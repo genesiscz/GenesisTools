@@ -1,6 +1,7 @@
 import axios from "axios";
 import * as fs from "fs";
 import * as path from "path";
+import minimist from "minimist";
 
 interface GitHubRelease {
 	tag_name: string;
@@ -64,11 +65,14 @@ async function fetchReleaseNotes(options: ScriptOptions): Promise<void> {
 		// Generate markdown content
 		const markdownContent = generateMarkdown(allReleases, owner, repo);
 
-		// Write to file
-		const outputPath = path.resolve(outputFile);
-		fs.writeFileSync(outputPath, markdownContent);
-
-		console.log(`Release notes written to ${outputPath}`);
+		if (outputFile) {
+            process.stdout.write(outputFile);
+        } else {
+			// Write to file
+			const outputPath = path.resolve(outputFile);
+			fs.writeFileSync(outputPath, markdownContent);
+			console.log(`Release notes written to ${outputPath}`);
+		}
 	} catch (error) {
 		if (axios.isAxiosError(error)) {
 			if (error.response?.status === 403) {
@@ -102,49 +106,72 @@ function generateMarkdown(releases: GitHubRelease[], owner: string, repo: string
 	return headerContent + releasesContent;
 }
 
-function parseCommandLineArgs(): ScriptOptions {
-	const args = process.argv.slice(2);
+function parseRepoArg(repoArg: string): { owner: string; repo: string } | null {
+	// Accepts owner/repo or full github.com URL
+	if (!repoArg) return null;
+	const githubUrlPattern = /github\.com[:/]+([^/]+)\/([^/]+)(?:\/|$)/i;
+	const ownerRepoPattern = /^([^/]+)\/([^/]+)$/;
 
-	if (args.length < 2) {
-		console.log(`
-Usage: ts-node github-release-notes.ts <owner>/<repo> <output-file> [options]
+	let match = repoArg.match(githubUrlPattern);
+	if (match) {
+		return { owner: match[1], repo: match[2].replace(/\.git$/, "") };
+	}
+	match = repoArg.match(ownerRepoPattern);
+	if (match) {
+		return { owner: match[1], repo: match[2] };
+	}
+	return null;
+}
+
+function printHelpAndExit(): void {
+	console.log(`
+Usage: bun src/github-release-notes/index.ts <owner>/<repo>|<github-url> <output-file> [options]
 
 Arguments:
-  owner/repo     GitHub repository in format "owner/repo"
+  owner/repo     GitHub repository in format "owner/repo" or full github.com URL
   output-file    Path to the output markdown file
 
 Options:
   --limit=<n>    Limit the number of releases to fetch
+  -h, --help     Show this help message
 
 Example:
-  ts-node github-release-notes.ts software-mansion/react-native-reanimated releases.md --limit=10
+  bun src/github-release-notes/index.ts software-mansion/react-native-reanimated releases.md --limit=10
+  bun src/github-release-notes/index.ts https://github.com/software-mansion/react-native-reanimated releases.md
   
 Note:
   To avoid GitHub API rate limits, you can set the GITHUB_TOKEN environment variable.
   export GITHUB_TOKEN=your_github_token
 `);
+	process.exit(0);
+}
+
+function parseCommandLineArgs(): ScriptOptions {
+	const argv = minimist(process.argv.slice(2), {
+		alias: { h: "help" },
+		boolean: ["help"],
+	});
+
+	if (argv.help) {
+		printHelpAndExit();
+	}
+
+	const [repoArg, outputFile] = argv._;
+
+	if (!repoArg || !outputFile) {
+		printHelpAndExit();
+	}
+
+	const repoInfo = parseRepoArg(repoArg);
+	if (!repoInfo) {
+		console.error('Invalid repository format. Use "owner/repo" or a full github.com URL.');
 		process.exit(1);
 	}
 
-	// Parse owner/repo
-	const repoArg = args[0];
-	const [owner, repo] = repoArg.split("/");
+	const options: ScriptOptions = { owner: repoInfo.owner, repo: repoInfo.repo, outputFile };
 
-	if (!owner || !repo) {
-		console.error('Invalid repository format. Use "owner/repo".');
-		process.exit(1);
-	}
-
-	// Output file
-	const outputFile = args[1];
-
-	// Parse options
-	const options: ScriptOptions = { owner, repo, outputFile };
-
-	// Check for limit option
-	const limitArg = args.find((arg) => arg.startsWith("--limit="));
-	if (limitArg) {
-		const limit = parseInt(limitArg.split("=")[1], 10);
+	if (argv.limit) {
+		const limit = parseInt(argv.limit, 10);
 		if (!isNaN(limit) && limit > 0) {
 			options.limit = limit;
 		} else {
@@ -156,6 +183,5 @@ Note:
 	return options;
 }
 
-// Main execution
 const options = parseCommandLineArgs();
 fetchReleaseNotes(options).catch(console.error);
