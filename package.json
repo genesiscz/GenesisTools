@@ -12,6 +12,7 @@
     "dependencies": {
         "@types/fb-watchman": "^2.0.4",
         "@types/minimist": "^1.2.5",
+        "axios": "^1.8.4",
         "enquirer": "^2.4.1",
         "fb-watchman": "^2.0.2",
         "minimist": "^1.2.8"
