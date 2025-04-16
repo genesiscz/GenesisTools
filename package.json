@@ -1,0 +1,17 @@
+{
+  "name": "genesis-tools",
+  "description": "Useful tools that I use for my projects",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@types/fb-watchman": "^2.0.4",
+    "enquirer": "^2.4.1",
+    "fb-watchman": "^2.0.2"
+  }
+}
