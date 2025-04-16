@@ -14,19 +14,20 @@ interface GitHubRelease {
 interface ScriptOptions {
 	owner: string;
 	repo: string;
-	outputFile: string;
+	outputFile: string|null;
 	limit?: number;
+	oldest?: boolean;
 }
 
 async function fetchReleaseNotes(options: ScriptOptions): Promise<void> {
-	const { owner, repo, outputFile, limit } = options;
+	const { owner, repo, outputFile, limit, oldest } = options;
 
 	try {
 		console.log(`Fetching release notes for ${owner}/${repo}...`);
 
 		// Determine how many releases to fetch
 		const perPage = 100; // GitHub API maximum
-		const maxPages = limit ? Math.ceil(limit / perPage) : Infinity;
+		const maxPages = limit ? Math.ceil(limit / perPage) : 5;
 
 		let allReleases: GitHubRelease[] = [];
 		let page = 1;
@@ -34,6 +35,7 @@ async function fetchReleaseNotes(options: ScriptOptions): Promise<void> {
 
 		// Fetch releases page by page
 		while (hasMorePages && page <= maxPages) {
+            console.debug(`Fetching page ${page} of ${maxPages}...`);
 			const url = `https://api.github.com/repos/${owner}/${repo}/releases?per_page=${perPage}&page=${page}`;
 
 			const response = await axios.get(url, {
@@ -62,13 +64,19 @@ async function fetchReleaseNotes(options: ScriptOptions): Promise<void> {
 
 		console.log(`Found ${allReleases.length} releases.`);
 
+		// Sort releases
+		if (oldest) {
+			allReleases = allReleases.sort((a, b) => new Date(a.published_at).getTime() - new Date(b.published_at).getTime());
+		} else {
+			allReleases = allReleases.sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime());
+		}
+
 		// Generate markdown content
 		const markdownContent = generateMarkdown(allReleases, owner, repo);
 
-		if (outputFile) {
-            process.stdout.write(outputFile);
+		if (!outputFile) {
+            process.stdout.write(markdownContent);
         } else {
-			// Write to file
 			const outputPath = path.resolve(outputFile);
 			fs.writeFileSync(outputPath, markdownContent);
 			console.log(`Release notes written to ${outputPath}`);
@@ -133,11 +141,13 @@ Arguments:
 
 Options:
   --limit=<n>    Limit the number of releases to fetch
+  --oldest       Sort releases from oldest to newest (default is newest to oldest)
   -h, --help     Show this help message
 
 Example:
   bun src/github-release-notes/index.ts software-mansion/react-native-reanimated releases.md --limit=10
   bun src/github-release-notes/index.ts https://github.com/software-mansion/react-native-reanimated releases.md
+  bun src/github-release-notes/index.ts software-mansion/react-native-reanimated releases.md --oldest
   
 Note:
   To avoid GitHub API rate limits, you can set the GITHUB_TOKEN environment variable.
@@ -149,7 +159,7 @@ Note:
 function parseCommandLineArgs(): ScriptOptions {
 	const argv = minimist(process.argv.slice(2), {
 		alias: { h: "help" },
-		boolean: ["help"],
+		boolean: ["help", "oldest"],
 	});
 
 	if (argv.help) {
@@ -158,7 +168,7 @@ function parseCommandLineArgs(): ScriptOptions {
 
 	const [repoArg, outputFile] = argv._;
 
-	if (!repoArg || !outputFile) {
+	if (!repoArg) {
 		printHelpAndExit();
 	}
 
@@ -178,6 +188,10 @@ function parseCommandLineArgs(): ScriptOptions {
 			console.error("Invalid limit value. Must be a positive integer.");
 			process.exit(1);
 		}
+	}
+
+	if (argv.oldest) {
+		options.oldest = true;
 	}
 
 	return options;
