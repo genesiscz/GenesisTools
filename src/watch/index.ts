@@ -4,10 +4,6 @@ import Enquirer from "enquirer";
 
 const client = new watchman.Client();
 const prompter = new Enquirer();
-// Mapping of project names to directories
-const Directories: Map<string, string> = new Map<string, string>([
-    // TODO Add some
-]);
 
 // Parse CLI arguments
 const argv = minimist(process.argv.slice(2), {
@@ -24,21 +20,13 @@ async function getDirOfInterest(): Promise<string> {
     // If a positional argument is provided, try to resolve it
     const arg = argv._[0];
     if (arg) {
-        let dir = Directories.get(arg);
-        if (dir) return dir;
         if (arg.startsWith(".") || arg.startsWith("/")) {
             return arg;
         }
-        console.error("Invalid project name provided:", arg);
+        console.error("Invalid directory path provided:", arg);
     }
 
     // No valid argument, show interactive selection
-    // Get directories from Directories map
-    const staticChoices = Array.from(Directories.entries()).map(([name, path]) => ({
-        name: `${name} (${path})`,
-        value: path,
-    }));
-
     // Get watched directories from watchman
     const watchedDirs: string[] = await new Promise((resolve) => {
         client.command(["watch-list"], (err, resp) => {
@@ -46,19 +34,16 @@ async function getDirOfInterest(): Promise<string> {
             resolve(resp.roots);
         });
     });
-    const dynamicChoices = watchedDirs
-        .filter((dir) => !staticChoices.some((c) => c.value === dir))
-        .map((dir) => ({ name: `watchman: ${dir}`, value: dir }));
+    const dynamicChoices = watchedDirs.map((dir) => ({ name: `watchman: ${dir}`, value: dir }));
 
     const choices = [
-        ...staticChoices,
         ...dynamicChoices,
         { name: `Current directory (${process.cwd()})`, value: process.cwd() },
     ];
 
     const answer = await prompter.prompt({
         type: "autocomplete",
-		maxChoices: 1,
+        maxChoices: 1,
         name: "directory",
         message: "Select a directory to watch:",
         choices,
@@ -66,7 +51,6 @@ async function getDirOfInterest(): Promise<string> {
     return answer.directory;
 }
 
-// `makeSubscription` function declaration
 function makeSubscription(client: watchman.Client, watch: string, relativePath: string | undefined): void {
     const subscription: Record<string, unknown> = {
         // Match all files
@@ -97,11 +81,10 @@ function makeSubscription(client: watchman.Client, watch: string, relativePath: 
         });
 
         sortedFiles.forEach((file: any) => {
-            const mtimeMs = +file.mtime_ms; 
-			const date = new Date(mtimeMs);
-			const today = new Date();
-			const dateTime = date.toDateString() === today.toDateString() ? date.toLocaleTimeString() : date.toLocaleString();
-
+            const mtimeMs = +file.mtime_ms;
+            const date = new Date(mtimeMs);
+            const today = new Date();
+            const dateTime = date.toDateString() === today.toDateString() ? date.toLocaleTimeString() : date.toLocaleString();
             console.log(`${dateTime} File changed: ${file.name}`);
         });
     });
@@ -135,3 +118,5 @@ function makeSubscription(client: watchman.Client, watch: string, relativePath: 
         });
     });
 })();
+
+// `
