@@ -51,7 +51,7 @@ async function getDirOfInterest(): Promise<string> {
     return answer.directory;
 }
 
-function makeSubscription(client: watchman.Client, watch: string, relativePath: string | undefined): void {
+function makeSubscription(client: watchman.Client, watch: string, relativePath: string | undefined, retryCount = 0): void {
     const subscription: Record<string, unknown> = {
         // Match all files
         expression: ["allof", ["type", "f"]],
@@ -65,7 +65,14 @@ function makeSubscription(client: watchman.Client, watch: string, relativePath: 
 
     client.command(["subscribe", watch, "mysubscription", subscription], (error, resp) => {
         if (error) {
-            console.error("Failed to subscribe:", error);
+            if (retryCount < 15) {
+                console.error(`Failed to subscribe (attempt ${retryCount + 1}/15):`, error);
+                setTimeout(() => makeSubscription(client, watch, relativePath, retryCount + 1), 1000);
+            } else {
+                console.error("Failed to subscribe after 15 attempts. Exiting.");
+                client.end();
+                process.exit(1);
+            }
             return;
         }
         console.log("Subscription", resp.subscribe, "established");
@@ -74,7 +81,10 @@ function makeSubscription(client: watchman.Client, watch: string, relativePath: 
     // Listen to subscription events
     client.on("subscription", (resp: any) => {
         if (resp.subscription !== "mysubscription") return;
-
+        if (!resp.files || !Array.isArray(resp.files)) {
+            // No files in the response, nothing to do
+            return;
+        }
         // Sort files by mtime_ms ascending (latest at the bottom)
         const sortedFiles = resp.files.slice().sort((a: any, b: any) => {
             return Number(a.mtime_ms) - Number(b.mtime_ms);
@@ -90,33 +100,45 @@ function makeSubscription(client: watchman.Client, watch: string, relativePath: 
     });
 }
 
+async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
+    let attempt = 0;
+    while (attempt < maxRetries) {
+        await new Promise((resolve) => {
+            client.capabilityCheck({ optional: [], required: ["relative_root"] }, (capabilityError, capabilityResp) => {
+                if (capabilityError) {
+                    console.error(`Capability check failed (attempt ${attempt + 1}/${maxRetries}):`, capabilityError);
+                    attempt++;
+                    setTimeout(resolve, 1000);
+                    return;
+                }
+                client.command(["watch-project", dirOfInterest], (watchError, watchResp: any) => {
+                    if (watchError) {
+                        console.error(`Error initiating watch (attempt ${attempt + 1}/${maxRetries}):`, watchError);
+                        attempt++;
+                        setTimeout(resolve, 1000);
+                        return;
+                    }
+                    if ("warning" in watchResp) {
+                        console.warn("Warning:", watchResp.warning);
+                    }
+                    console.log("Watch established on", watchResp.watch, "relative_path:", watchResp.relative_path);
+                    makeSubscription(client, watchResp.watch, watchResp.relative_path);
+                    // Success, don't retry further
+                    attempt = maxRetries;
+                    resolve(undefined);
+                });
+            });
+        });
+    }
+    if (attempt === maxRetries) {
+        console.error("Failed to establish watch after 15 attempts. Exiting.");
+        client.end();
+        process.exit(1);
+    }
+}
+
 (async () => {
     const dirOfInterest = await getDirOfInterest();
     console.log("Directory of interest:", dirOfInterest);
-
-    // Capability check and watch initialization
-    client.capabilityCheck({ optional: [], required: ["relative_root"] }, (capabilityError, capabilityResp) => {
-        if (capabilityError) {
-            console.error("Capability check failed:", capabilityError);
-            client.end();
-            return;
-        }
-
-        client.command(["watch-project", dirOfInterest], (watchError, watchResp: any) => {
-            if (watchError) {
-                console.error("Error initiating watch:", watchError);
-                client.end();
-                return;
-            }
-
-            if ("warning" in watchResp) {
-                console.warn("Warning:", watchResp.warning);
-            }
-
-            console.log("Watch established on", watchResp.watch, "relative_path:", watchResp.relative_path);
-            makeSubscription(client, watchResp.watch, watchResp.relative_path);
-        });
-    });
+    await watchWithRetry(dirOfInterest);
 })();
-
-// `
