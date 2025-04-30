@@ -1,5 +1,5 @@
 import minimist from "minimist";
-import { resolve, join, dirname } from "node:path";
+import { resolve, join, dirname, basename } from "node:path";
 import { mkdir } from "node:fs/promises"; // Using fs.promises for async operations - Bun implements this
 import logger from '../logger';
 
@@ -11,6 +11,7 @@ interface Options {
     all?: boolean; // Default if no filter is specified
     target?: string;
     help?: boolean;
+    flat?: boolean; // Add flat option
     // Aliases
     s?: boolean;
     u?: boolean;
@@ -18,6 +19,7 @@ interface Options {
     c?: number;
     t?: string;
     h?: boolean;
+    f?: boolean; // Alias for flat
 }
 
 interface Args extends Options {
@@ -82,19 +84,20 @@ Options:
 
   Output:
     -t, --target DIR    Directory to copy files into (default: ./.ai/YYYY-MM-DD-HH.mm).
+    -f, --flat          Copy all files directly to the target directory without preserving the directory structure.
     -h, --help          Show this message.
 
 Examples:
   bun run src/git/collect-uncommitted-files.ts ./my-repo -c 5
   bun run src/git/collect-uncommitted-files.ts ../other-repo --staged --target ./collected_staged
-  bun run src/git/collect-uncommitted-files.ts /path/to/project --all
+  bun run src/git/collect-uncommitted-files.ts /path/to/project --all --flat
 `);
 }
 
 // --- Main Function ---
 async function main() {
     const argv = minimist<Args>(process.argv.slice(2), {
-        boolean: ["staged", "unstaged", "all", "help"],
+        boolean: ["staged", "unstaged", "all", "help", "flat"],
         string: ["target"],
         alias: {
             c: "commits",
@@ -103,6 +106,7 @@ async function main() {
             a: "all",
             t: "target",
             h: "help",
+            f: "flat",
         },
     });
 
@@ -121,7 +125,7 @@ async function main() {
     const repoDir = resolve(repoDirArg);
     logger.debug(`ℹ️ Repository directory: ${repoDir}`);
 
-    const { commits, staged, unstaged, target } = argv;
+    const { commits, staged, unstaged, target, flat } = argv;
     let all = argv.all; // Mutable 'all' flag
 
     const modeFlags = [commits !== undefined, staged, unstaged, all].filter(Boolean).length;
@@ -200,10 +204,7 @@ async function main() {
             gitOutput = await runGitCommand(["diff", "--name-only"], repoDir);
         } else {
             // mode === 'all'
-            const stagedFiles = await runGitCommand(["diff", "--name-only", "--cached"], repoDir);
-            const unstagedFiles = await runGitCommand(["diff", "--name-only"], repoDir);
-            // Combine and deduplicate
-            const combined = new Set([...stagedFiles.split("\n"), ...unstagedFiles.split("\n")]);
+            const combined = (await runGitCommand(["diff", "--name-only", "HEAD"], repoDir)).split("\n");
             gitOutput = Array.from(combined)
                 .filter((f) => f)
                 .join("\n"); // Filter out empty lines
@@ -222,23 +223,23 @@ async function main() {
     }
 
     // --- Copy Files ---
-    logger.info(`⏳ Copying files to ${targetDir}...`);
+    logger.info(`⏳ Copying files to ${targetDir}${flat ? " (flat)" : ""}...`);
     let copiedCount = 0;
     let errorCount = 0;
 
     for (const relativePath of fileList) {
         const sourcePath = join(repoDir, relativePath);
-        const destPath = join(targetDir, relativePath);
+        const destPath = flat ? join(targetDir, basename(relativePath)) : join(targetDir, relativePath);
         const destSubDir = dirname(destPath);
 
         try {
-            // Ensure the subdirectory structure exists in the target
-            await mkdir(destSubDir, { recursive: true });
+            // Ensure the subdirectory structure exists in the target, only if not flat
+            if (!flat) {
+                await mkdir(destSubDir, { recursive: true });
+            }
             // Use Bun.write to copy - simpler than node:fs/promises cp for this case
             await Bun.write(destPath, Bun.file(sourcePath));
-            // Alternative using fs.promises.cp:
-            // await cp(sourcePath, destPath, { recursive: true, force: true }); // force overwrites - REMOVED
-            logger.info(`  → Copied: ${relativePath}`);
+            logger.info(`  → Copied: ${relativePath} ${flat ? "as " + basename(relativePath) : ""}`);
             copiedCount++;
         } catch (error: any) {
             logger.error(`  ✖ Error copying ${relativePath}: ${error.message}`);
