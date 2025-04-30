@@ -1,6 +1,7 @@
 import minimist from "minimist";
 import Enquirer from "enquirer";
 import { resolve } from "node:path";
+import logger from '../logger';
 
 interface Options {
     commits?: number;
@@ -15,7 +16,7 @@ interface Args extends Options {
 const prompter = new Enquirer();
 
 function showHelp() {
-    console.log(`
+    logger.info(`
 Usage: diff.ts <directory> [--commits X] [--output FILE] [--help]
 
 Arguments:
@@ -44,7 +45,7 @@ async function main() {
 
     const repoDirArg = argv._[0];
     if (typeof repoDirArg !== "string") {
-        console.error("✖ Error: Repository directory path is missing or invalid.");
+        logger.error("✖ Error: Repository directory path is missing or invalid.");
         showHelp();
         process.exit(1);
     }
@@ -68,7 +69,7 @@ async function main() {
 
             commits = resp?.commits;
         } catch (promptError) {
-            console.error("\n✖ Prompt cancelled: " + JSON.stringify(promptError));
+            logger.error("\n✖ Prompt cancelled: " + JSON.stringify(promptError));
             process.exit(1);
         }
     }
@@ -85,7 +86,7 @@ async function main() {
         "--no-color",
     ];
 
-    console.debug(`⏳ Running: ${gitExecutablePath} ${gitArgs.join(" ")} in ${repoDir}`);
+    logger.debug(`⏳ Running: ${gitExecutablePath} ${gitArgs.join(" ")} in ${repoDir}`);
 
     const proc = Bun.spawn({
         cmd: [gitExecutablePath, ...gitArgs],
@@ -104,16 +105,16 @@ async function main() {
     const exitCode = await proc.exited;
 
     if (exitCode !== 0) {
-        console.error(`\n✖ git diff exited with code ${exitCode}`);
+        logger.error(`\n✖ git diff exited with code ${exitCode}`);
         if (errorOutput) {
-            console.error("Git stderr:");
-            console.error(errorOutput.trim());
+            logger.error("Git stderr:");
+            logger.error(errorOutput.trim());
         }
 
         // Sometimes git diff writes errors to stdout (e.g., bad revision)
         if (diffOutput && !errorOutput && exitCode !== 0) {
-            console.error("Git output (potential error):");
-            console.error(diffOutput.trim());
+            logger.error("Git output (potential error):");
+            logger.error(diffOutput.trim());
         }
         process.exit(exitCode ?? 1);
     }
@@ -121,9 +122,9 @@ async function main() {
     if (output) {
         try {
             await Bun.write(output, diffOutput);
-            console.log(`✔ Diff successfully written to ${output}`);
+            logger.info(`✔ Diff successfully written to ${output}`);
         } catch (writeError) {
-            console.error(`✖ Error writing diff to file ${output}:`, writeError);
+            logger.error(`✖ Error writing diff to file ${output}:`, writeError);
             process.exit(1);
         }
     } else {
@@ -131,11 +132,11 @@ async function main() {
         if (!diffOutput.endsWith("\n")) {
             process.stdout.write("\n");
         }
-        console.log(`\n✔ Git diff completed successfully.`);
+        logger.info(`\n✔ Git diff completed successfully.`);
     }
 }
 
 main().catch((err) => {
-    console.error("\n✖ An unexpected error occurred:", err);
+    logger.error("\n✖ An unexpected error occurred:", err);
     process.exit(1);
 });

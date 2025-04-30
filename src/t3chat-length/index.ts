@@ -2,6 +2,8 @@
  * This tool is internal and probably not useful to you.
  */
 
+import logger from '../logger';
+
 interface Message {
     content: string;
     threadId: string;
@@ -39,8 +41,8 @@ function processMessages(input: InputJson): OutputMessageInfo[] {
 
 // https://t3.chat/api/trpc/syncData
 const myInputJson: InputJson = {
-    json: {},
+    json: { messages: [] },
 };
 
 const processedInfo = processMessages(myInputJson);
-console.log(processedInfo);
+logger.info(processedInfo);

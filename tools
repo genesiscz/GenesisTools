@@ -4,13 +4,14 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import Enquirer from 'enquirer';
-import clipboardy from 'clipboardy'; // Use ESM import
+import clipboardy from 'clipboardy'; 
+import logger from './src/logger';
 
 // --- Configuration ---
 const SRC_DIR_NAME = 'src';
 const INDEX_FILE_NAME = 'index.ts';
 const SCRIPT_EXTENSION = '.ts';
-const EXECUTABLE_NAME = 'tools'; // How the script is invoked
+const EXECUTABLE_NAME = 'tools'; // How this script is invoked
 
 // --- Helper Functions ---
 async function getAvailableTools(srcDir) {
@@ -33,18 +34,18 @@ async function getAvailableTools(srcDir) {
                 }
             } catch (statError) {
                 // Ignore errors for individual entries (e.g., permission issues)
-                // console.warn(`Warning: Could not stat entry ${entryPath}:`, statError);
+                // logger.warn(`Warning: Could not stat entry ${entryPath}:`, statError);
             }
         }
     } catch (readError) {
-        console.error(`✖ Error reading source directory ${srcDir}:`, readError);
+        logger.error(`✖ Error reading source directory ${srcDir}:`, readError);
     }
     return tools.sort(); // Return sorted list
 }
 
 async function selectToolAndCopyCommand(tools) {
     if (tools.length === 0) {
-        console.log("ℹ️ No tools found in the src directory.");
+        logger.info("ℹ️ No tools found in the src directory.");
         process.exit(0);
     }
 
@@ -63,16 +64,16 @@ async function selectToolAndCopyCommand(tools) {
         if (response && response.tool) {
             const commandToCopy = `${EXECUTABLE_NAME} ${response.tool}`;
             await clipboardy.write(commandToCopy);
-            console.log(`✔ Command "${commandToCopy}" copied to clipboard!`);
+            logger.info(`✔ Command "${commandToCopy}" copied to clipboard!`);
         } else {
-            console.log("✖ Tool selection cancelled.");
+            logger.info("✖ Tool selection cancelled.");
         }
     } catch (error) {
         // instanceof check works fine in JS
         if (error instanceof Error && error.message === 'User aborted') {
-            console.log("\n✖ Tool selection cancelled.");
+            logger.info("\n✖ Tool selection cancelled.");
         } else {
-            console.error('\n✖ An error occurred during tool selection:', error);
+            logger.error('\n✖ An error occurred during tool selection:', error);
         }
         process.exit(1); // Exit on error or cancellation
     }
@@ -97,15 +98,15 @@ function executeTool(scriptId, scriptArgs) {
     } else if (existsSync(pathAsIs) && pathAsIs.endsWith(SCRIPT_EXTENSION)) { // Only accept as-is if it's a .ts file
         targetScript = pathAsIs;
     } else {
-        console.error(`✖ Error: Could not find a script matching '${scriptId}'.`);
-        console.error("Looked for:");
-        console.error(`  - ${pathDirIndex}`);
-        console.error(`  - ${pathWithTs}`);
-        console.error(`  - ${pathAsIs} (if it ends with .ts)`);
+        logger.error(`✖ Error: Could not find a script matching '${scriptId}'.`);
+        logger.error("Looked for:");
+        logger.error(`  - ${pathDirIndex}`);
+        logger.error(`  - ${pathWithTs}`);
+        logger.error(`  - ${pathAsIs} (if it ends with .ts)`);
         process.exit(1);
     }
 
-    console.debug(`▶️ Running: bun run ${targetScript} ${scriptArgs.join(' ')}`);
+    logger.debug(`▶️ Running: bun run ${targetScript} ${scriptArgs.join(' ')}`);
 
     // Execute bun run using spawnSync
     const result = spawnSync(
@@ -129,7 +130,7 @@ async function main() {
 
     if (args.length === 0) {
         // No arguments: Show interactive tool list
-        console.log("ℹ️ No tool specified. Listing available tools...");
+        logger.info("ℹ️ No tool specified. Listing available tools...");
         const availableTools = await getAvailableTools(srcDir);
         await selectToolAndCopyCommand(availableTools);
     } else {
@@ -141,6 +142,6 @@ async function main() {
 }
 
 main().catch(err => {
-    console.error("\n✖ An unexpected error occurred in the main execution:", err);
+    logger.error("\n✖ An unexpected error occurred in the main execution:", err);
     process.exit(1);
 });

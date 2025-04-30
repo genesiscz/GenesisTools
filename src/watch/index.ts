@@ -1,6 +1,7 @@
 import * as watchman from "fb-watchman";
 import minimist from "minimist";
 import Enquirer from "enquirer";
+import logger from '../logger';
 
 const client = new watchman.Client();
 const prompter = new Enquirer();
@@ -22,7 +23,7 @@ async function getDirOfInterest(): Promise<string> {
         if (arg.startsWith(".") || arg.startsWith("/")) {
             return arg;
         }
-        console.error("Invalid directory path provided:", arg);
+        logger.error("Invalid directory path provided:", arg);
     }
 
     // No valid argument, show interactive selection
@@ -66,16 +67,16 @@ function makeSubscription(
     client.command(["subscribe", watch, "mysubscription", subscription], (error, resp) => {
         if (error) {
             if (retryCount < 15) {
-                console.error(`Failed to subscribe (attempt ${retryCount + 1}/15):`, error);
+                logger.error(`Failed to subscribe (attempt ${retryCount + 1}/15):`, error);
                 setTimeout(() => makeSubscription(client, watch, relativePath, retryCount + 1), 1000);
             } else {
-                console.error("Failed to subscribe after 15 attempts. Exiting.");
+                logger.error("Failed to subscribe after 15 attempts. Exiting.");
                 client.end();
                 process.exit(1);
             }
             return;
         }
-        console.log("Subscription", resp.subscribe, "established");
+        logger.info("Subscription", resp.subscribe, "established");
     });
 
     // Remove any previous listeners to avoid duplicates
@@ -97,7 +98,7 @@ function makeSubscription(
             const today = new Date();
             const dateTime =
                 date.toDateString() === today.toDateString() ? date.toLocaleTimeString() : date.toLocaleString();
-            console.log(`${dateTime} File changed: ${file.name}`);
+            logger.info(`${dateTime} File changed: ${file.name}`);
         });
     });
 }
@@ -112,7 +113,7 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
                 { optional: [], required: ["relative_root"] },
                 (capabilityError: any, capabilityResp: any) => {
                     if (capabilityError) {
-                        console.error(
+                        logger.error(
                             `Capability check failed (attempt ${attempt + 1}/${maxRetries}):`,
                             capabilityError
                         );
@@ -124,7 +125,7 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
                     }
                     client.command(["watch-project", dirOfInterest], (watchError: any, watchResp: any) => {
                         if (watchError) {
-                            console.error(`Error initiating watch (attempt ${attempt + 1}/${maxRetries}):`, watchError);
+                            logger.error(`Error initiating watch (attempt ${attempt + 1}/${maxRetries}):`, watchError);
                             lastError = watchError;
                             attempt++;
                             client.end();
@@ -132,9 +133,9 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
                             return;
                         }
                         if ("warning" in watchResp) {
-                            console.warn("Warning:", watchResp.warning);
+                            logger.warn("Warning:", watchResp.warning);
                         }
-                        console.log("Watch established on", watchResp.watch, "relative_path:", watchResp.relative_path);
+                        logger.info("Watch established on", watchResp.watch, "relative_path:", watchResp.relative_path);
                         makeSubscription(client, watchResp.watch, watchResp.relative_path);
                         attempt = maxRetries;
                         resolve(undefined);
@@ -146,12 +147,12 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
             return;
         }
     }
-    console.error("Failed to establish watch after 15 attempts. Exiting.", lastError);
+    logger.error("Failed to establish watch after 15 attempts. Exiting.", lastError);
     process.exit(1);
 }
 
 (async () => {
     const dirOfInterest = await getDirOfInterest();
-    console.log("Directory of interest:", dirOfInterest);
+    logger.info("Directory of interest:", dirOfInterest);
     await watchWithRetry(dirOfInterest);
 })();

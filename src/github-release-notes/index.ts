@@ -2,6 +2,7 @@ import axios from "axios";
 import * as fs from "fs";
 import * as path from "path";
 import minimist from "minimist";
+import logger from '../logger';
 
 interface GitHubRelease {
     tag_name: string;
@@ -23,7 +24,7 @@ async function fetchReleaseNotes(options: ScriptOptions): Promise<void> {
     const { owner, repo, outputFile, limit, oldest } = options;
 
     try {
-        console.log(`Fetching release notes for ${owner}/${repo}...`);
+        logger.info(`Fetching release notes for ${owner}/${repo}...`);
 
         const perPage = 100; // GitHub API maximum
         const maxPages = limit ? Math.ceil(limit / perPage) : 5;
@@ -33,7 +34,7 @@ async function fetchReleaseNotes(options: ScriptOptions): Promise<void> {
         let hasMorePages = true;
 
         while (hasMorePages && page <= maxPages) {
-            console.debug(`Fetching page ${page} of ${maxPages}...`);
+            logger.debug(`Fetching page ${page} of ${maxPages}...`);
 
             const url = `https://api.github.com/repos/${owner}/${repo}/releases?per_page=${perPage}&page=${page}`;
 
@@ -61,7 +62,7 @@ async function fetchReleaseNotes(options: ScriptOptions): Promise<void> {
             }
         }
 
-        console.log(`Found ${allReleases.length} releases.`);
+        logger.info(`Found ${allReleases.length} releases.`);
 
         // Sort releases
         if (oldest) {
@@ -82,21 +83,21 @@ async function fetchReleaseNotes(options: ScriptOptions): Promise<void> {
         } else {
             const outputPath = path.resolve(outputFile);
             fs.writeFileSync(outputPath, markdownContent);
-            console.log(`Release notes written to ${outputPath}`);
+            logger.info(`Release notes written to ${outputPath}`);
         }
     } catch (error) {
         if (axios.isAxiosError(error)) {
             if (error.response?.status === 403) {
-                console.error(
+                logger.error(
                     "Rate limit exceeded. Consider using a GitHub token by setting the GITHUB_TOKEN environment variable."
                 );
             } else if (error.response?.status === 404) {
-                console.error(`Repository ${owner}/${repo} not found or no releases available.`);
+                logger.error(`Repository ${owner}/${repo} not found or no releases available.`);
             } else {
-                console.error(`Error: ${error.message}`);
+                logger.error(`Error: ${error.message}`);
             }
         } else {
-            console.error("An unknown error occurred:", error);
+            logger.error("An unknown error occurred:", error);
         }
         process.exit(1);
     }
@@ -137,7 +138,7 @@ function parseRepoArg(repoArg: string): { owner: string; repo: string } | null {
 }
 
 function printHelpAndExit(): void {
-    console.log(`
+    logger.info(`
 Usage: bun src/github-release-notes/index.ts <owner>/<repo>|<github-url> <output-file> [options]
 
 Arguments:
@@ -179,7 +180,7 @@ function parseCommandLineArgs(): ScriptOptions {
 
     const repoInfo = parseRepoArg(repoArg);
     if (!repoInfo) {
-        console.error('Invalid repository format. Use "owner/repo" or a full github.com URL.');
+        logger.error('Invalid repository format. Use "owner/repo" or a full github.com URL.');
         process.exit(1);
     }
 
@@ -190,7 +191,7 @@ function parseCommandLineArgs(): ScriptOptions {
         if (!isNaN(limit) && limit > 0) {
             options.limit = limit;
         } else {
-            console.error("Invalid limit value. Must be a positive integer.");
+            logger.error("Invalid limit value. Must be a positive integer.");
             process.exit(1);
         }
     }
@@ -203,4 +204,4 @@ function parseCommandLineArgs(): ScriptOptions {
 }
 
 const options = parseCommandLineArgs();
-fetchReleaseNotes(options).catch(console.error);
+fetchReleaseNotes(options).catch(logger.error);
