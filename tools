@@ -1,0 +1,146 @@
+#!/usr/bin/env bun
+
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { resolve, join, basename } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import Enquirer from 'enquirer';
+import clipboardy from 'clipboardy'; // Use ESM import
+
+// --- Configuration ---
+const SRC_DIR_NAME = 'src';
+const INDEX_FILE_NAME = 'index.ts';
+const SCRIPT_EXTENSION = '.ts';
+const EXECUTABLE_NAME = 'tools'; // How the script is invoked
+
+// --- Helper Functions ---
+async function getAvailableTools(srcDir) {
+    const tools = [];
+    try {
+        const entries = readdirSync(srcDir);
+        for (const entry of entries) {
+            const entryPath = join(srcDir, entry);
+            try {
+                const stats = statSync(entryPath);
+                if (stats.isDirectory()) {
+                    // Check for index.ts inside the directory
+                    const indexFilePath = join(entryPath, INDEX_FILE_NAME);
+                    if (existsSync(indexFilePath)) {
+                        tools.push(entry); // Tool name is the directory name
+                    }
+                } else if (stats.isFile() && entry.endsWith(SCRIPT_EXTENSION) && entry !== INDEX_FILE_NAME) {
+                    // Add .ts files directly in src (excluding index.ts)
+                    tools.push(basename(entry, SCRIPT_EXTENSION));
+                }
+            } catch (statError) {
+                // Ignore errors for individual entries (e.g., permission issues)
+                // console.warn(`Warning: Could not stat entry ${entryPath}:`, statError);
+            }
+        }
+    } catch (readError) {
+        console.error(`✖ Error reading source directory ${srcDir}:`, readError);
+    }
+    return tools.sort(); // Return sorted list
+}
+
+async function selectToolAndCopyCommand(tools) {
+    if (tools.length === 0) {
+        console.log("ℹ️ No tools found in the src directory.");
+        process.exit(0);
+    }
+
+    try {
+        // Note: Enquirer might infer the type here, but explicitly removing <{ tool: string }>
+        const prompter = new Enquirer();
+        const response = await prompter.prompt({
+            type: 'autocomplete',
+            name: 'tool',
+            message: 'Select a tool to copy its command:',
+            choices: tools,
+            limit: 10, // Show up to 10 choices at once
+        });
+
+        // Check if response and response.tool exist (JS style)
+        if (response && response.tool) {
+            const commandToCopy = `${EXECUTABLE_NAME} ${response.tool}`;
+            await clipboardy.write(commandToCopy);
+            console.log(`✔ Command "${commandToCopy}" copied to clipboard!`);
+        } else {
+            console.log("✖ Tool selection cancelled.");
+        }
+    } catch (error) {
+        // instanceof check works fine in JS
+        if (error instanceof Error && error.message === 'User aborted') {
+            console.log("\n✖ Tool selection cancelled.");
+        } else {
+            console.error('\n✖ An error occurred during tool selection:', error);
+        }
+        process.exit(1); // Exit on error or cancellation
+    }
+}
+
+function executeTool(scriptId, scriptArgs) {
+    const workspaceRoot = resolve(__dirname); // Assumes the script is run from the root
+    const srcDir = join(workspaceRoot, SRC_DIR_NAME);
+
+    // Potential paths
+    const pathDirIndex = join(srcDir, scriptId, INDEX_FILE_NAME);
+    const pathWithTs = join(srcDir, `${scriptId}${SCRIPT_EXTENSION}`);
+    const pathAsIs = join(srcDir, scriptId); // Handles cases where .ts is already included by user
+
+    let targetScript = '';
+
+    // Check existence in order of preference
+    if (existsSync(pathDirIndex)) {
+        targetScript = pathDirIndex;
+    } else if (existsSync(pathWithTs)) {
+        targetScript = pathWithTs;
+    } else if (existsSync(pathAsIs) && pathAsIs.endsWith(SCRIPT_EXTENSION)) { // Only accept as-is if it's a .ts file
+        targetScript = pathAsIs;
+    } else {
+        console.error(`✖ Error: Could not find a script matching '${scriptId}'.`);
+        console.error("Looked for:");
+        console.error(`  - ${pathDirIndex}`);
+        console.error(`  - ${pathWithTs}`);
+        console.error(`  - ${pathAsIs} (if it ends with .ts)`);
+        process.exit(1);
+    }
+
+    console.debug(`▶️ Running: bun run ${targetScript} ${scriptArgs.join(' ')}`);
+
+    // Execute bun run using spawnSync
+    const result = spawnSync(
+        'bun',
+        ['run', targetScript, ...scriptArgs],
+        {
+            stdio: 'inherit',
+            cwd: process.cwd(),
+            shell: process.platform === 'win32'
+        }
+    );
+
+    process.exit(result.status ?? 1);
+}
+
+// --- Main Logic ---
+async function main() {
+    const args = process.argv.slice(2);
+    const workspaceRoot = resolve(__dirname);
+    const srcDir = join(workspaceRoot, SRC_DIR_NAME);
+
+    if (args.length === 0) {
+        // No arguments: Show interactive tool list
+        console.log("ℹ️ No tool specified. Listing available tools...");
+        const availableTools = await getAvailableTools(srcDir);
+        await selectToolAndCopyCommand(availableTools);
+    } else {
+        // Arguments provided: Execute the tool
+        const scriptId = args[0];
+        const scriptArgs = args.slice(1);
+        executeTool(scriptId, scriptArgs);
+    }
+}
+
+main().catch(err => {
+    console.error("\n✖ An unexpected error occurred in the main execution:", err);
+    process.exit(1);
+});
