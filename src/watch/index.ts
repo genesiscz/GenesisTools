@@ -35,22 +35,24 @@ async function getDirOfInterest(): Promise<string> {
     });
     const dynamicChoices = watchedDirs.map((dir) => ({ name: `watchman: ${dir}`, value: dir }));
 
-    const choices = [
-        ...dynamicChoices,
-        { name: `Current directory (${process.cwd()})`, value: process.cwd() },
-    ];
+    const choices = [...dynamicChoices, { name: `Current directory (${process.cwd()})`, value: process.cwd() }];
 
-    const answer = await prompter.prompt({
+    const answer = (await prompter.prompt({
         type: "autocomplete",
         maxChoices: 1,
         name: "directory",
         message: "Select a directory to watch:",
         choices,
-    }) as { directory: string };
+    })) as { directory: string };
     return answer.directory;
 }
 
-function makeSubscription(client: watchman.Client, watch: string, relativePath: string | undefined, retryCount = 0): void {
+function makeSubscription(
+    client: watchman.Client,
+    watch: string,
+    relativePath: string | undefined,
+    retryCount = 0
+): void {
     const subscription: Record<string, unknown> = {
         // Match all files
         expression: ["allof", ["type", "f"]],
@@ -93,7 +95,8 @@ function makeSubscription(client: watchman.Client, watch: string, relativePath: 
             const mtimeMs = +file.mtime_ms;
             const date = new Date(mtimeMs);
             const today = new Date();
-            const dateTime = date.toDateString() === today.toDateString() ? date.toLocaleTimeString() : date.toLocaleString();
+            const dateTime =
+                date.toDateString() === today.toDateString() ? date.toLocaleTimeString() : date.toLocaleString();
             console.log(`${dateTime} File changed: ${file.name}`);
         });
     });
@@ -105,33 +108,39 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
     while (attempt < maxRetries) {
         const client = new (require("fb-watchman").Client)();
         await new Promise((resolve) => {
-            client.capabilityCheck({ optional: [], required: ["relative_root"] }, (capabilityError: any, capabilityResp: any) => {
-                if (capabilityError) {
-                    console.error(`Capability check failed (attempt ${attempt + 1}/${maxRetries}):`, capabilityError);
-                    lastError = capabilityError;
-                    attempt++;
-                    client.end();
-                    setTimeout(resolve, 1000);
-                    return;
-                }
-                client.command(["watch-project", dirOfInterest], (watchError: any, watchResp: any) => {
-                    if (watchError) {
-                        console.error(`Error initiating watch (attempt ${attempt + 1}/${maxRetries}):`, watchError);
-                        lastError = watchError;
+            client.capabilityCheck(
+                { optional: [], required: ["relative_root"] },
+                (capabilityError: any, capabilityResp: any) => {
+                    if (capabilityError) {
+                        console.error(
+                            `Capability check failed (attempt ${attempt + 1}/${maxRetries}):`,
+                            capabilityError
+                        );
+                        lastError = capabilityError;
                         attempt++;
                         client.end();
                         setTimeout(resolve, 1000);
                         return;
                     }
-                    if ("warning" in watchResp) {
-                        console.warn("Warning:", watchResp.warning);
-                    }
-                    console.log("Watch established on", watchResp.watch, "relative_path:", watchResp.relative_path);
-                    makeSubscription(client, watchResp.watch, watchResp.relative_path);
-                    attempt = maxRetries;
-                    resolve(undefined);
-                });
-            });
+                    client.command(["watch-project", dirOfInterest], (watchError: any, watchResp: any) => {
+                        if (watchError) {
+                            console.error(`Error initiating watch (attempt ${attempt + 1}/${maxRetries}):`, watchError);
+                            lastError = watchError;
+                            attempt++;
+                            client.end();
+                            setTimeout(resolve, 1000);
+                            return;
+                        }
+                        if ("warning" in watchResp) {
+                            console.warn("Warning:", watchResp.warning);
+                        }
+                        console.log("Watch established on", watchResp.watch, "relative_path:", watchResp.relative_path);
+                        makeSubscription(client, watchResp.watch, watchResp.relative_path);
+                        attempt = maxRetries;
+                        resolve(undefined);
+                    });
+                }
+            );
         });
         if (attempt === maxRetries) {
             return;

@@ -39,8 +39,7 @@ function processMessages(input: InputJson): OutputMessageInfo[] {
 
 // https://t3.chat/api/trpc/syncData
 const myInputJson: InputJson = {
-    json: {
-    },
+    json: {},
 };
 
 const processedInfo = processMessages(myInputJson);
