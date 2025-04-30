@@ -5,7 +5,6 @@ import Enquirer from "enquirer";
 const client = new watchman.Client();
 const prompter = new Enquirer();
 
-// Parse CLI arguments
 const argv = minimist(process.argv.slice(2), {
     alias: { c: "current" },
     boolean: ["current"],
@@ -55,7 +54,6 @@ function makeSubscription(client: watchman.Client, watch: string, relativePath: 
     const subscription: Record<string, unknown> = {
         // Match all files
         expression: ["allof", ["type", "f"]],
-        // Interested fields
         fields: ["name", "size", "mtime_ms", "exists", "type"],
     };
 
@@ -78,7 +76,8 @@ function makeSubscription(client: watchman.Client, watch: string, relativePath: 
         console.log("Subscription", resp.subscribe, "established");
     });
 
-    // Listen to subscription events
+    // Remove any previous listeners to avoid duplicates
+    client.removeAllListeners("subscription");
     client.on("subscription", (resp: any) => {
         if (resp.subscription !== "mysubscription") return;
         if (!resp.files || !Array.isArray(resp.files)) {
@@ -102,19 +101,25 @@ function makeSubscription(client: watchman.Client, watch: string, relativePath: 
 
 async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
     let attempt = 0;
+    let lastError: any = null;
     while (attempt < maxRetries) {
+        const client = new (require("fb-watchman").Client)();
         await new Promise((resolve) => {
-            client.capabilityCheck({ optional: [], required: ["relative_root"] }, (capabilityError, capabilityResp) => {
+            client.capabilityCheck({ optional: [], required: ["relative_root"] }, (capabilityError: any, capabilityResp: any) => {
                 if (capabilityError) {
                     console.error(`Capability check failed (attempt ${attempt + 1}/${maxRetries}):`, capabilityError);
+                    lastError = capabilityError;
                     attempt++;
+                    client.end();
                     setTimeout(resolve, 1000);
                     return;
                 }
-                client.command(["watch-project", dirOfInterest], (watchError, watchResp: any) => {
+                client.command(["watch-project", dirOfInterest], (watchError: any, watchResp: any) => {
                     if (watchError) {
                         console.error(`Error initiating watch (attempt ${attempt + 1}/${maxRetries}):`, watchError);
+                        lastError = watchError;
                         attempt++;
+                        client.end();
                         setTimeout(resolve, 1000);
                         return;
                     }
@@ -123,18 +128,17 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
                     }
                     console.log("Watch established on", watchResp.watch, "relative_path:", watchResp.relative_path);
                     makeSubscription(client, watchResp.watch, watchResp.relative_path);
-                    // Success, don't retry further
                     attempt = maxRetries;
                     resolve(undefined);
                 });
             });
         });
+        if (attempt === maxRetries) {
+            return;
+        }
     }
-    if (attempt === maxRetries) {
-        console.error("Failed to establish watch after 15 attempts. Exiting.");
-        client.end();
-        process.exit(1);
-    }
+    console.error("Failed to establish watch after 15 attempts. Exiting.", lastError);
+    process.exit(1);
 }
 
 (async () => {
