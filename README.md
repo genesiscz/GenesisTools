@@ -4,11 +4,13 @@ GenesisTools is a collection of utilities designed to simplify various developme
 
 ## Installation
 
-To install the project dependencies, use Bun:
+To install project dependencies and make `tools` command available everywhere, run 
 
 ```
-bun install
+bun install && ./install.sh
 ```
+
+After that, run `source ~/.zshrc` if you use `zsh` or `source ~/.bashrc` if you use `bash`
 
 ## Tools Overview
 
@@ -16,7 +18,7 @@ The project includes the following tools:
 
 ### 1. Git Last Commits Diff
 
-This tool displays the differences between the last few commits in a Git repository.
+This tool displays the differences between the last few commits in a Git repository. Can be handy for AI input.
 
 **Usage:**
 
@@ -39,7 +41,7 @@ tools git-last-commits-diff /path/to/repo --commits 2
 
 ### 2. Collect Files for AI
 
-This tool is designed to collect and aggregate files from your project for analysis by AI systems. It can be configured to filter files by type, size, or directory structures to suit your analysis needs.
+This tool is designed to collect and aggregate files from your project for analysis by AI systems. It can be configured to filter files by staged, unstaged, both OR files changed in the last X commits.
 
 **Usage:**
 
