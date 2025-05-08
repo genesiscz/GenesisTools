@@ -139,7 +139,7 @@ function parseRepoArg(repoArg: string): { owner: string; repo: string } | null {
 
 function printHelpAndExit(): void {
     logger.info(`
-Usage: bun src/github-release-notes/index.ts <owner>/<repo>|<github-url> <output-file> [options]
+Usage: tools github-release-notes <owner>/<repo>|<github-url> <output-file> [options]
 
 Arguments:
   owner/repo     GitHub repository in format "owner/repo" or full github.com URL
@@ -151,9 +151,9 @@ Options:
   -h, --help     Show this help message
 
 Example:
-  bun src/github-release-notes/index.ts software-mansion/react-native-reanimated releases.md --limit=10
-  bun src/github-release-notes/index.ts https://github.com/software-mansion/react-native-reanimated releases.md
-  bun src/github-release-notes/index.ts software-mansion/react-native-reanimated releases.md --oldest
+  tools github-release-notes software-mansion/react-native-reanimated releases.md --limit=10
+  tools github-release-notes https://github.com/software-mansion/react-native-reanimated releases.md
+  tools github-release-notes software-mansion/react-native-reanimated releases.md --oldest
   
 Note:
   To avoid GitHub API rate limits, you can set the GITHUB_TOKEN environment variable.
