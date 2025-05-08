@@ -11,6 +11,11 @@ async function main() {
       value: 'watch',
     },
     {
+      name: 'watch-glob',
+      message: 'Watch files matching a glob pattern with real-time updates',
+      value: 'watch-glob',
+    },
+    {
       name: 'github-release-notes',
       message: 'Fetch and save GitHub release notes as markdown',
       value: 'github-release-notes',
@@ -29,6 +34,8 @@ async function main() {
   let scriptPath = '';
   if (command === 'watch') {
     scriptPath = path.join(__dirname, 'src/watch', 'index.ts');
+  } else if (command === 'watch-glob') {
+    scriptPath = path.join(__dirname, 'src/watch-glob', 'index.ts');
   } else if (command === 'github-release-notes') {
     scriptPath = path.join(__dirname, 'src/github-release-notes', 'index.ts');
   } else {
