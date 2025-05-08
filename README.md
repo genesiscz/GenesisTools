@@ -35,15 +35,21 @@ This tool displays the differences between the last few commits (or staged/untsa
 **Usage:**
 
 ```
-tools git-last-commits-diff <directory> [--commits X] [--output FILE] [--help]
+tools git-last-commits-diff <directory> [--commits X] [--output FILE | --clipboard] [--help]
 ```
 
 **Options:**
 
 -   `<directory>`: Required. Path to the Git repository.
 -   `--commits` (or `-c`): Number of recent commits to diff (e.g., `--commits 5` to diff `HEAD~5..HEAD`). If omitted, the tool will fetch the last 200 commits and present an interactive autocomplete list, allowing you to select a specific commit to diff against `HEAD`.
--   `--output` (or `-o`): Write the diff output to a file. If not provided, the output is printed to stdout.
+-   `--output [FILE]` (or `-o [FILE]`): Write the diff output to `FILE`. If `FILE` is omitted or an empty string is provided (e.g., `--output ""`), the output is printed to stdout. This option takes precedence over `--clipboard` and skips the interactive prompt.
+-   `--clipboard` (or `-cl`): Copy the diff output directly to the system clipboard. This option skips the interactive prompt unless `--output` is also specified (which takes precedence).
 -   `--help` (or `-h`): Show the usage help message.
+
+If neither `--output` nor `--clipboard` is specified, the tool will interactively prompt you to choose the output destination:
+-   **Save to a file**: Prompts for a filename (defaults to `commits-{firstCommitShaTruncated}-{lastCommitShaTruncated}.diff` in the current directory). The full absolute path of the saved file is copied to the clipboard.
+-   **Copy to clipboard**: Copies the entire diff output to the clipboard.
+-   **Print to stdout**: Prints the diff output to the console.
 
 **Example:**
 
