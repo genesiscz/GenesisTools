@@ -18,13 +18,23 @@
         "typescript": "^5.0.0"
     },
     "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.11.0",
+        "@modelcontextprotocol/server-github": "^2025.4.8",
+        "@types/chokidar": "^2.1.7",
         "@types/fb-watchman": "^2.0.4",
+        "@types/glob": "^8.1.0",
         "@types/minimist": "^1.2.5",
+        "@types/ws": "^8.18.1",
         "axios": "^1.8.4",
+        "chalk": "^5.4.1",
+        "chokidar": "^4.0.3",
         "clipboardy": "^4.0.0",
         "enquirer": "^2.4.1",
         "fb-watchman": "^2.0.2",
+        "glob": "^11.0.2",
         "loglevel": "^1.9.2",
-        "minimist": "^1.2.8"
+        "minimatch": "^10.0.1",
+        "minimist": "^1.2.8",
+        "ws": "^8.18.2"
     }
 }
