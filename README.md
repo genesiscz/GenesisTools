@@ -4,6 +4,8 @@ GenesisTools is a collection of utilities designed to simplify various developme
 
 ## Installation
 
+We expect you to have `bun` installed because there are some tools that use Bun API available only on BunJS environment. 
+
 To install project dependencies and make `tools` command available everywhere, run 
 
 ```
@@ -16,9 +18,19 @@ After that, run `source ~/.zshrc` if you use `zsh` or `source ~/.bashrc` if you 
 
 The project includes the following tools:
 
+### 0. List of tools available
+
+You can just run 
+
+```bash
+tools
+```
+
+Which will give you list of all tools available. If you pick one from the list, it will automatically save the command to the clipboard.
+
 ### 1. Git Last Commits Diff
 
-This tool displays the differences between the last few commits in a Git repository. Can be handy for AI input.
+This tool displays the differences between the last few commits (or staged/untsaged/all changes) in a Git repository. Can be handy for AI input.
 
 **Usage:**
 
@@ -29,7 +41,7 @@ tools git-last-commits-diff <directory> [--commits X] [--output FILE] [--help]
 **Options:**
 
 -   `<directory>`: Required. Path to the Git repository.
--   `--commits` (or `-c`): Number of commits to diff. If omitted, the tool will prompt for a number.
+-   `--commits` (or `-c`): Number of recent commits to diff (e.g., `--commits 5` to diff `HEAD~5..HEAD`). If omitted, the tool will fetch the last 200 commits and present an interactive autocomplete list, allowing you to select a specific commit to diff against `HEAD`.
 -   `--output` (or `-o`): Write the diff output to a file. If not provided, the output is printed to stdout.
 -   `--help` (or `-h`): Show the usage help message.
 
@@ -50,7 +62,7 @@ tools collect-files-for-ai [options]
 ```
 
 ```
-Usage: collect-uncommitted-files.ts <directory> [options]
+Usage: collect-uncommitted-files <directory> [options]
 
 Arguments:
   <directory>         Required. Path to the Git repository.
@@ -67,9 +79,9 @@ Options:
     -h, --help          Show this message.
 
 Examples:
-  bun run src/git/collect-uncommitted-files.ts ./my-repo -c 5
-  bun run src/git/collect-uncommitted-files.ts ../other-repo --staged --target ./collected_staged
-  bun run src/git/collect-uncommitted-files.ts /path/to/project --all
+  tools collect-files-for-ai ./my-repo -c 5
+  tools collect-files-for-ai ../other-repo --staged --target ./collected_staged
+  tools collect-files-for-ai /path/to/project --all
 ```
 
 ### 3. GitHub Release Notes
@@ -83,7 +95,7 @@ tools github-release-notes <owner>/<repo>|<github-url> <output-file> [options]
 ```
 
 ```
-Usage: bun src/github-release-notes/index.ts <owner>/<repo>|<github-url> <output-file> [options]
+Usage: tools github-release-notes <owner>/<repo>|<github-url> <output-file> [options]
 
 Arguments:
   owner/repo     GitHub repository in format "owner/repo" or full github.com URL
@@ -95,9 +107,9 @@ Options:
   -h, --help     Show this help message
 
 Example:
-  bun src/github-release-notes/index.ts software-mansion/react-native-reanimated releases.md --limit=10
-  bun src/github-release-notes/index.ts https://github.com/software-mansion/react-native-reanimated releases.md
-  bun src/github-release-notes/index.ts software-mansion/react-native-reanimated releases.md --oldest
+  tools github-release-notes software-mansion/react-native-reanimated releases.md --limit=10
+  tools github-release-notes https://github.com/software-mansion/react-native-reanimated releases.md
+  tools github-release-notes software-mansion/react-native-reanimated releases.md --oldest
 
 Note:
   To avoid GitHub API rate limits, you can set the GITHUB_TOKEN environment variable.
@@ -111,7 +123,7 @@ This tool is internal and probably not useful to you
 To use, modify the `myInputJson` variable in `src/t3chat-length/index.ts` and run:
 
 ```
-bun run src/t3chat-length/index.ts
+tools t3chat-length
 ```
 
 ### 5. Watchman
@@ -130,8 +142,8 @@ This tool uses Watchman to monitor a directory for file changes and prints a mes
 **Example:**
 
 ```
-bun run src/watchman/index.ts -c
-bun run src/watchman/index.ts /path/to/dir
+tools watchman -c
+tools watchman /path/to/dir
 ```
 
 If no argument is provided, you will be prompted to select a directory interactively.
@@ -141,7 +153,7 @@ If no argument is provided, you will be prompted to select a directory interacti
 All tools are designed to be executed using BunJS. For example, to run any tool, use:
 
 ```
-bun run src/<tool-folder>/index.ts [options]
+tools <tool-folder> [options]
 ```
 
 where `<tool-folder>` is one of:
@@ -255,3 +267,58 @@ find . -name "*.py" | tools files-to-prompt -0
 ## License
 
 This project is licensed under the MIT License.
+
+
+## Useful notes
+
+### MCP 
+To add a bunch of MCP servers installed, it's best to install them globally like 
+
+```bash
+bun add --global @modelcontextprotocol/inspector @modelcontextprotocol/server-sequential-thinking @modelcontextprotocol/server-filesystem @modelcontextprotocol/server-github @modelcontextprotocol/server-puppeteer @modelcontextprotocol/server-brave-search @executeautomation/playwright-mcp-server
+```
+
+### MCP Configuration for Cursor
+
+My own configuration of mcp.json for Cursor
+
+```
+{
+  "mcpServers": {
+    "github": {
+      "command": "mcp-server-github",
+      "args": [],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
+      }
+    },
+    "sequential-thinking": {
+      "command": "mcp-server-sequential-thinking",
+      "args": [],
+      "env": {}
+    },
+    "puppeteer": {
+      "command": "mcp-server-puppeteer",
+      "args": [],
+      "env": {}
+    },
+    "playwright": {
+      "command": "playwright-mcp-server",
+      "args": [],
+      "env": {}
+    },
+    "brave-search": {
+      "command": "mcp-server-brave-search",
+      "env": {
+        "BRAVE_API_KEY": "...."
+      }
+    },
+    "filesystem": {
+      "command": "mcp-server-filesystem",
+      "args": [
+        "/Users/Martin/Allowed/Directory/"
+      ]
+    }
+  }
+}
+```
