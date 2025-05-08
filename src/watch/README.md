@@ -1,4 +1,4 @@
-# watch-glob
+# watch
 
 A command-line tool that watches files matching a glob pattern and displays changes in real-time, similar to `tail -f` but for multiple files including those created after the watch has started.
 
@@ -16,7 +16,7 @@ A command-line tool that watches files matching a glob pattern and displays chan
 ## Usage
 
 ```bash
-bun src/watch-glob/index.ts [glob-pattern] [options]
+bun src/watch/index.ts [glob-pattern] [options]
 ```
 
 ### Options
@@ -24,28 +24,29 @@ bun src/watch-glob/index.ts [glob-pattern] [options]
 - `--seconds`, `-s`: Polling interval in seconds (default: 3)
 - `--verbose`, `-v`: Enable verbose logging to see more detailed information about which files are being scanned
 - `--follow`, `-f`: Follow mode that only shows new content (like tail -f)
+- `--lines`, `-n`: Number of lines to display from each file (default: 50)
 - `--help`, `-h`: Show help information
 
 ### Examples
 
 Watch all TypeScript files in the `src` directory and its subdirectories:
 ```bash
-bun src/watch-glob/index.ts "src/**/*.ts"
+bun src/watch/index.ts "src/**/*.ts"
 ```
 
 Watch multiple file types in your home directory with verbose logging:
 ```bash
-bun src/watch-glob/index.ts "~/projects/**/*.{js,ts,tsx}" -v
+bun src/watch/index.ts "~/projects/**/*.{js,ts,tsx}" -v -n 100
 ```
 
 Only show new changes to files (follow mode):
 ```bash
-bun src/watch-glob/index.ts "src/**/*.ts" -f
+bun src/watch/index.ts "src/**/*.ts" -f
 ```
 
 Use a faster polling interval (1 second) with follow mode:
 ```bash
-bun src/watch-glob/index.ts "src/**/*.ts" --seconds 1 -f
+bun src/watch/index.ts "src/**/*.ts" --seconds 1 -f
 ```
 
 ## How It Works
