@@ -148,6 +148,7 @@ where `<tool-folder>` is one of:
 
 -   `git-last-commits-diff`
 -   `collect-files-for-ai`
+-   `files-to-prompt`
 -   `github-release-notes`
 -   `t3chat-length`
 -   `watchman`
@@ -216,6 +217,40 @@ The tool uses the `chokidar` library to watch for file changes based on the prov
 - Matched files: The tool shows a list of all files that match the pattern
 
 The tool can be stopped by pressing `Ctrl+C`.
+
+### 7. Files to Prompt
+
+This tool converts files to a prompt format suitable for AI systems. It can process individual files or recursively process directories, with options for various output formats and filtering.
+
+**Usage:**
+
+```
+tools files-to-prompt [options] [paths...]
+```
+
+**Options:**
+
+-   `-e`, `--extension EXT`: File extensions to include (can use multiple times)
+-   `--include-hidden`: Include files and folders starting with `.`
+-   `--ignore-files-only`: `--ignore` option only ignores files
+-   `--ignore-gitignore`: Ignore .gitignore files and include all files
+-   `--ignore PATTERN`: List of patterns to ignore (can use multiple times)
+-   `-o`, `--output FILE`: Output to a file instead of stdout
+-   `-c`, `--cxml`: Output in XML-ish format suitable for Claude
+-   `-m`, `--markdown`: Output Markdown with fenced code blocks
+-   `-n`, `--line-numbers`: Add line numbers to the output
+-   `-0`, `--null`: Use NUL character as separator when reading from stdin
+-   `-h`, `--help`: Show this help message
+-   `--version`: Show version information
+
+**Examples:**
+
+```
+tools files-to-prompt src/components
+tools files-to-prompt -e js -e ts src/
+tools files-to-prompt --markdown -o output.md project/
+find . -name "*.py" | tools files-to-prompt -0
+```
 
 ## License
 
