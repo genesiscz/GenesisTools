@@ -88,9 +88,9 @@ Options:
     -h, --help          Show this message.
 
 Examples:
-  bun run src/git/collect-uncommitted-files.ts ./my-repo -c 5
-  bun run src/git/collect-uncommitted-files.ts ../other-repo --staged --target ./collected_staged
-  bun run src/git/collect-uncommitted-files.ts /path/to/project --all --flat
+  tools collect-files-for-ai ./my-repo -c 5
+  tools collect-files-for-ai ../other-repo --staged --target ./collected_staged
+  tools collect-files-for-ai /path/to/project --all --flat
 `);
 }
 
