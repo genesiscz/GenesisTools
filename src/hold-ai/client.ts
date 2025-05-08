@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import logger from "../logger";
 
 interface IMessage {
     timestamp: string;
@@ -14,13 +15,13 @@ const waitForCompletion = async (): Promise<string> => {
             messages.length = 0;
 
             // Connect to the WebSocket server
-            const ws = new WebSocket("ws://localhost:9090");
+            const ws = new WebSocket("ws://localhost:9091");
 
             let displayMessages: IMessage[] = [];
 
             // Handle connection open
             ws.on("open", () => {
-                console.log("Connected... processing...");
+                logger.info("Still processing...");
             });
 
             // Handle messages
@@ -36,18 +37,7 @@ const waitForCompletion = async (): Promise<string> => {
                     if (completed) {
                         // Filter out the special completion message for display
                         displayMessages = messages.filter((msg: any) => msg.message !== "__COMPLETED__");
-                        // Display all the messages
-                        if (displayMessages.length === 0) {
-                            // console.log("No messages received from the server.");
-                        } else {
-                            // console.log("\nMessages from server:");
-                            // displayMessages.forEach((msg, index) => {
-                            //     console.log(
-                            //         `${index + 1}. [${new Date(msg.timestamp).toLocaleTimeString()}] ${msg.message}`
-                            //     );
-                            // });
-                        }
-
+                        
                         // Join all messages as output
                         const combinedMessages = displayMessages.map((msg) => msg.message).join("\n");
 
@@ -57,7 +47,7 @@ const waitForCompletion = async (): Promise<string> => {
                         // Resolve with the combined message
                         resolve(combinedMessages);
                     } else {
-                        console.log("Instruction: " + message.message);
+                        logger.info("Instruction: " + message.message);
                     }
                 } catch (err) {
                     console.error("Error parsing message:", err);
@@ -66,13 +56,13 @@ const waitForCompletion = async (): Promise<string> => {
 
             // Handle errors
             ws.on("error", (error) => {
-                console.log("Still processing...");
+                logger.info("Still processing...");
                 setTimeout(connectWebSocket, 3000);
             });
 
             // Handle connection close
             ws.on("close", () => {
-                //console.log("Disconnected from Hold-AI Server");
+                //logger.info("Disconnected from Hold-AI Server");
                 // Retry connection after 3 seconds
             });
         };
@@ -84,11 +74,11 @@ const waitForCompletion = async (): Promise<string> => {
 
 // Main function
 const main = async () => {
-    console.log("Processing...");
+    logger.info("Processing...");
 
     await waitForCompletion();
 
-    console.log("OK");
+    logger.info("OK");
 };
 
 // Run the client

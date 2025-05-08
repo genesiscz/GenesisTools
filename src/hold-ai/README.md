@@ -13,13 +13,13 @@ The system consists of two parts:
 ### Step 1: Start the Server
 In one terminal window, start the server:
 ```bash
-bun src/tools/hold-ai/server.ts
+tools hold-ai/server
 ```
 
 ### Step 2: Have the AI Start the Client
 When interacting with the AI, prompt it to run:
 ```
-Run "bun src/tools/hold-ai/client.ts" and wait until it ends. If you see any return output, use it as instructions on what to do next.
+Run `tools hold-ai/client` and wait until it ends. If you see any return output, use it as instructions on what to do next. After finishing, 
 ```
 
 ### Step 3: Provide Your Messages
