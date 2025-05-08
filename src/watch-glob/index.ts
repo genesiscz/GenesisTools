@@ -2,24 +2,30 @@ import chokidar from 'chokidar';
 import minimist from 'minimist';
 import path from 'path';
 import fs from 'fs';
+import type { WatchEventType, WatchOptions } from 'fs';
 import os from 'os';
 import { glob } from 'glob';
 import logger from '../logger';
 import chalk from 'chalk';
 
+
 const argv = minimist(process.argv.slice(2), {
     alias: { 
         s: 'seconds', 
         v: 'verbose',
-        f: 'follow'
+        f: 'follow',
+        n: 'lines'
     },
-    default: { seconds: 3 },
+    default: { 
+        seconds: 3,
+        lines: 50
+    },
     boolean: ['verbose', 'follow']
 });
 
 // Set up help message
 if (argv.help || argv.h) {
-    console.log(chalk.cyan(`
+    logger.log(chalk.cyan(`
 watch-glob - Watch files matching a glob pattern and display changes in real-time
 
 Usage:
@@ -28,77 +34,109 @@ Usage:
 Options:
   --seconds, -s    Polling interval in seconds for directory rescans (default: 3)
   --verbose, -v    Enable verbose logging
-  --follow, -f     Follow mode: tail files continuously
-  --help, -h       Show this help message
+  --follow, -f     Follow mode: continuously watch files for changes (like tail -f)
+  --lines, -n      Number of lines to display from each file (default: 50)
+  --help, -h       Show help message
 
 Examples:
   bun src/watch-glob/index.ts "src/**/*.ts" --seconds 1
-  bun src/watch-glob/index.ts "~/projects/**/*.{js,ts,tsx}" -v -f
+  bun src/watch-glob/index.ts "~/projects/**/*.{js,ts,tsx}" -v -f -n 100
+
+Behavior:
+  Without -f: Shows files ordered by modified time (oldest first, newest last) and exits
+  With -f:    Shows files and continuously watches for changes
 `));
     process.exit(0);
 }
 
 // Get the glob pattern from arguments
-let globPattern = argv._[0];
-if (!globPattern) {
-    console.error(chalk.red('Error: No glob pattern provided'));
-    console.log(chalk.yellow('Use --help for usage information'));
+let globPatterns = argv._;
+if (globPatterns.length === 0) {
+    logger.error(chalk.red('Error: No glob pattern provided'));
+    logger.log(chalk.yellow('Use --help for usage information'));
     process.exit(1);
 }
 
-// Expand tilde to home directory if present
-if (globPattern.startsWith('~/')) {
-    globPattern = globPattern.replace(/^~\//, `${os.homedir()}/`);
+// Check if shell expansion has likely occurred
+let possibleShellExpansion = false;
+for (const pattern of globPatterns) {
+    // A pattern likely wasn't shell-expanded if it contains glob chars
+    const hasGlobChars = /[*?[\]{}()]/.test(pattern);
+    if (!hasGlobChars) {
+        possibleShellExpansion = true;
+        break;
+    }
 }
 
-// Normalize path separators for windows compatibility
-globPattern = globPattern.replace(/\\/g, '/');
+if (possibleShellExpansion) {
+    logger.error(chalk.red('Error: It appears your glob patterns may have been expanded by the shell'));
+    logger.log(chalk.yellow('To prevent this, please wrap each pattern in quotes:'));
+    logger.log(chalk.green(`tools watch-glob "${globPatterns.join('" "')}"`));
+    logger.log();
+    logger.log(chalk.blue('Without quotes, the shell expands wildcards before passing arguments to the script.'));
+    process.exit(1);
+}
 
-// Convert relative path to absolute if it's not already absolute
-if (!path.isAbsolute(globPattern)) {
-    globPattern = path.resolve(process.cwd(), globPattern);
+// Expand tilde to home directory in all patterns
+globPatterns = globPatterns.map(pattern => {
+    if (pattern.startsWith('~/')) {
+        return pattern.replace(/^~\//, `${os.homedir()}/`);
+    }
+    return pattern;
+});
+
+// Store current working directory
+const cwd = process.cwd();
+
+// For debug purposes
+if (argv.verbose) {
+    logger.log(`CWD: ${cwd}`);
+    logger.log(`Patterns: ${JSON.stringify(globPatterns)}`);
 }
 
 const log = {
-    info: (message: string) => console.log(chalk.blue('ℹ️ ') + message),
-    debug: (message: string) => argv.verbose ? console.log(chalk.gray('🔍 ') + message) : null,
-    error: (message: string, err?: any) => console.error(chalk.red('❌ ') + message + (err ? ': ' + err : '')),
-    warn: (message: string) => console.log(chalk.yellow('⚠️ ') + message),
+    info: (message: string) => logger.log(chalk.blue('ℹ️ ') + message),
+    debug: (message: string) => argv.verbose ? logger.log(chalk.gray('🔍 ') + message) : null,
+    error: (message: string, err?: any) => logger.error(chalk.red('❌ ') + message + (err ? ': ' + err : '')),
+    warn: (message: string) => logger.log(chalk.yellow('⚠️ ') + message),
     file: {
-        new: (filepath: string) => console.log(chalk.green(`\n📄 NEW FILE: ${filepath}`)),
-        change: (filepath: string) => console.log(chalk.yellow(`\n📝 UPDATED: ${filepath}`)),
-        remove: (filepath: string) => console.log(chalk.red(`\n🗑️  REMOVED: ${filepath}`)),
+        new: (filepath: string) => logger.log(chalk.green(`\n📄 NEW FILE: ${filepath}`)),
+        existing: (filepath: string) => logger.log(chalk.blue(`\n📄 EXISTING FILE: ${filepath}`)),
+        change: (filepath: string) => logger.log(chalk.yellow(`\n📝 UPDATED: ${filepath}`)),
+        remove: (filepath: string) => logger.log(chalk.red(`\n🗑️  REMOVED: ${filepath}`)),
         content: (content: string) => {
             // Use a box with a distinct color for file content
-            console.log(chalk.cyan('┌' + '─'.repeat(78) + '┐'));
+            logger.log(chalk.cyan('┌' + '─'.repeat(78) + '┐'));
             
             // Split by lines and add a prefix to each line
             const lines = content.split('\n');
             for (const line of lines) {
-                console.log(chalk.cyan('│ ') + line);
+                logger.log(chalk.cyan('│ ') + line);
             }
             
-            console.log(chalk.cyan('└' + '─'.repeat(78) + '┘'));
+            logger.log(chalk.cyan('└' + '─'.repeat(78) + '┘'));
         }
     },
     summary: {
         directories: (dirs: Set<string>) => {
-            console.log(chalk.magenta('\n📁 WATCHED DIRECTORIES:'));
+            logger.log(chalk.magenta('\n📁 WATCHED DIRECTORIES:'));
             Array.from(dirs).sort().forEach(dir => {
-                console.log(chalk.magenta('   ├─ ') + dir);
+                logger.log(chalk.magenta('   ├─ ') + dir);
             });
         },
         files: (files: Set<string>) => {
-            console.log(chalk.green('\n📁 WATCHED FILES:'));
+            logger.log(chalk.green('\n📁 WATCHED FILES:'));
             Array.from(files).sort().forEach(file => {
-                console.log(chalk.green('   ├─ ') + file);
+                logger.log(chalk.green('   ├─ ') + file);
             });
         }
     }
 };
 
-log.info(`Watching files matching pattern: ${chalk.cyan(globPattern)}`);
+log.info(`Watching files matching pattern: ${chalk.cyan(path.join(cwd, globPatterns.join(', ')).replace(/\\/g, '/'))}`);
+log.info(`Base directory: ${chalk.cyan(cwd)}`);
 log.info(`Directory rescan interval: ${chalk.yellow(argv.seconds.toString())} seconds`);
+log.info(`Lines to display: ${chalk.yellow(argv.lines.toString())}`);
 if (argv.follow) {
     log.info('Follow mode enabled: continuously tailing files');
 }
@@ -110,9 +148,85 @@ if (argv.verbose) {
 const filePositions: Record<string, number> = {};
 const scannedDirectories = new Set<string>();
 const matchedFiles = new Set<string>();
+const fileLastModified: Record<string, number> = {}; // Track last modified time
+let lastUpdatedFile: string | null = null; // Track the last updated file
+
+// Helper function to read file content with a specified line limit
+function readFileWithLineLimit(filepath: string, startPosition: number, fileSize: number, fd: number, lineLimit: number): string {
+    try {
+        // If reading from a specific position (not the beginning), just read the new content
+        if (startPosition > 0) {
+            const bufferSize = fileSize - startPosition;
+            const buffer = Buffer.alloc(bufferSize);
+            fs.readSync(fd, buffer, 0, bufferSize, startPosition);
+            return buffer.toString('utf8');
+        }
+        
+        // If we need to limit lines and are starting from the beginning
+        if (lineLimit > 0) {
+            // Instead of reading the whole file, we'll read backwards in chunks
+            // to find just the last N lines
+            const chunkSize = 1024; // Read 1KB at a time
+            let buffer = Buffer.alloc(chunkSize);
+            let lines: string[] = [];
+            let position = fileSize;
+            let foundLines = 0;
+            let remainder = '';
+            
+            // Read backwards in chunks until we have enough lines or reach beginning of file
+            while (position > 0 && foundLines < lineLimit) {
+                const size = Math.min(chunkSize, position);
+                position -= size;
+                
+                // Read a chunk
+                fs.readSync(fd, buffer, 0, size, position);
+                
+                // Convert to string and prepend any remainder from previous iteration
+                let content = buffer.slice(0, size).toString('utf8') + remainder;
+                
+                // Split into lines and count them
+                const chunk_lines = content.split('\n');
+                
+                // If this isn't the last chunk and the first line isn't a complete line,
+                // save it as remainder for next iteration and remove it from current chunk
+                if (position > 0 && chunk_lines.length > 1) {
+                    remainder = chunk_lines[0];
+                    chunk_lines.shift();
+                }
+                
+                // Add lines to our result, but limit to what we need
+                lines = [...chunk_lines, ...lines];
+                foundLines = lines.length;
+                
+                // If we have more lines than needed, trim the excess
+                if (foundLines > lineLimit) {
+                    lines = lines.slice(-lineLimit);
+                    break;
+                }
+            }
+            
+            return lines.join('\n');
+        }
+        
+        // If no line limit, read the whole file
+        const buffer = Buffer.alloc(fileSize);
+        fs.readSync(fd, buffer, 0, fileSize, 0);
+        return buffer.toString('utf8');
+    } catch (err) {
+        log.error(`Error reading file content: ${filepath}`, err);
+        return '';
+    }
+}
+
+// Define types for tailFile arguments
+type TailFileOptions = {
+    filepath: string;
+    follow?: boolean;
+    isInitialDisplay?: boolean;
+};
 
 // Helper function to read and display file content in tail -f style
-function tailFile(filepath: string, follow = false) {
+function tailFile({ filepath, follow = false, isInitialDisplay = false }: TailFileOptions): void {
     try {
         log.debug(`Processing file: ${filepath}`);
         
@@ -128,12 +242,15 @@ function tailFile(filepath: string, follow = false) {
             return;
         }
         
+        // Update file's last modified time
+        fileLastModified[filepath] = stats.mtimeMs;
+        
         // Get file descriptor
         const fd = fs.openSync(filepath, 'r');
         
         // Determine the starting position for reading
         const isNewFile = !(filepath in filePositions);
-        const startPosition = isNewFile ? (follow ? stats.size : 0) : filePositions[filepath];
+        const startPosition = isNewFile ? (follow && !isInitialDisplay ? stats.size : 0) : filePositions[filepath];
         const fileSize = stats.size;
         
         // Track the file and its directory
@@ -145,21 +262,30 @@ function tailFile(filepath: string, follow = false) {
         
         // If there's new content
         if (fileSize > startPosition) {
-            // Allocate buffer for new content
-            const bufferSize = fileSize - startPosition;
-            const buffer = Buffer.alloc(bufferSize);
+            // Read the file content with line limit for non-follow mode
+            const newContent = readFileWithLineLimit(filepath, startPosition, fileSize, fd, 
+                (isNewFile || isInitialDisplay) ? parseInt(argv.lines.toString()) : 0);
             
-            // Read new content
-            fs.readSync(fd, buffer, 0, bufferSize, startPosition);
-            const newContent = buffer.toString('utf8');
+            // Format the last modified time
+            const modifiedTime = new Date(stats.mtimeMs).toLocaleTimeString();
             
             // Display file information and new content
-            const timestamp = new Date().toLocaleTimeString();
             if (isNewFile) {
-                log.file.new(`${timestamp} - ${filepath}`);
+                // If we're showing initial display, mark them as existing not new
+                if (isInitialDisplay) {
+                    log.file.existing(`${modifiedTime} - ${filepath}`);
+                } else {
+                    log.file.new(`${modifiedTime} - ${filepath}`);
+                }
             } else {
-                log.file.change(`${timestamp} - ${filepath}`);
+                // Only show the UPDATED message if it's not the same file as the last update
+                if (lastUpdatedFile !== filepath) {
+                    log.file.change(`${modifiedTime} - ${filepath}`);
+                }
             }
+            
+            // Set this as the last updated file
+            lastUpdatedFile = filepath;
             
             // Display the content with formatting
             if (newContent.trim()) {
@@ -179,32 +305,51 @@ function tailFile(filepath: string, follow = false) {
     }
 }
 
+// Function to get files sorted by last modified time
+function getSortedFilesByModTime(): string[] {
+    return Object.entries(fileLastModified)
+        .sort((a, b) => b[1] - a[1]) // Sort by last modified time, newest first
+        .map(entry => entry[0]);      // Extract just the file paths
+}
+
 // Function to print scanned directories and files
 function printScannedPaths() {
     log.summary.directories(scannedDirectories);
     log.summary.files(matchedFiles);
-    console.log(); // Add empty line for better readability
+    logger.log(); // Add empty line for better readability
 }
 
 // Function to scan for files matching the glob pattern
 async function scanForFiles(): Promise<string[]> {
-    log.debug(`Performing glob scan for: ${globPattern}`);
+    log.debug(`Performing glob scan for: ${globPatterns.join(', ')} in ${cwd}`);
     
     try {
-        const files = await glob(globPattern, { 
-            absolute: true,
-            dot: true, 
-            nodir: true,
-            windowsPathsNoEscape: true
-        });
+        const files = await Promise.all(globPatterns.map(async pattern => {
+            const files = await glob(pattern, { 
+                absolute: true,
+                dot: true, 
+                nodir: true,
+                windowsPathsNoEscape: true,
+                cwd: cwd
+            });
+            
+            if (files.length === 0) {
+                log.debug(`No files found matching the pattern: ${pattern}`);
+            } else {
+                log.debug(`Found ${files.length} files matching the pattern: ${pattern}`);
+            }
+            
+            return files;
+        }));
         
-        if (files.length === 0) {
-            log.debug('No files found matching the pattern');
+        const allFiles = files.flat();
+        if (allFiles.length === 0) {
+            log.debug('No files found matching the patterns');
         } else {
-            log.debug(`Found ${files.length} files matching the pattern`);
+            log.debug(`Found ${allFiles.length} files matching the patterns`);
         }
         
-        return files;
+        return allFiles;
     } catch (err) {
         log.error(`Error during file scan`, err);
         return [];
@@ -213,24 +358,10 @@ async function scanForFiles(): Promise<string[]> {
 
 // Process new files that aren't being tracked yet
 function processNewFiles(files: string[]) {
+    // In follow mode, we want to show the last n lines before following
     for (const file of files) {
         if (!matchedFiles.has(file)) {
-            if (argv.follow) {
-                // In follow mode, just track the files but don't display content
-                try {
-                    const stats = fs.statSync(file);
-                    filePositions[file] = stats.size;
-                    matchedFiles.add(file);
-                    scannedDirectories.add(path.dirname(file));
-                    
-                    log.debug(`Tracking new file: ${file}`);
-                } catch (err) {
-                    log.error(`Error processing file ${file}`, err);
-                }
-            } else {
-                // Display content in non-follow mode
-                tailFile(file, false);
-            }
+            tailFile({ filepath: file, follow: true });
         }
     }
 }
@@ -241,7 +372,7 @@ async function setupFileWatchers() {
         // For each tracked file, set up a watcher for direct file changes
         Array.from(matchedFiles).forEach(file => {
             try {
-                fs.watch(file, { persistent: true }, (eventType) => {
+                fs.watch(file, { persistent: true } as WatchOptions, (eventType: WatchEventType) => {
                     if (eventType === 'change') {
                         log.debug(`Direct fs.watch event (change) for ${file}`);
                         // Immediately check the file size and read new content
@@ -252,7 +383,9 @@ async function setupFileWatchers() {
                                 const trackedSize = filePositions[file] || 0;
                                 
                                 if (currentSize > trackedSize) {
-                                    tailFile(file);
+                                    // Update the file's last modified time
+                                    fileLastModified[file] = stats.mtimeMs;
+                                    tailFile({ filepath: file });
                                 }
                             }
                         } catch (err) {
@@ -274,8 +407,48 @@ async function startWatcher() {
     // Perform initial scan and setup
     log.info(chalk.cyan('Performing initial scan for existing files...'));
     const initialFiles = await scanForFiles();
-    processNewFiles(initialFiles);
+    
+    // If no files are found, exit with a message
+    if (initialFiles.length === 0) {
+        log.error('No files found matching the patterns. Exiting.');
+        process.exit(1);
+    }
+    
+    // First, update last modified times for all files and track their directories
+    for (const file of initialFiles) {
+        try {
+            const stats = fs.statSync(file);
+            fileLastModified[file] = stats.mtimeMs;
+            // Also track directories
+            const dirPath = path.dirname(file);
+            scannedDirectories.add(dirPath);
+            matchedFiles.add(file);
+        } catch (err) {
+            log.error(`Error getting stats for file ${file}`, err);
+        }
+    }
+    
+    // Display directory and file summaries first
     printScannedPaths();
+    
+    // Sort files by last modified time - always show oldest first in initial display
+    // so most recently modified appears at the bottom of the screen
+    // Get the sorted files, but reverse them to get oldest first
+    let sortedFiles = getSortedFilesByModTime().reverse();
+    
+    // If not in follow mode, display content and exit
+    if (!argv.follow) {
+        for (const file of sortedFiles) {
+            tailFile({ filepath: file, follow: false, isInitialDisplay: true });
+        }
+        log.info(chalk.green('Finished displaying files. Exiting.'));
+        process.exit(0);
+    }
+    
+    // In follow mode, display initial content in sorted order first
+    for (const file of sortedFiles) {
+        tailFile({ filepath: file, follow: true, isInitialDisplay: true });
+    }
     
     // Set up direct FS watchers for instant file change detection
     await setupFileWatchers();
@@ -313,21 +486,43 @@ async function startWatcher() {
             if (!matchedFiles.has(filepath)) {
                 // Check if this file matches our glob pattern
                 try {
-                    const files = glob.sync(globPattern, { 
-                        absolute: true, 
-                        dot: true, 
-                        nodir: true,
-                        windowsPathsNoEscape: true
-                    });
+                    const foundFiles = [];
+                    for (const pattern of globPatterns) {
+                        const matchedFiles = glob.sync(pattern, { 
+                            absolute: true, 
+                            dot: true, 
+                            nodir: true,
+                            windowsPathsNoEscape: true,
+                            cwd: cwd
+                        });
+                        foundFiles.push(...matchedFiles);
+                    }
                     
-                    if (files.includes(filepath)) {
-                        tailFile(filepath, false);
+                    if (foundFiles.includes(filepath)) {
+                        // Update the file's last modified time
+                        try {
+                            const stats = fs.statSync(filepath);
+                            fileLastModified[filepath] = stats.mtimeMs;
+                        } catch (err) {
+                            log.debug(`Error getting stats for new file ${filepath}: ${err}`);
+                        }
+                        
+                        tailFile({ filepath, follow: false });
                         // Set up direct watcher for this new file
                         try {
-                            fs.watch(filepath, { persistent: true }, (eventType) => {
+                            fs.watch(filepath, { persistent: true } as WatchOptions, (eventType: WatchEventType) => {
                                 if (eventType === 'change') {
                                     log.debug(`Direct fs.watch event (change) for ${filepath}`);
-                                    tailFile(filepath);
+                                    
+                                    // Update last modified time
+                                    try {
+                                        const stats = fs.statSync(filepath);
+                                        fileLastModified[filepath] = stats.mtimeMs;
+                                    } catch (err) {
+                                        log.debug(`Error updating last modified time for ${filepath}: ${err}`);
+                                    }
+                                    
+                                    tailFile({ filepath, follow: false });
                                 }
                             });
                         } catch (err) {
@@ -342,8 +537,16 @@ async function startWatcher() {
         .on('change', (filepath) => {
             log.debug(`File changed event: ${filepath}`);
             if (matchedFiles.has(filepath)) {
+                // Update last modified time
+                try {
+                    const stats = fs.statSync(filepath);
+                    fileLastModified[filepath] = stats.mtimeMs;
+                } catch (err) {
+                    log.debug(`Error updating last modified time for ${filepath}: ${err}`);
+                }
+                
                 // Immediately tail the file when a change is detected
-                tailFile(filepath);
+                tailFile({ filepath, follow: false });
             }
         })
         .on('unlink', (filepath) => {
@@ -353,7 +556,13 @@ async function startWatcher() {
                 
                 // Remove from tracking
                 delete filePositions[filepath];
+                delete fileLastModified[filepath];
                 matchedFiles.delete(filepath);
+                
+                // Reset lastUpdatedFile if it was this file
+                if (lastUpdatedFile === filepath) {
+                    lastUpdatedFile = null;
+                }
                 
                 // Check if directory is now empty
                 const dirPath = path.dirname(filepath);
@@ -381,7 +590,9 @@ async function startWatcher() {
                     
                     if (currentSize > trackedSize) {
                         log.debug(`File size change detected in interval check: ${file} (${trackedSize} -> ${currentSize})`);
-                        tailFile(file);
+                        // Update last modified time
+                        fileLastModified[file] = stats.mtimeMs;
+                        tailFile({ filepath: file });
                     }
                 }
             } catch (err) {
@@ -435,6 +646,12 @@ async function startWatcher() {
                         log.file.remove(`${new Date().toLocaleTimeString()} - ${file}`);
                         matchedFiles.delete(file);
                         delete filePositions[file];
+                        delete fileLastModified[file];
+                        
+                        // Reset lastUpdatedFile if it was this file
+                        if (lastUpdatedFile === file) {
+                            lastUpdatedFile = null;
+                        }
                     }
                 });
             }
