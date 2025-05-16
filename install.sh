@@ -2,7 +2,8 @@
 
 # Get the current directory of the script
 CURRENT_DIR="$(pwd)"
-EXPORT_LINE="export PATH=\"$CURRENT_DIR:\$PATH\""
+TOOLS_LINE="export GENESIS_TOOLS_PATH=\"$CURRENT_DIR\""
+EXPORT_LINE="export PATH=\"\$GENESIS_TOOLS_PATH:\$PATH\""
 
 # Function to add the export line to a shell config file
 add_to_shell_config() {
@@ -14,6 +15,7 @@ add_to_shell_config() {
             echo "✅ $CURRENT_DIR is already in PATH in $shell_config_file"
         else
             # Append the export line if not found
+            echo "$TOOLS_LINE" >> "$shell_config_file"
             echo "$EXPORT_LINE" >> "$shell_config_file"
             echo "📝 Added $CURRENT_DIR to PATH in $shell_config_file"
         fi
