@@ -9,6 +9,7 @@ interface Options {
     output?: string | boolean; // boolean for -o without value
     clipboard?: boolean;
     help?: boolean;
+    testModeClipboardFile?: string; // New option for testing
 }
 
 interface Args extends Options {
@@ -163,7 +164,7 @@ async function main() {
             cl: "clipboard", // Added alias for clipboard
             h: "help",
         },
-        string: ["output"], // Ensures --output value is treated as string, even if empty like --output ""
+        string: ["output", "testModeClipboardFile"], // Ensures value is string
                                // However, --output without a value will make argv.output true.
     });
 
@@ -183,6 +184,7 @@ async function main() {
     let commits = argv.commits;
     const outputFileArg = argv.output; // Renamed for clarity
     const clipboardArg = argv.clipboard;
+    const testClipboardFile = argv.testModeClipboardFile; // Get the new arg
     let diffStartRef: string;
 
     if (commits !== undefined) {
@@ -347,11 +349,19 @@ async function main() {
                 logger.warn(`ℹ You can manually copy the path: ${targetPath}`);
             }
         } else if (outputAction === "clipboard") {
-            if (diffOutput.trim().length === 0) {
-                logger.info("ℹ Diff output is empty. Nothing to copy to clipboard.");
+            if (testClipboardFile) {
+                const absoluteTestClipboardFile = resolve(process.cwd(), testClipboardFile);
+                try {
+                    await Bun.write(absoluteTestClipboardFile, diffOutput);
+                    logger.info(`[TEST MODE] Diff intended for clipboard written to ${absoluteTestClipboardFile}`);
+                    logger.info(`✔ Diff successfully copied to clipboard (via test file: ${absoluteTestClipboardFile}).`);
+                } catch (writeError: any) {
+                    logger.error(`✖ Failed to write to test clipboard file ${absoluteTestClipboardFile}: ${writeError.message}`);
+                    process.exit(1);
+                }
             } else {
                 await clipboardy.write(diffOutput);
-                logger.info(`✔ Diff successfully copied to clipboard.`);
+                logger.info("✔ Diff successfully copied to clipboard.");
             }
         } else { // stdout
             process.stdout.write(diffOutput);
