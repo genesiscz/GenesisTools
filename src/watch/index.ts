@@ -72,7 +72,7 @@ for (const pattern of globPatterns) {
 if (possibleShellExpansion) {
     logger.error(chalk.red("Error: It appears your glob patterns may have been expanded by the shell"));
     logger.info(chalk.yellow("To prevent this, please wrap each pattern in quotes:"));
-    logger.info(chalk.green(`tools watch "${globPatterns.join('" "')}"`));
+    logger.info(chalk.green(`tools watch "src/**/*.ts"`));
     logger.info();
     logger.info(chalk.blue("Without quotes, the shell expands wildcards before passing arguments to the script."));
     process.exit(1);
