@@ -23,22 +23,35 @@ Run `tools hold-ai/client` and wait until it ends. If you see any return output,
 ```
 
 ### Step 3: Provide Your Messages
-In the server terminal, type your messages and press Enter after each one.
+The server will open an editor for multiline input. You can:
+- Type or paste multiline content
+- Save and exit the editor to submit the message
+- The message will be sent to all connected clients
+- Repeat for additional messages
 
 ### Step 4: Complete the Session
-When you're finished, type `OK` in the server terminal to signal completion.
+When you're finished, type `OK` (alone) in the editor and save/exit to signal completion.
 
 The AI will receive the combined output of all your messages and can process them as instructions.
+
+## Features
+
+- **Multiline Input**: Uses an editor interface for rich, multiline message composition
+- **Real-time Broadcasting**: Messages are sent to connected clients immediately
+- **Session Management**: Type "OK" to complete sessions and reset for new cycles
+- **Persistent Messages**: New clients receive all messages from the current session
 
 ## Example
 
 1. You ask the AI to handle a task
 2. AI starts the client and waits for your input
-3. You provide additional context or instructions through the server
-4. You type "OK" when done
-5. AI receives your instructions and continues processing
+3. You provide additional context or instructions through the server's editor interface
+4. You can send multiple multiline messages
+5. You type "OK" when done to complete the session
+6. AI receives your instructions and continues processing
 
 ## Requirements
 
 - Bun.js runtime
-- ws (WebSocket) package 
+- ws (WebSocket) package
+- enquirer package 

@@ -1,5 +1,5 @@
-import { WebSocketServer } from "ws";
 import Enquirer from "enquirer";
+import { WebSocketServer } from "ws";
 import log from "../logger";
 
 // Store messages
@@ -32,16 +32,19 @@ const startServer = () => {
         });
     });
 
-    log.info('Enter messages (type "OK" to finish current cycle and reset):');
+    log.info(
+        'Enter messages using multiline editor (save and exit to submit, type "OK" alone to finish current cycle and reset):'
+    );
 
     // Handle user input
     const promptUser = async () => {
         try {
             const response: { userInput?: string } = await prompter.prompt({
                 type: "input",
+                multiline: true,
                 name: "userInput",
-                message: " ", // Minimal message, relying on prefix
-                prefix: ">", // Display '>' as the prompt prefix
+                message: "Enter your message (save and exit when done):",
+                initial: "", // Start with empty content
             });
 
             const input = response.userInput?.trim() || ""; // Safely get and trim input
@@ -89,14 +92,16 @@ const startServer = () => {
                         client.send(JSON.stringify(newMessage));
                     }
                 });
+                log.info("Message sent to clients: "+newMessage.message);
+            } else {
+                log.info("Empty message, skipping...");
             }
             // Continue prompting for the next message
             promptUser();
         } catch (error) {
-            // Enquirer throws an error if the prompt is cancelled (e.g. Ctrl+C)
-            if (String(error).toLowerCase().includes("cancel") || !error) {
-                // Also handle empty error for some cancellation cases
-                log.warn("\nPrompt cancelled by user. Shutting down Hold-AI server gracefully.");
+            // Enhanced error handling similar to git-last-commits-diff
+            if (error && (String(error).toLowerCase().includes("cancel") || (error as any).message === "canceled")) {
+                log.info("\nPrompt cancelled by user. Shutting down Hold-AI server gracefully.");
             } else {
                 log.error("\nError during prompt:", error);
             }
