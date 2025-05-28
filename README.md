@@ -171,6 +171,7 @@ where `<tool-folder>` is one of:
 -   `t3chat-length`
 -   `watchman`
 -   `watch`
+-   `mcp-ripgrep`
 
 Refer to each tool's section above for specific usage and options.
 
@@ -270,18 +271,54 @@ tools files-to-prompt --markdown -o output.md project/
 find . -name "*.py" | tools files-to-prompt -0
 ```
 
-## License
+## MCPs
 
-This project is licensed under the MIT License.
+### 8. MCP Ripgrep
 
+A Model Context Protocol (MCP) server that provides powerful file search capabilities using ripgrep. This tool allows AI assistants to search through codebases efficiently with various filtering and formatting options.
 
-## Useful notes
+**Features:**
 
-### MCP 
-To add a bunch of MCP servers installed, it's best to install them globally like 
+- Fast file content search using ripgrep
+- Support for regex patterns and literal string matching
+- File type and glob pattern filtering
+- Context lines around matches
+- Case-sensitive and case-insensitive search
+- Count matches functionality
+- List files without searching content
+- Advanced search options including word boundaries, hidden files, and symlink following
+
+**Usage:**
+
+The mcp-ripgrep tool is designed to be used as an MCP server. It provides several tools:
+
+- `search`: Basic search functionality with pattern matching
+- `advanced-search`: Extended search with more filtering options
+- `count-matches`: Count occurrences of patterns
+- `list-files`: List files that would be searched
+- `list-file-types`: Show supported file types
+
+**Running as MCP Server:**
 
 ```bash
-bun add --global @modelcontextprotocol/inspector @modelcontextprotocol/server-sequential-thinking @modelcontextprotocol/server-filesystem @modelcontextprotocol/server-github @modelcontextprotocol/server-puppeteer @modelcontextprotocol/server-brave-search @executeautomation/playwright-mcp-server
+cd src/mcp-ripgrep
+bun run index.ts --root /path/to/search/directory
+```
+
+**MCP Configuration:**
+
+Add to your MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "ripgrep": {
+      "command": "bun",
+      "args": ["run", "/path/to/GenesisTools/src/mcp-ripgrep/index.ts", "--root", "/path/to/search/directory"],
+      "env": {}
+    }
+  }
+}
 ```
 
 ### MCP Configuration for Cursor
@@ -291,6 +328,11 @@ My own configuration of mcp.json for Cursor
 ```
 {
   "mcpServers": {
+    "ripgrep": {
+      "command": "tools mcp-ripgrep",
+      "args": ["--root", "/Users/Martin/Tresors/Projects/SomeProject/"],
+      "env": {}
+    },
     "github": {
       "command": "mcp-server-github",
       "args": [],
@@ -327,4 +369,32 @@ My own configuration of mcp.json for Cursor
     }
   }
 }
+```
+
+## License
+
+This project is licensed under the MIT License.
+
+
+## Useful notes
+
+### Install any python package with its own environment
+- Install `brew install python-argcomplete pipx && pipx ensurepath`
+- Optional: `sudo pipx ensurepath --global`
+- For autocomplete, run `pipx completions` 
+  - Add `eval "$(register-python-argcomplete pipx)"` to ~/.zshrc
+  - Run `source ~/.zshrc`
+  - Follow the instructions from `pipx completions` if it doesn't work
+
+### Record usage of a process and show a graph of it 
+
+- Finish the [pipx installation](#install-any-python-package-with-its-own-environment) from above
+- Install: `pipx install 'psrecord[plot]'` 
+- Usage: `psrecord <pid> --interval <sec> --duration <sec> --plot Screen.png`
+
+### MCP 
+To add a bunch of MCP servers installed, it's best to install them globally like 
+
+```bash
+bun add --global @modelcontextprotocol/inspector @modelcontextprotocol/server-sequential-thinking @modelcontextprotocol/server-filesystem @modelcontextprotocol/server-github @modelcontextprotocol/server-puppeteer @modelcontextprotocol/server-brave-search @executeautomation/playwright-mcp-server
 ```
