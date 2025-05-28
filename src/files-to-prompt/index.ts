@@ -4,6 +4,7 @@ import { existsSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { minimatch } from "minimatch";
 import logger from "../logger";
+import type { FileSink } from "bun";
 
 // --- Interfaces ---
 interface Options {
@@ -57,29 +58,26 @@ const EXT_TO_LANG: Record<string, string> = {
 // --- Helper Functions ---
 function shouldIgnore(path: string, gitignoreRules: string[]): boolean {
   const baseFile = basename(path);
-  const baseFileWithSlash = baseFile + "/";
-  
-  for (const rule of gitignoreRules) {
-    if (minimatch(baseFile, rule)) {
-      return true;
-    }
-    
-    // For directories, check with trailing slash
-    if (statSync(path).isDirectory() && minimatch(baseFileWithSlash, rule)) {
-      return true;
-    }
+  // Check file match
+  if (gitignoreRules.some(rule => minimatch(baseFile, rule, { dot: true }))) {
+    return true;
   }
-  
+  // Check directory match (ensure it ends with / for directory-specific rules)
+  try {
+      if (statSync(path).isDirectory() && gitignoreRules.some(rule => minimatch(baseFile + '/', rule, { dot: true }))) {
+        return true;
+      }
+  } catch (e) {
+      // ignore stat errors if path disappears?
+  }
   return false;
 }
 
 async function readGitignore(path: string): Promise<string[]> {
   const gitignorePath = join(path, ".gitignore");
-  
   if (existsSync(gitignorePath)) {
     try {
       const content = await readFile(gitignorePath, { encoding: "utf-8" });
-      
       return content
         .split("\n")
         .map(line => line.trim())
@@ -89,14 +87,12 @@ async function readGitignore(path: string): Promise<string[]> {
       return [];
     }
   }
-  
   return [];
 }
 
 function addLineNumbers(content: string): string {
   const lines = content.split("\n");
   const padding = String(lines.length).length;
-  
   return lines
     .map((line, i) => `${String(i + 1).padStart(padding)}  ${line}`)
     .join("\n");
@@ -129,11 +125,9 @@ function printDefault(
 ): void {
   writer(path);
   writer("---");
-  
   if (lineNumbers) {
     content = addLineNumbers(content);
   }
-  
   writer(content);
   writer("");
   writer("---");
@@ -148,11 +142,9 @@ function printAsXml(
   writer(`<document index="${globalIndex}">`);
   writer(`<source>${path}</source>`);
   writer("<document_content>");
-  
   if (lineNumbers) {
     content = addLineNumbers(content);
   }
-  
   writer(content);
   writer("</document_content>");
   writer("</document>");
@@ -167,20 +159,15 @@ function printAsMarkdown(
 ): void {
   const ext = extname(path).slice(1); // Remove leading dot
   const lang = EXT_TO_LANG[ext] || "";
-  
-  // Figure out how many backticks to use
   let backticks = "```";
   while (content.includes(backticks)) {
     backticks += "`";
   }
-  
   writer(path);
   writer(`${backticks}${lang}`);
-  
   if (lineNumbers) {
     content = addLineNumbers(content);
   }
-  
   writer(content);
   writer(`${backticks}`);
 }
@@ -191,71 +178,96 @@ async function processPath(
   includeHidden: boolean,
   ignoreFilesOnly: boolean,
   ignoreGitignore: boolean,
-  gitignoreRules: string[],
+  gitignoreRules: string[], // Rules from parent/initial directory
   ignorePatterns: string[],
   writer: WriterFunc,
   claudeXml: boolean,
   markdown: boolean,
   lineNumbers: boolean
 ): Promise<void> {
-  // Handle file case
-  if (statSync(path).isFile()) {
-    try {
-      const content = await readFile(path, { encoding: "utf-8" });
-      printPath(writer, path, content, claudeXml, markdown, lineNumbers);
-    } catch (error) {
-      const message = `Warning: Skipping file ${path} due to error: ${error}`;
-      logger.error(message);
-    }
+  if (!existsSync(path)) {
+    logger.error(`Path does not exist: ${path}`);
     return;
   }
-  
-  // Handle directory case
-  async function processDirectory(dirPath: string): Promise<void> {
+
+  try {
+      const stats = statSync(path);
+      
+      // Handle file case directly if initial path is a file
+      if (stats.isFile()) {
+          // Need to apply checks here too for the single-file case
+          if (!includeHidden && basename(path).startsWith('.')) return;
+          if (!ignoreGitignore && shouldIgnore(path, gitignoreRules)) return;
+          if (ignorePatterns.length > 0) {
+              const baseName = basename(path);
+              const matchesPattern = ignorePatterns.some(pattern => minimatch(baseName, pattern, { dot: true }));
+              if (matchesPattern) return; // ignoreFilesOnly doesn't apply here
+          }
+          const ext = extname(path).slice(1).toLowerCase();
+          if (extensions.length > 0 && !extensions.includes(ext)) return;
+
+        try {
+          const content = await readFile(path, { encoding: "utf-8" });
+          printPath(writer, path, content, claudeXml, markdown, lineNumbers);
+        } catch (error) {
+          const message = `Warning: Skipping file ${path} due to error: ${error}`;
+          logger.error(message);
+        }
+        return;
+      }
+
+      // Handle directory case
+      if (stats.isDirectory()) {
+          // Initial call to processDirectory starts with the initial gitignoreRules
+        await processDirectory(path, gitignoreRules);
+      }
+
+  } catch (error: any) {
+        logger.error(`Error accessing path ${path}: ${error.message}`);
+        return;
+  }
+
+  // Renamed original processPath's dir logic to processDirectory
+  // Added passedRules parameter
+  async function processDirectory(dirPath: string, passedRules: string[]): Promise<void> {
+    // Read .gitignore specifically for this directory
+    let currentDirGitignoreRules = ignoreGitignore ? [] : await readGitignore(dirPath);
+    // Combine passed rules with current dir's rules
+    let effectiveGitignoreRules = [...passedRules, ...currentDirGitignoreRules]; 
+
     try {
       const entries = await readdir(dirPath, { withFileTypes: true });
-      
-      // Filter and process files
       for (const entry of entries) {
         const entryPath = join(dirPath, entry.name);
-        
-        // Skip hidden files/directories if needed
+
+        // Skip hidden files/directories first (respect includeHidden)
         if (!includeHidden && entry.name.startsWith(".")) {
           continue;
         }
-        
+
         // Apply gitignore rules if needed
-        if (!ignoreGitignore && shouldIgnore(entryPath, gitignoreRules)) {
+        if (!ignoreGitignore && shouldIgnore(entryPath, effectiveGitignoreRules)) {
           continue;
         }
-        
+
         // Apply ignore patterns if needed
         if (ignorePatterns.length > 0) {
-          const matchesPattern = ignorePatterns.some(pattern => 
-            minimatch(entry.name, pattern)
+          const matchesPattern = ignorePatterns.some(pattern =>
+            minimatch(entry.name, pattern, { dot: true })
           );
-          
           if (matchesPattern && (entry.isFile() || !ignoreFilesOnly)) {
             continue;
           }
         }
-        
+
         if (entry.isDirectory()) {
-          // Read gitignore in this directory
-          if (!ignoreGitignore) {
-            const newRules = await readGitignore(entryPath);
-            if (newRules.length > 0) {
-              gitignoreRules.push(...newRules);
-            }
-          }
-          
-          await processDirectory(entryPath);
+          // Recursively process subdirectory, PASSING DOWN the effective rules
+          await processDirectory(entryPath, effectiveGitignoreRules);
         } else if (entry.isFile()) {
-          // Skip if not matching extensions (if specified)
-          if (extensions.length > 0 && !extensions.some(ext => entry.name.endsWith(ext))) {
-            continue;
+          const ext = extname(entry.name).slice(1).toLowerCase();
+          if (extensions.length > 0 && !extensions.includes(ext)) {
+             continue;
           }
-          
           try {
             const content = await readFile(entryPath, { encoding: "utf-8" });
             printPath(writer, entryPath, content, claudeXml, markdown, lineNumbers);
@@ -265,41 +277,32 @@ async function processPath(
           }
         }
       }
-    } catch (error) {
-      logger.error(`Error processing directory ${dirPath}: ${error}`);
+    } catch (error: any) {
+       logger.error(`Error reading directory ${dirPath}: ${error.message}`);
     }
   }
-  
-  await processDirectory(path);
 }
 
 async function readPathsFromStdin(useNullSeparator: boolean): Promise<string[]> {
-  // Check if there's input from stdin
-  if (process.stdin.isTTY) {
-    // No input from stdin, don't block for input
+  let input = "";
+  for await (const chunk of Bun.stdin.stream()) {
+    input += Buffer.from(chunk).toString();
+  }
+  if (!input) {
     return [];
   }
-  
-  return new Promise((resolve) => {
-    let data = "";
-    
-    process.stdin.on("data", (chunk) => {
-      data += chunk.toString();
-    });
-    
-    process.stdin.on("end", () => {
-      if (useNullSeparator) {
-        resolve(data.split("\0").filter(Boolean));
-      } else {
-        resolve(data.split(/\s+/).filter(Boolean));
-      }
-    });
-  });
+  const separator = useNullSeparator ? '\0' : '\n';
+  return input.split(separator).map(s => s.trim()).filter(Boolean);
 }
 
-// --- Help Function ---
+function showVersion(): void {
+    const VERSION = "1.0.0"; // Placeholder
+    logger.info(`files-to-prompt v${VERSION}`);
+}
+
 function showHelp(): void {
-  logger.info(`
+    showVersion(); // Add version info to help output
+    logger.info(`
 Files-to-Prompt: Convert files to a prompt format for AI systems
 
 Usage: files-to-prompt [options] [paths...]
@@ -329,140 +332,118 @@ Examples:
 `);
 }
 
-// --- Main Function ---
 async function main(): Promise<void> {
-  const argv = minimist<Args>(process.argv.slice(2), {
-    boolean: [
-      "include-hidden",
-      "ignore-files-only",
-      "ignore-gitignore",
-      "cxml",
-      "markdown",
-      "line-numbers",
-      "null",
-      "help",
-      "version"
-    ],
-    string: ["output", "ignore", "extension"],
-    alias: {
-      e: "extension",
-      o: "output",
-      c: "cxml",
-      m: "markdown",
-      n: "line-numbers",
-      h: "help",
-      0: "null"
-    },
-    // Allow arrays for these options
-    array: ["extension", "ignore"]
-  });
-  
-  // Handle help and version
-  if (argv.help) {
-    showHelp();
-    process.exit(0);
-  }
-  
-  if (argv.version) {
-    // Version from package.json could be used here
-    logger.info("files-to-prompt v1.0.0");
-    process.exit(0);
-  }
-  
-  // Get paths from arguments and stdin
-  const argPaths = argv._.map(String);
-  const stdinPaths = await readPathsFromStdin(Boolean(argv.null));
-  const paths = [...argPaths, ...stdinPaths];
-  
-  if (paths.length === 0) {
-    logger.error("No paths provided. Use --help for usage information.");
+ try { // Wrap main logic
+    const argv = minimist<Args>(process.argv.slice(2), {
+        alias: {
+            e: "extension",
+            o: "output",
+            c: "cxml",
+            m: "markdown",
+            h: "help",
+            v: "version",
+            '0': "null"
+        },
+        boolean: [
+            "includeHidden",
+            "ignoreFilesOnly",
+            "ignoreGitignore",
+            "cxml",
+            "markdown",
+            "lineNumbers", // IMPORTANT: Treat -n as boolean if no value given
+            "null",
+            "help",
+            "version"
+        ],
+        string: ["output"],
+        // Declare potentially multi-value args explicitly if needed by minimist typing/parsing
+        // minimist might need hints for array types if they aren't consistently used with multiple flags
+        // For now, assuming basic parsing works for -e val1 -e val2
+    });
+
+    if (argv.help) {
+        showHelp();
+        process.exit(0);
+    }
+    if (argv.version) {
+        showVersion();
+        process.exit(0);
+    }
+
+
+    const paths = argv._;
+    if (paths.length === 0 && process.stdin.isTTY) {
+        logger.error("Error: No input paths provided.");
+        showHelp();
+        process.exit(1);
+    }
+
+    const extensions = (Array.isArray(argv.extension) ? argv.extension : typeof argv.extension === 'string' ? [argv.extension] : [])
+                       .map(ext => ext.toLowerCase().replace(/^\./, '')); // Normalize extensions
+    const includeHidden = !!argv.includeHidden;
+    const ignoreFilesOnly = !!argv.ignoreFilesOnly;
+    const ignoreGitignore = !!argv.ignoreGitignore;
+    const ignorePatterns = Array.isArray(argv.ignore) ? argv.ignore : typeof argv.ignore === 'string' ? [argv.ignore] : [];
+    const outputFile = argv.output;
+    const claudeXml = !!argv.cxml;
+    const markdown = !!argv.markdown;
+    const lineNumbers = !!argv.lineNumbers; // Now correctly uses boolean flag value
+    const readStdinNull = !!argv.null;
+
+
+    let writer: WriterFunc = (s: string) => { process.stdout.write(s + "\n"); };
+    let fileSink: FileSink | null = null;
+
+    if (outputFile) {
+        try {
+            const outputDir = dirname(outputFile);
+            if (!existsSync(outputDir)) {
+                await mkdir(outputDir, { recursive: true });
+            }
+            fileSink = Bun.file(outputFile).writer();
+            writer = (s: string) => { (fileSink as FileSink).write(s + "\n"); };
+        } catch (error: any) {
+            logger.error(`Error setting up output file ${outputFile}: ${error.message}`);
+            process.exit(1);
+        }
+    }
+
+    let processedPaths: string[] = [];
+    if (paths.length > 0) {
+        processedPaths = paths.map(p => resolve(p)); // Resolve initial paths
+    } else {
+        processedPaths = await readPathsFromStdin(readStdinNull);
+        processedPaths = processedPaths.map(p => resolve(p));
+    }
+
+    // Process each path
+    for (const path of processedPaths) {
+        let initialGitignoreRules = ignoreGitignore ? [] : await readGitignore(dirname(path));
+
+        await processPath(
+            path,
+            extensions,
+            includeHidden,
+            ignoreFilesOnly,
+            ignoreGitignore,
+            initialGitignoreRules, // Pass initial rules
+            ignorePatterns,
+            writer,
+            claudeXml,
+            markdown,
+            lineNumbers
+        );
+    }
+
+    if (fileSink) {
+        await fileSink.end();
+    }
+ } catch (error: any) { // Catch errors in main
+    logger.error(`An unexpected error occurred: ${error.message}`);
+    // Optionally log stack trace for debugging
+    // console.error(error.stack);
     process.exit(1);
-  }
-  
-  // Extract and validate options
-  const {
-    extension = [],
-    includeHidden = false,
-    ignoreFilesOnly = false,
-    ignoreGitignore = false,
-    ignore = [],
-    output,
-    cxml = false,
-    markdown = false,
-    lineNumbers = false
-  } = argv;
-  
-  // Normalize extensions (add leading dot if missing)
-  const extensions = extension.map(ext => ext.startsWith(".") ? ext : `.${ext}`);
-  
-  // Set up writer function
-  let writer: WriterFunc;
-  let outputStream: any = null;
-  
-  if (output) {
-    try {
-      // Ensure the directory exists
-      await mkdir(dirname(resolve(output)), { recursive: true });
-      
-      // Create a function that appends to the file
-      writer = async (s: string) => {
-        await writeFile(resolve(output), s + "\n", { encoding: "utf-8", flag: "a" });
-      };
-      
-      // Clear the file to start
-      await writeFile(resolve(output), "", { encoding: "utf-8" });
-    } catch (error) {
-      logger.error(`Error opening output file ${output}: ${error}`);
-      process.exit(1);
-    }
-  } else {
-    writer = (s: string) => console.log(s);
-  }
-  
-  // Reset global counter for tests
-  globalIndex = 1;
-  
-  // Process each path
-  let gitignoreRules: string[] = [];
-  
-  if (cxml && paths.length > 0) {
-    writer("<documents>");
-  }
-  
-  for (const path of paths) {
-    if (!existsSync(path)) {
-      logger.error(`Path does not exist: ${path}`);
-      continue;
-    }
-    
-    if (!ignoreGitignore) {
-      const dirPath = statSync(path).isDirectory() ? path : dirname(path);
-      const newRules = await readGitignore(dirPath);
-      gitignoreRules.push(...newRules);
-    }
-    
-    await processPath(
-      path,
-      extensions,
-      includeHidden,
-      ignoreFilesOnly,
-      ignoreGitignore,
-      gitignoreRules,
-      ignore,
-      writer,
-      cxml,
-      markdown,
-      lineNumbers
-    );
-  }
-  
-  if (cxml) {
-    writer("</documents>");
-  }
+ }
 }
 
-// --- Run Main ---
-main().catch((err) => {
-  logger.error("\n✖ An unexpected error occurred:", err);
-  process.exit(1);
-});
+main();
