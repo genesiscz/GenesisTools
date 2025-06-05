@@ -240,17 +240,18 @@ The tool can be stopped by pressing `Ctrl+C`.
 
 ### 7. NPM Package Diff
 
-A tool that compares files between two versions of an npm package. It creates temporary directories, installs the specified package versions, watches for file changes during installation, and shows diffs between matching files.
+A powerful command-line tool for comparing files between different versions of npm packages. It creates temporary directories, installs the specified package versions, watches for file changes during installation, and shows beautiful diffs between matching files with multiple output formats.
 
-**Features:**
+## Features
 
-- Compare files between any two versions of an npm package
-- Configurable file filtering using glob patterns (default: `**/*.d.ts`)
-- Automatic installation using yarn in isolated temporary directories
-- Real-time file watching during package installation
-- Pretty diff output with color-coded changes
-- Shows files that exist only in one version
-- Automatic cleanup of temporary directories
+- 🎨 **Beautiful Terminal Output**: Colored diffs with syntax highlighting
+- 📊 **Multiple Output Formats**: Terminal, unified diff, HTML, JSON, side-by-side
+- 🔍 **Smart Filtering**: Include/exclude files using glob patterns
+- 📈 **Statistics & Analytics**: File counts, size comparisons, change summaries
+- ⚡ **Performance**: Parallel package installation, efficient file watching
+- 🛠️ **Highly Configurable**: CLI options, config files, environment variables
+- 🎯 **Integration Ready**: Supports output redirection, CI/CD pipelines
+- 🌈 **Delta Support**: Optional integration with delta for even prettier diffs
 
 **Usage:**
 
@@ -258,11 +259,36 @@ A tool that compares files between two versions of an npm package. It creates te
 tools npm-package-diff <package-name> <version1> <version2> [options]
 ```
 
-**Options:**
 
-- `--filter`, `-f`: Glob pattern to filter files (default: `**/*.d.ts`)
-- `--verbose`, `-v`: Enable verbose logging for detailed information
-- `--help`, `-h`: Show help information
+## Options
+
+| Option | Alias | Description | Default |
+|--------|-------|-------------|---------|
+| `--filter` | `-f` | Glob pattern to include files | `**/*.d.ts` |
+| `--exclude` | `-e` | Glob pattern to exclude files | - |
+| `--output` | `-o` | Output file path | console |
+| `--format` | `-F` | Output format (see below) | `terminal` |
+| `--patch` | `-p` | Generate patch file | - |
+| `--verbose` | `-v` | Enable verbose logging | `false` |
+| `--silent` | `-s` | Suppress output except errors | `false` |
+| `--stats` | - | Show statistics summary | `false` |
+| `--sizes` | - | Compare file sizes | `false` |
+| `--line-numbers` | - | Show line numbers | `true` |
+| `--word-diff` | - | Show word-level differences | `false` |
+| `--side-by-side` | - | Side-by-side view | `false` |
+| `--context` | - | Context lines in diff | `3` |
+| `--config` | `-c` | Path to config file | `.npmpackagediffrc` |
+| `--use-delta` | - | Use delta for output | `false` |
+| `--delta-theme` | - | Delta theme (light/dark) | `auto` |
+
+## Output Formats
+
+- **terminal**: Colored diff output in the terminal (default)
+- **unified**: Standard unified diff format (can be used as .patch)
+- **html**: Interactive HTML with syntax highlighting
+- **json**: Structured JSON with detailed changes
+- **side-by-side**: Terminal side-by-side comparison
+
 
 **Examples:**
 
