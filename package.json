@@ -32,9 +32,12 @@
         "enquirer": "^2.4.1",
         "fb-watchman": "^2.0.2",
         "glob": "^11.0.2",
+        "ink": "^6.0.0",
         "loglevel": "^1.9.2",
         "minimatch": "^10.0.1",
         "minimist": "^1.2.8",
-        "ws": "^8.18.2"
+        "node-notifier": "^10.0.1",
+        "pino": "^9.7.0",
+        "pino-pretty": "^13.0.0"
     }
 }
