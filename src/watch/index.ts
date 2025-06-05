@@ -5,7 +5,7 @@ import fs from "fs";
 import type { WatchEventType, WatchOptions } from "fs";
 import os from "os";
 import { glob } from "glob";
-import logger from "../logger";
+import { consoleLog as logger } from "../logger";
 import chalk from "chalk";
 
 const argv = minimist(process.argv.slice(2), {
