@@ -89,13 +89,14 @@ const argv = minimist(process.argv.slice(2), {
         format: "terminal",
         output: null,
         lineNumbers: true,
-        context: 3,
+        context: 10,
         timeout: 120000, // 2 minutes default
-        packageManager: "auto"
+        packageManager: "auto",
+        paging: false
     },
-    boolean: ["verbose", "help", "silent", "stats", "sizes", "line-numbers", "word-diff", "side-by-side", "use-delta"],
+    boolean: ["verbose", "help", "silent", "stats", "sizes", "line-numbers", "side-by-side", "word-diff", "use-delta", "paging"],
     string: ["filter", "output", "format", "exclude", "patch", "config", "delta-theme", "npmrc", "package-manager"],
-    number: ["timeout"]
+    number: ["timeout", "context"]
 });
 
 // Configuration loading
@@ -145,8 +146,7 @@ ${chalk.bold("OPTIONS:")}
   ${chalk.cyan("--sizes")}              Compare file sizes
   ${chalk.cyan("--line-numbers")}       Show line numbers (default: true)
   ${chalk.cyan("--word-diff")}          Show word-level differences
-  ${chalk.cyan("--side-by-side")}       Show side-by-side diff in terminal
-  ${chalk.cyan("--context")}            Number of context lines (default: 3)
+  ${chalk.cyan("--context")}            Number of context lines (default: 10)
   ${chalk.cyan("--config, -c")}         Path to config file (default: .npmpackagediffrc)
   ${chalk.cyan("--use-delta")}          Use delta for terminal output (if installed)
   ${chalk.cyan("--delta-theme")}        Delta theme to use (light/dark)
@@ -154,6 +154,7 @@ ${chalk.bold("OPTIONS:")}
   ${chalk.cyan("--npmrc")}              Path to .npmrc file for authentication
   ${chalk.cyan("--package-manager")}    Package manager: auto, npm, yarn, pnpm, bun
                        (default: "auto")
+  ${chalk.cyan("--paging")}             Enable terminal pagination with color support
 
 ${chalk.bold("OUTPUT FORMATS:")}
   ${chalk.yellow("terminal")}       - Colored diff in terminal (default)
@@ -176,7 +177,7 @@ ${chalk.bold("EXAMPLES:")}
   npm-package-diff @types/node 18.0.0 20.0.0 --format html -o report.html
 
   ${chalk.gray("# Show side-by-side diff with statistics")}
-  npm-package-diff axios 0.27.0 1.0.0 --side-by-side --stats
+  npm-package-diff axios 0.27.0 1.0.0 --format side-by-side --stats
 
   ${chalk.gray("# Use delta for beautiful terminal output")}
   npm-package-diff typescript 4.9.0 5.0.0 --use-delta
@@ -184,8 +185,8 @@ ${chalk.bold("EXAMPLES:")}
   ${chalk.gray("# Use specific package manager with custom .npmrc")}
   npm-package-diff @private/package 1.0.0 2.0.0 --package-manager pnpm --npmrc ~/.npmrc
 
-  ${chalk.gray("# Set custom timeout for slow networks")}
-  npm-package-diff large-package 1.0.0 2.0.0 --timeout 300000
+  ${chalk.gray("# Enable pagination for large diffs")}
+  npm-package-diff large-package 1.0.0 2.0.0 --paging
 
 ${chalk.bold("CONFIG FILE EXAMPLE (.npmpackagediffrc):")}
 ${chalk.gray(`{
@@ -194,12 +195,13 @@ ${chalk.gray(`{
   "format": "terminal",
   "lineNumbers": true,
   "wordDiff": false,
-  "context": 3,
+  "context": 10,
   "stats": true,
   "sizes": true,
   "timeout": 180000,
   "packageManager": "pnpm",
-  "npmrc": "./.npmrc"
+  "npmrc": "./.npmrc",
+  "paging": true
 }`)}
 `;
     logger.info(helpText);
@@ -247,6 +249,8 @@ class EnhancedPackageComparison {
     private spinner?: ora.Ora;
     private results: DiffResult[] = [];
     private packageManager: PackageManager;
+    private pagerProcess?: any;
+    private outputBuffer: string[] = [];
 
     constructor(
         private packageName: string, 
@@ -599,28 +603,72 @@ class EnhancedPackageComparison {
         }
     }
 
+    private write(text: string): void {
+        if (this.options.paging && !this.options.output && (this.options.format === "terminal" || this.options.format === "side-by-side")) {
+            this.outputBuffer.push(text);
+        } else {
+            console.log(text);
+        }
+    }
+
+    private startPager(): void {
+        if (!this.options.paging || this.options.output || (this.options.format !== "terminal" && this.options.format !== "side-by-side")) {
+            return;
+        }
+
+        try {
+            // Use less with -R flag to preserve colors
+            this.pagerProcess = spawn('less', ['-R', '-F', '-X'], {
+                stdio: ['pipe', 'inherit', 'inherit']
+            });
+
+            this.pagerProcess.on('error', (err: any) => {
+                logger.debug(`Failed to start pager: ${err}`);
+                // Fallback to normal output
+                this.outputBuffer.forEach(line => console.log(line));
+                this.outputBuffer = [];
+            });
+
+            // Write buffered output to pager
+            this.outputBuffer.forEach(line => {
+                this.pagerProcess.stdin.write(line + '\n');
+            });
+            this.outputBuffer = [];
+        } catch (e) {
+            // Fallback to normal output
+            this.outputBuffer.forEach(line => console.log(line));
+            this.outputBuffer = [];
+        }
+    }
+
+    private endPager(): void {
+        if (this.pagerProcess && this.pagerProcess.stdin) {
+            this.pagerProcess.stdin.end();
+        }
+    }
+
     private outputTerminalDiff(result: DiffResult): void {
         if (this.options.useDelta && this.isDeltaAvailable()) {
             this.outputWithDelta(result);
             return;
         }
 
-        console.log(chalk.cyan(`\n${"=".repeat(80)}`));
-        console.log(chalk.bold.white(`📄 ${result.file}`));
+        this.write(chalk.cyan(`\n${"=".repeat(80)}`));
+        this.write(chalk.bold.white(`📄 ${result.file}`));
         
         if (result.status === "added") {
-            console.log(chalk.green(`   Status: Added (${filesize(result.newSize || 0)})`));
+            this.write(chalk.green(`   Status: Added (${filesize(result.newSize || 0)})`));
         } else if (result.status === "removed") {
-            console.log(chalk.red(`   Status: Removed (${filesize(result.oldSize || 0)})`));
+            this.write(chalk.red(`   Status: Removed (${filesize(result.oldSize || 0)})`));
         } else if (result.status === "modified") {
-            console.log(chalk.yellow(`   Status: Modified`));
-            console.log(chalk.gray(`   Size: ${filesize(result.oldSize || 0)} → ${filesize(result.newSize || 0)}`));
-            console.log(chalk.green(`   +${result.additions} additions`), chalk.red(`-${result.deletions} deletions`));
+            this.write(chalk.yellow(`   Status: Modified`));
+            this.write(chalk.gray(`   Size: ${filesize(result.oldSize || 0)} → ${filesize(result.newSize || 0)}`));
+            this.write(chalk.green(`   +${result.additions} additions`) + " " + chalk.red(`-${result.deletions} deletions`));
         }
-        console.log(chalk.cyan(`${"=".repeat(80)}`));
+        this.write(chalk.cyan(`${"=".repeat(80)}`));
 
         if (result.changes && result.status === "modified") {
-            if (this.options.sideBySide) {
+            if (this.options.format === "side-by-side") {
                 this.outputSideBySideDiff(result);
             } else {
                 this.outputInlineDiff(result);
@@ -629,23 +677,74 @@ class EnhancedPackageComparison {
     }
 
     private outputInlineDiff(result: DiffResult): void {
-        let lineNumber = 1;
+        const context = this.options.context;
+        let outputLines: string[] = [];
+        let currentLine = 1;
+        
+        // Build a complete view of the file with changes
+        const lines: { type: 'add' | 'remove' | 'normal', content: string, lineNum?: number }[] = [];
+        
         result.changes?.forEach(change => {
-            const lines = change.value.split('\n').filter(line => line !== '');
-            lines.forEach(line => {
+            const changeLines = change.value.split('\n').filter((_, idx, arr) => idx !== arr.length - 1 || change.value.endsWith('\n'));
+            
+            changeLines.forEach(line => {
                 if (change.added) {
-                    const lineNum = this.options.lineNumbers ? chalk.green(`+${lineNumber.toString().padStart(4)} `) : '';
-                    console.log(chalk.green(`${lineNum}+ ${line}`));
+                    lines.push({ type: 'add', content: line });
                 } else if (change.removed) {
-                    const lineNum = this.options.lineNumbers ? chalk.red(`-${lineNumber.toString().padStart(4)} `) : '';
-                    console.log(chalk.red(`${lineNum}- ${line}`));
+                    lines.push({ type: 'remove', content: line, lineNum: currentLine++ });
                 } else {
-                    const lineNum = this.options.lineNumbers ? chalk.gray(` ${lineNumber.toString().padStart(4)} `) : '';
-                    console.log(chalk.gray(`${lineNum}  ${line}`));
+                    lines.push({ type: 'normal', content: line, lineNum: currentLine++ });
                 }
-                if (!change.removed) lineNumber++;
             });
         });
+
+        // Find hunks with context
+        let inHunk = false;
+        let contextCounter = 0;
+        let lastPrintedLine = -1;
+        
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            
+            if (line.type !== 'normal') {
+                // We're in a change, print context before if needed
+                const startContext = Math.max(0, i - context);
+                
+                if (lastPrintedLine < startContext - 1) {
+                    this.write(chalk.cyan(`   @@ ... @@`));
+                }
+                
+                // Print context before
+                for (let j = Math.max(lastPrintedLine + 1, startContext); j < i; j++) {
+                    const contextLine = lines[j];
+                    if (contextLine.type === 'normal') {
+                        const lineNum = this.options.lineNumbers ? chalk.gray(` ${contextLine.lineNum?.toString().padStart(4)} `) : '';
+                        this.write(chalk.gray(`${lineNum}  ${contextLine.content}`));
+                    }
+                }
+                
+                // Print the change
+                if (line.type === 'add') {
+                    const lineNum = this.options.lineNumbers ? chalk.green(`+${"".padStart(4)} `) : '';
+                    this.write(chalk.green(`${lineNum}+ ${line.content}`));
+                } else if (line.type === 'remove') {
+                    const lineNum = this.options.lineNumbers ? chalk.red(`-${line.lineNum?.toString().padStart(4)} `) : '';
+                    this.write(chalk.red(`${lineNum}- ${line.content}`));
+                }
+                
+                lastPrintedLine = i;
+                inHunk = true;
+                contextCounter = context;
+            } else if (inHunk && contextCounter > 0) {
+                // Print context after changes
+                const lineNum = this.options.lineNumbers ? chalk.gray(` ${line.lineNum?.toString().padStart(4)} `) : '';
+                this.write(chalk.gray(`${lineNum}  ${line.content}`));
+                lastPrintedLine = i;
+                contextCounter--;
+            } else if (inHunk && contextCounter === 0) {
+                inHunk = false;
+            }
+        }
     }
 
     private outputSideBySideDiff(result: DiffResult): void {
@@ -653,24 +752,57 @@ class EnhancedPackageComparison {
         const terminalWidth = process.stdout.columns || 80;
         const columnWidth = Math.floor((terminalWidth - 3) / 2);
         
-        console.log(chalk.gray(`${"─".repeat(columnWidth)} │ ${"─".repeat(columnWidth)}`));
-        console.log(chalk.bold(`${this.version1.padEnd(columnWidth)} │ ${this.version2}`));
-        console.log(chalk.gray(`${"─".repeat(columnWidth)} │ ${"─".repeat(columnWidth)}`));
+        this.write(chalk.gray(`${"─".repeat(columnWidth)} │ ${"─".repeat(columnWidth)}`));
+        this.write(chalk.bold(`${this.version1.padEnd(columnWidth)} │ ${this.version2}`));
+        this.write(chalk.gray(`${"─".repeat(columnWidth)} │ ${"─".repeat(columnWidth)}`));
 
-        // This is a simplified version - for a full implementation, 
-        // you'd want to properly align the changes side by side
-        result.changes?.forEach(change => {
+        // This is a simplified version with context support
+        const context = this.options.context;
+        let contextBuffer: string[] = [];
+        let inChange = false;
+        
+        result.changes?.forEach((change, idx) => {
             const lines = change.value.split('\n').filter(line => line !== '');
-            lines.forEach(line => {
-                const truncatedLine = line.substring(0, columnWidth - 2);
-                if (change.added) {
-                    console.log(`${" ".repeat(columnWidth)} │ ${chalk.green("+ " + truncatedLine)}`);
-                } else if (change.removed) {
-                    console.log(`${chalk.red("- " + truncatedLine.padEnd(columnWidth - 2))} │`);
-                } else {
-                    console.log(`${chalk.gray("  " + truncatedLine.padEnd(columnWidth - 2))} │ ${chalk.gray("  " + truncatedLine)}`);
+            
+            if (change.added || change.removed) {
+                // Output context before if we have any
+                if (contextBuffer.length > 0) {
+                    const startIdx = Math.max(0, contextBuffer.length - context);
+                    for (let i = startIdx; i < contextBuffer.length; i++) {
+                        const line = contextBuffer[i];
+                        const truncated = line.substring(0, columnWidth - 2);
+                        this.write(`${chalk.gray("  " + truncated.padEnd(columnWidth - 2))} │ ${chalk.gray("  " + truncated)}`);
+                    }
                 }
-            });
+                contextBuffer = [];
+                inChange = true;
+                
+                lines.forEach(line => {
+                    const truncatedLine = line.substring(0, columnWidth - 2);
+                    if (change.added) {
+                        this.write(`${" ".repeat(columnWidth)} │ ${chalk.green("+ " + truncatedLine)}`);
+                    } else if (change.removed) {
+                        this.write(`${chalk.red("- " + truncatedLine.padEnd(columnWidth - 2))} │`);
+                    }
+                });
+            } else {
+                // Normal lines
+                if (inChange) {
+                    // Show context after changes
+                    lines.slice(0, context).forEach(line => {
+                        const truncated = line.substring(0, columnWidth - 2);
+                        this.write(`${chalk.gray("  " + truncated.padEnd(columnWidth - 2))} │ ${chalk.gray("  " + truncated)}`);
+                    });
+                    inChange = false;
+                    contextBuffer = [];
+                } else {
+                    // Buffer context lines
+                    contextBuffer = contextBuffer.concat(lines);
+                    if (contextBuffer.length > context * 2) {
+                        contextBuffer = contextBuffer.slice(-context);
+                    }
+                }
+            }
         });
     }
 
@@ -679,6 +811,15 @@ class EnhancedPackageComparison {
             execSync('which delta', { stdio: 'ignore' });
             return true;
         } catch {
+            if (this.options.useDelta) {
+                this.write(chalk.yellow(
+                    "\n⚠️  Delta is not installed but --use-delta was specified.\n" +
+                    "   To install delta for beautiful diffs:\n" +
+                    "   • macOS: brew install git-delta\n" +
+                    "   • Linux: Download from https://github.com/dandavison/delta/releases\n" +
+                    "   • Cargo: cargo install git-delta\n"
+                ));
+            }
             return false;
         }
     }
@@ -716,7 +857,6 @@ class EnhancedPackageComparison {
         try {
             const Diff2Html = require("diff2html");
             const unifiedDiff = this.generateUnifiedDiff();
-            
             const html = Diff2Html.html(unifiedDiff, {
                 drawFileList: true,
                 matching: "lines",
@@ -731,7 +871,8 @@ class EnhancedPackageComparison {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NPM Package Diff: ${this.packageName} ${this.version1} vs ${this.version2}</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.35/bundles/css/diff2html.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/diff2html@3.4.51/bundles/js/diff2html-ui.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/diff2html@3.4.51/bundles/css/diff2html.min.css" rel="stylesheet">
     <style>
         body { 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -849,19 +990,30 @@ class EnhancedPackageComparison {
 
         // Terminal output
         if ((format === "terminal" || format === "side-by-side") && !this.options.output) {
+            // Start pager if needed
+            if (this.options.paging) {
+                this.outputBuffer = [];
+            }
+            
             this.results
                 .filter(r => r.status !== "identical" || this.options.showIdentical)
                 .forEach(result => this.outputTerminalDiff(result));
-        }
+                
+            // Show statistics if requested
+            if (this.options.stats) {
+                this.showStatistics();
+            }
 
-        // Show statistics if requested
-        if (this.options.stats) {
-            this.showStatistics();
-        }
-
-        // Show size comparison if requested
-        if (this.options.sizes) {
-            this.showSizeComparison();
+            // Show size comparison if requested
+            if (this.options.sizes) {
+                this.showSizeComparison();
+            }
+            
+            // Start pager with all output
+            if (this.options.paging) {
+                this.startPager();
+                this.endPager();
+            }
         }
     }
 
@@ -888,7 +1040,7 @@ class EnhancedPackageComparison {
                 borderColor: "cyan"
             }
         );
-        console.log(statsBox);
+        this.write(statsBox);
     }
 
     private showSizeComparison(): void {
@@ -922,7 +1074,7 @@ class EnhancedPackageComparison {
                 ]);
             });
 
-        console.log("\n" + table.toString());
+        this.write("\n" + table.toString());
     }
 
     async cleanup(): Promise<void> {
