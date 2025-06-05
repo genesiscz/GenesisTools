@@ -172,6 +172,7 @@ where `<tool-folder>` is one of:
 -   `watchman`
 -   `watch`
 -   `mcp-ripgrep`
+-   `npm-package-diff`
 
 Refer to each tool's section above for specific usage and options.
 
@@ -237,7 +238,72 @@ The tool uses the `chokidar` library to watch for file changes based on the prov
 
 The tool can be stopped by pressing `Ctrl+C`.
 
-### 7. Files to Prompt
+### 7. NPM Package Diff
+
+A tool that compares files between two versions of an npm package. It creates temporary directories, installs the specified package versions, watches for file changes during installation, and shows diffs between matching files.
+
+**Features:**
+
+- Compare files between any two versions of an npm package
+- Configurable file filtering using glob patterns (default: `**/*.d.ts`)
+- Automatic installation using yarn in isolated temporary directories
+- Real-time file watching during package installation
+- Pretty diff output with color-coded changes
+- Shows files that exist only in one version
+- Automatic cleanup of temporary directories
+
+**Usage:**
+
+```bash
+tools npm-package-diff <package-name> <version1> <version2> [options]
+```
+
+**Options:**
+
+- `--filter`, `-f`: Glob pattern to filter files (default: `**/*.d.ts`)
+- `--verbose`, `-v`: Enable verbose logging for detailed information
+- `--help`, `-h`: Show help information
+
+**Examples:**
+
+Compare TypeScript definitions between React versions:
+```bash
+tools npm-package-diff react 18.0.0 18.2.0
+```
+
+Compare specific file types between Node.js type definitions:
+```bash
+tools npm-package-diff @types/node 18.0.0 20.0.0 --filter="**/*.d.ts"
+```
+
+Compare JavaScript files between Lodash versions with verbose output:
+```bash
+tools npm-package-diff lodash 4.17.20 4.17.21 --filter="**/*.js" -v
+```
+
+Compare all files (not just TypeScript definitions):
+```bash
+tools npm-package-diff some-package 1.0.0 2.0.0 --filter="**/*"
+```
+
+**How It Works:**
+
+1. Creates temporary directories: `diff-<package-name>/<version1>` and `diff-<package-name>/<version2>`
+2. Sets up file watchers to monitor file additions during installation
+3. Installs both package versions in parallel using yarn
+4. Collects metadata about all files added during installation
+5. Filters files based on the specified glob pattern
+6. Compares matching files and shows differences
+7. Displays files that exist only in one version
+8. Automatically cleans up temporary directories
+
+The tool is particularly useful for:
+- Analyzing TypeScript definition changes between package versions
+- Understanding API changes in libraries
+- Reviewing breaking changes before upgrading dependencies
+- Generating changelogs or migration guides
+
+### 8. Files to Prompt
 
 This tool converts files to a prompt format suitable for AI systems. It can process individual files or recursively process directories, with options for various output formats and filtering.
 
@@ -273,7 +339,7 @@ find . -name "*.py" | tools files-to-prompt -0
 
 ## MCPs
 
-### 8. MCP Ripgrep
+### 9. MCP Ripgrep
 
 A Model Context Protocol (MCP) server that provides powerful file search capabilities using ripgrep. This tool allows AI assistants to search through codebases efficiently with various filtering and formatting options.
 
