@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 
-import { existsSync, readdirSync, statSync } from 'node:fs';
-import { resolve, join, basename } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import clipboardy from 'clipboardy';
 import Enquirer from 'enquirer';
-import clipboardy from 'clipboardy'; 
+import { spawnSync } from 'node:child_process';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 import logger from './src/logger';
 
 // --- Configuration ---
