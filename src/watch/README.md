@@ -1,61 +1,147 @@
-# watch
+# 🔄 Watch
 
-A command-line tool that watches files matching a glob pattern and displays changes in real-time, similar to `tail -f` but for multiple files including those created after the watch has started.
+![Status](https://img.shields.io/badge/Status-Active-success?style=flat-square)
+![Platform](https://img.shields.io/badge/Platform-Cross--platform-blue?style=flat-square)
+![Dependencies](https://img.shields.io/badge/Dependencies-Minimal-green?style=flat-square)
 
-## Features
+> **Real-time file monitoring with powerful glob patterns - like `tail -f` on steroids! 🚀**
 
-- Watch files matching any glob pattern (e.g., `~/projects/**/*.{js,ts,tsx}`)
-- Display file content in real-time as files are created or modified
-- Automatically detect new files that match the pattern
-- Show file additions, modifications, and removals
-- Support for tilde expansion (`~`) for home directory
-- Configurable polling interval
-- Follow mode to tail files continuously
-- Shows a summary of scanned directories and matched files
+Watch multiple files across directories, auto-detect new files, and see changes as they happen with beautiful formatting.
 
-## Usage
+---
+
+## ✨ Key Features
+
+| Feature | Description |
+|---------|-------------|
+| 🎯 **Glob Patterns** | Watch any files matching patterns like `**/*.{js,ts}` |
+| 📡 **Real-time Updates** | See changes instantly as files are modified |
+| 🆕 **Auto-discovery** | New files matching patterns are detected automatically |
+| 🏠 **Path Expansion** | Full support for `~` home directory expansion |
+| ⚡ **Smart Polling** | Configurable intervals with efficient file watching |
+| 📊 **Rich Summaries** | Visual directory trees and file listings |
+| 🎨 **Beautiful Output** | Color-coded changes with timestamps |
+
+---
+
+## 🚀 Quick Start
 
 ```bash
-tools watch [glob-pattern] [options]
-```
-
-### Options
-
-- `--seconds`, `-s`: Polling interval in seconds (default: 1)
-- `--verbose`, `-v`: Enable verbose logging to see more detailed information about which files are being scanned
-- `--follow`, `-f`: Follow mode that only shows new content (like tail -f)
-- `--lines`, `-n`: Number of lines to display from each file (default: 50)
-- `--help`, `-h`: Show help information
-
-### Examples
-
-Watch all TypeScript files in the `src` directory and its subdirectories:
-```bash
+# Watch all TypeScript files
 tools watch "src/**/*.ts"
+
+# Watch multiple file types
+tools watch "~/projects/**/*.{js,ts,tsx,json}"
+
+# Follow mode (continuous updates)
+tools watch "logs/**/*.log" --follow
+
+# Fast polling with more context
+tools watch "**/*.md" --seconds 1 --lines 100
 ```
 
-Watch multiple file types in your home directory with verbose logging:
+---
+
+## 🎛️ Options
+
+| Option | Alias | Description | Default |
+|--------|-------|-------------|---------|
+| `--seconds` | `-s` | Polling interval in seconds | `1` |
+| `--verbose` | `-v` | Show detailed file scanning info | `false` |
+| `--follow` | `-f` | Continuously follow file changes | `false` |
+| `--lines` | `-n` | Number of initial lines to show | `50` |
+| `--help` | `-h` | Display help information | - |
+
+---
+
+## 📖 Usage Modes
+
+### 🔍 **Standard Mode** (default)
+Shows files ordered by modification time and exits:
 ```bash
-tools watch "~/projects/**/*.{js,ts,tsx}" -v -n 100
+tools watch "src/**/*.js"
+# Displays current file contents and exits
 ```
 
-Only show new changes to files (follow mode):
+### 📡 **Follow Mode** (`-f`)
+Continuously monitors for changes:
 ```bash
-tools watch "src/**/*.ts" -f
+tools watch "src/**/*.js" -f
+# Keeps running and shows updates in real-time
 ```
 
-Use a faster polling interval (1 second) with follow mode:
+---
+
+## 💡 Pro Tips
+
+<details>
+<summary><b>🎯 Advanced Patterns</b></summary>
+
 ```bash
-tools watch "src/**/*.ts" --seconds 1 -f
+# Watch specific nested patterns
+tools watch "src/**/components/**/*.tsx"
+
+# Exclude patterns with shell features
+tools watch "src/**/*.js" | grep -v test
+
+# Watch multiple separate directories
+tools watch "{src,lib,test}/**/*.js"
 ```
 
-## How It Works
+</details>
 
-The tool uses the `chokidar` library to watch for file changes based on the provided glob pattern. When files are added, modified, or removed, it displays the changes in the terminal in real-time.
+<details>
+<summary><b>⚡ Performance Optimization</b></summary>
 
-- New or modified files: The tool shows the timestamp, file path, and the new content of the file
-- Removed files: The tool shows a notification that the file has been removed
-- Scanned directories: The tool shows a list of all directories being scanned
-- Matched files: The tool shows a list of all files that match the pattern
+- Use specific patterns to reduce file scanning
+- Adjust `--seconds` based on your needs
+- Enable `--verbose` to debug performance issues
+- Consider using more specific paths instead of `**`
 
-The tool can be stopped by pressing `Ctrl+C`. 
+</details>
+
+---
+
+## 🎨 Output Format
+
+The tool provides rich, color-coded output:
+
+```
+📁 WATCHED DIRECTORIES:
+   ├─ /home/user/project/src
+   ├─ /home/user/project/lib
+
+📁 WATCHED FILES:
+   ├─ /home/user/project/src/index.ts
+   ├─ /home/user/project/src/utils.ts
+
+📄 NEW FILE: 14:23:45 - src/newfile.ts
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ console.log('Hello from new file!');                                         │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+📝 UPDATED: 14:24:12 - src/index.ts
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ import { utils } from './utils';                                             │
+│ console.log('Updated code here');                                            │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## ⚠️ Important Notes
+
+> **🔒 Shell Expansion**: Always wrap glob patterns in quotes to prevent shell expansion:
+> ```bash
+> ✅ tools watch "src/**/*.js"
+> ❌ tools watch src/**/*.js  # Shell expands before tool receives it
+> ```
+
+---
+
+## 🛠️ Technical Details
+
+- Built with **chokidar** for robust file watching
+- Uses **glob** for powerful pattern matching
+- Implements smart buffering for optimal performance
+- Supports all major platforms (Windows, macOS, Linux)

@@ -1,32 +1,57 @@
-# NPM Package Diff
+# 🎨 NPM Package Diff
 
-A powerful command-line tool for comparing files between different versions of npm packages. It creates temporary directories, installs the specified package versions, watches for file changes during installation, and shows beautiful diffs between matching files with multiple output formats.
+![npm](https://img.shields.io/badge/npm-CB3837?style=flat-square&logo=npm&logoColor=white)
+![yarn](https://img.shields.io/badge/Yarn-2C8EBB?style=flat-square&logo=yarn&logoColor=white)
+![pnpm](https://img.shields.io/badge/pnpm-F69220?style=flat-square&logo=pnpm&logoColor=white)
+![bun](https://img.shields.io/badge/Bun-000000?style=flat-square&logo=bun&logoColor=white)
 
-## Features
+> **🚀 Lightning-fast, beautiful diffs between NPM package versions**
 
-- 🎨 **Beautiful Terminal Output**: Colored diffs with syntax highlighting
-- 📊 **Multiple Output Formats**: Terminal, unified diff, HTML, JSON, side-by-side
-- 🔍 **Smart Filtering**: Include/exclude files using glob patterns
-- 📈 **Statistics & Analytics**: File counts, size comparisons, change summaries
-- ⚡ **Performance**: Parallel package installation, efficient file watching
-- 🛠️ **Highly Configurable**: CLI options, config files, environment variables
-- 🎯 **Integration Ready**: Supports output redirection, CI/CD pipelines
-- 🌈 **Delta Support**: Optional integration with delta for even prettier diffs
+A powerful command-line tool that creates temporary directories, installs package versions in parallel, watches for file changes during installation, and shows beautiful diffs with multiple output formats.
 
-## Usage
+---
+
+## ✨ Features at a Glance
+
+| Feature | Description |
+|---------|-------------|
+| 🎨 **Beautiful Output** | Colored terminal diffs with syntax highlighting |
+| 📊 **Multiple Formats** | Terminal, unified diff, HTML, JSON, side-by-side |
+| 🔍 **Smart Filtering** | Include/exclude files using glob patterns |
+| 📈 **Rich Analytics** | File counts, size comparisons, change summaries |
+| ⚡ **High Performance** | Parallel installation, efficient file watching |
+| 🛠️ **Highly Configurable** | CLI options, config files, environment variables |
+| 🎯 **CI/CD Ready** | Exit codes, JSON output, automated workflows |
+| 🌈 **Delta Integration** | GitHub-style diffs with delta support |
+
+---
+
+## 🚀 Quick Start
 
 ```bash
-tools npm-package-diff <package-name> <version1> <version2> [options]
+# Compare TypeScript definitions
+tools npm-package-diff react 18.0.0 18.2.0
+
+# Compare with beautiful side-by-side view
+tools npm-package-diff lodash 4.17.20 4.17.21 --format side-by-side
+
+# Generate an HTML report
+tools npm-package-diff @types/node 18.0.0 20.0.0 --format html -o report.html
 ```
 
-## Options
+---
+
+## 📋 Complete Options Reference
+
+<details>
+<summary><b>🎛️ All Available Options</b></summary>
 
 | Option | Alias | Description | Default |
 |--------|-------|-------------|---------|
 | `--filter` | `-f` | Glob pattern to include files | `**/*.d.ts` |
 | `--exclude` | `-e` | Glob pattern to exclude files | - |
 | `--output` | `-o` | Output file path | console |
-| `--format` | `-F` | Output format (see below) | `terminal` |
+| `--format` | `-F` | Output format (see formats below) | `terminal` |
 | `--patch` | `-p` | Generate patch file | - |
 | `--verbose` | `-v` | Enable verbose logging | `false` |
 | `--silent` | `-s` | Suppress output except errors | `false` |
@@ -39,65 +64,75 @@ tools npm-package-diff <package-name> <version1> <version2> [options]
 | `--config` | `-c` | Path to config file | `.npmpackagediffrc` |
 | `--use-delta` | - | Use delta for output | `false` |
 | `--delta-theme` | - | Delta theme (light/dark) | `auto` |
+| `--timeout` | - | Installation timeout (ms) | `120000` |
+| `--npmrc` | - | Path to .npmrc file | - |
+| `--package-manager` | `-m` | Package manager to use | `auto` |
+| `--paging` | - | Enable terminal pagination | `false` |
+| `--keep` | `-k` | Keep temporary directories | `false` |
 
-## Output Formats
+</details>
 
-- **terminal**: Colored diff output in the terminal (default)
-- **unified**: Standard unified diff format (can be used as .patch)
-- **html**: Interactive HTML with syntax highlighting
-- **json**: Structured JSON with detailed changes
-- **side-by-side**: Terminal side-by-side comparison
+---
 
-## Examples
+## 🎨 Output Formats
 
-### Basic Usage
+| Format | Description | Best For |
+|--------|-------------|----------|
+| 🖥️ **terminal** | Colored diff with syntax highlighting | Quick reviews |
+| 📄 **unified** | Standard patch format | Git patches |
+| 🌐 **html** | Interactive web page with toggles | Sharing & reports |
+| 📊 **json** | Structured data | Automation & CI |
+| ↔️ **side-by-side** | Split-screen comparison | Detailed analysis |
+
+---
+
+## 💡 Real-World Examples
+
+<details>
+<summary><b>🔧 Common Use Cases</b></summary>
+
+### 📦 Breaking Change Detection
 ```bash
-# Compare TypeScript definitions between React versions
-tools npm-package-diff react 18.0.0 18.2.0
-
-# Compare all JavaScript files
-tools npm-package-diff lodash 4.17.20 4.17.21 --filter="**/*.js"
+# Check for breaking changes in a major version bump
+tools npm-package-diff express 4.18.0 5.0.0 --stats --sizes
 ```
 
-### Generate Patch File
+### 🔍 Security Audit Trail
 ```bash
-# Create a unified diff patch
-tools npm-package-diff express 4.17.0 4.18.0 --patch express.patch
-
-# Or use the unified format
-tools npm-package-diff express 4.17.0 4.18.0 --format unified -o express.patch
+# Track changes in security-critical packages
+tools npm-package-diff jsonwebtoken 8.5.1 9.0.0 --format html -o security-audit.html
 ```
 
-### Create HTML Report
+### 🤖 CI/CD Integration
 ```bash
-# Generate an interactive HTML diff
-tools npm-package-diff @types/node 18.0.0 20.0.0 --format html -o report.html
-
-# With side-by-side view
-tools npm-package-diff vue 3.2.0 3.3.0 --format html --side-by-side -o vue-diff.html
+# Automated checks in CI pipeline
+tools npm-package-diff mypackage $OLD_VERSION $NEW_VERSION --format json -o diff.json
+if [ -s diff.json ]; then
+  echo "Changes detected!"
+  exit 1
+fi
 ```
 
-### Advanced Usage
+### 📈 Migration Guide Generation
 ```bash
-# Show statistics and size comparison
-tools npm-package-diff axios 0.27.0 1.0.0 --stats --sizes
-
-# Use delta for beautiful terminal output
-tools npm-package-diff typescript 4.9.0 5.0.0 --use-delta
-
-# Exclude test files and show word-level diff
-tools npm-package-diff jest 28.0.0 29.0.0 --exclude="**/*.test.js" --word-diff
-
-# JSON output with statistics
-tools npm-package-diff webpack 4.46.0 5.88.0 --format json -o webpack-diff.json
-
-# Redirect output to file (strips ANSI colors automatically)
-tools npm-package-diff react 17.0.0 18.0.0 > react-diff.txt
+# Create a detailed migration guide
+tools npm-package-diff typescript 4.9.0 5.0.0 \
+  --format html \
+  --stats \
+  --sizes \
+  --output migration-guide.html
 ```
 
-## Configuration File
+</details>
 
-Create a `.npmpackagediffrc` file in your project root:
+---
+
+## ⚙️ Configuration
+
+<details>
+<summary><b>📝 Configuration File Example</b></summary>
+
+Create a `.npmpackagediffrc` file in your project:
 
 ```json
 {
@@ -109,56 +144,46 @@ Create a `.npmpackagediffrc` file in your project root:
   "context": 3,
   "stats": true,
   "sizes": true,
+  "timeout": 180000,
+  "packageManager": "pnpm",
+  "npmrc": "./.npmrc",
+  "paging": true,
   "useDelta": false
 }
 ```
 
-## How It Works
+</details>
 
-1. Creates temporary directories for each package version
-2. Sets up file watchers to monitor additions during installation
-3. Installs both package versions in parallel using npm/yarn
-4. Collects metadata about all added files
-5. Filters files based on include/exclude patterns
-6. Compares matching files and generates diffs
-7. Outputs results in the specified format
-8. Cleans up temporary directories
+---
 
-## Integration with CI/CD
+## 🚦 How It Works
 
-The tool is designed to work well in CI/CD pipelines:
-
-```bash
-# Exit with non-zero code if differences found
-tools npm-package-diff mypackage 1.0.0 2.0.0 --format json -o diff.json
-if [ -s diff.json ]; then
-  echo "Differences found!"
-  exit 1
-fi
-
-# Generate HTML report for artifacts
-tools npm-package-diff mypackage $OLD_VERSION $NEW_VERSION \
-  --format html \
-  --output reports/package-diff.html \
-  --stats \
-  --sizes
+```mermaid
+graph LR
+    A[Start] --> B[Create Temp Dirs]
+    B --> C[Setup File Watchers]
+    C --> D[Install Packages]
+    D --> E[Collect File Changes]
+    E --> F[Filter Files]
+    F --> G[Generate Diffs]
+    G --> H[Format Output]
+    H --> I[Cleanup]
 ```
 
-## Tips
+1. **🏗️ Setup** - Creates isolated temporary directories
+2. **👁️ Watch** - Monitors file system during installation
+3. **📦 Install** - Parallel package installation
+4. **📊 Analyze** - Collects and filters changed files
+5. **🎨 Output** - Generates beautiful, formatted diffs
+6. **🧹 Cleanup** - Removes temporary files (unless `--keep`)
 
-1. **Performance**: Use specific filters to reduce comparison time
-2. **Large Packages**: Increase context lines for better understanding
-3. **Binary Files**: These are detected and skipped automatically
-4. **Delta Integration**: Install delta separately for enhanced output
-5. **Output Redirection**: ANSI colors are automatically stripped
+---
 
-## Troubleshooting
+## 🐛 Troubleshooting
 
-- **Installation Fails**: Ensure npm/yarn is properly configured
-- **No Differences Found**: Check your filter patterns
-- **Out of Memory**: Use more specific filters or compare fewer files
-- **Delta Not Working**: Install delta separately: `brew install git-delta`
-
-## License
-
-MIT
+| Issue | Solution |
+|-------|----------|
+| **Installation fails** | Check npm/yarn config, use `--npmrc` for auth |
+| **No differences found** | Verify filter patterns with `--verbose` |
+| **Out of memory** | Use specific filters to reduce file count |
+| **Delta not working** | Install separately: `brew install git-delta` |

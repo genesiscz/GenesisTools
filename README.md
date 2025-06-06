@@ -1,273 +1,384 @@
-# GenesisTools
+# 🌟 GenesisTools
 
-GenesisTools is a collection of utilities designed to simplify various development tasks such as Git operations, file collection for AI analysis, generating GitHub release notes, computing message lengths, and watching files for changes. All tools are built with TypeScript and run on BunJS.
+<div align="center">
+  
+  <img src="https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Bun-000000?style=for-the-badge&logo=bun&logoColor=white" alt="Bun" />
+  <img src="https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="Node.js" />
+  <img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge" alt="MIT License" />
+  
+  <h3>✨ A powerful collection of development utilities for the modern developer ✨</h3>
+  
+  <p>
+    <strong>Simplify your workflow with tools for Git operations, AI file analysis, release notes generation, and more!</strong>
+  </p>
 
-## Installation
+</div>
 
-We expect you to have `bun` installed because there are some tools that use Bun API available only on BunJS environment. 
+---
 
-To install project dependencies and make `tools` command available everywhere, run 
+## 📚 Table of Contents
 
-```
-bun install && ./install.sh
-```
+- [🚀 Quick Start](#-quick-start)
+- [🛠️ Available Tools](#️-available-tools)
+  - [🔍 Git & Version Control](#-git--version-control)
+  - [🤖 AI & Analysis](#-ai--analysis)
+  - [📊 Monitoring & Watching](#-monitoring--watching)
+  - [📦 Package Management](#-package-management)
+  - [🔌 MCP Servers](#-mcp-servers)
+- [💡 Tool Details](#-tool-details)
+- [⚙️ Configuration](#️-configuration)
+- [📝 License](#-license)
 
-After that, run `source ~/.zshrc` if you use `zsh` or `source ~/.bashrc` if you use `bash`
+---
 
-## Tools Overview
+## 🚀 Quick Start
 
-The project includes the following tools:
+### Prerequisites
 
-### 0. List of tools available
-
-You can just run 
+> 📌 **Important**: BunJS is required as some tools use Bun-specific APIs
 
 ```bash
+# Install Bun if you haven't already
+curl -fsSL https://bun.sh/install | bash
+```
+
+### Installation
+
+```bash
+# Clone and install GenesisTools
+git clone https://github.com/yourusername/GenesisTools.git
+cd GenesisTools
+
+# Install dependencies and make tools globally available
+bun install && ./install.sh
+
+# Reload your shell configuration
+source ~/.zshrc  # For Zsh users
+source ~/.bashrc # For Bash users
+```
+
+### 🎯 First Command
+
+```bash
+# List all available tools
 tools
+
+# Pick a tool from the interactive list - it auto-copies to clipboard! 📋
 ```
 
-Which will give you list of all tools available. If you pick one from the list, it will automatically save the command to the clipboard.
+---
 
-### 1. Git Last Commits Diff
+## 🛠️ Available Tools
 
-This tool displays the differences between the last few commits (or staged/untsaged/all changes) in a Git repository. Can be handy for AI input.
+<table>
+<tr>
+<td width="50%">
 
-**Usage:**
+### 🔍 Git & Version Control
 
-```
-tools git-last-commits-diff <directory> [--commits X] [--output FILE | --clipboard] [--help]
-```
+| Tool | Description |
+|------|-------------|
+| **[Git Last Commits Diff](#1--git-last-commits-diff)** | 📝 View diffs between recent commits |
+| **[GitHub Release Notes](#3--github-release-notes)** | 📋 Generate beautiful release notes |
 
-**Options:**
+</td>
+<td width="50%">
 
--   `<directory>`: Required. Path to the Git repository.
--   `--commits` (or `-c`): Number of recent commits to diff (e.g., `--commits 5` to diff `HEAD~5..HEAD`). If omitted, the tool will fetch the last 200 commits and present an interactive autocomplete list, allowing you to select a specific commit to diff against `HEAD`.
--   `--output [FILE]` (or `-o [FILE]`): Write the diff output to `FILE`. If `FILE` is omitted or an empty string is provided (e.g., `--output ""`), the output is printed to stdout. This option takes precedence over `--clipboard` and skips the interactive prompt.
--   `--clipboard` (or `-cl`): Copy the diff output directly to the system clipboard. This option skips the interactive prompt unless `--output` is also specified (which takes precedence).
--   `--help` (or `-h`): Show the usage help message.
+### 🤖 AI & Analysis
 
-If neither `--output` nor `--clipboard` is specified, the tool will interactively prompt you to choose the output destination:
--   **Save to a file**: Prompts for a filename (defaults to `commits-{firstCommitShaTruncated}-{lastCommitShaTruncated}.diff` in the current directory). The full absolute path of the saved file is copied to the clipboard.
--   **Copy to clipboard**: Copies the entire diff output to the clipboard.
--   **Print to stdout**: Prints the diff output to the console.
+| Tool | Description |
+|------|-------------|
+| **[Collect Files for AI](#2--collect-files-for-ai)** | 🤖 Aggregate project files for AI analysis |
+| **[Files to Prompt](#8--files-to-prompt)** | 💬 Convert files to AI-friendly prompts |
+| **[Hold-AI](#10--hold-ai-tool)** | ⏸️ Control AI responses via WebSocket |
 
-**Example:**
+</td>
+</tr>
+<tr>
+<td width="50%">
 
-```
+### 📊 Monitoring & Watching
+
+| Tool | Description |
+|------|-------------|
+| **[Watchman](#5--watchman)** | 👁️ Monitor file changes with Facebook Watchman |
+| **[Watch](#6--watch-formerly-watch-glob)** | 🔄 Real-time file monitoring with glob patterns |
+
+</td>
+<td width="50%">
+
+### 📦 Package Management
+
+| Tool | Description |
+|------|-------------|
+| **[NPM Package Diff](#7--npm-package-diff)** | 🎨 Beautiful package version comparisons |
+| **[MCP Ripgrep](#9--mcp-ripgrep)** | ⚡ Lightning-fast code search server |
+
+</td>
+</tr>
+</table>
+
+---
+
+## 💡 Tool Details
+
+### 1. 📝 Git Last Commits Diff
+
+> Display beautiful diffs between recent commits or working changes - perfect for AI input!
+
+<details>
+<summary><b>🎯 Quick Example</b></summary>
+
+```bash
+# Diff last 2 commits
 tools git-last-commits-diff /path/to/repo --commits 2
+
+# Interactive commit selection
+tools git-last-commits-diff /path/to/repo
+
+# Copy diff to clipboard
+tools git-last-commits-diff . --commits 3 --clipboard
 ```
 
-### 2. Collect Files for AI
+</details>
 
-This tool is designed to collect and aggregate files from your project for analysis by AI systems. It can be configured to filter files by staged, unstaged, both OR files changed in the last X commits.
+<details>
+<summary><b>⚙️ Options</b></summary>
 
-**Usage:**
+| Option | Description |
+|--------|-------------|
+| `<directory>` | 📁 Path to Git repository (required) |
+| `--commits, -c` | 🔢 Number of recent commits to diff |
+| `--output, -o` | 💾 Save diff to file |
+| `--clipboard, -cl` | 📋 Copy diff to clipboard |
+| `--help, -h` | ❓ Show help message |
 
-```
-tools collect-files-for-ai [options]
-```
+</details>
 
-```
-Usage: collect-uncommitted-files <directory> [options]
+---
 
-Arguments:
-  <directory>         Required. Path to the Git repository.
+### 2. 🤖 Collect Files for AI
 
-Options:
-  Mode (choose one, default is --all if --commits is not used):
-    -c, --commits NUM   Collect files changed in the last NUM commits.
-    -s, --staged        Collect only staged files.
-    -u, --unstaged      Collect only unstaged files.
-    -a, --all           Collect all uncommitted (staged + unstaged) files.
+> Smart file collection tool that gathers changed files for AI analysis with intelligent filtering.
 
-  Output:
-    -t, --target DIR    Directory to copy files into (default: ./.ai/YYYY-MM-DD-HH.mm).
-    -h, --help          Show this message.
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
 
-Examples:
-  tools collect-files-for-ai ./my-repo -c 5
-  tools collect-files-for-ai ../other-repo --staged --target ./collected_staged
-  tools collect-files-for-ai /path/to/project --all
-```
+```bash
+# Collect files from last 5 commits
+tools collect-files-for-ai ./my-repo -c 5
 
-### 3. GitHub Release Notes
+# Collect only staged files
+tools collect-files-for-ai . --staged
 
-This tool assists in generating release notes by parsing commit histories and formatting them appropriately for GitHub releases.
-
-**Usage:**
-
-```
-tools github-release-notes <owner>/<repo>|<github-url> <output-file> [options]
+# Collect with flat structure (no subdirectories)
+tools collect-files-for-ai . --all --flat
 ```
 
+</details>
+
+<details>
+<summary><b>⚙️ Modes & Options</b></summary>
+
+**🎨 Collection Modes** (choose one):
+- `--commits, -c NUM` - Files from last NUM commits
+- `--staged, -s` - Only staged files
+- `--unstaged, -u` - Only unstaged files  
+- `--all, -a` - All uncommitted files (default)
+
+**📁 Output Options**:
+- `--target, -t DIR` - Custom output directory
+- `--flat, -f` - Copy files without preserving directory structure
+
+</details>
+
+---
+
+### 3. 📋 GitHub Release Notes
+
+> Generate beautiful, markdown-formatted release notes from any GitHub repository.
+
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
+
+```bash
+# Generate release notes
+tools github-release-notes facebook/react releases.md
+
+# From GitHub URL
+tools github-release-notes https://github.com/microsoft/vscode releases.md
+
+# Limit releases & sort oldest first
+tools github-release-notes vercel/next.js notes.md --limit=10 --oldest
 ```
-Usage: tools github-release-notes <owner>/<repo>|<github-url> <output-file> [options]
 
-Arguments:
-  owner/repo     GitHub repository in format "owner/repo" or full github.com URL
-  output-file    Path to the output markdown file
+</details>
 
-Options:
-  --limit=<n>    Limit the number of releases to fetch
-  --oldest       Sort releases from oldest to newest (default is newest to oldest)
-  -h, --help     Show this help message
+<details>
+<summary><b>💡 Pro Tip</b></summary>
 
-Example:
-  tools github-release-notes software-mansion/react-native-reanimated releases.md --limit=10
-  tools github-release-notes https://github.com/software-mansion/react-native-reanimated releases.md
-  tools github-release-notes software-mansion/react-native-reanimated releases.md --oldest
+Set `GITHUB_TOKEN` environment variable to avoid rate limits:
 
-Note:
-  To avoid GitHub API rate limits, you can set the GITHUB_TOKEN environment variable.
-  export GITHUB_TOKEN=your_github_token
+```bash
+export GITHUB_TOKEN=your_github_token
 ```
 
-### 4. T3Chat Length
+</details>
 
-This tool is internal and probably not useful to you
+---
 
-To use, modify the `myInputJson` variable in `src/t3chat-length/index.ts` and run:
+### 4. 🔢 T3Chat Length
 
-```
+> 🔒 **Internal Tool** - Analyzes T3Chat message lengths and thread sizes.
+
+<details>
+<summary><b>ℹ️ Note</b></summary>
+
+This tool is for internal use. Modify `myInputJson` in `src/t3chat-length/index.ts` before running:
+
+```bash
 tools t3chat-length
 ```
 
-### 5. Watchman
+</details>
 
-This tool monitors WatchMan watched files for changes and can trigger actions when changes are detected. It is useful for development workflows where automatic recompilation or testing is required.
+---
 
-**Usage:**
+### 5. 👁️ Watchman
 
-This tool uses Watchman to monitor a directory for file changes and prints a message when files are modified. You can specify the directory to watch as a positional argument, use `-c` or `--current` to watch the current directory, or select interactively if no argument is provided.
+> Monitor files using Facebook's Watchman for instant change detection.
 
-**Options:**
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
 
--   `<directory>`: Path to the directory to watch (optional, can be relative or absolute).
--   `-c`, `--current`: Watch the current working directory.
-
-**Example:**
-
-```
+```bash
+# Watch current directory
 tools watchman -c
-tools watchman /path/to/dir
+
+# Watch specific directory
+tools watchman /path/to/project
+
+# Interactive directory selection
+tools watchman
 ```
 
-If no argument is provided, you will be prompted to select a directory interactively.
+</details>
 
-## Running the Tools
+---
 
-All tools are designed to be executed using BunJS. For example, to run any tool, use:
+### 6. 🔄 Watch (formerly Watch-Glob)
 
-```
-tools <tool-folder> [options]
-```
+> Real-time file monitoring with powerful glob patterns - like `tail -f` on steroids! 🚀
 
-where `<tool-folder>` is one of:
+<details>
+<summary><b>✨ Features</b></summary>
 
--   `git-last-commits-diff`
--   `collect-files-for-ai`
--   `files-to-prompt`
--   `github-release-notes`
--   `t3chat-length`
--   `watchman`
--   `watch`
--   `mcp-ripgrep`
--   `npm-package-diff`
+- 🎯 Watch files matching any glob pattern
+- 📡 Real-time content updates
+- 🆕 Auto-detect new files
+- 🏠 Tilde expansion support (`~`)
+- ⚡ Configurable polling intervals
+- 📊 Directory & file summaries
 
-Refer to each tool's section above for specific usage and options.
+</details>
 
-### 6. Watch (formerly Watch-Glob)
-
-A command-line tool that watches files matching a glob pattern and displays changes in real-time, similar to `tail -f` but for multiple files including those created after the watch has started.
-
-**Features:**
-
-- Watch files matching any glob pattern (e.g., `~/projects/**/*.{js,ts,tsx}`)
-- Display file content in real-time as files are created or modified
-- Automatically detect new files that match the pattern
-- Show file additions, modifications, and removals
-- Support for tilde expansion (`~`) for home directory
-- Configurable polling interval
-- Follow mode to tail files continuously
-- Shows a summary of scanned directories and matched files
-
-**Usage:**
+<details>
+<summary><b>🎯 Examples</b></summary>
 
 ```bash
-tools watch [glob-pattern] [options]
-```
-
-**Options:**
-
-- `--seconds`, `-s`: Polling interval in seconds (default: 3)
-- `--verbose`, `-v`: Enable verbose logging to see more detailed information about which files are being scanned
-- `--follow`, `-f`: Follow mode that only shows new content (like tail -f)
-- `--lines`, `-n`: Number of lines to display from each file (default: 50)
-- `--help`, `-h`: Show help information
-
-**Examples:**
-
-Watch all TypeScript files in the `src` directory and its subdirectories:
-```bash
+# Watch TypeScript files
 tools watch "src/**/*.ts"
-```
 
-Watch multiple file types in your home directory with verbose logging:
-```bash
+# Multiple file types with verbose mode
 tools watch "~/projects/**/*.{js,ts,tsx}" -v -n 100
+
+# Follow mode (like tail -f)
+tools watch "logs/**/*.log" -f
+
+# Fast polling with custom line count
+tools watch "src/**/*" --seconds 1 -n 200
 ```
 
-Only show new changes to files (follow mode):
+</details>
+
+<details>
+<summary><b>⚙️ Options</b></summary>
+
+| Option | Alias | Description | Default |
+|--------|-------|-------------|---------|
+| `--seconds` | `-s` | Polling interval | `3` |
+| `--verbose` | `-v` | Detailed logging | `false` |
+| `--follow` | `-f` | Tail mode | `false` |
+| `--lines` | `-n` | Lines to display | `50` |
+
+</details>
+
+---
+
+### 7. 🎨 NPM Package Diff
+
+> **The Swiss Army knife for comparing NPM package versions!** 🛠️
+
+![Features](https://img.shields.io/badge/Features-12+-brightgreen?style=for-the-badge) ![Output Formats](https://img.shields.io/badge/Output_Formats-5-blue?style=for-the-badge) ![Performance](https://img.shields.io/badge/Performance-Parallel-orange?style=for-the-badge)
+
+<details>
+<summary><b>🌟 Key Features</b></summary>
+
+**🎨 Visual Excellence**
+- Beautiful colored terminal diffs with syntax highlighting
+- Side-by-side and line-by-line comparisons
+- Interactive HTML reports with toggle views
+- Delta integration for GitHub-style diffs
+
+**📊 Smart Analysis**
+- File size comparisons and statistics
+- Addition/deletion line counts
+- Glob pattern filtering (include/exclude)
+- Binary file detection and skipping
+
+**⚡ Performance**
+- Parallel package installation
+- Efficient file watching during install
+- Configurable timeouts
+- Multi-package manager support (npm, yarn, pnpm, bun)
+
+</details>
+
+<details>
+<summary><b>🎯 Examples</b></summary>
+
 ```bash
-tools watch "src/**/*.ts" -f
+# Basic comparison
+tools npm-package-diff react 18.0.0 18.2.0
+
+# Compare all JavaScript files
+tools npm-package-diff lodash 4.17.20 4.17.21 --filter="**/*.js"
+
+# Generate a patch file
+tools npm-package-diff express 4.17.0 4.18.0 --patch express.patch
+
+# Create interactive HTML report
+tools npm-package-diff @types/node 18.0.0 20.0.0 --format html -o report.html
+
+# Use delta for beautiful diffs
+tools npm-package-diff typescript 4.9.0 5.0.0 --use-delta
+
+# Compare with statistics
+tools npm-package-diff webpack 4.46.0 5.88.0 --stats --sizes
 ```
 
-Use a faster polling interval (1 second) with follow mode:
-```bash
-tools watch "src/**/*.ts" --seconds 1 -f
-```
+</details>
 
-**How It Works:**
-
-The tool uses the `chokidar` library to watch for file changes based on the provided glob pattern. When files are added, modified, or removed, it displays the changes in the terminal in real-time.
-
-- New or modified files: The tool shows the timestamp, file path, and the new content of the file
-- Removed files: The tool shows a notification that the file has been removed
-- Scanned directories: The tool shows a list of all directories being scanned
-- Matched files: The tool shows a list of all files that match the pattern
-
-The tool can be stopped by pressing `Ctrl+C`.
-
-### 7. NPM Package Diff
-
-A powerful command-line tool for comparing files between different versions of npm packages. It creates temporary directories, installs the specified package versions, watches for file changes during installation, and shows beautiful diffs between matching files with multiple output formats.
-
-## Features
-
-- 🎨 **Beautiful Terminal Output**: Colored diffs with syntax highlighting
-- 📊 **Multiple Output Formats**: Terminal, unified diff, HTML, JSON, side-by-side
-- 🔍 **Smart Filtering**: Include/exclude files using glob patterns
-- 📈 **Statistics & Analytics**: File counts, size comparisons, change summaries
-- ⚡ **Performance**: Parallel package installation, efficient file watching
-- 🛠️ **Highly Configurable**: CLI options, config files, environment variables
-- 🎯 **Integration Ready**: Supports output redirection, CI/CD pipelines
-- 🌈 **Delta Support**: Optional integration with delta for even prettier diffs
-
-**Usage:**
-
-```bash
-tools npm-package-diff <package-name> <version1> <version2> [options]
-```
-
-
-## Options
+<details>
+<summary><b>⚙️ Options</b></summary>
 
 | Option | Alias | Description | Default |
 |--------|-------|-------------|---------|
 | `--filter` | `-f` | Glob pattern to include files | `**/*.d.ts` |
 | `--exclude` | `-e` | Glob pattern to exclude files | - |
 | `--output` | `-o` | Output file path | console |
-| `--format` | `-F` | Output format (see below) | `terminal` |
+| `--format` | `-F` | Output format (terminal/unified/html/json/side-by-side) | `terminal` |
 | `--patch` | `-p` | Generate patch file | - |
 | `--verbose` | `-v` | Enable verbose logging | `false` |
 | `--silent` | `-s` | Suppress output except errors | `false` |
@@ -277,152 +388,150 @@ tools npm-package-diff <package-name> <version1> <version2> [options]
 | `--word-diff` | - | Show word-level differences | `false` |
 | `--side-by-side` | - | Side-by-side view | `false` |
 | `--context` | - | Context lines in diff | `3` |
-| `--config` | `-c` | Path to config file | `.npmpackagediffrc` |
 | `--use-delta` | - | Use delta for output | `false` |
-| `--delta-theme` | - | Delta theme (light/dark) | `auto` |
+| `--keep` | `-k` | Keep temporary directories | `false` |
 
-## Output Formats
+</details>
 
-- **terminal**: Colored diff output in the terminal (default)
-- **unified**: Standard unified diff format (can be used as .patch)
-- **html**: Interactive HTML with syntax highlighting
-- **json**: Structured JSON with detailed changes
-- **side-by-side**: Terminal side-by-side comparison
+<details>
+<summary><b>📋 Output Formats</b></summary>
 
+- **🖥️ terminal** - Colored diff with syntax highlighting (default)
+- **📄 unified** - Standard patch format for git apply
+- **🌐 html** - Interactive web page with toggle views
+- **📊 json** - Structured data for programmatic use
+- **↔️ side-by-side** - Split-screen terminal comparison
 
-**Examples:**
+</details>
 
-Compare TypeScript definitions between React versions:
+---
+
+### 8. 💬 Files to Prompt
+
+> Convert your codebase into AI-friendly prompts with intelligent formatting and filtering.
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+- 🎯 Multiple output formats (XML, Markdown, plain text)
+- 📁 Recursive directory processing
+- 🔍 Extension and pattern filtering
+- 👻 Hidden file handling
+- 📊 Line number support
+- 🚫 Gitignore respect
+
+</details>
+
+<details>
+<summary><b>🎯 Examples</b></summary>
+
 ```bash
-tools npm-package-diff react 18.0.0 18.2.0
-```
-
-Compare specific file types between Node.js type definitions:
-```bash
-tools npm-package-diff @types/node 18.0.0 20.0.0 --filter="**/*.d.ts"
-```
-
-Compare JavaScript files between Lodash versions with verbose output:
-```bash
-tools npm-package-diff lodash 4.17.20 4.17.21 --filter="**/*.js" -v
-```
-
-Compare all files (not just TypeScript definitions):
-```bash
-tools npm-package-diff some-package 1.0.0 2.0.0 --filter="**/*"
-```
-
-**How It Works:**
-
-1. Creates temporary directories: `diff-<package-name>/<version1>` and `diff-<package-name>/<version2>`
-2. Sets up file watchers to monitor file additions during installation
-3. Installs both package versions in parallel using yarn
-4. Collects metadata about all files added during installation
-5. Filters files based on the specified glob pattern
-6. Compares matching files and shows differences
-7. Displays files that exist only in one version
-8. Automatically cleans up temporary directories
-
-The tool is particularly useful for:
-- Analyzing TypeScript definition changes between package versions
-- Understanding API changes in libraries
-- Reviewing breaking changes before upgrading dependencies
-- Generating changelogs or migration guides
-
-### 8. Files to Prompt
-
-This tool converts files to a prompt format suitable for AI systems. It can process individual files or recursively process directories, with options for various output formats and filtering.
-
-**Usage:**
-
-```
-tools files-to-prompt [options] [paths...]
-```
-
-**Options:**
-
--   `-e`, `--extension EXT`: File extensions to include (can use multiple times)
--   `--include-hidden`: Include files and folders starting with `.`
--   `--ignore-files-only`: `--ignore` option only ignores files
--   `--ignore-gitignore`: Ignore .gitignore files and include all files
--   `--ignore PATTERN`: List of patterns to ignore (can use multiple times)
--   `-o`, `--output FILE`: Output to a file instead of stdout
--   `-c`, `--cxml`: Output in XML-ish format suitable for Claude
--   `-m`, `--markdown`: Output Markdown with fenced code blocks
--   `-n`, `--line-numbers`: Add line numbers to the output
--   `-0`, `--null`: Use NUL character as separator when reading from stdin
--   `-h`, `--help`: Show this help message
--   `--version`: Show version information
-
-**Examples:**
-
-```
+# Basic usage
 tools files-to-prompt src/components
+
+# Filter by extensions
 tools files-to-prompt -e js -e ts src/
-tools files-to-prompt --markdown -o output.md project/
+
+# Generate markdown with line numbers
+tools files-to-prompt --markdown -n -o output.md project/
+
+# XML format for Claude
+tools files-to-prompt --cxml src/ > prompt.xml
+
+# Pipe from find command
 find . -name "*.py" | tools files-to-prompt -0
 ```
 
-## MCPs
+</details>
 
-### 9. MCP Ripgrep
+---
 
-A Model Context Protocol (MCP) server that provides powerful file search capabilities using ripgrep. This tool allows AI assistants to search through codebases efficiently with various filtering and formatting options.
+### 9. ⚡ MCP Ripgrep
 
-**Features:**
+> Lightning-fast code search server implementing the Model Context Protocol (MCP).
 
-- Fast file content search using ripgrep
-- Support for regex patterns and literal string matching
-- File type and glob pattern filtering
-- Context lines around matches
-- Case-sensitive and case-insensitive search
-- Count matches functionality
-- List files without searching content
-- Advanced search options including word boundaries, hidden files, and symlink following
+<details>
+<summary><b>🚀 Capabilities</b></summary>
 
-**Usage:**
+- **search** - Basic pattern search with highlighting
+- **advanced-search** - Extended options (word boundaries, symlinks, etc.)
+- **count-matches** - Count occurrences efficiently
+- **list-files** - List searchable files
+- **list-file-types** - Show supported file types
 
-The mcp-ripgrep tool is designed to be used as an MCP server. It provides several tools:
+</details>
 
-- `search`: Basic search functionality with pattern matching
-- `advanced-search`: Extended search with more filtering options
-- `count-matches`: Count occurrences of patterns
-- `list-files`: List files that would be searched
-- `list-file-types`: Show supported file types
+<details>
+<summary><b>⚙️ MCP Configuration</b></summary>
 
-**Running as MCP Server:**
-
-```bash
-cd src/mcp-ripgrep
-bun run index.ts --root /path/to/search/directory
-```
-
-**MCP Configuration:**
-
-Add to your MCP configuration:
+Add to your MCP configuration file:
 
 ```json
 {
   "mcpServers": {
     "ripgrep": {
       "command": "bun",
-      "args": ["run", "/path/to/GenesisTools/src/mcp-ripgrep/index.ts", "--root", "/path/to/search/directory"],
+      "args": [
+        "run",
+        "/path/to/GenesisTools/src/mcp-ripgrep/index.ts",
+        "--root",
+        "/path/to/search"
+      ],
       "env": {}
     }
   }
 }
 ```
 
-### MCP Configuration for Cursor
+</details>
 
-My own configuration of mcp.json for Cursor
+---
 
+### 10. ⏸️ Hold-AI Tool
+
+> Control AI responses with a WebSocket-based hold/release mechanism.
+
+<details>
+<summary><b>🔧 How It Works</b></summary>
+
+1. **Start Server** → Collects your messages
+2. **AI Connects** → Via client tool
+3. **You Provide Input** → Through editor interface
+4. **Send "OK"** → Releases AI to continue
+
+</details>
+
+<details>
+<summary><b>📝 Usage Flow</b></summary>
+
+```bash
+# Terminal 1: Start server
+tools hold-ai/server
+
+# Terminal 2: AI runs client
+tools hold-ai/client
+
+# Server: Opens editor for your input
+# Type messages, save & exit to send
+# Type "OK" alone to complete
 ```
+
+</details>
+
+---
+
+## ⚙️ Configuration
+
+### 🔧 MCP Configuration Example
+
+Here's a complete MCP configuration for Cursor:
+
+```json
 {
   "mcpServers": {
     "ripgrep": {
       "command": "tools mcp-ripgrep",
-      "args": ["--root", "/Users/Martin/Tresors/Projects/SomeProject/"],
+      "args": ["--root", "/Users/YourName/Projects/"],
       "env": {}
     },
     "github": {
@@ -442,51 +551,84 @@ My own configuration of mcp.json for Cursor
       "args": [],
       "env": {}
     },
-    "playwright": {
-      "command": "playwright-mcp-server",
-      "args": [],
-      "env": {}
-    },
     "brave-search": {
       "command": "mcp-server-brave-search",
       "env": {
-        "BRAVE_API_KEY": "...."
+        "BRAVE_API_KEY": "..."
       }
     },
     "filesystem": {
       "command": "mcp-server-filesystem",
-      "args": [
-        "/Users/Martin/Allowed/Directory/"
-      ]
+      "args": ["/Users/YourName/Allowed/Directory/"]
     }
   }
 }
 ```
 
-## License
+### 🐍 Python Package Management Tips
 
-This project is licensed under the MIT License.
-
-
-## Useful notes
-
-### Install any python package with its own environment
-- Install `brew install python-argcomplete pipx && pipx ensurepath`
-- Optional: `sudo pipx ensurepath --global`
-- For autocomplete, run `pipx completions` 
-  - Add `eval "$(register-python-argcomplete pipx)"` to ~/.zshrc
-  - Run `source ~/.zshrc`
-  - Follow the instructions from `pipx completions` if it doesn't work
-
-### Record usage of a process and show a graph of it 
-
-- Finish the [pipx installation](#install-any-python-package-with-its-own-environment) from above
-- Install: `pipx install 'psrecord[plot]'` 
-- Usage: `psrecord <pid> --interval <sec> --duration <sec> --plot Screen.png`
-
-### MCP 
-To add a bunch of MCP servers installed, it's best to install them globally like 
+<details>
+<summary><b>Install packages with isolated environments using pipx</b></summary>
 
 ```bash
-bun add --global @modelcontextprotocol/inspector @modelcontextprotocol/server-sequential-thinking @modelcontextprotocol/server-filesystem @modelcontextprotocol/server-github @modelcontextprotocol/server-puppeteer @modelcontextprotocol/server-brave-search @executeautomation/playwright-mcp-server
+# Install pipx
+brew install python-argcomplete pipx && pipx ensurepath
+
+# Optional: Enable global access
+sudo pipx ensurepath --global
+
+# For autocomplete
+pipx completions
+echo 'eval "$(register-python-argcomplete pipx)"' >> ~/.zshrc
+source ~/.zshrc
 ```
+
+</details>
+
+<details>
+<summary><b>Monitor Process Usage</b></summary>
+
+```bash
+# Install psrecord
+pipx install 'psrecord[plot]'
+
+# Record process usage
+psrecord <pid> --interval 1 --duration 60 --plot usage.png
+```
+
+</details>
+
+### 🌐 Global MCP Server Installation
+
+For system-wide access to MCP servers:
+
+```bash
+bun add --global \
+  @modelcontextprotocol/inspector \
+  @modelcontextprotocol/server-sequential-thinking \
+  @modelcontextprotocol/server-filesystem \
+  @modelcontextprotocol/server-github \
+  @modelcontextprotocol/server-puppeteer \
+  @modelcontextprotocol/server-brave-search \
+  @executeautomation/playwright-mcp-server
+```
+
+---
+
+## 📝 License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+---
+
+<div align="center">
+  
+  ### 🌟 Built with ❤️ by developers, for developers
+  
+  <p>
+    <a href="https://github.com/yourusername/GenesisTools">⭐ Star this repo</a> •
+    <a href="https://github.com/yourusername/GenesisTools/issues">🐛 Report Bug</a> •
+    <a href="https://github.com/yourusername/GenesisTools/pulls">✨ Contribute</a>
+  </p>
+  
+</div>
