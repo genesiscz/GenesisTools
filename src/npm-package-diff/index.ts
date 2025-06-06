@@ -82,7 +82,8 @@ const argv = minimist(process.argv.slice(2), {
         p: "patch",
         c: "config",
         s: "silent",
-        m: "package-manager"
+        m: "package-manager",
+        k: "keep"
     },
     default: {
         filter: "**/*.d.ts",
@@ -94,7 +95,7 @@ const argv = minimist(process.argv.slice(2), {
         packageManager: "auto",
         paging: false
     },
-    boolean: ["verbose", "help", "silent", "stats", "sizes", "line-numbers", "side-by-side", "word-diff", "use-delta", "paging"],
+    boolean: ["verbose", "help", "silent", "stats", "sizes", "line-numbers", "word-diff", "use-delta", "paging", "keep"],
     string: ["filter", "output", "format", "exclude", "patch", "config", "delta-theme", "npmrc", "package-manager"],
     number: ["timeout", "context"]
 });
@@ -155,11 +156,12 @@ ${chalk.bold("OPTIONS:")}
   ${chalk.cyan("--package-manager")}    Package manager: auto, npm, yarn, pnpm, bun
                        (default: "auto")
   ${chalk.cyan("--paging")}             Enable terminal pagination with color support
+  ${chalk.cyan("--keep, -k")}           Keep temporary directories after comparison
 
 ${chalk.bold("OUTPUT FORMATS:")}
   ${chalk.yellow("terminal")}       - Colored diff in terminal (default)
   ${chalk.yellow("unified")}        - Unified diff format (can be used as .patch)
-  ${chalk.yellow("html")}           - HTML output with syntax highlighting
+  ${chalk.yellow("html")}           - Interactive HTML with side-by-side/line-by-line toggle
   ${chalk.yellow("json")}           - JSON format with detailed changes
   ${chalk.yellow("side-by-side")}   - Side-by-side comparison in terminal
 
@@ -173,7 +175,7 @@ ${chalk.bold("EXAMPLES:")}
   ${chalk.gray("# Generate a patch file")}
   npm-package-diff express 4.17.0 4.18.0 --patch express.patch
 
-  ${chalk.gray("# Create HTML report")}
+  ${chalk.gray("# Create interactive HTML report")}
   npm-package-diff @types/node 18.0.0 20.0.0 --format html -o report.html
 
   ${chalk.gray("# Show side-by-side diff with statistics")}
@@ -188,6 +190,9 @@ ${chalk.bold("EXAMPLES:")}
   ${chalk.gray("# Enable pagination for large diffs")}
   npm-package-diff large-package 1.0.0 2.0.0 --paging
 
+  ${chalk.gray("# Keep temporary files for inspection")}
+  npm-package-diff some-package 1.0.0 2.0.0 --keep
+
 ${chalk.bold("CONFIG FILE EXAMPLE (.npmpackagediffrc):")}
 ${chalk.gray(`{
   "filter": "**/*.{js,ts,jsx,tsx}",
@@ -201,7 +206,8 @@ ${chalk.gray(`{
   "timeout": 180000,
   "packageManager": "pnpm",
   "npmrc": "./.npmrc",
-  "paging": true
+  "paging": true,
+  "useDelta": false
 }`)}
 `;
     logger.info(helpText);
@@ -493,6 +499,18 @@ class EnhancedPackageComparison {
     }
 
     async compareFiles(): Promise<void> {
+        // Check delta availability first if requested
+        if (this.options['use-delta'] && !this.isDeltaAvailable()) {
+            logger.error(chalk.yellow(
+                "\n⚠️  Delta is not installed but --use-delta was specified.\n" +
+                "   To install delta for beautiful diffs:\n" +
+                "   • macOS: brew install git-delta\n" +
+                "   • Linux: Download from https://github.com/dandavison/delta/releases\n" +
+                "   • Cargo: cargo install git-delta\n"
+            ));
+            process.exit(1);
+        }
+
         if (!this.options.silent) {
             this.spinner = ora({
                 text: `Comparing files...`,
@@ -648,7 +666,7 @@ class EnhancedPackageComparison {
     }
 
     private outputTerminalDiff(result: DiffResult): void {
-        if (this.options.useDelta && this.isDeltaAvailable()) {
+        if (this.options['use-delta'] && this.isDeltaAvailable()) {
             this.outputWithDelta(result);
             return;
         }
@@ -678,72 +696,94 @@ class EnhancedPackageComparison {
 
     private outputInlineDiff(result: DiffResult): void {
         const context = this.options.context;
-        let outputLines: string[] = [];
-        let currentLine = 1;
+        let outputLines: { type: 'add' | 'remove' | 'normal', content: string, lineNum?: number }[] = [];
+        let lineNumberOld = 1;
+        let lineNumberNew = 1;
         
         // Build a complete view of the file with changes
-        const lines: { type: 'add' | 'remove' | 'normal', content: string, lineNum?: number }[] = [];
-        
         result.changes?.forEach(change => {
-            const changeLines = change.value.split('\n').filter((_, idx, arr) => idx !== arr.length - 1 || change.value.endsWith('\n'));
+            const lines = change.value.split('\n');
+            // Remove last empty line if the change doesn't end with newline
+            if (lines[lines.length - 1] === '' && !change.value.endsWith('\n')) {
+                lines.pop();
+            }
             
-            changeLines.forEach(line => {
+            lines.forEach(line => {
                 if (change.added) {
-                    lines.push({ type: 'add', content: line });
+                    outputLines.push({ type: 'add', content: line, lineNum: lineNumberNew++ });
                 } else if (change.removed) {
-                    lines.push({ type: 'remove', content: line, lineNum: currentLine++ });
+                    outputLines.push({ type: 'remove', content: line, lineNum: lineNumberOld++ });
                 } else {
-                    lines.push({ type: 'normal', content: line, lineNum: currentLine++ });
+                    outputLines.push({ type: 'normal', content: line, lineNum: lineNumberOld });
+                    lineNumberOld++;
+                    lineNumberNew++;
                 }
             });
         });
 
-        // Find hunks with context
-        let inHunk = false;
-        let contextCounter = 0;
-        let lastPrintedLine = -1;
+        // Output with context
+        let i = 0;
+        let lastPrintedIdx = -1;
+        let hasOutput = false;
         
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
+        while (i < outputLines.length) {
+            const line = outputLines[i];
             
             if (line.type !== 'normal') {
-                // We're in a change, print context before if needed
-                const startContext = Math.max(0, i - context);
+                // We found a change, print context before
+                const startIdx = Math.max(lastPrintedIdx + 1, i - context);
                 
-                if (lastPrintedLine < startContext - 1) {
+                // Add separator if there's a gap
+                if (lastPrintedIdx >= 0 && startIdx > lastPrintedIdx + 1) {
                     this.write(chalk.cyan(`   @@ ... @@`));
                 }
                 
                 // Print context before
-                for (let j = Math.max(lastPrintedLine + 1, startContext); j < i; j++) {
-                    const contextLine = lines[j];
+                for (let j = startIdx; j < i; j++) {
+                    const contextLine = outputLines[j];
                     if (contextLine.type === 'normal') {
                         const lineNum = this.options.lineNumbers ? chalk.gray(` ${contextLine.lineNum?.toString().padStart(4)} `) : '';
                         this.write(chalk.gray(`${lineNum}  ${contextLine.content}`));
+                        hasOutput = true;
                     }
                 }
                 
-                // Print the change
-                if (line.type === 'add') {
-                    const lineNum = this.options.lineNumbers ? chalk.green(`+${"".padStart(4)} `) : '';
-                    this.write(chalk.green(`${lineNum}+ ${line.content}`));
-                } else if (line.type === 'remove') {
-                    const lineNum = this.options.lineNumbers ? chalk.red(`-${line.lineNum?.toString().padStart(4)} `) : '';
-                    this.write(chalk.red(`${lineNum}- ${line.content}`));
+                // Print all consecutive changes
+                let j = i;
+                while (j < outputLines.length && outputLines[j].type !== 'normal') {
+                    const changeLine = outputLines[j];
+                    if (changeLine.type === 'add') {
+                        const lineNum = this.options.lineNumbers ? chalk.green(` ${changeLine.lineNum?.toString().padStart(4)} `) : '';
+                        this.write(chalk.green(`${lineNum}+ ${changeLine.content}`));
+                    } else if (changeLine.type === 'remove') {
+                        const lineNum = this.options.lineNumbers ? chalk.red(` ${changeLine.lineNum?.toString().padStart(4)} `) : '';
+                        this.write(chalk.red(`${lineNum}- ${changeLine.content}`));
+                    }
+                    hasOutput = true;
+                    j++;
                 }
                 
-                lastPrintedLine = i;
-                inHunk = true;
-                contextCounter = context;
-            } else if (inHunk && contextCounter > 0) {
-                // Print context after changes
-                const lineNum = this.options.lineNumbers ? chalk.gray(` ${line.lineNum?.toString().padStart(4)} `) : '';
-                this.write(chalk.gray(`${lineNum}  ${line.content}`));
-                lastPrintedLine = i;
-                contextCounter--;
-            } else if (inHunk && contextCounter === 0) {
-                inHunk = false;
+                // Print context after
+                const endIdx = Math.min(j + context, outputLines.length);
+                for (let k = j; k < endIdx; k++) {
+                    const contextLine = outputLines[k];
+                    if (contextLine.type === 'normal') {
+                        const lineNum = this.options.lineNumbers ? chalk.gray(` ${contextLine.lineNum?.toString().padStart(4)} `) : '';
+                        this.write(chalk.gray(`${lineNum}  ${contextLine.content}`));
+                        hasOutput = true;
+                    }
+                }
+                
+                lastPrintedIdx = endIdx - 1;
+                i = endIdx;
+            } else {
+                i++;
             }
+        }
+
+        // If no output was generated (e.g., all changes are beyond context), show a message
+        if (!hasOutput && result.changes && result.changes.length > 0) {
+            this.write(chalk.gray(`   [Changes exist but are outside the context of ${context} lines]`));
         }
     }
 
@@ -760,18 +800,26 @@ class EnhancedPackageComparison {
         const context = this.options.context;
         let contextBuffer: string[] = [];
         let inChange = false;
+        let hasOutput = false;
         
         result.changes?.forEach((change, idx) => {
-            const lines = change.value.split('\n').filter(line => line !== '');
+            const lines = change.value.split('\n');
+            if (lines[lines.length - 1] === '' && !change.value.endsWith('\n')) {
+                lines.pop();
+            }
             
             if (change.added || change.removed) {
                 // Output context before if we have any
                 if (contextBuffer.length > 0) {
                     const startIdx = Math.max(0, contextBuffer.length - context);
+                    if (inChange && startIdx > 0) {
+                        this.write(chalk.cyan(`${"...".padEnd(columnWidth)} │ ${"...".padEnd(columnWidth)}`));
+                    }
                     for (let i = startIdx; i < contextBuffer.length; i++) {
                         const line = contextBuffer[i];
                         const truncated = line.substring(0, columnWidth - 2);
                         this.write(`${chalk.gray("  " + truncated.padEnd(columnWidth - 2))} │ ${chalk.gray("  " + truncated)}`);
+                        hasOutput = true;
                     }
                 }
                 contextBuffer = [];
@@ -784,6 +832,7 @@ class EnhancedPackageComparison {
                     } else if (change.removed) {
                         this.write(`${chalk.red("- " + truncatedLine.padEnd(columnWidth - 2))} │`);
                     }
+                    hasOutput = true;
                 });
             } else {
                 // Normal lines
@@ -792,9 +841,10 @@ class EnhancedPackageComparison {
                     lines.slice(0, context).forEach(line => {
                         const truncated = line.substring(0, columnWidth - 2);
                         this.write(`${chalk.gray("  " + truncated.padEnd(columnWidth - 2))} │ ${chalk.gray("  " + truncated)}`);
+                        hasOutput = true;
                     });
                     inChange = false;
-                    contextBuffer = [];
+                    contextBuffer = lines.slice(context);
                 } else {
                     // Buffer context lines
                     contextBuffer = contextBuffer.concat(lines);
@@ -804,6 +854,10 @@ class EnhancedPackageComparison {
                 }
             }
         });
+
+        if (!hasOutput && result.changes && result.changes.length > 0) {
+            this.write(chalk.gray(`   [Changes exist but are outside the context of ${context} lines]`));
+        }
     }
 
     private isDeltaAvailable(): boolean {
@@ -811,15 +865,6 @@ class EnhancedPackageComparison {
             execSync('which delta', { stdio: 'ignore' });
             return true;
         } catch {
-            if (this.options.useDelta) {
-                this.write(chalk.yellow(
-                    "\n⚠️  Delta is not installed but --use-delta was specified.\n" +
-                    "   To install delta for beautiful diffs:\n" +
-                    "   • macOS: brew install git-delta\n" +
-                    "   • Linux: Download from https://github.com/dandavison/delta/releases\n" +
-                    "   • Cargo: cargo install git-delta\n"
-                ));
-            }
             return false;
         }
     }
@@ -829,8 +874,7 @@ class EnhancedPackageComparison {
             const tempFile = path.join(os.tmpdir(), `npm-diff-${Date.now()}.patch`);
             fs.writeFileSync(tempFile, result.patch);
             
-            const theme = this.options.deltaTheme || 'auto';
-            const deltaCmd = `delta --file-style=bold --hunk-header-style=file --theme=${theme} < ${tempFile}`;
+            const deltaCmd = `delta --file-style=bold --hunk-header-style=file < ${tempFile}`;
             
             try {
                 execSync(deltaCmd, { stdio: 'inherit' });
@@ -854,17 +898,10 @@ class EnhancedPackageComparison {
     }
 
     private generateHtmlOutput(): string {
-        try {
-            const Diff2Html = require("diff2html");
-            const unifiedDiff = this.generateUnifiedDiff();
-            const html = Diff2Html.html(unifiedDiff, {
-                drawFileList: true,
-                matching: "lines",
-                outputFormat: this.options.sideBySide ? "side-by-side" : "line-by-line",
-                highlightCode: true
-            });
-
-            const template = `
+        const unifiedDiff = this.generateUnifiedDiff();
+        const escapedDiff = unifiedDiff.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        
+        const template = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -897,11 +934,42 @@ class EnhancedPackageComparison {
             background: #f0f0f0;
             border-radius: 4px;
         }
+        .controls {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .controls button {
+            padding: 8px 16px;
+            margin-right: 10px;
+            border: none;
+            border-radius: 4px;
+            background: #007bff;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .controls button:hover {
+            background: #0056b3;
+        }
+        .controls button.active {
+            background: #28a745;
+        }
         .diff-wrapper {
             background: white;
             border-radius: 8px;
             overflow: hidden;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        #diff-container {
+            padding: 20px;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
         }
     </style>
 </head>
@@ -919,16 +987,81 @@ class EnhancedPackageComparison {
             <span class="stat">➖ Files Removed: ${this.results.filter(r => r.status === "removed").length}</span>
         </div>
     </div>
-    <div class="diff-wrapper">
-        ${html}
+    <script>
+    let fileList = true;
+    </script>
+    <div class="controls">
+        <button id="side-by-side-btn" onclick="switchToSideBySide()">Side by Side</button>
+        <button id="line-by-line-btn" class="active" onclick="switchToLineByLine()">Line by Line</button>
     </div>
+    
+    <div class="diff-wrapper">
+        <div id="diff-container">
+            <div class="loading">Loading diff...</div>
+        </div>
+    </div>
+
+    <script>
+        // Store the unified diff in a variable
+        const unifiedDiff = \`${escapedDiff}\`;
+        
+        let currentView = 'line-by-line';
+        let diff2htmlUi = null;
+        
+        function renderDiff(outputFormat) {
+            const targetElement = document.getElementById('diff-container');
+            targetElement.innerHTML = '<div class="loading">Rendering diff...</div>';
+            
+            // Use setTimeout to allow the loading message to show
+            setTimeout(() => {
+                diff2htmlUi = new Diff2HtmlUI(targetElement, unifiedDiff, {
+                    drawFileList: true,
+                    matching: 'lines',
+                    outputFormat: outputFormat,
+                    highlightCode: true,
+                    fileListToggle: true,
+                    fileContentToggle: true,
+                    synchronisedScroll: true
+                });
+                
+                diff2htmlUi.draw();
+                diff2htmlUi.highlightCode();
+                diff2htmlUi.fileListToggle(true);
+                
+                if (outputFormat === 'side-by-side') {
+                    diff2htmlUi.synchronisedScroll();
+                }
+            }, 100);
+        }
+        
+        function switchToSideBySide() {
+            currentView = 'side-by-side';
+            document.getElementById('side-by-side-btn').classList.add('active');
+            document.getElementById('line-by-line-btn').classList.remove('active');
+            renderDiff('side-by-side');
+        }
+        
+        function switchToLineByLine() {
+            currentView = 'line-by-line';
+            document.getElementById('line-by-line-btn').classList.add('active');
+            document.getElementById('side-by-side-btn').classList.remove('active');
+            renderDiff('line-by-line');
+        }
+        
+        function toggleFileList() {
+            if (diff2htmlUi) {
+                diff2htmlUi.fileListToggle(true);
+            }
+        }
+        
+        // Initial render
+        document.addEventListener('DOMContentLoaded', function() {
+            renderDiff('line-by-line');
+        });
+    </script>
 </body>
 </html>`;
-            return template;
-        } catch (e) {
-            logger.error("Failed to generate HTML output. Install diff2html: npm install diff2html");
-            return "";
-        }
+        return template;
     }
 
     private generateJsonOutput(): string {
@@ -970,8 +1103,6 @@ class EnhancedPackageComparison {
                 output = this.generateJsonOutput();
                 break;
             case "side-by-side":
-                this.options.sideBySide = true;
-                // Fall through to terminal
             case "terminal":
             default:
                 // Terminal output is handled differently
@@ -1078,7 +1209,7 @@ class EnhancedPackageComparison {
     }
 
     async cleanup(): Promise<void> {
-        if (!this.options.keepTemp) {
+        if (!this.options.keep) {
             const cleanupSpinner = ora({
                 text: "Cleaning up temporary files...",
                 spinner: "dots"
