@@ -25,10 +25,7 @@
   - [🤖 AI & Analysis](#-ai--analysis)
   - [📊 Monitoring & Watching](#-monitoring--watching)
   - [📦 Package Management](#-package-management)
-  - [🔌 MCP Servers](#-mcp-servers)
 - [💡 Tool Details](#-tool-details)
-- [⚙️ Configuration](#️-configuration)
-- [📝 License](#-license)
 
 ---
 
@@ -46,8 +43,9 @@ curl -fsSL https://bun.sh/install | bash
 ### Installation
 
 ```bash
+cd ~
 # Clone and install GenesisTools
-git clone https://github.com/yourusername/GenesisTools.git
+git clone https://github.com/genesiscz/GenesisTools.git
 cd GenesisTools
 
 # Install dependencies and make tools globally available
@@ -71,19 +69,12 @@ tools
 
 ## 🛠️ Available Tools
 
-<table>
-<tr>
-<td width="50%">
-
 ### 🔍 Git & Version Control
 
 | Tool | Description |
 |------|-------------|
 | **[Git Last Commits Diff](#1--git-last-commits-diff)** | 📝 View diffs between recent commits |
 | **[GitHub Release Notes](#3--github-release-notes)** | 📋 Generate beautiful release notes |
-
-</td>
-<td width="50%">
 
 ### 🤖 AI & Analysis
 
@@ -92,11 +83,7 @@ tools
 | **[Collect Files for AI](#2--collect-files-for-ai)** | 🤖 Aggregate project files for AI analysis |
 | **[Files to Prompt](#8--files-to-prompt)** | 💬 Convert files to AI-friendly prompts |
 | **[Hold-AI](#10--hold-ai-tool)** | ⏸️ Control AI responses via WebSocket |
-
-</td>
-</tr>
-<tr>
-<td width="50%">
+| **[MCP Ripgrep](#9--mcp-ripgrep)** | ⚡ Lightning-fast code search server |
 
 ### 📊 Monitoring & Watching
 
@@ -105,19 +92,11 @@ tools
 | **[Watchman](#5--watchman)** | 👁️ Monitor file changes with Facebook Watchman |
 | **[Watch](#6--watch-formerly-watch-glob)** | 🔄 Real-time file monitoring with glob patterns |
 
-</td>
-<td width="50%">
-
 ### 📦 Package Management
 
 | Tool | Description |
 |------|-------------|
 | **[NPM Package Diff](#7--npm-package-diff)** | 🎨 Beautiful package version comparisons |
-| **[MCP Ripgrep](#9--mcp-ripgrep)** | ⚡ Lightning-fast code search server |
-
-</td>
-</tr>
-</table>
 
 ---
 
@@ -267,7 +246,7 @@ tools watchman
 
 ---
 
-### 6. 🔄 Watch (formerly Watch-Glob)
+### 6. 🔄 Watch 
 
 > Real-time file monitoring with powerful glob patterns - like `tail -f` on steroids! 🚀
 
@@ -318,7 +297,9 @@ tools watch "src/**/*" --seconds 1 -n 200
 
 ### 7. 🎨 NPM Package Diff
 
-> **The Swiss Army knife for comparing NPM package versions!** 🛠️
+> **🚀 Lightning-fast, beautiful diffs between NPM package versions**
+
+A powerful command-line tool that creates temporary directories, installs package versions in parallel, watches for file changes during installation, and shows beautiful diffs with multiple output formats.
 
 ![Features](https://img.shields.io/badge/Features-12+-brightgreen?style=for-the-badge) ![Output Formats](https://img.shields.io/badge/Output_Formats-5-blue?style=for-the-badge) ![Performance](https://img.shields.io/badge/Performance-Parallel-orange?style=for-the-badge)
 
@@ -394,7 +375,7 @@ tools npm-package-diff webpack 4.46.0 5.88.0 --stats --sizes
 </details>
 
 <details>
-<summary><b>📋 Output Formats</b></summary>
+<summary><b>📋 Output Formats (`--format`)</b></summary>
 
 - **🖥️ terminal** - Colored diff with syntax highlighting (default)
 - **📄 unified** - Standard patch format for git apply
@@ -470,12 +451,10 @@ Add to your MCP configuration file:
 {
   "mcpServers": {
     "ripgrep": {
-      "command": "bun",
+      "command": "tools mcp-ripgrep",
       "args": [
-        "run",
-        "/path/to/GenesisTools/src/mcp-ripgrep/index.ts",
         "--root",
-        "/path/to/search"
+        "/Root/Path/For/Project/"
       ],
       "env": {}
     }
@@ -520,9 +499,80 @@ tools hold-ai/client
 
 ---
 
-## ⚙️ Configuration
+# Useful notes
 
-### 🔧 MCP Configuration Example
+<details>
+<summary><b>🔌 MCP (Model Context Protocol)</b></summary>
+
+### 🌐 Global MCP Server Installation
+
+For system-wide access to MCP servers:
+
+```bash
+bun add --global \
+  @modelcontextprotocol/inspector \
+  @modelcontextprotocol/server-sequential-thinking \
+  @modelcontextprotocol/server-filesystem \
+  @modelcontextprotocol/server-github \
+  @modelcontextprotocol/server-puppeteer \
+  @modelcontextprotocol/server-brave-search \
+  @executeautomation/playwright-mcp-server \
+  interactive-mcp
+```
+
+### 🔧 MCP Configuration Example for Claude Desktop
+
+> 📌 **Important**: Claude Desktop seems to lose ability to find tools in the $PATH. For that reason, the "command" needs to have the FULL path to the tool (to find where it is, run `which tools` or `which mcp-server-github` for example)
+
+Here's a complete MCP example configuration for Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "/Users/YourName/.bun/bin/mcp-server-github",
+      "args": [],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_...."
+      }
+    },
+    "ripgrep": {
+      "command": "/Users/YourName/PathTo/GenesisTools/tools",
+      "args": [
+        "mcp-ripgrep"
+      ],
+      "env": {
+        "SHELL": "/bin/zsh"
+      }
+    },
+    "sequential-thinking": {
+      "command": "/opt/homebrew/bin/mcp-server-sequential-thinking",
+      "args": [],
+      "env": {}
+    },
+    "puppeteer": {
+      "command": "/Users/YourName/.bun/bin/mcp-server-puppeteer",
+      "args": [],
+      "env": {}
+    },
+    "brave-search": {
+      "command": "/Users/YourName/.bun/bin/mcp-server-brave-search",
+      "env": {
+        "BRAVE_API_KEY": "BSAIV......"
+      }
+    },
+    "filesystem": {
+      "command": "/Users/YourName/.bun/bin/mcp-server-filesystem",
+      "args": [
+        "/Users/YourName/PathTo/Projects/"
+      ]
+    }
+  },
+  "globalShortcut": ""
+}
+```
+
+### 🔧 MCP Configuration Example for Cursor
 
 Here's a complete MCP configuration for Cursor:
 
@@ -565,7 +615,9 @@ Here's a complete MCP configuration for Cursor:
 }
 ```
 
-### 🐍 Python Package Management Tips
+</details>
+
+## 🐍 Python Package Management Tips
 
 <details>
 <summary><b>Install packages with isolated environments using pipx</b></summary>
@@ -598,27 +650,6 @@ psrecord <pid> --interval 1 --duration 60 --plot usage.png
 
 </details>
 
-### 🌐 Global MCP Server Installation
-
-For system-wide access to MCP servers:
-
-```bash
-bun add --global \
-  @modelcontextprotocol/inspector \
-  @modelcontextprotocol/server-sequential-thinking \
-  @modelcontextprotocol/server-filesystem \
-  @modelcontextprotocol/server-github \
-  @modelcontextprotocol/server-puppeteer \
-  @modelcontextprotocol/server-brave-search \
-  @executeautomation/playwright-mcp-server
-```
-
----
-
-## 📝 License
-
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
-
 ---
 
 <div align="center">
@@ -626,9 +657,9 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
   ### 🌟 Built with ❤️ by developers, for developers
   
   <p>
-    <a href="https://github.com/yourusername/GenesisTools">⭐ Star this repo</a> •
-    <a href="https://github.com/yourusername/GenesisTools/issues">🐛 Report Bug</a> •
-    <a href="https://github.com/yourusername/GenesisTools/pulls">✨ Contribute</a>
+    <a href="https://github.com/genesiscz/GenesisTools">⭐ Star this repo</a> •
+    <a href="https://github.com/genesiscz/GenesisTools/issues">🐛 Report Bug</a> •
+    <a href="https://github.com/genesiscz/GenesisTools/pulls">✨ Contribute</a>
   </p>
   
 </div>
