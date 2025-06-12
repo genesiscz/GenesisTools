@@ -29,7 +29,7 @@ export const createLogger = (level: pino.LevelWithSilent, logToFile: boolean) =>
         streams.push({
             stream: pino.destination({
                 dest: logFilePath,
-                sync: false, // Async writing is generally better for performance
+                sync: true, // Async writing is generally better for performance
             }),
             level,
         });
@@ -77,6 +77,11 @@ export const createDefaultLoggerFromCommandLineArgs = () => {
 
 const logger = createDefaultLoggerFromCommandLineArgs();
 const consoleLog = createLogger(level, false);
+
+// Ensure all logs are flushed before the process exits
+process.on('beforeExit', () => {
+    logger.flush();
+});
 
 export { consoleLog };
 export default logger;
