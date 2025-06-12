@@ -400,6 +400,7 @@ tools npm-package-diff webpack 4.46.0 5.88.0 --stats --sizes
 - 👻 Hidden file handling
 - 📊 Line number support
 - 🚫 Gitignore respect
+- 📂 Flat folder structure copying with renamed files
 
 </details>
 
@@ -418,6 +419,12 @@ tools files-to-prompt --markdown -n -o output.md project/
 
 # XML format for Claude
 tools files-to-prompt --cxml src/ > prompt.xml
+
+# Copy files to flat folder structure (renames files with directory structure)
+tools files-to-prompt --flat-folder -o flat-output/ src/
+
+# Flat folder with extension filtering
+tools files-to-prompt --flat-folder -e js -e ts -o flat-js-ts/ project/
 
 # Pipe from find command
 find . -name "*.py" | tools files-to-prompt -0

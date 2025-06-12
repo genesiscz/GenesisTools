@@ -1,7 +1,7 @@
 import minimist from "minimist";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve, relative } from "node:path";
 import { existsSync, statSync } from "node:fs";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile } from "node:fs/promises";
 import { minimatch } from "minimatch";
 import logger from "../logger";
 import type { FileSink } from "bun";
@@ -18,6 +18,7 @@ interface Options {
   cxml?: boolean;
   markdown?: boolean;
   lineNumbers?: boolean;
+  flatFolder?: boolean;
   null?: boolean;
   help?: boolean;
   version?: boolean;
@@ -27,6 +28,7 @@ interface Options {
   c?: boolean;
   m?: boolean;
   n?: boolean;
+  f?: boolean;
   h?: boolean;
   0?: boolean;
 }
@@ -56,6 +58,11 @@ const EXT_TO_LANG: Record<string, string> = {
 };
 
 // --- Helper Functions ---
+function pathToFlatName(filePath: string, basePath: string): string {
+  const relativePath = relative(basePath, filePath);
+  return relativePath.replace(/[/\\]/g, '__');
+}
+
 function shouldIgnore(path: string, gitignoreRules: string[]): boolean {
   const baseFile = basename(path);
   // Check file match
@@ -183,7 +190,10 @@ async function processPath(
   writer: WriterFunc,
   claudeXml: boolean,
   markdown: boolean,
-  lineNumbers: boolean
+  lineNumbers: boolean,
+  flatFolder: boolean = false,
+  outputDir?: string,
+  basePath?: string
 ): Promise<void> {
   if (!existsSync(path)) {
     logger.error(`Path does not exist: ${path}`);
@@ -206,12 +216,25 @@ async function processPath(
           const ext = extname(path).slice(1).toLowerCase();
           if (extensions.length > 0 && !extensions.includes(ext)) return;
 
-        try {
-          const content = await readFile(path, { encoding: "utf-8" });
-          printPath(writer, path, content, claudeXml, markdown, lineNumbers);
-        } catch (error) {
-          const message = `Warning: Skipping file ${path} due to error: ${error}`;
-          logger.error(message);
+        if (flatFolder && outputDir && basePath) {
+          // Copy file to flat structure
+          const flatName = pathToFlatName(path, basePath);
+          const destPath = join(outputDir, flatName);
+          try {
+            await Bun.write(destPath, Bun.file(path));
+            logger.info(`Copied: ${path} -> ${destPath}`);
+          } catch (error) {
+            logger.error(`Error copying file ${path}: ${error}`);
+          }
+        } else {
+          // Original behavior - output content
+          try {
+            const content = await readFile(path, { encoding: "utf-8" });
+            printPath(writer, path, content, claudeXml, markdown, lineNumbers);
+          } catch (error) {
+            const message = `Warning: Skipping file ${path} due to error: ${error}`;
+            logger.error(message);
+          }
         }
         return;
       }
@@ -268,12 +291,26 @@ async function processPath(
           if (extensions.length > 0 && !extensions.includes(ext)) {
              continue;
           }
-          try {
-            const content = await readFile(entryPath, { encoding: "utf-8" });
-            printPath(writer, entryPath, content, claudeXml, markdown, lineNumbers);
-          } catch (error) {
-            const message = `Warning: Skipping file ${entryPath} due to error: ${error}`;
-            logger.error(message);
+          
+          if (flatFolder && outputDir && basePath) {
+            // Copy file to flat structure
+            const flatName = pathToFlatName(entryPath, basePath);
+            const destPath = join(outputDir, flatName);
+            try {
+              await Bun.write(destPath, Bun.file(entryPath));
+              logger.info(`Copied: ${entryPath} -> ${destPath}`);
+            } catch (error) {
+              logger.error(`Error copying file ${entryPath}: ${error}`);
+            }
+          } else {
+            // Original behavior - output content
+            try {
+              const content = await readFile(entryPath, { encoding: "utf-8" });
+              printPath(writer, entryPath, content, claudeXml, markdown, lineNumbers);
+            } catch (error) {
+              const message = `Warning: Skipping file ${entryPath} due to error: ${error}`;
+              logger.error(message);
+            }
           }
         }
       }
@@ -284,10 +321,19 @@ async function processPath(
 }
 
 async function readPathsFromStdin(useNullSeparator: boolean): Promise<string[]> {
+  const reader = Bun.stdin.stream().getReader();
   let input = "";
-  for await (const chunk of Bun.stdin.stream()) {
-    input += Buffer.from(chunk).toString();
+  
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      input += Buffer.from(value).toString();
+    }
+  } finally {
+    reader.releaseLock();
   }
+  
   if (!input) {
     return [];
   }
@@ -316,10 +362,11 @@ Options:
   --ignore-files-only     --ignore option only ignores files
   --ignore-gitignore      Ignore .gitignore files and include all files
   --ignore PATTERN        List of patterns to ignore (can use multiple times)
-  -o, --output FILE       Output to a file instead of stdout
+  -o, --output FILE       Output to a file instead of stdout (or directory for --flat-folder)
   -c, --cxml              Output in XML-ish format suitable for Claude
   -m, --markdown          Output Markdown with fenced code blocks
   -n, --line-numbers      Add line numbers to the output
+  -f, --flat-folder       Copy files to a flat folder structure with renamed files
   -0, --null              Use NUL character as separator when reading from stdin
   -h, --help              Show this help message
   --version               Show version information
@@ -328,6 +375,7 @@ Examples:
   files-to-prompt src/components
   files-to-prompt -e js -e ts src/
   files-to-prompt --markdown -o output.md project/
+  files-to-prompt --flat-folder -o flat-output/ src/
   find . -name "*.py" | files-to-prompt -0
 `);
 }
@@ -342,7 +390,8 @@ async function main(): Promise<void> {
             m: "markdown",
             h: "help",
             v: "version",
-            '0': "null"
+            '0': "null",
+            f: "flatFolder"
         },
         boolean: [
             "includeHidden",
@@ -353,7 +402,8 @@ async function main(): Promise<void> {
             "lineNumbers", // IMPORTANT: Treat -n as boolean if no value given
             "null",
             "help",
-            "version"
+            "version",
+            "flatFolder"
         ],
         string: ["output"],
         // Declare potentially multi-value args explicitly if needed by minimist typing/parsing
@@ -389,12 +439,23 @@ async function main(): Promise<void> {
     const markdown = !!argv.markdown;
     const lineNumbers = !!argv.lineNumbers; // Now correctly uses boolean flag value
     const readStdinNull = !!argv.null;
+    const flatFolder = !!(argv.flatFolder || argv["flat-folder"]);
 
+    // Validate options
+    if (flatFolder && !outputFile) {
+        logger.error("Error: --flat-folder requires -o/--output to specify the destination directory.");
+        process.exit(1);
+    }
+
+    if (flatFolder && (claudeXml || markdown)) {
+        logger.error("Error: --flat-folder cannot be used with --cxml or --markdown options.");
+        process.exit(1);
+    }
 
     let writer: WriterFunc = (s: string) => { process.stdout.write(s + "\n"); };
     let fileSink: FileSink | null = null;
 
-    if (outputFile) {
+    if (outputFile && !flatFolder) {
         try {
             const outputDir = dirname(outputFile);
             if (!existsSync(outputDir)) {
@@ -406,6 +467,19 @@ async function main(): Promise<void> {
             logger.error(`Error setting up output file ${outputFile}: ${error.message}`);
             process.exit(1);
         }
+    } else if (flatFolder && outputFile) {
+        // Create output directory for flat folder structure
+        try {
+            if (!existsSync(outputFile)) {
+                await mkdir(outputFile, { recursive: true });
+            } else if (!statSync(outputFile).isDirectory()) {
+                logger.error(`Error: Output path ${outputFile} exists but is not a directory.`);
+                process.exit(1);
+            }
+        } catch (error: any) {
+            logger.error(`Error setting up output directory ${outputFile}: ${error.message}`);
+            process.exit(1);
+        }
     }
 
     let processedPaths: string[] = [];
@@ -414,6 +488,49 @@ async function main(): Promise<void> {
     } else {
         processedPaths = await readPathsFromStdin(readStdinNull);
         processedPaths = processedPaths.map(p => resolve(p));
+    }
+
+    // Calculate common base path for flat folder mode
+    let commonBasePath: string | undefined;
+    if (flatFolder && processedPaths.length > 0) {
+        // Find the common base directory for all paths
+        commonBasePath = processedPaths[0];
+        try {
+            const stats = statSync(commonBasePath);
+            if (!stats.isDirectory()) {
+                commonBasePath = dirname(commonBasePath);
+            }
+        } catch (error) {
+            commonBasePath = dirname(commonBasePath);
+        }
+
+        // Find the deepest common directory
+        for (let i = 1; i < processedPaths.length; i++) {
+            let currentPath = processedPaths[i];
+            try {
+                const stats = statSync(currentPath);
+                if (!stats.isDirectory()) {
+                    currentPath = dirname(currentPath);
+                }
+            } catch (error) {
+                currentPath = dirname(currentPath);
+            }
+
+            // Find common path between commonBasePath and currentPath
+            const commonParts = [];
+            const baseParts = commonBasePath.split(/[/\\]/);
+            const currentParts = currentPath.split(/[/\\]/);
+            
+            for (let j = 0; j < Math.min(baseParts.length, currentParts.length); j++) {
+                if (baseParts[j] === currentParts[j]) {
+                    commonParts.push(baseParts[j]);
+                } else {
+                    break;
+                }
+            }
+            
+            commonBasePath = commonParts.join('/');
+        }
     }
 
     // Process each path
@@ -431,7 +548,10 @@ async function main(): Promise<void> {
             writer,
             claudeXml,
             markdown,
-            lineNumbers
+            lineNumbers,
+            flatFolder,
+            flatFolder ? outputFile : undefined,
+            commonBasePath
         );
     }
 
