@@ -18,6 +18,7 @@
         "typescript": "^5.0.0"
     },
     "dependencies": {
+        "@ai-sdk/openai": "^1.3.22",
         "@modelcontextprotocol/sdk": "^1.11.0",
         "@modelcontextprotocol/server-github": "^2025.4.8",
         "@types/chokidar": "^2.1.7",
@@ -25,6 +26,7 @@
         "@types/glob": "^8.1.0",
         "@types/minimist": "^1.2.5",
         "@types/ws": "^8.18.1",
+        "ai": "^4.3.16",
         "axios": "^1.8.4",
         "boxen": "^8.0.1",
         "chalk": "^5.4.1",

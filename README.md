@@ -73,6 +73,7 @@ tools
 
 | Tool | Description |
 |------|-------------|
+| **[Git Commit](#11--git-commit)** | 🤖 AI-powered commit messages with auto-staging |
 | **[Git Last Commits Diff](#1--git-last-commits-diff)** | 📝 View diffs between recent commits |
 | **[GitHub Release Notes](#3--github-release-notes)** | 📋 Generate beautiful release notes |
 
@@ -501,6 +502,63 @@ tools hold-ai/client
 # Type messages, save & exit to send
 # Type "OK" alone to complete
 ```
+
+</details>
+
+---
+
+### 11. 🤖 Git Commit
+
+> Automatically stage changes, generate AI-powered commit messages, and optionally push - all in one command!
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+- 🎯 Auto-stages all changes with `git add .`
+- 🤖 Generates 4 commit message suggestions using Google Gemini AI
+- 📝 Interactive commit message selection
+- 🚀 Optional automatic push after commit
+- 🔍 Shows diff preview in verbose mode
+
+</details>
+
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
+
+```bash
+# Basic usage - stages, generates messages, commits
+tools git-commit
+
+# Verbose mode to see diff preview
+tools git-commit --verbose
+
+# Just run it - it's that simple!
+tools git-commit
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ Configuration</b></summary>
+
+**Required Environment Variable:**
+```bash
+export OPENROUTER_API_KEY=your_openrouter_api_key
+```
+
+The tool uses Google's Gemini 2.0 Flash Lite model via OpenRouter for fast, high-quality commit messages.
+
+</details>
+
+<details>
+<summary><b>📋 Workflow</b></summary>
+
+1. **Stage Changes** → Automatically runs `git add .`
+2. **Analyze Diff** → Examines staged changes
+3. **Generate Messages** → AI creates 4 contextual commit messages
+4. **Select Message** → Choose the best one interactively
+5. **Commit** → Creates commit with chosen message
+6. **Push (Optional)** → Asks if you want to push to remote
 
 </details>
 
