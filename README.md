@@ -509,14 +509,15 @@ tools hold-ai/client
 
 ### 11. 🤖 Git Commit
 
-> Automatically stage changes, generate AI-powered commit messages, and optionally push - all in one command!
+> Generate AI-powered commit messages for your staged changes, with optional detailed descriptions and push functionality!
 
 <details>
 <summary><b>✨ Features</b></summary>
 
-- 🎯 Auto-stages all changes with `git add .`
 - 🤖 Generates 4 commit message suggestions using Google Gemini AI
 - 📝 Interactive commit message selection
+- 📃 Optional detailed commit messages with body text (`--detail`)
+- 📦 Optional staging of all changes (`--stage`)
 - 🚀 Optional automatic push after commit
 - 🔍 Shows diff preview in verbose mode
 
@@ -526,15 +527,33 @@ tools hold-ai/client
 <summary><b>🎯 Quick Examples</b></summary>
 
 ```bash
-# Basic usage - stages, generates messages, commits
+# Generate commit for already staged changes
 tools git-commit
+
+# Stage all changes first, then commit
+tools git-commit --stage
+
+# Generate detailed commit messages with body text
+tools git-commit --detail
+
+# Stage changes and generate detailed commits
+tools git-commit --stage --detail
 
 # Verbose mode to see diff preview
 tools git-commit --verbose
-
-# Just run it - it's that simple!
-tools git-commit
 ```
+
+</details>
+
+<details>
+<summary><b>⚙️ Options</b></summary>
+
+| Option | Alias | Description |
+|--------|-------|-------------|
+| `--stage` | `-s` | Stage all changes before committing |
+| `--detail` | `-d` | Generate detailed commit messages with body text |
+| `--verbose` | `-v` | Enable verbose logging |
+| `--help` | `-h` | Show help message |
 
 </details>
 
@@ -553,9 +572,11 @@ The tool uses Google's Gemini 2.0 Flash Lite model via OpenRouter for fast, high
 <details>
 <summary><b>📋 Workflow</b></summary>
 
-1. **Stage Changes** → Automatically runs `git add .`
+1. **Stage Changes (Optional)** → Runs `git add .` if `--stage` is used
 2. **Analyze Diff** → Examines staged changes
 3. **Generate Messages** → AI creates 4 contextual commit messages
+   - With `--detail`: Each message includes a summary line and detailed body
+   - Without `--detail`: Just concise summary lines
 4. **Select Message** → Choose the best one interactively
 5. **Commit** → Creates commit with chosen message
 6. **Push (Optional)** → Asks if you want to push to remote

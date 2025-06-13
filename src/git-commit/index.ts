@@ -1,13 +1,15 @@
 import minimist from "minimist";
 import Enquirer from "enquirer";
-import chalk from "chalk";
-import { openai } from "@ai-sdk/openai";
-import { generateText } from "ai";
-import logger from '../logger';
+import { generateObject } from "ai";
+import { z } from "zod";
+import logger from "../logger";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
 interface Options {
     help?: boolean;
     verbose?: boolean;
+    detail?: boolean;
+    stage?: boolean;
 }
 
 interface Args extends Options {
@@ -17,25 +19,29 @@ interface Args extends Options {
 const prompter = new Enquirer();
 
 function showHelp() {
-    logger.info(`
-Usage: tools git-commit-auto [options]
+    console.log(`
+Usage: tools git-commit [options]
 
-Automatically stage changes, generate commit messages using AI, and optionally push.
+Generate commit messages using AI and optionally push.
 
 Options:
+  -s, --stage     Stage all changes before committing
+  -d, --detail    Generate detailed commit messages with body text
   -v, --verbose   Enable verbose logging
   -h, --help      Show this help message
 
 Examples:
-  tools git-commit-auto
-  tools git-commit-auto --verbose
+  tools git-commit                    # Generate commit for staged changes
+  tools git-commit --stage            # Stage all changes first
+  tools git-commit --detail           # Generate commits with detailed descriptions
+  tools git-commit --stage --detail   # Stage changes and generate detailed commits
 `);
 }
 
 async function getGitDiff(): Promise<string> {
     const proc = Bun.spawn({
         cmd: ["git", "diff", "--cached"],
-        stdio: ["ignore", "pipe", "pipe"]
+        stdio: ["ignore", "pipe", "pipe"],
     });
 
     const stdout = await new Response(proc.stdout).text();
@@ -49,42 +55,74 @@ async function getGitDiff(): Promise<string> {
     return stdout;
 }
 
-async function generateCommitMessages(diff: string): Promise<string[]> {
+interface CommitMessage {
+    summary: string;
+    detail?: string;
+}
+
+async function generateCommitMessages(diff: string, includeDetail: boolean): Promise<CommitMessage[]> {
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
         throw new Error("OPENROUTER_API_KEY environment variable is not set");
     }
 
-    const openRouter = openai({
-        baseURL: 'https://openrouter.ai/api/v1',
+    const openRouter = createOpenRouter({
+        baseURL: "https://openrouter.ai/api/v1",
         apiKey,
     });
 
-    const prompt = `Based on the following git diff, generate 4 different concise commit messages that describe the changes. Each message should be clear, follow conventional commit format when appropriate, and be on a new line.
+    if (includeDetail) {
+        const prompt = `Based on the following git diff, generate 4 different commit messages. Each should have:
+1. A concise summary line (optimal to 72 chars, max 72 chars) following conventional commit format
+2. A detailed body explaining in bullet points (prefixed with "-") about what changed and why
 
 Git diff:
-${diff}
+${diff}`;
 
-Generate 4 commit messages:`;
+        const { object } = await generateObject({
+            model: openRouter("google/gemini-2.0-flash-lite-001"),
+            schema: z.object({
+                commits: z
+                    .array(
+                        z.object({
+                            summary: z.string().describe("Concise commit summary line"),
+                            detail: z.string().describe("Detailed explanation of changes"),
+                        })
+                    )
+                    .length(4)
+                    .describe("Exactly 4 commit messages with summaries and details"),
+            }),
+            prompt,
+        });
 
-    const { text } = await generateText({
-        model: openRouter('google/gemini-2.0-flash-lite-001'),
-        prompt,
-    });
+        return object.commits;
+    } else {
+        const prompt = `Based on the following git diff, generate 4 different concise commit messages that describe the changes. Each message should be clear, follow conventional commit format when appropriate.
 
-    return text.split('\n')
-        .map(line => line.trim())
-        .filter(line => line.length > 0)
-        .slice(0, 4);
+Git diff:
+${diff}`;
+
+        const { object } = await generateObject({
+            model: openRouter("google/gemini-2.0-flash-lite-001"),
+            schema: z.object({
+                messages: z.array(z.string()).length(4).describe("Exactly 4 commit message strings"),
+            }),
+            prompt,
+        });
+
+        return object.messages.map((msg) => ({ summary: msg }));
+    }
 }
 
 async function main() {
     const argv = minimist<Args>(process.argv.slice(2), {
         alias: {
             v: "verbose",
-            h: "help"
+            h: "help",
+            d: "detail",
+            s: "stage",
         },
-        boolean: ["verbose", "help"]
+        boolean: ["verbose", "help", "detail", "stage"],
     });
 
     if (argv.help) {
@@ -93,17 +131,19 @@ async function main() {
     }
 
     try {
-        // Stage all changes
-        logger.info("📦 Staging all changes...");
-        const addProc = Bun.spawn({
-            cmd: ["git", "add", "."],
-            stdio: ["ignore", "pipe", "pipe"]
-        });
+        // Stage all changes if requested
+        if (argv.stage) {
+            logger.info("📦 Staging all changes...");
+            const addProc = Bun.spawn({
+                cmd: ["git", "add", "."],
+                stdio: ["ignore", "pipe", "pipe"],
+            });
 
-        const addExitCode = await addProc.exited;
-        if (addExitCode !== 0) {
-            const stderr = await new Response(addProc.stderr).text();
-            throw new Error(`Git add failed: ${stderr}`);
+            const addExitCode = await addProc.exited;
+            if (addExitCode !== 0) {
+                const stderr = await new Response(addProc.stderr).text();
+                throw new Error(`Git add failed: ${stderr}`);
+            }
         }
 
         // Get the diff of staged changes
@@ -111,7 +151,10 @@ async function main() {
         const diff = await getGitDiff();
 
         if (!diff.trim()) {
-            logger.info("✨ No changes to commit!");
+            logger.info("✨ No staged changes to commit!");
+            if (!argv.stage) {
+                logger.info("💡 Tip: Use --stage to stage all changes first");
+            }
             process.exit(0);
         }
 
@@ -121,21 +164,44 @@ async function main() {
 
         // Generate commit messages
         logger.info("🤖 Generating commit messages with AI...");
-        const messages = await generateCommitMessages(diff);
+        const messages = await generateCommitMessages(diff, argv.detail || false);
+
+        // Prepare choices for the prompt
+        const choices = messages.map((msg, index) => {
+            if (msg.detail) {
+                // Show both summary and detail in the choice
+                return {
+                    name: index.toString(),
+                    message: `${msg.summary}\n    ${msg.detail.replace(/\n/g, "\n    ")}`,
+                };
+            } else {
+                return {
+                    name: index.toString(),
+                    message: msg.summary,
+                };
+            }
+        });
 
         // Let user choose a commit message
-        const { chosenMessage } = await prompter.prompt({
+        const { chosenIndex } = (await prompter.prompt({
             type: "select",
-            name: "chosenMessage",
+            name: "chosenIndex",
             message: "Choose a commit message:",
-            choices: messages
-        }) as { chosenMessage: string };
+            choices: choices,
+        })) as { chosenIndex: string };
+
+        const chosenMessage = messages[parseInt(chosenIndex)];
 
         // Commit with chosen message
-        logger.info(`💾 Committing with message: "${chosenMessage}"`);
+        const commitMessage = chosenMessage.detail
+            ? `${chosenMessage.summary}\n\n${chosenMessage.detail}`
+            : chosenMessage.summary;
+
+        logger.info(`💾 Committing with message: "${chosenMessage.summary}"`);
+
         const commitProc = Bun.spawn({
-            cmd: ["git", "commit", "-m", chosenMessage],
-            stdio: ["ignore", "pipe", "pipe"]
+            cmd: ["git", "commit", "-m", commitMessage],
+            stdio: ["ignore", "pipe", "pipe"],
         });
 
         const commitExitCode = await commitProc.exited;
@@ -147,18 +213,18 @@ async function main() {
         logger.info("✅ Commit successful!");
 
         // Ask if user wants to push
-        const { shouldPush } = await prompter.prompt({
+        const { shouldPush } = (await prompter.prompt({
             type: "confirm",
             name: "shouldPush",
             message: "Do you want to push the changes?",
-            initial: true
-        }) as { shouldPush: boolean };
+            initial: true,
+        })) as { shouldPush: boolean };
 
         if (shouldPush) {
             logger.info("🚀 Pushing changes...");
             const pushProc = Bun.spawn({
                 cmd: ["git", "push"],
-                stdio: ["ignore", "pipe", "pipe"]
+                stdio: ["ignore", "pipe", "pipe"],
             });
 
             const pushExitCode = await pushProc.exited;
@@ -169,9 +235,8 @@ async function main() {
 
             logger.info("✅ Push successful!");
         }
-
     } catch (error: any) {
-        if (error.message === 'canceled') {
+        if (error.message === "" || error.message === "canceled") {
             logger.info("\n🚫 Operation cancelled by user.");
             process.exit(0);
         }

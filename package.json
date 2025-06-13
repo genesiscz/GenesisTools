@@ -21,6 +21,7 @@
         "@ai-sdk/openai": "^1.3.22",
         "@modelcontextprotocol/sdk": "^1.11.0",
         "@modelcontextprotocol/server-github": "^2025.4.8",
+        "@openrouter/ai-sdk-provider": "^0.7.2",
         "@types/chokidar": "^2.1.7",
         "@types/fb-watchman": "^2.0.4",
         "@types/glob": "^8.1.0",
@@ -46,6 +47,7 @@
         "node-notifier": "^10.0.1",
         "ora": "^8.2.0",
         "pino": "^9.7.0",
-        "pino-pretty": "^13.0.0"
+        "pino-pretty": "^13.0.0",
+        "zod": "^3.25.64"
     }
 }
