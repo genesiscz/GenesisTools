@@ -85,6 +85,8 @@ tools
 | **[Files to Prompt](#8--files-to-prompt)** | 💬 Convert files to AI-friendly prompts |
 | **[Hold-AI](#10--hold-ai-tool)** | ⏸️ Control AI responses via WebSocket |
 | **[MCP Ripgrep](#9--mcp-ripgrep)** | ⚡ Lightning-fast code search server |
+| **[MCP TS Introspect](#12--mcp-ts-introspect)** | 🔍 TypeScript export introspection tool & MCP server |
+| **[TS AI Indexer](#13--ts-ai-indexer)** | 📊 Generate comprehensive TypeScript project indexes |
 
 ### 📊 Monitoring & Watching
 
@@ -580,6 +582,145 @@ The tool uses Google's Gemini 2.0 Flash Lite model via OpenRouter for fast, high
 4. **Select Message** → Choose the best one interactively
 5. **Commit** → Creates commit with chosen message
 6. **Push (Optional)** → Asks if you want to push to remote
+
+</details>
+
+---
+
+### 12. 🔍 MCP TS Introspect
+
+> Powerful TypeScript export introspection tool that analyzes packages, source code, or projects - works as both CLI and MCP server!
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+- 🔍 **Three Introspection Modes**:
+  - **Package**: Analyze npm packages (supports npm, yarn, pnpm)
+  - **Source**: Analyze TypeScript code snippets
+  - **Project**: Analyze entire TypeScript projects
+- 🚀 **Dual Operation Modes**:
+  - CLI tool for command-line usage
+  - MCP server for AI assistant integration
+- 📊 **Smart Analysis**:
+  - Extract function, class, type, and const exports
+  - Full TypeScript type signatures
+  - JSDoc comment extraction
+  - Regex-based filtering
+- ⚡ **Performance**:
+  - File-based caching (7-day TTL)
+  - Parallel processing
+  - Result limiting
+
+</details>
+
+<details>
+<summary><b>🎯 CLI Examples</b></summary>
+
+```bash
+# Interactive mode
+tools mcp-ts-introspect
+
+# Analyze a package
+tools mcp-ts-introspect -m package -p typescript -t "^create" --limit 10
+
+# Analyze source code
+tools mcp-ts-introspect -m source -s "export function hello() { return 'world'; }"
+
+# Analyze current project
+tools mcp-ts-introspect -m project --search-term "Controller$" -o exports.json
+
+# Copy results to clipboard
+tools mcp-ts-introspect -m package -p @types/node -t "^read" -o clipboard
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ CLI Options</b></summary>
+
+| Option | Alias | Description |
+|--------|-------|-------------|
+| `--mode` | `-m` | Introspection mode: package, source, or project |
+| `--package` | `-p` | Package name to introspect |
+| `--source` | `-s` | TypeScript source code to analyze |
+| `--project` | | Project path (defaults to current directory) |
+| `--search-term` | `-t` | Regex pattern to filter exports |
+| `--search-paths` | | Additional paths to search for packages |
+| `--cache` | | Enable caching (default: true) |
+| `--cache-dir` | | Cache directory (default: .ts-morph-cache) |
+| `--limit` | | Maximum number of results |
+| `--output` | `-o` | Output destination: stdout, clipboard, or file |
+| `--verbose` | `-v` | Enable verbose logging |
+| `--mcp` | | Run as MCP server |
+
+</details>
+
+<details>
+<summary><b>🔧 MCP Server Mode</b></summary>
+
+Run as an MCP server for AI assistants:
+
+```bash
+tools mcp-ts-introspect --mcp
+```
+
+**MCP Configuration for Claude Desktop:**
+
+```json
+{
+  "mcpServers": {
+    "ts-introspect": {
+      "command": "/path/to/GenesisTools/tools",
+      "args": ["mcp-ts-introspect", "--mcp"]
+    }
+  }
+}
+```
+
+**Available MCP Tools:**
+
+1. **introspect-package** - Analyze npm packages
+   - `packageName` (required): Package to analyze
+   - `searchPaths`, `searchTerm`, `cache`, `cacheDir`, `limit`
+
+2. **introspect-source** - Analyze TypeScript code
+   - `sourceCode` (required): Code to analyze
+   - `searchTerm`, `limit`
+
+3. **introspect-project** - Analyze TypeScript projects
+   - `projectPath`: Project directory
+   - `searchTerm`, `cache`, `cacheDir`, `limit`
+
+</details>
+
+---
+
+### 13. 📊 TS AI Indexer
+
+> Generate comprehensive, AI-friendly documentation from TypeScript codebases with detailed type information and relationships.
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+- 📊 **Complete Project Analysis**:
+  - Classes with methods, properties, and inheritance
+  - Interfaces with all members
+  - Functions with full signatures
+  - Types and type aliases
+  - Enums and constants
+  - Import/export relationships
+- 📝 **Smart Documentation**:
+  - JSDoc comment extraction
+  - Type simplification for readability
+  - Decorator information
+  - Access modifiers (public/private/protected)
+- 🎨 **Output Formats**:
+  - **Compact**: Concise, AI-optimized format
+  - **Detailed**: Full documentation with all details
+- ⚡ **Performance**:
+  - Fast TypeScript AST analysis
+  - Configurable file exclusion
+  - Memory-efficient processing
 
 </details>
 
