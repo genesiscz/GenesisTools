@@ -85,6 +85,7 @@ tools
 | **[Files to Prompt](#8--files-to-prompt)** | 💬 Convert files to AI-friendly prompts |
 | **[Hold-AI](#10--hold-ai-tool)** | ⏸️ Control AI responses via WebSocket |
 | **[MCP Ripgrep](#9--mcp-ripgrep)** | ⚡ Lightning-fast code search server |
+| **[TS AI Indexer](#13--ts-ai-indexer)** | 📊 Generate comprehensive TypeScript project indexes |
 
 ### 📊 Monitoring & Watching
 
@@ -580,6 +581,93 @@ The tool uses Google's Gemini 2.0 Flash Lite model via OpenRouter for fast, high
 4. **Select Message** → Choose the best one interactively
 5. **Commit** → Creates commit with chosen message
 6. **Push (Optional)** → Asks if you want to push to remote
+
+### 13. 📊 TS AI Indexer
+
+> Generate comprehensive, AI-friendly documentation from TypeScript codebases with detailed type information and relationships.
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+- 📊 **Complete Project Analysis**:
+  - Classes with methods, properties, and inheritance
+  - Interfaces with all members
+  - Functions with full signatures
+  - Types and type aliases
+  - Enums and constants
+  - Import/export relationships
+- 📝 **Smart Documentation**:
+  - JSDoc comment extraction
+  - Type simplification for readability
+  - Decorator information
+  - Access modifiers (public/private/protected)
+- 🎨 **Output Formats**:
+  - **Compact**: Concise, AI-optimized format
+  - **Detailed**: Full documentation with all details
+- ⚡ **Performance**:
+  - Fast TypeScript AST analysis
+  - Configurable file exclusion
+  - Memory-efficient processing
+
+</details>
+
+<details>
+<summary><b>🎯 Examples</b></summary>
+
+```bash
+# Generate documentation for a directory
+tools ts-ai-context src/
+
+# Output to specific file
+tools ts-ai-context . --output api-docs.md
+
+# Include private members
+tools ts-ai-context src/ --include-private
+
+# Copy to clipboard for immediate use
+tools ts-ai-context lib/ --clipboard
+
+# Exclude test files
+tools ts-ai-context . --exclude "**/tests/**,**/*.test.ts"
+
+# Detailed format with all information
+tools ts-ai-context src/ --format detailed
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ Options</b></summary>
+
+| Option | Alias | Description | Default |
+|--------|-------|-------------|---------|
+| `--output` | `-o` | Output markdown file | `ts-ai-context.md` |
+| `--include-private` | | Include private members | `false` |
+| `--include-protected` | | Include protected members | `true` |
+| `--include-node-modules` | | Include node_modules | `false` |
+| `--exclude` | `-e` | Glob pattern to exclude | - |
+| `--clipboard` | `-c` | Copy to clipboard | `false` |
+| `--format` | `-f` | Output format (compact/detailed) | `compact` |
+| `--verbose` | `-v` | Enable verbose logging | `false` |
+
+</details>
+
+<details>
+<summary><b>📋 Output Structure</b></summary>
+
+The tool generates a structured markdown document with:
+
+1. **Project Overview** - File count and structure
+2. **Import Graph** - Dependencies between files
+3. **Export Summary** - All exports by category
+4. **File Details** - For each file:
+   - Import statements
+   - Exported items
+   - Classes with full member details
+   - Interfaces and types
+   - Functions and constants
+
+Perfect for providing context to AI assistants when working with TypeScript projects!
 
 </details>
 
