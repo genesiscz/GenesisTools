@@ -23,6 +23,54 @@ function processOutput(output: string, useColors: boolean): string {
     return searchRoot ? output.replaceAll(searchRoot, ".") : output;
 }
 
+function wrapArray(value: unknown | string | string[] | undefined): string[] {
+    if (!value) return [];
+    return Array.isArray(value) ? value : [String(value)];
+}
+
+// Common schema properties to avoid duplication
+const schemaProperties = {
+    pattern: { type: "string", description: "The search pattern (regex by default)" },
+    path: {
+        type: "string",
+        description:
+            "Path to search (relative to search root). Use '.' for current directory, 'src' for src directory, 'src/components' for nested directories, or 'filename.txt' for specific files. Ripgrep searches recursively in directories.",
+    },
+    pathForListing: {
+        type: "string",
+        description:
+            "Path to search (relative to search root). Use '.' for current directory, 'src' for src directory, 'src/components' for nested directories. Ripgrep lists files recursively in directories.",
+    },
+    caseSensitive: { type: "boolean", description: "Use case sensitive search (default: auto)" },
+    filePattern: {
+        oneOf: [
+            { type: "string", description: "Single glob pattern" },
+            { type: "array", items: { type: "string" }, description: "Array of glob patterns" },
+        ],
+        description:
+            "Filter by file type or glob pattern(s). Can be a single pattern like '*.js' or an array like ['*.js', '*.ts'] for multiple patterns",
+    },
+    fileType: { type: "string", description: "Filter by file type (e.g., js, py)" },
+    maxResults: { type: "number", description: "Limit the number of matching lines" },
+    context: { type: "number", description: "Show N lines before and after each match" },
+    useColors: { type: "boolean", description: "Use colors in output (default: false)" },
+    fixedStrings: {
+        type: "boolean",
+        description: "Treat pattern as a literal string, not a regex",
+    },
+    invertMatch: { type: "boolean", description: "Show lines that don't match the pattern" },
+    wordMatch: { type: "boolean", description: "Only show matches surrounded by word boundaries" },
+    includeHidden: { type: "boolean", description: "Search in hidden files and directories" },
+    includeHiddenForListing: { type: "boolean", description: "Include hidden files and directories" },
+    followSymlinks: { type: "boolean", description: "Follow symbolic links" },
+    showFilenamesOnly: {
+        type: "boolean",
+        description: "Only show filenames of matches, not content",
+    },
+    showLineNumbers: { type: "boolean", description: "Show line numbers" },
+    countLines: { type: "boolean", description: "Count matching lines instead of total matches" },
+};
+
 // Create an MCP server
 const server = new Server(
     {
@@ -111,17 +159,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        pattern: { type: "string", description: "The search pattern (regex by default)" },
-                        path: {
-                            type: "string",
-                            description:
-                                "Directory or file(s) to search - use only one root directory, if you need mode, use the filePattern.",
-                        },
-                        caseSensitive: { type: "boolean", description: "Use case sensitive search (default: auto)" },
-                        filePattern: { type: "string", description: "Filter by file type or glob" },
-                        maxResults: { type: "number", description: "Limit the number of matching lines" },
-                        context: { type: "number", description: "Show N lines before and after each match" },
-                        useColors: { type: "boolean", description: "Use colors in output (default: false)" },
+                        pattern: schemaProperties.pattern,
+                        path: schemaProperties.path,
+                        caseSensitive: schemaProperties.caseSensitive,
+                        filePattern: schemaProperties.filePattern,
+                        maxResults: schemaProperties.maxResults,
+                        context: schemaProperties.context,
+                        useColors: schemaProperties.useColors,
                     },
                     required: ["pattern", "path"],
                 },
@@ -132,27 +176,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        pattern: { type: "string", description: "The search pattern (regex by default)" },
-                        path: { type: "string", description: "Directory or file(s) to search." },
-                        caseSensitive: { type: "boolean", description: "Use case sensitive search (default: auto)" },
-                        fixedStrings: {
-                            type: "boolean",
-                            description: "Treat pattern as a literal string, not a regex",
-                        },
-                        filePattern: { type: "string", description: "Filter by file type or glob" },
-                        fileType: { type: "string", description: "Filter by file type (e.g., js, py)" },
-                        maxResults: { type: "number", description: "Limit the number of matching lines" },
-                        context: { type: "number", description: "Show N lines before and after each match" },
-                        invertMatch: { type: "boolean", description: "Show lines that don't match the pattern" },
-                        wordMatch: { type: "boolean", description: "Only show matches surrounded by word boundaries" },
-                        includeHidden: { type: "boolean", description: "Search in hidden files and directories" },
-                        followSymlinks: { type: "boolean", description: "Follow symbolic links" },
-                        showFilenamesOnly: {
-                            type: "boolean",
-                            description: "Only show filenames of matches, not content",
-                        },
-                        showLineNumbers: { type: "boolean", description: "Show line numbers" },
-                        useColors: { type: "boolean", description: "Use colors in output (default: false)" },
+                        pattern: schemaProperties.pattern,
+                        path: schemaProperties.path,
+                        caseSensitive: schemaProperties.caseSensitive,
+                        fixedStrings: schemaProperties.fixedStrings,
+                        filePattern: schemaProperties.filePattern,
+                        fileType: schemaProperties.fileType,
+                        maxResults: schemaProperties.maxResults,
+                        context: schemaProperties.context,
+                        invertMatch: schemaProperties.invertMatch,
+                        wordMatch: schemaProperties.wordMatch,
+                        includeHidden: schemaProperties.includeHidden,
+                        followSymlinks: schemaProperties.followSymlinks,
+                        showFilenamesOnly: schemaProperties.showFilenamesOnly,
+                        showLineNumbers: schemaProperties.showLineNumbers,
+                        useColors: schemaProperties.useColors,
                     },
                     required: ["pattern", "path"],
                 },
@@ -163,12 +201,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        pattern: { type: "string", description: "The search pattern (regex by default)" },
-                        path: { type: "string", description: "Directory or file(s) to search." },
-                        caseSensitive: { type: "boolean", description: "Use case sensitive search (default: auto)" },
-                        filePattern: { type: "string", description: "Filter by file type or glob" },
-                        countLines: { type: "boolean", description: "Count matching lines instead of total matches" },
-                        useColors: { type: "boolean", description: "Use colors in output (default: false)" },
+                        pattern: schemaProperties.pattern,
+                        path: schemaProperties.path,
+                        caseSensitive: schemaProperties.caseSensitive,
+                        filePattern: schemaProperties.filePattern,
+                        countLines: schemaProperties.countLines,
+                        useColors: schemaProperties.useColors,
                     },
                     required: ["pattern", "path"],
                 },
@@ -179,10 +217,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        path: { type: "string", description: "Directory or file(s) to search." },
-                        filePattern: { type: "string", description: "Filter by file type or glob" },
-                        fileType: { type: "string", description: "Filter by file type (e.g., js, py)" },
-                        includeHidden: { type: "boolean", description: "Include hidden files and directories" },
+                        path: schemaProperties.pathForListing,
+                        filePattern: schemaProperties.filePattern,
+                        fileType: schemaProperties.fileType,
+                        includeHidden: schemaProperties.includeHiddenForListing,
                     },
                     required: ["path"],
                 },
@@ -216,7 +254,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                 const pattern = String(args.pattern || "");
                 const path = String(args.path);
                 const caseSensitive = typeof args.caseSensitive === "boolean" ? args.caseSensitive : undefined;
-                const filePattern = args.filePattern ? String(args.filePattern) : undefined;
+                const filePattern = wrapArray(args.filePattern);
                 const maxResults = typeof args.maxResults === "number" ? args.maxResults : undefined;
                 const context = typeof args.context === "number" ? args.context : undefined;
                 const useColors = typeof args.useColors === "boolean" ? args.useColors : false;
@@ -242,8 +280,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                 }
 
                 // Add file pattern if specified
-                if (filePattern) {
-                    command += ` -g ${escapeShellArg(filePattern)}`;
+                if (filePattern && filePattern.length > 0) {
+                    for (const pattern of filePattern) {
+                        command += ` -g ${escapeShellArg(pattern)}`;
+                    }
                 }
 
                 // Add max results if specified
@@ -292,7 +332,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                 const path = String(args.path);
                 const caseSensitive = typeof args.caseSensitive === "boolean" ? args.caseSensitive : undefined;
                 const fixedStrings = typeof args.fixedStrings === "boolean" ? args.fixedStrings : undefined;
-                const filePattern = args.filePattern ? String(args.filePattern) : undefined;
+                const filePattern = wrapArray(args.filePattern);
                 const fileType = args.fileType ? String(args.fileType) : undefined;
                 const maxResults = typeof args.maxResults === "number" ? args.maxResults : undefined;
                 const context = typeof args.context === "number" ? args.context : undefined;
@@ -331,8 +371,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                 }
 
                 // Add file pattern if specified
-                if (filePattern) {
-                    command += ` -g ${escapeShellArg(filePattern)}`;
+                if (filePattern && filePattern.length > 0) {
+                    for (const pattern of filePattern) {
+                        command += ` -g ${escapeShellArg(pattern)}`;
+                    }
                 }
 
                 // Add file type if specified
@@ -402,8 +444,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                 return {
                     content: [
                         {
-                            text: "resource",
-                            uri: "file://" + fullPath,
+                            type: "text",
+                            text: processOutput(stdout, useColors) || "No matches found",
                         },
                     ],
                 };
@@ -413,7 +455,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                 const pattern = String(args.pattern || "");
                 const path = String(args.path);
                 const caseSensitive = typeof args.caseSensitive === "boolean" ? args.caseSensitive : undefined;
-                const filePattern = args.filePattern ? String(args.filePattern) : undefined;
+                const filePattern = wrapArray(args.filePattern);
                 const countLines = typeof args.countLines === "boolean" ? args.countLines : true;
                 const useColors = typeof args.useColors === "boolean" ? args.useColors : false;
 
@@ -438,8 +480,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                 }
 
                 // Add file pattern if specified
-                if (filePattern) {
-                    command += ` -g ${escapeShellArg(filePattern)}`;
+                if (filePattern && filePattern.length > 0) {
+                    for (const pattern of filePattern) {
+                        command += ` -g ${escapeShellArg(pattern)}`;
+                    }
                 }
 
                 // Add count flag
@@ -475,7 +519,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
             case "list-files": {
                 const path = String(args.path);
-                const filePattern = args.filePattern ? String(args.filePattern) : undefined;
+                const filePattern = wrapArray(args.filePattern);
                 const fileType = args.fileType ? String(args.fileType) : undefined;
                 const includeHidden = typeof args.includeHidden === "boolean" ? args.includeHidden : undefined;
 
@@ -486,8 +530,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                 let command = "rg --files";
 
                 // Add file pattern if specified
-                if (filePattern) {
-                    command += ` -g ${escapeShellArg(filePattern)}`;
+                if (filePattern && filePattern.length > 0) {
+                    for (const pattern of filePattern) {
+                        command += ` -g ${escapeShellArg(pattern)}`;
+                    }
                 }
 
                 // Add file type if specified
