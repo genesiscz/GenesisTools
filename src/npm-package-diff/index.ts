@@ -13,6 +13,7 @@ import { filesize } from "filesize";
 import boxen from "boxen";
 import { createRequire } from "module";
 import { execSync } from "child_process";
+import { resolvePathWithTilde } from "../utils";
 
 const require = createRequire(import.meta.url);
 
@@ -22,7 +23,7 @@ const createSimpleLogger = () => {
     const isVerbose = process.argv.includes("-v") || process.argv.includes("--verbose");
     const isSilent = process.argv.includes("--silent");
     const isDebug = process.argv.includes("-vv") || process.argv.includes("--debug");
-    
+
     return {
         info: (msg: string) => {
             if (!isSilent) {
@@ -30,7 +31,7 @@ const createSimpleLogger = () => {
                     console.log(msg);
                 } else {
                     // Strip ANSI codes for non-TTY output
-                    console.log(msg.replace(/\u001b\[[0-9;]*m/g, ''));
+                    console.log(msg.replace(/\u001b\[[0-9;]*m/g, ""));
                 }
             }
         },
@@ -38,7 +39,7 @@ const createSimpleLogger = () => {
             if (isTTY) {
                 console.error(msg);
             } else {
-                console.error(msg.replace(/\u001b\[[0-9;]*m/g, ''));
+                console.error(msg.replace(/\u001b\[[0-9;]*m/g, ""));
             }
         },
         debug: (msg: string) => {
@@ -65,7 +66,7 @@ const createSimpleLogger = () => {
                     console.warn(msg);
                 }
             }
-        }
+        },
     };
 };
 
@@ -83,7 +84,7 @@ const argv = minimist(process.argv.slice(2), {
         c: "config",
         s: "silent",
         m: "package-manager",
-        k: "keep"
+        k: "keep",
     },
     default: {
         filter: "**/*.d.ts",
@@ -93,18 +94,29 @@ const argv = minimist(process.argv.slice(2), {
         context: 10,
         timeout: 120000, // 2 minutes default
         packageManager: "auto",
-        paging: false
+        paging: false,
     },
-    boolean: ["verbose", "help", "silent", "stats", "sizes", "line-numbers", "word-diff", "use-delta", "paging", "keep"],
+    boolean: [
+        "verbose",
+        "help",
+        "silent",
+        "stats",
+        "sizes",
+        "line-numbers",
+        "word-diff",
+        "use-delta",
+        "paging",
+        "keep",
+    ],
     string: ["filter", "output", "format", "exclude", "patch", "config", "delta-theme", "npmrc", "package-manager"],
-    number: ["timeout", "context"]
+    number: ["timeout", "context"],
 });
 
 // Configuration loading
 const loadConfig = (configPath?: string): any => {
     const defaultConfigPath = path.join(process.cwd(), ".npmpackagediffrc");
     const configFile = configPath || (fs.existsSync(defaultConfigPath) ? defaultConfigPath : null);
-    
+
     if (configFile && fs.existsSync(configFile)) {
         try {
             const config = JSON.parse(fs.readFileSync(configFile, "utf8"));
@@ -123,11 +135,11 @@ const config = { ...loadConfig(argv.config), ...argv };
 // Help message
 if (config.help) {
     const helpText = `
-${boxen(chalk.bold.cyan("NPM Package Diff"), { 
-    padding: 1, 
-    margin: 1, 
+${boxen(chalk.bold.cyan("NPM Package Diff"), {
+    padding: 1,
+    margin: 1,
     borderStyle: "round",
-    borderColor: "cyan"
+    borderColor: "cyan",
 })}
 
 ${chalk.bold("USAGE:")}
@@ -259,12 +271,12 @@ class EnhancedPackageComparison {
     private outputBuffer: string[] = [];
 
     constructor(
-        private packageName: string, 
-        private version1: string, 
+        private packageName: string,
+        private version1: string,
         private version2: string,
         private options: typeof config
     ) {
-        this.tempDir = path.join(os.tmpdir(), `npm-diff-${packageName.replace(/[^a-zA-Z0-9]/g, '-')}`);
+        this.tempDir = path.join(os.tmpdir(), `npm-diff-${packageName.replace(/[^a-zA-Z0-9]/g, "-")}`);
         this.dir1 = path.join(this.tempDir, version1);
         this.dir2 = path.join(this.tempDir, version2);
         this.packageManager = this.detectPackageManager();
@@ -289,26 +301,26 @@ class EnhancedPackageComparison {
             logger.debug("Detected yarn from yarn.lock");
             return "yarn";
         }
-        
+
         // Check if commands are available
         try {
-            execSync('which pnpm', { stdio: 'ignore' });
+            execSync("which pnpm", { stdio: "ignore" });
             logger.debug("Using pnpm (found in PATH)");
             return "pnpm";
         } catch {}
-        
+
         try {
-            execSync('which bun', { stdio: 'ignore' });
+            execSync("which bun", { stdio: "ignore" });
             logger.debug("Using bun (found in PATH)");
             return "bun";
         } catch {}
-        
+
         try {
-            execSync('which yarn', { stdio: 'ignore' });
+            execSync("which yarn", { stdio: "ignore" });
             logger.debug("Using yarn (found in PATH)");
             return "yarn";
         } catch {}
-        
+
         logger.debug("Defaulting to npm");
         return "npm";
     }
@@ -317,10 +329,10 @@ class EnhancedPackageComparison {
         if (!this.options.silent) {
             this.spinner = ora({
                 text: `Setting up comparison for ${chalk.cyan(this.packageName)}`,
-                spinner: "dots"
+                spinner: "dots",
             }).start();
         }
-        
+
         // Clean up existing directories
         if (fs.existsSync(this.tempDir)) {
             logger.debug(`Removing existing temp directory: ${this.tempDir}`);
@@ -330,26 +342,31 @@ class EnhancedPackageComparison {
         // Create directories
         fs.mkdirSync(this.dir1, { recursive: true });
         fs.mkdirSync(this.dir2, { recursive: true });
-        
+
         // Copy .npmrc if specified
         if (this.options.npmrc) {
-            const npmrcPath = path.resolve(this.options.npmrc);
+            const npmrcPath = resolvePathWithTilde(this.options.npmrc);
+
             if (fs.existsSync(npmrcPath)) {
-                const npmrcContent = fs.readFileSync(npmrcPath, 'utf8');
-                fs.writeFileSync(path.join(this.dir1, '.npmrc'), npmrcContent);
-                fs.writeFileSync(path.join(this.dir2, '.npmrc'), npmrcContent);
-                logger.debug(`Copied .npmrc from ${npmrcPath}`);
+                try {
+                    const npmrcContent = fs.readFileSync(npmrcPath, "utf8");
+                    fs.writeFileSync(path.join(this.dir1, ".npmrc"), npmrcContent);
+                    fs.writeFileSync(path.join(this.dir2, ".npmrc"), npmrcContent);
+                    logger.debug(`\nCopied .npmrc from ${npmrcPath}`);
+                } catch (error) {
+                    logger.error(`\nError copying .npmrc from ${npmrcPath}: ${error}`);
+                }
             } else {
-                logger.warn(`Specified .npmrc file not found: ${npmrcPath}`);
+                logger.warn(`\nSpecified .npmrc file not found: ${npmrcPath}`);
             }
         }
-        
+
         this.spinner?.succeed(`Created temporary directories`);
     }
 
     private setupWatcher(directory: string, addedFiles: FileMetadata[]): any {
         logger.debug(`Setting up watcher for: ${directory}`);
-        
+
         const watcher = chokidar.watch(directory, {
             persistent: true,
             ignoreInitial: true,
@@ -384,16 +401,16 @@ class EnhancedPackageComparison {
         if (!this.options.silent) {
             this.spinner = ora({
                 text: `Installing packages using ${this.packageManager}...`,
-                spinner: "dots"
+                spinner: "dots",
             }).start();
         }
-        
+
         // Setup watchers before installation
         this.setupWatcher(this.dir1, this.addedFiles1);
         this.setupWatcher(this.dir2, this.addedFiles2);
 
         // Give watchers time to initialize
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
         // Install both packages in parallel
         const installPromises = [
@@ -410,25 +427,25 @@ class EnhancedPackageComparison {
         }
 
         // Give time for all file events to be processed
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
     }
 
     private async installPackageInDirectory(pkg: string, version: string, dir: string): Promise<void> {
         logger.debug(`Installing ${pkg}@${version} in ${dir} using ${this.packageManager}`);
-        
+
         const sanitizePackageName = (name: string): string => {
-            return name.replace(/[^\w-]/g, '-').replace(/^@/, '');
+            return name.replace(/[^\w-]/g, "-").replace(/^@/, "");
         };
-        
+
         const sanitizedPkgName = sanitizePackageName(pkg);
-        
+
         // Initialize package.json
         const packageJson = {
             name: `temp-${sanitizedPkgName}-${version}`,
             version: "1.0.0",
             dependencies: {
-                [pkg]: version
-            }
+                [pkg]: version,
+            },
         };
 
         fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify(packageJson, null, 2));
@@ -436,7 +453,7 @@ class EnhancedPackageComparison {
         // Prepare install command based on package manager
         let installCmd: string;
         let installArgs: string[];
-        
+
         switch (this.packageManager) {
             case "bun":
                 installCmd = "bun";
@@ -467,16 +484,16 @@ class EnhancedPackageComparison {
             let timedOut = false;
             const timeout = setTimeout(() => {
                 timedOut = true;
-                installProcess.kill('SIGTERM');
+                installProcess.kill("SIGTERM");
                 reject(new Error(`Installation timed out after ${this.options.timeout}ms for ${pkg}@${version}`));
             }, this.options.timeout);
 
             installProcess.on("close", (code) => {
                 clearTimeout(timeout);
                 if (timedOut) return;
-                
+
                 if (code === 0) {
-                    logger.debug(`Successfully installed ${pkg}@${version}`);
+                    logger.debug(`Successfully installed ${pkg}@${version} to ${dir}`);
                     resolve();
                 } else {
                     reject(new Error(`${this.packageManager} install failed with code ${code} for ${pkg}@${version}`));
@@ -500,38 +517,36 @@ class EnhancedPackageComparison {
 
     async compareFiles(): Promise<void> {
         // Check delta availability first if requested
-        if (this.options['use-delta'] && !this.isDeltaAvailable()) {
-            logger.error(chalk.yellow(
-                "\n⚠️  Delta is not installed but --use-delta was specified.\n" +
-                "   To install delta for beautiful diffs:\n" +
-                "   • macOS: brew install git-delta\n" +
-                "   • Linux: Download from https://github.com/dandavison/delta/releases\n" +
-                "   • Cargo: cargo install git-delta\n"
-            ));
+        if (this.options["use-delta"] && !this.isDeltaAvailable()) {
+            logger.error(
+                chalk.yellow(
+                    "\n⚠️  Delta is not installed but --use-delta was specified.\n" +
+                        "   To install delta for beautiful diffs:\n" +
+                        "   • macOS: brew install git-delta\n" +
+                        "   • Linux: Download from https://github.com/dandavison/delta/releases\n" +
+                        "   • Cargo: cargo install git-delta\n"
+                )
+            );
             process.exit(1);
         }
 
         if (!this.options.silent) {
             this.spinner = ora({
                 text: `Comparing files...`,
-                spinner: "dots"
+                spinner: "dots",
             }).start();
         }
 
         // Filter files based on the glob pattern
-        const filteredFiles1 = this.addedFiles1.filter(file => 
-            this.matchesFilter(file.relativePath)
-        );
-        const filteredFiles2 = this.addedFiles2.filter(file => 
-            this.matchesFilter(file.relativePath)
-        );
+        const filteredFiles1 = this.addedFiles1.filter((file) => this.matchesFilter(file.relativePath));
+        const filteredFiles2 = this.addedFiles2.filter((file) => this.matchesFilter(file.relativePath));
 
         logger.debug(`Found ${filteredFiles1.length} matching files in ${this.version1}`);
         logger.debug(`Found ${filteredFiles2.length} matching files in ${this.version2}`);
 
         // Create maps for easier lookup
-        const files1Map = new Map(filteredFiles1.map(f => [f.relativePath, f]));
-        const files2Map = new Map(filteredFiles2.map(f => [f.relativePath, f]));
+        const files1Map = new Map(filteredFiles1.map((f) => [f.relativePath, f]));
+        const files2Map = new Map(filteredFiles2.map((f) => [f.relativePath, f]));
 
         // Get all unique file paths
         const allPaths = new Set([...files1Map.keys(), ...files2Map.keys()]);
@@ -543,17 +558,87 @@ class EnhancedPackageComparison {
             if (file1 && file2) {
                 await this.compareTwoFiles(file1, file2);
             } else if (file1 && !file2) {
-                this.results.push({
-                    file: filePath,
-                    status: "removed",
-                    oldSize: file1.size
-                });
+                // For removed files, read the content and create a diff showing all lines as deletions
+                try {
+                    const content1 = fs.readFileSync(file1.absolutePath, "utf8");
+                    const lines = content1.split("\n");
+                    // Remove last empty line if present
+                    if (lines[lines.length - 1] === "") {
+                        lines.pop();
+                    }
+                    const lineCount = lines.length;
+
+                    const changes = [{ removed: true, added: false, value: content1, count: lineCount }];
+
+                    // Generate patch for removed file
+                    const patch = diff.createTwoFilesPatch(
+                        filePath,
+                        filePath,
+                        content1,
+                        "",
+                        `v${this.version1}`,
+                        `v${this.version2}`,
+                        { context: this.options.context }
+                    );
+
+                    this.results.push({
+                        file: filePath,
+                        status: "removed",
+                        oldSize: file1.size,
+                        additions: 0,
+                        deletions: lineCount,
+                        changes,
+                        patch,
+                    });
+                } catch (error) {
+                    logger.error(`Error reading removed file ${filePath}: ${error}`);
+                    this.results.push({
+                        file: filePath,
+                        status: "removed",
+                        oldSize: file1.size,
+                    });
+                }
             } else if (!file1 && file2) {
-                this.results.push({
-                    file: filePath,
-                    status: "added",
-                    newSize: file2.size
-                });
+                // For added files, read the content and create a diff showing all lines as additions
+                try {
+                    const content2 = fs.readFileSync(file2.absolutePath, "utf8");
+                    const lines = content2.split("\n");
+                    // Remove last empty line if present
+                    if (lines[lines.length - 1] === "") {
+                        lines.pop();
+                    }
+                    const lineCount = lines.length;
+
+                    const changes = [{ added: true, removed: false, value: content2, count: lineCount }];
+
+                    // Generate patch for added file
+                    const patch = diff.createTwoFilesPatch(
+                        filePath,
+                        filePath,
+                        "",
+                        content2,
+                        `v${this.version1}`,
+                        `v${this.version2}`,
+                        { context: this.options.context }
+                    );
+
+                    this.results.push({
+                        file: filePath,
+                        status: "added",
+                        newSize: file2.size,
+                        additions: lineCount,
+                        deletions: 0,
+                        changes,
+                        patch,
+                    });
+                } catch (error) {
+                    logger.error(`Error reading added file ${filePath}: ${error}`);
+                    this.results.push({
+                        file: filePath,
+                        status: "added",
+                        newSize: file2.size,
+                    });
+                }
             }
         }
 
@@ -570,23 +655,23 @@ class EnhancedPackageComparison {
                     file: file1.relativePath,
                     status: "identical",
                     oldSize: file1.size,
-                    newSize: file2.size
+                    newSize: file2.size,
                 });
                 return;
             }
 
             // Generate diff
-            const changes = this.options.wordDiff 
+            const changes = this.options.wordDiff
                 ? diff.diffWords(content1, content2)
-                : diff.diffLines(content1, content2, { 
-                    ignoreWhitespace: false,
-                    newlineIsToken: true 
-                });
+                : diff.diffLines(content1, content2, {
+                      ignoreWhitespace: false,
+                      newlineIsToken: true,
+                  });
 
             // Count additions and deletions
             let additions = 0;
             let deletions = 0;
-            changes.forEach(change => {
+            changes.forEach((change) => {
                 if (change.added) {
                     additions += change.count || 0;
                 } else if (change.removed) {
@@ -613,16 +698,19 @@ class EnhancedPackageComparison {
                 additions,
                 deletions,
                 changes,
-                patch
+                patch,
             });
-
         } catch (error) {
             logger.error(`Error comparing files ${file1.relativePath}: ${error}`);
         }
     }
 
     private write(text: string): void {
-        if (this.options.paging && !this.options.output && (this.options.format === "terminal" || this.options.format === "side-by-side")) {
+        if (
+            this.options.paging &&
+            !this.options.output &&
+            (this.options.format === "terminal" || this.options.format === "side-by-side")
+        ) {
             this.outputBuffer.push(text);
         } else {
             console.log(text);
@@ -630,31 +718,35 @@ class EnhancedPackageComparison {
     }
 
     private startPager(): void {
-        if (!this.options.paging || this.options.output || (this.options.format !== "terminal" && this.options.format !== "side-by-side")) {
+        if (
+            !this.options.paging ||
+            this.options.output ||
+            (this.options.format !== "terminal" && this.options.format !== "side-by-side")
+        ) {
             return;
         }
 
         try {
             // Use less with -R flag to preserve colors
-            this.pagerProcess = spawn('less', ['-R', '-F', '-X'], {
-                stdio: ['pipe', 'inherit', 'inherit']
+            this.pagerProcess = spawn("less", ["-R", "-F", "-X"], {
+                stdio: ["pipe", "inherit", "inherit"],
             });
 
-            this.pagerProcess.on('error', (err: any) => {
+            this.pagerProcess.on("error", (err: any) => {
                 logger.debug(`Failed to start pager: ${err}`);
                 // Fallback to normal output
-                this.outputBuffer.forEach(line => console.log(line));
+                this.outputBuffer.forEach((line) => console.log(line));
                 this.outputBuffer = [];
             });
 
             // Write buffered output to pager
-            this.outputBuffer.forEach(line => {
-                this.pagerProcess.stdin.write(line + '\n');
+            this.outputBuffer.forEach((line) => {
+                this.pagerProcess.stdin.write(line + "\n");
             });
             this.outputBuffer = [];
         } catch (e) {
             // Fallback to normal output
-            this.outputBuffer.forEach(line => console.log(line));
+            this.outputBuffer.forEach((line) => console.log(line));
             this.outputBuffer = [];
         }
     }
@@ -666,14 +758,14 @@ class EnhancedPackageComparison {
     }
 
     private outputTerminalDiff(result: DiffResult): void {
-        if (this.options['use-delta'] && this.isDeltaAvailable()) {
+        if (this.options["use-delta"] && this.isDeltaAvailable()) {
             this.outputWithDelta(result);
             return;
         }
 
         this.write(chalk.cyan(`\n${"=".repeat(80)}`));
         this.write(chalk.bold.white(`📄 ${result.file}`));
-        
+
         if (result.status === "added") {
             this.write(chalk.green(`   Status: Added (${filesize(result.newSize || 0)})`));
         } else if (result.status === "removed") {
@@ -681,11 +773,16 @@ class EnhancedPackageComparison {
         } else if (result.status === "modified") {
             this.write(chalk.yellow(`   Status: Modified`));
             this.write(chalk.gray(`   Size: ${filesize(result.oldSize || 0)} → ${filesize(result.newSize || 0)}`));
-            this.write(chalk.green(`   +${result.additions} additions`) + " " + chalk.red(`-${result.deletions} deletions`));
+            this.write(
+                chalk.green(`   +${result.additions} additions`) + " " + chalk.red(`-${result.deletions} deletions`)
+            );
         }
         this.write(chalk.cyan(`${"=".repeat(80)}`));
 
-        if (result.changes && result.status === "modified") {
+        if (
+            result.changes &&
+            (result.status === "modified" || result.status === "added" || result.status === "removed")
+        ) {
             if (this.options.format === "side-by-side") {
                 this.outputSideBySideDiff(result);
             } else {
@@ -696,25 +793,25 @@ class EnhancedPackageComparison {
 
     private outputInlineDiff(result: DiffResult): void {
         const context = this.options.context;
-        let outputLines: { type: 'add' | 'remove' | 'normal', content: string, lineNum?: number }[] = [];
+        let outputLines: { type: "add" | "remove" | "normal"; content: string; lineNum?: number }[] = [];
         let lineNumberOld = 1;
         let lineNumberNew = 1;
-        
+
         // Build a complete view of the file with changes
-        result.changes?.forEach(change => {
-            const lines = change.value.split('\n');
+        result.changes?.forEach((change) => {
+            const lines = change.value.split("\n");
             // Remove last empty line if the change doesn't end with newline
-            if (lines[lines.length - 1] === '' && !change.value.endsWith('\n')) {
+            if (lines[lines.length - 1] === "" && !change.value.endsWith("\n")) {
                 lines.pop();
             }
-            
-            lines.forEach(line => {
+
+            lines.forEach((line) => {
                 if (change.added) {
-                    outputLines.push({ type: 'add', content: line, lineNum: lineNumberNew++ });
+                    outputLines.push({ type: "add", content: line, lineNum: lineNumberNew++ });
                 } else if (change.removed) {
-                    outputLines.push({ type: 'remove', content: line, lineNum: lineNumberOld++ });
+                    outputLines.push({ type: "remove", content: line, lineNum: lineNumberOld++ });
                 } else {
-                    outputLines.push({ type: 'normal', content: line, lineNum: lineNumberOld });
+                    outputLines.push({ type: "normal", content: line, lineNum: lineNumberOld });
                     lineNumberOld++;
                     lineNumberNew++;
                 }
@@ -725,55 +822,63 @@ class EnhancedPackageComparison {
         let i = 0;
         let lastPrintedIdx = -1;
         let hasOutput = false;
-        
+
         while (i < outputLines.length) {
             const line = outputLines[i];
-            
-            if (line.type !== 'normal') {
+
+            if (line.type !== "normal") {
                 // We found a change, print context before
                 const startIdx = Math.max(lastPrintedIdx + 1, i - context);
-                
+
                 // Add separator if there's a gap
                 if (lastPrintedIdx >= 0 && startIdx > lastPrintedIdx + 1) {
                     this.write(chalk.cyan(`   @@ ... @@`));
                 }
-                
+
                 // Print context before
                 for (let j = startIdx; j < i; j++) {
                     const contextLine = outputLines[j];
-                    if (contextLine.type === 'normal') {
-                        const lineNum = this.options.lineNumbers ? chalk.gray(` ${contextLine.lineNum?.toString().padStart(4)} `) : '';
+                    if (contextLine.type === "normal") {
+                        const lineNum = this.options.lineNumbers
+                            ? chalk.gray(` ${contextLine.lineNum?.toString().padStart(4)} `)
+                            : "";
                         this.write(chalk.gray(`${lineNum}  ${contextLine.content}`));
                         hasOutput = true;
                     }
                 }
-                
+
                 // Print all consecutive changes
                 let j = i;
-                while (j < outputLines.length && outputLines[j].type !== 'normal') {
+                while (j < outputLines.length && outputLines[j].type !== "normal") {
                     const changeLine = outputLines[j];
-                    if (changeLine.type === 'add') {
-                        const lineNum = this.options.lineNumbers ? chalk.green(` ${changeLine.lineNum?.toString().padStart(4)} `) : '';
+                    if (changeLine.type === "add") {
+                        const lineNum = this.options.lineNumbers
+                            ? chalk.green(` ${changeLine.lineNum?.toString().padStart(4)} `)
+                            : "";
                         this.write(chalk.green(`${lineNum}+ ${changeLine.content}`));
-                    } else if (changeLine.type === 'remove') {
-                        const lineNum = this.options.lineNumbers ? chalk.red(` ${changeLine.lineNum?.toString().padStart(4)} `) : '';
+                    } else if (changeLine.type === "remove") {
+                        const lineNum = this.options.lineNumbers
+                            ? chalk.red(` ${changeLine.lineNum?.toString().padStart(4)} `)
+                            : "";
                         this.write(chalk.red(`${lineNum}- ${changeLine.content}`));
                     }
                     hasOutput = true;
                     j++;
                 }
-                
+
                 // Print context after
                 const endIdx = Math.min(j + context, outputLines.length);
                 for (let k = j; k < endIdx; k++) {
                     const contextLine = outputLines[k];
-                    if (contextLine.type === 'normal') {
-                        const lineNum = this.options.lineNumbers ? chalk.gray(` ${contextLine.lineNum?.toString().padStart(4)} `) : '';
+                    if (contextLine.type === "normal") {
+                        const lineNum = this.options.lineNumbers
+                            ? chalk.gray(` ${contextLine.lineNum?.toString().padStart(4)} `)
+                            : "";
                         this.write(chalk.gray(`${lineNum}  ${contextLine.content}`));
                         hasOutput = true;
                     }
                 }
-                
+
                 lastPrintedIdx = endIdx - 1;
                 i = endIdx;
             } else {
@@ -791,7 +896,7 @@ class EnhancedPackageComparison {
         // Simple side-by-side implementation
         const terminalWidth = process.stdout.columns || 80;
         const columnWidth = Math.floor((terminalWidth - 3) / 2);
-        
+
         this.write(chalk.gray(`${"─".repeat(columnWidth)} │ ${"─".repeat(columnWidth)}`));
         this.write(chalk.bold(`${this.version1.padEnd(columnWidth)} │ ${this.version2}`));
         this.write(chalk.gray(`${"─".repeat(columnWidth)} │ ${"─".repeat(columnWidth)}`));
@@ -801,13 +906,13 @@ class EnhancedPackageComparison {
         let contextBuffer: string[] = [];
         let inChange = false;
         let hasOutput = false;
-        
+
         result.changes?.forEach((change, idx) => {
-            const lines = change.value.split('\n');
-            if (lines[lines.length - 1] === '' && !change.value.endsWith('\n')) {
+            const lines = change.value.split("\n");
+            if (lines[lines.length - 1] === "" && !change.value.endsWith("\n")) {
                 lines.pop();
             }
-            
+
             if (change.added || change.removed) {
                 // Output context before if we have any
                 if (contextBuffer.length > 0) {
@@ -818,14 +923,16 @@ class EnhancedPackageComparison {
                     for (let i = startIdx; i < contextBuffer.length; i++) {
                         const line = contextBuffer[i];
                         const truncated = line.substring(0, columnWidth - 2);
-                        this.write(`${chalk.gray("  " + truncated.padEnd(columnWidth - 2))} │ ${chalk.gray("  " + truncated)}`);
+                        this.write(
+                            `${chalk.gray("  " + truncated.padEnd(columnWidth - 2))} │ ${chalk.gray("  " + truncated)}`
+                        );
                         hasOutput = true;
                     }
                 }
                 contextBuffer = [];
                 inChange = true;
-                
-                lines.forEach(line => {
+
+                lines.forEach((line) => {
                     const truncatedLine = line.substring(0, columnWidth - 2);
                     if (change.added) {
                         this.write(`${" ".repeat(columnWidth)} │ ${chalk.green("+ " + truncatedLine)}`);
@@ -838,9 +945,11 @@ class EnhancedPackageComparison {
                 // Normal lines
                 if (inChange) {
                     // Show context after changes
-                    lines.slice(0, context).forEach(line => {
+                    lines.slice(0, context).forEach((line) => {
                         const truncated = line.substring(0, columnWidth - 2);
-                        this.write(`${chalk.gray("  " + truncated.padEnd(columnWidth - 2))} │ ${chalk.gray("  " + truncated)}`);
+                        this.write(
+                            `${chalk.gray("  " + truncated.padEnd(columnWidth - 2))} │ ${chalk.gray("  " + truncated)}`
+                        );
                         hasOutput = true;
                     });
                     inChange = false;
@@ -862,7 +971,7 @@ class EnhancedPackageComparison {
 
     private isDeltaAvailable(): boolean {
         try {
-            execSync('which delta', { stdio: 'ignore' });
+            execSync("which delta", { stdio: "ignore" });
             return true;
         } catch {
             return false;
@@ -873,11 +982,11 @@ class EnhancedPackageComparison {
         if (result.patch) {
             const tempFile = path.join(os.tmpdir(), `npm-diff-${Date.now()}.patch`);
             fs.writeFileSync(tempFile, result.patch);
-            
+
             const deltaCmd = `delta --file-style=bold --hunk-header-style=file < ${tempFile}`;
-            
+
             try {
-                execSync(deltaCmd, { stdio: 'inherit' });
+                execSync(deltaCmd, { stdio: "inherit" });
             } catch (e) {
                 logger.warn("Delta failed, falling back to default output");
                 this.outputTerminalDiff(result);
@@ -889,7 +998,7 @@ class EnhancedPackageComparison {
 
     private generateUnifiedDiff(): string {
         let unifiedDiff = "";
-        this.results.forEach(result => {
+        this.results.forEach((result) => {
             if (result.patch) {
                 unifiedDiff += result.patch + "\n";
             }
@@ -899,8 +1008,12 @@ class EnhancedPackageComparison {
 
     private generateHtmlOutput(): string {
         const unifiedDiff = this.generateUnifiedDiff();
-        const escapedDiff = unifiedDiff.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        
+        // Escape for JavaScript template literal (backticks and ${})
+        const jsEscapedDiff = unifiedDiff
+            .replace(/\\/g, "\\\\") // Escape backslashes first
+            .replace(/`/g, "\\`") // Escape backticks
+            .replace(/\$/g, "\\$"); // Escape dollar signs
+
         const template = `
 <!DOCTYPE html>
 <html lang="en">
@@ -982,9 +1095,9 @@ class EnhancedPackageComparison {
             <strong>Generated:</strong> ${new Date().toLocaleString()}
         </div>
         <div class="stats">
-            <span class="stat">📊 Files Changed: ${this.results.filter(r => r.status === "modified").length}</span>
-            <span class="stat">➕ Files Added: ${this.results.filter(r => r.status === "added").length}</span>
-            <span class="stat">➖ Files Removed: ${this.results.filter(r => r.status === "removed").length}</span>
+            <span class="stat">📊 Files Changed: ${this.results.filter((r) => r.status === "modified").length}</span>
+            <span class="stat">➕ Files Added: ${this.results.filter((r) => r.status === "added").length}</span>
+            <span class="stat">➖ Files Removed: ${this.results.filter((r) => r.status === "removed").length}</span>
         </div>
     </div>
     <script>
@@ -1003,7 +1116,7 @@ class EnhancedPackageComparison {
 
     <script>
         // Store the unified diff in a variable
-        const unifiedDiff = \`${escapedDiff}\`;
+        const unifiedDiff = \`${jsEscapedDiff}\`;
         
         let currentView = 'line-by-line';
         let diff2htmlUi = null;
@@ -1073,16 +1186,16 @@ class EnhancedPackageComparison {
             filter: this.options.filter,
             stats: {
                 total: this.results.length,
-                added: this.results.filter(r => r.status === "added").length,
-                removed: this.results.filter(r => r.status === "removed").length,
-                modified: this.results.filter(r => r.status === "modified").length,
-                identical: this.results.filter(r => r.status === "identical").length
+                added: this.results.filter((r) => r.status === "added").length,
+                removed: this.results.filter((r) => r.status === "removed").length,
+                modified: this.results.filter((r) => r.status === "modified").length,
+                identical: this.results.filter((r) => r.status === "identical").length,
             },
-            files: this.results.map(r => ({
+            files: this.results.map((r) => ({
                 ...r,
                 changes: undefined, // Remove the raw changes array for cleaner JSON
-                patch: this.options.includePatchInJson ? r.patch : undefined
-            }))
+                patch: this.options.includePatchInJson ? r.patch : undefined,
+            })),
         };
         return JSON.stringify(summary, null, 2);
     }
@@ -1125,11 +1238,11 @@ class EnhancedPackageComparison {
             if (this.options.paging) {
                 this.outputBuffer = [];
             }
-            
+
             this.results
-                .filter(r => r.status !== "identical" || this.options.showIdentical)
-                .forEach(result => this.outputTerminalDiff(result));
-                
+                .filter((r) => r.status !== "identical" || this.options.showIdentical)
+                .forEach((result) => this.outputTerminalDiff(result));
+
             // Show statistics if requested
             if (this.options.stats) {
                 this.showStatistics();
@@ -1139,7 +1252,7 @@ class EnhancedPackageComparison {
             if (this.options.sizes) {
                 this.showSizeComparison();
             }
-            
+
             // Start pager with all output
             if (this.options.paging) {
                 this.startPager();
@@ -1151,24 +1264,24 @@ class EnhancedPackageComparison {
     private showStatistics(): void {
         const stats = {
             total: this.results.length,
-            added: this.results.filter(r => r.status === "added").length,
-            removed: this.results.filter(r => r.status === "removed").length,
-            modified: this.results.filter(r => r.status === "modified").length,
-            identical: this.results.filter(r => r.status === "identical").length
+            added: this.results.filter((r) => r.status === "added").length,
+            removed: this.results.filter((r) => r.status === "removed").length,
+            modified: this.results.filter((r) => r.status === "modified").length,
+            identical: this.results.filter((r) => r.status === "identical").length,
         };
 
         const statsBox = boxen(
             `${chalk.bold("📊 Diff Statistics")}\n\n` +
-            `Total files analyzed: ${chalk.cyan(stats.total)}\n` +
-            `Files added: ${chalk.green(`+${stats.added}`)}\n` +
-            `Files removed: ${chalk.red(`-${stats.removed}`)}\n` +
-            `Files modified: ${chalk.yellow(`~${stats.modified}`)}\n` +
-            `Files unchanged: ${chalk.gray(stats.identical)}`,
+                `Total files analyzed: ${chalk.cyan(stats.total)}\n` +
+                `Files added: ${chalk.green(`+${stats.added}`)}\n` +
+                `Files removed: ${chalk.red(`-${stats.removed}`)}\n` +
+                `Files modified: ${chalk.yellow(`~${stats.modified}`)}\n` +
+                `Files unchanged: ${chalk.gray(stats.identical)}`,
             {
                 padding: 1,
                 margin: 1,
                 borderStyle: "round",
-                borderColor: "cyan"
+                borderColor: "cyan",
             }
         );
         this.write(statsBox);
@@ -1177,32 +1290,27 @@ class EnhancedPackageComparison {
     private showSizeComparison(): void {
         const table = new Table({
             head: ["File", "Status", `Size (${this.version1})`, `Size (${this.version2})`, "Diff"],
-            style: { head: ["cyan"] }
+            style: { head: ["cyan"] },
         });
 
         this.results
-            .filter(r => r.status !== "identical")
-            .forEach(result => {
+            .filter((r) => r.status !== "identical")
+            .forEach((result) => {
                 const oldSize = result.oldSize ? filesize(result.oldSize) : "-";
                 const newSize = result.newSize ? filesize(result.newSize) : "-";
-                const sizeDiff = (result.oldSize && result.newSize) 
-                    ? filesize(result.newSize - result.oldSize, { signed: true })
-                    : "-";
+                const sizeDiff =
+                    result.oldSize && result.newSize
+                        ? filesize(result.newSize - result.oldSize, { signed: true })
+                        : "-";
 
                 const status = {
                     added: chalk.green("Added"),
                     removed: chalk.red("Removed"),
                     modified: chalk.yellow("Modified"),
-                    identical: chalk.gray("Identical")
+                    identical: chalk.gray("Identical"),
                 }[result.status];
 
-                table.push([
-                    result.file,
-                    status,
-                    oldSize,
-                    newSize,
-                    sizeDiff
-                ]);
+                table.push([result.file, status, oldSize, newSize, sizeDiff]);
             });
 
         this.write("\n" + table.toString());
@@ -1212,7 +1320,7 @@ class EnhancedPackageComparison {
         if (!this.options.keep) {
             const cleanupSpinner = ora({
                 text: "Cleaning up temporary files...",
-                spinner: "dots"
+                spinner: "dots",
             }).start();
 
             // Close watchers
@@ -1241,8 +1349,8 @@ async function main(): Promise<void> {
         await comparison.compareFiles();
         await comparison.outputResults();
     } catch (error) {
-        logger.error(`Comparison failed: ${error}`);
-        process.exit(1);
+        logger.error(`Comparison failed: ${error}. Try running with --verbose flag for more information.`);
+        throw error;
     } finally {
         await comparison.cleanup();
     }

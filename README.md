@@ -19,13 +19,13 @@
 
 ## 📚 Table of Contents
 
-- [🚀 Quick Start](#-quick-start)
-- [🛠️ Available Tools](#️-available-tools)
-  - [🔍 Git & Version Control](#-git--version-control)
-  - [🤖 AI & Analysis](#-ai--analysis)
-  - [📊 Monitoring & Watching](#-monitoring--watching)
-  - [📦 Package Management](#-package-management)
-- [💡 Tool Details](#-tool-details)
+-   [🚀 Quick Start](#-quick-start)
+-   [🛠️ Available Tools](#️-available-tools)
+    -   [🔍 Git & Version Control](#-git--version-control)
+    -   [🤖 AI & Analysis](#-ai--analysis)
+    -   [📊 Monitoring & Watching](#-monitoring--watching)
+    -   [📦 Package Management](#-package-management)
+-   [💡 Tool Details](#-tool-details)
 
 ---
 
@@ -71,32 +71,32 @@ tools
 
 ### 🔍 Git & Version Control
 
-| Tool | Description |
-|------|-------------|
-| **[Git Commit](#11--git-commit)** | 🤖 AI-powered commit messages with auto-staging |
-| **[Git Last Commits Diff](#1--git-last-commits-diff)** | 📝 View diffs between recent commits |
-| **[GitHub Release Notes](#3--github-release-notes)** | 📋 Generate beautiful release notes |
+| Tool                                                   | Description                                     |
+| ------------------------------------------------------ | ----------------------------------------------- |
+| **[Git Commit](#11--git-commit)**                      | 🤖 AI-powered commit messages with auto-staging |
+| **[Git Last Commits Diff](#1--git-last-commits-diff)** | 📝 View diffs between recent commits            |
+| **[GitHub Release Notes](#3--github-release-notes)**   | 📋 Generate beautiful release notes             |
 
 ### 🤖 AI & Analysis
 
-| Tool | Description |
-|------|-------------|
+| Tool                                                 | Description                                |
+| ---------------------------------------------------- | ------------------------------------------ |
 | **[Collect Files for AI](#2--collect-files-for-ai)** | 🤖 Aggregate project files for AI analysis |
-| **[Files to Prompt](#8--files-to-prompt)** | 💬 Convert files to AI-friendly prompts |
-| **[Hold-AI](#10--hold-ai-tool)** | ⏸️ Control AI responses via WebSocket |
-| **[MCP Ripgrep](#9--mcp-ripgrep)** | ⚡ Lightning-fast code search server |
+| **[Files to Prompt](#8--files-to-prompt)**           | 💬 Convert files to AI-friendly prompts    |
+| **[Hold-AI](#10--hold-ai-tool)**                     | ⏸️ Control AI responses via WebSocket      |
+| **[MCP Ripgrep](#9--mcp-ripgrep)**                   | ⚡ Lightning-fast code search server       |
 
 ### 📊 Monitoring & Watching
 
-| Tool | Description |
-|------|-------------|
-| **[Watchman](#5--watchman)** | 👁️ Monitor file changes with Facebook Watchman |
+| Tool                                       | Description                                     |
+| ------------------------------------------ | ----------------------------------------------- |
+| **[Watchman](#5--watchman)**               | 👁️ Monitor file changes with Facebook Watchman  |
 | **[Watch](#6--watch-formerly-watch-glob)** | 🔄 Real-time file monitoring with glob patterns |
 
 ### 📦 Package Management
 
-| Tool | Description |
-|------|-------------|
+| Tool                                         | Description                              |
+| -------------------------------------------- | ---------------------------------------- |
 | **[NPM Package Diff](#7--npm-package-diff)** | 🎨 Beautiful package version comparisons |
 
 ---
@@ -126,13 +126,13 @@ tools git-last-commits-diff . --commits 3 --clipboard
 <details>
 <summary><b>⚙️ Options</b></summary>
 
-| Option | Description |
-|--------|-------------|
-| `<directory>` | 📁 Path to Git repository (required) |
-| `--commits, -c` | 🔢 Number of recent commits to diff |
-| `--output, -o` | 💾 Save diff to file |
-| `--clipboard, -cl` | 📋 Copy diff to clipboard |
-| `--help, -h` | ❓ Show help message |
+| Option             | Description                          |
+| ------------------ | ------------------------------------ |
+| `<directory>`      | 📁 Path to Git repository (required) |
+| `--commits, -c`    | 🔢 Number of recent commits to diff  |
+| `--output, -o`     | 💾 Save diff to file                 |
+| `--clipboard, -cl` | 📋 Copy diff to clipboard            |
+| `--help, -h`       | ❓ Show help message                 |
 
 </details>
 
@@ -162,14 +162,16 @@ tools collect-files-for-ai . --all --flat
 <summary><b>⚙️ Modes & Options</b></summary>
 
 **🎨 Collection Modes** (choose one):
-- `--commits, -c NUM` - Files from last NUM commits
-- `--staged, -s` - Only staged files
-- `--unstaged, -u` - Only unstaged files  
-- `--all, -a` - All uncommitted files (default)
+
+-   `--commits, -c NUM` - Files from last NUM commits
+-   `--staged, -s` - Only staged files
+-   `--unstaged, -u` - Only unstaged files
+-   `--all, -a` - All uncommitted files (default)
 
 **📁 Output Options**:
-- `--target, -t DIR` - Custom output directory
-- `--flat, -f` - Copy files without preserving directory structure
+
+-   `--target, -t DIR` - Custom output directory
+-   `--flat, -f` - Copy files without preserving directory structure
 
 </details>
 
@@ -247,19 +249,19 @@ tools watchman
 
 ---
 
-### 6. 🔄 Watch 
+### 6. 🔄 Watch
 
 > Real-time file monitoring with powerful glob patterns - like `tail -f` on steroids! 🚀
 
 <details>
 <summary><b>✨ Features</b></summary>
 
-- 🎯 Watch files matching any glob pattern
-- 📡 Real-time content updates
-- 🆕 Auto-detect new files
-- 🏠 Tilde expansion support (`~`)
-- ⚡ Configurable polling intervals
-- 📊 Directory & file summaries
+-   🎯 Watch files matching any glob pattern
+-   📡 Real-time content updates
+-   🆕 Auto-detect new files
+-   🏠 Tilde expansion support (`~`)
+-   ⚡ Configurable polling intervals
+-   📊 Directory & file summaries
 
 </details>
 
@@ -285,12 +287,12 @@ tools watch "src/**/*" --seconds 1 -n 200
 <details>
 <summary><b>⚙️ Options</b></summary>
 
-| Option | Alias | Description | Default |
-|--------|-------|-------------|---------|
-| `--seconds` | `-s` | Polling interval | `3` |
-| `--verbose` | `-v` | Detailed logging | `false` |
-| `--follow` | `-f` | Tail mode | `false` |
-| `--lines` | `-n` | Lines to display | `50` |
+| Option      | Alias | Description      | Default |
+| ----------- | ----- | ---------------- | ------- |
+| `--seconds` | `-s`  | Polling interval | `3`     |
+| `--verbose` | `-v`  | Detailed logging | `false` |
+| `--follow`  | `-f`  | Tail mode        | `false` |
+| `--lines`   | `-n`  | Lines to display | `50`    |
 
 </details>
 
@@ -308,22 +310,25 @@ A powerful command-line tool that creates temporary directories, installs packag
 <summary><b>🌟 Key Features</b></summary>
 
 **🎨 Visual Excellence**
-- Beautiful colored terminal diffs with syntax highlighting
-- Side-by-side and line-by-line comparisons
-- Interactive HTML reports with toggle views
-- Delta integration for GitHub-style diffs
+
+-   Beautiful colored terminal diffs with syntax highlighting
+-   Side-by-side and line-by-line comparisons
+-   Interactive HTML reports with toggle views
+-   Delta integration for GitHub-style diffs
 
 **📊 Smart Analysis**
-- File size comparisons and statistics
-- Addition/deletion line counts
-- Glob pattern filtering (include/exclude)
-- Binary file detection and skipping
+
+-   File size comparisons and statistics
+-   Addition/deletion line counts
+-   Glob pattern filtering (include/exclude)
+-   Binary file detection and skipping
 
 **⚡ Performance**
-- Parallel package installation
-- Efficient file watching during install
-- Configurable timeouts
-- Multi-package manager support (npm, yarn, pnpm, bun)
+
+-   Parallel package installation
+-   Efficient file watching during install
+-   Configurable timeouts
+-   Multi-package manager support (npm, yarn, pnpm, bun)
 
 </details>
 
@@ -355,34 +360,34 @@ tools npm-package-diff webpack 4.46.0 5.88.0 --stats --sizes
 <details>
 <summary><b>⚙️ Options</b></summary>
 
-| Option | Alias | Description | Default |
-|--------|-------|-------------|---------|
-| `--filter` | `-f` | Glob pattern to include files | `**/*.d.ts` |
-| `--exclude` | `-e` | Glob pattern to exclude files | - |
-| `--output` | `-o` | Output file path | console |
-| `--format` | `-F` | Output format (terminal/unified/html/json/side-by-side) | `terminal` |
-| `--patch` | `-p` | Generate patch file | - |
-| `--verbose` | `-v` | Enable verbose logging | `false` |
-| `--silent` | `-s` | Suppress output except errors | `false` |
-| `--stats` | - | Show statistics summary | `false` |
-| `--sizes` | - | Compare file sizes | `false` |
-| `--line-numbers` | - | Show line numbers | `true` |
-| `--word-diff` | - | Show word-level differences | `false` |
-| `--side-by-side` | - | Side-by-side view | `false` |
-| `--context` | - | Context lines in diff | `3` |
-| `--use-delta` | - | Use delta for output | `false` |
-| `--keep` | `-k` | Keep temporary directories | `false` |
+| Option           | Alias | Description                                             | Default     |
+| ---------------- | ----- | ------------------------------------------------------- | ----------- |
+| `--filter`       | `-f`  | Glob pattern to include files                           | `**/*.d.ts` |
+| `--exclude`      | `-e`  | Glob pattern to exclude files                           | -           |
+| `--output`       | `-o`  | Output file path                                        | console     |
+| `--format`       | `-F`  | Output format (terminal/unified/html/json/side-by-side) | `terminal`  |
+| `--patch`        | `-p`  | Generate patch file                                     | -           |
+| `--verbose`      | `-v`  | Enable verbose logging                                  | `false`     |
+| `--silent`       | `-s`  | Suppress output except errors                           | `false`     |
+| `--stats`        | -     | Show statistics summary                                 | `false`     |
+| `--sizes`        | -     | Compare file sizes                                      | `false`     |
+| `--line-numbers` | -     | Show line numbers                                       | `true`      |
+| `--word-diff`    | -     | Show word-level differences                             | `false`     |
+| `--side-by-side` | -     | Side-by-side view                                       | `false`     |
+| `--context`      | -     | Context lines in diff                                   | `3`         |
+| `--use-delta`    | -     | Use delta for output                                    | `false`     |
+| `--keep`         | `-k`  | Keep temporary directories                              | `false`     |
 
 </details>
 
 <details>
 <summary><b>📋 Output Formats (`--format`)</b></summary>
 
-- **🖥️ terminal** - Colored diff with syntax highlighting (default)
-- **📄 unified** - Standard patch format for git apply
-- **🌐 html** - Interactive web page with toggle views
-- **📊 json** - Structured data for programmatic use
-- **↔️ side-by-side** - Split-screen terminal comparison
+-   **🖥️ terminal** - Colored diff with syntax highlighting (default)
+-   **📄 unified** - Standard patch format for git apply
+-   **🌐 html** - Interactive web page with toggle views
+-   **📊 json** - Structured data for programmatic use
+-   **↔️ side-by-side** - Split-screen terminal comparison
 
 </details>
 
@@ -395,13 +400,13 @@ tools npm-package-diff webpack 4.46.0 5.88.0 --stats --sizes
 <details>
 <summary><b>✨ Features</b></summary>
 
-- 🎯 Multiple output formats (XML, Markdown, plain text)
-- 📁 Recursive directory processing
-- 🔍 Extension and pattern filtering
-- 👻 Hidden file handling
-- 📊 Line number support
-- 🚫 Gitignore respect
-- 📂 Flat folder structure copying with renamed files
+-   🎯 Multiple output formats (XML, Markdown, plain text)
+-   📁 Recursive directory processing
+-   🔍 Extension and pattern filtering
+-   👻 Hidden file handling
+-   📊 Line number support
+-   🚫 Gitignore respect
+-   📂 Flat folder structure copying with renamed files
 
 </details>
 
@@ -442,11 +447,11 @@ find . -name "*.py" | tools files-to-prompt -0
 <details>
 <summary><b>🚀 Capabilities</b></summary>
 
-- **search** - Basic pattern search with highlighting
-- **advanced-search** - Extended options (word boundaries, symlinks, etc.)
-- **count-matches** - Count occurrences efficiently
-- **list-files** - List searchable files
-- **list-file-types** - Show supported file types
+-   **search** - Basic pattern search with highlighting
+-   **advanced-search** - Extended options (word boundaries, symlinks, etc.)
+-   **count-matches** - Count occurrences efficiently
+-   **list-files** - List searchable files
+-   **list-file-types** - Show supported file types
 
 </details>
 
@@ -457,16 +462,13 @@ Add to your MCP configuration file:
 
 ```json
 {
-  "mcpServers": {
-    "ripgrep": {
-      "command": "tools mcp-ripgrep",
-      "args": [
-        "--root",
-        "/Root/Path/For/Project/"
-      ],
-      "env": {}
+    "mcpServers": {
+        "ripgrep": {
+            "command": "tools mcp-ripgrep",
+            "args": ["--root", "/Root/Path/For/Project/"],
+            "env": {}
+        }
     }
-  }
 }
 ```
 
@@ -514,12 +516,12 @@ tools hold-ai/client
 <details>
 <summary><b>✨ Features</b></summary>
 
-- 🤖 Generates 4 commit message suggestions using Google Gemini AI
-- 📝 Interactive commit message selection
-- 📃 Optional detailed commit messages with body text (`--detail`)
-- 📦 Optional staging of all changes (`--stage`)
-- 🚀 Optional automatic push after commit
-- 🔍 Shows diff preview in verbose mode
+-   🤖 Generates 4 commit message suggestions using Google Gemini AI
+-   📝 Interactive commit message selection
+-   📃 Optional detailed commit messages with body text (`--detail`)
+-   📦 Optional staging of all changes (`--stage`)
+-   🚀 Optional automatic push after commit
+-   🔍 Shows diff preview in verbose mode
 
 </details>
 
@@ -548,12 +550,12 @@ tools git-commit --verbose
 <details>
 <summary><b>⚙️ Options</b></summary>
 
-| Option | Alias | Description |
-|--------|-------|-------------|
-| `--stage` | `-s` | Stage all changes before committing |
-| `--detail` | `-d` | Generate detailed commit messages with body text |
-| `--verbose` | `-v` | Enable verbose logging |
-| `--help` | `-h` | Show help message |
+| Option      | Alias | Description                                      |
+| ----------- | ----- | ------------------------------------------------ |
+| `--stage`   | `-s`  | Stage all changes before committing              |
+| `--detail`  | `-d`  | Generate detailed commit messages with body text |
+| `--verbose` | `-v`  | Enable verbose logging                           |
+| `--help`    | `-h`  | Show help message                                |
 
 </details>
 
@@ -561,6 +563,7 @@ tools git-commit --verbose
 <summary><b>⚙️ Configuration</b></summary>
 
 **Required Environment Variable:**
+
 ```bash
 export OPENROUTER_API_KEY=your_openrouter_api_key
 ```
@@ -575,8 +578,8 @@ The tool uses Google's Gemini 2.0 Flash Lite model via OpenRouter for fast, high
 1. **Stage Changes (Optional)** → Runs `git add .` if `--stage` is used
 2. **Analyze Diff** → Examines staged changes
 3. **Generate Messages** → AI creates 4 contextual commit messages
-   - With `--detail`: Each message includes a summary line and detailed body
-   - Without `--detail`: Just concise summary lines
+    - With `--detail`: Each message includes a summary line and detailed body
+    - Without `--detail`: Just concise summary lines
 4. **Select Message** → Choose the best one interactively
 5. **Commit** → Creates commit with chosen message
 6. **Push (Optional)** → Asks if you want to push to remote
@@ -603,6 +606,7 @@ bun add --global \
   @modelcontextprotocol/server-puppeteer \
   @modelcontextprotocol/server-brave-search \
   @executeautomation/playwright-mcp-server \
+  @eslint/mcp \
   interactive-mcp
 ```
 
@@ -614,47 +618,52 @@ Here's a complete MCP example configuration for Claude Desktop:
 
 ```json
 {
-  "mcpServers": {
-    "github": {
-      "command": "/Users/YourName/.bun/bin/mcp-server-github",
-      "args": [],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_...."
-      }
+    "mcpServers": {
+        "github": {
+            "command": "/Users/YourName/.bun/bin/mcp-server-github",
+            "args": [],
+            "env": {
+                "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_...."
+            }
+        },
+        "ripgrep": {
+            "command": "/Users/YourName/PathTo/GenesisTools/tools",
+            "args": ["mcp-ripgrep"],
+            "env": {
+                "SHELL": "/bin/zsh"
+            }
+        },
+        "sequential-thinking": {
+            "command": "/opt/homebrew/bin/mcp-server-sequential-thinking",
+            "args": [],
+            "env": {}
+        },
+        "puppeteer": {
+            "command": "/Users/YourName/.bun/bin/mcp-server-puppeteer",
+            "args": [],
+            "env": {}
+        },
+        "brave-search": {
+            "command": "/Users/YourName/.bun/bin/mcp-server-brave-search",
+            "env": {
+                "BRAVE_API_KEY": "BSAIV......"
+            }
+        },
+        "filesystem": {
+            "command": "/Users/YourName/.bun/bin/mcp-server-filesystem",
+            "args": ["/Users/YourName/PathTo/Projects/"]
+        },
+        "context": {
+            "command": "context7-mcp"
+        },
+        "eslint-mcp": {
+            "type": "stdio",
+            "command": "/Users/Yourname/.bun/bin/bun",
+            "args": ["x", "@eslint/mcp@latest"],
+            "env": {}
+        }
     },
-    "ripgrep": {
-      "command": "/Users/YourName/PathTo/GenesisTools/tools",
-      "args": [
-        "mcp-ripgrep"
-      ],
-      "env": {
-        "SHELL": "/bin/zsh"
-      }
-    },
-    "sequential-thinking": {
-      "command": "/opt/homebrew/bin/mcp-server-sequential-thinking",
-      "args": [],
-      "env": {}
-    },
-    "puppeteer": {
-      "command": "/Users/YourName/.bun/bin/mcp-server-puppeteer",
-      "args": [],
-      "env": {}
-    },
-    "brave-search": {
-      "command": "/Users/YourName/.bun/bin/mcp-server-brave-search",
-      "env": {
-        "BRAVE_API_KEY": "BSAIV......"
-      }
-    },
-    "filesystem": {
-      "command": "/Users/YourName/.bun/bin/mcp-server-filesystem",
-      "args": [
-        "/Users/YourName/PathTo/Projects/"
-      ]
-    }
-  },
-  "globalShortcut": ""
+    "globalShortcut": ""
 }
 ```
 
@@ -664,40 +673,43 @@ Here's a complete MCP configuration for Cursor:
 
 ```json
 {
-  "mcpServers": {
-    "ripgrep": {
-      "command": "tools mcp-ripgrep",
-      "args": ["--root", "/Users/YourName/Projects/"],
-      "env": {}
-    },
-    "github": {
-      "command": "mcp-server-github",
-      "args": [],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
-      }
-    },
-    "sequential-thinking": {
-      "command": "mcp-server-sequential-thinking",
-      "args": [],
-      "env": {}
-    },
-    "puppeteer": {
-      "command": "mcp-server-puppeteer",
-      "args": [],
-      "env": {}
-    },
-    "brave-search": {
-      "command": "mcp-server-brave-search",
-      "env": {
-        "BRAVE_API_KEY": "..."
-      }
-    },
-    "filesystem": {
-      "command": "mcp-server-filesystem",
-      "args": ["/Users/YourName/Allowed/Directory/"]
+    "mcpServers": {
+        "ripgrep": {
+            "command": "tools mcp-ripgrep",
+            "args": ["--root", "/Users/YourName/Projects/"],
+            "env": {}
+        },
+        "github": {
+            "command": "mcp-server-github",
+            "args": [],
+            "env": {
+                "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
+            }
+        },
+        "sequential-thinking": {
+            "command": "mcp-server-sequential-thinking",
+            "args": [],
+            "env": {}
+        },
+        "puppeteer": {
+            "command": "mcp-server-puppeteer",
+            "args": [],
+            "env": {}
+        },
+        "brave-search": {
+            "command": "mcp-server-brave-search",
+            "env": {
+                "BRAVE_API_KEY": "..."
+            }
+        },
+        "context": {
+            "command": "context7-mcp"
+        },
+        "filesystem": {
+            "command": "mcp-server-filesystem",
+            "args": ["/Users/YourName/Allowed/Directory/"]
+        }
     }
-  }
 }
 ```
 
@@ -735,6 +747,16 @@ psrecord <pid> --interval 1 --duration 60 --plot usage.png
 ```
 
 </details>
+
+---
+
+<a href="https://www.star-history.com/#genesiscz/GenesisTools&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=genesiscz/GenesisTools&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=genesiscz/GenesisTools&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=genesiscz/GenesisTools&type=Date" />
+ </picture>
+</a>
 
 ---
 
