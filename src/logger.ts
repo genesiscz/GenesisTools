@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename);
 
 const args = minimist(process.argv.slice(2));
 
-export const createLogger = (level: pino.LevelWithSilent, logToFile: boolean) => {
+export const createLogger = (level: pino.LevelWithSilent, logToFile: boolean, includeTimestamp: boolean = true) => {
     // Get current date for log file name
     const getCurrentDate = () => {
         const now = new Date();
@@ -42,7 +42,7 @@ export const createLogger = (level: pino.LevelWithSilent, logToFile: boolean) =>
                 target: "pino-pretty",
                 options: {
                     colorize: true,
-                    translateTime: "SYS:standard",
+                    translateTime: includeTimestamp ? "SYS:standard" : false,
                     ignore: "pid,hostname", // Ignore these fields for cleaner console output
                 },
             }),
@@ -54,21 +54,21 @@ export const createLogger = (level: pino.LevelWithSilent, logToFile: boolean) =>
     const logger = pino(
         {
             level,
-            timestamp: pino.stdTimeFunctions.isoTime,
+            timestamp: includeTimestamp ? pino.stdTimeFunctions.isoTime : false,
         },
         pino.multistream(streams)
     );
     return logger;
 };
 
- // Default level
- let level: pino.LevelWithSilent = "info";
+// Default level
+let level: pino.LevelWithSilent = "info";
 
- if (args.vv) {
-     level = "trace";
- } else if (args.v) {
-     level = "debug";
- }
+if (args.vv) {
+    level = "trace";
+} else if (args.v) {
+    level = "debug";
+}
 
 export const createDefaultLoggerFromCommandLineArgs = () => {
     const logger = createLogger(level, true);
@@ -79,7 +79,7 @@ const logger = createDefaultLoggerFromCommandLineArgs();
 const consoleLog = createLogger(level, false);
 
 // Ensure all logs are flushed before the process exits
-process.on('beforeExit', () => {
+process.on("beforeExit", () => {
     logger.flush();
 });
 
