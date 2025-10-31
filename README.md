@@ -76,6 +76,7 @@ tools
 | **[Git Commit](#11--git-commit)**                      | 🤖 AI-powered commit messages with auto-staging |
 | **[Git Last Commits Diff](#1--git-last-commits-diff)** | 📝 View diffs between recent commits            |
 | **[GitHub Release Notes](#3--github-release-notes)**   | 📋 Generate beautiful release notes             |
+| **[Last Changes](#13--last-changes)**                  | 📅 Show uncommitted changes grouped by time     |
 
 ### 🤖 AI & Analysis
 
@@ -85,13 +86,16 @@ tools
 | **[Files to Prompt](#8--files-to-prompt)**           | 💬 Convert files to AI-friendly prompts    |
 | **[Hold-AI](#10--hold-ai-tool)**                     | ⏸️ Control AI responses via WebSocket      |
 | **[MCP Ripgrep](#9--mcp-ripgrep)**                   | ⚡ Lightning-fast code search server       |
+| **[MCP Web Reader](#12--mcp-web-reader)**            | 🌐 Fetch raw HTML or Markdown (Jina/local) |
+| **[TSC Single](#15--tsc-single)**                    | 🔍 TypeScript diagnostics (CLI & MCP)      |
 
 ### 📊 Monitoring & Watching
 
-| Tool                                       | Description                                     |
-| ------------------------------------------ | ----------------------------------------------- |
-| **[Watchman](#5--watchman)**               | 👁️ Monitor file changes with Facebook Watchman  |
-| **[Watch](#6--watch-formerly-watch-glob)** | 🔄 Real-time file monitoring with glob patterns |
+| Tool                                          | Description                                     |
+| --------------------------------------------- | ----------------------------------------------- |
+| **[Watchman](#5--watchman)**                  | 👁️ Monitor file changes with Facebook Watchman  |
+| **[Watch](#6--watch-formerly-watch-glob)**    | 🔄 Real-time file monitoring with glob patterns |
+| **[FSEvents Profile](#14--fsevents-profile)** | 📊 Profile macOS filesystem events              |
 
 ### 📦 Package Management
 
@@ -504,6 +508,292 @@ tools hold-ai/client
 # Type messages, save & exit to send
 # Type "OK" alone to complete
 ```
+
+</details>
+
+---
+
+### 12. 🌐 MCP Web Reader
+
+> Fetches web content as raw HTML, Jina Reader Markdown, or locally extracted Markdown. Works as both CLI and MCP server.
+
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
+
+```bash
+# CLI modes
+tools mcp-web-reader --mode raw --url https://example.com
+tools mcp-web-reader --mode markdown --depth advanced --url https://example.com
+tools mcp-web-reader --mode jina --url https://example.com
+
+# Token limiting and compaction
+tools mcp-web-reader --mode markdown --url https://example.com --tokens 2048 --save-tokens
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ MCP Tools</b></summary>
+
+Exposed tools with parameters: `url`, `depth` (basic|advanced), `save_tokens` (0|1), `tokens` (max tokens)
+
+-   `FetchWebRaw`
+-   `FetchWebMarkdown`
+-   `FetchJina`
+
+Each returns `{ content: [{ type: "text", text }], meta: { tokens } }`.
+
+</details>
+
+---
+
+### 13. 📅 Last Changes
+
+> Shows uncommitted git changes grouped by modification time to help you understand what files were updated and when.
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+-   📅 Time-based grouping (Last hour, Last 3 hours, Today, Yesterday, etc.)
+-   🎨 Color-coded git status (modified, added, deleted, renamed)
+-   ⏰ Relative and absolute timestamps
+-   📋 Detailed status descriptions (staged/unstaged)
+-   🔍 Handles untracked files and directories
+
+</details>
+
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
+
+```bash
+# Show uncommitted changes grouped by time
+tools last-changes
+
+# Enable verbose logging
+tools last-changes --verbose
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ Options</b></summary>
+
+| Option      | Alias | Description            |
+| ----------- | ----- | ---------------------- |
+| `--verbose` | `-v`  | Enable verbose logging |
+| `--help`    | `-h`  | Show help message      |
+
+</details>
+
+<details>
+<summary><b>📋 Output Format</b></summary>
+
+Groups files by time periods:
+
+-   **Last hour** - Files modified in the past hour
+-   **Last 3 hours** - Files modified 1-3 hours ago
+-   **Last 6 hours** - Files modified 3-6 hours ago
+-   **Last 12 hours** - Files modified 6-12 hours ago
+-   **Today** - Files modified today but more than 12 hours ago
+-   **Yesterday** - Files modified yesterday
+-   **Last N days** - Files modified in the past week
+-   **Older** - Files modified more than a week ago
+
+Each file shows:
+
+-   Git status (M, A, D, R, etc.) with color coding
+-   Status description (e.g., "modified (staged & unstaged)")
+-   Relative time (e.g., "5 minutes ago")
+-   Absolute timestamp (e.g., "Oct 30, 2024, 2:30:45 PM")
+
+</details>
+
+---
+
+### 14. 📊 FSEvents Profile
+
+> Profile file system events using macOS fsevents. Helps identify directories with high filesystem activity to diagnose performance issues or find cache/build directories.
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+-   📊 Monitor filesystem events in real-time
+-   📈 Aggregate events by directory
+-   🏆 Show top N most active directories
+-   🔍 Find processes watching fsevents
+-   ⚡ Uses native macOS fsevents API for efficiency
+
+</details>
+
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
+
+```bash
+# Monitor entire filesystem for default 15 seconds
+tools fsevents-profile
+
+# Monitor specific directory
+tools fsevents-profile /Users
+
+# Monitor for custom duration
+tools fsevents-profile -d 30
+
+# Show top 5 directories instead of default 10
+tools fsevents-profile -t 5 /tmp
+
+# Show processes currently watching fsevents (requires root)
+sudo tools fsevents-profile --watchers
+
+# Enable verbose logging to see events in real-time
+tools fsevents-profile -v /Users/Martin
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ Options</b></summary>
+
+| Option       | Alias | Description                                             | Default |
+| ------------ | ----- | ------------------------------------------------------- | ------- |
+| `--duration` | `-d`  | Monitoring duration in seconds                          | `15`    |
+| `--top`      | `-t`  | Number of top directories to display                    | `10`    |
+| `--path`     | -     | Path to monitor                                         | `"/"`   |
+| `--watchers` | `-w`  | Show processes currently watching fsevents (needs root) | -       |
+| `--verbose`  | `-v`  | Enable verbose logging to see events as they occur      | -       |
+| `--help`     | `-h`  | Show help message                                       | -       |
+
+</details>
+
+<details>
+<summary><b>📋 How It Works</b></summary>
+
+1. Starts an fsevents watcher on the specified path
+2. Collects all file system events during the monitoring period
+3. Aggregates events by parent directory
+4. Displays the top N directories with the most activity
+5. Press Ctrl+C at any time to stop early and see results
+
+</details>
+
+<details>
+<summary><b>💡 Tips</b></summary>
+
+-   Common high-activity locations include: caches, build outputs, cloud sync folders
+-   Monitoring the root filesystem (`/`) may generate a large number of events
+-   The `--watchers` flag requires root privileges to run `fs_usage`
+-   Use `--verbose` to see events in real-time as they occur
+
+</details>
+
+---
+
+### 15. 🔍 TSC Single
+
+> TypeScript diagnostics checker that can run as both a CLI tool and an MCP server. It supports checking individual files, directories, or glob patterns against your project's tsconfig.json.
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+-   ✅ **CLI Mode**: Check TypeScript files from the command line
+-   ✅ **MCP Server Mode**: Run as a persistent MCP server for AI assistants
+-   ✅ **Dual Checking Methods**: Use TypeScript Compiler API or LSP
+-   ✅ **Glob Pattern Support**: Check multiple files using patterns
+-   ✅ **Persistent LSP**: In MCP mode, LSP stays running for faster checks
+
+</details>
+
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
+
+```bash
+# Check a single file
+tools tsc-single src/app.ts
+
+# Check all TypeScript files in a directory
+tools tsc-single src
+
+# Check files using glob patterns (use quotes!)
+tools tsc-single 'src/**/*.ts'
+
+# Use LSP for checking (faster for incremental checks)
+tools tsc-single --lsp src/app.ts
+
+# Show warnings too
+tools tsc-single --warnings src/app.ts
+
+# Run as MCP server for current directory
+tools tsc-single --mcp .
+
+# Run MCP server for a specific project
+tools tsc-single --mcp /path/to/project
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ Options</b></summary>
+
+| Option       | Description                                            |
+| ------------ | ------------------------------------------------------ |
+| `--lsp`      | Use typescript-language-server instead of compiler API |
+| `--warnings` | Show warnings in addition to errors                    |
+| `--mcp`      | Run as MCP server (requires project path argument)     |
+
+</details>
+
+<details>
+<summary><b>⚙️ MCP Configuration</b></summary>
+
+Add to your MCP settings (e.g., Claude Desktop config):
+
+```json
+{
+    "mcpServers": {
+        "typescript-diagnostics": {
+            "command": "/path/to/GenesisTools/tools",
+            "args": ["tsc-single", "--mcp", "/path/to/your/project"]
+        }
+    }
+}
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ MCP Tool: GetTsDiagnostics</b></summary>
+
+Get TypeScript diagnostics for files matching the specified patterns.
+
+**Parameters:**
+
+-   `files` (required): String or array of file paths/glob patterns
+    -   Examples: `"src/app.ts"`, `"src/**/*.ts"`, `["file1.ts", "file2.ts"]`
+-   `showWarnings` (optional): Include warnings in addition to errors (default: false)
+
+**Example Requests:**
+
+```typescript
+// Single file
+{ "files": "src/app.ts" }
+
+// Glob pattern
+{ "files": "src/**/*.ts" }
+
+// Multiple files
+{ "files": ["src/app.ts", "src/utils.ts"] }
+
+// With warnings
+{ "files": "src/app.ts", "showWarnings": true }
+```
+
+</details>
+
+<details>
+<summary><b>📋 Exit Codes</b></summary>
+
+-   `0`: Success (no errors)
+-   `1`: Usage error or no files found
+-   `2`: TypeScript errors found
 
 </details>
 
