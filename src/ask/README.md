@@ -144,12 +144,12 @@ All code uses strict TypeScript with no `any` types:
 
 // Provider types are properly defined
 export interface DetectedProvider {
-  name: string;
-  type: string;
-  key: string;
-  provider: ProviderV1;
-  models: ModelInfo[];
-  config: ProviderConfig;
+    name: string;
+    type: string;
+    key: string;
+    provider: ProviderV1;
+    models: ModelInfo[];
+    config: ProviderConfig;
 }
 ```
 
@@ -160,17 +160,17 @@ export interface DetectedProvider {
 ```typescript
 // ✅ CORRECT - Use prompt for single messages
 const result = await generateText({
-  model: this.config.model,
-  prompt: message,
-  system: this.config.systemPrompt,
-  temperature: this.config.temperature,
-  maxTokens: this.config.maxTokens,
+    model: this.config.model,
+    prompt: message,
+    system: this.config.systemPrompt,
+    temperature: this.config.temperature,
+    maxTokens: this.config.maxTokens,
 });
 
 // ❌ INCORRECT - Using messages array causes cryptic errors
 const result = await generateText({
-  model: this.config.model,
-  messages: [{ role: "user", content: message }], // This fails with "def.typeName" error
+    model: this.config.model,
+    messages: [{ role: "user", content: message }], // This fails with "def.typeName" error
 });
 ```
 
@@ -179,14 +179,14 @@ The same pattern applies to `streamText()`:
 ```typescript
 // ✅ CORRECT
 const result = await streamText({
-  model: this.config.model,
-  prompt: message,
+    model: this.config.model,
+    prompt: message,
 });
 
 // ❌ INCORRECT
 const result = await streamText({
-  model: this.config.model,
-  messages: messagesArray, // This hangs/fails
+    model: this.config.model,
+    messages: messagesArray, // This hangs/fails
 });
 ```
 
@@ -319,30 +319,37 @@ jq -r 'select(.msg | contains("ChatEngine")) | .msg' logs/$(date +%Y-%m-%d).log
 ## Provider-Specific Notes
 
 ### OpenAI
+
 - Models: `gpt-4o`, `gpt-4`, `gpt-3.5-turbo`, etc.
 - Environment: `OPENAI_API_KEY`
 
 ### OpenRouter
+
 - Models: `anthropic/claude-3.5-sonnet-20240620`, etc.
 - Environment: `OPENROUTER_API_KEY`
 - Dynamic pricing supported
 
 ### Anthropic
+
 - Models: `claude-3-5-sonnet-20241022`, etc.
 - Environment: `ANTHROPIC_API_KEY`
 
 ### Google
+
 - Models: `gemini-pro`, etc.
 - Environment: `GOOGLE_API_KEY`
 
 ### Groq
+
 - Models: `llama-3.1-70b-versatile`, etc.
 - Environment: `GROQ_API_KEY`
 
 ### xAI
+
 - Models: `grok-beta`
 - Environment: `X_AI_API_KEY`
 
 ### JinaAI
+
 - Models: `jina-r1`
 - Environment: `JINA_AI_API_KEY`

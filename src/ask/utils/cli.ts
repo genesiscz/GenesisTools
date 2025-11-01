@@ -1,49 +1,32 @@
 import minimist from "minimist";
-import type { CLIOptions, Args } from "../types";
+import type { CLIOptions, Args, OutputFormat } from "../types";
 
 export function parseCLIArguments(): Args {
-  const argv = minimist<Args>(process.argv.slice(2), {
-    alias: {
-      s: "sst",
-      m: "model",
-      p: "provider",
-      o: "output",
-      h: "help",
-      v: "verbose",
-      V: "version",
-      i: "interactive",
-      t: "temperature",
-      k: "maxTokens",
-    },
-    boolean: [
-      "streaming",
-      "help",
-      "version",
-      "verbose",
-      "silent",
-    ],
-    default: {
-      streaming: true,
-    },
-    string: [
-      "sst",
-      "model",
-      "provider",
-      "output",
-      "systemPrompt",
-      "temperature",
-      "maxTokens",
-    ],
-    default: {
-      streaming: true,
-    },
-  });
+    const argv = minimist<Args>(process.argv.slice(2), {
+        alias: {
+            s: "sst",
+            m: "model",
+            p: "provider",
+            o: "output",
+            h: "help",
+            v: "verbose",
+            V: "version",
+            i: "interactive",
+            t: "temperature",
+            k: "maxTokens",
+        },
+        boolean: ["streaming", "help", "version", "verbose", "silent"],
+        string: ["sst", "model", "provider", "output", "systemPrompt", "temperature", "maxTokens"],
+        default: {
+            streaming: true,
+        },
+    });
 
-  return argv;
+    return argv;
 }
 
 export function showHelp(): void {
-  console.log(`
+    console.log(`
 ASK Tool - Multi-Router LLM Chat Application
 
 Usage:
@@ -117,192 +100,192 @@ Environment Variables:
 }
 
 export function showVersion(): void {
-  console.log("ASK Tool v1.0.0");
-  console.log("Multi-provider LLM chat application for GenesisTools");
+    console.log("ASK Tool v1.0.0");
+    console.log("Multi-provider LLM chat application for GenesisTools");
 }
 
 export function validateOptions(options: CLIOptions): { valid: boolean; errors: string[] } {
-  const errors: string[] = [];
+    const errors: string[] = [];
 
-  // Validate temperature
-  if (options.temperature !== undefined) {
-    const temp = parseFloat(options.temperature.toString());
-    if (isNaN(temp) || temp < 0 || temp > 2) {
-      errors.push("Temperature must be a number between 0 and 2");
+    // Validate temperature
+    if (options.temperature !== undefined) {
+        const temp = parseFloat(options.temperature.toString());
+        if (isNaN(temp) || temp < 0 || temp > 2) {
+            errors.push("Temperature must be a number between 0 and 2");
+        }
     }
-  }
 
-  // Validate maxTokens
-  if (options.maxTokens !== undefined) {
-    const tokens = parseInt(options.maxTokens.toString());
-    if (isNaN(tokens) || tokens < 1 || tokens > 100000) {
-      errors.push("Max tokens must be a number between 1 and 100000");
+    // Validate maxTokens
+    if (options.maxTokens !== undefined) {
+        const tokens = parseInt(options.maxTokens.toString());
+        if (isNaN(tokens) || tokens < 1 || tokens > 100000) {
+            errors.push("Max tokens must be a number between 1 and 100000");
+        }
     }
-  }
 
-  // Validate output format
-  if (options.output) {
-    const validFormats = ["text", "json", "markdown", "clipboard"];
-    const format = options.output.toLowerCase();
+    // Validate output format
+    if (options.output) {
+        const validFormats = ["text", "json", "markdown", "clipboard"];
+        const format = options.output.toLowerCase();
 
-    if (format !== "file" && !validFormats.includes(format)) {
-      errors.push(`Invalid output format: ${format}. Valid formats: ${validFormats.join(", ")}, file <filename>`);
+        if (format !== "file" && !validFormats.includes(format)) {
+            errors.push(`Invalid output format: ${format}. Valid formats: ${validFormats.join(", ")}, file <filename>`);
+        }
     }
-  }
 
-  // Check for conflicting options
-  if (options.sst && options._.length > 0) {
-    errors.push("Cannot use --sst and provide a message simultaneously");
-  }
+    // Check for conflicting options
+    if (options.sst && (options as Args)._?.length && (options as Args)._!.length > 0) {
+        errors.push("Cannot use --sst and provide a message simultaneously");
+    }
 
-  if (options.help && options.version) {
-    errors.push("Cannot use both --help and --version");
-  }
+    if (options.help && options.version) {
+        errors.push("Cannot use both --help and --version");
+    }
 
-  return {
-    valid: errors.length === 0,
-    errors,
-  };
+    return {
+        valid: errors.length === 0,
+        errors,
+    };
 }
 
 export function formatError(error: unknown, context?: string): string {
-  let message = "";
+    let message = "";
 
-  if (context) {
-    message += `${context}: `;
-  }
+    if (context) {
+        message += `${context}: `;
+    }
 
-  if (error instanceof Error) {
-    message += error.message;
-  } else if (typeof error === "string") {
-    message += error;
-  } else {
-    message += JSON.stringify(error);
-  }
+    if (error instanceof Error) {
+        message += error.message;
+    } else if (typeof error === "string") {
+        message += error;
+    } else {
+        message += JSON.stringify(error);
+    }
 
-  return message;
+    return message;
 }
 
 export function isInteractiveMode(options: CLIOptions, args: Args): boolean {
-  // If explicitly set
-  if (options.interactive !== undefined) {
-    return options.interactive;
-  }
+    // If explicitly set
+    if (options.interactive !== undefined) {
+        return options.interactive;
+    }
 
-  // If no message provided, assume interactive
-  if (args._.length === 0 && !options.sst) {
-    return true;
-  }
+    // If no message provided, assume interactive
+    if (args._.length === 0 && !options.sst) {
+        return true;
+    }
 
-  // If message provided, assume non-interactive
-  return false;
+    // If message provided, assume non-interactive
+    return false;
 }
 
 export function shouldShowHelp(options: CLIOptions): boolean {
-  return !!options.help;
+    return !!options.help;
 }
 
 export function shouldShowVersion(options: CLIOptions): boolean {
-  return !!options.version;
+    return !!options.version;
 }
 
-export function parseOutputFormat(outputArg?: string): { type: string; filename?: string } | undefined {
-  if (!outputArg) {
-    return undefined;
-  }
+export function parseOutputFormat(outputArg?: string): { type: OutputFormat; filename?: string } | undefined {
+    if (!outputArg) {
+        return undefined;
+    }
 
-  const parts = outputArg.toLowerCase().split(/\s+/);
-  const format = parts[0];
+    const parts = outputArg.toLowerCase().split(/\s+/);
+    const format = parts[0] as OutputFormat;
 
-  if (format === "file" && parts.length > 1) {
-    const filename = parts.slice(1).join(" ");
-    return { type: "file", filename };
-  }
+    if (format === "file" && parts.length > 1) {
+        const filename = parts.slice(1).join(" ");
+        return { type: "file", filename };
+    }
 
-  return { type: format };
+    return { type: format };
 }
 
 export function createSystemPrompt(customPrompt?: string): string | undefined {
-  if (!customPrompt) {
-    return undefined;
-  }
+    if (!customPrompt) {
+        return undefined;
+    }
 
-  // Validate system prompt length
-  if (customPrompt.length > 10000) {
-    throw new Error("System prompt too long (max 10000 characters)");
-  }
+    // Validate system prompt length
+    if (customPrompt.length > 10000) {
+        throw new Error("System prompt too long (max 10000 characters)");
+    }
 
-  return customPrompt.trim();
+    return customPrompt.trim();
 }
 
 export function parseTemperature(tempArg?: string | number): number | undefined {
-  if (tempArg === undefined) {
-    return undefined;
-  }
+    if (tempArg === undefined) {
+        return undefined;
+    }
 
-  const temp = typeof tempArg === "string" ? parseFloat(tempArg) : tempArg;
+    const temp = typeof tempArg === "string" ? parseFloat(tempArg) : tempArg;
 
-  if (isNaN(temp) || temp < 0 || temp > 2) {
-    throw new Error("Temperature must be a number between 0 and 2");
-  }
+    if (isNaN(temp) || temp < 0 || temp > 2) {
+        throw new Error("Temperature must be a number between 0 and 2");
+    }
 
-  return temp;
+    return temp;
 }
 
 export function parseMaxTokens(tokensArg?: string | number): number | undefined {
-  if (tokensArg === undefined) {
-    return undefined;
-  }
+    if (tokensArg === undefined) {
+        return undefined;
+    }
 
-  const tokens = typeof tokensArg === "string" ? parseInt(tokensArg) : tokensArg;
+    const tokens = typeof tokensArg === "string" ? parseInt(tokensArg) : tokensArg;
 
-  if (isNaN(tokens) || tokens < 1 || tokens > 100000) {
-    throw new Error("Max tokens must be a number between 1 and 100000");
-  }
+    if (isNaN(tokens) || tokens < 1 || tokens > 100000) {
+        throw new Error("Max tokens must be a number between 1 and 100000");
+    }
 
-  return tokens;
+    return tokens;
 }
 
 export function getConversationsDir(): string {
-  const customDir = process.env.ASK_CONVERSATIONS_DIR;
-  return customDir || "./conversations";
+    const customDir = process.env.ASK_CONVERSATIONS_DIR;
+    return customDir || "./conversations";
 }
 
 export function formatElapsedTime(milliseconds: number): string {
-  const seconds = Math.floor(milliseconds / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
+    const seconds = Math.floor(milliseconds / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
 
-  if (hours > 0) {
-    return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
-  } else if (minutes > 0) {
-    return `${minutes}m ${seconds % 60}s`;
-  } else {
-    return `${seconds}s`;
-  }
+    if (hours > 0) {
+        return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+    } else if (minutes > 0) {
+        return `${minutes}m ${seconds % 60}s`;
+    } else {
+        return `${seconds}s`;
+    }
 }
 
 export function formatBytes(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB"];
-  let size = bytes;
-  let unitIndex = 0;
+    const units = ["B", "KB", "MB", "GB"];
+    let size = bytes;
+    let unitIndex = 0;
 
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex++;
-  }
+    while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex++;
+    }
 
-  return `${size.toFixed(1)} ${units[unitIndex]}`;
+    return `${size.toFixed(1)} ${units[unitIndex]}`;
 }
 
 export function sanitizeFilename(filename: string): string {
-  // Remove invalid characters and ensure it's a valid filename
-  return filename
-    .replace(/[<>:"/\\|?*]/g, "_") // Replace invalid chars with underscore
-    .replace(/\s+/g, "_") // Replace spaces with underscores
-    .substring(0, 100); // Limit length
+    // Remove invalid characters and ensure it's a valid filename
+    return filename
+        .replace(/[<>:"/\\|?*]/g, "_") // Replace invalid chars with underscore
+        .replace(/\s+/g, "_") // Replace spaces with underscores
+        .substring(0, 100); // Limit length
 }
 
 export function generateTimestamp(): string {
-  return new Date().toISOString().replace(/[:.]/g, "-");
+    return new Date().toISOString().replace(/[:.]/g, "-");
 }

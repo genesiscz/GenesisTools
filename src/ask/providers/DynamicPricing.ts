@@ -144,9 +144,9 @@ export class DynamicPricingManager {
             return 0;
         }
 
-        const inputTokens = usage.inputTokens || 0;
-        const outputTokens = usage.outputTokens || 0;
-        const cachedInputTokens = usage.cachedInputTokens || 0;
+        const inputTokens = usage.promptTokens || 0;
+        const outputTokens = usage.completionTokens || 0;
+        const cachedInputTokens = usage.cachedPromptTokens || 0;
 
         const inputCost = (inputTokens * pricing.input) / 1000;
         const outputCost = (outputTokens * pricing.output) / 1000;
