@@ -6,7 +6,29 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const args = minimist(process.argv.slice(2));
+const args = minimist(process.argv.slice(2), {
+    alias: {
+        v: "verbose",
+        vv: "trace",
+    },
+    default: {
+        verbose: false,
+        trace: false,
+    },
+});
+
+const getLogLevel = (): pino.LevelWithSilent | null => {
+    if (process.env.LOG_TRACE === "1") return "trace";
+    if (process.env.LOG_DEBUG === "1") return "debug";
+    if (process.env.LOG_SILENT === "1") return "silent";
+    if (args.vv) {
+        return "trace";
+    } else if (args.v) {
+        return "debug";
+    }
+
+    return "info";
+};
 
 export const createLogger = (level: pino.LevelWithSilent, logToFile: boolean, includeTimestamp: boolean = true) => {
     // Get current date for log file name
@@ -62,13 +84,7 @@ export const createLogger = (level: pino.LevelWithSilent, logToFile: boolean, in
 };
 
 // Default level
-let level: pino.LevelWithSilent = "info";
-
-if (args.vv) {
-    level = "trace";
-} else if (args.v) {
-    level = "debug";
-}
+let level: pino.LevelWithSilent = getLogLevel();
 
 export const createDefaultLoggerFromCommandLineArgs = () => {
     const logger = createLogger(level, true);
