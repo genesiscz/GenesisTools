@@ -18,6 +18,27 @@ export interface DiagnosticsResult {
     diagnostics: TsDiagnostic[];
 }
 
+export interface HoverContents {
+    kind?: string;
+    value: string;
+}
+
+export interface HoverRange {
+    start: { line: number; character: number };
+    end: { line: number; character: number };
+}
+
+export interface RawHoverResponse {
+    contents: string | HoverContents | Array<string | HoverContents>;
+    range?: HoverRange;
+}
+
+export interface HoverResult {
+    contents: string;
+    range?: HoverRange;
+    raw?: RawHoverResponse | null;
+}
+
 export interface LspWorkerOptions {
     cwd: string;
     debug?: boolean;
@@ -370,6 +391,76 @@ export class LspWorker {
             this.fileVersions.clear();
             this.fileContents.clear();
             this.openFiles.clear();
+        }
+    }
+
+    /**
+     * Get hover information at a specific position in a file
+     */
+    async getHover(file: string, position: { line: number; character: number }): Promise<HoverResult> {
+        if (!this.initialized || !this.endpoint) {
+            throw new Error("LSP not initialized. Call start() first.");
+        }
+
+        const uri = `file://${file}`;
+
+        // Ensure file is open
+        if (!this.openFiles.has(uri)) {
+            const content = readFileSync(file, "utf-8");
+            const languageId = file.endsWith(".tsx") || file.endsWith(".jsx") ? "typescriptreact" : "typescript";
+
+            this.client!.didOpen({
+                textDocument: {
+                    uri,
+                    languageId,
+                    version: 1,
+                    text: content,
+                },
+            });
+            this.openFiles.add(uri);
+            this.fileVersions.set(uri, 1);
+            this.fileContents.set(uri, content);
+
+            // Wait a bit for LSP to process the file
+            await new Promise((r) => setTimeout(r, 100));
+        }
+
+        this.log(`Getting hover info for ${file} at line ${position.line}, character ${position.character}`);
+
+        try {
+            const response = (await this.endpoint.send("textDocument/hover", {
+                textDocument: { uri },
+                position: {
+                    line: position.line - 1, // Convert from 1-based to 0-based
+                    character: position.character - 1, // Convert from 1-based to 0-based
+                },
+            })) as RawHoverResponse | null;
+
+            if (!response) {
+                return { contents: "" };
+            }
+
+            this.log(`Raw hover response: ${JSON.stringify(response, null, 2)}`);
+
+            let contents = "";
+            if (typeof response.contents === "string") {
+                contents = response.contents;
+            } else if (Array.isArray(response.contents)) {
+                contents = response.contents
+                    .map((item) => (typeof item === "string" ? item : item.value || ""))
+                    .join("\n");
+            } else if (response.contents && typeof response.contents === "object" && "value" in response.contents) {
+                contents = response.contents.value;
+            }
+
+            return {
+                contents,
+                range: response.range,
+                raw: response, // Include full raw response for deeper inspection
+            };
+        } catch (error) {
+            this.log(`Error getting hover info: ${error}`);
+            throw error;
         }
     }
 

@@ -1,0 +1,48 @@
+import { LspWorker } from "../LspWorker.js";
+import type {
+    TSServer,
+    DiagnosticsResult,
+    DiagnosticsOptions,
+    HoverResult,
+    HoverPosition,
+} from "../core/interfaces.js";
+
+export interface LspServerOptions {
+    cwd: string;
+    debug?: boolean;
+}
+
+/**
+ * TypeScript diagnostics provider using Language Server Protocol.
+ * Delegates to LspWorker for low-level LSP communication.
+ * Preferred for incremental checks and hover information.
+ */
+export class LspServer implements TSServer {
+    private worker: LspWorker;
+    private cwd: string;
+
+    constructor(options: LspServerOptions) {
+        this.cwd = options.cwd;
+        this.worker = new LspWorker(options);
+    }
+
+    async initialize(): Promise<void> {
+        await this.worker.start();
+    }
+
+    async getDiagnostics(files: string[], options?: DiagnosticsOptions): Promise<DiagnosticsResult> {
+        return await this.worker.getDiagnostics(files, options);
+    }
+
+    async getHover(file: string, position: HoverPosition): Promise<HoverResult> {
+        return await this.worker.getHover(file, position);
+    }
+
+    formatDiagnostics(result: DiagnosticsResult, showWarnings: boolean): string[] {
+        return this.worker.formatDiagnostics(result, showWarnings);
+    }
+
+    async shutdown(): Promise<void> {
+        await this.worker.shutdown();
+    }
+}

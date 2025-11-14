@@ -9,6 +9,8 @@ TypeScript diagnostics checker that can run as both a CLI tool and an MCP server
 - ✅ **Dual Checking Methods**: Use TypeScript Compiler API or LSP
 - ✅ **Glob Pattern Support**: Check multiple files using patterns
 - ✅ **Persistent LSP**: In MCP mode, LSP stays running for faster checks
+- ✅ **Type Introspection**: Get hover information for types, functions, and variables
+- ✅ **Smart Position Handling**: Find symbols by text search or use auto/exact positioning
 - ✅ **Clean Architecture**: Reusable `LspWorker` class for LSP management
 
 ## CLI Usage
@@ -35,9 +37,13 @@ tools tsc-single src/app.ts 'tests/**/*.test.ts'
 ### Options
 
 ```bash
---lsp        # Use typescript-language-server instead of compiler API
---warnings   # Show warnings in addition to errors
---mcp        # Run as MCP server (see MCP Mode below)
+--lsp            # Use typescript-language-server instead of compiler API
+--warnings       # Show warnings in addition to errors
+--mcp            # Run as MCP server (see MCP Mode below)
+--hover          # Get hover information for a specific location
+--line <num>     # Line number for hover (required with --hover)
+--char <num>     # Character position for hover (optional)
+--text <string>  # Text to search for on the line (optional)
 ```
 
 ### Examples with Options
@@ -51,6 +57,12 @@ tools tsc-single --warnings src/app.ts
 
 # Combine options
 tools tsc-single --lsp --warnings 'src/**/*.ts'
+
+# Get hover information (type introspection)
+tools tsc-single --hover --line 19 --text greetUser src/app.ts
+tools tsc-single --hover --line 13 src/app.ts  # auto-position
+tools tsc-single --hover --line 9 --char 15 src/app.ts  # exact position
+tools tsc-single --hover --line 10 --raw src/app.ts  # include raw LSP data
 ```
 
 ## MCP Server Mode
@@ -82,7 +94,7 @@ Add to your MCP settings (e.g., Claude Desktop config):
 }
 ```
 
-### Available MCP Tool
+### Available MCP Tools
 
 #### `GetTsDiagnostics`
 
@@ -126,6 +138,66 @@ src/app.ts:10:5 - error TS2322: Type 'string' is not assignable to type 'number'
 src/utils.ts:25:12 - error TS2339: Property 'foo' does not exist on type 'Bar'.
 ```
 
+#### `GetTsHover`
+
+Get TypeScript hover information (type definitions, documentation) for a specific location in a TypeScript file. Perfect for introspecting types, function signatures, and variable definitions.
+
+**Parameters:**
+- `file` (required): Path to the TypeScript file
+- `line` (required): Line number (1-based)
+- `character` (optional): Character position (1-based). If not provided, uses first non-whitespace character
+- `text` (optional): Text to search for on the line. Will hover over the first occurrence
+- `includeRaw` (optional): Include raw LSP response with full structural data (default: false)
+
+**Smart Position Handling:**
+The tool offers three ways to specify the position:
+1. **Text search**: Provide `text` to find and hover over specific text on the line
+2. **Auto position**: Omit `character` to hover at the first non-whitespace character
+3. **Exact position**: Provide exact `character` position for precise control
+
+**Example Requests:**
+
+```typescript
+// Hover using text search (finds "myUser" on line 13)
+{ "file": "src/app.ts", "line": 13, "text": "myUser" }
+
+// Hover at first non-whitespace character on line 9
+{ "file": "src/app.ts", "line": 9 }
+
+// Hover at exact position
+{ "file": "src/app.ts", "line": 9, "character": 15 }
+```
+
+**Response Format:**
+
+```json
+{
+  "file": "src/app.ts",
+  "line": 13,
+  "character": 7,
+  "lineContent": "const myUser: User = {",
+  "hover": "\n```typescript\nconst myUser: User\n```\n"
+}
+```
+
+The response includes:
+- `file`: The file path
+- `line`: The line number that was queried
+- `character`: The exact character position that was hovered
+- `lineContent`: The full content of the line (helps verify correct location)
+- `hover`: The TypeScript hover information (types, signatures, JSDoc documentation)
+- `raw` (if `includeRaw: true`): Full LSP response including `kind`, `value`, and `range` details
+
+**Rich Documentation Support:**
+
+The hover information includes full JSDoc comments when present:
+
+```json
+{
+  "hover": "\n```typescript\nfunction greetUser(user: User): string\n```\nGreets a user with a personalized message\n\n*@param* `user` — The user object containing name and age\n\n*@returns* — A formatted greeting string\n\n*@example*\n```typescript\nconst user = { name: \"Alice\", age: 30, email: \"alice@example.com\" };\nconst greeting = greetUser(user);\nconsole.log(greeting);\n```"
+}
+```
+
 ## Architecture
 
 ### LspWorker Class
@@ -141,6 +213,9 @@ await worker.start();
 // Get diagnostics for files
 const result = await worker.getDiagnostics(files, { showWarnings: true });
 
+// Get hover information at a specific position
+const hover = await worker.getHover(filePath, { line: 10, character: 15 });
+
 // Format diagnostics for display
 const formatted = worker.formatDiagnostics(result, showWarnings);
 
@@ -151,6 +226,7 @@ await worker.shutdown();
 **Key Features:**
 - Persistent LSP connection (reusable across multiple checks)
 - Automatic diagnostic collection
+- Type introspection via hover
 - Configurable wait times
 - Clean shutdown handling
 
