@@ -52,6 +52,7 @@
         "ink": "^6.3.1",
         "ink-table": "^3.1.0",
         "jsdom": "^26.1.0",
+        "jsonpath": "^1.1.1",
         "loglevel": "^1.9.2",
         "minimatch": "^10.0.1",
         "minimist": "^1.2.8",

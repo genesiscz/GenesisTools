@@ -91,11 +91,12 @@ tools
 
 ### 📊 Monitoring & Watching
 
-| Tool                                          | Description                                     |
-| --------------------------------------------- | ----------------------------------------------- |
-| **[Watchman](#5--watchman)**                  | 👁️ Monitor file changes with Facebook Watchman  |
-| **[Watch](#6--watch-formerly-watch-glob)**    | 🔄 Real-time file monitoring with glob patterns |
-| **[FSEvents Profile](#14--fsevents-profile)** | 📊 Profile macOS filesystem events              |
+| Tool                                               | Description                                     |
+| -------------------------------------------------- | ----------------------------------------------- |
+| **[macOS ESLogger](#16--macos-eslogger)**          | 🔐 Monitor macOS Endpoint Security events       |
+| **[Watchman](#5--watchman)**                       | 👁️ Monitor file changes with Facebook Watchman  |
+| **[Watch](#6--watch-formerly-watch-glob)**         | 🔄 Real-time file monitoring with glob patterns |
+| **[FSEvents Profile](#14--fsevents-profile)**      | 📊 Profile macOS filesystem events              |
 
 ### 📦 Package Management
 
@@ -682,6 +683,168 @@ tools fsevents-profile -v /Users/Martin
 -   Monitoring the root filesystem (`/`) may generate a large number of events
 -   The `--watchers` flag requires root privileges to run `fs_usage`
 -   Use `--verbose` to see events in real-time as they occur
+
+</details>
+
+---
+
+### 16. 🔐 macOS ESLogger
+
+> Monitor macOS Endpoint Security events in real-time using the ESLogger utility - perfect for security monitoring and debugging process execution!
+
+**🚨 macOS Only** - Requires macOS 10.15+ and Full Disk Access permissions
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+- 🔍 **Real-time Event Monitoring**: Monitor system events as they happen
+- 🎯 **Advanced Filtering**: Filter events using JSON path expressions
+- 📊 **Multiple Event Types**: Process execution, file operations, authentication, and more
+- 🏷️ **Event Categories**: Pre-defined groups like process, file, network, security
+- 🎨 **Beautiful Output**: Color-coded, formatted event display
+- 🔧 **Debug Mode**: Raw JSON output for troubleshooting
+- 📝 **Multiple Output**: Console, file logging, or clipboard
+- 🖥️ **Interactive Mode**: Easy setup for beginners
+
+</details>
+
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
+
+```bash
+# Interactive mode (recommended for beginners)
+tools macos-eslogger
+
+# Monitor process events (exec, fork, exit)
+tools macos-eslogger -c process
+
+# Monitor specific events
+tools macos-eslogger -e exec,fork,authentication
+
+# Filter for specific processes
+tools macos-eslogger -e exec --filter-event '.event.target.path =~ ".*bash.*"'
+
+# Monitor file operations but exclude temp files
+tools macos-eslogger -e open,write --filter-event '.event.file.path !~ ".*tmp.*"'
+
+# Save authentication events to file
+tools macos-eslogger -e authentication -o auth.log
+
+# Debug mode to see raw event structure
+tools macos-eslogger -e exec --debug --dry-run
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ Event Categories</b></summary>
+
+| Category     | Events                                      | Description                     |
+| ------------ | ------------------------------------------- | ------------------------------- |
+| `process`    | exec, fork, exit                           | Process lifecycle events        |
+| `file`       | open, close, create, write, unlink, rename | File system operations          |
+| `network`    | uipc_bind, uipc_connect                    | Network/socket operations       |
+| `security`   | authentication, sudo, su, setuid...        | Security and privilege events   |
+| `session`    | login/logout, screensharing, ssh           | User session events             |
+| `auth`       | authorization events                       | System authorization            |
+
+</details>
+
+<details>
+<summary><b>🔍 Filter Syntax</b></summary>
+
+Use JSON path expressions with dot notation and regex operators:
+
+```bash
+# Regex matching (recommended)
+.event.target.path =~ ".*bash.*"        # Executables containing "bash"
+.event.target.path =~ "^/usr/.*"        # Paths starting with "/usr/"
+.event.process.audit_token.pid == "1234" # Specific PID (exact match)
+
+# Regex exclusion
+.event.target.path !~ ".*tmp.*"         # Exclude temp file paths
+
+# String matching (supports regex if pattern contains special chars)
+.event.target.path == "/bin/bash"       # Exact string match
+```
+
+**Supported Operators:**
+- `==` - Exact match (supports regex if pattern contains `.*`)
+- `!=` - Not equal (supports regex if pattern contains `.*`)
+- `=~` - Regex match
+- `!~` - Regex not match
+
+</details>
+
+<details>
+<summary><b>⚙️ Options</b></summary>
+
+| Option              | Alias | Description                                             |
+| ------------------- | ----- | ------------------------------------------------------- |
+| `--events, -e`      |       | Comma-separated list of event types to monitor         |
+| `--category, -c`    |       | Monitor all events in a category                       |
+| `--output, -o`      |       | Write output to file instead of stdout                 |
+| `--filter-event`    |       | Filter events using JSON path expression               |
+| `--include-fork`    |       | Auto-include fork events when monitoring exec          |
+| `--debug`           |       | Show raw JSON events for debugging                     |
+| `--dry-run`         |       | Show what would be monitored without running           |
+| `--silent`          |       | Suppress non-error messages                            |
+| `--verbose`         |       | Enable verbose logging                                 |
+| `--help, -h`        |       | Show help message                                      |
+
+</details>
+
+<details>
+<summary><b>🔧 Setup Requirements</b></summary>
+
+**1. macOS Version:** 10.15+ (Catalina or later)
+
+**2. Full Disk Access:** Required for ESLogger to work
+```bash
+# Go to: System Settings > Privacy & Security > Full Disk Access
+# Add and enable: /usr/sbin/eslogger
+```
+
+**3. Run with sudo:** ESLogger requires root privileges
+```bash
+sudo tools macos-eslogger -e exec
+```
+
+**4. Terminal Session:** Run in a separate terminal from the one you're monitoring
+
+</details>
+
+<details>
+<summary><b>📋 Understanding Events</b></summary>
+
+**Process Events:**
+- **exec**: `event.target.path` - Executable being run
+- **fork**: `event.child.executable.path` - Child process created
+
+**File Events:**
+- **open/write**: `event.file.path` - File being accessed
+- **create/unlink**: `event.target.path` - File being created/deleted
+
+**Security Events:**
+- **authentication**: `event.success` - Auth success/failure
+- **sudo**: `event.command` - Command run with sudo
+
+**Common Paths:**
+- `.event.target.path` - Executable path (exec events)
+- `.event.file.path` - File path (file events)
+- `.process.executable.path` - Process that triggered event
+- `.process.audit_token.pid` - Process ID
+
+</details>
+
+<details>
+<summary><b>💡 Pro Tips</b></summary>
+
+- **Shell Builtins**: `which`, `cd`, `echo` don't trigger exec events - use `/usr/bin/which`
+- **Process Groups**: ESLogger suppresses events from its own process group
+- **Performance**: Start with specific events rather than all events
+- **Debugging**: Use `--debug` to see raw event structure for filter creation
+- **Categories**: Use `-c process` for general process monitoring
 
 </details>
 
