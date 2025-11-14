@@ -63,7 +63,7 @@ export class CliHandler {
      * Show help message
      */
     showHelp(): void {
-        console.error("Usage: tsc-single [options] <file|directory|pattern> [...more]");
+        console.error("Usage: mcp-tsc [options] <file|directory|pattern> [...more]");
         console.error("");
         console.error("Commands:");
         console.error("  -d, --diagnostics    Check TypeScript files for errors (default)");
@@ -84,21 +84,21 @@ export class CliHandler {
         console.error("");
         console.error("Examples:");
         console.error("  # Diagnostics");
-        console.error("  tsc-single src/app.ts                            # single file (default command)");
-        console.error("  tsc-single -d src                                # all TS files in src/");
-        console.error("  tsc-single --diagnostics 'src/**/*.ts'           # glob pattern");
-        console.error("  tsc-single -d -w src/app.ts                      # show warnings");
-        console.error("  tsc-single --use-tsc src/app.ts                  # use compiler API");
+        console.error("  mcp-tsc src/app.ts                            # single file (default command)");
+        console.error("  mcp-tsc -d src                                # all TS files in src/");
+        console.error("  mcp-tsc --diagnostics 'src/**/*.ts'           # glob pattern");
+        console.error("  mcp-tsc -d -w src/app.ts                      # show warnings");
+        console.error("  mcp-tsc --use-tsc src/app.ts                  # use compiler API");
         console.error("");
         console.error("  # Hover / Type Introspection");
-        console.error("  tsc-single --hover -l 10 src/app.ts              # hover at line 10");
-        console.error("  tsc-single --hover -l 10 -t myVar src/app.ts     # hover on 'myVar'");
-        console.error("  tsc-single --hover -l 10 --raw src/app.ts        # include raw LSP data");
+        console.error("  mcp-tsc --hover -l 10 src/app.ts              # hover at line 10");
+        console.error("  mcp-tsc --hover -l 10 -t myVar src/app.ts     # hover on 'myVar'");
+        console.error("  mcp-tsc --hover -l 10 --raw src/app.ts        # include raw LSP data");
         console.error("");
         console.error("  # Server Management");
-        console.error("  tsc-single --kill-server                         # kill server for current dir");
-        console.error("  tsc-single -k --all                              # kill all servers");
-        console.error("  tsc-single --mcp /path/to/project                # run as MCP server");
+        console.error("  mcp-tsc --kill-server                         # kill server for current dir");
+        console.error("  mcp-tsc -k --all                              # kill all servers");
+        console.error("  mcp-tsc --mcp /path/to/project                # run as MCP server");
         console.error("");
         console.error("Note: LSP servers are persistent and reused across runs for better performance.");
     }

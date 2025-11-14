@@ -87,7 +87,7 @@ tools
 | **[Hold-AI](#10--hold-ai-tool)**                     | ⏸️ Control AI responses via WebSocket      |
 | **[MCP Ripgrep](#9--mcp-ripgrep)**                   | ⚡ Lightning-fast code search server       |
 | **[MCP Web Reader](#12--mcp-web-reader)**            | 🌐 Fetch raw HTML or Markdown (Jina/local) |
-| **[TSC Single](#15--tsc-single)**                    | 🔍 TypeScript diagnostics (CLI & MCP)      |
+| **[MCP TSC](#15--mcp-tsc)**                          | 🔍 TypeScript diagnostics (CLI & MCP)      |
 
 ### 📊 Monitoring & Watching
 
@@ -850,7 +850,7 @@ sudo tools macos-eslogger -e exec
 
 ---
 
-### 15. 🔍 TSC Single
+### 15. 🔍 MCP TSC
 
 > TypeScript diagnostics checker that can run as both a CLI tool and an MCP server. It supports checking individual files, directories, or glob patterns against your project's tsconfig.json.
 
@@ -870,25 +870,25 @@ sudo tools macos-eslogger -e exec
 
 ```bash
 # Check a single file
-tools tsc-single src/app.ts
+tools mcp-tsc src/app.ts
 
 # Check all TypeScript files in a directory
-tools tsc-single src
+tools mcp-tsc src
 
 # Check files using glob patterns (use quotes!)
-tools tsc-single 'src/**/*.ts'
+tools mcp-tsc 'src/**/*.ts'
 
 # Use LSP for checking (faster for incremental checks)
-tools tsc-single --lsp src/app.ts
+tools mcp-tsc --lsp src/app.ts
 
 # Show warnings too
-tools tsc-single --warnings src/app.ts
+tools mcp-tsc --warnings src/app.ts
 
 # Run as MCP server for current directory
-tools tsc-single --mcp .
+tools mcp-tsc --mcp .
 
 # Run MCP server for a specific project
-tools tsc-single --mcp /path/to/project
+tools mcp-tsc --mcp /path/to/project
 ```
 
 </details>
@@ -914,7 +914,7 @@ Add to your MCP settings (e.g., Claude Desktop config):
     "mcpServers": {
         "typescript-diagnostics": {
             "command": "/path/to/GenesisTools/tools",
-            "args": ["tsc-single", "--mcp", "/path/to/your/project"]
+            "args": ["mcp-tsc", "--mcp", "/path/to/your/project"]
         }
     }
 }

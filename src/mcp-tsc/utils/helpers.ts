@@ -3,7 +3,7 @@ import { existsSync, mkdirSync } from "fs";
 import path from "path";
 import { tmpdir } from "os";
 
-export const SERVERS_DIR = path.join(tmpdir(), ".tsc-single-servers");
+export const SERVERS_DIR = path.join(tmpdir(), ".mcp-tsc-servers");
 
 /**
  * Ensure the servers directory exists

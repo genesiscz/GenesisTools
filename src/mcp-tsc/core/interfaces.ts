@@ -1,5 +1,5 @@
 /**
- * Core interfaces and types for tsc-single TypeScript diagnostics tool
+ * Core interfaces and types for mcp-tsc TypeScript diagnostics tool
  */
 
 // ============================================================================

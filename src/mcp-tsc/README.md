@@ -1,4 +1,4 @@
-# tsc-single - TypeScript Diagnostics Tool
+# mcp-tsc - TypeScript Diagnostics Tool
 
 TypeScript diagnostics checker that can run as both a CLI tool and an MCP server. It supports checking individual files, directories, or glob patterns against your project's tsconfig.json.
 
@@ -19,19 +19,19 @@ TypeScript diagnostics checker that can run as both a CLI tool and an MCP server
 
 ```bash
 # Check a single file
-tools tsc-single src/app.ts
+tools mcp-tsc src/app.ts
 
 # Check all TypeScript files in a directory
-tools tsc-single src
+tools mcp-tsc src
 
 # Check files using glob patterns (use quotes!)
-tools tsc-single 'src/**/*.ts'
+tools mcp-tsc 'src/**/*.ts'
 
 # Check multiple paths
-tools tsc-single src tests
+tools mcp-tsc src tests
 
 # Mix files and patterns
-tools tsc-single src/app.ts 'tests/**/*.test.ts'
+tools mcp-tsc src/app.ts 'tests/**/*.test.ts'
 ```
 
 ### Options
@@ -50,33 +50,33 @@ tools tsc-single src/app.ts 'tests/**/*.test.ts'
 
 ```bash
 # Use LSP for checking (faster for incremental checks)
-tools tsc-single --lsp src/app.ts
+tools mcp-tsc --lsp src/app.ts
 
 # Show warnings too
-tools tsc-single --warnings src/app.ts
+tools mcp-tsc --warnings src/app.ts
 
 # Combine options
-tools tsc-single --lsp --warnings 'src/**/*.ts'
+tools mcp-tsc --lsp --warnings 'src/**/*.ts'
 
 # Get hover information (type introspection)
-tools tsc-single --hover --line 19 --text greetUser src/app.ts
-tools tsc-single --hover --line 13 src/app.ts  # auto-position
-tools tsc-single --hover --line 9 --char 15 src/app.ts  # exact position
-tools tsc-single --hover --line 10 --raw src/app.ts  # include raw LSP data
+tools mcp-tsc --hover --line 19 --text greetUser src/app.ts
+tools mcp-tsc --hover --line 13 src/app.ts  # auto-position
+tools mcp-tsc --hover --line 9 --char 15 src/app.ts  # exact position
+tools mcp-tsc --hover --line 10 --raw src/app.ts  # include raw LSP data
 ```
 
 ## MCP Server Mode
 
-Run tsc-single as a persistent MCP server that AI assistants can use to check TypeScript files.
+Run mcp-tsc as a persistent MCP server that AI assistants can use to check TypeScript files.
 
 ### Starting the Server
 
 ```bash
 # Run MCP server for current directory
-tools tsc-single --mcp .
+tools mcp-tsc --mcp .
 
 # Run MCP server for a specific project
-tools tsc-single --mcp /path/to/project
+tools mcp-tsc --mcp /path/to/project
 ```
 
 ### MCP Configuration
@@ -88,7 +88,7 @@ Add to your MCP settings (e.g., Claude Desktop config):
   "mcpServers": {
     "typescript-diagnostics": {
       "command": "/path/to/GenesisTools/tools",
-      "args": ["tsc-single", "--mcp", "/path/to/your/project"]
+      "args": ["mcp-tsc", "--mcp", "/path/to/your/project"]
     }
   }
 }
