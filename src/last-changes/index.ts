@@ -14,6 +14,7 @@ const log = {
 interface Options {
     help?: boolean;
     verbose?: boolean;
+    commits?: number;
 }
 
 interface Args extends Options {
@@ -39,6 +40,7 @@ Shows uncommitted git changes grouped by modification time to help you
 understand what files were updated and when.
 
 Options:
+  -c, --commits X Show changes from the last X commits instead of uncommitted changes
   -v, --verbose   Enable verbose logging
   -h, --help      Show this help message
 `);
@@ -99,6 +101,16 @@ function getStatusDescription(status: string): string {
     if (staged === "R") return "renamed (staged)";
     if (staged === "C") return "copied (staged)";
     if (staged === " " && unstaged === "?") return "untracked";
+    return status;
+}
+
+function getCommitStatusDescription(status: string): string {
+    // For commit diffs, status is usually a single letter
+    if (status === "M") return "modified";
+    if (status === "A") return "added";
+    if (status === "D") return "deleted";
+    if (status === "R") return "renamed";
+    if (status === "C") return "copied";
     return status;
 }
 
@@ -262,13 +274,92 @@ async function getUncommittedFiles(verbose: boolean): Promise<FileChange[]> {
     return files;
 }
 
+async function getCommittedFiles(numCommits: number, verbose: boolean): Promise<FileChange[]> {
+    // Get commit info and file changes
+    // Format: --format="%H|%ct" outputs commit hash and timestamp, --name-status outputs file changes
+    const logProc = Bun.spawn({
+        cmd: ["git", "log", `-n`, `${numCommits}`, `--format=%H|%ct`, "--name-status"],
+        stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const logStdout = await new Response(logProc.stdout).text();
+    const logStderr = await new Response(logProc.stderr).text();
+    const logExitCode = await logProc.exited;
+
+    if (logExitCode !== 0) {
+        throw new Error(`git log failed: ${logStderr || logStdout}`);
+    }
+
+    const lines = logStdout.split("\n");
+    const files: FileChange[] = [];
+    let currentCommitDate: Date | null = null;
+
+    for (const line of lines) {
+        const trimmedLine = line.trim();
+
+        // Skip empty lines
+        if (!trimmedLine) continue;
+
+        // Check if this is a commit header (format: HASH|TIMESTAMP)
+        if (trimmedLine.includes("|") && /^[a-f0-9]{40}\|\d+$/.test(trimmedLine)) {
+            const [hash, timestamp] = trimmedLine.split("|");
+            currentCommitDate = new Date(parseInt(timestamp, 10) * 1000);
+            if (verbose) {
+                log.debug(`Processing commit ${hash.substring(0, 7)} from ${currentCommitDate.toISOString()}`);
+            }
+            continue;
+        }
+
+        // If we don't have a commit date yet, skip this line
+        if (!currentCommitDate) continue;
+
+        // Parse file status line (format: STATUS\tFILE or STATUS\tFILE1\tFILE2 for rename)
+        const parts = trimmedLine.split("\t");
+        if (parts.length < 2) continue;
+
+        const status = parts[0].trim();
+        let filePath: string;
+
+        if (status.startsWith("R") && parts.length >= 3) {
+            // Rename: R100\told\tnew (use the new filename)
+            filePath = parts[2];
+        } else {
+            filePath = parts[1];
+        }
+
+        if (!filePath) continue;
+
+        // Normalize status to match uncommitted format (use first char, pad with space)
+        let normalizedStatus = status.charAt(0);
+        if (normalizedStatus === "R") {
+            normalizedStatus = "R ";
+        } else if (normalizedStatus === "C") {
+            normalizedStatus = "C ";
+        } else {
+            normalizedStatus = normalizedStatus + " ";
+        }
+
+        files.push({
+            file: filePath,
+            status: normalizedStatus,
+            mtime: currentCommitDate,
+        });
+    }
+
+    files.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+
+    return files;
+}
+
 async function main() {
     const argv = minimist<Args>(process.argv.slice(2), {
         alias: {
+            c: "commits",
             v: "verbose",
             h: "help",
         },
         boolean: ["verbose", "help"],
+        string: ["commits"],
     });
 
     if (argv.help) {
@@ -282,16 +373,35 @@ async function main() {
     }
 
     try {
-        const files = await getUncommittedFiles(verbose);
+        let files: FileChange[];
+        let title: string;
+        let emptyMessage: string;
+
+        if (argv.commits !== undefined) {
+            const numCommits = Number(argv.commits);
+            if (!Number.isInteger(numCommits) || numCommits < 1) {
+                log.err("Error: --commits value must be a positive integer.");
+                showHelp();
+                process.exit(1);
+            }
+
+            files = await getCommittedFiles(numCommits, verbose);
+            title = `Last ${numCommits} Commit${numCommits !== 1 ? "s" : ""}`;
+            emptyMessage = `No changes found in the last ${numCommits} commit${numCommits !== 1 ? "s" : ""}.`;
+        } else {
+            files = await getUncommittedFiles(verbose);
+            title = "Uncommitted Changes";
+            emptyMessage = "No uncommitted changes found.";
+        }
 
         if (files.length === 0) {
-            log.ok("No uncommitted changes found.");
+            log.ok(emptyMessage);
             process.exit(0);
         }
 
         const groups = groupFilesByTime(files);
 
-        log.info(chalk.bold(`\n📋 Uncommitted Changes (${files.length} file${files.length !== 1 ? "s" : ""}):\n`));
+        log.info(chalk.bold(`\n📋 ${title} (${files.length} file${files.length !== 1 ? "s" : ""}):\n`));
 
         for (const group of groups) {
             log.info(
@@ -303,7 +413,10 @@ async function main() {
             for (const { file, status, mtime } of group.files) {
                 const statusColor = getStatusColor(status);
                 const statusText = statusColor(status);
-                const description = getStatusDescription(status);
+                const description =
+                    argv.commits !== undefined
+                        ? getCommitStatusDescription(status.trim())
+                        : getStatusDescription(status);
                 const relativeTime = formatRelativeTime(mtime);
                 const absoluteTime = formatAbsoluteTime(mtime);
 
