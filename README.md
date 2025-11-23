@@ -88,6 +88,7 @@ tools
 | **[MCP Ripgrep](#9--mcp-ripgrep)**                   | ⚡ Lightning-fast code search server       |
 | **[MCP Web Reader](#12--mcp-web-reader)**            | 🌐 Fetch raw HTML or Markdown (Jina/local) |
 | **[MCP TSC](#15--mcp-tsc)**                          | 🔍 TypeScript diagnostics (CLI & MCP)      |
+| **[MCP Manager](#17--mcp-manager)**                  | ⚙️ Cross-platform MCP configuration manager |
 
 ### 📊 Monitoring & Watching
 
@@ -957,6 +958,102 @@ Get TypeScript diagnostics for files matching the specified patterns.
 -   `0`: Success (no errors)
 -   `1`: Usage error or no files found
 -   `2`: TypeScript errors found
+
+</details>
+
+---
+
+### 17. ⚙️ MCP Manager
+
+> Cross-platform MCP (Model Context Protocol) server configuration manager. Manage MCP servers across multiple AI assistants (Claude Desktop, Gemini Code Assist, Codex, Cursor) with automatic backups, visual diffs, and safe operations.
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+-   🎯 **Multi-Provider Support**: Manage MCP servers for Claude, Gemini, Codex, and Cursor
+-   📦 **Unified Configuration**: Single `~/mcp.json` file to manage all servers
+-   💾 **Automatic Backups**: Creates backups before any changes with automatic restore on rejection
+-   👁️ **Visual Diffs**: See exactly what changed before applying updates
+-   ✅ **Interactive Confirmation**: Review changes and approve or revert
+-   🔄 **Cross-Platform Sync**: Sync servers from unified config to multiple providers
+-   🛡️ **Safe Operations**: All changes are reversible with automatic backup restoration
+
+</details>
+
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
+
+```bash
+# Interactive mode - choose an action
+tools mcp-manager
+
+# Open/edit unified configuration file (~/mcp.json)
+tools mcp-manager config
+
+# Sync servers from ~/mcp.json to selected providers
+tools mcp-manager sync
+
+# List all MCP servers across all providers
+tools mcp-manager list
+
+# Enable/disable servers
+tools mcp-manager enable github
+tools mcp-manager disable github
+
+# Install a server from unified config to a provider
+tools mcp-manager install github
+
+# Show full configuration of a server
+tools mcp-manager show github
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ Commands</b></summary>
+
+| Command       | Description                                      |
+| ------------- | ------------------------------------------------ |
+| `config`      | Open/create `~/mcp.json` configuration file     |
+| `sync`        | Sync MCP servers from `~/mcp.json` to providers |
+| `list`        | List all MCP servers across all providers        |
+| `enable`      | Enable an MCP server in a provider               |
+| `disable`     | Disable an MCP server in a provider               |
+| `disable-all` | Disable an MCP server for all projects (Claude)  |
+| `install`     | Install/add an MCP server to a provider          |
+| `show`        | Show full configuration of an MCP server         |
+
+</details>
+
+<details>
+<summary><b>💡 Workflow</b></summary>
+
+1. **Create Unified Config**: Edit `~/mcp.json` with all your MCP servers
+2. **Sync to Providers**: Select which providers to sync to
+3. **Review Changes**: See diff and confirm or reject changes
+4. **Automatic Backup**: If rejected, automatically restores from backup
+
+</details>
+
+<details>
+<summary><b>🛡️ Safety Features</b></summary>
+
+- **Automatic Backups**: Created before every write operation
+- **Visual Diffs**: See exactly what will change
+- **Confirmation Prompts**: Approve or reject changes
+- **Automatic Restore**: Reverts changes if rejected
+
+Backups are stored in `~/.mcp-manager/backups/` with timestamps.
+
+</details>
+
+<details>
+<summary><b>📋 Supported Providers</b></summary>
+
+- **Claude Desktop**: `~/.claude.json` (supports global and project-specific configs)
+- **Gemini Code Assist**: `~/.gemini/settings.json`
+- **Codex**: `~/.codex/config.toml` (TOML format)
+- **Cursor**: `~/.cursor/mcp.json`
 
 </details>
 
