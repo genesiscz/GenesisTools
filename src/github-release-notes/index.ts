@@ -2,7 +2,7 @@ import axios from "axios";
 import * as fs from "fs";
 import * as path from "path";
 import minimist from "minimist";
-import logger from '../logger';
+import logger from "@app/logger";
 
 interface GitHubRelease {
     tag_name: string;

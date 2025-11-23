@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import logger from "../logger";
+import logger from "@app/logger";
 
 interface IMessage {
     timestamp: string;
@@ -37,7 +37,7 @@ const waitForCompletion = async (): Promise<string> => {
                     if (completed) {
                         // Filter out the special completion message for display
                         displayMessages = messages.filter((msg: any) => msg.message !== "__COMPLETED__");
-                        
+
                         // Join all messages as output
                         const combinedMessages = displayMessages.map((msg) => msg.message).join("\n");
 

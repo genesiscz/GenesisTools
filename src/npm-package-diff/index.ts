@@ -13,7 +13,7 @@ import { filesize } from "filesize";
 import boxen from "boxen";
 import { createRequire } from "module";
 import { execSync } from "child_process";
-import { resolvePathWithTilde } from "../utils";
+import { resolvePathWithTilde } from "@app/utils";
 
 const require = createRequire(import.meta.url);
 

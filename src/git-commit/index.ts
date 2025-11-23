@@ -2,7 +2,7 @@ import minimist from "minimist";
 import Enquirer from "enquirer";
 import { generateObject } from "ai";
 import { z } from "zod";
-import logger from "../logger";
+import logger from "@app/logger";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
 interface Options {

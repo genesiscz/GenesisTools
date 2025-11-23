@@ -1,8 +1,8 @@
 import minimist from "minimist";
 import Enquirer from "enquirer";
 import { resolve, isAbsolute, join as pathJoin } from "node:path";
-import logger from '../logger';
-import clipboardy from 'clipboardy';
+import logger from "@app/logger";
+import clipboardy from "clipboardy";
 
 interface Options {
     commits?: number;
@@ -55,7 +55,8 @@ async function getTruncatedSha(repoDir: string, refName: string): Promise<string
         logger.error(`✖ Failed to get SHA for ref '${refName}'. Exit code: ${exitCode}.`);
         if (stderr.trim()) {
             logger.error("Git stderr:\n" + stderr.trim());
-        } else if (stdout.trim()) { // Some git errors go to stdout
+        } else if (stdout.trim()) {
+            // Some git errors go to stdout
             logger.error("Git stdout (potential error):\n" + stdout.trim());
         }
         return undefined;
@@ -92,7 +93,8 @@ async function getAndSelectCommit(repoDir: string, enquirerInstance: Enquirer): 
 ✖ 'git log' command failed with exit code ${exitCode}.`);
         if (errorOutput) {
             logger.error("Git stderr:\n" + errorOutput.trim());
-        } else if (logOutput) { // Some git errors go to stdout
+        } else if (logOutput) {
+            // Some git errors go to stdout
             logger.error("Git stdout (potential error):\n" + logOutput.trim());
         }
         return undefined;
@@ -104,27 +106,29 @@ async function getAndSelectCommit(repoDir: string, enquirerInstance: Enquirer): 
     }
 
     const commitsRaw = logOutput.trim().split("\n");
-    const choices = commitsRaw.map(line => {
-        const match = line.match(/^([a-f0-9]+)\s+(.*)$/);
-        let hash: string;
-        let displayMessage: string;
+    const choices = commitsRaw
+        .map((line) => {
+            const match = line.match(/^([a-f0-9]+)\s+(.*)$/);
+            let hash: string;
+            let displayMessage: string;
 
-        if (!match) {
-            logger.warn(`Unexpected commit line format: ${line}`);
-            const firstSpaceIndex = line.indexOf(' ');
-            hash = firstSpaceIndex > 0 ? line.substring(0, firstSpaceIndex) : line;
-            const commitMsgPart = firstSpaceIndex > 0 ? line.substring(firstSpaceIndex + 1) : 'No message';
-            displayMessage = `${hash} - ${commitMsgPart}`;
-        } else {
-            hash = match[1];
-            const commitMessage = match[2];
-            displayMessage = `${hash} - ${commitMessage}`;
-        }
-        return {
-            name: hash,             // Required by Enquirer's Choice type, also typically the returned value part
-            message: displayMessage, // Displayed to the user
-        };
-    }).filter(choice => choice.name); // Ensure valid name/hash
+            if (!match) {
+                logger.warn(`Unexpected commit line format: ${line}`);
+                const firstSpaceIndex = line.indexOf(" ");
+                hash = firstSpaceIndex > 0 ? line.substring(0, firstSpaceIndex) : line;
+                const commitMsgPart = firstSpaceIndex > 0 ? line.substring(firstSpaceIndex + 1) : "No message";
+                displayMessage = `${hash} - ${commitMsgPart}`;
+            } else {
+                hash = match[1];
+                const commitMessage = match[2];
+                displayMessage = `${hash} - ${commitMessage}`;
+            }
+            return {
+                name: hash, // Required by Enquirer's Choice type, also typically the returned value part
+                message: displayMessage, // Displayed to the user
+            };
+        })
+        .filter((choice) => choice.name); // Ensure valid name/hash
 
     if (choices.length === 0) {
         logger.warn("ℹ No processable commits found to select from after parsing.");
@@ -132,24 +136,27 @@ async function getAndSelectCommit(repoDir: string, enquirerInstance: Enquirer): 
     }
 
     try {
-        const response = await enquirerInstance.prompt({
+        const response = (await enquirerInstance.prompt({
             type: "autocomplete",
             name: "selectedCommitValue",
             message: "Select a commit (type to filter). The diff will be from this commit to HEAD:",
             choices: choices,
-        }) as { selectedCommitValue?: string };
+        })) as { selectedCommitValue?: string };
 
-        if (response && typeof response.selectedCommitValue === 'string') {
+        if (response && typeof response.selectedCommitValue === "string") {
             return response.selectedCommitValue;
         } else {
             logger.warn("ℹ Commit selection did not return a valid value or was cancelled in an unexpected way.");
             return undefined;
         }
     } catch (promptError: any) {
-        if (promptError && (promptError.message === 'canceled' || String(promptError).toLowerCase().includes('cancel'))) {
-             logger.info("\nℹ Commit selection cancelled by user.");
+        if (
+            promptError &&
+            (promptError.message === "canceled" || String(promptError).toLowerCase().includes("cancel"))
+        ) {
+            logger.info("\nℹ Commit selection cancelled by user.");
         } else {
-             logger.error("\n✖ Error during commit selection prompt:", promptError);
+            logger.error("\n✖ Error during commit selection prompt:", promptError);
         }
         return undefined;
     }
@@ -164,7 +171,7 @@ async function main() {
             h: "help",
         },
         string: ["output"], // Ensures --output value is treated as string, even if empty like --output ""
-                               // However, --output without a value will make argv.output true.
+        // However, --output without a value will make argv.output true.
     });
 
     if (argv.help || argv._.length === 0) {
@@ -211,18 +218,21 @@ async function main() {
     let targetPath: string | undefined; // Full absolute path for file output
 
     // Determine output action
-    if (typeof outputFileArg === 'string') { // Handles --output FILE and --output ""
+    if (typeof outputFileArg === "string") {
+        // Handles --output FILE and --output ""
         if (outputFileArg.length > 0) {
             outputAction = "file";
             targetPath = resolve(process.cwd(), outputFileArg); // Resolve relative to CWD or use as absolute
             logger.info(`ℹ Output will be written to file: ${targetPath}`);
-        } else { // --output ""
+        } else {
+            // --output ""
             outputAction = "stdout";
             logger.info("ℹ Output will be written to stdout (due to empty --output value).");
         }
-    } else if (outputFileArg === true) { // Handles -o without a value
-         outputAction = "stdout";
-         logger.info("ℹ Output will be written to stdout (due to --output flag without value).");
+    } else if (outputFileArg === true) {
+        // Handles -o without a value
+        outputAction = "stdout";
+        logger.info("ℹ Output will be written to stdout (due to --output flag without value).");
     } else if (clipboardArg) {
         outputAction = "clipboard";
         logger.info("ℹ Output will be copied to clipboard.");
@@ -236,12 +246,12 @@ async function main() {
         ];
 
         try {
-            const response = await prompter.prompt({
+            const response = (await prompter.prompt({
                 type: "select",
                 name: "selectedAction",
                 message: "Where would you like the diff output to go?",
                 choices: outputChoices,
-            }) as { selectedAction?: OutputAction };
+            })) as { selectedAction?: OutputAction };
 
             if (!response || !response.selectedAction) {
                 logger.warn("ℹ Output destination selection was cancelled or failed. Exiting.");
@@ -254,19 +264,20 @@ async function main() {
                 const lastShaRaw = await getTruncatedSha(repoDir, "HEAD");
 
                 // Handle potentially undefined SHAs for filename
-                const firstSha = firstShaRaw ?? (diffStartRef.startsWith("HEAD~") ? diffStartRef.replace("~", "") : "start");
+                const firstSha =
+                    firstShaRaw ?? (diffStartRef.startsWith("HEAD~") ? diffStartRef.replace("~", "") : "start");
                 const lastSha = lastShaRaw ?? "HEAD";
 
                 const defaultFileName = `commits-${firstSha}-${lastSha}.diff`;
                 const currentDir = process.cwd();
                 const suggestedPath = pathJoin(currentDir, defaultFileName);
 
-                const { filePathResponse } = await prompter.prompt({
+                const { filePathResponse } = (await prompter.prompt({
                     type: "input",
                     name: "filePathResponse",
                     message: `Enter filename for the diff (will be created in ${currentDir}):`,
                     initial: defaultFileName,
-                }) as { filePathResponse?: string };
+                })) as { filePathResponse?: string };
 
                 if (!filePathResponse || filePathResponse.trim().length === 0) {
                     logger.warn("ℹ No filename provided. Exiting.");
@@ -276,14 +287,18 @@ async function main() {
                 logger.info(`ℹ Output will be written to file: ${targetPath}`);
             } else if (outputAction === "clipboard") {
                 logger.info("ℹ Output will be copied to clipboard.");
-            } else { // stdout
+            } else {
+                // stdout
                 logger.info("ℹ Output will be written to stdout.");
             }
         } catch (promptError: any) {
-            if (promptError && (promptError.message === 'canceled' || String(promptError).toLowerCase().includes('cancel'))) {
-                 logger.info("\nℹ Output selection cancelled by user. Exiting.");
+            if (
+                promptError &&
+                (promptError.message === "canceled" || String(promptError).toLowerCase().includes("cancel"))
+            ) {
+                logger.info("\nℹ Output selection cancelled by user. Exiting.");
             } else {
-                 logger.error("\n✖ Error during output selection prompt:", promptError);
+                logger.error("\n✖ Error during output selection prompt:", promptError);
             }
             process.exit(0);
         }
@@ -353,9 +368,11 @@ async function main() {
                 await clipboardy.write(diffOutput);
                 logger.info(`✔ Diff successfully copied to clipboard.`);
             }
-        } else { // stdout
+        } else {
+            // stdout
             process.stdout.write(diffOutput);
-            if (!diffOutput.endsWith("\n") && diffOutput.length > 0) { // Ensure newline if content exists
+            if (!diffOutput.endsWith("\n") && diffOutput.length > 0) {
+                // Ensure newline if content exists
                 process.stdout.write("\n");
             }
             logger.info(`\n✔ Git diff completed successfully. Output to stdout.`);
@@ -370,4 +387,3 @@ main().catch((err) => {
     logger.error("\n✖ An unexpected error occurred:", err);
     process.exit(1);
 });
-

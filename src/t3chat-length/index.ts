@@ -2,7 +2,7 @@
  * This tool is internal and probably not useful to you.
  */
 
-import logger from "../logger";
+import logger from "@app/logger";
 
 interface Message {
     content: string;
@@ -51,7 +51,7 @@ function processMessages(input: InputJson): OutputMessageInfo[] {
 // https://t3.chat/api/trpc/syncData
 const myInputJson: InputJson = {
     json: {
-        messages: []
+        messages: [],
     },
 };
 

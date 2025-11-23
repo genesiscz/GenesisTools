@@ -2,7 +2,7 @@ import { spawn, ChildProcess } from "child_process";
 import minimist from "minimist";
 import Enquirer from "enquirer";
 import chalk from "chalk";
-import logger, { consoleLog } from "../logger";
+import logger, { consoleLog } from "@app/logger";
 
 // ============================================================================
 // TypeScript Types based on ESLogger Swift types

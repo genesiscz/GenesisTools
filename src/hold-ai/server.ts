@@ -1,6 +1,6 @@
 import Enquirer from "enquirer";
 import { WebSocketServer } from "ws";
-import log from "../logger";
+import log from "@app/logger";
 
 // Store messages
 const messages: Array<{ timestamp: string; message: string }> = [];
@@ -92,7 +92,7 @@ const startServer = () => {
                         client.send(JSON.stringify(newMessage));
                     }
                 });
-                log.info("Message sent to clients: "+newMessage.message);
+                log.info("Message sent to clients: " + newMessage.message);
             } else {
                 log.info("Empty message, skipping...");
             }

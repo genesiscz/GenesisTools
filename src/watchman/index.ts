@@ -1,7 +1,7 @@
 import * as watchman from "fb-watchman";
 import minimist from "minimist";
 import Enquirer from "enquirer";
-import logger from '../logger';
+import logger from "@app/logger";
 
 const client = new watchman.Client();
 const prompter = new Enquirer();

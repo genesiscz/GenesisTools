@@ -1,7 +1,7 @@
 import minimist from "minimist";
 import { resolve, join, dirname, basename } from "node:path";
 import { mkdir } from "node:fs/promises"; // Using fs.promises for async operations - Bun implements this
-import logger from '../logger';
+import logger from "@app/logger";
 
 // --- Interfaces ---
 interface Options {

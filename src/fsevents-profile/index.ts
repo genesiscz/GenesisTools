@@ -4,7 +4,7 @@ import Enquirer from "enquirer";
 import * as fsevents from "fsevents";
 import minimist from "minimist";
 import * as path from "path";
-import logger from "../logger";
+import logger from "@app/logger";
 
 // Define options interface
 interface Options {
