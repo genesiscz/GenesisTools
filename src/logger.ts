@@ -30,7 +30,15 @@ const getLogLevel = (): pino.LevelWithSilent | null => {
     return "info";
 };
 
-export const createLogger = (level: pino.LevelWithSilent, logToFile: boolean, includeTimestamp: boolean = true) => {
+export interface LoggerOptions {
+    level: pino.LevelWithSilent;
+    logToFile?: boolean;
+    includeTimestamp?: boolean;
+    prefixPid?: boolean;
+}
+
+export const createLogger = (options: LoggerOptions) => {
+    const { level, logToFile = false, includeTimestamp = true, prefixPid = false } = options;
     // Get current date for log file name
     const getCurrentDate = () => {
         const now = new Date();
@@ -65,34 +73,54 @@ export const createLogger = (level: pino.LevelWithSilent, logToFile: boolean, in
                 options: {
                     colorize: true,
                     translateTime: includeTimestamp ? "SYS:standard" : false,
-                    ignore: "pid,hostname", // Ignore these fields for cleaner console output
+                    ignore: prefixPid ? "hostname" : "pid,hostname", // Show PID if prefixPid is true
                 },
             }),
             level,
         });
     }
 
+    // Create base logger config
+    const baseConfig: pino.LoggerOptions = {
+        level,
+        timestamp: includeTimestamp ? pino.stdTimeFunctions.isoTime : false,
+    };
+
+    // Add PID to base config if prefixPid is true
+    if (prefixPid) {
+        baseConfig.base = {
+            pid: process.pid,
+        };
+    }
+
     // Create pino logger with multiple streams
-    const logger = pino(
-        {
-            level,
-            timestamp: includeTimestamp ? pino.stdTimeFunctions.isoTime : false,
-        },
-        pino.multistream(streams)
-    );
+    const logger = pino(baseConfig, pino.multistream(streams));
     return logger;
 };
 
 // Default level
-let level: pino.LevelWithSilent = getLogLevel();
+let level: pino.LevelWithSilent = getLogLevel() ?? "info";
 
-export const createDefaultLoggerFromCommandLineArgs = () => {
-    const logger = createLogger(level, true);
+export const createDefaultLoggerFromCommandLineArgs = (prefixPid: boolean = false) => {
+    const logger = createLogger({
+        level,
+        logToFile: true,
+        includeTimestamp: true,
+        prefixPid,
+    });
     return logger;
 };
 
-const logger = createDefaultLoggerFromCommandLineArgs();
-const consoleLog = createLogger(level, false);
+// Check if PID prefixing is requested via environment variable
+const prefixPid = process.env.LOG_PID === "1" || process.env.DEBUG === "1";
+
+const logger = createDefaultLoggerFromCommandLineArgs(prefixPid);
+const consoleLog = createLogger({
+    level,
+    logToFile: false,
+    includeTimestamp: true,
+    prefixPid,
+});
 
 // Ensure all logs are flushed before the process exits
 process.on("beforeExit", () => {
