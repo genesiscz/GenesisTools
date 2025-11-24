@@ -15,7 +15,7 @@ export function parseCLIArguments(): Args {
             t: "temperature",
             k: "maxTokens",
         },
-        boolean: ["streaming", "help", "version", "verbose", "silent"],
+        boolean: ["streaming", "help", "version", "verbose", "silent", "predictCost"],
         string: ["sst", "model", "provider", "output", "systemPrompt", "temperature", "maxTokens"],
         default: {
             streaming: true,

@@ -64,6 +64,10 @@ export class ChatEngine {
     }
 
     private async sendStreamingMessage(message: string, tools?: Record<string, any>): Promise<ChatResponse> {
+        // Store usage from onFinish callback - this is the most reliable source
+        let finishUsage: LanguageModelUsage | undefined;
+        let finishCost: number | undefined;
+
         const result = await streamText({
             model: this.config.model,
             prompt: message, // Use prompt instead of messages array
@@ -71,13 +75,41 @@ export class ChatEngine {
             temperature: this.config.temperature,
             maxTokens: this.config.maxTokens,
             onFinish: async ({ usage }) => {
-                // This is called when the stream completes
+                // This is called when the stream completes - usage is available HERE
+                logger.debug(`[ChatEngine] onFinish callback called with usage:`, JSON.stringify(usage, null, 2));
                 if (usage) {
-                    await dynamicPricingManager.calculateCost(this.config.provider, this.config.modelName, usage);
-                    // We'll handle cost display outside of this method
+                    finishUsage = usage;
+                    finishCost = await dynamicPricingManager.calculateCost(
+                        this.config.provider,
+                        this.config.modelName,
+                        usage
+                    );
+                    logger.debug(`[ChatEngine] onFinish calculated cost:`, finishCost);
                 }
             },
         });
+
+        // DEBUG: Log the full result object structure
+        logger.debug(`[ChatEngine] streamText result object keys:`, Object.keys(result));
+        logger.debug(
+            `[ChatEngine] streamText result.usage:`,
+            result.usage ? JSON.stringify(result.usage, null, 2) : "null/undefined"
+        );
+        logger.debug(`[ChatEngine] streamText result.usage type:`, typeof result.usage);
+        logger.debug(
+            `[ChatEngine] streamText result.usage structure:`,
+            result.usage
+                ? {
+                      hasPromptTokens: "promptTokens" in (result.usage || {}),
+                      hasCompletionTokens: "completionTokens" in (result.usage || {}),
+                      hasTotalTokens: "totalTokens" in (result.usage || {}),
+                      hasInputTokens: "inputTokens" in (result.usage || {}),
+                      hasOutputTokens: "outputTokens" in (result.usage || {}),
+                      hasCachedPromptTokens: "cachedPromptTokens" in (result.usage || {}),
+                      allKeys: Object.keys(result.usage || {}),
+                  }
+                : "no usage object"
+        );
 
         let fullResponse = "";
         const startTime = Date.now();
@@ -94,16 +126,48 @@ export class ChatEngine {
         // Add a newline after streaming
         process.stdout.write("\n");
 
-        // Calculate cost if usage is available
+        // Wait a bit for onFinish callback to complete (it's async)
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        // DEBUG: Log usage sources
+        logger.debug(`[ChatEngine] After streaming, finishUsage available:`, !!finishUsage);
+        logger.debug(`[ChatEngine] After streaming, result.usage type:`, typeof result.usage);
+        logger.debug(`[ChatEngine] After streaming, result.usage is Promise:`, result.usage instanceof Promise);
+
+        // Try to get usage - prioritize onFinish callback as it's most reliable
+        let usage: LanguageModelUsage | undefined;
         let cost: number | undefined;
-        if (result.usage) {
-            cost = await dynamicPricingManager.calculateCost(this.config.provider, this.config.modelName, result.usage);
+
+        if (finishUsage) {
+            // Use usage from onFinish callback (most reliable)
+            logger.debug(`[ChatEngine] Using usage from onFinish callback:`, JSON.stringify(finishUsage, null, 2));
+            usage = finishUsage;
+            cost = finishCost;
+        } else if (result.usage instanceof Promise) {
+            // If usage is a Promise, await it
+            logger.debug(`[ChatEngine] result.usage is a Promise, awaiting...`);
+            usage = await result.usage;
+            logger.debug(`[ChatEngine] Resolved usage from Promise:`, JSON.stringify(usage, null, 2));
+            if (usage) {
+                cost = await dynamicPricingManager.calculateCost(this.config.provider, this.config.modelName, usage);
+            }
+        } else if (result.usage) {
+            // If usage is already available
+            usage = result.usage;
+            logger.debug(`[ChatEngine] result.usage available directly:`, JSON.stringify(usage, null, 2));
+            cost = await dynamicPricingManager.calculateCost(this.config.provider, this.config.modelName, usage);
+        }
+
+        if (!usage) {
+            logger.warn(
+                `[ChatEngine] No usage data available from streamText result for ${this.config.provider}/${this.config.modelName}`
+            );
         }
 
         return {
             content: fullResponse,
-            usage: result.usage,
-            cost,
+            usage: usage,
+            cost: cost,
             toolCalls: result.toolCalls
                 ? Array.isArray(result.toolCalls)
                     ? result.toolCalls.map((tc) => ({
@@ -125,10 +189,41 @@ export class ChatEngine {
             maxTokens: this.config.maxTokens,
         });
 
+        // DEBUG: Log the full result object structure
+        logger.debug(`[ChatEngine] generateText result object keys:`, Object.keys(result));
+        logger.debug(
+            `[ChatEngine] generateText result.usage:`,
+            result.usage ? JSON.stringify(result.usage, null, 2) : "null/undefined"
+        );
+        logger.debug(`[ChatEngine] generateText result.usage type:`, typeof result.usage);
+        logger.debug(
+            `[ChatEngine] generateText result.usage structure:`,
+            result.usage
+                ? {
+                      hasPromptTokens: "promptTokens" in (result.usage || {}),
+                      hasCompletionTokens: "completionTokens" in (result.usage || {}),
+                      hasTotalTokens: "totalTokens" in (result.usage || {}),
+                      hasInputTokens: "inputTokens" in (result.usage || {}),
+                      hasOutputTokens: "outputTokens" in (result.usage || {}),
+                      hasCachedPromptTokens: "cachedPromptTokens" in (result.usage || {}),
+                      allKeys: Object.keys(result.usage || {}),
+                  }
+                : "no usage object"
+        );
+
         // Calculate cost
         let cost: number | undefined;
         if (result.usage) {
+            logger.debug(
+                `[ChatEngine] Calculating cost for ${this.config.provider}/${this.config.modelName} with usage:`,
+                JSON.stringify(result.usage, null, 2)
+            );
             cost = await dynamicPricingManager.calculateCost(this.config.provider, this.config.modelName, result.usage);
+            logger.debug(`[ChatEngine] Calculated cost:`, cost);
+        } else {
+            logger.warn(
+                `[ChatEngine] No usage data available from generateText result for ${this.config.provider}/${this.config.modelName}`
+            );
         }
 
         return {

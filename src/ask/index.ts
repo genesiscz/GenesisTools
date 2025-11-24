@@ -12,6 +12,7 @@ import { providerManager } from "./providers/ProviderManager";
 import { transcriptionManager } from "./audio/TranscriptionManager";
 import { outputManager } from "./output/OutputManager";
 import { costTracker } from "./output/CostTracker";
+import { costPredictor } from "./output/CostPredictor";
 import { webSearchTool } from "./utils/websearch";
 import {
     parseCLIArguments,
@@ -83,7 +84,7 @@ class ASKTool {
 
     private async handleSpeechToText(filePath: string, outputFormat?: string): Promise<void> {
         try {
-            console.log(chalk.blue("<� Transcribing audio..."));
+            console.log(chalk.blue("<ï¿½ Transcribing audio..."));
 
             const result = await transcriptionManager.transcribeAudio(filePath);
 
@@ -125,6 +126,16 @@ class ASKTool {
             // Create chat engine
             const chatEngine = new ChatEngine(chatConfig);
 
+            // Optional: Show cost prediction if --predict-cost flag is set
+            if (argv.predictCost) {
+                const prediction = await costPredictor.predictCost(
+                    modelChoice.provider.name,
+                    modelChoice.model.id,
+                    message
+                );
+                console.log(chalk.cyan("\n" + costPredictor.formatPrediction(prediction) + "\n"));
+            }
+
             // Set up tools
             const tools = this.getAvailableTools();
 
@@ -132,6 +143,18 @@ class ASKTool {
 
             // Send message
             const response = await chatEngine.sendMessage(message, tools);
+
+            // Track usage for single message mode
+            if (response.usage) {
+                const sessionId = generateSessionId();
+                await costTracker.trackUsage(
+                    modelChoice.provider.name,
+                    modelChoice.model.id,
+                    response.usage,
+                    sessionId,
+                    0
+                );
+            }
 
             // Handle output
             const outputConfig = parseOutputFormat(argv.output);
@@ -170,7 +193,7 @@ class ASKTool {
     }
 
     private async startInteractiveChat(argv: Args): Promise<void> {
-        console.log(chalk.green("=� Starting interactive chat mode"));
+        console.log(chalk.green("=ï¿½ Starting interactive chat mode"));
         console.log(chalk.gray("Type /help for available commands, /quit to exit\n"));
 
         try {
@@ -255,15 +278,17 @@ class ASKTool {
                     const duration = Date.now() - startTime;
 
                     // Show timing info
-                    console.log(chalk.gray(`\n�  Response time: ${formatElapsedTime(duration)}`));
+                    console.log(chalk.gray(`\nï¿½  Response time: ${formatElapsedTime(duration)}`));
 
                     // Track usage
                     if (response.usage) {
+                        const messageIndex = Math.floor(chatEngine.getConversationLength() / 2); // Approximate message index
                         await costTracker.trackUsage(
                             modelChoice.provider.name,
                             modelChoice.model.id,
                             response.usage,
-                            sessionId
+                            sessionId,
+                            messageIndex
                         );
                     }
 
@@ -299,7 +324,7 @@ class ASKTool {
                         continue;
                     }
                     logger.error(`Chat error: ${error}`);
-                    console.log(chalk.red("=� Error occurred. Type /quit to exit or continue chatting."));
+                    console.log(chalk.red("=ï¿½ Error occurred. Type /quit to exit or continue chatting."));
                 }
             }
 
@@ -427,7 +452,7 @@ class ASKTool {
 
         if (result.transcriptionFile) {
             try {
-                console.log(chalk.blue("<� Transcribing audio..."));
+                console.log(chalk.blue("<ï¿½ Transcribing audio..."));
                 const transcriptionResult = await transcriptionManager.transcribeAudio(result.transcriptionFile);
 
                 // Add transcription as a user message

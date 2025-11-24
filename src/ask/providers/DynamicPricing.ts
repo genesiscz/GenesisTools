@@ -26,7 +26,13 @@ export class DynamicPricingManager {
         try {
             switch (provider) {
                 case "openai":
-                    return await this.fetchOpenAIPricing(modelId);
+                    // Use OpenAI direct pricing first
+                    const openAIPricing = await this.fetchOpenAIPricing(modelId);
+                    if (openAIPricing) {
+                        return openAIPricing;
+                    }
+                    // Fallback to OpenRouter if not found
+                    return await this.fetchOpenRouterPricing(`openai/${modelId}`);
                 case "anthropic":
                     return await this.fetchAnthropicPricing(modelId);
                 case "google":
@@ -73,10 +79,24 @@ export class DynamicPricingManager {
                 return null;
             }
 
+            // OpenRouter pricing is per million tokens, convert to per thousand
+            // Example: $0.0000025 per million = $0.0000025 / 1000 = $0.0000000025 per thousand
+            const promptPrice =
+                typeof model.pricing.prompt === "string" ? parseFloat(model.pricing.prompt) : model.pricing.prompt;
+            const completionPrice =
+                typeof model.pricing.completion === "string"
+                    ? parseFloat(model.pricing.completion)
+                    : model.pricing.completion;
+            const cachePrice = model.pricing.cache_read
+                ? typeof model.pricing.cache_read === "string"
+                    ? parseFloat(model.pricing.cache_read)
+                    : model.pricing.cache_read
+                : undefined;
+
             return {
-                input: model.pricing.prompt / 1000000, // Convert from per-million to per-thousand
-                output: model.pricing.completion / 1000000,
-                cachedInput: model.pricing.cache_read ? model.pricing.cache_read / 1000000 : undefined,
+                input: promptPrice / 1000, // Convert from per-million to per-thousand
+                output: completionPrice / 1000,
+                cachedInput: cachePrice ? cachePrice / 1000 : undefined,
             };
         } catch (error) {
             logger.warn(`Failed to fetch OpenRouter pricing: ${error}`);
@@ -85,7 +105,40 @@ export class DynamicPricingManager {
     }
 
     private async fetchOpenAIPricing(modelId: string): Promise<PricingInfo | null> {
-        // OpenAI doesn't have a public pricing API, fallback to OpenRouter
+        // OpenAI direct pricing (as of 2024)
+        // Source: https://platform.openai.com/pricing
+        const openAIPricing: Record<string, PricingInfo> = {
+            "gpt-4o": {
+                input: 5.0 / 1000, // $5.00 per million = $0.005 per thousand
+                output: 15.0 / 1000, // $15.00 per million = $0.015 per thousand
+                cachedInput: 2.5 / 1000, // $2.50 per million = $0.0025 per thousand (estimated)
+            },
+            "gpt-4o-mini": {
+                input: 0.15 / 1000, // $0.15 per million = $0.00015 per thousand
+                output: 0.6 / 1000, // $0.60 per million = $0.0006 per thousand
+            },
+            "gpt-4-turbo": {
+                input: 10.0 / 1000, // $10.00 per million = $0.01 per thousand
+                output: 30.0 / 1000, // $30.00 per million = $0.03 per thousand
+            },
+            "gpt-4": {
+                input: 30.0 / 1000, // $30.00 per million = $0.03 per thousand
+                output: 60.0 / 1000, // $60.00 per million = $0.06 per thousand
+            },
+            "gpt-3.5-turbo": {
+                input: 0.5 / 1000, // $0.50 per million = $0.0005 per thousand
+                output: 1.5 / 1000, // $1.50 per million = $0.0015 per thousand
+            },
+        };
+
+        const pricing = openAIPricing[modelId];
+        if (pricing) {
+            logger.debug(`Using OpenAI direct pricing for ${modelId}`);
+            return pricing;
+        }
+
+        // Fallback to OpenRouter for unknown models
+        logger.debug(`No direct pricing for ${modelId}, falling back to OpenRouter`);
         return await this.fetchOpenRouterPricing(`openai/${modelId}`);
     }
 
@@ -137,6 +190,18 @@ export class DynamicPricingManager {
     }
 
     async calculateCost(provider: string, model: string, usage: LanguageModelUsage): Promise<number> {
+        // DEBUG: Log the usage object structure
+        logger.debug(`[DynamicPricing] calculateCost called for ${provider}/${model}`);
+        logger.debug(`[DynamicPricing] usage object:`, JSON.stringify(usage, null, 2));
+        logger.debug(`[DynamicPricing] usage type:`, typeof usage);
+        logger.debug(`[DynamicPricing] usage keys:`, Object.keys(usage || {}));
+        logger.debug(`[DynamicPricing] usage.promptTokens:`, usage.promptTokens);
+        logger.debug(`[DynamicPricing] usage.completionTokens:`, usage.completionTokens);
+        logger.debug(`[DynamicPricing] usage.totalTokens:`, usage.totalTokens);
+        logger.debug(`[DynamicPricing] usage.inputTokens:`, (usage as any).inputTokens);
+        logger.debug(`[DynamicPricing] usage.outputTokens:`, (usage as any).outputTokens);
+        logger.debug(`[DynamicPricing] usage.cachedPromptTokens:`, usage.cachedPromptTokens);
+
         const pricing = await this.getPricing(provider, model);
 
         if (!pricing) {
@@ -144,18 +209,33 @@ export class DynamicPricingManager {
             return 0;
         }
 
-        const inputTokens = usage.promptTokens || 0;
-        const outputTokens = usage.completionTokens || 0;
-        const cachedInputTokens = usage.cachedPromptTokens || 0;
+        // Try both naming conventions (promptTokens/completionTokens vs inputTokens/outputTokens)
+        const inputTokens = usage.promptTokens ?? (usage as any).inputTokens ?? 0;
+        const outputTokens = usage.completionTokens ?? (usage as any).outputTokens ?? 0;
+        const cachedInputTokens = usage.cachedPromptTokens ?? (usage as any).cachedInputTokens ?? 0;
 
-        const inputCost = (inputTokens * pricing.input) / 1000;
-        const outputCost = (outputTokens * pricing.output) / 1000;
-        const cachedInputCost = pricing.cachedInput ? (cachedInputTokens * pricing.cachedInput) / 1000 : 0;
+        logger.debug(
+            `[DynamicPricing] Using tokens - input: ${inputTokens}, output: ${outputTokens}, cached: ${cachedInputTokens}`
+        );
 
-        return inputCost + outputCost + cachedInputCost;
+        // Pricing is per thousand tokens, so: (tokens / 1000) * price_per_thousand
+        const inputCost = (inputTokens / 1000) * pricing.input;
+        const outputCost = (outputTokens / 1000) * pricing.output;
+        const cachedInputCost = pricing.cachedInput ? (cachedInputTokens / 1000) * pricing.cachedInput : 0;
+
+        const totalCost = inputCost + outputCost + cachedInputCost;
+        logger.debug(
+            `[DynamicPricing] Calculated costs - input: ${inputCost}, output: ${outputCost}, cached: ${cachedInputCost}, total: ${totalCost}`
+        );
+
+        return totalCost;
     }
 
     formatCost(cost: number): string {
+        // Show more precision for very small costs
+        if (cost > 0 && cost < 0.0001) {
+            return `$${cost.toExponential(2)}`;
+        }
         return `$${cost.toFixed(4)}`;
     }
 

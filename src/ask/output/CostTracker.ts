@@ -2,6 +2,7 @@ import logger from "../../logger";
 import type { LanguageModelUsage } from "ai";
 import type { CostBreakdown } from "../types";
 import { dynamicPricingManager } from "../providers/DynamicPricing";
+import { usageDatabase } from "./UsageDatabase";
 
 export interface SessionCost {
     provider: string;
@@ -38,8 +39,21 @@ export class CostTracker {
         provider: string,
         model: string,
         usage: LanguageModelUsage,
-        sessionId: string = "default"
+        sessionId: string = "default",
+        messageIndex?: number
     ): Promise<void> {
+        // DEBUG: Log the usage object received
+        logger.debug(`[CostTracker] trackUsage called for ${provider}/${model}, sessionId: ${sessionId}`);
+        logger.debug(`[CostTracker] usage object:`, JSON.stringify(usage, null, 2));
+        logger.debug(`[CostTracker] usage type:`, typeof usage);
+        logger.debug(`[CostTracker] usage keys:`, Object.keys(usage || {}));
+        logger.debug(`[CostTracker] usage.promptTokens:`, usage.promptTokens);
+        logger.debug(`[CostTracker] usage.completionTokens:`, usage.completionTokens);
+        logger.debug(`[CostTracker] usage.totalTokens:`, usage.totalTokens);
+        logger.debug(`[CostTracker] usage.inputTokens:`, (usage as any).inputTokens);
+        logger.debug(`[CostTracker] usage.outputTokens:`, (usage as any).outputTokens);
+        logger.debug(`[CostTracker] usage.cachedPromptTokens:`, usage.cachedPromptTokens);
+
         const key = `${provider}/${model}`;
         const cost = await dynamicPricingManager.calculateCost(provider, model, usage);
 
@@ -56,10 +70,16 @@ export class CostTracker {
             timestamp: new Date(),
         };
 
-        existing.inputTokens += usage.inputTokens || 0;
-        existing.outputTokens += usage.outputTokens || 0;
-        existing.cachedInputTokens += usage.cachedInputTokens || 0;
-        existing.totalTokens += usage.totalTokens || 0;
+        // Extract tokens - try both naming conventions
+        const inputTokens = usage.promptTokens ?? (usage as any).inputTokens ?? 0;
+        const outputTokens = usage.completionTokens ?? (usage as any).outputTokens ?? 0;
+        const cachedInputTokens = usage.cachedPromptTokens ?? (usage as any).cachedInputTokens ?? 0;
+        const totalTokens = usage.totalTokens ?? inputTokens + outputTokens;
+
+        existing.inputTokens += inputTokens;
+        existing.outputTokens += outputTokens;
+        existing.cachedInputTokens += cachedInputTokens;
+        existing.totalTokens += totalTokens;
         existing.cost += cost;
         existing.messageCount += 1;
         existing.timestamp = new Date();
@@ -71,11 +91,20 @@ export class CostTracker {
         const currentDailyCost = this.dailyCosts.get(today) || 0;
         this.dailyCosts.set(today, currentDailyCost + cost);
 
+        // Persist to database
+        try {
+            await usageDatabase.recordUsage(sessionId, provider, model, usage, cost, messageIndex);
+        } catch (error) {
+            logger.warn(`Failed to persist usage to database: ${error}`);
+        }
+
         // Check for alerts
         await this.checkCostAlerts(existing, currentDailyCost);
 
         logger.debug(
-            `Tracked usage: ${provider}/${model} - ${dynamicPricingManager.formatTokens(usage.totalTokens || 0)} tokens, ${dynamicPricingManager.formatCost(cost)}`
+            `Tracked usage: ${provider}/${model} - ${dynamicPricingManager.formatTokens(
+                totalTokens
+            )} tokens, ${dynamicPricingManager.formatCost(cost)}`
         );
     }
 
@@ -86,7 +115,9 @@ export class CostTracker {
                 type: "daily",
                 amount: dailyCost,
                 threshold: this.dailyLimit,
-                message: `Daily cost limit exceeded: ${dynamicPricingManager.formatCost(dailyCost)} > ${dynamicPricingManager.formatCost(this.dailyLimit)}`,
+                message: `Daily cost limit exceeded: ${dynamicPricingManager.formatCost(
+                    dailyCost
+                )} > ${dynamicPricingManager.formatCost(this.dailyLimit)}`,
             };
             this.costAlerts.push(alert);
             logger.warn(alert.message);
@@ -98,7 +129,9 @@ export class CostTracker {
                 type: "limit",
                 amount: sessionCost.cost,
                 threshold: this.sessionLimit,
-                message: `Session cost limit exceeded: ${dynamicPricingManager.formatCost(sessionCost.cost)} > ${dynamicPricingManager.formatCost(this.sessionLimit)}`,
+                message: `Session cost limit exceeded: ${dynamicPricingManager.formatCost(
+                    sessionCost.cost
+                )} > ${dynamicPricingManager.formatCost(this.sessionLimit)}`,
             };
             this.costAlerts.push(alert);
             logger.warn(alert.message);
@@ -112,7 +145,9 @@ export class CostTracker {
                     type: "warning",
                     amount: sessionCost.cost,
                     threshold,
-                    message: `Cost warning: ${dynamicPricingManager.formatCost(sessionCost.cost)} spent on ${sessionCost.provider}/${sessionCost.model}`,
+                    message: `Cost warning: ${dynamicPricingManager.formatCost(sessionCost.cost)} spent on ${
+                        sessionCost.provider
+                    }/${sessionCost.model}`,
                 };
                 this.costAlerts.push(alert);
                 logger.info(alert.message);
@@ -296,7 +331,9 @@ export class CostTracker {
         if (Object.keys(providerStats).length > 0) {
             report += "By Provider:\n";
             for (const [provider, stats] of Object.entries(providerStats)) {
-                report += `  ${provider}: ${dynamicPricingManager.formatCost(stats.cost)} (${dynamicPricingManager.formatTokens(stats.tokens)} tokens, ${stats.messages} messages)\n`;
+                report += `  ${provider}: ${dynamicPricingManager.formatCost(
+                    stats.cost
+                )} (${dynamicPricingManager.formatTokens(stats.tokens)} tokens, ${stats.messages} messages)\n`;
             }
             report += "\n";
         }
@@ -306,7 +343,11 @@ export class CostTracker {
             report += "By Model:\n";
             for (const item of breakdown) {
                 const avgCostPerToken = item.totalTokens > 0 ? (item.cost / item.totalTokens) * 1000 : 0;
-                report += `  ${item.provider}/${item.model}: ${dynamicPricingManager.formatCost(item.cost)} (${dynamicPricingManager.formatTokens(item.totalTokens)} tokens, ${dynamicPricingManager.formatCost(avgCostPerToken)}/1K tokens)\n`;
+                report += `  ${item.provider}/${item.model}: ${dynamicPricingManager.formatCost(
+                    item.cost
+                )} (${dynamicPricingManager.formatTokens(item.totalTokens)} tokens, ${dynamicPricingManager.formatCost(
+                    avgCostPerToken
+                )}/1K tokens)\n`;
             }
             report += "\n";
         }

@@ -8,30 +8,30 @@ The `ask` tool is a comprehensive multi-provider LLM chat application that autom
 
 ### 1. Environment Analysis & API Key Detection
 
-- **Automatic Key Discovery**: Scan `process.env` for AI-related API keys
-- **Provider Mapping**: Map detected keys to corresponding AI providers
-- **Validation**: Verify API key validity before offering provider options
-- **Security**: Never expose API keys in logs or output
+-   **Automatic Key Discovery**: Scan `process.env` for AI-related API keys
+-   **Provider Mapping**: Map detected keys to corresponding AI providers
+-   **Validation**: Verify API key validity before offering provider options
+-   **Security**: Never expose API keys in logs or output
 
 ### 2. Dynamic Provider Configuration
 
-- **Runtime Provider Setup**: Use Vercel AI SDK's provider factories to configure providers at runtime
-- **Model Discovery**: Query available models for each provider using AI SDK introspection
-- **Provider Registry**: Maintain a registry of configured providers with their capabilities
+-   **Runtime Provider Setup**: Use Vercel AI SDK's provider factories to configure providers at runtime
+-   **Model Discovery**: Query available models for each provider using AI SDK introspection
+-   **Provider Registry**: Maintain a registry of configured providers with their capabilities
 
 ### 3. Interactive Model Selection
 
-- **Provider Choice**: Present available providers based on detected API keys
-- **Model Selection**: Show available models for chosen provider
-- **Model Metadata**: Display model capabilities (context window, pricing, etc.)
-- **Fallback Options**: Handle cases where providers/models are unavailable
+-   **Provider Choice**: Present available providers based on detected API keys
+-   **Model Selection**: Show available models for chosen provider
+-   **Model Metadata**: Display model capabilities (context window, pricing, etc.)
+-   **Fallback Options**: Handle cases where providers/models are unavailable
 
 ### 4. Chat Interface Modes
 
-- **Interactive Mode**: Real-time chat with streaming responses
-- **Non-Interactive Mode**: Single query/response for automation
-- **Multi-turn Conversations**: Maintain conversation history
-- **Streaming Support**: Real-time text streaming with progress indicators
+-   **Interactive Mode**: Real-time chat with streaming responses
+-   **Non-Interactive Mode**: Single query/response for automation
+-   **Multi-turn Conversations**: Maintain conversation history
+-   **Streaming Support**: Real-time text streaming with progress indicators
 
 ## Technical Architecture
 
@@ -293,39 +293,39 @@ tools ask --streaming "Tell me a story" | grep "moral"
 
 ### Core Dependencies
 
-- `ai`: Vercel AI SDK core
-- `@ai-sdk/openai`: OpenAI provider
-- `@ai-sdk/anthropic`: Anthropic provider
-- `@ai-sdk/google`: Google provider
-- `@ai-sdk/groq`: Groq provider (very fast inference)
-- `@ai-sdk/openai-compatible`: For xAI, OpenRouter, Jina, etc.
+-   `ai`: Vercel AI SDK core
+-   `@ai-sdk/openai`: OpenAI provider
+-   `@ai-sdk/anthropic`: Anthropic provider
+-   `@ai-sdk/google`: Google provider
+-   `@ai-sdk/groq`: Groq provider (very fast inference)
+-   `@ai-sdk/openai-compatible`: For xAI, OpenRouter, Jina, etc.
 
 ### Transcription Dependencies
 
-- `@ai-sdk/assemblyai`: AssemblyAI transcription (large file support)
-- `@ai-sdk/deepgram`: Deepgram transcription (real-time, large files)
-- `@ai-sdk/gladia`: Gladia transcription (large file support)
-- `@ai-sdk/revai`: Rev.ai transcription (enterprise-grade)
-- `@ai-sdk/fal`: Fal AI transcription
+-   `@ai-sdk/assemblyai`: AssemblyAI transcription (large file support)
+-   `@ai-sdk/deepgram`: Deepgram transcription (real-time, large files)
+-   `@ai-sdk/gladia`: Gladia transcription (large file support)
+-   `@ai-sdk/revai`: Rev.ai transcription (enterprise-grade)
+-   `@ai-sdk/fal`: Fal AI transcription
 
 ### Audio Processing Dependencies
 
-- `fluent-ffmpeg`: Audio file format conversion and chunking
-- `ffprobe`: Audio metadata extraction
-- `mime-types`: MIME type detection for audio files
+-   `fluent-ffmpeg`: Audio file format conversion and chunking
+-   `ffprobe`: Audio metadata extraction
+-   `mime-types`: MIME type detection for audio files
 
 ### UI Dependencies
 
-- `enquirer`: Interactive prompts
-- `chalk`: Terminal colors
-- `ora`: Loading spinners
-- `clipboardy`: Clipboard operations
+-   `enquirer`: Interactive prompts
+-   `chalk`: Terminal colors
+-   `ora`: Loading spinners
+-   `clipboardy`: Clipboard operations
 
 ### Utility Dependencies
 
-- `minimist`: CLI argument parsing
-- `zod`: Schema validation
-- `pino`: Structured logging
+-   `minimist`: CLI argument parsing
+-   `zod`: Schema validation
+-   `pino`: Structured logging
 
 ## Configuration & Environment
 
@@ -335,27 +335,27 @@ The tool automatically detects these AI API keys:
 
 #### Core Chat & Text Generation
 
-- `OPENAI_API_KEY` - OpenAI models (GPT-4, GPT-3.5, Whisper)
-- `ANTHROPIC_API_KEY` - Claude models
-- `X_AI_API_KEY` - xAI Grok models
-- `GOOGLE_API_KEY` - Google Gemini models
-- `OPENROUTER_API_KEY` - 100+ models via OpenRouter
-- `GROQ_API_KEY` - Groq models (very fast inference)
+-   `OPENAI_API_KEY` - OpenAI models (GPT-4, GPT-3.5, Whisper)
+-   `ANTHROPIC_API_KEY` - Claude models
+-   `X_AI_API_KEY` - xAI Grok models
+-   `GOOGLE_API_KEY` - Google Gemini models
+-   `OPENROUTER_API_KEY` - 100+ models via OpenRouter
+-   `GROQ_API_KEY` - Groq models (very fast inference)
 
 #### Transcription & Audio
 
-- `ASSEMBLYAI_API_KEY` - AssemblyAI transcription (supports 100MB+ files)
-- `DEEPGRAM_API_KEY` - Deepgram transcription (supports 100MB+ files)
-- `GLADIA_API_KEY` - Gladia transcription (supports 100MB+ files)
-- `REVAII_API_KEY` - Rev.ai transcription (supports 100MB+ files)
-- `FAL_API_KEY` - Fal AI transcription
+-   `ASSEMBLYAI_API_KEY` - AssemblyAI transcription (supports 100MB+ files)
+-   `DEEPGRAM_API_KEY` - Deepgram transcription (supports 100MB+ files)
+-   `GLADIA_API_KEY` - Gladia transcription (supports 100MB+ files)
+-   `REVAII_API_KEY` - Rev.ai transcription (supports 100MB+ files)
+-   `FAL_API_KEY` - Fal AI transcription
 
 #### Search & Tools
 
-- `BRAVE_API_KEY` - Brave Search API for web search
-- `PEXELS_API_KEY` - Pexels image search
-- `ELEVENLABS_API_KEY` - ElevenLabs text-to-speech
-- `JINA_AI_API_KEY` - Jina AI for embeddings/search
+-   `BRAVE_API_KEY` - Brave Search API for web search
+-   `PEXELS_API_KEY` - Pexels image search
+-   `ELEVENLABS_API_KEY` - ElevenLabs text-to-speech
+-   `JINA_AI_API_KEY` - Jina AI for embeddings/search
 
 #### Provider Priority Order
 
@@ -382,67 +382,67 @@ The tool automatically detects these AI API keys:
 
 ### API Key Issues
 
-- Invalid keys: Show clear error messages
-- Missing keys: Graceful degradation, skip provider
-- Rate limits: Implement exponential backoff
-- Quota exceeded: Fallback to other providers
+-   Invalid keys: Show clear error messages
+-   Missing keys: Graceful degradation, skip provider
+-   Rate limits: Implement exponential backoff
+-   Quota exceeded: Fallback to other providers
 
 ### Model Availability
 
-- Model not found: Suggest alternatives
-- Model deprecated: Update to newer versions
-- Provider outage: Automatic failover
+-   Model not found: Suggest alternatives
+-   Model deprecated: Update to newer versions
+-   Provider outage: Automatic failover
 
 ### Network Issues
 
-- Timeout handling: Configurable timeouts
-- Retry logic: Exponential backoff with jitter
-- Offline mode: Cache responses for offline use
+-   Timeout handling: Configurable timeouts
+-   Retry logic: Exponential backoff with jitter
+-   Offline mode: Cache responses for offline use
 
 ## Testing Strategy
 
 ### Unit Tests
 
-- Provider detection logic
-- Model parsing and validation
-- Chat engine state management
-- CLI argument parsing
+-   Provider detection logic
+-   Model parsing and validation
+-   Chat engine state management
+-   CLI argument parsing
 
 ### Integration Tests
 
-- Real API calls (with mock keys)
-- Streaming response handling
-- Multi-turn conversation flow
-- Error recovery scenarios
+-   Real API calls (with mock keys)
+-   Streaming response handling
+-   Multi-turn conversation flow
+-   Error recovery scenarios
 
 ### E2E Tests
 
-- Full interactive sessions
-- Batch processing workflows
-- Output format validation
-- Cross-platform compatibility
+-   Full interactive sessions
+-   Batch processing workflows
+-   Output format validation
+-   Cross-platform compatibility
 
 ## Security Considerations
 
 ### API Key Management
 
-- Never log API keys
-- Use environment variables only
-- Validate key formats before use
-- Implement key rotation support
+-   Never log API keys
+-   Use environment variables only
+-   Validate key formats before use
+-   Implement key rotation support
 
 ### Data Privacy
 
-- Don't persist conversation history without consent
-- Clear sensitive data from memory
-- Implement conversation encryption for storage
+-   Don't persist conversation history without consent
+-   Clear sensitive data from memory
+-   Implement conversation encryption for storage
 
 ### Rate Limiting & Cost Control
 
-- Track API usage per provider
-- Implement spending limits
-- Warn on high-cost operations
-- Support budget alerts
+-   Track API usage per provider
+-   Implement spending limits
+-   Warn on high-cost operations
+-   Support budget alerts
 
 ## Core Features & Requirements
 
@@ -452,12 +452,12 @@ After model selection, the user enters an **interactive chat session** with the 
 
 #### Special Commands
 
-- **`/model`**: Re-trigger model selection with autocomplete
-- **`/output`**: Change output format (see Output Formats below)
-- **`/help`**: Show available commands
-- **`/quit`** or **`/exit`**: End the session
-- **`/clear`**: Clear conversation history
-- **`/save`**: Manually save current conversation
+-   **`/model`**: Re-trigger model selection with autocomplete
+-   **`/output`**: Change output format (see Output Formats below)
+-   **`/help`**: Show available commands
+-   **`/quit`** or **`/exit`**: End the session
+-   **`/clear`**: Clear conversation history
+-   **`/save`**: Manually save current conversation
 
 #### Interactive Chat Flow
 
@@ -473,11 +473,11 @@ The `/output` command allows switching between output formats:
 
 #### Available Formats
 
-- **`text`** (default): Plain text output
-- **`json`**: Structured JSON responses
-- **`markdown`**: Markdown formatted output
-- **`clipboard`**: Auto-copy responses to clipboard
-- **`file <filename>`**: Save responses to specified file
+-   **`text`** (default): Plain text output
+-   **`json`**: Structured JSON responses
+-   **`markdown`**: Markdown formatted output
+-   **`clipboard`**: Auto-copy responses to clipboard
+-   **`file <filename>`**: Save responses to specified file
 
 #### Format Switching
 
@@ -517,9 +517,9 @@ const searchTool = {
 
 Users can request searches naturally:
 
-- "Search for recent AI news"
-- "What's the weather in Tokyo?"
-- "Find tutorials for React hooks"
+-   "Search for recent AI news"
+-   "What's the weather in Tokyo?"
+-   "Find tutorials for React hooks"
 
 ### 4. Streaming Output
 
@@ -541,9 +541,9 @@ for await (const chunk of result.textStream) {
 
 #### Performance Requirements
 
-- **Chunk latency**: <50ms between chunks
-- **First chunk**: <200ms from API response
-- **No buffering**: Chunks displayed immediately as received
+-   **Chunk latency**: <50ms between chunks
+-   **First chunk**: <200ms from API response
+-   **No buffering**: Chunks displayed immediately as received
 
 ### 5. Conversation Persistence
 
@@ -590,10 +590,10 @@ Conversations saved as JSON files on disk:
 
 #### File Naming Convention
 
-- **Format**: `YYYY-MM-DD_HH-MM-SS_<random-id>.json`
-- **Location**: `./conversations/` directory
-- **Auto-save**: Every 5 messages or when session ends
-- **Load**: Support loading previous conversations
+-   **Format**: `YYYY-MM-DD_HH-MM-SS_<random-id>.json`
+-   **Location**: `./conversations/` directory
+-   **Auto-save**: Every 5 messages or when session ends
+-   **Load**: Support loading previous conversations
 
 ### 6. Speech-to-Text (SST) Support
 
@@ -728,11 +728,11 @@ async function selectBestTranscriptionModel(fileSize: number) {
 
 #### Streaming Transcription
 
-- **Supported formats**: MP3, WAV, M4A, FLAC, OGG, WebM, AAC
-- **Real-time streaming**: AssemblyAI, Deepgram, Gladia support real-time streaming
-- **Progress indication**: Show transcription progress for long files
-- **Large file handling**: Automatic chunking for files >25MB with compatible providers
-- **Language detection**: Automatic language detection for most providers
+-   **Supported formats**: MP3, WAV, M4A, FLAC, OGG, WebM, AAC
+-   **Real-time streaming**: AssemblyAI, Deepgram, Gladia support real-time streaming
+-   **Progress indication**: Show transcription progress for long files
+-   **Large file handling**: Automatic chunking for files >25MB with compatible providers
+-   **Language detection**: Automatic language detection for most providers
 
 #### File Size Handling
 
@@ -867,10 +867,10 @@ async function transcribeAudioWithFallback(filePath: string): Promise<string> {
 
 All token counts displayed in thousands ("k"):
 
-- **Input tokens**: 1.2k (1,200 tokens)
-- **Output tokens**: 0.8k (800 tokens)
-- **Cached input**: 0.3k (300 tokens)
-- **Total**: 2.3k (2,300 tokens)
+-   **Input tokens**: 1.2k (1,200 tokens)
+-   **Output tokens**: 0.8k (800 tokens)
+-   **Cached input**: 0.3k (300 tokens)
+-   **Total**: 2.3k (2,300 tokens)
 
 #### Dynamic Cost Calculation System
 
@@ -1082,10 +1082,10 @@ class CostTracker {
 
 #### Cost Alert System
 
-- **Per-session alerts**: Warn when session exceeds $0.10
-- **Daily limits**: Optional daily spending caps
-- **Provider-specific limits**: Different limits per provider
-- **Cost prediction**: Show estimated cost before long operations
+-   **Per-session alerts**: Warn when session exceeds $0.10
+-   **Daily limits**: Optional daily spending caps
+-   **Provider-specific limits**: Different limits per provider
+-   **Cost prediction**: Show estimated cost before long operations
 
 ## Implementation Details & Gotchas
 
@@ -1305,13 +1305,13 @@ function isRetryableError(error: any): boolean {
 
 ### Performance Optimizations
 
-- **Lazy provider loading**: Only import provider SDKs when needed
-- **Connection pooling**: Reuse HTTP connections where possible
-- **Caching**: Cache model lists and pricing data (1 hour TTL)
-- **Chunked output**: No artificial delays in streaming
-- **Memory management**: Clear large objects when not needed
-- **Audio chunking**: Smart splitting for large files
-- **Cost prediction**: Pre-calculate costs for operations
+-   **Lazy provider loading**: Only import provider SDKs when needed
+-   **Connection pooling**: Reuse HTTP connections where possible
+-   **Caching**: Cache model lists and pricing data (1 hour TTL)
+-   **Chunked output**: No artificial delays in streaming
+-   **Memory management**: Clear large objects when not needed
+-   **Audio chunking**: Smart splitting for large files
+-   **Cost prediction**: Pre-calculate costs for operations
 
 ## Complete Implementation Architecture
 
@@ -1594,73 +1594,73 @@ main().catch((err) => {
 
 #### Must-Have for First Working Version
 
-- [ ] Environment scanning for API keys
-- [ ] Basic provider setup (OpenAI, xAI, OpenRouter)
-- [ ] Interactive model selection with autocomplete
-- [ ] Interactive chat mode with special commands (/model, /output, /quit, etc.)
-- [ ] CLI argument parsing (including --sst for speech-to-text)
-- [ ] Streaming responses (fast as possible)
-- [ ] Output format selection (/output command)
-- [ ] Conversation persistence (JSON files on disk)
-- [ ] Basic cost tracking (token counts in "k" format)
+-   [x] Environment scanning for API keys ✅ **COMPLETED** - Implemented in `ProviderManager.ts`
+-   [x] Basic provider setup (OpenAI, xAI, OpenRouter) ✅ **COMPLETED** - Implemented in `providers.ts` with 7 providers
+-   [x] Interactive model selection with autocomplete ✅ **COMPLETED** - Implemented in `ModelSelector.ts`
+-   [x] Interactive chat mode with special commands (/model, /output, /quit, etc.) ✅ **COMPLETED** - Implemented in `CommandHandler.ts`
+-   [x] CLI argument parsing (including --sst for speech-to-text) ✅ **COMPLETED** - Implemented in `cli.ts`
+-   [x] Streaming responses (fast as possible) ✅ **COMPLETED** - Implemented in `ChatEngine.ts`
+-   [x] Output format selection (/output command) ✅ **COMPLETED** - Implemented in `OutputManager.ts`
+-   [x] Conversation persistence (JSON files on disk) ✅ **COMPLETED** - Implemented in `ConversationManager.ts`
+-   [x] Basic cost tracking (token counts in "k" format) ✅ **COMPLETED** - Implemented in `CostTracker.ts` and `DynamicPricing.ts`
 
 ### Phase 2: Enhanced Features
 
 #### Core Chat Experience
 
-- [ ] Web search tool integration (Brave Search API)
-- [ ] Speech-to-text support (Whisper via OpenAI)
-- [ ] Multi-turn conversations with history
-- [ ] Dynamic model discovery (query provider APIs)
-- [ ] Error handling & recovery
-- [ ] More providers (Anthropic, Google, Jina)
+-   [x] Web search tool integration (Brave Search API) ✅ **COMPLETED** - Implemented in `websearch.ts` with Brave Search API
+-   [x] Speech-to-text support (Whisper via OpenAI) ✅ **COMPLETED** - Implemented in `TranscriptionManager.ts` with multiple providers (Groq, OpenAI, AssemblyAI, Deepgram, Gladia)
+-   [x] Multi-turn conversations with history ✅ **COMPLETED** - Implemented in `ChatEngine.ts` with conversation history management
+-   [x] Dynamic model discovery (query provider APIs) ✅ **COMPLETED** - Implemented in `ProviderManager.ts` for OpenRouter, known models for others
+-   [x] Error handling & recovery ✅ **COMPLETED** - Error handling implemented throughout, fallback providers for transcription
+-   [x] More providers (Anthropic, Google, Jina) ✅ **COMPLETED** - All 7 providers implemented: OpenAI, Groq, OpenRouter, Anthropic, Google, xAI, Jina
 
 #### Cost & Analytics
 
-- [ ] Advanced cost tracking (per-provider breakdown with $)
-- [ ] Cost alerts and spending limits
-- [ ] Cost prediction before operations
-- [ ] Usage analytics and reporting
+-   [x] Advanced cost tracking (per-provider breakdown with $) ✅ **COMPLETED** - Implemented in `CostTracker.ts` and `DynamicPricing.ts` with dynamic pricing from OpenRouter
+-   [x] Cost alerts and spending limits ✅ **COMPLETED** - Implemented in `CostTracker.ts` with daily/session limits and warnings
+-   [x] Cost prediction before operations ✅ **COMPLETED** - Implemented in `CostPredictor.ts`, use `--predict-cost` flag
+-   [x] Usage analytics and reporting ✅ **COMPLETED** - Implemented in `usage` tool with SQLite database at `~/.genesis-tools/ask.sqlite`
 
 ### Phase 3: Advanced Capabilities
 
 #### Extended Functionality
 
-- [ ] Tool calling integration (GenesisTools integration)
-- [ ] Agent modes (autonomous multi-step workflows)
-- [ ] Multi-modal support (image generation/analysis)
-- [ ] Batch processing (multiple questions from files)
-- [ ] Conversation loading and management
-- [ ] Configuration persistence (preferred models/settings)
+-   [ ] Tool calling integration (GenesisTools integration) ❌ **NOT IMPLEMENTED** - Only web search tool exists, no GenesisTools integration
+-   [ ] Agent modes (autonomous multi-step workflows) ❌ **NOT IMPLEMENTED**
+-   [ ] Multi-modal support (image generation/analysis) ❌ **NOT IMPLEMENTED**
+-   [ ] Batch processing (multiple questions from files) ❌ **NOT IMPLEMENTED**
+-   [x] Conversation loading and management ✅ **PARTIALLY COMPLETED** - Can load/list conversations via `ConversationManager.ts`, but no CLI commands for loading
+-   [ ] Configuration persistence (preferred models/settings) ❌ **NOT IMPLEMENTED** - No config file persistence
 
 #### Quality of Life
 
-- [ ] Progress indicators for long operations
-- [ ] Conversation search and filtering
-- [ ] Export conversations to different formats
-- [ ] Keyboard shortcuts and advanced commands
-- [ ] Plugin system for custom tools/providers
+-   [ ] Progress indicators for long operations ❌ **NOT IMPLEMENTED** - No progress spinners/indicators for long operations
+-   [ ] Conversation search and filtering ❌ **NOT IMPLEMENTED** - Can list conversations but no search/filter
+-   [x] Export conversations to different formats ✅ **COMPLETED** - Implemented in `ConversationManager.ts` (JSON, Markdown, TXT)
+-   [ ] Keyboard shortcuts and advanced commands ❌ **NOT IMPLEMENTED** - Only basic commands exist
+-   [ ] Plugin system for custom tools/providers ❌ **NOT IMPLEMENTED**
 
 ## Success Metrics
 
 ### Functional Metrics
 
-- **Provider Detection**: Successfully detect 90%+ of available API keys
-- **Model Availability**: 95%+ of detected providers have working models
-- **Response Quality**: All responses complete without errors
-- **Streaming Performance**: <100ms latency for streaming chunks
+-   **Provider Detection**: Successfully detect 90%+ of available API keys
+-   **Model Availability**: 95%+ of detected providers have working models
+-   **Response Quality**: All responses complete without errors
+-   **Streaming Performance**: <100ms latency for streaming chunks
 
 ### UX Metrics
 
-- **Time to First Response**: <3 seconds for model selection + first response
-- **Error Rate**: <5% of interactions result in errors
-- **User Satisfaction**: Intuitive interface requiring minimal documentation
+-   **Time to First Response**: <3 seconds for model selection + first response
+-   **Error Rate**: <5% of interactions result in errors
+-   **User Satisfaction**: Intuitive interface requiring minimal documentation
 
 ### Performance Metrics
 
-- **Memory Usage**: <100MB for typical chat sessions
-- **API Efficiency**: Minimize unnecessary API calls
-- **Startup Time**: <500ms tool initialization
+-   **Memory Usage**: <100MB for typical chat sessions
+-   **API Efficiency**: Minimize unnecessary API calls
+-   **Startup Time**: <500ms tool initialization
 
 ## Conclusion
 
