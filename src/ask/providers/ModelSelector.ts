@@ -127,11 +127,11 @@ export class ModelSelector {
 
         if (model.pricing) {
             const costStr =
-                model.pricing.input && model.pricing.output
+                model.pricing.inputPer1M != null && model.pricing.outputPer1M != null
                     ? chalk.yellow(
-                          `$${(model.pricing.input / 1000).toFixed(4)}/${(model.pricing.output / 1000).toFixed(
-                              4
-                          )} per 1K tokens`
+                          `$${model.pricing.inputPer1M.toFixed(2)}/${model.pricing.outputPer1M.toFixed(
+                              2
+                          )} per 1M tokens`
                       )
                     : chalk.yellow("pricing unknown");
             parts.push(costStr);

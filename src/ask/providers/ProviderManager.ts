@@ -1,7 +1,16 @@
 import logger from "../../logger";
 import type { ProviderV1 } from "@ai-sdk/provider";
-import type { DetectedProvider, ModelInfo, ProviderConfig } from "../types";
+import type {
+    DetectedProvider,
+    ModelInfo,
+    ProviderConfig,
+    OpenRouterModelsResponse,
+    OpenRouterModelResponse,
+    OpenRouterPricing,
+    PricingInfo,
+} from "../types";
 import { getProviderConfigs, KNOWN_MODELS } from "./providers";
+import { dynamicPricingManager } from "./DynamicPricing";
 
 export class ProviderManager {
     private detectedProviders: Map<string, DetectedProvider> = new Map();
@@ -107,11 +116,22 @@ export class ProviderManager {
             // For other providers, use known model lists
             const knownModels = KNOWN_MODELS[config.name as keyof typeof KNOWN_MODELS];
             if (knownModels) {
-                return knownModels.map((model) => ({
-                    ...model,
-                    provider: config.name,
-                    pricing: undefined, // Will be loaded dynamically
-                }));
+                // Fetch pricing for all models in parallel
+                const modelsWithPricing = await Promise.all(
+                    knownModels.map(async (model) => {
+                        const pricing = await dynamicPricingManager.getPricing(config.name, model.id);
+                        return {
+                            ...model,
+                            provider: config.name,
+                            pricing: pricing || undefined,
+                        };
+                    })
+                );
+
+                // Sort models alphabetically by name
+                modelsWithPricing.sort((a: ModelInfo, b: ModelInfo) => a.name.localeCompare(b.name));
+
+                return modelsWithPricing;
             }
 
             // Fallback: try to get basic model info
@@ -156,41 +176,59 @@ export class ProviderManager {
                 throw new Error(`OpenRouter API error: ${response.status}`);
             }
 
-            const data = await response.json();
+            const data = (await response.json()) as OpenRouterModelsResponse;
 
-            return data.data.map(
-                (model: {
-                    id: string;
-                    name?: string;
-                    context_length?: number;
-                    pricing?: {
-                        prompt: number;
-                        completion: number;
-                        cache_read?: number;
-                    };
-                    description?: string;
-                }) => ({
+            const models: ModelInfo[] = data.data.map((model: OpenRouterModelResponse) => {
+                return {
                     id: model.id,
                     name: model.name || model.id,
                     contextWindow: model.context_length || 4096,
-                    pricing: model.pricing
-                        ? {
-                              input: model.pricing.prompt / 1000000, // Convert from per-million to per-thousand
-                              output: model.pricing.completion / 1000000,
-                              cachedInput: model.pricing.cache_read ? model.pricing.cache_read / 1000000 : undefined,
-                          }
-                        : undefined,
+                    pricing: model.pricing ? this.convertOpenRouterPricing(model.pricing) : undefined,
                     capabilities: this.parseCapabilities({
                         id: model.id,
                         description: model.description,
                     }),
                     provider: "openrouter",
-                })
-            );
+                };
+            });
+
+            // Sort models alphabetically by name
+            models.sort((a: ModelInfo, b: ModelInfo) => a.name.localeCompare(b.name));
+
+            return models;
         } catch (error) {
             logger.error(`Failed to fetch OpenRouter models: ${error}`);
             return [];
         }
+    }
+
+    /**
+     * Convert OpenRouter pricing per token to PricingInfo (per million tokens)
+     * OpenRouter API returns pricing per token (e.g., "0.00000015" = $0.15 per million tokens)
+     */
+    private convertOpenRouterPricing(pricing: OpenRouterPricing): PricingInfo {
+        const promptPricePerToken =
+            typeof pricing.prompt === "string" ? parseFloat(pricing.prompt) : pricing.prompt ?? 0;
+        const completionPricePerToken =
+            typeof pricing.completion === "string" ? parseFloat(pricing.completion) : pricing.completion ?? 0;
+
+        // Handle both cache_read and input_cache_read field names
+        const cachePricePerToken =
+            pricing.cache_read !== undefined
+                ? typeof pricing.cache_read === "string"
+                    ? parseFloat(pricing.cache_read)
+                    : pricing.cache_read
+                : pricing.input_cache_read !== undefined
+                ? typeof pricing.input_cache_read === "string"
+                    ? parseFloat(pricing.input_cache_read)
+                    : pricing.input_cache_read
+                : undefined;
+
+        return {
+            inputPer1M: promptPricePerToken * 1_000_000, // Convert per-token to per-million
+            outputPer1M: completionPricePerToken * 1_000_000, // Convert per-token to per-million
+            cachedReadPer1M: cachePricePerToken ? cachePricePerToken * 1_000_000 : undefined, // Convert per-token to per-million
+        };
     }
 
     private parseCapabilities(model: { id: string; description?: string }): string[] {
