@@ -121,6 +121,36 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
             })
         );
 
+        // Filter out models with invalid pricing (null, negative, or extreme values)
+        // Also exclude "Auto Router" which has invalid pricing from OpenRouter
+        modelsWithPricing = modelsWithPricing.filter(({ model, pricing }) => {
+            if (pricing === null) return true; // Keep models without pricing (they'll show as N/A)
+
+            // Exclude Auto Router models (they have invalid pricing)
+            const modelName = (model.name || "").toLowerCase();
+            const modelId = (model.id || "").toLowerCase();
+            if (
+                modelName.includes("auto router") ||
+                modelName.includes("autorouter") ||
+                modelId.includes("auto-router") ||
+                modelId.includes("autorouter") ||
+                modelId === "auto" ||
+                modelId.endsWith("/auto")
+            ) {
+                return false;
+            }
+
+            // Filter out models with invalid pricing (negative or extreme values)
+            const inputPrice = pricing?.inputPer1M ?? Infinity;
+            const outputPrice = pricing?.outputPer1M ?? Infinity;
+
+            // Exclude negative prices or prices that are too extreme (likely errors)
+            if (inputPrice < 0 || outputPrice < 0) return false;
+            if (inputPrice > 1_000_000 || outputPrice > 1_000_000) return false; // Sanity check
+
+            return true;
+        });
+
         // Filter by capabilities if specified
         if (filterCapabilities) {
             const filterCaps = filterCapabilities
@@ -189,7 +219,35 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
 
     const modelsWithPricing = allFilteredModels;
 
-    const validModels = modelsWithPricing.filter((m) => m.pricing !== null);
+    // Filter out models with invalid pricing (null, negative, or extreme values)
+    // Also exclude "Auto Router" which has invalid pricing from OpenRouter
+    const validModels = modelsWithPricing.filter((m) => {
+        if (m.pricing === null) return false;
+
+        // Exclude Auto Router models (they have invalid pricing)
+        const modelName = (m.model.name || "").toLowerCase();
+        const modelId = (m.model.id || "").toLowerCase();
+        if (
+            modelName.includes("auto router") ||
+            modelName.includes("autorouter") ||
+            modelId.includes("auto-router") ||
+            modelId.includes("autorouter") ||
+            modelId === "auto" ||
+            modelId.endsWith("/auto")
+        ) {
+            return false;
+        }
+
+        // Filter out models with invalid pricing (negative or extreme values)
+        const inputPrice = m.pricing?.inputPer1M ?? Infinity;
+        const outputPrice = m.pricing?.outputPer1M ?? Infinity;
+
+        // Exclude negative prices or prices that are too extreme (likely errors)
+        if (inputPrice < 0 || outputPrice < 0) return false;
+        if (inputPrice > 1_000_000 || outputPrice > 1_000_000) return false; // Sanity check
+
+        return true;
+    });
 
     if (validModels.length > 0) {
         // Find cheapest and most expensive
