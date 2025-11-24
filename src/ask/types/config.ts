@@ -6,6 +6,8 @@ export interface CLIOptions {
     provider?: string; // Specific provider
     format?: string; // Output format for pricing (table/json)
     output?: string; // Output format
+    sort?: string; // Sort order for models (price_input/input/price_output/output/name)
+    filterCapabilities?: string; // Filter by capabilities (pipe-separated: "chat|vision|functions|reasoning")
     interactive?: boolean;
     streaming?: boolean;
     systemPrompt?: string;

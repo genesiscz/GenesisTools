@@ -17,7 +17,18 @@ export function parseCLIArguments(): Args {
             k: "maxTokens",
         },
         boolean: ["streaming", "help", "version", "verbose", "silent", "predictCost"],
-        string: ["sst", "model", "provider", "format", "output", "systemPrompt", "temperature", "maxTokens"],
+        string: [
+            "sst",
+            "model",
+            "provider",
+            "format",
+            "output",
+            "systemPrompt",
+            "temperature",
+            "maxTokens",
+            "sort",
+            "filterCapabilities",
+        ],
         default: {
             streaming: true,
         },
@@ -32,21 +43,22 @@ ASK Tool - Multi-Router LLM Chat Application
 
 Usage:
   tools ask [options] [message]
-  tools ask price [options]
-  tools ask pricing [options]
+  tools ask models [options]
 
 Arguments:
   <message>               Message to send (for non-interactive mode)
 
 Commands:
-  price, pricing          Display pricing information for all available providers and models
+  models, model           Display pricing and detailed information for all available providers and models
 
 Options:
   -s, --sst <file>        Transcribe audio file
   -m, --model <model>     Specify model (e.g., gpt-4-turbo)
   -p, --provider <prov>   Specify provider (e.g., openai)
-  -f, --format <format>   Output format (text/json/markdown/clipboard/file) or pricing format (table/json)
+  -f, --format <format>   Output format (text/json/markdown/clipboard/file) or models format (table/json)
   -o, --output <format>   Output format (text/json/markdown/clipboard/file)
+  --sort <order>          Sort models by: price_input/input/price_output/output/name (default: price_input)
+  --filter-capabilities   Filter models by capabilities (pipe-separated: "chat|vision|functions|reasoning")
   -i, --interactive       Start interactive chat mode (default: true)
   -t, --temperature <n>   Set temperature (0.0-2.0)
   -k, --maxTokens <n>     Set maximum tokens
@@ -68,10 +80,12 @@ Examples:
   # With specific model
   tools ask --model gpt-4-turbo "Explain quantum computing"
 
-  # Show pricing information
-  tools ask price
-  tools ask pricing --provider openai
-  tools ask price --format json
+  # Show pricing and model information
+  tools ask models
+  tools ask models --provider openai
+  tools ask models --format json
+  tools ask models --sort price_input
+  tools ask models --sort output --filter-capabilities="vision|functions"
 
   # Use --format for chat output
   tools ask --format json "What is 2+2?"
