@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import { DynamicPricingManager } from "./DynamicPricing";
-import { liteLLMPricingFetcher } from "./LiteLLMPricingFetcher";
-import { providerManager } from "./ProviderManager";
-import type { PricingInfo } from "../types/provider";
+import { DynamicPricingManager } from "@ask/providers/DynamicPricing";
+import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
+import { providerManager } from "@ask/providers/ProviderManager";
+import type { PricingInfo } from "@ask/types/provider";
 import type { LanguageModelUsage } from "ai";
 
 describe("DynamicPricingManager", () => {

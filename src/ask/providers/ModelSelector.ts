@@ -1,9 +1,9 @@
 import Enquirer from "enquirer";
 import chalk from "chalk";
 import type { ProviderV1 } from "@ai-sdk/provider";
-import logger from "../../logger";
-import type { DetectedProvider, ModelInfo, ProviderChoice } from "../types";
-import { providerManager } from "./ProviderManager";
+import logger from "@app/logger";
+import type { DetectedProvider, ModelInfo, ProviderChoice } from "@ask/types";
+import { providerManager } from "@ask/providers/ProviderManager";
 
 export class ModelSelector {
     private prompter = new Enquirer();

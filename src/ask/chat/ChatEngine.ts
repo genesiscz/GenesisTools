@@ -1,9 +1,9 @@
 import { streamText, generateText } from "ai";
 import type { LanguageModel, LanguageModelUsage } from "ai";
 import chalk from "chalk";
-import logger from "../../logger";
-import type { ChatConfig, ChatMessage } from "../types";
-import { dynamicPricingManager } from "../providers/DynamicPricing";
+import logger from "@app/logger";
+import type { ChatConfig, ChatMessage } from "@ask/types";
+import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 
 export interface ChatResponse {
     content: string;

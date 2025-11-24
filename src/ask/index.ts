@@ -2,18 +2,18 @@
 
 import Enquirer from "enquirer";
 import chalk from "chalk";
-import logger from "../logger";
-import { ChatEngine } from "./chat/ChatEngine";
-import { commandHandler } from "./chat/CommandHandler";
-import type { CommandResult } from "./chat/CommandHandler";
-import { ConversationManager, conversationManager } from "./chat/ConversationManager";
-import { modelSelector } from "./providers/ModelSelector";
-import { providerManager } from "./providers/ProviderManager";
-import { transcriptionManager } from "./audio/TranscriptionManager";
-import { outputManager } from "./output/OutputManager";
-import { costTracker } from "./output/CostTracker";
-import { costPredictor } from "./output/CostPredictor";
-import { webSearchTool } from "./utils/websearch";
+import logger from "@app/logger";
+import { ChatEngine } from "@ask/chat/ChatEngine";
+import { commandHandler } from "@ask/chat/CommandHandler";
+import type { CommandResult } from "@ask/chat/CommandHandler";
+import { ConversationManager, conversationManager } from "@ask/chat/ConversationManager";
+import { modelSelector } from "@ask/providers/ModelSelector";
+import { providerManager } from "@ask/providers/ProviderManager";
+import { transcriptionManager } from "@ask/audio/TranscriptionManager";
+import { outputManager } from "@ask/output/OutputManager";
+import { costTracker } from "@ask/output/CostTracker";
+import { costPredictor } from "@ask/output/CostPredictor";
+import { webSearchTool } from "@ask/utils/websearch";
 import {
     parseCLIArguments,
     showHelp,
@@ -30,11 +30,11 @@ import {
     parseMaxTokens,
     getConversationsDir,
     formatElapsedTime,
-} from "./utils/cli";
-import { generateSessionId, colorizeRole, colorizeProvider } from "./utils/helpers";
-import type { Args, CLIOptions, ChatConfig, ProviderChoice } from "./types";
-import type { ModelsOptions } from "./types/cli";
-import { showPricing } from "./pricing/index";
+} from "@ask/utils/cli";
+import { generateSessionId, colorizeRole, colorizeProvider } from "@ask/utils/helpers";
+import type { Args, CLIOptions, ChatConfig, ProviderChoice } from "@ask/types";
+import type { ModelsOptions } from "@ask/types/cli";
+import { showPricing } from "@ask/pricing/index";
 
 // Initialize conversation manager
 const convManager = conversationManager;
@@ -101,7 +101,7 @@ class ASKTool {
 
     private async handleSpeechToText(filePath: string, argv: Args): Promise<void> {
         try {
-            console.log(chalk.blue("<ÃƒÂ¯Ã‚Â¿Ã‚Â½ Transcribing audio..."));
+            console.log(chalk.blue("<ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ Transcribing audio..."));
 
             const result = await transcriptionManager.transcribeAudio(filePath);
 
@@ -210,7 +210,7 @@ class ASKTool {
     }
 
     private async startInteractiveChat(argv: Args): Promise<void> {
-        console.log(chalk.green("=ÃƒÂ¯Ã‚Â¿Ã‚Â½ Starting interactive chat mode"));
+        console.log(chalk.green("=ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ Starting interactive chat mode"));
         console.log(chalk.gray("Type /help for available commands, /quit to exit\n"));
 
         try {
@@ -293,7 +293,9 @@ class ASKTool {
                     const duration = Date.now() - startTime;
 
                     // Show timing info
-                    console.log(chalk.gray(`\nÃƒÂ¯Ã‚Â¿Ã‚Â½  Response time: ${formatElapsedTime(duration)}`));
+                    console.log(
+                        chalk.gray(`\nÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½  Response time: ${formatElapsedTime(duration)}`)
+                    );
 
                     // Track usage
                     if (response.usage) {
@@ -339,7 +341,11 @@ class ASKTool {
                         continue;
                     }
                     logger.error(`Chat error: ${error}`);
-                    console.log(chalk.red("=ÃƒÂ¯Ã‚Â¿Ã‚Â½ Error occurred. Type /quit to exit or continue chatting."));
+                    console.log(
+                        chalk.red(
+                            "=ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ Error occurred. Type /quit to exit or continue chatting."
+                        )
+                    );
                 }
             }
 
@@ -467,7 +473,7 @@ class ASKTool {
 
         if (result.transcriptionFile) {
             try {
-                console.log(chalk.blue("<ÃƒÂ¯Ã‚Â¿Ã‚Â½ Transcribing audio..."));
+                console.log(chalk.blue("<ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ Transcribing audio..."));
                 const transcriptionResult = await transcriptionManager.transcribeAudio(result.transcriptionFile);
 
                 // Add transcription as a user message

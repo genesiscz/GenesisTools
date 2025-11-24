@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { mkdir } from "node:fs/promises";
-import logger from "../../logger";
+import logger from "@app/logger";
 
 export type FFProbeResult = {
     format: {

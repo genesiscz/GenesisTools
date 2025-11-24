@@ -27,7 +27,8 @@
         // Path aliases
         "baseUrl": ".",
         "paths": {
-            "@app/*": ["src/*"]
+            "@app/*": ["src/*"],
+            "@ask/*": ["src/ask/*"]
         }
     },
     "include": ["src/**/*", "./test-*.ts"]

@@ -2,8 +2,8 @@ import { experimental_transcribe as transcribe } from "ai";
 import { statSync } from "node:fs";
 import type { ProviderV1 } from "@ai-sdk/provider";
 import chalk from "chalk";
-import logger from "../../logger";
-import { modelSelector } from "../providers/ModelSelector";
+import logger from "@app/logger";
+import { modelSelector } from "@ask/providers/ModelSelector";
 
 export interface TranscriptionOptions {
     language?: string;

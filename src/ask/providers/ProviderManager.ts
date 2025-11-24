@@ -1,4 +1,4 @@
-import logger from "../../logger";
+import logger from "@app/logger";
 import type { ProviderV1 } from "@ai-sdk/provider";
 import type {
     DetectedProvider,
@@ -9,9 +9,9 @@ import type {
     OpenRouterPricing,
     OpenAIModelsResponse,
     PricingInfo,
-} from "../types";
-import { getProviderConfigs, KNOWN_MODELS } from "./providers";
-import { dynamicPricingManager } from "./DynamicPricing";
+} from "@ask/types";
+import { getProviderConfigs, KNOWN_MODELS } from "@ask/providers/providers";
+import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 
 export class ProviderManager {
     private detectedProviders: Map<string, DetectedProvider> = new Map();

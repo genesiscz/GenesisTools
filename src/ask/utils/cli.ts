@@ -1,5 +1,6 @@
 import minimist from "minimist";
-import type { CLIOptions, Args, OutputFormat } from "../types";
+import logger from "@app/logger";
+import type { CLIOptions, Args, OutputFormat } from "@ask/types";
 
 export function parseCLIArguments(): Args {
     const argv = minimist<Args>(process.argv.slice(2), {

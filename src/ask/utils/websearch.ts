@@ -1,5 +1,5 @@
-import logger from "../../logger";
-import type { SearchResult, WebSearchOptions } from "../types";
+import logger from "@app/logger";
+import type { SearchResult, WebSearchOptions } from "@ask/types";
 
 export class WebSearchTool {
     private apiKey?: string;

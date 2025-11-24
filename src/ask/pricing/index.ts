@@ -1,12 +1,12 @@
 import chalk from "chalk";
 import Table from "cli-table3";
-import logger from "../../logger";
-import { providerManager } from "../providers/ProviderManager";
-import { dynamicPricingManager } from "../providers/DynamicPricing";
-import type { ModelsOptions } from "../types/cli";
+import logger from "@app/logger";
+import { providerManager } from "@ask/providers/ProviderManager";
+import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
+import type { ModelsOptions } from "@ask/types/cli";
 
 // Re-export for backward compatibility
-export type { ModelsOptions as PricingOptions } from "../types/cli";
+export type { ModelsOptions as PricingOptions } from "@ask/types/cli";
 
 function formatContextWindow(tokens: number): string {
     if (tokens >= 1_000_000) {

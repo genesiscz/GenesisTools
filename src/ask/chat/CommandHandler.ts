@@ -1,9 +1,9 @@
 import Enquirer from "enquirer";
 import type { LanguageModel } from "ai";
 import chalk from "chalk";
-import logger from "../../logger";
-import type { OutputConfig, OutputFormat } from "../types";
-import { modelSelector } from "../providers/ModelSelector";
+import logger from "@app/logger";
+import type { OutputConfig, OutputFormat } from "@ask/types";
+import { modelSelector } from "@ask/providers/ModelSelector";
 
 export interface CommandResult {
     shouldExit?: boolean;

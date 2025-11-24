@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
-import logger from "../../logger";
-import type { ChatSession, ChatMessage, ConversationMetadata } from "../types";
-import { dynamicPricingManager } from "../providers/DynamicPricing";
+import logger from "@app/logger";
+import type { ChatSession, ChatMessage, ConversationMetadata } from "@ask/types";
+import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 
 export class ConversationManager {
     private conversationsDir: string;

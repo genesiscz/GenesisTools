@@ -3,8 +3,8 @@ import { write } from "bun";
 import { resolve, dirname } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import chalk from "chalk";
-import logger from "../../logger";
-import type { OutputConfig, OutputFormat } from "../types";
+import logger from "@app/logger";
+import type { OutputConfig, OutputFormat } from "@ask/types";
 
 export interface FormattedResponse {
     content: string;
@@ -331,19 +331,25 @@ export class OutputManager {
 
             if (breakdown.inputTokens > 0) {
                 const inputCost = breakdown.cost * (breakdown.inputTokens / breakdown.totalTokens);
-                output += `  Input:  ${this.formatTokens(breakdown.inputTokens)} (${chalk.yellow(this.formatCost(inputCost))})\n`;
+                output += `  Input:  ${this.formatTokens(breakdown.inputTokens)} (${chalk.yellow(
+                    this.formatCost(inputCost)
+                )})\n`;
             }
 
             if (breakdown.outputTokens > 0) {
                 const outputCost = breakdown.cost * (breakdown.outputTokens / breakdown.totalTokens);
-                output += `  Output: ${this.formatTokens(breakdown.outputTokens)} (${chalk.yellow(this.formatCost(outputCost))})\n`;
+                output += `  Output: ${this.formatTokens(breakdown.outputTokens)} (${chalk.yellow(
+                    this.formatCost(outputCost)
+                )})\n`;
             }
 
             if (breakdown.cachedInputTokens > 0) {
                 output += `  Cached: ${this.formatTokens(breakdown.cachedInputTokens)}\n`;
             }
 
-            output += `  Total:  ${chalk.green(this.formatTokens(breakdown.totalTokens))} (${chalk.green(this.formatCost(breakdown.cost))})\n\n`;
+            output += `  Total:  ${chalk.green(this.formatTokens(breakdown.totalTokens))} (${chalk.green(
+                this.formatCost(breakdown.cost)
+            )})\n\n`;
         }
 
         const totalCost = breakdowns.reduce((sum, bd) => sum + bd.cost, 0);

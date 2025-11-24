@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import logger from "../../logger";
+import logger from "@app/logger";
 import type { LanguageModelUsage } from "ai";
 
 export interface UsageRecord {

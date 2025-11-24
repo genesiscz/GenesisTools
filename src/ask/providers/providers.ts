@@ -1,4 +1,4 @@
-import type { ProviderConfig } from "../types";
+import type { ProviderConfig } from "@ask/types";
 
 export const PROVIDER_CONFIGS: ProviderConfig[] = [
     // OpenAI - High priority, reliable
