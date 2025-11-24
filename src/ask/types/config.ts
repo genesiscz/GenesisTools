@@ -4,6 +4,7 @@ export interface CLIOptions {
     sst?: string; // Speech-to-text file
     model?: string; // Specific model
     provider?: string; // Specific provider
+    format?: string; // Output format for pricing (table/json)
     output?: string; // Output format
     interactive?: boolean;
     streaming?: boolean;
@@ -14,10 +15,12 @@ export interface CLIOptions {
     version?: boolean;
     verbose?: boolean;
     silent?: boolean;
+    predictCost?: boolean;
     // Aliases
     s?: string;
     m?: string;
     p?: string;
+    f?: string;
     o?: string;
     h?: boolean;
     v?: boolean;
