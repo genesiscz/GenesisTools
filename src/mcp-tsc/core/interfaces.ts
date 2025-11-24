@@ -75,6 +75,7 @@ export interface CliArgs {
     "kill-server": boolean;
     all: boolean;
     help: boolean;
+    timeout?: number;
 }
 
 export enum CommandType {

@@ -11,6 +11,7 @@ import { wrapArray } from "../utils/helpers.js";
 export interface McpAdapterOptions {
     server: TSServer; // The underlying TSServer implementation (always LspServer)
     cwd: string;
+    timeout?: number; // Global timeout in seconds (default: 30)
 }
 
 /**
@@ -25,10 +26,12 @@ export class McpAdapter {
     private mcpServer: Server;
     private tsServer: TSServer;
     private cwd: string;
+    private globalTimeout: number; // Global timeout in seconds
 
     constructor(options: McpAdapterOptions) {
         this.tsServer = options.server;
         this.cwd = options.cwd;
+        this.globalTimeout = options.timeout ?? 30;
 
         this.mcpServer = new Server(
             {
@@ -72,6 +75,11 @@ export class McpAdapter {
                                 showWarnings: {
                                     type: "boolean",
                                     description: "Include warnings in addition to errors (default: false)",
+                                },
+                                timeout: {
+                                    type: "number",
+                                    description:
+                                        "Timeout in seconds for diagnostics (overrides global --timeout option, default: 30)",
                                 },
                             },
                             required: ["files"],
@@ -152,6 +160,9 @@ export class McpAdapter {
 
             const filePatterns = wrapArray(filesParam);
             const showWarnings: boolean = Boolean(args.showWarnings ?? false);
+            // Use timeout from parameter if provided, otherwise use global timeout
+            const timeoutSeconds = args.timeout !== undefined ? Number(args.timeout) : this.globalTimeout;
+            const timeoutMs = timeoutSeconds * 1000; // Convert to milliseconds
 
             if (filePatterns.length === 0) {
                 return {
@@ -195,7 +206,10 @@ export class McpAdapter {
             }
 
             // Get diagnostics using TSServer
-            const result = await this.tsServer.getDiagnostics(filteredFiles, { showWarnings });
+            const result = await this.tsServer.getDiagnostics(filteredFiles, {
+                showWarnings,
+                maxWaitMs: timeoutMs,
+            });
             const formattedLines = this.tsServer.formatDiagnostics(result, showWarnings);
 
             // Build response

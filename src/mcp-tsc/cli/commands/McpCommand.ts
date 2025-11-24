@@ -8,12 +8,13 @@ export class McpCommand {
         // Use --root flag, fallback to first positional argument, then current directory
         const rootDir = argv.root || argv._[0] || process.cwd();
         const cwd = path.resolve(rootDir);
+        const timeout = argv.timeout ?? 30;
 
-        console.error(`Starting TypeScript Diagnostics MCP Server (root: ${cwd})`);
+        console.error(`Starting TypeScript Diagnostics MCP Server (root: ${cwd}, timeout: ${timeout}s)`);
 
         // MCP always uses LSP
         const lspServer = new LspServer({ cwd, debug: true });
-        const mcpAdapter = new McpAdapter({ server: lspServer, cwd });
+        const mcpAdapter = new McpAdapter({ server: lspServer, cwd, timeout });
 
         // Cleanup handlers
         process.on("SIGINT", async () => {

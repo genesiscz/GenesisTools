@@ -11,9 +11,9 @@ export class CliHandler {
      * Parse command line arguments
      */
     parseArgs(): CliArgs {
-        return minimist<CliArgs>(process.argv.slice(2), {
+        const parsed = minimist<CliArgs>(process.argv.slice(2), {
             boolean: ["mcp", "diagnostics", "hover", "use-tsc", "warnings", "raw", "kill-server", "all", "help"],
-            string: ["line", "char", "text", "root"],
+            string: ["line", "char", "text", "root", "timeout"],
             alias: {
                 h: "help",
                 d: "diagnostics",
@@ -30,8 +30,21 @@ export class CliHandler {
                 raw: false,
                 "kill-server": false,
                 all: false,
+                timeout: "30",
             },
         });
+
+        // Convert timeout to number
+        const timeoutValue = parsed.timeout
+            ? typeof parsed.timeout === "string"
+                ? Number(parsed.timeout)
+                : parsed.timeout
+            : 30;
+
+        return {
+            ...parsed,
+            timeout: timeoutValue,
+        };
     }
 
     /**
@@ -75,6 +88,7 @@ export class CliHandler {
         console.error("  --use-tsc            Use TypeScript Compiler API instead of LSP");
         console.error("  -w, --warnings       Show warnings in addition to errors");
         console.error("  -r, --root <path>    Override working directory (default: current directory)");
+        console.error("  --timeout <seconds>  Timeout for diagnostics in seconds (default: 30)");
         console.error("");
         console.error("Hover Command Options:");
         console.error("  -l, --line <num>     Line number (required with --hover)");
