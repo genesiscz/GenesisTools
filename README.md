@@ -77,27 +77,28 @@ tools
 | **[Git Last Commits Diff](#1--git-last-commits-diff)** | 📝 View diffs between recent commits            |
 | **[GitHub Release Notes](#3--github-release-notes)**   | 📋 Generate beautiful release notes             |
 | **[Last Changes](#13--last-changes)**                  | 📅 Show uncommitted changes grouped by time     |
+| **[Rename Commits](#18--rename-commits)**              | 🔄 Interactively rename commit messages         |
 
 ### 🤖 AI & Analysis
 
-| Tool                                                 | Description                                |
-| ---------------------------------------------------- | ------------------------------------------ |
-| **[Collect Files for AI](#2--collect-files-for-ai)** | 🤖 Aggregate project files for AI analysis |
-| **[Files to Prompt](#8--files-to-prompt)**           | 💬 Convert files to AI-friendly prompts    |
-| **[Hold-AI](#10--hold-ai-tool)**                     | ⏸️ Control AI responses via WebSocket      |
-| **[MCP Ripgrep](#9--mcp-ripgrep)**                   | ⚡ Lightning-fast code search server       |
-| **[MCP Web Reader](#12--mcp-web-reader)**            | 🌐 Fetch raw HTML or Markdown (Jina/local) |
-| **[MCP TSC](#15--mcp-tsc)**                          | 🔍 TypeScript diagnostics (CLI & MCP)      |
+| Tool                                                 | Description                                 |
+| ---------------------------------------------------- | ------------------------------------------- |
+| **[Collect Files for AI](#2--collect-files-for-ai)** | 🤖 Aggregate project files for AI analysis  |
+| **[Files to Prompt](#8--files-to-prompt)**           | 💬 Convert files to AI-friendly prompts     |
+| **[Hold-AI](#10--hold-ai-tool)**                     | ⏸️ Control AI responses via WebSocket       |
+| **[MCP Ripgrep](#9--mcp-ripgrep)**                   | ⚡ Lightning-fast code search server        |
+| **[MCP Web Reader](#12--mcp-web-reader)**            | 🌐 Fetch raw HTML or Markdown (Jina/local)  |
+| **[MCP TSC](#15--mcp-tsc)**                          | 🔍 TypeScript diagnostics (CLI & MCP)       |
 | **[MCP Manager](#17--mcp-manager)**                  | ⚙️ Cross-platform MCP configuration manager |
 
 ### 📊 Monitoring & Watching
 
-| Tool                                               | Description                                     |
-| -------------------------------------------------- | ----------------------------------------------- |
-| **[macOS ESLogger](#16--macos-eslogger)**          | 🔐 Monitor macOS Endpoint Security events       |
-| **[Watchman](#5--watchman)**                       | 👁️ Monitor file changes with Facebook Watchman  |
-| **[Watch](#6--watch-formerly-watch-glob)**         | 🔄 Real-time file monitoring with glob patterns |
-| **[FSEvents Profile](#14--fsevents-profile)**      | 📊 Profile macOS filesystem events              |
+| Tool                                          | Description                                     |
+| --------------------------------------------- | ----------------------------------------------- |
+| **[macOS ESLogger](#16--macos-eslogger)**     | 🔐 Monitor macOS Endpoint Security events       |
+| **[Watchman](#5--watchman)**                  | 👁️ Monitor file changes with Facebook Watchman  |
+| **[Watch](#6--watch-formerly-watch-glob)**    | 🔄 Real-time file monitoring with glob patterns |
+| **[FSEvents Profile](#14--fsevents-profile)** | 📊 Profile macOS filesystem events              |
 
 ### 📦 Package Management
 
@@ -698,14 +699,14 @@ tools fsevents-profile -v /Users/Martin
 <details>
 <summary><b>✨ Features</b></summary>
 
-- 🔍 **Real-time Event Monitoring**: Monitor system events as they happen
-- 🎯 **Advanced Filtering**: Filter events using JSON path expressions
-- 📊 **Multiple Event Types**: Process execution, file operations, authentication, and more
-- 🏷️ **Event Categories**: Pre-defined groups like process, file, network, security
-- 🎨 **Beautiful Output**: Color-coded, formatted event display
-- 🔧 **Debug Mode**: Raw JSON output for troubleshooting
-- 📝 **Multiple Output**: Console, file logging, or clipboard
-- 🖥️ **Interactive Mode**: Easy setup for beginners
+-   🔍 **Real-time Event Monitoring**: Monitor system events as they happen
+-   🎯 **Advanced Filtering**: Filter events using JSON path expressions
+-   📊 **Multiple Event Types**: Process execution, file operations, authentication, and more
+-   🏷️ **Event Categories**: Pre-defined groups like process, file, network, security
+-   🎨 **Beautiful Output**: Color-coded, formatted event display
+-   🔧 **Debug Mode**: Raw JSON output for troubleshooting
+-   📝 **Multiple Output**: Console, file logging, or clipboard
+-   🖥️ **Interactive Mode**: Easy setup for beginners
 
 </details>
 
@@ -740,14 +741,14 @@ tools macos-eslogger -e exec --debug --dry-run
 <details>
 <summary><b>⚙️ Event Categories</b></summary>
 
-| Category     | Events                                      | Description                     |
-| ------------ | ------------------------------------------- | ------------------------------- |
-| `process`    | exec, fork, exit                           | Process lifecycle events        |
-| `file`       | open, close, create, write, unlink, rename | File system operations          |
-| `network`    | uipc_bind, uipc_connect                    | Network/socket operations       |
-| `security`   | authentication, sudo, su, setuid...        | Security and privilege events   |
-| `session`    | login/logout, screensharing, ssh           | User session events             |
-| `auth`       | authorization events                       | System authorization            |
+| Category   | Events                                     | Description                   |
+| ---------- | ------------------------------------------ | ----------------------------- |
+| `process`  | exec, fork, exit                           | Process lifecycle events      |
+| `file`     | open, close, create, write, unlink, rename | File system operations        |
+| `network`  | uipc_bind, uipc_connect                    | Network/socket operations     |
+| `security` | authentication, sudo, su, setuid...        | Security and privilege events |
+| `session`  | login/logout, screensharing, ssh           | User session events           |
+| `auth`     | authorization events                       | System authorization          |
 
 </details>
 
@@ -770,28 +771,29 @@ Use JSON path expressions with dot notation and regex operators:
 ```
 
 **Supported Operators:**
-- `==` - Exact match (supports regex if pattern contains `.*`)
-- `!=` - Not equal (supports regex if pattern contains `.*`)
-- `=~` - Regex match
-- `!~` - Regex not match
+
+-   `==` - Exact match (supports regex if pattern contains `.*`)
+-   `!=` - Not equal (supports regex if pattern contains `.*`)
+-   `=~` - Regex match
+-   `!~` - Regex not match
 
 </details>
 
 <details>
 <summary><b>⚙️ Options</b></summary>
 
-| Option              | Alias | Description                                             |
-| ------------------- | ----- | ------------------------------------------------------- |
-| `--events, -e`      |       | Comma-separated list of event types to monitor         |
-| `--category, -c`    |       | Monitor all events in a category                       |
-| `--output, -o`      |       | Write output to file instead of stdout                 |
-| `--filter-event`    |       | Filter events using JSON path expression               |
-| `--include-fork`    |       | Auto-include fork events when monitoring exec          |
-| `--debug`           |       | Show raw JSON events for debugging                     |
-| `--dry-run`         |       | Show what would be monitored without running           |
-| `--silent`          |       | Suppress non-error messages                            |
-| `--verbose`         |       | Enable verbose logging                                 |
-| `--help, -h`        |       | Show help message                                      |
+| Option           | Alias | Description                                    |
+| ---------------- | ----- | ---------------------------------------------- |
+| `--events, -e`   |       | Comma-separated list of event types to monitor |
+| `--category, -c` |       | Monitor all events in a category               |
+| `--output, -o`   |       | Write output to file instead of stdout         |
+| `--filter-event` |       | Filter events using JSON path expression       |
+| `--include-fork` |       | Auto-include fork events when monitoring exec  |
+| `--debug`        |       | Show raw JSON events for debugging             |
+| `--dry-run`      |       | Show what would be monitored without running   |
+| `--silent`       |       | Suppress non-error messages                    |
+| `--verbose`      |       | Enable verbose logging                         |
+| `--help, -h`     |       | Show help message                              |
 
 </details>
 
@@ -801,12 +803,14 @@ Use JSON path expressions with dot notation and regex operators:
 **1. macOS Version:** 10.15+ (Catalina or later)
 
 **2. Full Disk Access:** Required for ESLogger to work
+
 ```bash
 # Go to: System Settings > Privacy & Security > Full Disk Access
 # Add and enable: /usr/sbin/eslogger
 ```
 
 **3. Run with sudo:** ESLogger requires root privileges
+
 ```bash
 sudo tools macos-eslogger -e exec
 ```
@@ -819,33 +823,37 @@ sudo tools macos-eslogger -e exec
 <summary><b>📋 Understanding Events</b></summary>
 
 **Process Events:**
-- **exec**: `event.target.path` - Executable being run
-- **fork**: `event.child.executable.path` - Child process created
+
+-   **exec**: `event.target.path` - Executable being run
+-   **fork**: `event.child.executable.path` - Child process created
 
 **File Events:**
-- **open/write**: `event.file.path` - File being accessed
-- **create/unlink**: `event.target.path` - File being created/deleted
+
+-   **open/write**: `event.file.path` - File being accessed
+-   **create/unlink**: `event.target.path` - File being created/deleted
 
 **Security Events:**
-- **authentication**: `event.success` - Auth success/failure
-- **sudo**: `event.command` - Command run with sudo
+
+-   **authentication**: `event.success` - Auth success/failure
+-   **sudo**: `event.command` - Command run with sudo
 
 **Common Paths:**
-- `.event.target.path` - Executable path (exec events)
-- `.event.file.path` - File path (file events)
-- `.process.executable.path` - Process that triggered event
-- `.process.audit_token.pid` - Process ID
+
+-   `.event.target.path` - Executable path (exec events)
+-   `.event.file.path` - File path (file events)
+-   `.process.executable.path` - Process that triggered event
+-   `.process.audit_token.pid` - Process ID
 
 </details>
 
 <details>
 <summary><b>💡 Pro Tips</b></summary>
 
-- **Shell Builtins**: `which`, `cd`, `echo` don't trigger exec events - use `/usr/bin/which`
-- **Process Groups**: ESLogger suppresses events from its own process group
-- **Performance**: Start with specific events rather than all events
-- **Debugging**: Use `--debug` to see raw event structure for filter creation
-- **Categories**: Use `-c process` for general process monitoring
+-   **Shell Builtins**: `which`, `cd`, `echo` don't trigger exec events - use `/usr/bin/which`
+-   **Process Groups**: ESLogger suppresses events from its own process group
+-   **Performance**: Start with specific events rather than all events
+-   **Debugging**: Use `--debug` to see raw event structure for filter creation
+-   **Categories**: Use `-c process` for general process monitoring
 
 </details>
 
@@ -1012,16 +1020,16 @@ tools mcp-manager show github
 <details>
 <summary><b>⚙️ Commands</b></summary>
 
-| Command       | Description                                      |
-| ------------- | ------------------------------------------------ |
+| Command       | Description                                     |
+| ------------- | ----------------------------------------------- |
 | `config`      | Open/create `~/mcp.json` configuration file     |
 | `sync`        | Sync MCP servers from `~/mcp.json` to providers |
-| `list`        | List all MCP servers across all providers        |
-| `enable`      | Enable an MCP server in a provider               |
-| `disable`     | Disable an MCP server in a provider               |
-| `disable-all` | Disable an MCP server for all projects (Claude)  |
-| `install`     | Install/add an MCP server to a provider          |
-| `show`        | Show full configuration of an MCP server         |
+| `list`        | List all MCP servers across all providers       |
+| `enable`      | Enable an MCP server in a provider              |
+| `disable`     | Disable an MCP server in a provider             |
+| `disable-all` | Disable an MCP server for all projects (Claude) |
+| `install`     | Install/add an MCP server to a provider         |
+| `show`        | Show full configuration of an MCP server        |
 
 </details>
 
@@ -1038,10 +1046,10 @@ tools mcp-manager show github
 <details>
 <summary><b>🛡️ Safety Features</b></summary>
 
-- **Automatic Backups**: Created before every write operation
-- **Visual Diffs**: See exactly what will change
-- **Confirmation Prompts**: Approve or reject changes
-- **Automatic Restore**: Reverts changes if rejected
+-   **Automatic Backups**: Created before every write operation
+-   **Visual Diffs**: See exactly what will change
+-   **Confirmation Prompts**: Approve or reject changes
+-   **Automatic Restore**: Reverts changes if rejected
 
 Backups are stored in `~/.mcp-manager/backups/` with timestamps.
 
@@ -1050,10 +1058,71 @@ Backups are stored in `~/.mcp-manager/backups/` with timestamps.
 <details>
 <summary><b>📋 Supported Providers</b></summary>
 
-- **Claude Desktop**: `~/.claude.json` (supports global and project-specific configs)
-- **Gemini Code Assist**: `~/.gemini/settings.json`
-- **Codex**: `~/.codex/config.toml` (TOML format)
-- **Cursor**: `~/.cursor/mcp.json`
+-   **Claude Desktop**: `~/.claude.json` (supports global and project-specific configs)
+-   **Gemini Code Assist**: `~/.gemini/settings.json`
+-   **Codex**: `~/.codex/config.toml` (TOML format)
+-   **Cursor**: `~/.cursor/mcp.json`
+
+</details>
+
+---
+
+### 18. 🔄 Rename Commits
+
+> Interactively rename commit messages for the last N commits with a beautiful confirmation screen before rewriting history.
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+-   🎯 Interactive prompts for each commit message
+-   📋 Confirmation screen showing old → new mapping
+-   🔄 Automatic git rebase to rewrite history
+-   ⚠️ Safety warnings about history rewriting
+-   🧹 Clean implementation with inline bash commands
+
+</details>
+
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
+
+```bash
+# Rename last 3 commits
+tools rename-commits --commits 3
+
+# Interactive mode (prompts for number)
+tools rename-commits
+
+# Show help
+tools rename-commits --help
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ Options</b></summary>
+
+| Option          | Alias | Description                        |
+| --------------- | ----- | ---------------------------------- |
+| `--commits, -c` |       | Number of recent commits to rename |
+| `--help, -h`    |       | Show help message                  |
+
+</details>
+
+<details>
+<summary><b>⚠️ Important Notes</b></summary>
+
+**History Rewriting:**
+
+-   ⚠️ Only use on commits that haven't been pushed yet
+-   🔄 Changes commit hashes for all renamed commits and their descendants
+-   💾 Consider creating a backup branch before renaming
+
+**Workflow:**
+
+1. Specify number of commits (via `-c` or interactively)
+2. Review commits and provide new messages one-by-one
+3. Confirm changes in the summary screen
+4. Git rebase rewrites the commit history
 
 </details>
 
