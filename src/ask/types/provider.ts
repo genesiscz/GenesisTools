@@ -74,3 +74,22 @@ export interface OpenRouterModelResponse {
 export interface OpenRouterModelsResponse {
     data: OpenRouterModelResponse[];
 }
+
+/**
+ * OpenAI API model response
+ * Represents a model returned from OpenAI's /v1/models endpoint
+ */
+export interface OpenAIModelResponse {
+    id: string;
+    object: string;
+    created: number;
+    owned_by: string;
+}
+
+/**
+ * OpenAI API models list response
+ */
+export interface OpenAIModelsResponse {
+    object: string;
+    data: OpenAIModelResponse[];
+}

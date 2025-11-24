@@ -7,6 +7,7 @@ import type {
     OpenRouterModelsResponse,
     OpenRouterModelResponse,
     OpenRouterPricing,
+    OpenAIModelsResponse,
     PricingInfo,
 } from "../types";
 import { getProviderConfigs, KNOWN_MODELS } from "./providers";
@@ -181,15 +182,7 @@ export class ProviderManager {
                 throw new Error(`OpenAI API error: ${response.status}`);
             }
 
-            const data = (await response.json()) as {
-                object: string;
-                data: Array<{
-                    id: string;
-                    object: string;
-                    created: number;
-                    owned_by: string;
-                }>;
-            };
+            const data = (await response.json()) as OpenAIModelsResponse;
 
             // Get known model metadata for enrichment
             const knownModels = KNOWN_MODELS.openai || [];
