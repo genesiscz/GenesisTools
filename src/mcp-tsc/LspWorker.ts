@@ -283,31 +283,64 @@ export class LspWorker {
                 for (const file of filesToUpdate) {
                     const uri = `file://${file}`;
                     const content = readFileSync(file, "utf-8");
-                    const state = this.getOrCreateFileState(uri);
-                    const newVersion = state.version + 1;
+                    // State should exist since file was in filesToUpdate (was checked as open)
+                    const state = this.getFileState(uri);
 
-                    this.endpoint!.notify("textDocument/didChange", {
-                        textDocument: {
-                            uri,
-                            version: newVersion,
-                        },
-                        contentChanges: [{ text: content }],
-                    });
+                    // Safety check: if state doesn't exist or file isn't actually open, open it instead
+                    if (!state || !state.isOpen) {
+                        const languageId =
+                            file.endsWith(".tsx") || file.endsWith(".jsx") ? "typescriptreact" : "typescript";
 
-                    state.version = newVersion;
-                    state.content = content;
+                        this.client.didOpen({
+                            textDocument: {
+                                uri,
+                                languageId,
+                                version: 1,
+                                text: content,
+                            },
+                        });
 
-                    // Update modification time
-                    try {
-                        const stats = statSync(file);
-                        state.modTime = stats.mtimeMs;
-                    } catch {
-                        // Ignore stat errors
+                        const fileState = this.getOrCreateFileState(uri);
+                        fileState.isOpen = true;
+                        fileState.version = 1;
+                        fileState.content = content;
+
+                        // Update modification time
+                        try {
+                            const stats = statSync(file);
+                            fileState.modTime = stats.mtimeMs;
+                        } catch {
+                            // Ignore stat errors
+                        }
+
+                        // Clear diagnostics for newly opened files
+                        fileState.diagnostics = [];
+                        fileState.diagnosticsLastUpdated = null;
+                    } else {
+                        // File is open, send didChange notification
+                        const newVersion = state.version + 1;
+                        this.endpoint!.notify("textDocument/didChange", {
+                            textDocument: {
+                                uri,
+                                version: newVersion,
+                            },
+                            contentChanges: [{ text: content }],
+                        });
+                        state.version = newVersion;
+                        state.content = content;
+
+                        // Update modification time
+                        try {
+                            const stats = statSync(file);
+                            state.modTime = stats.mtimeMs;
+                        } catch {
+                            // Ignore stat errors
+                        }
+
+                        // Clear diagnostics for updated files
+                        state.diagnostics = [];
+                        state.diagnosticsLastUpdated = null;
                     }
-
-                    // Clear diagnostics for updated files
-                    state.diagnostics = [];
-                    state.diagnosticsLastUpdated = null;
                 }
             }
 
@@ -434,6 +467,11 @@ export class LspWorker {
                     this.log(
                         `Timeout waiting for diagnostics (${maxWait}ms) - missing diagnostics for:\n${missingList}`
                     );
+                    // Throw error with timeout information for retry logic
+                    const error: any = new Error(`Timeout waiting for diagnostics (${maxWait}ms)`);
+                    error.isTimeout = true;
+                    error.missingFiles = missingFiles;
+                    throw error;
                 } else {
                     this.log(`Timeout waiting for diagnostics (${maxWait}ms)`);
                 }

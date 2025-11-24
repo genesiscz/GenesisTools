@@ -195,10 +195,36 @@ export class McpAdapter {
             }
 
             // Get diagnostics using TSServer
-            const result = await this.tsServer.getDiagnostics(filteredFiles, {
-                showWarnings,
-                maxWaitMs: timeoutMs,
-            });
+            let result;
+            try {
+                result = await this.tsServer.getDiagnostics(filteredFiles, {
+                    showWarnings,
+                    maxWaitMs: timeoutMs,
+                });
+            } catch (error: any) {
+                // Handle timeout errors by instructing client to retry with lower timeout
+                if (error?.isTimeout && error?.missingFiles) {
+                    const missingFilesList = error.missingFiles.map((f: string) => `  - ${f}`).join("\n");
+                    const retryTimeoutSeconds = 5;
+                    return {
+                        isError: true,
+                        content: [
+                            {
+                                type: "text",
+                                text: `Timeout waiting for diagnostics (${timeoutMs}ms).
+
+Missing diagnostics for the following file(s):
+${missingFilesList}
+
+Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get faster feedback.`,
+                            },
+                        ],
+                    };
+                }
+                // Re-throw other errors
+                throw error;
+            }
+
             const formattedLines = this.tsServer.formatDiagnostics(result, showWarnings);
 
             // Build response
