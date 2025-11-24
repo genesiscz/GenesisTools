@@ -969,7 +969,6 @@ async function main() {
                     type: "numeral",
                     name: "commitCount",
                     message: `How many commits do you want to rename? (1-${recentCommits.length})`,
-                    initial: 3,
                     min: 1,
                     max: recentCommits.length,
                 })) as { commitCount: number };
