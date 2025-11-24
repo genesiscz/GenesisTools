@@ -84,11 +84,77 @@ async function getCurrentBranch(repoDir: string): Promise<string> {
     return stdout.trim();
 }
 
-async function getCommits(repoDir: string, count: number): Promise<CommitInfo[]> {
+async function getCommits(repoDir: string, count: number, currentBranchOnly: boolean = true): Promise<CommitInfo[]> {
     logger.debug(`⏳ Fetching last ${count} commits from ${repoDir}...`);
 
+    // Build git log command
+    let gitArgs: string[] = [];
+
+    if (currentBranchOnly) {
+        // Only show commits that are unique to current branch (exclude base branch commits)
+        // Try to find the upstream/base branch, fallback to common base branches
+        const baseBranchProc = Bun.spawn({
+            cmd: ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+            cwd: repoDir,
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+        const baseBranch = await new Response(baseBranchProc.stdout).text();
+        const baseBranchExitCode = await baseBranchProc.exited;
+
+        let baseRef = "";
+        if (baseBranchExitCode === 0 && baseBranch.trim()) {
+            // Extract branch name from upstream (e.g., "origin/feature" -> "origin/master" or find merge-base)
+            const mergeBaseProc = Bun.spawn({
+                cmd: ["git", "merge-base", "HEAD", baseBranch.trim()],
+                cwd: repoDir,
+                stdio: ["ignore", "pipe", "pipe"],
+            });
+            const mergeBase = await new Response(mergeBaseProc.stdout).text();
+            const mergeBaseExitCode = await mergeBaseProc.exited;
+
+            if (mergeBaseExitCode === 0 && mergeBase.trim()) {
+                baseRef = mergeBase.trim();
+            }
+        }
+
+        // If no upstream or merge-base found, try common base branches
+        if (!baseRef) {
+            for (const branch of ["master", "main", "develop"]) {
+                const checkProc = Bun.spawn({
+                    cmd: ["git", "rev-parse", "--verify", branch],
+                    cwd: repoDir,
+                    stdio: ["ignore", "pipe", "pipe"],
+                });
+                const checkExitCode = await checkProc.exited;
+                if (checkExitCode === 0) {
+                    const mergeBaseProc = Bun.spawn({
+                        cmd: ["git", "merge-base", "HEAD", branch],
+                        cwd: repoDir,
+                        stdio: ["ignore", "pipe", "pipe"],
+                    });
+                    const mergeBase = await new Response(mergeBaseProc.stdout).text();
+                    const mergeBaseExitCode = await mergeBaseProc.exited;
+                    if (mergeBaseExitCode === 0 && mergeBase.trim()) {
+                        baseRef = mergeBase.trim();
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (baseRef) {
+            // Show commits on HEAD that are not on the base branch
+            gitArgs = ["log", `-n`, `${count}`, "--pretty=format:%H|%h|%s", "--no-decorate", "HEAD", `--not`, baseRef];
+        } else {
+            // Fallback: use --first-parent to exclude merged branch commits
+            gitArgs = ["log", `-n`, `${count}`, "--pretty=format:%H|%h|%s", "--no-decorate", "--first-parent"];
+        }
+    } else {
+        gitArgs = ["log", `-n`, `${count}`, "--pretty=format:%H|%h|%s", "--no-decorate"];
+    }
+
     const proc = Bun.spawn({
-        cmd: ["git", "log", `-n`, `${count}`, "--pretty=format:%H|%h|%s", "--no-decorate"],
+        cmd: ["git", ...gitArgs],
         cwd: repoDir,
         stdio: ["ignore", "pipe", "pipe"],
     });
@@ -270,8 +336,9 @@ async function main() {
 
         if (!commitCount) {
             // Show last 50 commits numbered so user can see which ones will be renamed
-            logger.info("📋 Fetching last 50 commits...");
-            const recentCommitsRaw = await getCommits(repoDir, 50);
+            // Use currentBranchOnly=true to only show commits on current branch
+            logger.info("📋 Fetching last 50 commits from current branch...");
+            const recentCommitsRaw = await getCommits(repoDir, 50, true);
 
             if (recentCommitsRaw.length === 0) {
                 logger.warn("ℹ No commits found.");
@@ -317,9 +384,9 @@ async function main() {
             process.exit(1);
         }
 
-        // Get commits
-        logger.info(`📋 Fetching last ${numCommits} commit(s)...`);
-        const commits = await getCommits(repoDir, numCommits);
+        // Get commits - use currentBranchOnly to only show commits on current branch
+        logger.info(`📋 Fetching last ${numCommits} commit(s) from current branch...`);
+        const commits = await getCommits(repoDir, numCommits, true);
 
         if (commits.length === 0) {
             logger.warn("ℹ No commits found.");
