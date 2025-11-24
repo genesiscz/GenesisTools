@@ -1,5 +1,5 @@
 import { ChildProcess, spawn } from "child_process";
-import { readFileSync } from "fs";
+import { readFileSync, statSync } from "fs";
 import path from "path";
 import { JSONRPCEndpoint, LspClient } from "ts-lsp-client";
 
@@ -39,6 +39,15 @@ export interface HoverResult {
     raw?: RawHoverResponse | null;
 }
 
+interface FileState {
+    isOpen: boolean;
+    version: number;
+    content: string;
+    modTime: number;
+    diagnostics: any[];
+    diagnosticsLastUpdated: number | null;
+}
+
 export interface LspWorkerOptions {
     cwd: string;
     debug?: boolean;
@@ -52,15 +61,31 @@ export class LspWorker {
     private lspProcess: ChildProcess | null = null;
     private endpoint: JSONRPCEndpoint | null = null;
     private client: LspClient | null = null;
-    private diagnosticsMap = new Map<string, any[]>();
-    private diagnosticsLastUpdated = new Map<string, number>(); // Track when diagnostics last changed
-    private openFiles = new Set<string>(); // Track which files are currently open
-    private fileVersions = new Map<string, number>(); // Track file versions for didChange
-    private fileContents = new Map<string, string>(); // Track file contents to detect changes
+    private files = new Map<string, FileState>(); // Consolidated file state
     private diagnosticsBarrier = 0; // Timestamp barrier - ignore diagnostics before this time
     private cwd: string;
     private debug: boolean;
     private initialized = false;
+
+    private getFileState(uri: string): FileState | undefined {
+        return this.files.get(uri);
+    }
+
+    private getOrCreateFileState(uri: string): FileState {
+        let state = this.files.get(uri);
+        if (!state) {
+            state = {
+                isOpen: false,
+                version: 0,
+                content: "",
+                modTime: 0,
+                diagnostics: [],
+                diagnosticsLastUpdated: null,
+            };
+            this.files.set(uri, state);
+        }
+        return state;
+    }
 
     constructor(options: LspWorkerOptions) {
         this.cwd = options.cwd;
@@ -122,8 +147,9 @@ export class LspWorker {
                 }
 
                 this.log(`Received diagnostics for ${filename}: ${diagnostics.length} items`);
-                this.diagnosticsMap.set(uri, diagnostics);
-                this.diagnosticsLastUpdated.set(uri, now);
+                const state = this.getOrCreateFileState(uri);
+                state.diagnostics = diagnostics;
+                state.diagnosticsLastUpdated = now;
             });
 
             this.lspProcess.stderr?.on("data", (data) => {
@@ -178,18 +204,31 @@ export class LspWorker {
         this.log(`Checking ${targetFiles.length} file(s):\n${fileList}`);
 
         // Check which files need updates (new files or changed files)
+        // Use file modification times for faster change detection without reading content
         const filesToOpen: string[] = [];
         const filesToUpdate: string[] = [];
 
         for (const file of targetFiles) {
             const uri = `file://${file}`;
-            const content = readFileSync(file, "utf-8");
+            const state = this.getFileState(uri);
 
-            if (!this.openFiles.has(uri)) {
+            if (!state || !state.isOpen) {
+                // File not open - needs to be opened
                 filesToOpen.push(file);
-            } else if (this.fileContents.get(uri) !== content) {
-                // File is open but content changed on disk
-                filesToUpdate.push(file);
+            } else {
+                // File is open - check if it changed using modification time
+                try {
+                    const stats = statSync(file);
+                    const currentModTime = stats.mtimeMs;
+
+                    if (state.modTime === 0 || currentModTime > state.modTime) {
+                        // File changed on disk - needs update
+                        filesToUpdate.push(file);
+                    }
+                } catch (error) {
+                    // File might not exist anymore or stat failed - treat as changed
+                    filesToUpdate.push(file);
+                }
             }
         }
 
@@ -217,13 +256,23 @@ export class LspWorker {
                             text: content,
                         },
                     });
-                    this.openFiles.add(uri);
-                    this.fileVersions.set(uri, 1);
-                    this.fileContents.set(uri, content);
+
+                    const state = this.getOrCreateFileState(uri);
+                    state.isOpen = true;
+                    state.version = 1;
+                    state.content = content;
+
+                    // Store modification time
+                    try {
+                        const stats = statSync(file);
+                        state.modTime = stats.mtimeMs;
+                    } catch {
+                        // Ignore stat errors
+                    }
 
                     // Clear diagnostics for newly opened files
-                    this.diagnosticsMap.delete(uri);
-                    this.diagnosticsLastUpdated.delete(uri);
+                    state.diagnostics = [];
+                    state.diagnosticsLastUpdated = null;
                 }
             }
 
@@ -234,8 +283,8 @@ export class LspWorker {
                 for (const file of filesToUpdate) {
                     const uri = `file://${file}`;
                     const content = readFileSync(file, "utf-8");
-                    const currentVersion = this.fileVersions.get(uri) || 1;
-                    const newVersion = currentVersion + 1;
+                    const state = this.getOrCreateFileState(uri);
+                    const newVersion = state.version + 1;
 
                     this.endpoint!.notify("textDocument/didChange", {
                         textDocument: {
@@ -244,12 +293,21 @@ export class LspWorker {
                         },
                         contentChanges: [{ text: content }],
                     });
-                    this.fileVersions.set(uri, newVersion);
-                    this.fileContents.set(uri, content);
+
+                    state.version = newVersion;
+                    state.content = content;
+
+                    // Update modification time
+                    try {
+                        const stats = statSync(file);
+                        state.modTime = stats.mtimeMs;
+                    } catch {
+                        // Ignore stat errors
+                    }
 
                     // Clear diagnostics for updated files
-                    this.diagnosticsMap.delete(uri);
-                    this.diagnosticsLastUpdated.delete(uri);
+                    state.diagnostics = [];
+                    state.diagnosticsLastUpdated = null;
                 }
             }
 
@@ -281,7 +339,10 @@ export class LspWorker {
                 // Check if all files have diagnostics
                 const allFilesHaveDiagnostics = filesToWaitFor.every((file) => {
                     const uri = `file://${file}`;
-                    return this.diagnosticsMap.has(uri);
+                    const state = this.getFileState(uri);
+                    return (
+                        state !== undefined && state.diagnostics.length >= 0 && state.diagnosticsLastUpdated !== null
+                    );
                 });
 
                 if (!allFilesHaveDiagnostics) {
@@ -298,8 +359,12 @@ export class LspWorker {
                 // Check if diagnostics have stabilized
                 const allDiagnosticsStable = filesToWaitFor.every((file) => {
                     const uri = `file://${file}`;
-                    const lastUpdate = this.diagnosticsLastUpdated.get(uri);
-                    return lastUpdate && now - lastUpdate >= stabilityWindowMs;
+                    const state = this.getFileState(uri);
+                    return (
+                        state !== undefined &&
+                        state.diagnosticsLastUpdated !== null &&
+                        now - state.diagnosticsLastUpdated >= stabilityWindowMs
+                    );
                 });
 
                 if (allDiagnosticsStable) {
@@ -310,7 +375,8 @@ export class LspWorker {
 
                     for (const file of filesToWaitFor) {
                         const uri = `file://${file}`;
-                        const diags = this.diagnosticsMap.get(uri) || [];
+                        const state = this.getFileState(uri);
+                        const diags = state?.diagnostics || [];
                         for (const d of diags) {
                             // Skip info/hint diagnostics
                             if (d.severity > 2) continue;
@@ -358,7 +424,8 @@ export class LspWorker {
                 const missingFiles: string[] = [];
                 for (const file of filesToWaitFor) {
                     const uri = `file://${file}`;
-                    if (!this.diagnosticsMap.has(uri)) {
+                    const state = this.getFileState(uri);
+                    if (!state || state.diagnosticsLastUpdated === null) {
                         missingFiles.push(file);
                     }
                 }
@@ -382,7 +449,8 @@ export class LspWorker {
 
         for (const file of targetFiles) {
             const uri = `file://${file}`;
-            const diagnostics = this.diagnosticsMap.get(uri) || [];
+            const state = this.getFileState(uri);
+            const diagnostics = state?.diagnostics || [];
 
             for (const d of diagnostics) {
                 allDiagnostics.push({
@@ -436,11 +504,12 @@ export class LspWorker {
             this.client.didClose({
                 textDocument: { uri },
             });
-            this.diagnosticsMap.delete(uri);
-            this.diagnosticsLastUpdated.delete(uri);
-            this.fileVersions.delete(uri);
-            this.fileContents.delete(uri);
-            this.openFiles.delete(uri); // Track that file is now closed
+            const state = this.getFileState(uri);
+            if (state) {
+                state.isOpen = false;
+                state.diagnostics = [];
+                state.diagnosticsLastUpdated = null;
+            }
         }
     }
 
@@ -465,11 +534,7 @@ export class LspWorker {
             this.endpoint = null;
             this.client = null;
             this.initialized = false;
-            this.diagnosticsMap.clear();
-            this.diagnosticsLastUpdated.clear();
-            this.fileVersions.clear();
-            this.fileContents.clear();
-            this.openFiles.clear();
+            this.files.clear();
         }
     }
 
@@ -484,7 +549,8 @@ export class LspWorker {
         const uri = `file://${file}`;
 
         // Ensure file is open
-        if (!this.openFiles.has(uri)) {
+        const state = this.getFileState(uri);
+        if (!state || !state.isOpen) {
             const content = readFileSync(file, "utf-8");
             const languageId = file.endsWith(".tsx") || file.endsWith(".jsx") ? "typescriptreact" : "typescript";
 
@@ -496,9 +562,19 @@ export class LspWorker {
                     text: content,
                 },
             });
-            this.openFiles.add(uri);
-            this.fileVersions.set(uri, 1);
-            this.fileContents.set(uri, content);
+
+            const fileState = this.getOrCreateFileState(uri);
+            fileState.isOpen = true;
+            fileState.version = 1;
+            fileState.content = content;
+
+            // Store modification time
+            try {
+                const stats = statSync(file);
+                fileState.modTime = stats.mtimeMs;
+            } catch {
+                // Ignore stat errors
+            }
 
             // Wait a bit for LSP to process the file
             await new Promise((r) => setTimeout(r, 100));
