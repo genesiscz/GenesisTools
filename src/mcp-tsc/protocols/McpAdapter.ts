@@ -136,7 +136,21 @@ export class McpAdapter {
 
     private async handleGetDiagnostics(args: any) {
         try {
-            const filePatterns = wrapArray(args.files);
+            // Handle case where AI agent passes JSON string instead of array
+            let filesParam = args.files;
+            if (typeof filesParam === "string") {
+                // Check if it's a JSON string representing an array
+                const trimmed = filesParam.trim();
+                if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                    try {
+                        filesParam = JSON.parse(trimmed);
+                    } catch {
+                        // If parsing fails, treat as regular string
+                    }
+                }
+            }
+
+            const filePatterns = wrapArray(filesParam);
             const showWarnings: boolean = Boolean(args.showWarnings ?? false);
 
             if (filePatterns.length === 0) {
