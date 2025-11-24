@@ -4,14 +4,14 @@ A powerful CLI tool for interacting with multiple LLM providers through a unifie
 
 ## Features
 
-- **Multi-provider support**: OpenAI, Anthropic, Google, Groq, OpenRouter, xAI, JinaAI
-- **Auto provider selection**: Automatically detects provider based on model name
-- **Interactive and non-interactive modes**: Chat interactively or send single messages
-- **Streaming responses**: Real-time response streaming
-- **Audio transcription**: Speech-to-text with multiple providers
-- **Dynamic pricing**: Real-time cost tracking from OpenRouter API
-- **Type safety**: Full TypeScript with no `any` types
-- **Comprehensive logging**: Debug support with logger
+-   **Multi-provider support**: OpenAI, Anthropic, Google, Groq, OpenRouter, xAI, JinaAI
+-   **Auto provider selection**: Automatically detects provider based on model name
+-   **Interactive and non-interactive modes**: Chat interactively or send single messages
+-   **Streaming responses**: Real-time response streaming
+-   **Audio transcription**: Speech-to-text with multiple providers
+-   **Dynamic pricing**: Real-time cost tracking from OpenRouter API
+-   **Type safety**: Full TypeScript with no `any` types
+-   **Comprehensive logging**: Debug support with logger
 
 ## Installation
 
@@ -64,9 +64,49 @@ tools ask --output file response.txt "Generate a story"
 # Copy to clipboard
 tools ask --output clipboard "Summarize this topic"
 
-# JSON output
+# JSON output (using --output)
 tools ask --output json "What is 2+2?"
+
+# JSON output (using --format as alias)
+tools ask --format json "What is 2+2?"
+
+# Markdown output
+tools ask --format markdown "Explain quantum computing"
 ```
+
+Note: Both `--output` and `--format` can be used for chat output. `--output` takes precedence if both are provided. `--format` is also used for pricing output format (`table` or `json`).
+
+### Pricing Information
+
+View pricing for all available providers and models:
+
+```bash
+# Show all providers and models with pricing
+tools ask price
+
+# Show pricing for a specific provider
+tools ask price --provider openai
+
+# Output pricing as JSON
+tools ask price --format json
+
+# Alternative command name
+tools ask pricing
+```
+
+The pricing command displays:
+
+-   **Model information**: Name, context window, capabilities
+-   **Input/Output costs**: Price per million tokens
+-   **Cached pricing**: For models that support caching (e.g., GPT-4o-mini)
+-   **Tiered pricing**: For models with different rates above 200k tokens (e.g., Claude models)
+-   **Summary statistics**: Cheapest/most expensive models, tiered pricing count
+
+Pricing data is fetched from:
+
+-   Direct provider pricing (OpenAI, Anthropic, etc.)
+-   LiteLLM pricing database (for OpenRouter and other providers)
+-   Real-time API pricing when available
 
 ## Configuration
 
@@ -99,17 +139,21 @@ export LOG_TRACE=1  # Enable trace logging
 
 The tool automatically detects which provider to use based on the model name:
 
-- `gpt-4o` → OpenAI
-- `claude-3-5-sonnet-20241022` → Anthropic (if available)
-- `anthropic/claude-3.5-sonnet-20240620` → OpenRouter
+-   `gpt-4o` → OpenAI
+-   `claude-3-5-sonnet-20241022` → Anthropic (if available)
+-   `anthropic/claude-3.5-sonnet-20240620` → OpenRouter
 
 ## Command Line Options
 
 ```
+Commands:
+  price, pricing          Display pricing information for all providers and models
+
 Options:
   -s, --sst <file>        Transcribe audio file
   -m, --model <model>     Specify model (e.g., gpt-4-turbo)
   -p, --provider <prov>   Specify provider (e.g., openai)
+  -f, --format <format>   Output format for pricing (table/json, default: table)
   -o, --output <format>   Output format (text/json/markdown/clipboard/file)
   -i, --interactive       Start interactive chat mode (default: true)
   -t, --temperature <n>   Set temperature (0.0-2.0)
@@ -127,12 +171,12 @@ Options:
 
 ### Key Components
 
-- **`index.ts`**: Main CLI entry point with argument parsing
-- **`ChatEngine.ts`**: Core chat logic and streaming implementation
-- **`ProviderManager.ts`**: Multi-provider detection and management
-- **`ModelSelector.ts`**: Interactive model selection and auto-detection
-- **`TranscriptionManager.ts`**: Audio transcription with multiple providers
-- **`types/`**: Centralized TypeScript type definitions
+-   **`index.ts`**: Main CLI entry point with argument parsing
+-   **`ChatEngine.ts`**: Core chat logic and streaming implementation
+-   **`ProviderManager.ts`**: Multi-provider detection and management
+-   **`ModelSelector.ts`**: Interactive model selection and auto-detection
+-   **`TranscriptionManager.ts`**: Audio transcription with multiple providers
+-   **`types/`**: Centralized TypeScript type definitions
 
 ### Type Safety
 
@@ -196,10 +240,10 @@ const result = await streamText({
 
 Comprehensive error handling with user-friendly messages:
 
-- Provider unavailable → Lists available providers
-- Model not found → Shows available models by provider
-- API errors → Clear error messages with context
-- Network issues → Retry logic and graceful degradation
+-   Provider unavailable → Lists available providers
+-   Model not found → Shows available models by provider
+-   API errors → Clear error messages with context
+-   Network issues → Retry logic and graceful degradation
 
 ## Development
 
@@ -293,12 +337,12 @@ tail -n 200 logs/$(date +%Y-%m-%d).log | jq -r 'select(.level >= 50)'
 
 #### Log Levels
 
-- `10` = TRACE (most verbose)
-- `20` = DEBUG (enabled with `-v` flag)
-- `30` = INFO (default)
-- `40` = WARN (warnings)
-- `50` = ERROR (errors)
-- `60` = FATAL (fatal errors)
+-   `10` = TRACE (most verbose)
+-   `20` = DEBUG (enabled with `-v` flag)
+-   `30` = INFO (default)
+-   `40` = WARN (warnings)
+-   `50` = ERROR (errors)
+-   `60` = FATAL (fatal errors)
 
 #### Searching Logs
 
@@ -320,36 +364,36 @@ jq -r 'select(.msg | contains("ChatEngine")) | .msg' logs/$(date +%Y-%m-%d).log
 
 ### OpenAI
 
-- Models: `gpt-4o`, `gpt-4`, `gpt-3.5-turbo`, etc.
-- Environment: `OPENAI_API_KEY`
+-   Models: `gpt-4o`, `gpt-4`, `gpt-3.5-turbo`, etc.
+-   Environment: `OPENAI_API_KEY`
 
 ### OpenRouter
 
-- Models: `anthropic/claude-3.5-sonnet-20240620`, etc.
-- Environment: `OPENROUTER_API_KEY`
-- Dynamic pricing supported
+-   Models: `anthropic/claude-3.5-sonnet-20240620`, etc.
+-   Environment: `OPENROUTER_API_KEY`
+-   Dynamic pricing supported
 
 ### Anthropic
 
-- Models: `claude-3-5-sonnet-20241022`, etc.
-- Environment: `ANTHROPIC_API_KEY`
+-   Models: `claude-3-5-sonnet-20241022`, etc.
+-   Environment: `ANTHROPIC_API_KEY`
 
 ### Google
 
-- Models: `gemini-pro`, etc.
-- Environment: `GOOGLE_API_KEY`
+-   Models: `gemini-pro`, etc.
+-   Environment: `GOOGLE_API_KEY`
 
 ### Groq
 
-- Models: `llama-3.1-70b-versatile`, etc.
-- Environment: `GROQ_API_KEY`
+-   Models: `llama-3.1-70b-versatile`, etc.
+-   Environment: `GROQ_API_KEY`
 
 ### xAI
 
-- Models: `grok-beta`
-- Environment: `X_AI_API_KEY`
+-   Models: `grok-beta`
+-   Environment: `X_AI_API_KEY`
 
 ### JinaAI
 
-- Models: `jina-r1`
-- Environment: `JINA_AI_API_KEY`
+-   Models: `jina-r1`
+-   Environment: `JINA_AI_API_KEY`

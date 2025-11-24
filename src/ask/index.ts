@@ -24,6 +24,7 @@ import {
     shouldShowHelp,
     shouldShowVersion,
     parseOutputFormat,
+    getOutputFormat,
     createSystemPrompt,
     parseTemperature,
     parseMaxTokens,
@@ -54,6 +55,19 @@ class ASKTool {
                 process.exit(0);
             }
 
+            // Handle price/pricing subcommand
+            const firstArg = argv._[0]?.toLowerCase();
+            if (firstArg === "price" || firstArg === "pricing") {
+                // Parse pricing-specific options
+                const pricingOptions = {
+                    provider: argv.provider,
+                    format: argv.format as "table" | "json" | undefined,
+                };
+                const { showPricing } = await import("./pricing/index");
+                await showPricing(pricingOptions);
+                return;
+            }
+
             // Validate options
             const validation = validateOptions(argv);
             if (!validation.valid) {
@@ -64,7 +78,7 @@ class ASKTool {
 
             // Handle speech-to-text
             if (argv.sst) {
-                await this.handleSpeechToText(argv.sst, argv.output);
+                await this.handleSpeechToText(argv.sst, argv);
                 return;
             }
 
@@ -82,13 +96,13 @@ class ASKTool {
         }
     }
 
-    private async handleSpeechToText(filePath: string, outputFormat?: string): Promise<void> {
+    private async handleSpeechToText(filePath: string, argv: Args): Promise<void> {
         try {
             console.log(chalk.blue("<ï¿½ Transcribing audio..."));
 
             const result = await transcriptionManager.transcribeAudio(filePath);
 
-            const outputConfig = outputFormat ? parseOutputFormat(outputFormat) : undefined;
+            const outputConfig = getOutputFormat(argv);
 
             await outputManager.handleOutput(result.text, outputConfig, {
                 provider: result.provider,
@@ -156,8 +170,8 @@ class ASKTool {
                 );
             }
 
-            // Handle output
-            const outputConfig = parseOutputFormat(argv.output);
+            // Handle output (support both --output and --format)
+            const outputConfig = getOutputFormat(argv);
             await outputManager.handleOutput(response.content, outputConfig, {
                 provider: modelChoice.provider.name,
                 model: modelChoice.model.id,
@@ -218,12 +232,10 @@ class ASKTool {
             const sessionId = generateSessionId();
             const session = convManager.createSession(sessionId, modelChoice.provider.name, modelChoice.model.id);
 
-            // Set output format
-            if (argv.output) {
-                const outputConfig = parseOutputFormat(argv.output);
-                if (outputConfig) {
-                    outputManager.setOutputFormat(outputConfig);
-                }
+            // Set output format (support both --output and --format)
+            const outputConfig = getOutputFormat(argv);
+            if (outputConfig) {
+                outputManager.setOutputFormat(outputConfig);
             }
 
             let shouldExit = false;

@@ -7,6 +7,7 @@ export function parseCLIArguments(): Args {
             s: "sst",
             m: "model",
             p: "provider",
+            f: "format",
             o: "output",
             h: "help",
             v: "verbose",
@@ -16,7 +17,7 @@ export function parseCLIArguments(): Args {
             k: "maxTokens",
         },
         boolean: ["streaming", "help", "version", "verbose", "silent", "predictCost"],
-        string: ["sst", "model", "provider", "output", "systemPrompt", "temperature", "maxTokens"],
+        string: ["sst", "model", "provider", "format", "output", "systemPrompt", "temperature", "maxTokens"],
         default: {
             streaming: true,
         },
@@ -31,14 +32,20 @@ ASK Tool - Multi-Router LLM Chat Application
 
 Usage:
   tools ask [options] [message]
+  tools ask price [options]
+  tools ask pricing [options]
 
 Arguments:
   <message>               Message to send (for non-interactive mode)
+
+Commands:
+  price, pricing          Display pricing information for all available providers and models
 
 Options:
   -s, --sst <file>        Transcribe audio file
   -m, --model <model>     Specify model (e.g., gpt-4-turbo)
   -p, --provider <prov>   Specify provider (e.g., openai)
+  -f, --format <format>   Output format (text/json/markdown/clipboard/file) or pricing format (table/json)
   -o, --output <format>   Output format (text/json/markdown/clipboard/file)
   -i, --interactive       Start interactive chat mode (default: true)
   -t, --temperature <n>   Set temperature (0.0-2.0)
@@ -60,6 +67,15 @@ Examples:
 
   # With specific model
   tools ask --model gpt-4-turbo "Explain quantum computing"
+
+  # Show pricing information
+  tools ask price
+  tools ask pricing --provider openai
+  tools ask price --format json
+
+  # Use --format for chat output
+  tools ask --format json "What is 2+2?"
+  tools ask --format markdown "Explain quantum computing"
 
   # Transcribe audio
   tools ask --sst recording.mp3
@@ -203,6 +219,27 @@ export function parseOutputFormat(outputArg?: string): { type: OutputFormat; fil
     }
 
     return { type: format };
+}
+
+/**
+ * Get output format from either --output or --format option.
+ * Prefers --output if both are provided.
+ */
+export function getOutputFormat(options: CLIOptions): { type: OutputFormat; filename?: string } | undefined {
+    // Prefer --output over --format
+    if (options.output) {
+        return parseOutputFormat(options.output);
+    }
+    // Use --format as fallback (but only for valid output formats, not pricing-specific ones)
+    if (options.format) {
+        const format = options.format.toLowerCase();
+        // Only use format if it's a valid output format (not "table" which is pricing-specific)
+        const validOutputFormats = ["text", "json", "markdown", "clipboard", "file"];
+        if (validOutputFormats.includes(format)) {
+            return parseOutputFormat(options.format);
+        }
+    }
+    return undefined;
 }
 
 export function createSystemPrompt(customPrompt?: string): string | undefined {
