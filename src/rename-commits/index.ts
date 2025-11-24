@@ -115,11 +115,12 @@ async function getCommits(
         await reflogProc.exited;
 
         // Look for "checkout: moving from <branch> to <current-branch>"
-        // Try to find the original creation (look for feat/*, feature/* patterns first, then any)
+        // Trace back through branch creation history to find the original base
         const reflogLines = reflogOutput.split("\n");
         let sourceBranch = null;
         let candidateBranches: string[] = [];
 
+        // First, find branches that were checked out to create the current branch
         for (const line of reflogLines) {
             const match = line.match(/checkout: moving from ([^\s]+) to (.+)/);
             if (match && match[2] === currentBranch) {
@@ -127,12 +128,112 @@ async function getCommits(
             }
         }
 
-        // Prioritize feat/*, feature/* branches (likely the original base)
-        const featBranches = candidateBranches.filter((b) => /^(feat|feature)\//.test(b));
-        if (featBranches.length > 0) {
-            sourceBranch = featBranches[0]; // Use the most recent feat/* branch
-        } else if (candidateBranches.length > 0) {
-            sourceBranch = candidateBranches[0]; // Fallback to most recent
+        // If we found candidates, trace back through claude/* branches to find the original base
+        // This handles cases where: feat/fixes -> claude/branch1 -> claude/branch2 (current)
+        if (candidateBranches.length > 0) {
+            // Start with the most recent candidate
+            let branchToCheck = candidateBranches[0];
+            const checkedBranches = new Set<string>([currentBranch]);
+            let maxDepth = 10; // Prevent infinite loops
+
+            while (branchToCheck && maxDepth > 0) {
+                if (checkedBranches.has(branchToCheck)) {
+                    break; // Avoid cycles
+                }
+                checkedBranches.add(branchToCheck);
+
+                // If this is a feat/* branch, use it as the source
+                if (/^(feat|feature)\//.test(branchToCheck)) {
+                    sourceBranch = branchToCheck;
+                    break;
+                }
+
+                // If this is not a claude/* branch, use it as source (might be main/master/etc)
+                if (!/^claude\//.test(branchToCheck)) {
+                    sourceBranch = branchToCheck;
+                    break;
+                }
+
+                // Otherwise, trace back to find what this claude/* branch was created from
+                // Collect all parents, prioritizing feat/* branches
+                let parentBranch = null;
+                const allParents: string[] = [];
+                for (const line of reflogLines) {
+                    const match = line.match(/checkout: moving from ([^\s]+) to (.+)/);
+                    if (match && match[2] === branchToCheck) {
+                        allParents.push(match[1]);
+                    }
+                }
+
+                // Prioritize feat/* branches, then other non-claude branches, then claude branches
+                const featParents = allParents.filter((p) => /^(feat|feature)\//.test(p));
+                const nonClaudeParents = allParents.filter(
+                    (p) => !/^claude\//.test(p) && p.length < 40 && !/^[0-9a-f]{40}$/i.test(p)
+                );
+                const claudeParents = allParents.filter((p) => /^claude\//.test(p));
+
+                if (featParents.length > 0) {
+                    parentBranch = featParents[0]; // Use first feat/* branch found
+                } else if (nonClaudeParents.length > 0) {
+                    parentBranch = nonClaudeParents[0]; // Use first non-claude branch
+                } else if (claudeParents.length > 0) {
+                    parentBranch = claudeParents[0]; // Fallback to claude branch
+                } else if (allParents.length > 0) {
+                    // Last resort: use first parent (might be a commit hash)
+                    parentBranch = allParents[0];
+                }
+
+                // If we found a commit hash, try to find the branch it's on
+                if (parentBranch && parentBranch.length === 40) {
+                    // Try to find what branch this commit is on
+                    const branchForCommitProc = Bun.spawn({
+                        cmd: ["git", "branch", "--contains", parentBranch, "--format=%(refname:short)"],
+                        cwd: repoDir,
+                        stdio: ["ignore", "pipe", "pipe"],
+                    });
+                    const branchForCommit = (await new Response(branchForCommitProc.stdout).text())
+                        .trim()
+                        .split("\n")[0];
+                    await branchForCommitProc.exited;
+
+                    if (branchForCommit && branchForCommit !== currentBranch) {
+                        parentBranch = branchForCommit;
+                    } else {
+                        // Look for checkout entries that might show the branch this commit was on
+                        for (const line of reflogLines) {
+                            const match = line.match(/checkout: moving from ([^\s]+) to (.+)/);
+                            if (
+                                match &&
+                                match[1] === parentBranch &&
+                                /^(feat|feature|main|master|develop)\//.test(match[2])
+                            ) {
+                                parentBranch = match[2];
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (!parentBranch || parentBranch.length === 40) {
+                    // No valid parent branch found, use current branch as source
+                    sourceBranch = branchToCheck;
+                    break;
+                }
+
+                branchToCheck = parentBranch;
+                maxDepth--;
+            }
+
+            // If we didn't find a feat/* branch but have candidates, use the first non-claude one
+            if (!sourceBranch && candidateBranches.length > 0) {
+                const nonClaudeBranches = candidateBranches.filter((b) => !/^claude\//.test(b));
+                if (nonClaudeBranches.length > 0) {
+                    sourceBranch = nonClaudeBranches[0];
+                } else {
+                    // Fallback to first candidate
+                    sourceBranch = candidateBranches[0];
+                }
+            }
         }
 
         // Step 2: If found, try to use that branch's merge-base
