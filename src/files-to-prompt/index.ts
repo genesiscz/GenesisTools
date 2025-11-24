@@ -5,6 +5,7 @@ import { mkdir, readdir, readFile } from "node:fs/promises";
 import { minimatch } from "minimatch";
 import logger from "@app/logger";
 import type { FileSink } from "bun";
+import { estimateTokens, formatTokens } from "@ask/utils/helpers";
 
 // --- Interfaces ---
 interface Options {
@@ -22,6 +23,7 @@ interface Options {
     null?: boolean;
     help?: boolean;
     version?: boolean;
+    dry?: boolean;
     // Aliases
     e?: string[];
     o?: string;
@@ -37,8 +39,98 @@ interface Args extends Options {
     _: string[]; // Positional arguments
 }
 
+interface IgnoredFile {
+    path: string;
+    reason: "gitignore" | "extension" | "pattern";
+    isDirectory?: boolean;
+}
+
+interface Statistics {
+    files: string[];
+    directories: string[];
+    totalSize: number;
+    totalTokens: number;
+    fileCount: number;
+    directoryCount: number;
+    skippedByGitignore: number;
+    skippedByExtension: number;
+    skippedByPattern: number;
+    ignoredFiles: IgnoredFile[];
+    basePath?: string;
+}
+
 // --- Constants ---
 let globalIndex = 1; // Used for XML index numbering
+
+// Default extensions to exclude (binary files, images, media, etc.)
+const DEFAULT_EXCLUDED_EXTENSIONS = [
+    // Images
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "svg",
+    "webp",
+    "ico",
+    "bmp",
+    "tiff",
+    "tif",
+    "heic",
+    "heif",
+    // Media
+    "mp4",
+    "avi",
+    "mov",
+    "wmv",
+    "flv",
+    "webm",
+    "mkv",
+    "mp3",
+    "wav",
+    "flac",
+    "aac",
+    "ogg",
+    "m4a",
+    // Archives
+    "zip",
+    "tar",
+    "gz",
+    "bz2",
+    "xz",
+    "7z",
+    "rar",
+    "z",
+    "tgz",
+    // Binaries
+    "exe",
+    "dll",
+    "so",
+    "dylib",
+    "bin",
+    "app",
+    "deb",
+    "rpm",
+    "pkg",
+    // Fonts
+    "ttf",
+    "otf",
+    "woff",
+    "woff2",
+    "eot",
+    // Other binary/data
+    "pdf",
+    "doc",
+    "docx",
+    "xls",
+    "xlsx",
+    "ppt",
+    "pptx",
+    "db",
+    "sqlite",
+    "sqlite3",
+    "lockb",
+    "lock", // Lock files (but keep .lock for now as user might want them)
+];
 
 const EXT_TO_LANG: Record<string, string> = {
     py: "python",
@@ -194,7 +286,9 @@ async function processPath(
     lineNumbers: boolean,
     flatFolder: boolean = false,
     outputDir?: string,
-    basePath?: string
+    basePath?: string,
+    dry: boolean = false,
+    statistics?: Statistics
 ): Promise<void> {
     if (!existsSync(path)) {
         logger.error(`Path does not exist: ${path}`);
@@ -207,15 +301,67 @@ async function processPath(
         // Handle file case directly if initial path is a file
         if (stats.isFile()) {
             // Need to apply checks here too for the single-file case
-            if (!includeHidden && basename(path).startsWith(".")) return;
-            if (!ignoreGitignore && shouldIgnore(path, gitignoreRules)) return;
+            // Skip .env.* files by default (check before hidden files check)
+            const fileName = basename(path);
+            if (fileName.startsWith(".env")) {
+                if (dry && statistics) {
+                    statistics.skippedByPattern++;
+                    statistics.ignoredFiles.push({ path, reason: "pattern" });
+                }
+                return;
+            }
+            // Apply gitignore rules if needed (check BEFORE hidden files check to track ignored hidden files)
+            if (!ignoreGitignore && shouldIgnore(path, gitignoreRules)) {
+                if (dry && statistics) {
+                    statistics.skippedByGitignore++;
+                    statistics.ignoredFiles.push({ path, reason: "gitignore" });
+                }
+                return;
+            }
+            if (!includeHidden && fileName.startsWith(".")) return;
             if (ignorePatterns.length > 0) {
                 const baseName = basename(path);
                 const matchesPattern = ignorePatterns.some((pattern) => minimatch(baseName, pattern, { dot: true }));
-                if (matchesPattern) return; // ignoreFilesOnly doesn't apply here
+                if (matchesPattern) {
+                    if (dry && statistics) {
+                        statistics.skippedByPattern++;
+                        statistics.ignoredFiles.push({ path, reason: "pattern" });
+                    }
+                    return; // ignoreFilesOnly doesn't apply here
+                }
             }
             const ext = extname(path).slice(1).toLowerCase();
-            if (extensions.length > 0 && !extensions.includes(ext)) return;
+            // Skip default excluded extensions (images, binaries, etc.)
+            if (DEFAULT_EXCLUDED_EXTENSIONS.includes(ext)) {
+                if (dry && statistics) {
+                    statistics.skippedByExtension++;
+                    statistics.ignoredFiles.push({ path, reason: "extension" });
+                }
+                return;
+            }
+            // Skip if extension filter is specified and file doesn't match
+            if (extensions.length > 0 && !extensions.includes(ext)) {
+                if (dry && statistics) {
+                    statistics.skippedByExtension++;
+                    statistics.ignoredFiles.push({ path, reason: "extension" });
+                }
+                return;
+            }
+
+            if (dry && statistics) {
+                statistics.files.push(path);
+                statistics.fileCount++;
+                try {
+                    const fileStats = statSync(path);
+                    statistics.totalSize += fileStats.size;
+                    // Read file content to estimate tokens
+                    const content = await readFile(path, { encoding: "utf-8" });
+                    statistics.totalTokens += estimateTokens(content);
+                } catch (e) {
+                    // ignore errors
+                }
+                return;
+            }
 
             if (flatFolder && outputDir && basePath) {
                 // Copy file to flat structure
@@ -244,7 +390,11 @@ async function processPath(
         if (stats.isDirectory()) {
             // Initial call to processDirectory starts with the initial gitignoreRules
             logger.debug(`Processing directory ${path}, writer type: ${typeof writer}`);
-            await processDirectory(path, gitignoreRules);
+            if (dry && statistics) {
+                statistics.directories.push(path);
+                statistics.directoryCount++;
+            }
+            await processDirectory(path, gitignoreRules, dry, statistics);
         }
     } catch (error: any) {
         logger.error(`Error accessing path ${path}: ${error.message}`);
@@ -253,7 +403,12 @@ async function processPath(
 
     // Renamed original processPath's dir logic to processDirectory
     // Added passedRules parameter
-    async function processDirectory(dirPath: string, passedRules: string[]): Promise<void> {
+    async function processDirectory(
+        dirPath: string,
+        passedRules: string[],
+        dry: boolean = false,
+        statistics?: Statistics
+    ): Promise<void> {
         // Read .gitignore specifically for this directory
         let currentDirGitignoreRules = ignoreGitignore ? [] : await readGitignore(dirPath);
         // Combine passed rules with current dir's rules
@@ -268,14 +423,32 @@ async function processPath(
                     `Processing entry: ${entry.name}, isFile: ${entry.isFile()}, isDirectory: ${entry.isDirectory()}`
                 );
 
-                // Skip hidden files/directories first (respect includeHidden)
-                if (!includeHidden && entry.name.startsWith(".")) {
+                // Skip .env.* files by default (check before hidden files check)
+                if (entry.isFile() && entry.name.startsWith(".env")) {
+                    if (dry && statistics) {
+                        statistics.skippedByPattern++;
+                        statistics.ignoredFiles.push({ path: entryPath, reason: "pattern" });
+                    }
                     continue;
                 }
 
-                // Apply gitignore rules if needed
+                // Apply gitignore rules if needed (check BEFORE hidden files check to track ignored hidden files)
                 if (!ignoreGitignore && shouldIgnore(entryPath, effectiveGitignoreRules)) {
                     logger.debug(`Skipping ${entryPath} - matched gitignore rule`);
+                    if (dry && statistics) {
+                        if (entry.isFile()) {
+                            statistics.skippedByGitignore++;
+                            statistics.ignoredFiles.push({ path: entryPath, reason: "gitignore" });
+                        } else if (entry.isDirectory()) {
+                            // Track ignored directories
+                            statistics.ignoredFiles.push({ path: entryPath, reason: "gitignore", isDirectory: true });
+                        }
+                    }
+                    continue;
+                }
+
+                // Skip hidden files/directories (respect includeHidden)
+                if (!includeHidden && entry.name.startsWith(".")) {
                     continue;
                 }
 
@@ -285,13 +458,25 @@ async function processPath(
                         minimatch(entry.name, pattern, { dot: true })
                     );
                     if (matchesPattern && (entry.isFile() || !ignoreFilesOnly)) {
+                        if (dry && statistics) {
+                            if (entry.isFile()) {
+                                statistics.skippedByPattern++;
+                                statistics.ignoredFiles.push({ path: entryPath, reason: "pattern" });
+                            } else if (entry.isDirectory()) {
+                                statistics.ignoredFiles.push({ path: entryPath, reason: "pattern", isDirectory: true });
+                            }
+                        }
                         continue;
                     }
                 }
 
                 if (entry.isDirectory()) {
                     // Recursively process subdirectory, PASSING DOWN the effective rules
-                    await processDirectory(entryPath, effectiveGitignoreRules);
+                    if (dry && statistics) {
+                        statistics.directories.push(entryPath);
+                        statistics.directoryCount++;
+                    }
+                    await processDirectory(entryPath, effectiveGitignoreRules, dry, statistics);
                 } else if (entry.isFile()) {
                     const ext = extname(entry.name).slice(1).toLowerCase();
                     logger.debug(
@@ -299,11 +484,40 @@ async function processPath(
                             extensions.length > 0 ? extensions.join(",") : "none"
                         }`
                     );
+                    // Skip default excluded extensions (images, binaries, etc.)
+                    if (DEFAULT_EXCLUDED_EXTENSIONS.includes(ext)) {
+                        logger.debug(`Skipping ${entry.name} - excluded extension ${ext}`);
+                        if (dry && statistics) {
+                            statistics.skippedByExtension++;
+                            statistics.ignoredFiles.push({ path: entryPath, reason: "extension" });
+                        }
+                        continue;
+                    }
+                    // Skip if extension filter is specified and file doesn't match
                     if (extensions.length > 0 && !extensions.includes(ext)) {
                         logger.debug(`Skipping ${entry.name} - extension ${ext} not in filter`);
+                        if (dry && statistics) {
+                            statistics.skippedByExtension++;
+                            statistics.ignoredFiles.push({ path: entryPath, reason: "extension" });
+                        }
                         continue;
                     }
                     logger.debug(`About to process file: ${entryPath}`);
+
+                    if (dry && statistics) {
+                        statistics.files.push(entryPath);
+                        statistics.fileCount++;
+                        try {
+                            const fileStats = statSync(entryPath);
+                            statistics.totalSize += fileStats.size;
+                            // Read file content to estimate tokens
+                            const content = await readFile(entryPath, { encoding: "utf-8" });
+                            statistics.totalTokens += estimateTokens(content);
+                        } catch (e) {
+                            // ignore errors
+                        }
+                        continue;
+                    }
 
                     if (flatFolder && outputDir && basePath) {
                         // Copy file to flat structure
@@ -362,6 +576,212 @@ function showVersion(): void {
     logger.info(`files-to-prompt v${VERSION}`);
 }
 
+function formatFileSize(bytes: number): string {
+    const units = ["B", "KB", "MB", "GB"];
+    let size = bytes;
+    let unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex++;
+    }
+
+    return `${size.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function toRelativePath(path: string, basePath?: string): string {
+    if (!basePath) return path;
+    try {
+        return relative(basePath, path);
+    } catch {
+        return path;
+    }
+}
+
+function groupIgnoredFilesByDirectory(ignoredFiles: IgnoredFile[], basePath?: string): Map<string, IgnoredFile[]> {
+    const grouped = new Map<string, IgnoredFile[]>();
+
+    for (const file of ignoredFiles) {
+        // For directories, use the directory path itself
+        // For files, use the parent directory
+        const key = file.isDirectory
+            ? toRelativePath(file.path, basePath)
+            : toRelativePath(dirname(file.path), basePath);
+
+        if (!grouped.has(key)) {
+            grouped.set(key, []);
+        }
+        grouped.get(key)!.push(file);
+    }
+
+    return grouped;
+}
+
+/**
+ * Generic function to format a list of file paths using depth-based grouping.
+ * Works with both string paths and IgnoredFile objects.
+ */
+function formatFileList<T extends string | IgnoredFile>(
+    items: T[],
+    basePath?: string,
+    maxDisplayItems: number = 100,
+    indent: string = "  "
+): string[] {
+    if (items.length === 0) return [];
+
+    // Extract relative paths and metadata
+    const pathsWithMeta = items.map((item) => {
+        if (typeof item === "string") {
+            return {
+                relPath: item,
+                isDirectory: item.endsWith("/"),
+            };
+        } else {
+            return {
+                relPath: toRelativePath(item.path, basePath),
+                isDirectory: item.isDirectory || false,
+            };
+        }
+    });
+
+    // Group files by directory depth
+    function groupFilesByDirectoryDepth(targetDepth: number): Map<string, typeof pathsWithMeta> {
+        const groups = new Map<string, typeof pathsWithMeta>();
+
+        for (const pathMeta of pathsWithMeta) {
+            const parts = pathMeta.relPath.split(/[/\\]/).filter(Boolean);
+            let groupKey: string;
+
+            if (parts.length <= targetDepth) {
+                // Show individual file/directory
+                groupKey = pathMeta.relPath;
+            } else {
+                // Group by directory at target depth
+                groupKey = parts.slice(0, targetDepth).join("/") + "/";
+            }
+
+            if (!groups.has(groupKey)) {
+                groups.set(groupKey, []);
+            }
+            groups.get(groupKey)!.push(pathMeta);
+        }
+
+        return groups;
+    }
+
+    // Try progressively shallower depths until number of groups <= maxDisplayItems
+    let currentDepth = 4;
+    let selectedDepth = 1;
+    let selectedGroups: Map<string, typeof pathsWithMeta> | null = null;
+
+    while (currentDepth >= 1) {
+        const groups = groupFilesByDirectoryDepth(currentDepth);
+        if (groups.size <= maxDisplayItems) {
+            selectedDepth = currentDepth;
+            selectedGroups = groups;
+            break;
+        }
+        currentDepth--;
+    }
+
+    // If no depth fits, use depth 1 and limit display
+    if (!selectedGroups) {
+        selectedGroups = groupFilesByDirectoryDepth(1);
+    }
+
+    // Sort groups: directories first, then by name
+    const sortedGroups = Array.from(selectedGroups.entries()).sort((a, b) => {
+        const aIsDir = a[0].endsWith("/") || a[1][0].isDirectory;
+        const bIsDir = b[0].endsWith("/") || b[1][0].isDirectory;
+        if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
+        return a[0].localeCompare(b[0]);
+    });
+
+    // Build output items
+    const outputItems: string[] = [];
+    const groupsToShow = sortedGroups.slice(0, maxDisplayItems);
+    for (const [key, files] of groupsToShow) {
+        if (files.length === 1) {
+            const path = files[0].relPath;
+            const suffix = files[0].isDirectory ? "/" : "";
+            outputItems.push(`${indent}- ${path}${suffix}`);
+        } else {
+            outputItems.push(`${indent}- ${key} (${files.length} files)`);
+        }
+    }
+
+    // Add overflow message if needed
+    if (selectedGroups.size > maxDisplayItems) {
+        outputItems.push(
+            `${indent}... and ${selectedGroups.size - maxDisplayItems} more ${
+                selectedDepth === 1 ? "directories" : "items"
+            }`
+        );
+    }
+
+    return outputItems;
+}
+
+function printStatistics(stats: Statistics): void {
+    // Use console.log to avoid timestamps in console output
+    console.log("\n" + "=".repeat(60));
+    console.log("DRY RUN STATISTICS");
+    console.log("=".repeat(60));
+    console.log(`\nFiles to process: ${stats.fileCount}`);
+    console.log(`Directories found: ${stats.directoryCount}`);
+    console.log(`Total size: ${formatFileSize(stats.totalSize)}`);
+    console.log(`Estimated tokens: ${formatTokens(stats.totalTokens)}`);
+
+    // Group ignored files by directory
+    const ignoredByDir = groupIgnoredFilesByDirectory(stats.ignoredFiles, stats.basePath);
+
+    if (stats.ignoredFiles.length > 0) {
+        console.log(`\nIgnored files: ${stats.ignoredFiles.length}`);
+
+        // Group by reason
+        const byReason = {
+            gitignore: stats.ignoredFiles.filter((f) => f.reason === "gitignore"),
+            extension: stats.ignoredFiles.filter((f) => f.reason === "extension"),
+            pattern: stats.ignoredFiles.filter((f) => f.reason === "pattern"),
+        };
+
+        if (byReason.gitignore.length > 0) {
+            const dirs = byReason.gitignore.filter((f) => f.isDirectory);
+            const files = byReason.gitignore.filter((f) => !f.isDirectory);
+            const totalCount = dirs.length + files.length;
+            console.log(
+                `\n  By gitignore (${totalCount}${
+                    dirs.length > 0 ? `: ${dirs.length} directories, ${files.length} files` : ""
+                }):`
+            );
+            const items = formatFileList(byReason.gitignore, stats.basePath, 100, "    ");
+            items.forEach((item) => console.log(item));
+        }
+
+        if (byReason.extension.length > 0) {
+            console.log(`\n  By extension filter (${byReason.extension.length}):`);
+            const items = formatFileList(byReason.extension, stats.basePath, 100, "    ");
+            items.forEach((item) => console.log(item));
+        }
+
+        if (byReason.pattern.length > 0) {
+            console.log(`\n  By ignore pattern (${byReason.pattern.length}):`);
+            const items = formatFileList(byReason.pattern, stats.basePath, 100, "    ");
+            items.forEach((item) => console.log(item));
+        }
+    }
+
+    if (stats.files.length > 0) {
+        console.log(`\nFiles that would be processed (${stats.files.length}):`);
+
+        const allFiles = stats.files.map((f) => toRelativePath(f, stats.basePath)).sort();
+        const items = formatFileList(allFiles, stats.basePath, 100, "  ");
+        console.log(items.join("\n"));
+    }
+
+    console.log("\n" + "=".repeat(60) + "\n");
+}
+
 function showHelp(): void {
     showVersion(); // Add version info to help output
     logger.info(`
@@ -384,6 +804,7 @@ Options:
   -n, --line-numbers      Add line numbers to the output
   -f, --flat-folder       Copy files to a flat folder structure with renamed files
   -0, --null              Use NUL character as separator when reading from stdin
+  --dry                   Show statistics about what would be processed without actually processing
   -h, --help              Show this help message
   --version               Show version information
 
@@ -421,6 +842,7 @@ async function main(): Promise<void> {
                 "help",
                 "version",
                 "flatFolder",
+                "dry",
             ],
             string: ["output"],
             // Declare potentially multi-value args explicitly if needed by minimist typing/parsing
@@ -461,6 +883,7 @@ async function main(): Promise<void> {
         const lineNumbers = !!argv.lineNumbers; // Now correctly uses boolean flag value
         const readStdinNull = !!argv.null;
         const flatFolder = !!(argv.flatFolder || argv["flat-folder"]);
+        const dry = !!argv.dry;
 
         // Validate options
         if (flatFolder && !outputFile) {
@@ -472,6 +895,21 @@ async function main(): Promise<void> {
             logger.error("Error: --flat-folder cannot be used with --cxml or --markdown options.");
             process.exit(1);
         }
+
+        // Initialize statistics for dry-run mode
+        const statistics: Statistics = {
+            files: [],
+            directories: [],
+            totalSize: 0,
+            totalTokens: 0,
+            fileCount: 0,
+            directoryCount: 0,
+            skippedByGitignore: 0,
+            skippedByExtension: 0,
+            skippedByPattern: 0,
+            ignoredFiles: [],
+            basePath: process.cwd(),
+        };
 
         let writer: WriterFunc = (s: string) => {
             process.stdout.write(s + "\n");
@@ -542,7 +980,7 @@ async function main(): Promise<void> {
                 }
 
                 // Find common path between commonBasePath and currentPath
-                const commonParts = [];
+                const commonParts: string[] = [];
                 const baseParts = commonBasePath.split(/[/\\]/);
                 const currentParts = currentPath.split(/[/\\]/);
 
@@ -555,6 +993,20 @@ async function main(): Promise<void> {
                 }
 
                 commonBasePath = commonParts.join("/");
+            }
+        }
+
+        // Update basePath for statistics (use common base path or first path's directory)
+        if (dry && processedPaths.length > 0) {
+            if (commonBasePath) {
+                statistics.basePath = commonBasePath;
+            } else {
+                try {
+                    const firstPathStats = statSync(processedPaths[0]);
+                    statistics.basePath = firstPathStats.isDirectory() ? processedPaths[0] : dirname(processedPaths[0]);
+                } catch {
+                    statistics.basePath = dirname(processedPaths[0]);
+                }
             }
         }
 
@@ -578,8 +1030,15 @@ async function main(): Promise<void> {
                 lineNumbers,
                 flatFolder,
                 flatFolder ? outputFile : undefined,
-                commonBasePath
+                commonBasePath,
+                dry,
+                dry ? statistics : undefined
             );
+        }
+
+        // Print statistics if dry-run mode
+        if (dry) {
+            printStatistics(statistics);
         }
 
         if (fileSink) {
