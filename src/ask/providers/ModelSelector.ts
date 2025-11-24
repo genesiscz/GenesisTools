@@ -78,7 +78,14 @@ export class ModelSelector {
             return provider.models[0];
         }
 
-        const choices = provider.models.map((model) => ({
+        // Sort models by name alphabetically
+        const sortedModels = [...provider.models].sort((a, b) => {
+            const aName = a.name || a.id;
+            const bName = b.name || b.id;
+            return aName.localeCompare(bName);
+        });
+
+        const choices = sortedModels.map((model) => ({
             name: model.id,
             message: this.formatModelChoice(model),
             value: model,

@@ -85,6 +85,7 @@ function createLogger(logger?: PricingLogger): PricingLogger {
 
 export class LiteLLMPricingFetcher {
     private cachedPricing: Map<string, LiteLLMModelPricing> | null = null;
+    private loadingPromise: Promise<Map<string, LiteLLMModelPricing>> | null = null;
     private readonly logger: PricingLogger;
     private readonly offline: boolean;
     private readonly offlineLoader?: () => Promise<Record<string, LiteLLMModelPricing>>;
@@ -133,6 +134,7 @@ export class LiteLLMPricingFetcher {
 
     clearCache(): void {
         this.cachedPricing = null;
+        this.loadingPromise = null;
     }
 
     private async loadOfflinePricing(): Promise<Map<string, LiteLLMModelPricing>> {
@@ -159,10 +161,28 @@ export class LiteLLMPricingFetcher {
     }
 
     private async ensurePricingLoaded(): Promise<Map<string, LiteLLMModelPricing>> {
+        // Return cached pricing if available
         if (this.cachedPricing != null) {
             return this.cachedPricing;
         }
 
+        // If a fetch is already in progress, wait for it instead of starting a new one
+        if (this.loadingPromise != null) {
+            return await this.loadingPromise;
+        }
+
+        // Start a new fetch and store the promise so concurrent calls can wait for it
+        this.loadingPromise = this.loadPricingData();
+        try {
+            const result = await this.loadingPromise;
+            return result;
+        } finally {
+            // Clear the loading promise after completion (success or failure)
+            this.loadingPromise = null;
+        }
+    }
+
+    private async loadPricingData(): Promise<Map<string, LiteLLMModelPricing>> {
         if (this.offline) {
             return await this.loadOfflinePricing();
         }
