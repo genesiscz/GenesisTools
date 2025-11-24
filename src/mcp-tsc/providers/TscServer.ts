@@ -7,7 +7,7 @@ import type {
     HoverResult,
     HoverPosition,
     TsDiagnostic,
-} from "../core/interfaces.js";
+} from "@app/mcp-tsc/core/interfaces.js";
 
 export interface TscServerOptions {
     cwd: string;

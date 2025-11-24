@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
-import { CliHandler } from "./cli/CliHandler.js";
-import { DiagnosticsCommand } from "./cli/commands/DiagnosticsCommand.js";
-import { HoverCommand } from "./cli/commands/HoverCommand.js";
-import { KillServerCommand } from "./cli/commands/KillServerCommand.js";
-import { McpCommand } from "./cli/commands/McpCommand.js";
-import { getPersistentServer } from "./utils/ServerManager.js";
+import { CliHandler } from "@app/mcp-tsc/cli/CliHandler.js";
+import { DiagnosticsCommand } from "@app/mcp-tsc/cli/commands/DiagnosticsCommand.js";
+import { HoverCommand } from "@app/mcp-tsc/cli/commands/HoverCommand.js";
+import { KillServerCommand } from "@app/mcp-tsc/cli/commands/KillServerCommand.js";
+import { McpCommand } from "@app/mcp-tsc/cli/commands/McpCommand.js";
+import { getPersistentServer } from "@app/mcp-tsc/utils/ServerManager.js";
 
 async function main() {
     const cliHandler = new CliHandler();

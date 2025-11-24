@@ -1,7 +1,7 @@
 import path from "path";
-import type { CliArgs } from "../../core/interfaces.js";
-import { LspServer } from "../../providers/LspServer.js";
-import { McpAdapter } from "../../protocols/McpAdapter.js";
+import type { CliArgs } from "@app/mcp-tsc/core/interfaces.js";
+import { LspServer } from "@app/mcp-tsc/providers/LspServer.js";
+import { McpAdapter } from "@app/mcp-tsc/protocols/McpAdapter.js";
 
 export class McpCommand {
     async execute(argv: CliArgs): Promise<void> {

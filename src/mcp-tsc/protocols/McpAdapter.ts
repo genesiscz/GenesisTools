@@ -4,9 +4,10 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import path from "path";
 import { readFileSync } from "fs";
 import ts from "typescript";
-import type { TSServer } from "../core/interfaces.js";
-import { resolveFiles, filterByTsconfig } from "../utils/FileResolver.js";
-import { wrapArray } from "../utils/helpers.js";
+import type { TSServer } from "@app/mcp-tsc/core/interfaces.js";
+import { resolveFiles, filterByTsconfig } from "@app/mcp-tsc/utils/FileResolver.js";
+import { normalizeFilePaths } from "@app/utils.js";
+import type { GetTsDiagnosticsArgs, GetTsHoverArgs, GetTsHoverResponse } from "@app/mcp-tsc/types/mcp.js";
 
 export interface McpAdapterOptions {
     server: TSServer; // The underlying TSServer implementation (always LspServer)
@@ -126,13 +127,14 @@ export class McpAdapter {
         // Register tool call handler
         this.mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
             const toolName = request.params.name;
+            const args = request.params.arguments || {};
 
             if (toolName === "GetTsHover") {
-                return await this.handleGetHover(request.params.arguments);
+                return await this.handleGetHover(args as unknown as GetTsHoverArgs);
             }
 
             if (toolName === "GetTsDiagnostics") {
-                return await this.handleGetDiagnostics(request.params.arguments);
+                return await this.handleGetDiagnostics(args as unknown as GetTsDiagnosticsArgs);
             }
 
             return {
@@ -142,23 +144,10 @@ export class McpAdapter {
         });
     }
 
-    private async handleGetDiagnostics(args: any) {
+    private async handleGetDiagnostics(args: GetTsDiagnosticsArgs) {
         try {
-            // Handle case where AI agent passes JSON string instead of array
-            let filesParam = args.files;
-            if (typeof filesParam === "string") {
-                // Check if it's a JSON string representing an array
-                const trimmed = filesParam.trim();
-                if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-                    try {
-                        filesParam = JSON.parse(trimmed);
-                    } catch {
-                        // If parsing fails, treat as regular string
-                    }
-                }
-            }
-
-            const filePatterns = wrapArray(filesParam);
+            // Normalize file paths from various formats (string, array, JSON string, Python-style array)
+            const filePatterns = normalizeFilePaths(args.files);
             const showWarnings: boolean = Boolean(args.showWarnings ?? false);
             // Use timeout from parameter if provided, otherwise use global timeout
             const timeoutSeconds = args.timeout !== undefined ? Number(args.timeout) : this.globalTimeout;
@@ -235,26 +224,26 @@ export class McpAdapter {
                     },
                 ],
             };
-        } catch (error: any) {
+        } catch (error) {
             return {
                 isError: true,
                 content: [
                     {
                         type: "text",
-                        text: `Error: ${error.message}`,
+                        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
                     },
                 ],
             };
         }
     }
 
-    private async handleGetHover(args: any) {
+    private async handleGetHover(args: GetTsHoverArgs) {
         try {
-            const filePath = args.file as string;
-            const line = args.line as number;
-            const charArg = args.character as number | undefined;
-            const text = args.text as string | undefined;
-            const includeRaw = args.includeRaw as boolean | undefined;
+            const filePath = args.file;
+            const line = args.line;
+            const charArg = args.character;
+            const text = args.text;
+            const includeRaw = args.includeRaw;
 
             if (!filePath) {
                 return {
@@ -315,7 +304,7 @@ export class McpAdapter {
             const hover = await this.tsServer.getHover(absolutePath, { line, character });
 
             // Build response object
-            const response: Record<string, any> = {
+            const response: GetTsHoverResponse = {
                 file: filePath,
                 line: line,
                 character: character,
@@ -336,13 +325,13 @@ export class McpAdapter {
                     },
                 ],
             };
-        } catch (error: any) {
+        } catch (error) {
             return {
                 isError: true,
                 content: [
                     {
                         type: "text",
-                        text: `Error: ${error.message}`,
+                        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
                     },
                 ],
             };

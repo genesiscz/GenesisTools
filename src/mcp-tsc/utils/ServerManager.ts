@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "fs";
 import path from "path";
-import { LspServer } from "../providers/LspServer.js";
-import type { ServerInfo } from "../core/interfaces.js";
-import { SERVERS_DIR, ensureServersDir, getServerInfoPath } from "./helpers.js";
+import { LspServer } from "@app/mcp-tsc/providers/LspServer.js";
+import type { ServerInfo } from "@app/mcp-tsc/core/interfaces.js";
+import { SERVERS_DIR, ensureServersDir, getServerInfoPath } from "@app/mcp-tsc/utils/helpers.js";
 
 // Global map to store persistent LSP servers
 const persistentServers = new Map<string, LspServer>();
