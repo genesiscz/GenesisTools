@@ -33,6 +33,8 @@ import {
 } from "./utils/cli";
 import { generateSessionId, colorizeRole, colorizeProvider } from "./utils/helpers";
 import type { Args, CLIOptions, ChatConfig, ProviderChoice } from "./types";
+import type { ModelsOptions } from "./types/cli";
+import { showPricing } from "./pricing/index";
 
 // Initialize conversation manager
 const convManager = conversationManager;
@@ -59,14 +61,13 @@ class ASKTool {
             const firstArg = argv._[0]?.toLowerCase();
             if (firstArg === "models" || firstArg === "model") {
                 // Parse models-specific options
-                const pricingOptions = {
+                const modelsOptions: ModelsOptions = {
                     provider: argv.provider,
-                    format: argv.format as "table" | "json" | undefined,
-                    sort: argv.sort as "price_input" | "input" | "price_output" | "output" | "name" | undefined,
+                    format: argv.format as ModelsOptions["format"],
+                    sort: argv.sort as ModelsOptions["sort"],
                     filterCapabilities: argv.filterCapabilities,
                 };
-                const { showPricing } = await import("./pricing/index");
-                await showPricing(pricingOptions);
+                await showPricing(modelsOptions);
                 return;
             }
 
@@ -100,7 +101,7 @@ class ASKTool {
 
     private async handleSpeechToText(filePath: string, argv: Args): Promise<void> {
         try {
-            console.log(chalk.blue("<Ã¯Â¿Â½ Transcribing audio..."));
+            console.log(chalk.blue("<ÃƒÂ¯Ã‚Â¿Ã‚Â½ Transcribing audio..."));
 
             const result = await transcriptionManager.transcribeAudio(filePath);
 
@@ -209,7 +210,7 @@ class ASKTool {
     }
 
     private async startInteractiveChat(argv: Args): Promise<void> {
-        console.log(chalk.green("=Ã¯Â¿Â½ Starting interactive chat mode"));
+        console.log(chalk.green("=ÃƒÂ¯Ã‚Â¿Ã‚Â½ Starting interactive chat mode"));
         console.log(chalk.gray("Type /help for available commands, /quit to exit\n"));
 
         try {
@@ -292,7 +293,7 @@ class ASKTool {
                     const duration = Date.now() - startTime;
 
                     // Show timing info
-                    console.log(chalk.gray(`\nÃ¯Â¿Â½  Response time: ${formatElapsedTime(duration)}`));
+                    console.log(chalk.gray(`\nÃƒÂ¯Ã‚Â¿Ã‚Â½  Response time: ${formatElapsedTime(duration)}`));
 
                     // Track usage
                     if (response.usage) {
@@ -338,7 +339,7 @@ class ASKTool {
                         continue;
                     }
                     logger.error(`Chat error: ${error}`);
-                    console.log(chalk.red("=Ã¯Â¿Â½ Error occurred. Type /quit to exit or continue chatting."));
+                    console.log(chalk.red("=ÃƒÂ¯Ã‚Â¿Ã‚Â½ Error occurred. Type /quit to exit or continue chatting."));
                 }
             }
 
@@ -466,7 +467,7 @@ class ASKTool {
 
         if (result.transcriptionFile) {
             try {
-                console.log(chalk.blue("<Ã¯Â¿Â½ Transcribing audio..."));
+                console.log(chalk.blue("<ÃƒÂ¯Ã‚Â¿Ã‚Â½ Transcribing audio..."));
                 const transcriptionResult = await transcriptionManager.transcribeAudio(result.transcriptionFile);
 
                 // Add transcription as a user message

@@ -3,13 +3,10 @@ import Table from "cli-table3";
 import logger from "../../logger";
 import { providerManager } from "../providers/ProviderManager";
 import { dynamicPricingManager } from "../providers/DynamicPricing";
+import type { ModelsOptions } from "../types/cli";
 
-export interface PricingOptions {
-    provider?: string;
-    format?: "table" | "json";
-    sort?: "price_input" | "input" | "price_output" | "output" | "name";
-    filterCapabilities?: string;
-}
+// Re-export for backward compatibility
+export type { ModelsOptions as PricingOptions } from "../types/cli";
 
 function formatContextWindow(tokens: number): string {
     if (tokens >= 1_000_000) {
@@ -63,10 +60,7 @@ function matchesCapabilities(modelCapabilities: string[], filterCapabilities: st
     return normalizedFilterCaps.every((filterCap) => normalizedModelCaps.includes(filterCap));
 }
 
-function sortModels(
-    modelsWithPricing: Array<{ model: any; pricing: any }>,
-    sortBy?: "price_input" | "input" | "price_output" | "output" | "name"
-): void {
+function sortModels(modelsWithPricing: Array<{ model: any; pricing: any }>, sortBy?: ModelsOptions["sort"]): void {
     if (!sortBy || sortBy === "price_input" || sortBy === "input") {
         // Sort by input cost (cheapest first)
         modelsWithPricing.sort((a, b) => {
@@ -91,11 +85,7 @@ function sortModels(
     }
 }
 
-async function showPricingTable(
-    providerFilter?: string,
-    sortBy?: "price_input" | "input" | "price_output" | "output" | "name",
-    filterCapabilities?: string
-) {
+async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions["sort"], filterCapabilities?: string) {
     console.log(chalk.bold.cyan("\n💰 MODEL PRICING & INFORMATION\n"));
 
     const providers = await providerManager.detectProviders();
@@ -321,7 +311,7 @@ async function showPricingJSON(providerFilter?: string, filterCapabilities?: str
     console.log(JSON.stringify(output, null, 2));
 }
 
-export async function showPricing(options: PricingOptions = {}): Promise<void> {
+export async function showPricing(options: ModelsOptions = {}): Promise<void> {
     const format = options.format || "table";
     const provider = options.provider;
     const sortBy = options.sort;
