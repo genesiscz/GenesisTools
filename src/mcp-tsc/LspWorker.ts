@@ -173,7 +173,9 @@ export class LspWorker {
         const showWarnings = options.showWarnings ?? false;
         const maxWait = options.maxWaitMs ?? 30000;
 
-        this.log(`Checking ${targetFiles.length} file(s)...`);
+        // Log which files are being checked
+        const fileList = targetFiles.map((f) => `- ${path.relative(this.cwd, f) || f}`).join("\n");
+        this.log(`Checking ${targetFiles.length} file(s):\n${fileList}`);
 
         // Check which files need updates (new files or changed files)
         const filesToOpen: string[] = [];
@@ -199,7 +201,8 @@ export class LspWorker {
 
             // Open new files
             if (filesToOpen.length > 0) {
-                this.log(`Opening ${filesToOpen.length} new file(s)...`);
+                const openList = filesToOpen.map((f) => `- ${path.relative(this.cwd, f) || f}`).join("\n");
+                this.log(`Opening ${filesToOpen.length} new file(s):\n${openList}`);
                 for (const file of filesToOpen) {
                     const uri = `file://${file}`;
                     const content = readFileSync(file, "utf-8");
@@ -226,7 +229,8 @@ export class LspWorker {
 
             // Update changed files
             if (filesToUpdate.length > 0) {
-                this.log(`Updating ${filesToUpdate.length} changed file(s)...`);
+                const updateList = filesToUpdate.map((f) => `- ${path.relative(this.cwd, f) || f}`).join("\n");
+                this.log(`Updating ${filesToUpdate.length} changed file(s):\n${updateList}`);
                 for (const file of filesToUpdate) {
                     const uri = `file://${file}`;
                     const content = readFileSync(file, "utf-8");
@@ -249,6 +253,14 @@ export class LspWorker {
                 }
             }
 
+            if (filesToOpen.length > 0) {
+                const openedList = filesToOpen.map((f) => `- ${path.relative(this.cwd, f) || f}`).join("\n");
+                this.log(`Files opened:\n${openedList}`);
+            }
+            if (filesToUpdate.length > 0) {
+                const updatedList = filesToUpdate.map((f) => `- ${path.relative(this.cwd, f) || f}`).join("\n");
+                this.log(`Files updated:\n${updatedList}`);
+            }
             this.log(`Files opened/updated (${Date.now() - openStart}ms)`);
         } else {
             this.log(`All ${targetFiles.length} file(s) already open with current content`);
@@ -291,7 +303,50 @@ export class LspWorker {
                 });
 
                 if (allDiagnosticsStable) {
-                    this.log(`All diagnostics received and stable (${Date.now() - waitStart}ms)`);
+                    // Collect and format diagnostics for logging
+                    const diagnosticsLines: string[] = [];
+                    let totalErrors = 0;
+                    let totalWarnings = 0;
+
+                    for (const file of filesToWaitFor) {
+                        const uri = `file://${file}`;
+                        const diags = this.diagnosticsMap.get(uri) || [];
+                        for (const d of diags) {
+                            // Skip info/hint diagnostics
+                            if (d.severity > 2) continue;
+
+                            // Skip warnings unless showWarnings is true
+                            if (d.severity === 2 && !showWarnings) continue;
+
+                            const relativeFile = path.relative(this.cwd, file) || file;
+                            const severityText = d.severity === 1 ? "error" : "warning";
+                            const line = d.range.start.line + 1;
+                            const character = d.range.start.character + 1;
+                            const code = d.code || "";
+                            diagnosticsLines.push(
+                                `${relativeFile}:${line}:${character} - ${severityText} TS${code}: ${d.message}`
+                            );
+
+                            if (d.severity === 1) totalErrors++;
+                            else if (d.severity === 2) totalWarnings++;
+                        }
+                    }
+
+                    const statusSummary =
+                        totalErrors === 0 && totalWarnings === 0
+                            ? " - all files OK (no errors or warnings)"
+                            : ` - ${totalErrors} error(s), ${totalWarnings} warning(s)`;
+
+                    const diagnosticsOutput =
+                        diagnosticsLines.length > 0
+                            ? `\n${diagnosticsLines.map((line) => `  ${line}`).join("\n")}`
+                            : "";
+
+                    this.log(
+                        `All diagnostics received and stable (${
+                            Date.now() - waitStart
+                        }ms)${statusSummary}${diagnosticsOutput}`
+                    );
                     break;
                 }
 
@@ -299,7 +354,22 @@ export class LspWorker {
             }
 
             if (Date.now() - waitStart >= maxWait) {
-                this.log(`Timeout waiting for diagnostics (${maxWait}ms)`);
+                // Check which files are missing diagnostics
+                const missingFiles: string[] = [];
+                for (const file of filesToWaitFor) {
+                    const uri = `file://${file}`;
+                    if (!this.diagnosticsMap.has(uri)) {
+                        missingFiles.push(file);
+                    }
+                }
+                if (missingFiles.length > 0) {
+                    const missingList = missingFiles.map((f) => `- ${path.relative(this.cwd, f) || f}`).join("\n");
+                    this.log(
+                        `Timeout waiting for diagnostics (${maxWait}ms) - missing diagnostics for:\n${missingList}`
+                    );
+                } else {
+                    this.log(`Timeout waiting for diagnostics (${maxWait}ms)`);
+                }
             }
         } else {
             this.log("Using cached diagnostics from already-open files with current content");
@@ -330,6 +400,15 @@ export class LspWorker {
                     warnings++;
                 }
             }
+        }
+
+        // Log final summary if no files were opened/updated (using cached diagnostics)
+        if (filesToWaitFor.length === 0) {
+            const statusSummary =
+                errors === 0 && warnings === 0
+                    ? " - all files OK (no errors or warnings)"
+                    : ` - ${errors} error(s), ${warnings} warning(s)`;
+            this.log(`Diagnostics check complete${statusSummary}`);
         }
 
         // Sort diagnostics
