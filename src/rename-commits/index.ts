@@ -67,6 +67,23 @@ async function getCurrentRepoDir(): Promise<string> {
     return resolve(stdout.trim());
 }
 
+async function getCurrentBranch(repoDir: string): Promise<string> {
+    const proc = Bun.spawn({
+        cmd: ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd: repoDir,
+        stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+        return "unknown";
+    }
+
+    return stdout.trim();
+}
+
 async function getCommits(repoDir: string, count: number): Promise<CommitInfo[]> {
     logger.debug(`⏳ Fetching last ${count} commits from ${repoDir}...`);
 
@@ -239,20 +256,48 @@ async function main() {
     try {
         // Get repository directory
         const repoDir = await getCurrentRepoDir();
-        logger.debug(`📁 Repository: ${repoDir}`);
+        const currentBranch = await getCurrentBranch(repoDir);
+        const currentDir = process.cwd();
+
+        // Show current context
+        console.log(chalk.bold("\n📋 Current Context:"));
+        console.log(`  Branch: ${chalk.cyan(currentBranch)}`);
+        console.log(`  Directory: ${chalk.cyan(currentDir)}`);
+        console.log(`  Repository: ${chalk.cyan(repoDir)}\n`);
 
         // Get number of commits
         let commitCount = argv.commits;
 
         if (!commitCount) {
+            // Show last 50 commits numbered so user can see which ones will be renamed
+            logger.info("📋 Fetching last 50 commits...");
+            const recentCommitsRaw = await getCommits(repoDir, 50);
+
+            if (recentCommitsRaw.length === 0) {
+                logger.warn("ℹ No commits found.");
+                process.exit(0);
+            }
+
+            // Reverse to show newest first (getCommits returns oldest first for rebase)
+            const recentCommits = [...recentCommitsRaw].reverse();
+
+            console.log(chalk.bold("\n📝 Recent commits (showing last 50, newest first):\n"));
+            recentCommits.forEach((commit, index) => {
+                console.log(
+                    chalk.dim(`${String(index + 1).padStart(2)}.`) +
+                        ` ${chalk.cyan(commit.shortHash)} - ${commit.message}`
+                );
+            });
+            console.log();
+
             try {
                 const response = (await prompter.prompt({
                     type: "numeral",
                     name: "commitCount",
-                    message: "How many commits do you want to rename?",
+                    message: `How many commits do you want to rename? (1-${recentCommits.length})`,
                     initial: 3,
                     min: 1,
-                    max: 100,
+                    max: recentCommits.length,
                 })) as { commitCount: number };
 
                 commitCount = response.commitCount;
