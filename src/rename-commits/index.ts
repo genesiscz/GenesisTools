@@ -105,161 +105,115 @@ async function getCommits(
         let baseRef = "";
         const currentBranch = await getCurrentBranch(repoDir);
 
-        // Step 1: Try to find the branch this was created from using reflog
-        const reflogProc = Bun.spawn({
-            cmd: ["git", "reflog", "show", "--all"],
+        // Step 1: Use git merge-base --fork-point to find where branch diverged
+        // This is more reliable than reflog parsing as it uses git's built-in fork detection
+        // Strategy: Check all local branches, find the one with the most recent fork point
+
+        // Get all local branches
+        const branchesProc = Bun.spawn({
+            cmd: ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads/"],
             cwd: repoDir,
             stdio: ["ignore", "pipe", "pipe"],
         });
-        const reflogOutput = await new Response(reflogProc.stdout).text();
-        await reflogProc.exited;
+        const branchesOutput = await new Response(branchesProc.stdout).text();
+        await branchesProc.exited;
 
-        // Look for "checkout: moving from <branch> to <current-branch>"
-        // Trace back through branch creation history to find the original base
-        const reflogLines = reflogOutput.split("\n");
-        let sourceBranch = null;
-        let candidateBranches: string[] = [];
+        const allBranches = branchesOutput
+            .trim()
+            .split("\n")
+            .filter((b) => b && b !== currentBranch);
 
-        // First, find branches that were checked out to create the current branch
-        for (const line of reflogLines) {
-            const match = line.match(/checkout: moving from ([^\s]+) to (.+)/);
-            if (match && match[2] === currentBranch) {
-                candidateBranches.push(match[1]);
-            }
-        }
+        let sourceBranch: string | null = null;
+        let bestForkPoint: string | null = null;
+        let bestForkPointDate = 0;
 
-        // If we found candidates, trace back through claude/* branches to find the original base
-        // This handles cases where: feat/fixes -> claude/branch1 -> claude/branch2 (current)
-        if (candidateBranches.length > 0) {
-            // Start with the most recent candidate
-            let branchToCheck = candidateBranches[0];
-            const checkedBranches = new Set<string>([currentBranch]);
-            let maxDepth = 10; // Prevent infinite loops
-
-            while (branchToCheck && maxDepth > 0) {
-                if (checkedBranches.has(branchToCheck)) {
-                    break; // Avoid cycles
-                }
-                checkedBranches.add(branchToCheck);
-
-                // If this is a feat/* branch, use it as the source
-                if (/^(feat|feature)\//.test(branchToCheck)) {
-                    sourceBranch = branchToCheck;
-                    break;
-                }
-
-                // If this is not a claude/* branch, use it as source (might be main/master/etc)
-                if (!/^claude\//.test(branchToCheck)) {
-                    sourceBranch = branchToCheck;
-                    break;
-                }
-
-                // Otherwise, trace back to find what this claude/* branch was created from
-                // Collect all parents, prioritizing feat/* branches
-                let parentBranch = null;
-                const allParents: string[] = [];
-                for (const line of reflogLines) {
-                    const match = line.match(/checkout: moving from ([^\s]+) to (.+)/);
-                    if (match && match[2] === branchToCheck) {
-                        allParents.push(match[1]);
-                    }
-                }
-
-                // Prioritize feat/* branches, then other non-claude branches, then claude branches
-                const featParents = allParents.filter((p) => /^(feat|feature)\//.test(p));
-                const nonClaudeParents = allParents.filter(
-                    (p) => !/^claude\//.test(p) && p.length < 40 && !/^[0-9a-f]{40}$/i.test(p)
-                );
-                const claudeParents = allParents.filter((p) => /^claude\//.test(p));
-
-                if (featParents.length > 0) {
-                    parentBranch = featParents[0]; // Use first feat/* branch found
-                } else if (nonClaudeParents.length > 0) {
-                    parentBranch = nonClaudeParents[0]; // Use first non-claude branch
-                } else if (claudeParents.length > 0) {
-                    parentBranch = claudeParents[0]; // Fallback to claude branch
-                } else if (allParents.length > 0) {
-                    // Last resort: use first parent (might be a commit hash)
-                    parentBranch = allParents[0];
-                }
-
-                // If we found a commit hash, try to find the branch it's on
-                if (parentBranch && parentBranch.length === 40) {
-                    // Try to find what branch this commit is on
-                    const branchForCommitProc = Bun.spawn({
-                        cmd: ["git", "branch", "--contains", parentBranch, "--format=%(refname:short)"],
-                        cwd: repoDir,
-                        stdio: ["ignore", "pipe", "pipe"],
-                    });
-                    const branchForCommit = (await new Response(branchForCommitProc.stdout).text())
-                        .trim()
-                        .split("\n")[0];
-                    await branchForCommitProc.exited;
-
-                    if (branchForCommit && branchForCommit !== currentBranch) {
-                        parentBranch = branchForCommit;
-                    } else {
-                        // Look for checkout entries that might show the branch this commit was on
-                        for (const line of reflogLines) {
-                            const match = line.match(/checkout: moving from ([^\s]+) to (.+)/);
-                            if (
-                                match &&
-                                match[1] === parentBranch &&
-                                /^(feat|feature|main|master|develop)\//.test(match[2])
-                            ) {
-                                parentBranch = match[2];
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if (!parentBranch || parentBranch.length === 40) {
-                    // No valid parent branch found, use current branch as source
-                    sourceBranch = branchToCheck;
-                    break;
-                }
-
-                branchToCheck = parentBranch;
-                maxDepth--;
-            }
-
-            // If we didn't find a feat/* branch but have candidates, use the first non-claude one
-            if (!sourceBranch && candidateBranches.length > 0) {
-                const nonClaudeBranches = candidateBranches.filter((b) => !/^claude\//.test(b));
-                if (nonClaudeBranches.length > 0) {
-                    sourceBranch = nonClaudeBranches[0];
-                } else {
-                    // Fallback to first candidate
-                    sourceBranch = candidateBranches[0];
-                }
-            }
-        }
-
-        // Step 2: If found, try to use that branch's merge-base
-        if (sourceBranch && sourceBranch !== currentBranch) {
-            const checkProc = Bun.spawn({
-                cmd: ["git", "rev-parse", "--verify", sourceBranch],
-                cwd: repoDir,
-                stdio: ["ignore", "pipe", "pipe"],
-            });
-            const checkExitCode = await checkProc.exited;
-            if (checkExitCode === 0) {
-                const mergeBaseProc = Bun.spawn({
-                    cmd: ["git", "merge-base", "HEAD", sourceBranch],
+        // Check each branch to find the one with the most recent fork point
+        for (const branch of allBranches) {
+            try {
+                // Use --fork-point to find where current branch diverged from this branch
+                const forkPointProc = Bun.spawn({
+                    cmd: ["git", "merge-base", "--fork-point", branch, "HEAD"],
                     cwd: repoDir,
                     stdio: ["ignore", "pipe", "pipe"],
                 });
-                const [mergeBase, mergeBaseExitCode] = await Promise.all([
-                    new Response(mergeBaseProc.stdout).text(),
-                    mergeBaseProc.exited,
-                ]);
-                if (mergeBaseExitCode === 0 && mergeBase.trim()) {
-                    baseRef = mergeBase.trim();
-                    baseBranchName = sourceBranch;
-                    detectionMethod = "reflog (feat/* branch)";
-                    logger.debug(`Found merge-base from source branch ${sourceBranch}: ${baseRef.substring(0, 7)}`);
+                const forkPointHash = (await new Response(forkPointProc.stdout).text()).trim();
+                const forkPointExitCode = await forkPointProc.exited;
+
+                if (forkPointExitCode === 0 && forkPointHash) {
+                    // Get the commit date of the fork point to find the most recent one
+                    const dateProc = Bun.spawn({
+                        cmd: ["git", "log", "-1", "--format=%ct", forkPointHash],
+                        cwd: repoDir,
+                        stdio: ["ignore", "pipe", "pipe"],
+                    });
+                    const dateStr = (await new Response(dateProc.stdout).text()).trim();
+                    await dateProc.exited;
+
+                    const forkPointDate = parseInt(dateStr) || 0;
+
+                    // Use the branch with the most recent fork point
+                    // (most recent = highest timestamp = most recent divergence)
+                    if (forkPointDate > bestForkPointDate) {
+                        sourceBranch = branch;
+                        bestForkPoint = forkPointHash;
+                        bestForkPointDate = forkPointDate;
+                    }
                 }
+            } catch {
+                // Skip branches that don't have a valid fork point
+                continue;
+            }
+        }
+
+        // If no fork point found with --fork-point, fall back to regular merge-base
+        if (!sourceBranch) {
+            // Try common base branches as fallback
+            for (const branch of ["main", "master", "develop"]) {
+                const checkProc = Bun.spawn({
+                    cmd: ["git", "rev-parse", "--verify", branch],
+                    cwd: repoDir,
+                    stdio: ["ignore", "pipe", "pipe"],
+                });
+                const checkExitCode = await checkProc.exited;
+                if (checkExitCode === 0) {
+                    const mergeBaseProc = Bun.spawn({
+                        cmd: ["git", "merge-base", "HEAD", branch],
+                        cwd: repoDir,
+                        stdio: ["ignore", "pipe", "pipe"],
+                    });
+                    const mergeBase = (await new Response(mergeBaseProc.stdout).text()).trim();
+                    await mergeBaseProc.exited;
+                    if (mergeBase) {
+                        sourceBranch = branch;
+                        bestForkPoint = mergeBase;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Step 2: Use the fork point we found
+        if (sourceBranch && bestForkPoint) {
+            baseRef = bestForkPoint;
+            baseBranchName = sourceBranch;
+            detectionMethod = "fork-point";
+            logger.debug(`Found fork-point from branch ${sourceBranch}: ${baseRef.substring(0, 7)}`);
+        } else if (sourceBranch) {
+            // Fallback: calculate merge-base if fork-point wasn't available
+            const mergeBaseProc = Bun.spawn({
+                cmd: ["git", "merge-base", "HEAD", sourceBranch],
+                cwd: repoDir,
+                stdio: ["ignore", "pipe", "pipe"],
+            });
+            const [mergeBase, mergeBaseExitCode] = await Promise.all([
+                new Response(mergeBaseProc.stdout).text(),
+                mergeBaseProc.exited,
+            ]);
+            if (mergeBaseExitCode === 0 && mergeBase.trim()) {
+                baseRef = mergeBase.trim();
+                baseBranchName = sourceBranch;
+                detectionMethod = "merge-base";
+                logger.debug(`Found merge-base from source branch ${sourceBranch}: ${baseRef.substring(0, 7)}`);
             }
         }
 
@@ -418,19 +372,22 @@ async function getCommits(
     };
 }
 
-function suggestCommitName(commit: CommitInfo, allCommits: CommitInfo[]): string {
+function suggestCommitName(commit: CommitInfo, allCommits: CommitInfo[], defaultScope?: string | null): string {
     const message = commit.message.toLowerCase();
 
-    // Find most common scope from all commits
-    const scopeCounts = new Map<string, number>();
-    for (const c of allCommits) {
-        const match = c.message.match(/^\w+\(([^)]+)\):/);
-        if (match) {
-            const scope = match[1].toLowerCase();
-            scopeCounts.set(scope, (scopeCounts.get(scope) || 0) + 1);
+    // Find most common scope from all commits, or use provided defaultScope
+    let mostCommonScope: string | undefined = defaultScope || undefined;
+    if (!mostCommonScope) {
+        const scopeCounts = new Map<string, number>();
+        for (const c of allCommits) {
+            const match = c.message.match(/^\w+\(([^)]+)\):/);
+            if (match) {
+                const scope = match[1].toLowerCase();
+                scopeCounts.set(scope, (scopeCounts.get(scope) || 0) + 1);
+            }
         }
+        mostCommonScope = Array.from(scopeCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
     }
-    const mostCommonScope = Array.from(scopeCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
 
     // Type shortening map
     const typeMap: Record<string, string> = {
@@ -491,11 +448,12 @@ async function promptForNewMessage(
     commit: CommitInfo,
     index: number,
     total: number,
-    allCommits: CommitInfo[]
+    allCommits: CommitInfo[],
+    defaultScope?: string | null
 ): Promise<string> {
     try {
         // Show current message clearly before the prompt
-        const suggestion = suggestCommitName(commit, allCommits);
+        const suggestion = suggestCommitName(commit, allCommits, defaultScope);
         console.log(chalk.dim(`\n  Current message: ${chalk.reset(commit.message)}`));
         if (suggestion !== commit.message) {
             console.log(chalk.dim(`  💡 Suggestion: ${chalk.green(suggestion)}`));
@@ -508,7 +466,22 @@ async function promptForNewMessage(
             initial: suggestion,
         })) as { newMessage: string };
 
-        return response.newMessage.trim();
+        let newMessage = response.newMessage.trim();
+
+        // Extract just the message part from suggestion (remove type prefix if present)
+        // This handles cases where user types "feat(scope): <suggested>" and suggestion is "feat: message"
+        // We want "feat(scope): message" not "feat(scope): feat: message"
+        let suggestionMessage = suggestion;
+        const suggestionMatch = suggestion.match(/^\w+(?:\([^)]+\))?:\s*(.+)$/);
+        if (suggestionMatch) {
+            suggestionMessage = suggestionMatch[1]; // Just the message part after "type: "
+        }
+
+        // Replace placeholders
+        newMessage = newMessage.replace(/<suggested>/g, suggestionMessage);
+        newMessage = newMessage.replace(/<original>/g, commit.message);
+
+        return newMessage;
     } catch (error: any) {
         if (error.message === "canceled") {
             throw new Error("Operation cancelled by user");
@@ -1114,10 +1087,49 @@ async function main() {
         }
 
         logger.info(`📝 Found ${commits.length} commit(s). Let's rename them:`);
+        console.log(chalk.dim("\n💡 Tip: You can use placeholders in your commit messages:"));
+        console.log(chalk.dim("   <suggested> - will be replaced with the suggested commit message"));
+        console.log(chalk.dim("   <original>  - will be replaced with the original commit message"));
+        console.log(chalk.dim('   Example: "feat(vouchers): <suggested>" or "refactor: <original>"\n'));
+
+        // Check if we can determine a scope from existing commits
+        let defaultScope: string | null = null;
+        const scopeCounts = new Map<string, number>();
+        for (const c of commits) {
+            const match = c.message.match(/^\w+\(([^)]+)\):/);
+            if (match) {
+                const scope = match[1].toLowerCase();
+                scopeCounts.set(scope, (scopeCounts.get(scope) || 0) + 1);
+            }
+        }
+        const mostCommonScope = Array.from(scopeCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
+
+        // If no scope found in commits, ask user for it
+        if (!mostCommonScope) {
+            try {
+                const scopeResponse = (await prompter.prompt({
+                    type: "input",
+                    name: "scope",
+                    message:
+                        "What scope should be used for commit suggestions? (e.g., 'vouchers', 'invoices', 'auth'):",
+                    initial: "",
+                })) as { scope: string };
+
+                defaultScope = scopeResponse.scope.trim() || null;
+            } catch (error: any) {
+                if (error.message === "canceled") {
+                    logger.info("\n🚫 Operation cancelled by user.");
+                    process.exit(0);
+                }
+                throw error;
+            }
+        } else {
+            defaultScope = mostCommonScope;
+        }
 
         // Prompt for new messages (oldest first, as they appear in rebase)
         for (let i = 0; i < commits.length; i++) {
-            const newMessage = await promptForNewMessage(commits[i], i, commits.length, commits);
+            const newMessage = await promptForNewMessage(commits[i], i, commits.length, commits, defaultScope);
             commits[i].newMessage = newMessage;
         }
 
