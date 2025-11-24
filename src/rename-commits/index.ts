@@ -92,52 +92,31 @@ async function getCommits(repoDir: string, count: number, currentBranchOnly: boo
 
     if (currentBranchOnly) {
         // Only show commits that are unique to current branch (exclude base branch commits)
-        // Try to find the upstream/base branch, fallback to common base branches
-        const baseBranchProc = Bun.spawn({
-            cmd: ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-            cwd: repoDir,
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-        const baseBranch = await new Response(baseBranchProc.stdout).text();
-        const baseBranchExitCode = await baseBranchProc.exited;
-
+        // Find merge-base with common base branches (master, main, develop)
         let baseRef = "";
-        if (baseBranchExitCode === 0 && baseBranch.trim()) {
-            // Extract branch name from upstream (e.g., "origin/feature" -> "origin/master" or find merge-base)
-            const mergeBaseProc = Bun.spawn({
-                cmd: ["git", "merge-base", "HEAD", baseBranch.trim()],
+        
+        // Try common base branches directly (don't use upstream as it might be the same branch)
+        for (const branch of ["master", "main", "develop"]) {
+            const checkProc = Bun.spawn({
+                cmd: ["git", "rev-parse", "--verify", branch],
                 cwd: repoDir,
                 stdio: ["ignore", "pipe", "pipe"],
             });
-            const mergeBase = await new Response(mergeBaseProc.stdout).text();
-            const mergeBaseExitCode = await mergeBaseProc.exited;
-
-            if (mergeBaseExitCode === 0 && mergeBase.trim()) {
-                baseRef = mergeBase.trim();
-            }
-        }
-
-        // If no upstream or merge-base found, try common base branches
-        if (!baseRef) {
-            for (const branch of ["master", "main", "develop"]) {
-                const checkProc = Bun.spawn({
-                    cmd: ["git", "rev-parse", "--verify", branch],
+            const checkExitCode = await checkProc.exited;
+            if (checkExitCode === 0) {
+                const mergeBaseProc = Bun.spawn({
+                    cmd: ["git", "merge-base", "HEAD", branch],
                     cwd: repoDir,
                     stdio: ["ignore", "pipe", "pipe"],
                 });
-                const checkExitCode = await checkProc.exited;
-                if (checkExitCode === 0) {
-                    const mergeBaseProc = Bun.spawn({
-                        cmd: ["git", "merge-base", "HEAD", branch],
-                        cwd: repoDir,
-                        stdio: ["ignore", "pipe", "pipe"],
-                    });
-                    const mergeBase = await new Response(mergeBaseProc.stdout).text();
-                    const mergeBaseExitCode = await mergeBaseProc.exited;
-                    if (mergeBaseExitCode === 0 && mergeBase.trim()) {
-                        baseRef = mergeBase.trim();
-                        break;
-                    }
+                const [mergeBase, mergeBaseExitCode] = await Promise.all([
+                    new Response(mergeBaseProc.stdout).text(),
+                    mergeBaseProc.exited,
+                ]);
+                if (mergeBaseExitCode === 0 && mergeBase.trim()) {
+                    baseRef = mergeBase.trim();
+                    logger.debug(`Found merge-base from ${branch}: ${baseRef.substring(0, 7)}`);
+                    break;
                 }
             }
         }
@@ -145,9 +124,12 @@ async function getCommits(repoDir: string, count: number, currentBranchOnly: boo
         if (baseRef) {
             // Show commits on HEAD that are not on the base branch
             gitArgs = ["log", `-n`, `${count}`, "--pretty=format:%H|%h|%s", "--no-decorate", "HEAD", `--not`, baseRef];
+            logger.debug(`Using merge-base: ${baseRef.substring(0, 7)}`);
         } else {
-            // Fallback: use --first-parent to exclude merged branch commits
-            gitArgs = ["log", `-n`, `${count}`, "--pretty=format:%H|%h|%s", "--no-decorate", "--first-parent"];
+            // Fallback: if no merge-base found, just show commits from HEAD
+            // This happens when branch has no upstream or base branch doesn't exist
+            gitArgs = ["log", `-n`, `${count}`, "--pretty=format:%H|%h|%s", "--no-decorate", "HEAD"];
+            logger.debug("No merge-base found, showing all commits from HEAD");
         }
     } else {
         gitArgs = ["log", `-n`, `${count}`, "--pretty=format:%H|%h|%s", "--no-decorate"];
@@ -159,13 +141,26 @@ async function getCommits(repoDir: string, count: number, currentBranchOnly: boo
         stdio: ["ignore", "pipe", "pipe"],
     });
 
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
+    const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+    ]);
 
     if (exitCode !== 0) {
+        logger.debug(`Git command failed: git ${gitArgs.join(" ")}`);
+        logger.debug(`Stderr: ${stderr.trim()}`);
         throw new Error(`Failed to get commits: ${stderr.trim()}`);
     }
+
+    logger.debug(
+        `Git command succeeded, got ${
+            stdout
+                .trim()
+                .split("\n")
+                .filter((l) => l.trim()).length
+        } commits`
+    );
 
     const lines = stdout
         .trim()
