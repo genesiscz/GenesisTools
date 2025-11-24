@@ -1,6 +1,6 @@
 import type { LanguageModelUsage, LanguageModel } from "ai";
-import type { ProviderV1 } from "@ai-sdk/provider";
-import type { DetectedProvider } from "./provider";
+import type { ProviderV2 } from "@ai-sdk/provider";
+import type { DetectedProvider, PricingInfo } from "./provider";
 
 // Message types
 export interface ChatMessage {
@@ -76,11 +76,7 @@ export interface ModelInfo {
     id: string;
     name: string;
     contextWindow: number;
-    pricing?: {
-        input: number;
-        output: number;
-        cachedInput?: number;
-    };
+    pricing?: PricingInfo;
     capabilities: string[];
     provider: string;
 }

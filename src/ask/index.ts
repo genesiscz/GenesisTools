@@ -2,7 +2,9 @@
 
 import Enquirer from "enquirer";
 import chalk from "chalk";
+import type { LanguageModel } from "ai";
 import logger from "@app/logger";
+import { getLanguageModel } from "@ask/types";
 import { ChatEngine } from "@ask/chat/ChatEngine";
 import { commandHandler } from "@ask/chat/CommandHandler";
 import type { CommandResult } from "@ask/chat/CommandHandler";
@@ -188,13 +190,9 @@ class ASKTool {
                     {
                         provider: modelChoice.provider.name,
                         model: modelChoice.model.id,
-                        inputTokens: response.usage?.promptTokens || 0,
-                        outputTokens: response.usage?.completionTokens || 0,
-                        cachedInputTokens:
-                            "cachedPromptTokens" in (response.usage || {}) &&
-                            typeof response.usage?.cachedPromptTokens === "number"
-                                ? response.usage.cachedPromptTokens
-                                : 0,
+                        inputTokens: response.usage?.inputTokens || 0,
+                        outputTokens: response.usage?.outputTokens || 0,
+                        cachedInputTokens: response.usage?.cachedInputTokens || 0,
                         totalTokens: response.usage?.totalTokens || 0,
                         cost: response.cost,
                         currency: "USD",
@@ -372,7 +370,7 @@ class ASKTool {
     }
 
     private async createChatConfig(modelChoice: ProviderChoice, argv: CLIOptions): Promise<ChatConfig> {
-        const model = modelChoice.provider.provider(modelChoice.model.id);
+        const model = getLanguageModel(modelChoice.provider.provider, modelChoice.model.id);
 
         return {
             model,
@@ -441,7 +439,7 @@ class ASKTool {
         chatConfig: ChatConfig
     ): Promise<void> {
         if (result.newModel && result.newProvider) {
-            await chatEngine.switchModel(result.newModel, result.newProvider, result.newModelName);
+            await chatEngine.switchModel(result.newModel, result.newProvider, result.newModelName || "unknown");
             // Update modelChoice reference
             if (result.newProvider) {
                 modelChoice.provider.name = result.newProvider;

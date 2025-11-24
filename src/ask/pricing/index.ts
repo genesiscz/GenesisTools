@@ -286,7 +286,7 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
     // Count capabilities
     const capabilityCounts: Record<string, number> = {};
     modelsWithPricing.forEach(({ model }) => {
-        model.capabilities.forEach((cap) => {
+        model.capabilities.forEach((cap: string) => {
             capabilityCounts[cap] = (capabilityCounts[cap] || 0) + 1;
         });
     });

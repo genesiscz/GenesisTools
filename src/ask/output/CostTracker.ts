@@ -44,15 +44,13 @@ export class CostTracker {
     ): Promise<void> {
         // DEBUG: Log the usage object received
         logger.debug(`[CostTracker] trackUsage called for ${provider}/${model}, sessionId: ${sessionId}`);
-        logger.debug(`[CostTracker] usage object:`, JSON.stringify(usage, null, 2));
-        logger.debug(`[CostTracker] usage type:`, typeof usage);
-        logger.debug(`[CostTracker] usage keys:`, Object.keys(usage || {}));
-        logger.debug(`[CostTracker] usage.promptTokens:`, usage.promptTokens);
-        logger.debug(`[CostTracker] usage.completionTokens:`, usage.completionTokens);
-        logger.debug(`[CostTracker] usage.totalTokens:`, usage.totalTokens);
-        logger.debug(`[CostTracker] usage.inputTokens:`, (usage as any).inputTokens);
-        logger.debug(`[CostTracker] usage.outputTokens:`, (usage as any).outputTokens);
-        logger.debug(`[CostTracker] usage.cachedPromptTokens:`, usage.cachedPromptTokens);
+        logger.debug({ usage: JSON.stringify(usage, null, 2) }, `[CostTracker] usage object`);
+        logger.debug({ usageType: typeof usage }, `[CostTracker] usage type`);
+        logger.debug({ keys: Object.keys(usage || {}) }, `[CostTracker] usage keys`);
+        logger.debug({ inputTokens: usage.inputTokens }, `[CostTracker] usage.inputTokens`);
+        logger.debug({ outputTokens: usage.outputTokens }, `[CostTracker] usage.outputTokens`);
+        logger.debug({ totalTokens: usage.totalTokens }, `[CostTracker] usage.totalTokens`);
+        logger.debug({ cachedInputTokens: usage.cachedInputTokens }, `[CostTracker] usage.cachedInputTokens`);
 
         const key = `${provider}/${model}`;
         const cost = await dynamicPricingManager.calculateCost(provider, model, usage);
@@ -70,10 +68,10 @@ export class CostTracker {
             timestamp: new Date(),
         };
 
-        // Extract tokens - try both naming conventions
-        const inputTokens = usage.promptTokens ?? (usage as any).inputTokens ?? 0;
-        const outputTokens = usage.completionTokens ?? (usage as any).outputTokens ?? 0;
-        const cachedInputTokens = usage.cachedPromptTokens ?? (usage as any).cachedInputTokens ?? 0;
+        // Extract tokens using new API naming
+        const inputTokens = usage.inputTokens ?? 0;
+        const outputTokens = usage.outputTokens ?? 0;
+        const cachedInputTokens = usage.cachedInputTokens ?? 0;
         const totalTokens = usage.totalTokens ?? inputTokens + outputTokens;
 
         existing.inputTokens += inputTokens;

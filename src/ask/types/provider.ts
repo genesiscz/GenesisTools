@@ -1,5 +1,11 @@
-import type { ProviderV1 } from "@ai-sdk/provider";
+import type { ProviderV2 } from "@ai-sdk/provider";
+import type { LanguageModel } from "ai";
 import type { ModelInfo } from "./chat";
+
+// Helper function to get language model from ProviderV2
+export function getLanguageModel(provider: ProviderV2, modelId: string): LanguageModel {
+    return provider.languageModel(modelId);
+}
 
 export interface ProviderConfig {
     name: string;
@@ -15,7 +21,7 @@ export interface DetectedProvider {
     name: string;
     type: string;
     key: string;
-    provider: ProviderV1;
+    provider: ProviderV2;
     models: ModelInfo[];
     config: ProviderConfig;
 }

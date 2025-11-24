@@ -3,6 +3,7 @@ import type { LanguageModel } from "ai";
 import chalk from "chalk";
 import logger from "@app/logger";
 import type { OutputConfig, OutputFormat } from "@ask/types";
+import { getLanguageModel } from "@ask/types";
 import { modelSelector } from "@ask/providers/ModelSelector";
 
 export interface CommandResult {
@@ -66,7 +67,7 @@ export class CommandHandler {
 
         logger.info(chalk.green(`✓ Switched to ${newChoice.provider.name}/${newChoice.model.name}`));
 
-        const model = newChoice.provider.provider(newChoice.model.id);
+        const model = getLanguageModel(newChoice.provider.provider, newChoice.model.id);
         return {
             newModel: model,
             newProvider: newChoice.provider.name,

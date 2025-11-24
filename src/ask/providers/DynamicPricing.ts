@@ -254,15 +254,10 @@ export class DynamicPricingManager {
         logger.debug({ usage: JSON.stringify(usage, null, 2) }, `[DynamicPricing] usage object`);
         logger.debug({ type: typeof usage }, `[DynamicPricing] usage type`);
         logger.debug({ keys: Object.keys(usage || {}) }, `[DynamicPricing] usage keys`);
-        logger.debug({ promptTokens: usage.promptTokens }, `[DynamicPricing] usage.promptTokens`);
-        logger.debug({ completionTokens: usage.completionTokens }, `[DynamicPricing] usage.completionTokens`);
+        logger.debug({ inputTokens: usage.inputTokens }, `[DynamicPricing] usage.inputTokens`);
+        logger.debug({ outputTokens: usage.outputTokens }, `[DynamicPricing] usage.outputTokens`);
         logger.debug({ totalTokens: usage.totalTokens }, `[DynamicPricing] usage.totalTokens`);
-        logger.debug({ inputTokens: (usage as any).inputTokens }, `[DynamicPricing] usage.inputTokens`);
-        logger.debug({ outputTokens: (usage as any).outputTokens }, `[DynamicPricing] usage.outputTokens`);
-        logger.debug(
-            { cachedPromptTokens: (usage as any).cachedPromptTokens },
-            `[DynamicPricing] usage.cachedPromptTokens`
-        );
+        logger.debug({ cachedInputTokens: usage.cachedInputTokens }, `[DynamicPricing] usage.cachedInputTokens`);
 
         const pricing = await this.getPricing(provider, model);
 
@@ -271,10 +266,10 @@ export class DynamicPricingManager {
             return 0;
         }
 
-        // Try both naming conventions (promptTokens/completionTokens vs inputTokens/outputTokens)
-        const inputTokens = usage.promptTokens ?? (usage as any).inputTokens ?? 0;
-        const outputTokens = usage.completionTokens ?? (usage as any).outputTokens ?? 0;
-        const cachedReadTokens = (usage as any).cachedPromptTokens ?? (usage as any).cachedInputTokens ?? 0;
+        // Extract tokens using new API naming
+        const inputTokens = usage.inputTokens ?? 0;
+        const outputTokens = usage.outputTokens ?? 0;
+        const cachedReadTokens = usage.cachedInputTokens ?? 0;
         // Note: AI SDK doesn't distinguish cache creation vs read, so we use cachedReadTokens for both
         const cachedCreateTokens = 0; // Not available from AI SDK usage object
 

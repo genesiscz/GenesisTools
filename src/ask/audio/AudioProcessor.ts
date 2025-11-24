@@ -236,9 +236,9 @@ export class AudioProcessor {
             return {
                 format: audioStream.codec_name || "unknown",
                 duration: parseFloat(String(audioStream.duration || probeData.format?.duration || "0")),
-                bitrate: audioStream.bit_rate ? parseInt(audioStream.bit_rate) : undefined,
-                sampleRate: audioStream.sample_rate ? parseInt(audioStream.sample_rate) : undefined,
-                channels: audioStream.channels ? parseInt(audioStream.channels) : undefined,
+                bitrate: audioStream.bit_rate ? parseInt(String(audioStream.bit_rate)) : undefined,
+                sampleRate: audioStream.sample_rate ? parseInt(String(audioStream.sample_rate)) : undefined,
+                channels: audioStream.channels ? parseInt(String(audioStream.channels)) : undefined,
             };
         } catch (error) {
             logger.warn(`Failed to get audio info for ${filePath}: ${error}`);

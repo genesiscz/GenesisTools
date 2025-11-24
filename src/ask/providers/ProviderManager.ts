@@ -1,5 +1,7 @@
 import logger from "@app/logger";
-import type { ProviderV1 } from "@ai-sdk/provider";
+import type { ProviderV2 } from "@ai-sdk/provider";
+import type { LanguageModel } from "ai";
+import { generateText } from "ai";
 import type {
     DetectedProvider,
     ModelInfo,
@@ -10,6 +12,7 @@ import type {
     OpenAIModelsResponse,
     PricingInfo,
 } from "@ask/types";
+import { getLanguageModel } from "@ask/types";
 import { getProviderConfigs, KNOWN_MODELS } from "@ask/providers/providers";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 
@@ -64,7 +67,7 @@ export class ProviderManager {
         return detected;
     }
 
-    private async createProvider(config: ProviderConfig): Promise<ProviderV1> {
+    private async createProvider(config: ProviderConfig): Promise<ProviderV2> {
         try {
             switch (config.type) {
                 case "openai": {
@@ -73,19 +76,16 @@ export class ProviderManager {
                 }
 
                 case "anthropic": {
-                    // @ts-expect-error - Optional dependency, may not be installed
                     const { anthropic } = await import("@ai-sdk/anthropic");
                     return anthropic;
                 }
 
                 case "google": {
-                    // @ts-expect-error - Optional dependency, may not be installed
                     const { google } = await import("@ai-sdk/google");
                     return google;
                 }
 
                 case "groq": {
-                    // @ts-expect-error - Optional dependency, may not be installed
                     const { groq } = await import("@ai-sdk/groq");
                     return groq;
                 }
@@ -107,7 +107,7 @@ export class ProviderManager {
         }
     }
 
-    private async getAvailableModels(config: ProviderConfig, _provider: ProviderV1): Promise<ModelInfo[]> {
+    private async getAvailableModels(config: ProviderConfig, _provider: ProviderV2): Promise<ModelInfo[]> {
         try {
             // For OpenRouter, we can query the API for available models
             if (config.name === "openrouter") {
@@ -399,13 +399,11 @@ export class ProviderManager {
             }
 
             // Try a minimal request to validate the provider
-            const { generateText } = await import("ai");
             const modelId = provider.models[0]?.id || "default";
-            const model = provider.provider(modelId);
+            const model = getLanguageModel(provider.provider, modelId);
             await generateText({
                 model,
                 prompt: "test",
-                maxTokens: 1,
             });
 
             return true;

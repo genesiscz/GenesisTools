@@ -90,8 +90,8 @@ describe("DynamicPricingManager", () => {
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
             const usage: LanguageModelUsage = {
-                promptTokens: 1000,
-                completionTokens: 500,
+                inputTokens: 1000,
+                outputTokens: 500,
                 totalTokens: 1500,
             };
 
@@ -112,8 +112,8 @@ describe("DynamicPricingManager", () => {
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
             const usage: LanguageModelUsage = {
-                promptTokens: 1000,
-                completionTokens: 500,
+                inputTokens: 1000,
+                outputTokens: 500,
                 totalTokens: 1500,
             };
             (usage as any).cachedPromptTokens = 200;
@@ -137,8 +137,8 @@ describe("DynamicPricingManager", () => {
 
             // 300k input tokens, 250k output tokens
             const usage: LanguageModelUsage = {
-                promptTokens: 300_000,
-                completionTokens: 250_000,
+                inputTokens: 300_000,
+                outputTokens: 250_000,
                 totalTokens: 550_000,
             };
 
@@ -163,8 +163,8 @@ describe("DynamicPricingManager", () => {
 
             // Exactly 200k tokens - should use base pricing only
             const usage: LanguageModelUsage = {
-                promptTokens: 200_000,
-                completionTokens: 0,
+                inputTokens: 200_000,
+                outputTokens: 0,
                 totalTokens: 200_000,
             };
 
@@ -186,8 +186,8 @@ describe("DynamicPricingManager", () => {
 
             // 200,001 tokens - should use tiered pricing for 1 token
             const usage: LanguageModelUsage = {
-                promptTokens: 200_001,
-                completionTokens: 0,
+                inputTokens: 200_001,
+                outputTokens: 0,
                 totalTokens: 200_001,
             };
 
@@ -199,8 +199,8 @@ describe("DynamicPricingManager", () => {
 
         it("should handle zero tokens", async () => {
             const usage: LanguageModelUsage = {
-                promptTokens: 0,
-                completionTokens: 0,
+                inputTokens: 0,
+                outputTokens: 0,
                 totalTokens: 0,
             };
 
@@ -213,8 +213,8 @@ describe("DynamicPricingManager", () => {
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(null);
 
             const usage: LanguageModelUsage = {
-                promptTokens: 1000,
-                completionTokens: 500,
+                inputTokens: 1000,
+                outputTokens: 500,
                 totalTokens: 1500,
             };
 
@@ -225,8 +225,8 @@ describe("DynamicPricingManager", () => {
 
         it("should handle both promptTokens and inputTokens naming", async () => {
             const usage1: LanguageModelUsage = {
-                promptTokens: 1000,
-                completionTokens: 500,
+                inputTokens: 1000,
+                outputTokens: 500,
                 totalTokens: 1500,
             };
 
@@ -419,8 +419,8 @@ describe("DynamicPricingManager", () => {
 
             for (const testCase of testCases) {
                 const usage: LanguageModelUsage = {
-                    promptTokens: testCase.input,
-                    completionTokens: testCase.output,
+                    inputTokens: testCase.input,
+                    outputTokens: testCase.output,
                     totalTokens: testCase.input + testCase.output,
                 };
 
@@ -434,8 +434,8 @@ describe("DynamicPricingManager", () => {
         it("should calculate costs using real LiteLLM pricing for Claude models", async () => {
             // Real API call to LiteLLM for Claude pricing
             const usage: LanguageModelUsage = {
-                promptTokens: 300_000, // Above 200k threshold
-                completionTokens: 250_000,
+                inputTokens: 300_000, // Above 200k threshold
+                outputTokens: 250_000,
                 totalTokens: 550_000,
             };
 
@@ -466,8 +466,8 @@ describe("DynamicPricingManager", () => {
 
             for (const edgeCase of edgeCases) {
                 const usage: LanguageModelUsage = {
-                    promptTokens: edgeCase.input,
-                    completionTokens: edgeCase.output,
+                    inputTokens: edgeCase.input,
+                    outputTokens: edgeCase.output,
                     totalTokens: edgeCase.input + edgeCase.output,
                 };
 
@@ -543,8 +543,8 @@ describe("DynamicPricingManager", () => {
             // ⚠️ BREAKS IF: OpenAI changes GPT-4o pricing
             // Real calculation using current OpenAI pricing: $5/$15 per million
             const usage: LanguageModelUsage = {
-                promptTokens: 1_000_000,
-                completionTokens: 500_000,
+                inputTokens: 1_000_000,
+                outputTokens: 500_000,
                 totalTokens: 1_500_000,
             };
 
@@ -559,8 +559,8 @@ describe("DynamicPricingManager", () => {
             // NOTE: Claude 3.5 Sonnet 20241022 has 200k context window, so no tiered pricing applies
             // Real calculation using current Claude pricing: $3/$15 per million (flat rate)
             const usage: LanguageModelUsage = {
-                promptTokens: 300_000,
-                completionTokens: 250_000,
+                inputTokens: 300_000,
+                outputTokens: 250_000,
                 totalTokens: 550_000,
             };
 

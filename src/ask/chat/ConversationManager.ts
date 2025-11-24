@@ -62,14 +62,7 @@ export class ConversationManager {
                     content: string;
                     timestamp: string | Date;
                     tokens?: number;
-                    usage?:
-                        | {
-                              promptTokens?: number;
-                              completionTokens?: number;
-                              totalTokens?: number;
-                              cachedPromptTokens?: number;
-                          }
-                        | import("ai").LanguageModelUsage;
+                    usage?: import("ai").LanguageModelUsage;
                 }) => ({
                     ...msg,
                     timestamp: new Date(msg.timestamp),
@@ -173,10 +166,10 @@ export class ConversationManager {
 
         messages.forEach((msg) => {
             if (msg.usage) {
-                totalUsage.inputTokens += msg.usage.promptTokens || 0;
-                totalUsage.outputTokens += msg.usage.completionTokens || 0;
+                totalUsage.inputTokens += msg.usage.inputTokens || 0;
+                totalUsage.outputTokens += msg.usage.outputTokens || 0;
                 totalUsage.totalTokens += msg.usage.totalTokens || 0;
-                totalUsage.cachedInputTokens += msg.usage.cachedPromptTokens || 0;
+                totalUsage.cachedInputTokens += msg.usage.cachedInputTokens || 0;
             }
         });
 

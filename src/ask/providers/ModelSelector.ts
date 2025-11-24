@@ -1,6 +1,6 @@
 import Enquirer from "enquirer";
 import chalk from "chalk";
-import type { ProviderV1 } from "@ai-sdk/provider";
+import type { ProviderV2 } from "@ai-sdk/provider";
 import logger from "@app/logger";
 import type { DetectedProvider, ModelInfo, ProviderChoice } from "@ask/types";
 import { providerManager } from "@ask/providers/ProviderManager";
@@ -90,15 +90,6 @@ export class ModelSelector {
                 name: "model",
                 message: `Choose ${chalk.cyan(provider.name)} model:`,
                 choices: choices,
-                suggest(input: string, choices: Array<{ name: string; message: string; value: unknown }>) {
-                    if (!input) return choices;
-
-                    return choices.filter((choice) => {
-                        const value = choice.value as { name: string; id: string };
-                        const searchText = `${value.name} ${value.id}`.toLowerCase();
-                        return searchText.includes(input.toLowerCase());
-                    });
-                },
             })) as { model: string | ModelInfo };
 
             // Fix: Handle both string and object response from enquirer
@@ -245,7 +236,7 @@ export class ModelSelector {
 
     async selectTranscriptionModel(
         fileSize?: number
-    ): Promise<{ provider: string; model: string; providerInstance: ProviderV1 } | null> {
+    ): Promise<{ provider: string; model: string; providerInstance: ProviderV2 } | null> {
         const transcriptionProviders = [
             { name: "groq", envKey: "GROQ_API_KEY", model: "whisper-large-v3", maxFileSize: 25 * 1024 * 1024 },
             {
@@ -280,11 +271,10 @@ export class ModelSelector {
         const selectedProvider = availableProviders[0];
 
         try {
-            let providerInstance: ProviderV1;
+            let providerInstance: ProviderV2;
 
             switch (selectedProvider.name) {
                 case "groq": {
-                    // @ts-expect-error - Optional dependency, may not be installed
                     const { groq } = await import("@ai-sdk/groq");
                     providerInstance = groq;
                     break;

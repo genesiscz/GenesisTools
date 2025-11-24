@@ -92,20 +92,20 @@ export function formatUsage(usage?: LanguageModelUsage): string {
 
     const parts: string[] = [];
 
-    if (usage.promptTokens) {
-        parts.push(`Input: ${formatTokens(usage.promptTokens)}`);
+    if (usage.inputTokens) {
+        parts.push(`Input: ${formatTokens(usage.inputTokens)}`);
     }
 
-    if (usage.completionTokens) {
-        parts.push(`Output: ${formatTokens(usage.completionTokens)}`);
+    if (usage.outputTokens) {
+        parts.push(`Output: ${formatTokens(usage.outputTokens)}`);
     }
 
     if (usage.totalTokens) {
         parts.push(`Total: ${formatTokens(usage.totalTokens)}`);
     }
 
-    if (usage.cachedPromptTokens && usage.cachedPromptTokens > 0) {
-        parts.push(`Cached: ${formatTokens(usage.cachedPromptTokens)}`);
+    if (usage.cachedInputTokens && usage.cachedInputTokens > 0) {
+        parts.push(`Cached: ${formatTokens(usage.cachedInputTokens)}`);
     }
 
     return parts.join(", ");

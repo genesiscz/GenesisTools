@@ -385,32 +385,32 @@ export class LiteLLMPricingFetcher {
 // Singleton instance
 export const liteLLMPricingFetcher = new LiteLLMPricingFetcher({
     logger: {
-        debug: (msg, ...args) => {
+        debug: (msg: unknown, ...args: unknown[]) => {
             if (typeof msg === "object" && msg !== null) {
-                logger.debug(msg, ...args);
+                logger.debug(msg as object, args[0] as string | undefined);
             } else {
-                logger.debug({ msg }, ...args);
+                logger.debug({ msg: String(msg) }, args[0] as string | undefined);
             }
         },
-        error: (msg, ...args) => {
+        error: (msg: unknown, ...args: unknown[]) => {
             if (typeof msg === "object" && msg !== null) {
-                logger.error(msg, ...args);
+                logger.error(msg as object, args[0] as string | undefined);
             } else {
-                logger.error({ msg }, ...args);
+                logger.error({ msg: String(msg) }, args[0] as string | undefined);
             }
         },
-        info: (msg, ...args) => {
+        info: (msg: unknown, ...args: unknown[]) => {
             if (typeof msg === "object" && msg !== null) {
-                logger.info(msg, ...args);
+                logger.info(msg as object, args[0] as string | undefined);
             } else {
-                logger.info({ msg }, ...args);
+                logger.info({ msg: String(msg) }, args[0] as string | undefined);
             }
         },
-        warn: (msg, ...args) => {
+        warn: (msg: unknown, ...args: unknown[]) => {
             if (typeof msg === "object" && msg !== null) {
-                logger.warn(msg, ...args);
+                logger.warn(msg as object, args[0] as string | undefined);
             } else {
-                logger.warn({ msg }, ...args);
+                logger.warn({ msg: String(msg) }, args[0] as string | undefined);
             }
         },
     },

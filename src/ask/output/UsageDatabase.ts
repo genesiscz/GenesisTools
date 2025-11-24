@@ -107,16 +107,17 @@ export class UsageDatabase {
     ): Promise<number> {
         // DEBUG: Log what we're storing
         logger.debug(`[UsageDatabase] recordUsage called for ${provider}/${model}`);
-        logger.debug(`[UsageDatabase] usage object:`, JSON.stringify(usage, null, 2));
+        logger.debug({ usage: JSON.stringify(usage, null, 2) }, `[UsageDatabase] usage object`);
 
-        // Extract tokens - try both naming conventions
-        const inputTokens = usage.promptTokens ?? (usage as any).inputTokens ?? 0;
-        const outputTokens = usage.completionTokens ?? (usage as any).outputTokens ?? 0;
-        const cachedInputTokens = usage.cachedPromptTokens ?? (usage as any).cachedInputTokens ?? 0;
+        // Extract tokens using new API naming
+        const inputTokens = usage.inputTokens ?? 0;
+        const outputTokens = usage.outputTokens ?? 0;
+        const cachedInputTokens = usage.cachedInputTokens ?? 0;
         const totalTokens = usage.totalTokens ?? inputTokens + outputTokens;
 
         logger.debug(
-            `[UsageDatabase] Storing tokens - input: ${inputTokens}, output: ${outputTokens}, cached: ${cachedInputTokens}, total: ${totalTokens}, cost: ${cost}`
+            { inputTokens, outputTokens, cachedInputTokens, totalTokens, cost },
+            `[UsageDatabase] Storing tokens`
         );
 
         const timestamp = new Date().toISOString();

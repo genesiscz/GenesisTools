@@ -3,3 +3,4 @@ export * from "./chat";
 export * from "./config";
 export * from "./cli";
 export * from "./pricing";
+export { getLanguageModel } from "./provider";

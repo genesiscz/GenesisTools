@@ -1,9 +1,18 @@
 import { experimental_transcribe as transcribe } from "ai";
+import type { TranscriptionModel } from "ai";
 import { statSync } from "node:fs";
-import type { ProviderV1 } from "@ai-sdk/provider";
+import type { ProviderV2 } from "@ai-sdk/provider";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { modelSelector } from "@ask/providers/ModelSelector";
+
+// Helper to get transcription model from ProviderV2
+function getTranscriptionModel(provider: ProviderV2, modelId: string): TranscriptionModel {
+    if (!provider.transcriptionModel) {
+        throw new Error(`Provider does not support transcription models`);
+    }
+    return provider.transcriptionModel(modelId);
+}
 
 export interface TranscriptionOptions {
     language?: string;
@@ -67,7 +76,7 @@ export class TranscriptionManager {
             const audioBuffer = await Bun.file(filePath).arrayBuffer();
 
             // Perform transcription
-            const model = transcriptionModel.providerInstance(transcriptionModel.model);
+            const model = getTranscriptionModel(transcriptionModel.providerInstance, transcriptionModel.model);
             const result = await transcribe({
                 model,
                 audio: audioBuffer,
@@ -145,7 +154,7 @@ export class TranscriptionManager {
         fileSize: number,
         preferredProvider?: string,
         preferredModel?: string
-    ): Promise<{ provider: string; model: string; providerInstance: ProviderV1 } | null> {
+    ): Promise<{ provider: string; model: string; providerInstance: ProviderV2 } | null> {
         // If provider and model are explicitly requested, try to use them
         if (preferredProvider && preferredModel) {
             return await this.getSpecificTranscriptionModel(preferredProvider, preferredModel);
@@ -193,12 +202,11 @@ export class TranscriptionManager {
     private async getSpecificTranscriptionModel(
         providerName: string,
         modelName: string
-    ): Promise<{ provider: string; model: string; providerInstance: ProviderV1 } | null> {
+    ): Promise<{ provider: string; model: string; providerInstance: ProviderV2 } | null> {
         try {
             switch (providerName) {
                 case "groq": {
                     if (!process.env.GROQ_API_KEY) return null;
-                    // @ts-expect-error - Optional dependency, may not be installed
                     const { groq } = await import("@ai-sdk/groq");
                     return {
                         provider: "groq",
