@@ -1,5 +1,4 @@
-import type { LanguageModelUsage } from "ai";
-import { dynamicPricingManager } from "../providers/DynamicPricing";
+import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 
 export interface CostPrediction {
     estimatedCost: number;
@@ -43,9 +42,9 @@ export class CostPredictor {
             };
         }
 
-        // Calculate estimated cost
-        const inputCost = (estimatedInputTokens * pricing.input) / 1000;
-        const outputCost = (estimatedOutputTokens * pricing.output) / 1000;
+        // Calculate estimated cost (pricing is per 1M tokens)
+        const inputCost = (estimatedInputTokens / 1_000_000) * pricing.inputPer1M;
+        const outputCost = (estimatedOutputTokens / 1_000_000) * pricing.outputPer1M;
         const estimatedCost = inputCost + outputCost;
 
         // Determine confidence based on whether we have pricing data
@@ -66,56 +65,6 @@ export class CostPredictor {
             estimatedOutputTokens,
             confidence,
             reasoning,
-        };
-    }
-
-    /**
-     * Estimate cost based on actual usage from a previous similar request
-     * @param provider Provider name
-     * @param model Model name
-     * @param inputText Input text
-     * @param historicalUsage Historical usage data for similar requests
-     * @returns Cost prediction
-     */
-    async predictCostFromHistory(
-        provider: string,
-        model: string,
-        inputText: string,
-        historicalUsage: LanguageModelUsage[]
-    ): Promise<CostPrediction> {
-        if (historicalUsage.length === 0) {
-            return this.predictCost(provider, model, inputText);
-        }
-
-        // Calculate average output tokens from history
-        const avgOutputTokens =
-            historicalUsage.reduce((sum, usage) => sum + (usage.completionTokens || 0), 0) / historicalUsage.length;
-
-        const estimatedInputTokens = Math.ceil(inputText.length / 4);
-        const estimatedOutputTokens = Math.ceil(avgOutputTokens);
-
-        const pricing = await dynamicPricingManager.getPricing(provider, model);
-
-        if (!pricing) {
-            return {
-                estimatedCost: 0,
-                estimatedInputTokens,
-                estimatedOutputTokens,
-                confidence: "low",
-                reasoning: `Could not determine pricing for ${provider}/${model}`,
-            };
-        }
-
-        const inputCost = (estimatedInputTokens * pricing.input) / 1000;
-        const outputCost = (estimatedOutputTokens * pricing.output) / 1000;
-        const estimatedCost = inputCost + outputCost;
-
-        return {
-            estimatedCost,
-            estimatedInputTokens,
-            estimatedOutputTokens,
-            confidence: "high",
-            reasoning: `Estimated cost based on ${historicalUsage.length} similar historical requests (avg ${estimatedOutputTokens} output tokens)`,
         };
     }
 
