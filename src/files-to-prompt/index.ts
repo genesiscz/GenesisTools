@@ -65,17 +65,32 @@ function pathToFlatName(filePath: string, basePath: string): string {
 
 function shouldIgnore(path: string, gitignoreRules: string[]): boolean {
     const baseFile = basename(path);
-    // Check file match
-    if (gitignoreRules.some((rule) => minimatch(baseFile, rule, { dot: true }))) {
+    // Separate negation rules (starting with !) from regular rules
+    const regularRules = gitignoreRules.filter((rule) => !rule.startsWith("!"));
+    const negationRules = gitignoreRules.filter((rule) => rule.startsWith("!")).map((rule) => rule.slice(1));
+
+    // Check if file matches a negation rule first (un-ignore)
+    if (negationRules.some((rule) => minimatch(baseFile, rule, { dot: true }))) {
+        return false; // Explicitly un-ignored
+    }
+
+    // Check file match against regular rules
+    const matchingRule = regularRules.find((rule) => minimatch(baseFile, rule, { dot: true }));
+    if (matchingRule) {
+        logger.debug(`shouldIgnore: ${path} matched rule: ${matchingRule}`);
         return true;
     }
     // Check directory match (ensure it ends with / for directory-specific rules)
     try {
-        if (
-            statSync(path).isDirectory() &&
-            gitignoreRules.some((rule) => minimatch(baseFile + "/", rule, { dot: true }))
-        ) {
-            return true;
+        if (statSync(path).isDirectory()) {
+            // Check negation rules for directories
+            if (negationRules.some((rule) => minimatch(baseFile + "/", rule, { dot: true }))) {
+                return false; // Explicitly un-ignored
+            }
+            // Check regular rules for directories
+            if (regularRules.some((rule) => minimatch(baseFile + "/", rule, { dot: true }))) {
+                return true;
+            }
         }
     } catch (e) {
         // ignore stat errors if path disappears?
@@ -228,6 +243,7 @@ async function processPath(
         // Handle directory case
         if (stats.isDirectory()) {
             // Initial call to processDirectory starts with the initial gitignoreRules
+            logger.debug(`Processing directory ${path}, writer type: ${typeof writer}`);
             await processDirectory(path, gitignoreRules);
         }
     } catch (error: any) {
@@ -245,8 +261,12 @@ async function processPath(
 
         try {
             const entries = await readdir(dirPath, { withFileTypes: true });
+            logger.debug(`Found ${entries.length} entries in ${dirPath}`);
             for (const entry of entries) {
                 const entryPath = join(dirPath, entry.name);
+                logger.debug(
+                    `Processing entry: ${entry.name}, isFile: ${entry.isFile()}, isDirectory: ${entry.isDirectory()}`
+                );
 
                 // Skip hidden files/directories first (respect includeHidden)
                 if (!includeHidden && entry.name.startsWith(".")) {
@@ -255,6 +275,7 @@ async function processPath(
 
                 // Apply gitignore rules if needed
                 if (!ignoreGitignore && shouldIgnore(entryPath, effectiveGitignoreRules)) {
+                    logger.debug(`Skipping ${entryPath} - matched gitignore rule`);
                     continue;
                 }
 
@@ -273,9 +294,16 @@ async function processPath(
                     await processDirectory(entryPath, effectiveGitignoreRules);
                 } else if (entry.isFile()) {
                     const ext = extname(entry.name).slice(1).toLowerCase();
+                    logger.debug(
+                        `File ${entry.name} has extension: ${ext}, extensions filter: ${
+                            extensions.length > 0 ? extensions.join(",") : "none"
+                        }`
+                    );
                     if (extensions.length > 0 && !extensions.includes(ext)) {
+                        logger.debug(`Skipping ${entry.name} - extension ${ext} not in filter`);
                         continue;
                     }
+                    logger.debug(`About to process file: ${entryPath}`);
 
                     if (flatFolder && outputDir && basePath) {
                         // Copy file to flat structure
@@ -532,7 +560,9 @@ async function main(): Promise<void> {
 
         // Process each path
         for (const path of processedPaths) {
+            logger.debug(`Processing path: ${path}, cwd: ${process.cwd()}`);
             let initialGitignoreRules = ignoreGitignore ? [] : await readGitignore(dirname(path));
+            logger.debug(`Initial gitignore rules: ${initialGitignoreRules.length} rules`);
 
             await processPath(
                 path,
