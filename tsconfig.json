@@ -25,10 +25,9 @@
         "noPropertyAccessFromIndexSignature": false,
 
         // Path aliases
-        "baseUrl": ".",
         "paths": {
-            "@app/*": ["src/*"],
-            "@ask/*": ["src/ask/*"]
+            "@app/*": ["./src/*"],
+            "@ask/*": ["./src/ask/*"]
         }
     },
     "include": ["src/**/*", "./test-*.ts"]

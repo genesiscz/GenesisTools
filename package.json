@@ -3,6 +3,10 @@
     "description": "Useful tools that I use for my projects",
     "module": "index.ts",
     "type": "module",
+    "scripts": {
+        "tsgo": "tsgo --noEmit",
+        "tsc": "tsgo --noEmit"
+    },
     "devDependencies": {
         "@types/bun": "latest",
         "@types/object-hash": "^3.0.6",
