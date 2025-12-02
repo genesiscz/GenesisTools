@@ -56,6 +56,10 @@ export interface HoverPosition {
     character: number; // 1-based
 }
 
+export interface HoverOptions {
+    timeoutMs?: number;
+}
+
 // ============================================================================
 // CLI Types
 // ============================================================================
@@ -109,7 +113,7 @@ export interface TSServer {
     /**
      * Get hover information at a specific position
      */
-    getHover(file: string, position: HoverPosition): Promise<HoverResult>;
+    getHover(file: string, position: HoverPosition, options?: HoverOptions): Promise<HoverResult>;
 
     /**
      * Format diagnostics for display

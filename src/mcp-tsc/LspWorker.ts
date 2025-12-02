@@ -2,6 +2,11 @@ import { ChildProcess, spawn } from "child_process";
 import { readFileSync, statSync } from "fs";
 import path from "path";
 import { JSONRPCEndpoint, LspClient } from "ts-lsp-client";
+import logger from "@app/logger";
+
+// ============================================================================
+// Types
+// ============================================================================
 
 export interface TsDiagnostic {
     file: string;
@@ -39,33 +44,349 @@ export interface HoverResult {
     raw?: RawHoverResponse | null;
 }
 
-interface FileState {
-    isOpen: boolean;
-    version: number;
-    content: string;
-    modTime: number;
-    diagnostics: any[];
-    diagnosticsLastUpdated: number | null;
-}
-
 export interface LspWorkerOptions {
     cwd: string;
     debug?: boolean;
 }
 
+interface FileState {
+    isOpen: boolean;
+    version: number;
+    modTime: number;
+    diagnostics: LspDiagnostic[];
+    diagnosticsReceivedAt: number | null;
+}
+
+interface LspDiagnostic {
+    range: { start: { line: number; character: number }; end: { line: number; character: number } };
+    severity: number;
+    code?: string | number;
+    message: string;
+}
+
+// Error types for classification
+export class LspError extends Error {
+    constructor(
+        message: string,
+        public readonly code?: string,
+        public readonly isRetryable: boolean = false
+    ) {
+        super(message);
+        this.name = "LspError";
+    }
+}
+
+export class LspTimeoutError extends LspError {
+    constructor(
+        message: string,
+        public readonly timeoutMs: number,
+        public readonly operation: string
+    ) {
+        super(message, "TIMEOUT", true);
+        this.name = "LspTimeoutError";
+    }
+}
+
+export class LspProtocolError extends LspError {
+    constructor(
+        message: string,
+        public readonly originalError?: Error
+    ) {
+        super(message, "PROTOCOL", true);
+        this.name = "LspProtocolError";
+    }
+}
+
+// ============================================================================
+// Request Queue
+// ============================================================================
+
+interface QueuedRequest<T> {
+    id: number;
+    execute: () => Promise<T>;
+    resolve: (value: T) => void;
+    reject: (error: Error) => void;
+    priority: number; // Lower = higher priority
+    createdAt: number;
+}
+
 /**
- * Manages TypeScript Language Server lifecycle and diagnostics collection.
- * Can be used in both one-off mode (CLI) and persistent mode (MCP server).
+ * Request queue that serializes LSP operations to prevent race conditions.
+ * Supports priority ordering and timeout handling.
+ */
+class RequestQueue {
+    private queue: QueuedRequest<unknown>[] = [];
+    private processing = false;
+    private requestId = 0;
+
+    async enqueue<T>(execute: () => Promise<T>, priority: number = 10): Promise<T> {
+        return new Promise((resolve, reject) => {
+            const request: QueuedRequest<T> = {
+                id: ++this.requestId,
+                execute,
+                resolve: resolve as (value: unknown) => void,
+                reject,
+                priority,
+                createdAt: Date.now(),
+            };
+
+            // Insert in priority order (lower number = higher priority)
+            const insertIndex = this.queue.findIndex((r) => r.priority > priority);
+            if (insertIndex === -1) {
+                this.queue.push(request as QueuedRequest<unknown>);
+            } else {
+                this.queue.splice(insertIndex, 0, request as QueuedRequest<unknown>);
+            }
+
+            this.processNext();
+        });
+    }
+
+    private async processNext(): Promise<void> {
+        if (this.processing || this.queue.length === 0) {
+            return;
+        }
+
+        this.processing = true;
+        const request = this.queue.shift()!;
+
+        try {
+            const result = await request.execute();
+            request.resolve(result);
+        } catch (error) {
+            request.reject(error as Error);
+        } finally {
+            this.processing = false;
+            // Process next request if any
+            if (this.queue.length > 0) {
+                setImmediate(() => this.processNext());
+            }
+        }
+    }
+
+    get length(): number {
+        return this.queue.length;
+    }
+
+    get isProcessing(): boolean {
+        return this.processing;
+    }
+}
+
+// ============================================================================
+// LspWorker
+// ============================================================================
+
+/**
+ * Manages TypeScript Language Server lifecycle and operations.
+ * Features:
+ * - Request queuing for serialized execution
+ * - Configurable timeouts for all operations
+ * - Automatic retry with exponential backoff
+ * - Proper error classification and logging
  */
 export class LspWorker {
     private lspProcess: ChildProcess | null = null;
     private endpoint: JSONRPCEndpoint | null = null;
     private client: LspClient | null = null;
-    private files = new Map<string, FileState>(); // Consolidated file state
-    private diagnosticsBarrier = 0; // Timestamp barrier - ignore diagnostics before this time
+    private files = new Map<string, FileState>();
+    private diagnosticsBarrier = 0;
     private cwd: string;
     private debug: boolean;
     private initialized = false;
+    private requestQueue = new RequestQueue();
+
+    // Configuration
+    private readonly DEFAULT_DIAGNOSTICS_TIMEOUT_MS = 30000;
+    private readonly DEFAULT_HOVER_TIMEOUT_MS = 3000;
+    private readonly MAX_RETRIES = 2;
+    private readonly RETRY_DELAY_MS = 500;
+    private readonly DIAGNOSTICS_STABILITY_MS = 50;
+
+    constructor(options: LspWorkerOptions) {
+        this.cwd = options.cwd;
+        this.debug = options.debug ?? false;
+    }
+
+    // ========================================================================
+    // Logging
+    // ========================================================================
+
+    private log(message: string, level: "info" | "warn" | "error" | "debug" = "info", extra?: object): void {
+        const logContext = {
+            component: "mcp-tsc",
+            subcomponent: "LspWorker",
+            pid: process.pid,
+            cwd: this.cwd,
+            queueLength: this.requestQueue.length,
+            ...extra,
+        };
+
+        if (this.debug || level === "error" || level === "warn") {
+            switch (level) {
+                case "error":
+                    logger.error(logContext, message);
+                    break;
+                case "warn":
+                    logger.warn(logContext, message);
+                    break;
+                case "debug":
+                    logger.debug(logContext, message);
+                    break;
+                default:
+                    logger.info(logContext, message);
+            }
+        }
+    }
+
+    // ========================================================================
+    // Lifecycle
+    // ========================================================================
+
+    async start(): Promise<void> {
+        if (this.initialized && this.isLspAlive()) {
+            this.log("LSP already initialized and alive");
+            return;
+        }
+
+        // If initialized but dead, cleanup first
+        if (this.initialized) {
+            this.log("LSP was initialized but process died, cleaning up...", "warn");
+            await this.cleanup();
+        }
+
+        this.log("Starting LSP server...");
+        const startTime = Date.now();
+
+        return new Promise<void>((resolve, reject) => {
+            this.lspProcess = spawn("typescript-language-server", ["--stdio"], {
+                cwd: this.cwd,
+                stdio: ["pipe", "pipe", "pipe"],
+            });
+
+            if (!this.lspProcess.stdin || !this.lspProcess.stdout) {
+                reject(new LspError("Failed to create LSP process streams"));
+                return;
+            }
+
+            this.endpoint = new JSONRPCEndpoint(this.lspProcess.stdin, this.lspProcess.stdout);
+            this.client = new LspClient(this.endpoint);
+
+            // Handle diagnostics notifications
+            this.endpoint.on("textDocument/publishDiagnostics", (params: { uri: string; diagnostics: LspDiagnostic[] }) => {
+                this.handleDiagnosticsNotification(params);
+            });
+
+            // Handle stderr for debugging
+            this.lspProcess.stderr?.on("data", (data) => {
+                this.log(`LSP stderr: ${data.toString().trim()}`, "warn");
+            });
+
+            // Handle process errors
+            this.lspProcess.on("error", (err) => {
+                this.log(`LSP process error: ${err.message}`, "error", { error: err.message, stack: err.stack });
+                this.initialized = false;
+                reject(new LspError(`Failed to start typescript-language-server: ${err.message}`));
+            });
+
+            // Handle process exit
+            this.lspProcess.on("exit", (code, signal) => {
+                this.log(
+                    `LSP process exited with code ${code}${signal ? ` (signal: ${signal})` : ""}`,
+                    code === 0 ? "info" : "error",
+                    { exitCode: code, signal }
+                );
+                this.initialized = false;
+                this.files.clear();
+            });
+
+            // Initialize the server
+            this.initializeLsp()
+                .then(() => {
+                    this.log(`LSP initialized in ${Date.now() - startTime}ms`);
+                    this.initialized = true;
+                    resolve();
+                })
+                .catch(reject);
+        });
+    }
+
+    private async initializeLsp(): Promise<void> {
+        if (!this.client) throw new LspError("LSP client not created");
+
+        await this.client.initialize({
+            processId: process.pid,
+            rootUri: `file://${this.cwd}`,
+            capabilities: {
+                textDocument: {
+                    publishDiagnostics: { relatedInformation: true },
+                    hover: { contentFormat: ["markdown", "plaintext"] },
+                },
+            },
+        });
+
+        this.client.initialized();
+    }
+
+    private isLspAlive(): boolean {
+        return this.lspProcess !== null && !this.lspProcess.killed && this.lspProcess.exitCode === null;
+    }
+
+    private async cleanup(): Promise<void> {
+        if (this.lspProcess) {
+            try {
+                this.lspProcess.kill();
+            } catch {
+                // Ignore
+            }
+        }
+        this.lspProcess = null;
+        this.endpoint = null;
+        this.client = null;
+        this.initialized = false;
+        this.files.clear();
+    }
+
+    async shutdown(): Promise<void> {
+        if (!this.client || !this.lspProcess) return;
+
+        try {
+            this.log("Shutting down LSP server...");
+            await this.client.shutdown();
+            this.client.exit();
+            this.lspProcess.kill();
+            this.log("LSP server shutdown complete");
+        } catch (error) {
+            this.log(`Error during shutdown: ${error}`, "error");
+        } finally {
+            await this.cleanup();
+        }
+    }
+
+    // ========================================================================
+    // Diagnostics Handling
+    // ========================================================================
+
+    private handleDiagnosticsNotification(params: { uri: string; diagnostics: LspDiagnostic[] }): void {
+        const { uri, diagnostics } = params;
+        const now = Date.now();
+
+        // Ignore stale diagnostics
+        if (now < this.diagnosticsBarrier) {
+            this.log(`Ignoring stale diagnostics for ${path.basename(uri)}`, "debug");
+            return;
+        }
+
+        const state = this.getOrCreateFileState(uri);
+        state.diagnostics = diagnostics;
+        state.diagnosticsReceivedAt = now;
+
+        this.log(`Received ${diagnostics.length} diagnostics for ${path.basename(uri)}`, "debug");
+    }
+
+    // ========================================================================
+    // File State Management
+    // ========================================================================
 
     private getFileState(uri: string): FileState | undefined {
         return this.files.get(uri);
@@ -77,511 +398,372 @@ export class LspWorker {
             state = {
                 isOpen: false,
                 version: 0,
-                content: "",
                 modTime: 0,
                 diagnostics: [],
-                diagnosticsLastUpdated: null,
+                diagnosticsReceivedAt: null,
             };
             this.files.set(uri, state);
         }
         return state;
     }
 
-    constructor(options: LspWorkerOptions) {
-        this.cwd = options.cwd;
-        this.debug = options.debug ?? false;
-    }
+    private async openFile(file: string): Promise<void> {
+        const uri = `file://${file}`;
+        const content = readFileSync(file, "utf-8");
+        const languageId = file.endsWith(".tsx") || file.endsWith(".jsx") ? "typescriptreact" : "typescript";
 
-    private log(message: string): void {
-        if (this.debug) {
-            const now = new Date();
-            const timestamp = `[${now.toLocaleString()}.${String(now.getMilliseconds()).padStart(3, "0")}]`;
-            console.error(`${timestamp} ${message}`);
+        this.client!.didOpen({
+            textDocument: { uri, languageId, version: 1, text: content },
+        });
+
+        const state = this.getOrCreateFileState(uri);
+        state.isOpen = true;
+        state.version = 1;
+        state.diagnostics = [];
+        state.diagnosticsReceivedAt = null;
+
+        try {
+            state.modTime = statSync(file).mtimeMs;
+        } catch {
+            // Ignore
         }
     }
 
-    /**
-     * Start and initialize the LSP server if not already running
-     */
-    async start(): Promise<void> {
-        if (this.initialized) {
-            this.log("LSP already initialized, reusing...");
+    private async updateFile(file: string): Promise<void> {
+        const uri = `file://${file}`;
+        const content = readFileSync(file, "utf-8");
+        const state = this.getFileState(uri);
+
+        if (!state || !state.isOpen) {
+            await this.openFile(file);
             return;
         }
 
-        this.log("Starting LSP mode...");
-        const startTime = Date.now();
+        // Clear old diagnostics
+        state.diagnostics = [];
+        state.diagnosticsReceivedAt = null;
 
-        return new Promise<void>((resolve, reject) => {
-            // Spawn typescript-language-server
-            this.log("Spawning typescript-language-server...");
-            this.lspProcess = spawn("typescript-language-server", ["--stdio"], {
-                cwd: this.cwd,
-                stdio: ["pipe", "pipe", "pipe"],
-            });
-
-            if (!this.lspProcess.stdin || !this.lspProcess.stdout) {
-                reject(new Error("Failed to create LSP process streams"));
-                return;
-            }
-
-            this.log(`Server spawned (cwd: ${this.cwd})`);
-
-            // Create LSP client
-            this.endpoint = new JSONRPCEndpoint(this.lspProcess.stdin, this.lspProcess.stdout);
-            this.client = new LspClient(this.endpoint);
-
-            // Listen for diagnostic notifications
-            this.endpoint.on("textDocument/publishDiagnostics", (params: any) => {
-                const uri = params.uri;
-                const diagnostics = params.diagnostics || [];
-                const filename = uri.split("/").pop() || uri;
-                const now = Date.now();
-
-                // Ignore diagnostics that arrive before the barrier (stale from close operations)
-                if (now < this.diagnosticsBarrier) {
-                    this.log(
-                        `Ignoring stale diagnostics for ${filename}: ${diagnostics.length} items (before barrier)`
-                    );
-                    return;
-                }
-
-                this.log(`Received diagnostics for ${filename}: ${diagnostics.length} items`);
-                const state = this.getOrCreateFileState(uri);
-                state.diagnostics = diagnostics;
-                state.diagnosticsLastUpdated = now;
-            });
-
-            this.lspProcess.stderr?.on("data", (data) => {
-                this.log(`LSP stderr: ${data.toString().trim()}`);
-            });
-
-            this.lspProcess.on("error", (err) => {
-                reject(new Error(`Failed to start typescript-language-server: ${err.message}`));
-            });
-
-            // Initialize the server
-            (async () => {
-                try {
-                    this.log("Sending initialize request...");
-                    await this.client!.initialize({
-                        processId: process.pid,
-                        rootUri: `file://${this.cwd}`,
-                        capabilities: {
-                            textDocument: {
-                                publishDiagnostics: { relatedInformation: true },
-                            },
-                        },
-                    });
-                    this.log(`Initialized (${Date.now() - startTime}ms)`);
-
-                    this.client!.initialized();
-                    this.initialized = true;
-                    resolve();
-                } catch (error) {
-                    reject(error);
-                }
-            })();
+        // Send didChange notification
+        const newVersion = state.version + 1;
+        this.endpoint!.notify("textDocument/didChange", {
+            textDocument: { uri, version: newVersion },
+            contentChanges: [{ text: content }],
         });
+        state.version = newVersion;
+
+        try {
+            state.modTime = statSync(file).mtimeMs;
+        } catch {
+            // Ignore
+        }
     }
 
-    /**
-     * Get diagnostics for the specified files
-     */
+    private fileNeedsUpdate(file: string): boolean {
+        const uri = `file://${file}`;
+        const state = this.getFileState(uri);
+
+        if (!state || !state.isOpen) return true;
+
+        try {
+            const currentModTime = statSync(file).mtimeMs;
+            return state.modTime === 0 || currentModTime > state.modTime;
+        } catch {
+            return true;
+        }
+    }
+
+    // ========================================================================
+    // Public API: getDiagnostics
+    // ========================================================================
+
     async getDiagnostics(
         targetFiles: string[],
         options: { showWarnings?: boolean; maxWaitMs?: number } = {}
     ): Promise<DiagnosticsResult> {
+        const maxWait = options.maxWaitMs ?? this.DEFAULT_DIAGNOSTICS_TIMEOUT_MS;
+
+        // Enqueue with normal priority
+        return this.requestQueue.enqueue(
+            () => this.getDiagnosticsWithRetry(targetFiles, options, maxWait),
+            10
+        );
+    }
+
+    private async getDiagnosticsWithRetry(
+        targetFiles: string[],
+        options: { showWarnings?: boolean; maxWaitMs?: number },
+        maxWait: number,
+        attempt: number = 1
+    ): Promise<DiagnosticsResult> {
+        try {
+            return await this.getDiagnosticsInternal(targetFiles, options, maxWait);
+        } catch (error) {
+            const isRetryable = error instanceof LspError && error.isRetryable;
+            const shouldRetry = isRetryable && attempt < this.MAX_RETRIES;
+
+            this.log(
+                `getDiagnostics failed (attempt ${attempt}/${this.MAX_RETRIES}): ${error}`,
+                "error",
+                {
+                    error: error instanceof Error ? error.message : String(error),
+                    isRetryable,
+                    willRetry: shouldRetry,
+                }
+            );
+
+            if (shouldRetry) {
+                // Exponential backoff
+                const delay = this.RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+                this.log(`Retrying in ${delay}ms...`);
+                await new Promise((r) => setTimeout(r, delay));
+
+                // If LSP died, restart it
+                if (!this.isLspAlive()) {
+                    this.log("LSP died, restarting...", "warn");
+                    await this.start();
+                }
+
+                return this.getDiagnosticsWithRetry(targetFiles, options, maxWait, attempt + 1);
+            }
+
+            throw error;
+        }
+    }
+
+    private async getDiagnosticsInternal(
+        targetFiles: string[],
+        options: { showWarnings?: boolean; maxWaitMs?: number },
+        maxWait: number
+    ): Promise<DiagnosticsResult> {
+        // Ensure LSP is running
+        if (!this.isLspAlive()) {
+            await this.start();
+        }
+
         if (!this.initialized || !this.client) {
-            throw new Error("LSP not initialized. Call start() first.");
+            throw new LspError("LSP not initialized");
         }
 
         const showWarnings = options.showWarnings ?? false;
-        const maxWait = options.maxWaitMs ?? 30000;
 
-        // Log which files are being checked
-        const fileList = targetFiles.map((f) => `- ${path.relative(this.cwd, f) || f}`).join("\n");
-        this.log(`Checking ${targetFiles.length} file(s):\n${fileList}`);
-
-        // Check which files need updates (new files or changed files)
-        // Use file modification times for faster change detection without reading content
-        const filesToOpen: string[] = [];
-        const filesToUpdate: string[] = [];
-
+        // Determine which files need opening/updating
+        const filesToProcess: string[] = [];
         for (const file of targetFiles) {
-            const uri = `file://${file}`;
-            const state = this.getFileState(uri);
-
-            if (!state || !state.isOpen) {
-                // File not open - needs to be opened
-                filesToOpen.push(file);
-            } else {
-                // File is open - check if it changed using modification time
-                try {
-                    const stats = statSync(file);
-                    const currentModTime = stats.mtimeMs;
-
-                    if (state.modTime === 0 || currentModTime > state.modTime) {
-                        // File changed on disk - needs update
-                        filesToUpdate.push(file);
-                    }
-                } catch (error) {
-                    // File might not exist anymore or stat failed - treat as changed
-                    filesToUpdate.push(file);
-                }
+            if (this.fileNeedsUpdate(file)) {
+                filesToProcess.push(file);
             }
         }
 
-        if (filesToOpen.length > 0 || filesToUpdate.length > 0) {
-            const openStart = Date.now();
-
-            // Set barrier before opening/updating to ignore any stale diagnostics
+        // Process files that need updating
+        if (filesToProcess.length > 0) {
+            this.log(`Processing ${filesToProcess.length} file(s) for diagnostics`);
             this.diagnosticsBarrier = Date.now();
 
-            // Open new files
-            if (filesToOpen.length > 0) {
-                const openList = filesToOpen.map((f) => `- ${path.relative(this.cwd, f) || f}`).join("\n");
-                this.log(`Opening ${filesToOpen.length} new file(s):\n${openList}`);
-                for (const file of filesToOpen) {
-                    const uri = `file://${file}`;
-                    const content = readFileSync(file, "utf-8");
-                    const languageId =
-                        file.endsWith(".tsx") || file.endsWith(".jsx") ? "typescriptreact" : "typescript";
-
-                    this.client.didOpen({
-                        textDocument: {
-                            uri,
-                            languageId,
-                            version: 1,
-                            text: content,
-                        },
-                    });
-
-                    const state = this.getOrCreateFileState(uri);
-                    state.isOpen = true;
-                    state.version = 1;
-                    state.content = content;
-
-                    // Store modification time
-                    try {
-                        const stats = statSync(file);
-                        state.modTime = stats.mtimeMs;
-                    } catch {
-                        // Ignore stat errors
-                    }
-
-                    // Clear diagnostics for newly opened files
-                    state.diagnostics = [];
-                    state.diagnosticsLastUpdated = null;
-                }
-            }
-
-            // Update changed files
-            if (filesToUpdate.length > 0) {
-                const updateList = filesToUpdate.map((f) => `- ${path.relative(this.cwd, f) || f}`).join("\n");
-                this.log(`Updating ${filesToUpdate.length} changed file(s):\n${updateList}`);
-                for (const file of filesToUpdate) {
-                    const uri = `file://${file}`;
-                    const content = readFileSync(file, "utf-8");
-                    // State should exist since file was in filesToUpdate (was checked as open)
-                    const state = this.getFileState(uri);
-
-                    // Safety check: if state doesn't exist or file isn't actually open, open it instead
-                    if (!state || !state.isOpen) {
-                        const languageId =
-                            file.endsWith(".tsx") || file.endsWith(".jsx") ? "typescriptreact" : "typescript";
-
-                        this.client.didOpen({
-                            textDocument: {
-                                uri,
-                                languageId,
-                                version: 1,
-                                text: content,
-                            },
-                        });
-
-                        const fileState = this.getOrCreateFileState(uri);
-                        fileState.isOpen = true;
-                        fileState.version = 1;
-                        fileState.content = content;
-
-                        // Update modification time
-                        try {
-                            const stats = statSync(file);
-                            fileState.modTime = stats.mtimeMs;
-                        } catch {
-                            // Ignore stat errors
-                        }
-
-                        // Clear diagnostics for newly opened files
-                        fileState.diagnostics = [];
-                        fileState.diagnosticsLastUpdated = null;
-                    } else {
-                        // File is open, send didChange notification
-                        const newVersion = state.version + 1;
-                        this.endpoint!.notify("textDocument/didChange", {
-                            textDocument: {
-                                uri,
-                                version: newVersion,
-                            },
-                            contentChanges: [{ text: content }],
-                        });
-                        state.version = newVersion;
-                        state.content = content;
-
-                        // Update modification time
-                        try {
-                            const stats = statSync(file);
-                            state.modTime = stats.mtimeMs;
-                        } catch {
-                            // Ignore stat errors
-                        }
-
-                        // Clear diagnostics for updated files
-                        state.diagnostics = [];
-                        state.diagnosticsLastUpdated = null;
-                    }
-                }
-            }
-
-            if (filesToOpen.length > 0) {
-                const openedList = filesToOpen.map((f) => `- ${path.relative(this.cwd, f) || f}`).join("\n");
-                this.log(`Files opened:\n${openedList}`);
-            }
-            if (filesToUpdate.length > 0) {
-                const updatedList = filesToUpdate.map((f) => `- ${path.relative(this.cwd, f) || f}`).join("\n");
-                this.log(`Files updated:\n${updatedList}`);
-            }
-            this.log(`Files opened/updated (${Date.now() - openStart}ms)`);
-        } else {
-            this.log(`All ${targetFiles.length} file(s) already open with current content`);
-        }
-
-        const filesToWaitFor = [...filesToOpen, ...filesToUpdate];
-
-        // Wait for diagnostics if we opened or updated files
-        if (filesToWaitFor.length > 0) {
-            this.log("Waiting for diagnostics...");
-            const waitStart = Date.now();
-            const stabilityWindowMs = 50;
-            const minWaitMs = 50;
-
-            while (Date.now() - waitStart < maxWait) {
-                const now = Date.now();
-
-                // Check if all files have diagnostics
-                const allFilesHaveDiagnostics = filesToWaitFor.every((file) => {
-                    const uri = `file://${file}`;
-                    const state = this.getFileState(uri);
-                    return (
-                        state !== undefined && state.diagnostics.length >= 0 && state.diagnosticsLastUpdated !== null
-                    );
-                });
-
-                if (!allFilesHaveDiagnostics) {
-                    await new Promise((r) => setTimeout(r, 100));
-                    continue;
-                }
-
-                // Don't exit early if we haven't waited the minimum time
-                if (now - waitStart < minWaitMs) {
-                    await new Promise((r) => setTimeout(r, 100));
-                    continue;
-                }
-
-                // Check if diagnostics have stabilized
-                const allDiagnosticsStable = filesToWaitFor.every((file) => {
-                    const uri = `file://${file}`;
-                    const state = this.getFileState(uri);
-                    return (
-                        state !== undefined &&
-                        state.diagnosticsLastUpdated !== null &&
-                        now - state.diagnosticsLastUpdated >= stabilityWindowMs
-                    );
-                });
-
-                if (allDiagnosticsStable) {
-                    // Collect and format diagnostics for logging
-                    const diagnosticsLines: string[] = [];
-                    let totalErrors = 0;
-                    let totalWarnings = 0;
-
-                    for (const file of filesToWaitFor) {
-                        const uri = `file://${file}`;
-                        const state = this.getFileState(uri);
-                        const diags = state?.diagnostics || [];
-                        for (const d of diags) {
-                            // Skip info/hint diagnostics
-                            if (d.severity > 2) continue;
-
-                            // Skip warnings unless showWarnings is true
-                            if (d.severity === 2 && !showWarnings) continue;
-
-                            const relativeFile = path.relative(this.cwd, file) || file;
-                            const severityText = d.severity === 1 ? "error" : "warning";
-                            const line = d.range.start.line + 1;
-                            const character = d.range.start.character + 1;
-                            const code = d.code || "";
-                            diagnosticsLines.push(
-                                `${relativeFile}:${line}:${character} - ${severityText} TS${code}: ${d.message}`
-                            );
-
-                            if (d.severity === 1) totalErrors++;
-                            else if (d.severity === 2) totalWarnings++;
-                        }
-                    }
-
-                    const statusSummary =
-                        totalErrors === 0 && totalWarnings === 0
-                            ? " - all files OK (no errors or warnings)"
-                            : ` - ${totalErrors} error(s), ${totalWarnings} warning(s)`;
-
-                    const diagnosticsOutput =
-                        diagnosticsLines.length > 0
-                            ? `\n${diagnosticsLines.map((line) => `  ${line}`).join("\n")}`
-                            : "";
-
-                    this.log(
-                        `All diagnostics received and stable (${
-                            Date.now() - waitStart
-                        }ms)${statusSummary}${diagnosticsOutput}`
-                    );
-                    break;
-                }
-
-                await new Promise((r) => setTimeout(r, 100));
-            }
-
-            if (Date.now() - waitStart >= maxWait) {
-                // Check which files are missing diagnostics
-                const missingFiles: string[] = [];
-                for (const file of filesToWaitFor) {
-                    const uri = `file://${file}`;
-                    const state = this.getFileState(uri);
-                    if (!state || state.diagnosticsLastUpdated === null) {
-                        missingFiles.push(file);
-                    }
-                }
-                if (missingFiles.length > 0) {
-                    const missingList = missingFiles.map((f) => `- ${path.relative(this.cwd, f) || f}`).join("\n");
-                    this.log(
-                        `Timeout waiting for diagnostics (${maxWait}ms) - missing diagnostics for:\n${missingList}`
-                    );
-                    // Throw error with timeout information for retry logic
-                    const error: any = new Error(`Timeout waiting for diagnostics (${maxWait}ms)`);
-                    error.isTimeout = true;
-                    error.missingFiles = missingFiles;
-                    throw error;
+            for (const file of filesToProcess) {
+                const uri = `file://${file}`;
+                const state = this.getFileState(uri);
+                if (!state || !state.isOpen) {
+                    await this.openFile(file);
                 } else {
-                    this.log(`Timeout waiting for diagnostics (${maxWait}ms)`);
+                    await this.updateFile(file);
                 }
             }
-        } else {
-            this.log("Using cached diagnostics from already-open files with current content");
         }
 
-        // Process diagnostics
-        let errors = 0;
-        let warnings = 0;
-        const allDiagnostics: TsDiagnostic[] = [];
-
-        for (const file of targetFiles) {
+        // Collect files missing diagnostics
+        const filesMissingDiagnostics = targetFiles.filter((file) => {
             const uri = `file://${file}`;
             const state = this.getFileState(uri);
-            const diagnostics = state?.diagnostics || [];
+            return state && state.isOpen && state.diagnosticsReceivedAt === null;
+        });
 
-            for (const d of diagnostics) {
-                allDiagnostics.push({
+        const filesToWaitFor = [...new Set([...filesToProcess, ...filesMissingDiagnostics])];
+
+        // Wait for diagnostics if needed
+        if (filesToWaitFor.length > 0) {
+            await this.waitForDiagnostics(filesToWaitFor, maxWait);
+        }
+
+        // Collect and return diagnostics
+        return this.collectDiagnostics(targetFiles, showWarnings);
+    }
+
+    private async waitForDiagnostics(files: string[], maxWaitMs: number): Promise<void> {
+        const startTime = Date.now();
+        const checkInterval = 50;
+
+        while (Date.now() - startTime < maxWaitMs) {
+            const allReady = files.every((file) => {
+                const uri = `file://${file}`;
+                const state = this.getFileState(uri);
+                return state?.diagnosticsReceivedAt !== null;
+            });
+
+            if (allReady) {
+                // Wait for stability
+                const allStable = files.every((file) => {
+                    const uri = `file://${file}`;
+                    const state = this.getFileState(uri);
+                    const receivedAt = state?.diagnosticsReceivedAt;
+                    return receivedAt !== null && receivedAt !== undefined && Date.now() - receivedAt >= this.DIAGNOSTICS_STABILITY_MS;
+                });
+
+                if (allStable) {
+                    this.log(`Diagnostics stable after ${Date.now() - startTime}ms`);
+                    return;
+                }
+            }
+
+            await new Promise((r) => setTimeout(r, checkInterval));
+        }
+
+        // Timeout - identify missing files
+        const missingFiles = files.filter((file) => {
+            const uri = `file://${file}`;
+            const state = this.getFileState(uri);
+            return state?.diagnosticsReceivedAt === null;
+        });
+
+        if (missingFiles.length > 0) {
+            // Close timed-out files so they can be reopened fresh
+            for (const file of missingFiles) {
+                const uri = `file://${file}`;
+                const state = this.getFileState(uri);
+                if (state?.isOpen) {
+                    try {
+                        this.client?.didClose({ textDocument: { uri } });
+                    } catch {
+                        // Ignore
+                    }
+                    state.isOpen = false;
+                    state.diagnostics = [];
+                    state.diagnosticsReceivedAt = null;
+                }
+            }
+
+            const error = new LspTimeoutError(
+                `Timeout waiting for diagnostics (${maxWaitMs}ms) for ${missingFiles.length} file(s)`,
+                maxWaitMs,
+                "getDiagnostics"
+            );
+            // @ts-ignore - Add extra info for error handling
+            error.missingFiles = missingFiles;
+            // @ts-ignore
+            error.isTimeout = true;
+            throw error;
+        }
+    }
+
+    private collectDiagnostics(files: string[], _showWarnings: boolean): DiagnosticsResult {
+        let errors = 0;
+        let warnings = 0;
+        const diagnostics: TsDiagnostic[] = [];
+
+        for (const file of files) {
+            const uri = `file://${file}`;
+            const state = this.getFileState(uri);
+            const fileDiagnostics = state?.diagnostics || [];
+
+            for (const d of fileDiagnostics) {
+                // Skip info/hint (severity > 2)
+                if (d.severity > 2) continue;
+
+                const diagnostic: TsDiagnostic = {
                     file,
                     line: d.range.start.line + 1,
                     character: d.range.start.character + 1,
                     severity: d.severity || 1,
                     code: d.code || "",
                     message: d.message,
-                });
+                };
 
-                if (d.severity === 1) {
-                    errors++;
-                } else if (d.severity === 2) {
-                    warnings++;
-                }
+                diagnostics.push(diagnostic);
+
+                if (d.severity === 1) errors++;
+                else if (d.severity === 2) warnings++;
             }
         }
 
-        // Log final summary if no files were opened/updated (using cached diagnostics)
-        if (filesToWaitFor.length === 0) {
-            const statusSummary =
-                errors === 0 && warnings === 0
-                    ? " - all files OK (no errors or warnings)"
-                    : ` - ${errors} error(s), ${warnings} warning(s)`;
-            this.log(`Diagnostics check complete${statusSummary}`);
-        }
-
-        // Sort diagnostics
-        allDiagnostics.sort((a, b) => {
+        // Sort by file, then line, then character
+        diagnostics.sort((a, b) => {
             if (a.file !== b.file) return a.file.localeCompare(b.file);
             if (a.line !== b.line) return a.line - b.line;
             return a.character - b.character;
         });
 
-        return {
-            errors,
-            warnings,
-            diagnostics: allDiagnostics,
-        };
+        return { errors, warnings, diagnostics };
     }
 
-    /**
-     * Close files in the LSP to free memory (optional for persistent mode)
-     */
-    async closeFiles(files: string[]): Promise<void> {
-        if (!this.client) return;
+    // ========================================================================
+    // Public API: getHover
+    // ========================================================================
 
-        for (const file of files) {
-            const uri = `file://${file}`;
-            this.client.didClose({
-                textDocument: { uri },
-            });
-            const state = this.getFileState(uri);
-            if (state) {
-                state.isOpen = false;
-                state.diagnostics = [];
-                state.diagnosticsLastUpdated = null;
-            }
-        }
+    async getHover(
+        file: string,
+        position: { line: number; character: number },
+        options: { timeoutMs?: number } = {}
+    ): Promise<HoverResult> {
+        const timeoutMs = options.timeoutMs ?? this.DEFAULT_HOVER_TIMEOUT_MS;
+
+        // Enqueue with high priority (hover should be fast)
+        return this.requestQueue.enqueue(
+            () => this.getHoverWithRetry(file, position, timeoutMs),
+            5
+        );
     }
 
-    /**
-     * Shutdown and cleanup the LSP server
-     */
-    async shutdown(): Promise<void> {
-        if (!this.client || !this.lspProcess) {
-            return;
-        }
-
+    private async getHoverWithRetry(
+        file: string,
+        position: { line: number; character: number },
+        timeoutMs: number,
+        attempt: number = 1
+    ): Promise<HoverResult> {
         try {
-            this.log("Shutting down LSP server...");
-            await this.client.shutdown();
-            this.client.exit();
-            this.lspProcess.kill();
-            this.log("LSP server shutdown complete");
+            return await this.getHoverInternal(file, position, timeoutMs);
         } catch (error) {
-            this.log(`Error during shutdown: ${error}`);
-        } finally {
-            this.lspProcess = null;
-            this.endpoint = null;
-            this.client = null;
-            this.initialized = false;
-            this.files.clear();
+            const isRetryable = error instanceof LspError && error.isRetryable;
+            const shouldRetry = isRetryable && attempt < this.MAX_RETRIES;
+
+            this.log(
+                `getHover failed (attempt ${attempt}/${this.MAX_RETRIES}): ${error}`,
+                "error",
+                {
+                    error: error instanceof Error ? error.message : String(error),
+                    isRetryable,
+                    willRetry: shouldRetry,
+                    file: path.basename(file),
+                    position,
+                }
+            );
+
+            if (shouldRetry) {
+                const delay = this.RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+                this.log(`Retrying hover in ${delay}ms...`);
+                await new Promise((r) => setTimeout(r, delay));
+
+                if (!this.isLspAlive()) {
+                    this.log("LSP died, restarting...", "warn");
+                    await this.start();
+                }
+
+                return this.getHoverWithRetry(file, position, timeoutMs, attempt + 1);
+            }
+
+            throw error;
         }
     }
 
-    /**
-     * Get hover information at a specific position in a file
-     */
-    async getHover(file: string, position: { line: number; character: number }): Promise<HoverResult> {
+    private async getHoverInternal(
+        file: string,
+        position: { line: number; character: number },
+        timeoutMs: number
+    ): Promise<HoverResult> {
+        if (!this.isLspAlive()) {
+            await this.start();
+        }
+
         if (!this.initialized || !this.endpoint) {
-            throw new Error("LSP not initialized. Call start() first.");
+            throw new LspError("LSP not initialized");
         }
 
         const uri = `file://${file}`;
@@ -589,85 +771,109 @@ export class LspWorker {
         // Ensure file is open
         const state = this.getFileState(uri);
         if (!state || !state.isOpen) {
-            const content = readFileSync(file, "utf-8");
-            const languageId = file.endsWith(".tsx") || file.endsWith(".jsx") ? "typescriptreact" : "typescript";
-
-            this.client!.didOpen({
-                textDocument: {
-                    uri,
-                    languageId,
-                    version: 1,
-                    text: content,
-                },
-            });
-
-            const fileState = this.getOrCreateFileState(uri);
-            fileState.isOpen = true;
-            fileState.version = 1;
-            fileState.content = content;
-
-            // Store modification time
-            try {
-                const stats = statSync(file);
-                fileState.modTime = stats.mtimeMs;
-            } catch {
-                // Ignore stat errors
-            }
-
-            // Wait a bit for LSP to process the file
+            await this.openFile(file);
+            // Give LSP a moment to process
+            await new Promise((r) => setTimeout(r, 100));
+        } else if (this.fileNeedsUpdate(file)) {
+            await this.updateFile(file);
             await new Promise((r) => setTimeout(r, 100));
         }
 
-        this.log(`Getting hover info for ${file} at line ${position.line}, character ${position.character}`);
+        this.log(`Getting hover for ${path.basename(file)} at ${position.line}:${position.character}`, "debug");
 
+        // Create timeout promise
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            setTimeout(() => {
+                reject(new LspTimeoutError(`Hover timeout after ${timeoutMs}ms`, timeoutMs, "getHover"));
+            }, timeoutMs);
+        });
+
+        // Send hover request with timeout
         try {
-            const response = (await this.endpoint.send("textDocument/hover", {
-                textDocument: { uri },
-                position: {
-                    line: position.line - 1, // Convert from 1-based to 0-based
-                    character: position.character - 1, // Convert from 1-based to 0-based
-                },
-            })) as RawHoverResponse | null;
+            const response = await Promise.race([
+                this.endpoint.send("textDocument/hover", {
+                    textDocument: { uri },
+                    position: {
+                        line: position.line - 1,
+                        character: position.character - 1,
+                    },
+                }) as Promise<RawHoverResponse | null>,
+                timeoutPromise,
+            ]);
 
             if (!response) {
                 return { contents: "" };
             }
 
-            this.log(`Raw hover response: ${JSON.stringify(response, null, 2)}`);
-
-            let contents = "";
-            if (typeof response.contents === "string") {
-                contents = response.contents;
-            } else if (Array.isArray(response.contents)) {
-                contents = response.contents
-                    .map((item) => (typeof item === "string" ? item : item.value || ""))
-                    .join("\n");
-            } else if (response.contents && typeof response.contents === "object" && "value" in response.contents) {
-                contents = response.contents.value;
+            return this.parseHoverResponse(response);
+        } catch (error) {
+            // Classify error
+            if (error instanceof LspTimeoutError) {
+                throw error;
             }
 
-            return {
-                contents,
-                range: response.range,
-                raw: response, // Include full raw response for deeper inspection
-            };
-        } catch (error) {
-            this.log(`Error getting hover info: ${error}`);
-            throw error;
+            // Check for protocol errors
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            if (
+                errorMessage.includes("protocol") ||
+                errorMessage.includes("closed") ||
+                errorMessage.includes("socket")
+            ) {
+                throw new LspProtocolError(`LSP protocol error: ${errorMessage}`, error as Error);
+            }
+
+            throw new LspError(`Hover failed: ${errorMessage}`);
         }
     }
 
-    /**
-     * Format diagnostics for display
-     */
+    private parseHoverResponse(response: RawHoverResponse): HoverResult {
+        let contents = "";
+
+        if (typeof response.contents === "string") {
+            contents = response.contents;
+        } else if (Array.isArray(response.contents)) {
+            contents = response.contents
+                .map((item) => (typeof item === "string" ? item : item.value || ""))
+                .join("\n");
+        } else if (response.contents && typeof response.contents === "object" && "value" in response.contents) {
+            contents = response.contents.value;
+        }
+
+        return {
+            contents,
+            range: response.range,
+            raw: response,
+        };
+    }
+
+    // ========================================================================
+    // Utility Methods
+    // ========================================================================
+
+    async closeFiles(files: string[]): Promise<void> {
+        if (!this.client) return;
+
+        for (const file of files) {
+            const uri = `file://${file}`;
+            try {
+                this.client.didClose({ textDocument: { uri } });
+            } catch {
+                // Ignore
+            }
+            const state = this.getFileState(uri);
+            if (state) {
+                state.isOpen = false;
+                state.diagnostics = [];
+                state.diagnosticsReceivedAt = null;
+            }
+        }
+    }
+
     formatDiagnostics(result: DiagnosticsResult, showWarnings: boolean): string[] {
         const lines: string[] = [];
 
         for (const d of result.diagnostics) {
-            // Skip info/hint diagnostics
             if (d.severity > 2) continue;
-
-            // Skip warnings unless requested
             if (d.severity === 2 && !showWarnings) continue;
 
             const relativeFile = path.relative(this.cwd, d.file) || d.file;
@@ -676,5 +882,13 @@ export class LspWorker {
         }
 
         return lines;
+    }
+
+    // For testing/debugging
+    getQueueStats(): { length: number; isProcessing: boolean } {
+        return {
+            length: this.requestQueue.length,
+            isProcessing: this.requestQueue.isProcessing,
+        };
     }
 }

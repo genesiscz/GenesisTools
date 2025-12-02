@@ -20,6 +20,7 @@ export interface GetTsHoverArgs {
     character?: number;
     text?: string;
     includeRaw?: boolean;
+    timeout?: number; // Timeout in seconds (default: 3)
 }
 
 /**
@@ -33,3 +34,12 @@ export interface GetTsHoverResponse {
     hover: string;
     raw?: unknown;
 }
+
+
+
+
+
+
+
+
+

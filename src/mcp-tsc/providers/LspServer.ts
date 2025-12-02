@@ -5,6 +5,7 @@ import type {
     DiagnosticsOptions,
     HoverResult,
     HoverPosition,
+    HoverOptions,
 } from "@app/mcp-tsc/core/interfaces.js";
 
 export interface LspServerOptions {
@@ -19,10 +20,8 @@ export interface LspServerOptions {
  */
 export class LspServer implements TSServer {
     private worker: LspWorker;
-    private cwd: string;
 
     constructor(options: LspServerOptions) {
-        this.cwd = options.cwd;
         this.worker = new LspWorker(options);
     }
 
@@ -34,8 +33,8 @@ export class LspServer implements TSServer {
         return await this.worker.getDiagnostics(files, options);
     }
 
-    async getHover(file: string, position: HoverPosition): Promise<HoverResult> {
-        return await this.worker.getHover(file, position);
+    async getHover(file: string, position: HoverPosition, options?: HoverOptions): Promise<HoverResult> {
+        return await this.worker.getHover(file, position, options);
     }
 
     formatDiagnostics(result: DiagnosticsResult, showWarnings: boolean): string[] {
@@ -44,5 +43,12 @@ export class LspServer implements TSServer {
 
     async shutdown(): Promise<void> {
         await this.worker.shutdown();
+    }
+
+    /**
+     * Get queue statistics (for debugging/monitoring)
+     */
+    getQueueStats(): { length: number; isProcessing: boolean } {
+        return this.worker.getQueueStats();
     }
 }

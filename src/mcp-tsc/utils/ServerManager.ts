@@ -3,6 +3,7 @@ import path from "path";
 import { LspServer } from "@app/mcp-tsc/providers/LspServer.js";
 import type { ServerInfo } from "@app/mcp-tsc/core/interfaces.js";
 import { SERVERS_DIR, ensureServersDir, getServerInfoPath } from "@app/mcp-tsc/utils/helpers.js";
+import logger from "@app/logger";
 
 // Global map to store persistent LSP servers
 const persistentServers = new Map<string, LspServer>();
@@ -11,15 +12,170 @@ const persistentServers = new Map<string, LspServer>();
  * Get or create a persistent LSP server for a directory
  */
 export async function getPersistentServer(cwd: string, debug: boolean = false): Promise<LspServer> {
+    logger.debug(
+        {
+            component: "mcp-tsc",
+            subcomponent: "ServerManager",
+            pid: process.pid,
+            cwd,
+            debug,
+            mapSize: persistentServers.size,
+            mapKeys: Array.from(persistentServers.keys()),
+        },
+        "getPersistentServer() called"
+    );
+
     const existing = persistentServers.get(cwd);
     if (existing) {
+        logger.debug(
+            {
+                component: "mcp-tsc",
+                subcomponent: "ServerManager",
+                pid: process.pid,
+                cwd,
+            },
+            "Found existing server in memory, reusing it"
+        );
+
+        // Check if server info file exists and matches current PID
+        const infoPath = getServerInfoPath(cwd);
+        if (existsSync(infoPath)) {
+            try {
+                const info: ServerInfo = JSON.parse(readFileSync(infoPath, "utf-8"));
+                logger.debug(
+                    {
+                        component: "mcp-tsc",
+                        subcomponent: "ServerManager",
+                        pid: process.pid,
+                        infoPid: info.pid,
+                        infoStarted: new Date(info.started).toISOString(),
+                        cwd,
+                    },
+                    "Server info file exists"
+                );
+
+                if (info.pid !== process.pid) {
+                    logger.warn(
+                        {
+                            component: "mcp-tsc",
+                            subcomponent: "ServerManager",
+                            pid: process.pid,
+                            infoPid: info.pid,
+                            cwd,
+                        },
+                        "PID mismatch - server may have been created by different process"
+                    );
+                }
+            } catch (error) {
+                logger.warn(
+                    {
+                        component: "mcp-tsc",
+                        subcomponent: "ServerManager",
+                        pid: process.pid,
+                        cwd,
+                        error: error instanceof Error ? error.message : String(error),
+                    },
+                    "Failed to read server info file"
+                );
+            }
+        } else {
+            logger.warn(
+                {
+                    component: "mcp-tsc",
+                    subcomponent: "ServerManager",
+                    pid: process.pid,
+                    cwd,
+                },
+                "Server exists in memory but info file missing"
+            );
+        }
+
         return existing;
     }
 
+    logger.info(
+        {
+            component: "mcp-tsc",
+            subcomponent: "ServerManager",
+            pid: process.pid,
+            cwd,
+        },
+        "No existing server found, creating new server"
+    );
+
+    // Check if server info file exists from previous process
+    const infoPath = getServerInfoPath(cwd);
+    if (existsSync(infoPath)) {
+        try {
+            const info: ServerInfo = JSON.parse(readFileSync(infoPath, "utf-8"));
+            logger.warn(
+                {
+                    component: "mcp-tsc",
+                    subcomponent: "ServerManager",
+                    pid: process.pid,
+                    stalePid: info.pid,
+                    staleStarted: new Date(info.started).toISOString(),
+                    cwd,
+                },
+                "Found stale server info file - possible process restart"
+            );
+        } catch (error) {
+            logger.warn(
+                {
+                    component: "mcp-tsc",
+                    subcomponent: "ServerManager",
+                    pid: process.pid,
+                    cwd,
+                    error: error instanceof Error ? error.message : String(error),
+                },
+                "Failed to read stale server info file"
+            );
+        }
+    }
+
     // Create new server
+    logger.debug(
+        {
+            component: "mcp-tsc",
+            subcomponent: "ServerManager",
+            pid: process.pid,
+            cwd,
+        },
+        "Creating new LspServer instance"
+    );
     const server = new LspServer({ cwd, debug });
+
+    logger.debug(
+        {
+            component: "mcp-tsc",
+            subcomponent: "ServerManager",
+            pid: process.pid,
+            cwd,
+        },
+        "Initializing LspServer"
+    );
     await server.initialize();
+    logger.info(
+        {
+            component: "mcp-tsc",
+            subcomponent: "ServerManager",
+            pid: process.pid,
+            cwd,
+        },
+        "LspServer initialized successfully"
+    );
+
     persistentServers.set(cwd, server);
+    logger.debug(
+        {
+            component: "mcp-tsc",
+            subcomponent: "ServerManager",
+            pid: process.pid,
+            cwd,
+            newMapSize: persistentServers.size,
+        },
+        "Server stored in persistentServers map"
+    );
 
     // Save server info
     ensureServersDir();
@@ -28,7 +184,19 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
         cwd,
         started: Date.now(),
     };
-    writeFileSync(getServerInfoPath(cwd), JSON.stringify(serverInfo, null, 2));
+    writeFileSync(infoPath, JSON.stringify(serverInfo, null, 2));
+    logger.debug(
+        {
+            component: "mcp-tsc",
+            subcomponent: "ServerManager",
+            pid: process.pid,
+            infoPid: serverInfo.pid,
+            infoStarted: new Date(serverInfo.started).toISOString(),
+            infoPath,
+            cwd,
+        },
+        "Server info saved"
+    );
 
     return server;
 }

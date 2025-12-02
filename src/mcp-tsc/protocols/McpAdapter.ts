@@ -116,6 +116,10 @@ export class McpAdapter {
                                     description:
                                         "Optional: Include the raw LSP response with full structural data (default: false)",
                                 },
+                                timeout: {
+                                    type: "number",
+                                    description: "Timeout in seconds for hover (default: 3)",
+                                },
                             },
                             required: ["file", "line"],
                         },
@@ -270,6 +274,9 @@ Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get 
             const charArg = args.character;
             const text = args.text;
             const includeRaw = args.includeRaw;
+            // Default hover timeout is 3 seconds
+            const timeoutSeconds = args.timeout !== undefined ? Number(args.timeout) : 3;
+            const timeoutMs = timeoutSeconds * 1000;
 
             if (!filePath) {
                 return {
@@ -326,8 +333,8 @@ Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get 
                 character = match ? match.index! + 1 : 1;
             }
 
-            // Get hover using TSServer
-            const hover = await this.tsServer.getHover(absolutePath, { line, character });
+            // Get hover using TSServer with timeout
+            const hover = await this.tsServer.getHover(absolutePath, { line, character }, { timeoutMs });
 
             // Build response object
             const response: GetTsHoverResponse = {
@@ -365,15 +372,22 @@ Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get 
     }
 
     async start(): Promise<void> {
-        // Initialize underlying TSServer
-        if (this.tsServer.initialize) {
-            await this.tsServer.initialize();
-        }
+        try {
+            // Initialize underlying TSServer
+            if (this.tsServer.initialize) {
+                await this.tsServer.initialize();
+            }
 
-        // Start MCP server
-        const transport = new StdioServerTransport();
-        await this.mcpServer.connect(transport);
-        console.error("TypeScript Diagnostics MCP Server running");
+            // Start MCP server
+            const transport = new StdioServerTransport();
+            console.error("TypeScript Diagnostics MCP Server starting...");
+            console.error("Connecting MCP server to transport...");
+            await this.mcpServer.connect(transport);
+            console.error("TypeScript Diagnostics MCP Server connected, should be running indefinitely...");
+        } catch (error) {
+            console.error("MCP Server failed to start:", error);
+            throw error;
+        }
     }
 
     async shutdown(): Promise<void> {
