@@ -1,27 +1,18 @@
 import { MCPProvider } from "./types.js";
 import type { UnifiedMCPServerConfig, MCPServerInfo } from "./types.js";
+import type { CursorGenericConfig, CursorMCPServerConfig } from "./cursor.types.js";
 import { existsSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
 import path from "path";
 import logger from "@app/logger";
 import chalk from "chalk";
+import { stripMeta } from "../config.utils.js";
 
 /**
  * Cursor MCP provider.
  * Manages MCP servers in workspace-specific storage.
  * Note: Cursor uses workspace storage, so this is a simplified implementation.
  */
-interface CursorGenericConfig {
-    mcpServers?: Record<string, CursorMCPServerConfig>;
-    [key: string]: unknown;
-}
-
-interface CursorMCPServerConfig {
-    command?: string;
-    args?: unknown[];
-    env?: Record<string, string>;
-    [key: string]: unknown;
-}
 
 export class CursorProvider extends MCPProvider {
     constructor() {
@@ -61,16 +52,18 @@ export class CursorProvider extends MCPProvider {
 
         // Show diff if there are changes and ask for confirmation
         if (oldContent) {
-            this.backupManager.showDiff(oldContent, newContent, this.configPath);
-            const confirmed = await this.backupManager.askConfirmation();
+            const hasDiff = await this.backupManager.showDiff(oldContent, newContent, this.configPath);
+            if (hasDiff) {
+                const confirmed = await this.backupManager.askConfirmation();
 
-            if (!confirmed) {
-                // Restore from backup if user rejected changes
-                if (backupPath) {
-                    await this.backupManager.restoreFromBackup(this.configPath, backupPath);
+                if (!confirmed) {
+                    // Restore from backup if user rejected changes
+                    if (backupPath) {
+                        await this.backupManager.restoreFromBackup(this.configPath, backupPath);
+                    }
+                    logger.info(chalk.yellow("Changes reverted."));
+                    return;
                 }
-                logger.info(chalk.yellow("Changes reverted."));
-                return;
             }
         }
 
@@ -103,7 +96,7 @@ export class CursorProvider extends MCPProvider {
         return serverConfig ? this.cursorToUnified(serverConfig) : null;
     }
 
-    async enableServer(serverName: string): Promise<void> {
+    async enableServer(serverName: string, _projectPath?: string | null): Promise<void> {
         // Cursor doesn't have explicit enable/disable
         // Servers are enabled if they exist in config
         const config = await this.readConfig();
@@ -112,7 +105,7 @@ export class CursorProvider extends MCPProvider {
         }
     }
 
-    async disableServer(serverName: string): Promise<void> {
+    async disableServer(serverName: string, _projectPath?: string | null): Promise<void> {
         const config = await this.readConfig();
 
         // Remove the server from config (Cursor doesn't have explicit disable)
@@ -127,14 +120,43 @@ export class CursorProvider extends MCPProvider {
         await this.disableServer(serverName);
     }
 
+    async enableServers(serverNames: string[], _projectPath?: string | null): Promise<void> {
+        // Cursor doesn't have explicit enable/disable
+        // Servers are enabled if they exist in config - this is a no-op
+        const config = await this.readConfig();
+        const missing = serverNames.filter((name) => !config.mcpServers?.[name]);
+        if (missing.length > 0) {
+            throw new Error(`Servers do not exist: ${missing.join(", ")}. Use installServer to add them.`);
+        }
+    }
+
+    async disableServers(serverNames: string[], _projectPath?: string | null): Promise<void> {
+        const config = await this.readConfig();
+
+        // Remove servers from config (Cursor doesn't have explicit disable)
+        let changed = false;
+        for (const serverName of serverNames) {
+            if (config.mcpServers?.[serverName]) {
+                delete config.mcpServers[serverName];
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            await this.writeConfig(config);
+        }
+    }
+
     async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<void> {
+        // Strip _meta before processing (unified utility ensures _meta never reaches providers)
+        const cleanConfig = stripMeta(config);
         const cursorConfig = await this.readConfig();
 
         if (!cursorConfig.mcpServers) {
             cursorConfig.mcpServers = {};
         }
 
-        cursorConfig.mcpServers[serverName] = this.unifiedToCursor(config);
+        cursorConfig.mcpServers[serverName] = this.unifiedToCursor(cleanConfig);
 
         await this.writeConfig(cursorConfig);
     }
@@ -146,12 +168,16 @@ export class CursorProvider extends MCPProvider {
             config.mcpServers = {};
         }
 
-        // Add/update enabled servers
+        // Add/update all servers
         for (const [name, serverConfig] of Object.entries(servers)) {
-            if (serverConfig.enabled !== false && serverConfig.disabled !== true) {
-                config.mcpServers[name] = this.unifiedToCursor(serverConfig);
+            // Read enabled state from _meta.enabled[providerName]
+            const isEnabled = serverConfig._meta?.enabled?.cursor !== false; // default to enabled if not specified
+
+            // Cursor doesn't have native disable - only add if enabled, remove if disabled
+            if (isEnabled) {
+                const cleanConfig = stripMeta(serverConfig);
+                config.mcpServers[name] = this.unifiedToCursor(cleanConfig);
             } else {
-                // Remove disabled servers
                 delete config.mcpServers[name];
             }
         }
@@ -165,10 +191,8 @@ export class CursorProvider extends MCPProvider {
 
         if (cursorConfig.mcpServers) {
             for (const [name, serverConfig] of Object.entries(cursorConfig.mcpServers)) {
-                result[name] = {
-                    ...this.cursorToUnified(serverConfig),
-                    enabled: true, // Cursor doesn't have disable, so all are enabled
-                };
+                // Strip _meta if it somehow got into provider config (shouldn't happen, but safety check)
+                result[name] = stripMeta(this.cursorToUnified(serverConfig));
             }
         }
 
@@ -180,10 +204,14 @@ export class CursorProvider extends MCPProvider {
             mcpServers: {},
         };
 
-        // Only include enabled servers
         for (const [name, unified] of Object.entries(servers)) {
-            if (unified.enabled !== false && unified.disabled !== true) {
-                config.mcpServers![name] = this.unifiedToCursor(unified);
+            // Read enabled state from _meta.enabled[providerName]
+            const isEnabled = unified._meta?.enabled?.cursor !== false;
+
+            // Cursor doesn't have native disable - only include if enabled
+            if (isEnabled) {
+                const cleanConfig = stripMeta(unified);
+                config.mcpServers![name] = this.unifiedToCursor(cleanConfig);
             }
         }
 

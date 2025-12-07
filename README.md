@@ -980,11 +980,11 @@ Get TypeScript diagnostics for files matching the specified patterns.
 <summary><b>✨ Features</b></summary>
 
 -   🎯 **Multi-Provider Support**: Manage MCP servers for Claude, Gemini, Codex, and Cursor
--   📦 **Unified Configuration**: Single `~/mcp.json` file to manage all servers
+-   📦 **Unified Configuration**: Single config file (`~/.genesis-tools/mcp-manager/config.json`) to manage all servers
 -   💾 **Automatic Backups**: Creates backups before any changes with automatic restore on rejection
 -   👁️ **Visual Diffs**: See exactly what changed before applying updates
 -   ✅ **Interactive Confirmation**: Review changes and approve or revert
--   🔄 **Cross-Platform Sync**: Sync servers from unified config to multiple providers
+-   🔄 **Bidirectional Sync**: Sync servers from unified config to providers, or import from providers to unified config
 -   🛡️ **Safe Operations**: All changes are reversible with automatic backup restoration
 
 </details>
@@ -996,11 +996,14 @@ Get TypeScript diagnostics for files matching the specified patterns.
 # Interactive mode - choose an action
 tools mcp-manager
 
-# Open/edit unified configuration file (~/mcp.json)
+# Open/edit unified configuration file
 tools mcp-manager config
 
-# Sync servers from ~/mcp.json to selected providers
+# Sync servers from unified config to selected providers
 tools mcp-manager sync
+
+# Sync servers FROM providers TO unified config
+tools mcp-manager sync-from-providers
 
 # List all MCP servers across all providers
 tools mcp-manager list
@@ -1021,24 +1024,27 @@ tools mcp-manager show github
 <details>
 <summary><b>⚙️ Commands</b></summary>
 
-| Command       | Description                                     |
-| ------------- | ----------------------------------------------- |
-| `config`      | Open/create `~/mcp.json` configuration file     |
-| `sync`        | Sync MCP servers from `~/mcp.json` to providers |
-| `list`        | List all MCP servers across all providers       |
-| `enable`      | Enable an MCP server in a provider              |
-| `disable`     | Disable an MCP server in a provider             |
-| `disable-all` | Disable an MCP server for all projects (Claude) |
-| `install`     | Install/add an MCP server to a provider         |
-| `show`        | Show full configuration of an MCP server        |
+| Command               | Description                                       |
+| --------------------- | ------------------------------------------------- |
+| `config`              | Open/create unified configuration file            |
+| `sync`                | Sync MCP servers from unified config to providers |
+| `sync-from-providers` | Sync servers FROM providers TO unified config     |
+| `list`                | List all MCP servers across all providers         |
+| `enable`              | Enable an MCP server in a provider                |
+| `disable`             | Disable an MCP server in a provider               |
+| `disable-all`         | Disable an MCP server for all projects (Claude)   |
+| `install`             | Install/add an MCP server to a provider           |
+| `show`                | Show full configuration of an MCP server          |
 
 </details>
 
 <details>
 <summary><b>💡 Workflow</b></summary>
 
-1. **Create Unified Config**: Edit `~/mcp.json` with all your MCP servers
-2. **Sync to Providers**: Select which providers to sync to
+1. **Create Unified Config**: Edit unified config (`~/.genesis-tools/mcp-manager/config.json`) with all your MCP servers
+2. **Sync Servers**:
+    - Sync FROM unified config TO providers: `tools mcp-manager sync`
+    - Sync FROM providers TO unified config: `tools mcp-manager sync-from-providers`
 3. **Review Changes**: See diff and confirm or reject changes
 4. **Automatic Backup**: If rejected, automatically restores from backup
 

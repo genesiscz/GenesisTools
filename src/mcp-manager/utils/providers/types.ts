@@ -18,10 +18,6 @@ export interface UnifiedMCPServerConfig {
     httpUrl?: string;
     headers?: Record<string, string>;
 
-    // State management
-    enabled?: boolean;
-    disabled?: boolean;
-
     /**
      * Meta information for this server.
      * This field is NOT synchronized to/from providers.
@@ -115,13 +111,17 @@ export abstract class MCPProvider {
 
     /**
      * Enable an MCP server
+     * @param serverName - Name of the server to enable
+     * @param projectPath - Optional project path for project-specific enabling (e.g., Claude projects)
      */
-    abstract enableServer(serverName: string): Promise<void>;
+    abstract enableServer(serverName: string, projectPath?: string | null): Promise<void>;
 
     /**
      * Disable an MCP server
+     * @param serverName - Name of the server to disable
+     * @param projectPath - Optional project path for project-specific disabling (e.g., Claude projects)
      */
-    abstract disableServer(serverName: string): Promise<void>;
+    abstract disableServer(serverName: string, projectPath?: string | null): Promise<void>;
 
     /**
      * Disable an MCP server for all projects (if applicable)
@@ -129,12 +129,37 @@ export abstract class MCPProvider {
     abstract disableServerForAllProjects(serverName: string): Promise<void>;
 
     /**
+     * Enable multiple MCP servers in a single batch operation (one backup, one diff, one save)
+     * @param serverNames - Names of the servers to enable
+     * @param projectPath - Optional project path for project-specific enabling
+     */
+    abstract enableServers(serverNames: string[], projectPath?: string | null): Promise<void>;
+
+    /**
+     * Disable multiple MCP servers in a single batch operation (one backup, one diff, one save)
+     * @param serverNames - Names of the servers to disable
+     * @param projectPath - Optional project path for project-specific disabling
+     */
+    abstract disableServers(serverNames: string[], projectPath?: string | null): Promise<void>;
+
+    /**
+     * Get available projects (if provider supports project-level configuration)
+     * @returns Array of project paths, or empty array if not supported
+     */
+    getProjects(): Promise<string[]> {
+        // Default implementation returns empty array (no project support)
+        return Promise.resolve([]);
+    }
+
+    /**
      * Install/add an MCP server configuration
      */
     abstract installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<void>;
 
     /**
-     * Sync servers from unified config to this provider
+     * Sync servers from unified config to this provider.
+     * Reads _meta.enabled[providerName] to determine enabled state per server.
+     * @param servers - Server configurations to sync (with _meta intact)
      */
     abstract syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<void>;
 

@@ -47,17 +47,17 @@ export class BackupManager {
     /**
      * Show diff between old and new configuration
      */
-    async showDiff(oldContent: string, newContent: string, configPath: string): Promise<void> {
+    async showDiff(oldContent: string, newContent: string, configPath: string): Promise<boolean> {
+        consoleLog.info(chalk.bold(`\nChanges to ${configPath}:\n`));
         // Check if there are actual changes by comparing content
         if (oldContent === newContent) {
             consoleLog.info(chalk.gray("No changes detected."));
-            return;
+            return false;
         }
-
-        consoleLog.info(chalk.bold(`\nChanges to ${configPath}:\n`));
 
         // Use DiffUtil to show diff using system diff command
         await DiffUtil.showDiff(oldContent, newContent, "old", "new");
+        return true;
     }
 
     /**

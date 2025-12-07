@@ -1,36 +1,18 @@
 import { MCPProvider } from "./types.js";
 import type { UnifiedMCPServerConfig, MCPServerInfo } from "./types.js";
+import type { CodexGenericConfig, CodexMCPServerConfig, CodexProjectConfig } from "./codex.types.js";
 import { existsSync, mkdirSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
 import path from "path";
 import * as TOML from "@iarna/toml";
 import logger from "@app/logger";
 import chalk from "chalk";
+import { stripMeta } from "../config.utils.js";
 
 /**
  * Codex MCP provider.
  * Manages MCP servers in ~/.codex/config.toml
  */
-interface CodexGenericConfig {
-    model?: string;
-    model_reasoning_effort?: "low" | "medium" | "high";
-    show_raw_agent_reasoning?: boolean;
-    mcp_servers?: Record<string, CodexMCPServerConfig>;
-    projects?: Record<string, CodexProjectConfig>;
-    [key: string]: unknown;
-}
-
-interface CodexMCPServerConfig {
-    command?: string;
-    args?: unknown[];
-    env?: Record<string, string>;
-    [key: string]: unknown;
-}
-
-interface CodexProjectConfig {
-    trust_level?: "trusted" | "untrusted" | "unknown";
-    [key: string]: unknown;
-}
 
 export class CodexProvider extends MCPProvider {
     constructor() {
@@ -74,16 +56,18 @@ export class CodexProvider extends MCPProvider {
 
         // Show diff if there are changes and ask for confirmation
         if (oldContent) {
-            this.backupManager.showDiff(oldContent, newContent, this.configPath);
-            const confirmed = await this.backupManager.askConfirmation();
+            const hasDiff = await this.backupManager.showDiff(oldContent, newContent, this.configPath);
+            if (hasDiff) {
+                const confirmed = await this.backupManager.askConfirmation();
 
-            if (!confirmed) {
-                // Restore from backup if user rejected changes
-                if (backupPath) {
-                    await this.backupManager.restoreFromBackup(this.configPath, backupPath);
+                if (!confirmed) {
+                    // Restore from backup if user rejected changes
+                    if (backupPath) {
+                        await this.backupManager.restoreFromBackup(this.configPath, backupPath);
+                    }
+                    logger.info(chalk.yellow("Changes reverted."));
+                    return;
                 }
-                logger.info(chalk.yellow("Changes reverted."));
-                return;
             }
         }
 
@@ -116,7 +100,7 @@ export class CodexProvider extends MCPProvider {
         return serverConfig ? this.codexToUnified(serverConfig) : null;
     }
 
-    async enableServer(serverName: string): Promise<void> {
+    async enableServer(serverName: string, projectPath?: string | null): Promise<void> {
         // Codex doesn't have explicit enable/disable
         // Servers are enabled if they exist in config
         // This is a no-op, but we ensure the server exists
@@ -126,7 +110,7 @@ export class CodexProvider extends MCPProvider {
         }
     }
 
-    async disableServer(serverName: string): Promise<void> {
+    async disableServer(serverName: string, projectPath?: string | null): Promise<void> {
         const config = await this.readConfig();
 
         // Remove the server from config (Codex doesn't have explicit disable)
@@ -141,14 +125,43 @@ export class CodexProvider extends MCPProvider {
         await this.disableServer(serverName);
     }
 
+    async enableServers(serverNames: string[], _projectPath?: string | null): Promise<void> {
+        // Codex doesn't have explicit enable/disable
+        // Servers are enabled if they exist in config - this is a no-op
+        const config = await this.readConfig();
+        const missing = serverNames.filter((name) => !config.mcp_servers?.[name]);
+        if (missing.length > 0) {
+            throw new Error(`Servers do not exist: ${missing.join(", ")}. Use installServer to add them.`);
+        }
+    }
+
+    async disableServers(serverNames: string[], _projectPath?: string | null): Promise<void> {
+        const config = await this.readConfig();
+
+        // Remove servers from config (Codex doesn't have explicit disable)
+        let changed = false;
+        for (const serverName of serverNames) {
+            if (config.mcp_servers?.[serverName]) {
+                delete config.mcp_servers[serverName];
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            await this.writeConfig(config);
+        }
+    }
+
     async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<void> {
+        // Strip _meta before processing (unified utility ensures _meta never reaches providers)
+        const cleanConfig = stripMeta(config);
         const codexConfig = await this.readConfig();
 
         if (!codexConfig.mcp_servers) {
             codexConfig.mcp_servers = {};
         }
 
-        codexConfig.mcp_servers[serverName] = this.unifiedToCodex(config);
+        codexConfig.mcp_servers[serverName] = this.unifiedToCodex(cleanConfig);
 
         await this.writeConfig(codexConfig);
     }
@@ -160,12 +173,16 @@ export class CodexProvider extends MCPProvider {
             config.mcp_servers = {};
         }
 
-        // Add/update enabled servers
+        // Add/update all servers
         for (const [name, serverConfig] of Object.entries(servers)) {
-            if (serverConfig.enabled !== false && serverConfig.disabled !== true) {
-                config.mcp_servers[name] = this.unifiedToCodex(serverConfig);
+            // Read enabled state from _meta.enabled[providerName]
+            const isEnabled = serverConfig._meta?.enabled?.codex !== false; // default to enabled if not specified
+
+            // Codex doesn't have native disable - only add if enabled, remove if disabled
+            if (isEnabled) {
+                const cleanConfig = stripMeta(serverConfig);
+                config.mcp_servers[name] = this.unifiedToCodex(cleanConfig);
             } else {
-                // Remove disabled servers
                 delete config.mcp_servers[name];
             }
         }
@@ -179,10 +196,8 @@ export class CodexProvider extends MCPProvider {
 
         if (codexConfig.mcp_servers) {
             for (const [name, serverConfig] of Object.entries(codexConfig.mcp_servers)) {
-                result[name] = {
-                    ...this.codexToUnified(serverConfig),
-                    enabled: true, // Codex doesn't have disable, so all are enabled
-                };
+                // Strip _meta if it somehow got into provider config (shouldn't happen, but safety check)
+                result[name] = stripMeta(this.codexToUnified(serverConfig));
             }
         }
 
@@ -194,10 +209,14 @@ export class CodexProvider extends MCPProvider {
             mcp_servers: {},
         };
 
-        // Only include enabled servers
         for (const [name, unified] of Object.entries(servers)) {
-            if (unified.enabled !== false && unified.disabled !== true) {
-                config.mcp_servers![name] = this.unifiedToCodex(unified);
+            // Read enabled state from _meta.enabled[providerName]
+            const isEnabled = unified._meta?.enabled?.codex !== false;
+
+            // Codex doesn't have native disable - only include if enabled
+            if (isEnabled) {
+                const cleanConfig = stripMeta(unified);
+                config.mcp_servers![name] = this.unifiedToCodex(cleanConfig);
             }
         }
 

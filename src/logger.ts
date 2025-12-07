@@ -72,7 +72,7 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
         logToFile = false,
         includeTimestamp = globalConfig.includeTimestamp ?? false,
         prefixPid: showPid = prefixPid,
-        timestampFormat = includeTimestamp ? (globalConfig.timestampFormat ?? "HH:MM:ss") : false,
+        timestampFormat = includeTimestamp ? globalConfig.timestampFormat ?? "HH:MM:ss" : false,
         sync = globalConfig.sync ?? false,
         minimalLevels = false,
     } = options;
