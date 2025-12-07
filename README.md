@@ -81,15 +81,16 @@ tools
 
 ### 🤖 AI & Analysis
 
-| Tool                                                 | Description                                 |
-| ---------------------------------------------------- | ------------------------------------------- |
-| **[Collect Files for AI](#2--collect-files-for-ai)** | 🤖 Aggregate project files for AI analysis  |
-| **[Files to Prompt](#8--files-to-prompt)**           | 💬 Convert files to AI-friendly prompts     |
-| **[Hold-AI](#10--hold-ai-tool)**                     | ⏸️ Control AI responses via WebSocket       |
-| **[MCP Ripgrep](#9--mcp-ripgrep)**                   | ⚡ Lightning-fast code search server        |
-| **[MCP Web Reader](#12--mcp-web-reader)**            | 🌐 Fetch raw HTML or Markdown (Jina/local)  |
-| **[MCP TSC](#15--mcp-tsc)**                          | 🔍 TypeScript diagnostics (CLI & MCP)       |
-| **[MCP Manager](#17--mcp-manager)**                  | ⚙️ Cross-platform MCP configuration manager |
+| Tool                                                 | Description                                   |
+| ---------------------------------------------------- | --------------------------------------------- |
+| **[Collect Files for AI](#2--collect-files-for-ai)** | 🤖 Aggregate project files for AI analysis    |
+| **[Files to Prompt](#8--files-to-prompt)**           | 💬 Convert files to AI-friendly prompts       |
+| **[Hold-AI](#10--hold-ai-tool)**                     | ⏸️ Control AI responses via WebSocket         |
+| **[JSON/TOON Converter](#19--jsontoon-converter)**   | 🔄 Convert JSON ↔ TOON for token optimization |
+| **[MCP Ripgrep](#9--mcp-ripgrep)**                   | ⚡ Lightning-fast code search server          |
+| **[MCP Web Reader](#12--mcp-web-reader)**            | 🌐 Fetch raw HTML or Markdown (Jina/local)    |
+| **[MCP TSC](#15--mcp-tsc)**                          | 🔍 TypeScript diagnostics (CLI & MCP)         |
+| **[MCP Manager](#17--mcp-manager)**                  | ⚙️ Cross-platform MCP configuration manager   |
 
 ### 📊 Monitoring & Watching
 
@@ -1123,6 +1124,135 @@ tools rename-commits --help
 2. Review commits and provide new messages one-by-one
 3. Confirm changes in the summary screen
 4. Git rebase rewrites the commit history
+
+</details>
+
+---
+
+### 19. 🔄 JSON/TOON Converter
+
+> Convert data between JSON and TOON (Token-Oriented Object Notation) formats. TOON can reduce token usage by 30-60% compared to standard JSON, making it ideal for LLM applications.
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+-   ✅ **Auto-Detection**: Automatically detects JSON or TOON format
+-   ✅ **Bidirectional Conversion**: Convert JSON ↔ TOON seamlessly
+-   ✅ **Size Comparison**: Compares TOON with compact JSON and returns the smaller format
+-   ✅ **File & Stdin Support**: Works with files or piped input
+-   ✅ **Verbose Mode**: Shows format detection, size comparison, and savings statistics
+-   ✅ **Error Handling**: Clear, LLM-readable error messages
+
+</details>
+
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
+
+```bash
+# Auto-detect format and convert (file)
+tools json data.json
+tools json data.toon
+
+# Auto-detect format and convert (stdin)
+cat data.json | tools json
+echo '{"key":"value"}' | tools json
+
+# Force conversion to TOON
+tools json data.json --to-toon
+cat data.json | tools json --to-toon
+
+# Force conversion to JSON
+tools json data.toon --to-json
+cat data.toon | tools json --to-json
+
+# Verbose mode (shows statistics)
+tools json data.json --verbose
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ Options</b></summary>
+
+| Option          | Alias | Description                                           |
+| --------------- | ----- | ----------------------------------------------------- |
+| `--to-toon, -t` |       | Force conversion to TOON format                       |
+| `--to-json, -j` |       | Force conversion to JSON format                       |
+| `--verbose, -v` |       | Enable verbose logging (shows format detection, etc.) |
+| `--help, -h`    |       | Show help message                                     |
+
+</details>
+
+<details>
+<summary><b>💡 How It Works</b></summary>
+
+**Auto-Detection Mode:**
+
+-   Detects input format (JSON or TOON)
+-   Converts to the opposite format automatically
+-   When converting JSON → TOON, compares sizes and returns the smaller format
+
+**Forced Conversion Mode:**
+
+-   Validates input format matches the requested conversion
+-   Provides clear error messages if format doesn't match
+-   Returns the converted result
+
+**Size Comparison:**
+
+-   Compares TOON output with compact JSON (no whitespace)
+-   Returns the format with fewer bytes
+-   Logs statistics in verbose mode
+
+</details>
+
+<details>
+<summary><b>📋 Example Output</b></summary>
+
+**JSON Input:**
+
+```json
+{
+    "users": [
+        { "id": 1, "name": "Alice", "role": "admin" },
+        { "id": 2, "name": "Bob", "role": "user" }
+    ]
+}
+```
+
+**TOON Output:**
+
+```
+users[2]{id,name,role}:
+  1,Alice,admin
+  2,Bob,user
+```
+
+**Verbose Mode:**
+
+```
+Detected format: JSON
+Compact JSON size: 86 bytes
+TOON size: 52 bytes
+✓ TOON is 39.5% smaller (34 bytes saved)
+Returning TOON format
+```
+
+</details>
+
+<details>
+<summary><b>🎯 Use Cases</b></summary>
+
+**For LLM Applications:**
+
+-   Before sending data: Convert JSON to TOON to reduce token usage
+-   After receiving data: Convert TOON responses back to JSON
+-   In pipelines: Automatically optimize data format
+
+**For Development:**
+
+-   Format comparison: See which format is more compact
+-   Data transformation: Convert between formats for different tools
 
 </details>
 

@@ -36,6 +36,7 @@
         "@modelcontextprotocol/server-github": "^2025.4.8",
         "@mozilla/readability": "^0.6.0",
         "@openrouter/ai-sdk-provider": "^0.7.2",
+        "@toon-format/toon": "^2.1.0",
         "@types/chokidar": "^2.1.7",
         "@types/fb-watchman": "^2.0.4",
         "@types/glob": "^8.1.0",
