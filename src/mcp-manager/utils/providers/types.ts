@@ -1,3 +1,5 @@
+import type { MCPServerMeta, EnabledMcpServers } from "../types.js";
+
 /**
  * Unified MCP server configuration interface.
  * Represents a server configuration that can be synced across providers.
@@ -20,6 +22,13 @@ export interface UnifiedMCPServerConfig {
     enabled?: boolean;
     disabled?: boolean;
 
+    /**
+     * Meta information for this server.
+     * This field is NOT synchronized to/from providers.
+     * Contains enabled state per provider.
+     */
+    _meta?: MCPServerMeta;
+
     // Platform-specific extensions
     [key: string]: unknown;
 }
@@ -29,6 +38,12 @@ export interface UnifiedMCPServerConfig {
  */
 export interface UnifiedMCPConfig {
     mcpServers: Record<string, UnifiedMCPServerConfig>;
+    /**
+     * Enabled state for MCP servers per provider.
+     * This is a duplicate of _meta.enabled information for easier access.
+     * Maps server name to enabled state per provider.
+     */
+    enabledMcpServers?: EnabledMcpServers;
     [key: string]: unknown;
 }
 
