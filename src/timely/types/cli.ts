@@ -2,7 +2,9 @@ export interface TimelyArgs {
     _: string[]; // Positional arguments (command, subcommand)
     help?: boolean;
     verbose?: boolean;
-    format?: "json" | "table" | "csv" | "raw" | "ai";
+    format?: "json" | "table" | "csv" | "raw" | "summary" | "detailed-summary";
+    silent?: boolean;
+    quiet?: boolean;
 
     // Account/project overrides
     account?: number;

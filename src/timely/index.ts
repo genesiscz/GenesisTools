@@ -74,9 +74,10 @@ ${chalk.cyan("Commands:")}
 ${chalk.cyan("Global Options:")}
   -h, --help              Show this help message
   -v, --verbose           Enable verbose output
-  -f, --format <format>   Output format: json, table, csv, raw, ai (default: table)
+  -f, --format <format>   Output format: json, table, csv, raw, summary, detailed-summary (default: table)
   -a, --account <id>      Override account ID
   -p, --project <id>      Override project ID
+  --silent, --quiet        Suppress console output (only show file path)
 
 ${chalk.cyan("Date Options (for events command):")}
   --since <YYYY-MM-DD>    Start date
@@ -91,7 +92,8 @@ ${chalk.cyan("Examples:")}
   tools timely export-month 2025-11
   tools timely export-month 2025-11 --format csv > time.csv
   tools timely export-month 2025-11 --format raw  # Detailed table with all info
-  tools timely export-month 2025-11 --format ai    # AI-friendly format for summaries
+  tools timely export-month 2025-11 --format summary  # Generate summary markdown
+  tools timely export-month 2025-11 --format detailed-summary --silent  # Detailed summary, only show path
   tools timely cache clear
 `);
 }
@@ -105,7 +107,7 @@ async function main(): Promise<void> {
             a: "account",
             p: "project",
         },
-        boolean: ["help", "verbose", "select", "clipboard"],
+        boolean: ["help", "verbose", "select", "clipboard", "silent", "quiet"],
         string: ["format", "since", "upto", "day", "month", "output"],
     });
 

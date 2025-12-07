@@ -4,6 +4,7 @@ import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
 import { TimelyService } from "../api/service";
 import { getMonthDateRange, formatDuration, getDatesInMonth } from "../utils/date";
+import { generateReportMarkdown } from "../utils/entry-processor";
 import type { TimelyArgs, TimelyEvent } from "../types";
 
 export async function exportMonthCommand(args: TimelyArgs, storage: Storage, service: TimelyService): Promise<void> {
@@ -106,6 +107,7 @@ export async function exportMonthCommand(args: TimelyArgs, storage: Storage, ser
 
     // Output based on format
     const format = args.format || "table";
+    const silent = args.silent || args.quiet || false;
 
     switch (format) {
         case "json":
@@ -117,8 +119,11 @@ export async function exportMonthCommand(args: TimelyArgs, storage: Storage, ser
         case "raw":
             await exportAsRaw(events, monthArg, accountId, tokens.access_token, service);
             break;
-        case "ai":
-            await exportAsAi(events, monthArg, accountId, tokens.access_token, service, storage);
+        case "summary":
+            await exportAsReport(monthArg, storage, silent, false);
+            break;
+        case "detailed-summary":
+            await exportAsReport(monthArg, storage, silent, true);
             break;
         case "table":
         default:
@@ -408,196 +413,33 @@ async function exportAsRaw(
 }
 
 /**
- * Calculate duration in seconds from ISO datetime strings
+ * Export events as summary format
+ * Uses the generic entry processor to generate a report markdown file
+ * @param monthArg - Month in YYYY-MM format
+ * @param storage - Storage instance
+ * @param silent - Whether to suppress console output
+ * @param detailMode - Whether to use detailed mode (for detailed-summary format)
  */
-function calculateDurationSeconds(from: string, to: string): number {
-    const fromDate = new Date(from);
-    const toDate = new Date(to);
-    return Math.floor((toDate.getTime() - fromDate.getTime()) / 1000);
-}
-
-/**
- * Format time from ISO datetime to HH:MM
- */
-function formatTime(isoString: string): string {
-    const date = new Date(isoString);
-    return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-}
-
-/**
- * Check if a month is finished (in the past)
- */
-function isMonthFinished(monthArg: string): boolean {
-    const [year, month] = monthArg.split("-").map(Number);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    // Get first day of next month
-    const nextMonth = new Date(year, month, 1);
-    nextMonth.setHours(0, 0, 0, 0);
-
-    // Month is finished if today is >= first day of next month
-    return today >= nextMonth;
-}
-
-/**
- * Export events as AI-friendly format for generating summaries
- * Pretty markdown format grouped by entries with sub-entry durations
- * Saves to cache file with appropriate TTL
- */
-async function exportAsAi(
-    events: TimelyEvent[],
+async function exportAsReport(
     monthArg: string,
-    accountId: number,
-    accessToken: string,
-    service: TimelyService,
-    storage: Storage
+    storage: Storage,
+    silent: boolean,
+    detailMode: boolean = false
 ): Promise<void> {
-    logger.info(chalk.cyan(`\nGenerating AI-friendly export for ${monthArg}...\n`));
-
-    // Check cache first
-    const cacheKey = `ai-export/${accountId}/${monthArg}.md`;
-    const monthFinished = isMonthFinished(monthArg);
-    const ttl = monthFinished ? "1 month" : "5 minutes";
-
-    // Try to get from cache (raw file, expiration checked via file mtime)
-    const cached = await storage.getRawFile(cacheKey, ttl);
-    if (cached !== null) {
-        logger.debug(`Cache hit: ${cacheKey}`);
-        console.log(cached);
-        return;
+    if (!silent) {
+        const modeText = detailMode ? "detailed " : "";
+        logger.info(chalk.cyan(`\nGenerating ${modeText}summary for ${monthArg}...\n`));
     }
 
-    logger.debug(`Cache miss: ${cacheKey}, generating...`);
+    const { content, filePath } = await generateReportMarkdown(monthArg, storage, detailMode);
 
-    // Group events by day
-    const byDay = new Map<string, TimelyEvent[]>();
-    for (const event of events) {
-        if (!byDay.has(event.day)) {
-            byDay.set(event.day, []);
-        }
-        byDay.get(event.day)!.push(event);
+    // Output absolute path (always shown)
+    console.log(filePath);
+
+    // Output content to console unless silent
+    if (!silent) {
+        console.log(content);
     }
-
-    // Sort days
-    const sortedDays = Array.from(byDay.keys()).sort();
-
-    // Build markdown content
-    const markdownLines: string[] = [];
-
-    // Output markdown header
-    markdownLines.push(`# Time Tracking Summary - ${monthArg}`);
-
-    for (const day of sortedDays) {
-        const dayEvents = byDay.get(day)!;
-
-        // Format date as DD.MM.YYYY
-        const [year, month, dayNum] = day.split("-");
-        const formattedDate = `${dayNum}.${month}.${year}`;
-
-        markdownLines.push("");
-        markdownLines.push(`## ${formattedDate}`);
-
-        // Process each event and group by entries
-        for (const event of dayEvents) {
-            const projectName = event.project?.name || "No Project";
-            const eventDuration = event.duration.formatted;
-
-            // If event has entry_ids, fetch entries and display them grouped
-            if (event.entry_ids && event.entry_ids.length > 0) {
-                for (const entryId of event.entry_ids) {
-                    const entries = await service.getEntry(accountId, entryId, accessToken);
-                    if (entries && Array.isArray(entries) && entries.length > 0) {
-                        for (const entry of entries) {
-                            // Entry header with project, title, and total duration
-                            markdownLines.push("");
-                            markdownLines.push(`### ${projectName} - ${entry.title}`);
-                            if (entry.note && entry.note.trim()) {
-                                markdownLines.push("");
-                                markdownLines.push(`**Note:** ${entry.note}`);
-                            }
-
-                            // Entry time range and duration
-                            markdownLines.push("");
-                            if (entry.from && entry.to) {
-                                const entryDuration = calculateDurationSeconds(entry.from, entry.to);
-                                const timeRange = `${formatTime(entry.from)} - ${formatTime(entry.to)}`;
-                                markdownLines.push(`**Duration:** ${formatDuration(entryDuration)} (${timeRange})`);
-                            } else {
-                                markdownLines.push(`**Duration:** ${entry.duration.formatted}`);
-                            }
-
-                            // Sub-entries with individual durations
-                            if (entry.sub_entries && entry.sub_entries.length > 0) {
-                                markdownLines.push("");
-                                markdownLines.push("**Activities:**");
-                                for (const subEntry of entry.sub_entries) {
-                                    if (subEntry.from && subEntry.to) {
-                                        const subDuration = calculateDurationSeconds(subEntry.from, subEntry.to);
-                                        const subTimeRange = `${formatTime(subEntry.from)} - ${formatTime(
-                                            subEntry.to
-                                        )}`;
-                                        markdownLines.push(
-                                            `- ${subEntry.note || "(no note)"} - ${formatDuration(
-                                                subDuration
-                                            )} (${subTimeRange})`
-                                        );
-                                    } else {
-                                        markdownLines.push(`- ${subEntry.note || "(no note)"}`);
-                                    }
-                                }
-                            }
-
-                            // If no sub-entries but entry has a note, show it
-                            if (
-                                (!entry.sub_entries || entry.sub_entries.length === 0) &&
-                                entry.note &&
-                                entry.note.trim()
-                            ) {
-                                markdownLines.push("");
-                                markdownLines.push(`**Activity:** ${entry.note}`);
-                            }
-                        }
-                    }
-                }
-            } else {
-                // No entries, just show event info
-                markdownLines.push("");
-                markdownLines.push(`### ${projectName}`);
-                if (event.note && event.note.trim()) {
-                    markdownLines.push("");
-                    markdownLines.push(`**Note:** ${event.note}`);
-                }
-                markdownLines.push("");
-                if (event.from && event.to) {
-                    // Events use simple time strings (HH:MM), not ISO datetime
-                    const timeRange = `${event.from} - ${event.to}`;
-                    markdownLines.push(`**Duration:** ${eventDuration} (${timeRange})`);
-                } else {
-                    markdownLines.push(`**Duration:** ${eventDuration}`);
-                }
-            }
-        }
-    }
-
-    // Summary
-    const totalSeconds = events.reduce((sum, e) => sum + e.duration.total_seconds, 0);
-    markdownLines.push("");
-    markdownLines.push("---");
-    markdownLines.push("");
-    markdownLines.push(`**Total Duration:** ${formatDuration(totalSeconds)}`);
-    markdownLines.push(`**Total Events:** ${events.length}`);
-    markdownLines.push(`**Days Tracked:** ${sortedDays.length}`);
-
-    // Join all lines with newlines
-    const markdownContent = markdownLines.join("\n") + "\n";
-
-    // Save to cache as raw file (no metadata wrapper, expiration via file mtime)
-    await storage.putRawFile(cacheKey, markdownContent, ttl);
-    logger.debug(`Raw file written: ${cacheKey}`);
-
-    // Output to console
-    console.log(markdownContent);
 }
 
 /**
