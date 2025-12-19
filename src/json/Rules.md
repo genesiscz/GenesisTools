@@ -1,5 +1,14 @@
 # JSON/TOON Conversion Tool - LLM Instructions
 
+## ⚠️ IMPORTANT NOTE
+
+**"jq" and "tools json" are NOT the same tool and should be treated as such.**
+
+-   `jq` - Standard JSON processor for filtering, querying, and transforming JSON data
+-   `tools json` - Custom GenesisTools utility that converts JSON to TOON format for LLM token efficiency
+
+Do not confuse these tools; they serve completely different purposes.
+
 ## Instruction
 
 **When reading JSON data from APIs or files, always pipe through `tools json` to ensure optimal token efficiency.**
