@@ -10,8 +10,6 @@ import Header from '../components/Header'
 
 import WorkOSProvider from '../integrations/workos/provider'
 
-import ConvexProvider from '../integrations/convex/provider'
-
 import TanStackQueryDevtools from '../integrations/tanstack-query/devtools'
 
 import StoreDevtools from '../lib/demo-store-devtools'
@@ -64,24 +62,22 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         <WorkOSProvider>
-          <ConvexProvider>
-            <Header />
-            {children}
-            <TanStackDevtools
-              config={{
-                position: 'bottom-right',
-              }}
-              plugins={[
-                {
-                  name: 'Tanstack Router',
-                  render: <TanStackRouterDevtoolsPanel />,
-                },
-                TanStackQueryDevtools,
-                StoreDevtools,
-                AiDevtools,
-              ]}
-            />
-          </ConvexProvider>
+          <Header />
+          {children}
+          <TanStackDevtools
+            config={{
+              position: 'bottom-right',
+            }}
+            plugins={[
+              {
+                name: 'Tanstack Router',
+                render: <TanStackRouterDevtoolsPanel />,
+              },
+              TanStackQueryDevtools,
+              StoreDevtools,
+              AiDevtools,
+            ]}
+          />
         </WorkOSProvider>
         <Scripts />
       </body>
