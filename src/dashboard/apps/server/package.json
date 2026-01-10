@@ -8,7 +8,7 @@
     "preview": "node .output/server/index.mjs"
   },
   "dependencies": {
-    "@workos-inc/node": "^7.0.0",
+    "@workos-inc/node": "8.0.0-rc.10",
     "@dashboard/shared": "workspace:*"
   },
   "devDependencies": {
