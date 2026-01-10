@@ -22,9 +22,20 @@ export default function AppWorkOSProvider({
     <AuthKitProvider
       clientId={VITE_WORKOS_CLIENT_ID}
       apiHostname={VITE_WORKOS_API_HOSTNAME}
-      onRedirectCallback={({ state }) => {
+      onRedirectCallback={({ state, error }) => {
+        // Handle OAuth errors
+        if (error) {
+          navigate({
+            to: '/auth/error',
+            search: { error: error.code, description: error.message },
+          })
+          return
+        }
+        // Navigate to return path or home
         if (state?.returnTo) {
-          navigate(state.returnTo)
+          navigate({ to: state.returnTo })
+        } else {
+          navigate({ to: '/' })
         }
       }}
     >
