@@ -35,7 +35,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
       </div>
 
       {/* Main content */}
-      <div className="relative z-10 w-full max-w-md px-6">
+      <div className="relative z-10 w-full max-w-md px-6" suppressHydrationWarning>
         {/* Logo */}
         <div className="text-center mb-8 animate-fade-in-up">
           <Link to="/" className="inline-flex items-center gap-3 group">
