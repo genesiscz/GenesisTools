@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useSearch } from '@tanstack/react-router'
 import { useState } from 'react'
-import { useSignIn, useAuthKit } from '@workos-inc/authkit-react'
+import { useAuth } from '@workos-inc/authkit-react'
 import {
   Mail,
   Lock,
@@ -22,7 +22,7 @@ export const Route = createFileRoute('/auth/signin')({
 
 function SignInPage() {
   const { reset: resetSuccess, error: urlError } = useSearch({ from: '/auth/signin' })
-  const { signIn } = useAuthKit()
+  const { signIn } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
   const [oauthLoading, setOauthLoading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(urlError || null)
