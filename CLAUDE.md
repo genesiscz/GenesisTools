@@ -333,3 +333,39 @@ echo "input" | tools your-tool-name
 -   **No Tests**: The project currently has no test suite
 -   **TypeScript Config**: Strict mode enabled, ES modules, no emit (Bun runs TS directly)
 -   **Logging**: Check `/logs/` directory for debug information if tools encounter errors
+
+## Context7 Documentation References
+
+When working with the dashboard project (`src/dashboard/`), use these context7 library IDs for up-to-date documentation:
+
+| Technology | Library ID | Description |
+|------------|-----------|-------------|
+| TanStack Start | `/websites/tanstack_start_framework_react` | Full-stack React framework |
+| TanStack Start + WorkOS | `/workos/authkit-tanstack-start` | Authentication integration |
+| Motia | `/motiadev/motia` | Backend framework with frontend client |
+| shadcn/ui | `/websites/ui_shadcn` | UI component library |
+| Turborepo | `/websites/turborepo` | Monorepo build system |
+| TanStack Query | `/websites/tanstack_query` | Data fetching and caching |
+| TanStack DB | `/tanstack/db` | Query/client data synchronization |
+| TanStack Router | `/websites/tanstack_router` | Type-safe routing (fallback if not in Start docs) |
+
+**Usage with context7 MCP tool:**
+```bash
+mcp-cli call plugin_context7_context7/query-docs '{"libraryId": "/websites/tanstack_start_framework_react", "topic": "server functions"}'
+```
+
+## PowerSync Documentation
+
+For offline-first sync with TanStack DB, refer to:
+- https://tanstack.com/db/latest/docs/collections/powersync-collection
+
+**Required packages:**
+```bash
+bun add @tanstack/powersync-db-collection @powersync/web @journeyapps/wa-sqlite
+```
+
+PowerSync enables:
+- Offline-first SQLite persistence
+- Automatic bi-directional sync
+- Optimistic updates with rollback
+- Cross-device real-time sync
