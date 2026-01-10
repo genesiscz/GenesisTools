@@ -2,6 +2,9 @@
 
 @import 'tw-animate-css';
 
+/* Import cyberpunk theme styles */
+@import './components/auth/cyberpunk.css';
+
 @custom-variant dark (&:is(.dark *));
 
 body {
@@ -87,6 +90,42 @@ code {
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.274 0.006 286.033);
   --sidebar-ring: oklch(0.442 0.017 285.786);
+}
+
+/* Cyberpunk theme - dark mode by default */
+.cyberpunk {
+  /* Background: deep dark blue-black */
+  --background: oklch(0.08 0.02 280);
+  --foreground: oklch(0.95 0 0);
+  --card: oklch(0.12 0.02 280);
+  --card-foreground: oklch(0.95 0 0);
+  --popover: oklch(0.1 0.02 280);
+  --popover-foreground: oklch(0.95 0 0);
+
+  /* Primary: Amber (cyberpunk gold) */
+  --primary: oklch(0.75 0.18 75); /* amber-500 */
+  --primary-foreground: oklch(0.15 0.02 280);
+
+  /* Secondary: Cyan (neon accent) */
+  --secondary: oklch(0.65 0.15 195); /* cyan-500 */
+  --secondary-foreground: oklch(0.15 0.02 280);
+
+  /* Muted: dark with amber tint */
+  --muted: oklch(0.2 0.02 280);
+  --muted-foreground: oklch(0.6 0.01 280);
+
+  /* Accent: cyan for highlights */
+  --accent: oklch(0.65 0.15 195);
+  --accent-foreground: oklch(0.15 0.02 280);
+
+  /* Destructive: red alert */
+  --destructive: oklch(0.55 0.2 25);
+  --destructive-foreground: oklch(0.95 0 0);
+
+  /* Borders with amber glow */
+  --border: oklch(0.35 0.05 75);
+  --input: oklch(0.2 0.03 280);
+  --ring: oklch(0.75 0.18 75);
 }
 
 @theme inline {
