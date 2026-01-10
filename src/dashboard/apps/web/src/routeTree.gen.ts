@@ -9,8 +9,13 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as McpRouteImport } from './routes/mcp'
+import { Route as AuthCallbackRouteImport } from './routes/auth-callback'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as TimerIndexRouteImport } from './routes/timer/index'
+import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
 import { Route as DemoWorkosRouteImport } from './routes/demo/workos'
 import { Route as DemoTrpcTodoRouteImport } from './routes/demo/trpc-todo'
 import { Route as DemoTanstackQueryRouteImport } from './routes/demo/tanstack-query'
@@ -24,6 +29,16 @@ import { Route as DemoImageRouteImport } from './routes/demo/image'
 import { Route as DemoDbChatApiRouteImport } from './routes/demo/db-chat-api'
 import { Route as DemoDbChatRouteImport } from './routes/demo/db-chat'
 import { Route as DemoConvexRouteImport } from './routes/demo/convex'
+import { Route as DashboardPlannerRouteImport } from './routes/dashboard/planner'
+import { Route as DashboardNotesRouteImport } from './routes/dashboard/notes'
+import { Route as DashboardFocusRouteImport } from './routes/dashboard/focus'
+import { Route as DashboardBookmarksRouteImport } from './routes/dashboard/bookmarks'
+import { Route as DashboardAiRouteImport } from './routes/dashboard/ai'
+import { Route as AuthSignupRouteImport } from './routes/auth/signup'
+import { Route as AuthSigninRouteImport } from './routes/auth/signin'
+import { Route as AuthResetPasswordRouteImport } from './routes/auth/reset-password'
+import { Route as AuthForgotPasswordRouteImport } from './routes/auth/forgot-password'
+import { Route as AuthErrorRouteImport } from './routes/auth/error'
 import { Route as ExampleGuitarsIndexRouteImport } from './routes/example.guitars/index'
 import { Route as ExampleGuitarsGuitarIdRouteImport } from './routes/example.guitars/$guitarId'
 import { Route as DemoStartServerFuncsRouteImport } from './routes/demo/start.server-funcs'
@@ -45,14 +60,39 @@ import { Route as DemoStartSsrSpaModeRouteImport } from './routes/demo/start.ssr
 import { Route as DemoStartSsrFullSsrRouteImport } from './routes/demo/start.ssr.full-ssr'
 import { Route as DemoStartSsrDataOnlyRouteImport } from './routes/demo/start.ssr.data-only'
 
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfileRoute = ProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const McpRoute = McpRouteImport.update({
   id: '/mcp',
   path: '/mcp',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthCallbackRoute = AuthCallbackRouteImport.update({
+  id: '/auth-callback',
+  path: '/auth-callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TimerIndexRoute = TimerIndexRouteImport.update({
+  id: '/timer/',
+  path: '/timer/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardIndexRoute = DashboardIndexRouteImport.update({
+  id: '/dashboard/',
+  path: '/dashboard/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DemoWorkosRoute = DemoWorkosRouteImport.update({
@@ -118,6 +158,56 @@ const DemoDbChatRoute = DemoDbChatRouteImport.update({
 const DemoConvexRoute = DemoConvexRouteImport.update({
   id: '/demo/convex',
   path: '/demo/convex',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardPlannerRoute = DashboardPlannerRouteImport.update({
+  id: '/dashboard/planner',
+  path: '/dashboard/planner',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardNotesRoute = DashboardNotesRouteImport.update({
+  id: '/dashboard/notes',
+  path: '/dashboard/notes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardFocusRoute = DashboardFocusRouteImport.update({
+  id: '/dashboard/focus',
+  path: '/dashboard/focus',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardBookmarksRoute = DashboardBookmarksRouteImport.update({
+  id: '/dashboard/bookmarks',
+  path: '/dashboard/bookmarks',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardAiRoute = DashboardAiRouteImport.update({
+  id: '/dashboard/ai',
+  path: '/dashboard/ai',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthSignupRoute = AuthSignupRouteImport.update({
+  id: '/auth/signup',
+  path: '/auth/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthSigninRoute = AuthSigninRouteImport.update({
+  id: '/auth/signin',
+  path: '/auth/signin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthResetPasswordRoute = AuthResetPasswordRouteImport.update({
+  id: '/auth/reset-password',
+  path: '/auth/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthForgotPasswordRoute = AuthForgotPasswordRouteImport.update({
+  id: '/auth/forgot-password',
+  path: '/auth/forgot-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthErrorRoute = AuthErrorRouteImport.update({
+  id: '/auth/error',
+  path: '/auth/error',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ExampleGuitarsIndexRoute = ExampleGuitarsIndexRouteImport.update({
@@ -224,7 +314,20 @@ const DemoStartSsrDataOnlyRoute = DemoStartSsrDataOnlyRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/auth-callback': typeof AuthCallbackRoute
   '/mcp': typeof McpRoute
+  '/profile': typeof ProfileRoute
+  '/settings': typeof SettingsRoute
+  '/auth/error': typeof AuthErrorRoute
+  '/auth/forgot-password': typeof AuthForgotPasswordRoute
+  '/auth/reset-password': typeof AuthResetPasswordRoute
+  '/auth/signin': typeof AuthSigninRoute
+  '/auth/signup': typeof AuthSignupRoute
+  '/dashboard/ai': typeof DashboardAiRoute
+  '/dashboard/bookmarks': typeof DashboardBookmarksRoute
+  '/dashboard/focus': typeof DashboardFocusRoute
+  '/dashboard/notes': typeof DashboardNotesRoute
+  '/dashboard/planner': typeof DashboardPlannerRoute
   '/demo/convex': typeof DemoConvexRoute
   '/demo/db-chat': typeof DemoDbChatRoute
   '/demo/db-chat-api': typeof DemoDbChatApiRoute
@@ -238,6 +341,8 @@ export interface FileRoutesByFullPath {
   '/demo/tanstack-query': typeof DemoTanstackQueryRoute
   '/demo/trpc-todo': typeof DemoTrpcTodoRoute
   '/demo/workos': typeof DemoWorkosRoute
+  '/dashboard': typeof DashboardIndexRoute
+  '/timer': typeof TimerIndexRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
   '/demo/api/available-providers': typeof DemoApiAvailableProvidersRoute
   '/demo/api/image': typeof DemoApiImageRoute
@@ -261,7 +366,20 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/auth-callback': typeof AuthCallbackRoute
   '/mcp': typeof McpRoute
+  '/profile': typeof ProfileRoute
+  '/settings': typeof SettingsRoute
+  '/auth/error': typeof AuthErrorRoute
+  '/auth/forgot-password': typeof AuthForgotPasswordRoute
+  '/auth/reset-password': typeof AuthResetPasswordRoute
+  '/auth/signin': typeof AuthSigninRoute
+  '/auth/signup': typeof AuthSignupRoute
+  '/dashboard/ai': typeof DashboardAiRoute
+  '/dashboard/bookmarks': typeof DashboardBookmarksRoute
+  '/dashboard/focus': typeof DashboardFocusRoute
+  '/dashboard/notes': typeof DashboardNotesRoute
+  '/dashboard/planner': typeof DashboardPlannerRoute
   '/demo/convex': typeof DemoConvexRoute
   '/demo/db-chat': typeof DemoDbChatRoute
   '/demo/db-chat-api': typeof DemoDbChatApiRoute
@@ -275,6 +393,8 @@ export interface FileRoutesByTo {
   '/demo/tanstack-query': typeof DemoTanstackQueryRoute
   '/demo/trpc-todo': typeof DemoTrpcTodoRoute
   '/demo/workos': typeof DemoWorkosRoute
+  '/dashboard': typeof DashboardIndexRoute
+  '/timer': typeof TimerIndexRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
   '/demo/api/available-providers': typeof DemoApiAvailableProvidersRoute
   '/demo/api/image': typeof DemoApiImageRoute
@@ -299,7 +419,20 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/auth-callback': typeof AuthCallbackRoute
   '/mcp': typeof McpRoute
+  '/profile': typeof ProfileRoute
+  '/settings': typeof SettingsRoute
+  '/auth/error': typeof AuthErrorRoute
+  '/auth/forgot-password': typeof AuthForgotPasswordRoute
+  '/auth/reset-password': typeof AuthResetPasswordRoute
+  '/auth/signin': typeof AuthSigninRoute
+  '/auth/signup': typeof AuthSignupRoute
+  '/dashboard/ai': typeof DashboardAiRoute
+  '/dashboard/bookmarks': typeof DashboardBookmarksRoute
+  '/dashboard/focus': typeof DashboardFocusRoute
+  '/dashboard/notes': typeof DashboardNotesRoute
+  '/dashboard/planner': typeof DashboardPlannerRoute
   '/demo/convex': typeof DemoConvexRoute
   '/demo/db-chat': typeof DemoDbChatRoute
   '/demo/db-chat-api': typeof DemoDbChatApiRoute
@@ -313,6 +446,8 @@ export interface FileRoutesById {
   '/demo/tanstack-query': typeof DemoTanstackQueryRoute
   '/demo/trpc-todo': typeof DemoTrpcTodoRoute
   '/demo/workos': typeof DemoWorkosRoute
+  '/dashboard/': typeof DashboardIndexRoute
+  '/timer/': typeof TimerIndexRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
   '/demo/api/available-providers': typeof DemoApiAvailableProvidersRoute
   '/demo/api/image': typeof DemoApiImageRoute
@@ -338,7 +473,20 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/auth-callback'
     | '/mcp'
+    | '/profile'
+    | '/settings'
+    | '/auth/error'
+    | '/auth/forgot-password'
+    | '/auth/reset-password'
+    | '/auth/signin'
+    | '/auth/signup'
+    | '/dashboard/ai'
+    | '/dashboard/bookmarks'
+    | '/dashboard/focus'
+    | '/dashboard/notes'
+    | '/dashboard/planner'
     | '/demo/convex'
     | '/demo/db-chat'
     | '/demo/db-chat-api'
@@ -352,6 +500,8 @@ export interface FileRouteTypes {
     | '/demo/tanstack-query'
     | '/demo/trpc-todo'
     | '/demo/workos'
+    | '/dashboard'
+    | '/timer'
     | '/api/trpc/$'
     | '/demo/api/available-providers'
     | '/demo/api/image'
@@ -375,7 +525,20 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/auth-callback'
     | '/mcp'
+    | '/profile'
+    | '/settings'
+    | '/auth/error'
+    | '/auth/forgot-password'
+    | '/auth/reset-password'
+    | '/auth/signin'
+    | '/auth/signup'
+    | '/dashboard/ai'
+    | '/dashboard/bookmarks'
+    | '/dashboard/focus'
+    | '/dashboard/notes'
+    | '/dashboard/planner'
     | '/demo/convex'
     | '/demo/db-chat'
     | '/demo/db-chat-api'
@@ -389,6 +552,8 @@ export interface FileRouteTypes {
     | '/demo/tanstack-query'
     | '/demo/trpc-todo'
     | '/demo/workos'
+    | '/dashboard'
+    | '/timer'
     | '/api/trpc/$'
     | '/demo/api/available-providers'
     | '/demo/api/image'
@@ -412,7 +577,20 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/auth-callback'
     | '/mcp'
+    | '/profile'
+    | '/settings'
+    | '/auth/error'
+    | '/auth/forgot-password'
+    | '/auth/reset-password'
+    | '/auth/signin'
+    | '/auth/signup'
+    | '/dashboard/ai'
+    | '/dashboard/bookmarks'
+    | '/dashboard/focus'
+    | '/dashboard/notes'
+    | '/dashboard/planner'
     | '/demo/convex'
     | '/demo/db-chat'
     | '/demo/db-chat-api'
@@ -426,6 +604,8 @@ export interface FileRouteTypes {
     | '/demo/tanstack-query'
     | '/demo/trpc-todo'
     | '/demo/workos'
+    | '/dashboard/'
+    | '/timer/'
     | '/api/trpc/$'
     | '/demo/api/available-providers'
     | '/demo/api/image'
@@ -450,7 +630,20 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AuthCallbackRoute: typeof AuthCallbackRoute
   McpRoute: typeof McpRoute
+  ProfileRoute: typeof ProfileRoute
+  SettingsRoute: typeof SettingsRoute
+  AuthErrorRoute: typeof AuthErrorRoute
+  AuthForgotPasswordRoute: typeof AuthForgotPasswordRoute
+  AuthResetPasswordRoute: typeof AuthResetPasswordRoute
+  AuthSigninRoute: typeof AuthSigninRoute
+  AuthSignupRoute: typeof AuthSignupRoute
+  DashboardAiRoute: typeof DashboardAiRoute
+  DashboardBookmarksRoute: typeof DashboardBookmarksRoute
+  DashboardFocusRoute: typeof DashboardFocusRoute
+  DashboardNotesRoute: typeof DashboardNotesRoute
+  DashboardPlannerRoute: typeof DashboardPlannerRoute
   DemoConvexRoute: typeof DemoConvexRoute
   DemoDbChatRoute: typeof DemoDbChatRoute
   DemoDbChatApiRoute: typeof DemoDbChatApiRoute
@@ -464,6 +657,8 @@ export interface RootRouteChildren {
   DemoTanstackQueryRoute: typeof DemoTanstackQueryRoute
   DemoTrpcTodoRoute: typeof DemoTrpcTodoRoute
   DemoWorkosRoute: typeof DemoWorkosRoute
+  DashboardIndexRoute: typeof DashboardIndexRoute
+  TimerIndexRoute: typeof TimerIndexRoute
   ApiTrpcSplatRoute: typeof ApiTrpcSplatRoute
   DemoApiAvailableProvidersRoute: typeof DemoApiAvailableProvidersRoute
   DemoApiImageRoute: typeof DemoApiImageRoute
@@ -488,6 +683,20 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profile': {
+      id: '/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof ProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/mcp': {
       id: '/mcp'
       path: '/mcp'
@@ -495,11 +704,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof McpRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/auth-callback': {
+      id: '/auth-callback'
+      path: '/auth-callback'
+      fullPath: '/auth-callback'
+      preLoaderRoute: typeof AuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/timer/': {
+      id: '/timer/'
+      path: '/timer'
+      fullPath: '/timer'
+      preLoaderRoute: typeof TimerIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/': {
+      id: '/dashboard/'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof DashboardIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/demo/workos': {
@@ -591,6 +821,76 @@ declare module '@tanstack/react-router' {
       path: '/demo/convex'
       fullPath: '/demo/convex'
       preLoaderRoute: typeof DemoConvexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/planner': {
+      id: '/dashboard/planner'
+      path: '/dashboard/planner'
+      fullPath: '/dashboard/planner'
+      preLoaderRoute: typeof DashboardPlannerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/notes': {
+      id: '/dashboard/notes'
+      path: '/dashboard/notes'
+      fullPath: '/dashboard/notes'
+      preLoaderRoute: typeof DashboardNotesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/focus': {
+      id: '/dashboard/focus'
+      path: '/dashboard/focus'
+      fullPath: '/dashboard/focus'
+      preLoaderRoute: typeof DashboardFocusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/bookmarks': {
+      id: '/dashboard/bookmarks'
+      path: '/dashboard/bookmarks'
+      fullPath: '/dashboard/bookmarks'
+      preLoaderRoute: typeof DashboardBookmarksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/ai': {
+      id: '/dashboard/ai'
+      path: '/dashboard/ai'
+      fullPath: '/dashboard/ai'
+      preLoaderRoute: typeof DashboardAiRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth/signup': {
+      id: '/auth/signup'
+      path: '/auth/signup'
+      fullPath: '/auth/signup'
+      preLoaderRoute: typeof AuthSignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth/signin': {
+      id: '/auth/signin'
+      path: '/auth/signin'
+      fullPath: '/auth/signin'
+      preLoaderRoute: typeof AuthSigninRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth/reset-password': {
+      id: '/auth/reset-password'
+      path: '/auth/reset-password'
+      fullPath: '/auth/reset-password'
+      preLoaderRoute: typeof AuthResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth/forgot-password': {
+      id: '/auth/forgot-password'
+      path: '/auth/forgot-password'
+      fullPath: '/auth/forgot-password'
+      preLoaderRoute: typeof AuthForgotPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth/error': {
+      id: '/auth/error'
+      path: '/auth/error'
+      fullPath: '/auth/error'
+      preLoaderRoute: typeof AuthErrorRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/example/guitars/': {
@@ -738,7 +1038,20 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AuthCallbackRoute: AuthCallbackRoute,
   McpRoute: McpRoute,
+  ProfileRoute: ProfileRoute,
+  SettingsRoute: SettingsRoute,
+  AuthErrorRoute: AuthErrorRoute,
+  AuthForgotPasswordRoute: AuthForgotPasswordRoute,
+  AuthResetPasswordRoute: AuthResetPasswordRoute,
+  AuthSigninRoute: AuthSigninRoute,
+  AuthSignupRoute: AuthSignupRoute,
+  DashboardAiRoute: DashboardAiRoute,
+  DashboardBookmarksRoute: DashboardBookmarksRoute,
+  DashboardFocusRoute: DashboardFocusRoute,
+  DashboardNotesRoute: DashboardNotesRoute,
+  DashboardPlannerRoute: DashboardPlannerRoute,
   DemoConvexRoute: DemoConvexRoute,
   DemoDbChatRoute: DemoDbChatRoute,
   DemoDbChatApiRoute: DemoDbChatApiRoute,
@@ -752,6 +1065,8 @@ const rootRouteChildren: RootRouteChildren = {
   DemoTanstackQueryRoute: DemoTanstackQueryRoute,
   DemoTrpcTodoRoute: DemoTrpcTodoRoute,
   DemoWorkosRoute: DemoWorkosRoute,
+  DashboardIndexRoute: DashboardIndexRoute,
+  TimerIndexRoute: TimerIndexRoute,
   ApiTrpcSplatRoute: ApiTrpcSplatRoute,
   DemoApiAvailableProvidersRoute: DemoApiAvailableProvidersRoute,
   DemoApiImageRoute: DemoApiImageRoute,
