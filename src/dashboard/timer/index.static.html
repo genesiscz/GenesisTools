@@ -1,0 +1,1432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CHRONO // Terminal</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-deep: #030308;
+      --bg-card: rgba(10, 10, 20, 0.85);
+      --amber: #ff9500;
+      --amber-bright: #ffb800;
+      --amber-dim: #cc7700;
+      --cyan: #00f0ff;
+      --cyan-dim: #00a8b3;
+      --purple: #a855f7;
+      --text-primary: #f5f5f0;
+      --text-muted: #6b7280;
+      --border-subtle: rgba(255, 149, 0, 0.15);
+      --border-glow: rgba(255, 149, 0, 0.4);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      color-scheme: dark;
+    }
+
+    body {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(255, 149, 0, 0.06), transparent),
+        radial-gradient(ellipse 60% 40% at 80% 100%, rgba(0, 240, 255, 0.03), transparent),
+        linear-gradient(180deg, #030308 0%, #0a0a14 50%, #030308 100%);
+      background-attachment: fixed;
+      color: var(--text-primary);
+      min-height: 100vh;
+      margin: 0;
+      overflow-x: hidden;
+    }
+
+    /* Cyber grid background */
+    .cyber-grid {
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255, 149, 0, 0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 149, 0, 0.02) 1px, transparent 1px);
+      background-size: 60px 60px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Scan lines overlay */
+    .scan-lines {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.08) 2px,
+        rgba(0, 0, 0, 0.08) 4px
+      );
+      z-index: 9998;
+    }
+
+    /* Noise texture */
+    .noise {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.025;
+      z-index: 9997;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    }
+
+    /* Typography */
+    .font-mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .font-display {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+    }
+
+    /* Neon text effects */
+    .neon-amber {
+      color: var(--amber);
+      text-shadow:
+        0 0 10px rgba(255, 149, 0, 0.8),
+        0 0 20px rgba(255, 149, 0, 0.5),
+        0 0 40px rgba(255, 149, 0, 0.3);
+    }
+
+    .neon-cyan {
+      color: var(--cyan);
+      text-shadow:
+        0 0 10px rgba(0, 240, 255, 0.8),
+        0 0 20px rgba(0, 240, 255, 0.5),
+        0 0 40px rgba(0, 240, 255, 0.3);
+    }
+
+    /* Glass card effect */
+    .glass-card {
+      background: linear-gradient(135deg, rgba(10, 10, 20, 0.9) 0%, rgba(5, 5, 15, 0.95) 100%);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      position: relative;
+      transition: all 0.3s ease;
+    }
+
+    .glass-card:hover {
+      border-color: var(--border-glow);
+      box-shadow:
+        0 0 40px -10px rgba(255, 149, 0, 0.2),
+        inset 0 0 40px -20px rgba(255, 149, 0, 0.05);
+    }
+
+    /* Tech corner decorations */
+    .tech-corners::before,
+    .tech-corners::after {
+      content: '';
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      border-color: rgba(255, 149, 0, 0.4);
+      border-style: solid;
+      pointer-events: none;
+    }
+
+    .tech-corners::before {
+      top: -1px;
+      left: -1px;
+      border-width: 2px 0 0 2px;
+      border-radius: 2px 0 0 0;
+    }
+
+    .tech-corners::after {
+      bottom: -1px;
+      right: -1px;
+      border-width: 0 2px 2px 0;
+      border-radius: 0 0 2px 0;
+    }
+
+    /* Timer display */
+    .timer-display {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: clamp(2.5rem, 8vw, 4rem);
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      font-variant-numeric: tabular-nums;
+      color: var(--cyan);
+      text-shadow:
+        0 0 20px rgba(0, 240, 255, 0.6),
+        0 0 40px rgba(0, 240, 255, 0.4),
+        0 0 60px rgba(0, 240, 255, 0.2);
+      transition: all 0.3s ease;
+    }
+
+    .timer-display.running {
+      animation: pulseGlow 2s ease-in-out infinite;
+    }
+
+    @keyframes pulseGlow {
+      0%, 100% {
+        text-shadow:
+          0 0 20px rgba(0, 240, 255, 0.6),
+          0 0 40px rgba(0, 240, 255, 0.4),
+          0 0 60px rgba(0, 240, 255, 0.2);
+        filter: brightness(1);
+      }
+      50% {
+        text-shadow:
+          0 0 30px rgba(0, 240, 255, 0.8),
+          0 0 60px rgba(0, 240, 255, 0.5),
+          0 0 100px rgba(0, 240, 255, 0.3);
+        filter: brightness(1.1);
+      }
+    }
+
+    /* Total time badge */
+    .total-badge {
+      position: absolute;
+      bottom: 16px;
+      right: 16px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      padding: 6px 10px;
+      background: rgba(255, 149, 0, 0.1);
+      border: 1px solid rgba(255, 149, 0, 0.3);
+      border-radius: 6px;
+      color: var(--amber);
+      opacity: 0.9;
+    }
+
+    .total-badge.hidden {
+      display: none;
+    }
+
+    /* Buttons */
+    .btn {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-weight: 500;
+      font-size: 0.8rem;
+      padding: 10px 16px;
+      border: 1px solid;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+      transform: translateX(-100%);
+      transition: transform 0.4s ease;
+    }
+
+    .btn:hover::before {
+      transform: translateX(100%);
+    }
+
+    .btn-primary {
+      border-color: var(--cyan-dim);
+      color: var(--cyan);
+      background: rgba(0, 240, 255, 0.08);
+    }
+
+    .btn-primary:hover {
+      background: rgba(0, 240, 255, 0.15);
+      border-color: var(--cyan);
+      box-shadow: 0 0 20px rgba(0, 240, 255, 0.3);
+    }
+
+    .btn-secondary {
+      border-color: var(--amber-dim);
+      color: var(--amber);
+      background: rgba(255, 149, 0, 0.08);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 149, 0, 0.15);
+      border-color: var(--amber);
+      box-shadow: 0 0 20px rgba(255, 149, 0, 0.3);
+    }
+
+    .btn-ghost {
+      border-color: rgba(255, 255, 255, 0.1);
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .btn-ghost:hover {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: rgba(255, 255, 255, 0.2);
+      color: var(--text-primary);
+    }
+
+    .btn:active {
+      transform: scale(0.97);
+    }
+
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .btn:disabled:hover {
+      box-shadow: none;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    /* Add timer button */
+    .btn-add {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-weight: 600;
+      font-size: 1rem;
+      padding: 16px 40px;
+      background: linear-gradient(135deg, rgba(255, 149, 0, 0.15) 0%, rgba(255, 184, 0, 0.1) 100%);
+      border: 1px solid rgba(255, 149, 0, 0.4);
+      border-radius: 10px;
+      color: var(--amber);
+      cursor: pointer;
+      transition: all 0.3s ease;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      position: relative;
+      box-shadow:
+        0 0 30px rgba(255, 149, 0, 0.15),
+        inset 0 0 30px rgba(255, 149, 0, 0.05);
+    }
+
+    .btn-add:hover {
+      background: linear-gradient(135deg, rgba(255, 149, 0, 0.25) 0%, rgba(255, 184, 0, 0.15) 100%);
+      border-color: var(--amber);
+      box-shadow:
+        0 0 50px rgba(255, 149, 0, 0.25),
+        inset 0 0 40px rgba(255, 149, 0, 0.08);
+      transform: translateY(-2px);
+    }
+
+    /* Pop-out button */
+    .btn-popout {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.3);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-size: 0.9rem;
+      z-index: 10;
+    }
+
+    .btn-popout:hover {
+      border-color: var(--cyan-dim);
+      color: var(--cyan);
+      background: rgba(0, 240, 255, 0.1);
+      box-shadow: 0 0 15px rgba(0, 240, 255, 0.2);
+    }
+
+    /* Input fields */
+    input[type="text"],
+    select {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-primary);
+      padding: 10px 14px;
+      border-radius: 6px;
+      transition: all 0.2s ease;
+      font-size: 0.9rem;
+    }
+
+    input[type="text"]:focus,
+    select:focus {
+      outline: none;
+      border-color: var(--cyan-dim);
+      box-shadow: 0 0 20px rgba(0, 240, 255, 0.15);
+    }
+
+    input[type="text"]:disabled,
+    select:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Timer name input */
+    .timer-name-input {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-size: 1.1rem;
+      font-weight: 600;
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid rgba(255, 149, 0, 0.3);
+      color: var(--amber);
+      padding: 8px 4px;
+      width: 100%;
+      transition: all 0.2s ease;
+    }
+
+    .timer-name-input:focus {
+      outline: none;
+      border-color: var(--amber);
+    }
+
+    .timer-name-input:disabled {
+      opacity: 0.7;
+    }
+
+    /* Laps container */
+    .laps-container {
+      max-height: 180px;
+      overflow-y: auto;
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .lap-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px;
+      margin-bottom: 6px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 6px;
+      border-left: 2px solid var(--amber-dim);
+      font-size: 0.85rem;
+      transition: all 0.2s ease;
+    }
+
+    .lap-item:hover {
+      background: rgba(0, 0, 0, 0.3);
+      border-left-color: var(--amber);
+    }
+
+    .lap-number {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-weight: 500;
+      color: var(--amber);
+    }
+
+    .lap-time {
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--cyan);
+    }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 80px 20px;
+    }
+
+    .empty-state h2 {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    .empty-state p {
+      color: rgba(107, 114, 128, 0.7);
+      font-size: 0.95rem;
+    }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--amber-dim);
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--amber);
+    }
+
+    /* Flash animation for countdown complete */
+    @keyframes flash {
+      0%, 100% {
+        box-shadow: 0 0 40px rgba(255, 149, 0, 0.3);
+      }
+      50% {
+        box-shadow: 0 0 80px rgba(255, 149, 0, 0.6), 0 0 120px rgba(255, 149, 0, 0.3);
+      }
+    }
+
+    .timer-card.flash {
+      animation: flash 0.5s ease-in-out 3;
+    }
+
+    /* Flicker animation */
+    @keyframes flicker {
+      0%, 100% { opacity: 1; }
+      92% { opacity: 1; }
+      93% { opacity: 0.85; }
+      94% { opacity: 1; }
+      96% { opacity: 0.9; }
+      97% { opacity: 1; }
+    }
+
+    .animate-flicker {
+      animation: flicker 4s infinite;
+    }
+
+    /* Fade in animation */
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .animate-fade-in {
+      animation: fadeInUp 0.5s ease-out forwards;
+    }
+
+    /* Status indicator */
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      transition: all 0.3s ease;
+    }
+
+    .status-dot.running {
+      background: var(--cyan);
+      box-shadow: 0 0 10px var(--cyan);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* Single Timer Mode */
+    body.single-timer-mode .cyber-grid,
+    body.single-timer-mode header,
+    body.single-timer-mode .add-section,
+    body.single-timer-mode #emptyState {
+      display: none;
+    }
+
+    body.single-timer-mode {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    body.single-timer-mode main {
+      padding: 20px;
+      width: 100%;
+      max-width: 480px;
+    }
+
+    body.single-timer-mode #timersGrid {
+      display: block;
+    }
+
+    body.single-timer-mode .timer-card {
+      margin: 0;
+    }
+
+    body.single-timer-mode .btn-popout {
+      display: none;
+    }
+
+    /* Decorative elements */
+    .header-line {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--amber-dim), transparent);
+      margin: 20px 0;
+    }
+
+    .corner-accent {
+      position: absolute;
+      width: 40px;
+      height: 40px;
+      border: 1px solid rgba(255, 149, 0, 0.2);
+      pointer-events: none;
+    }
+
+    .corner-accent.top-left {
+      top: 0;
+      left: 0;
+      border-right: none;
+      border-bottom: none;
+    }
+
+    .corner-accent.bottom-right {
+      bottom: 0;
+      right: 0;
+      border-left: none;
+      border-top: none;
+    }
+  </style>
+</head>
+<body class="bg-[#030308]">
+  <!-- Background effects -->
+  <div class="cyber-grid"></div>
+  <div class="noise"></div>
+  <div class="scan-lines"></div>
+
+  <div id="app" class="relative z-10">
+    <!-- Header -->
+    <header class="relative py-12 px-6">
+      <div class="max-w-5xl mx-auto text-center">
+        <div class="inline-block mb-4">
+          <span class="text-xs font-mono tracking-[0.3em] text-amber-500/60 uppercase">System Active</span>
+        </div>
+        <h1 class="text-4xl md:text-5xl font-display font-bold neon-amber animate-flicker tracking-tight">
+          CHRONO<span class="text-cyan-400">//</span>TERMINAL
+        </h1>
+        <p class="mt-4 text-sm text-gray-500 tracking-wide">
+          Precision time management interface v2.0
+        </p>
+        <div class="header-line"></div>
+      </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="max-w-5xl mx-auto pb-20 px-6">
+      <!-- Add Timer Section -->
+      <div class="add-section flex justify-center mb-16">
+        <button id="addTimerBtn" class="btn-add">
+          <span class="relative z-10">+ Initialize Timer</span>
+        </button>
+      </div>
+
+      <!-- Timers Grid -->
+      <div id="timersGrid" class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <!-- Timers will be rendered here -->
+      </div>
+
+      <!-- Empty State -->
+      <div id="emptyState" class="empty-state" style="display: none;">
+        <div class="text-4xl mb-6 opacity-30">⏱</div>
+        <h2>No Active Timers</h2>
+        <p>Initialize a timer to begin tracking</p>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // ============================================
+    // UTILITIES
+    // ============================================
+
+    function generateId() {
+      return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    }
+
+    function formatTime(ms) {
+      const totalSeconds = Math.floor(ms / 1000);
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      const deciseconds = Math.floor((ms % 1000) / 100);
+
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}.${deciseconds}`;
+    }
+
+    function parseTimeInput(str) {
+      const parts = str.trim().split(':').map(p => parseInt(p, 10) || 0);
+      if (parts.length === 2) {
+        return (parts[0] * 60 + parts[1]) * 1000;
+      } else if (parts.length === 3) {
+        return (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
+      }
+      return 0;
+    }
+
+    // ============================================
+    // TIMER CLASS
+    // ============================================
+
+    class Timer {
+      constructor(config = {}) {
+        this.id = config.id || generateId();
+        this.name = config.name || 'Timer';
+        this.type = config.type || 'stopwatch';
+
+        this.startTime = null;
+        this.pausedTime = config.pausedTime || 0;
+        this.isRunning = false;
+
+        this.firstStartTime = config.firstStartTime || null;
+        this.showTotal = config.showTotal !== false;
+
+        this.countdownDuration = config.countdownDuration || 300000;
+        this.laps = config.laps || [];
+        this.createdAt = config.createdAt || Date.now();
+        this.order = config.order || 0;
+      }
+
+      start() {
+        if (!this.isRunning) {
+          this.isRunning = true;
+          const now = performance.now();
+          if (!this.firstStartTime) {
+            this.firstStartTime = now;
+          }
+          this.startTime = now - this.pausedTime;
+        }
+      }
+
+      pause() {
+        if (this.isRunning) {
+          this.isRunning = false;
+          this.pausedTime = performance.now() - this.startTime;
+        }
+      }
+
+      reset() {
+        this.isRunning = false;
+        this.startTime = null;
+        this.pausedTime = 0;
+        this.firstStartTime = null;
+        this.laps = [];
+      }
+
+      lap() {
+        if (this.isRunning) {
+          const lapTime = this.getCurrentTime();
+          const lap = {
+            id: generateId(),
+            time: lapTime,
+            timestamp: performance.now(),
+            index: this.laps.length + 1
+          };
+          this.laps.push(lap);
+          return lap;
+        }
+        return null;
+      }
+
+      getCurrentTime() {
+        if (this.isRunning) {
+          return performance.now() - this.startTime;
+        }
+        return this.pausedTime;
+      }
+
+      getTotalTime() {
+        if (!this.firstStartTime) {
+          return 0;
+        }
+        return performance.now() - this.firstStartTime;
+      }
+
+      getDisplayTime() {
+        const currentTime = this.getCurrentTime();
+        if (this.type === 'countdown') {
+          const remaining = Math.max(0, this.countdownDuration - currentTime);
+          return remaining;
+        }
+        return currentTime;
+      }
+
+      isComplete() {
+        return this.type === 'countdown' && this.getCurrentTime() >= this.countdownDuration;
+      }
+
+      toJSON() {
+        const currentTime = this.getCurrentTime();
+        const totalTimeElapsed = this.getTotalTime();
+        return {
+          id: this.id,
+          name: this.name,
+          type: this.type,
+          pausedTime: currentTime,
+          savedTotalTime: totalTimeElapsed, // Store as duration
+          isRunning: this.isRunning, // Persist running state
+          countdownDuration: this.countdownDuration,
+          laps: this.laps,
+          showTotal: this.showTotal,
+          createdAt: this.createdAt,
+          order: this.order
+        };
+      }
+
+      static fromJSON(data) {
+        const timer = new Timer(data);
+
+        // Reconstruct firstStartTime from saved total time
+        if (data.savedTotalTime && data.savedTotalTime > 0) {
+          timer.firstStartTime = performance.now() - data.savedTotalTime;
+        }
+
+        // If timer was running before, restart it
+        if (data.isRunning) {
+          timer.isRunning = true;
+          timer.startTime = performance.now() - data.pausedTime;
+        }
+
+        return timer;
+      }
+    }
+
+    // ============================================
+    // TIMER STORE
+    // ============================================
+
+    class TimerStore {
+      constructor() {
+        this.timers = new Map();
+        this.listeners = new Set();
+      }
+
+      subscribe(callback) {
+        this.listeners.add(callback);
+        return () => this.listeners.delete(callback);
+      }
+
+      notify() {
+        this.listeners.forEach(cb => cb(this.getState()));
+      }
+
+      addTimer(timer) {
+        this.timers.set(timer.id, timer);
+        this.notify();
+      }
+
+      deleteTimer(id) {
+        this.timers.delete(id);
+        this.notify();
+      }
+
+      getTimer(id) {
+        return this.timers.get(id);
+      }
+
+      getAllTimers() {
+        return Array.from(this.timers.values());
+      }
+
+      getState() {
+        return {
+          timers: this.getAllTimers(),
+          timestamp: performance.now()
+        };
+      }
+
+      tick() {
+        this.notify();
+      }
+    }
+
+    // ============================================
+    // STORAGE SYNC
+    // ============================================
+
+    class StorageSync {
+      constructor(storageKey = 'cyberpunk-timers') {
+        this.storageKey = storageKey;
+        this.saveTimeout = null;
+        this.saveDelay = 300;
+      }
+
+      save(state, instanceId) {
+        clearTimeout(this.saveTimeout);
+        this.saveTimeout = setTimeout(() => {
+          this._saveImmediate(state, instanceId);
+        }, this.saveDelay);
+      }
+
+      _saveImmediate(state, instanceId) {
+        try {
+          const serializable = {
+            version: 1,
+            timers: state.timers.map(timer => timer.toJSON()),
+            lastSync: Date.now(),
+            sourceInstance: instanceId
+          };
+          localStorage.setItem(this.storageKey, JSON.stringify(serializable));
+        } catch (e) {
+          console.error('Failed to save:', e);
+        }
+      }
+
+      load() {
+        try {
+          const data = localStorage.getItem(this.storageKey);
+          if (!data) return null;
+          const parsed = JSON.parse(data);
+          if (parsed.version !== 1) return null;
+          return parsed;
+        } catch (e) {
+          console.error('Failed to load:', e);
+          return null;
+        }
+      }
+    }
+
+    // ============================================
+    // TIMER ENGINE
+    // ============================================
+
+    class TimerEngine {
+      constructor() {
+        this.rafId = null;
+        this.updateCallback = null;
+        this.isRunning = false;
+
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) {
+            if (this.rafId) {
+              cancelAnimationFrame(this.rafId);
+              this.rafId = null;
+            }
+          } else if (this.isRunning) {
+            this.tick();
+          }
+        });
+      }
+
+      tick() {
+        this.rafId = requestAnimationFrame(() => {
+          if (this.updateCallback && this.isRunning) {
+            this.updateCallback(performance.now());
+          }
+          this.tick();
+        });
+      }
+
+      start(callback) {
+        this.isRunning = true;
+        this.updateCallback = callback;
+        this.tick();
+      }
+
+      stop() {
+        this.isRunning = false;
+        if (this.rafId) {
+          cancelAnimationFrame(this.rafId);
+          this.rafId = null;
+        }
+      }
+    }
+
+    // ============================================
+    // UI RENDERER
+    // ============================================
+
+    class UIRenderer {
+      constructor(store, storageSync) {
+        this.store = store;
+        this.storageSync = storageSync;
+        this.lastRenderTime = 0;
+        this.updateInterval = 100;
+        this.completedCountdowns = new Set();
+      }
+
+      scheduleUpdate(timestamp) {
+        if (timestamp - this.lastRenderTime >= this.updateInterval) {
+          this.render();
+          this.lastRenderTime = timestamp;
+        }
+      }
+
+      render() {
+        const state = this.store.getState();
+        const timersGrid = document.getElementById('timersGrid');
+        const emptyState = document.getElementById('emptyState');
+
+        // Filter for single timer mode (UI only - storage still saves all timers)
+        let timersToRender = state.timers;
+        if (window.app && window.app.singleTimerId) {
+          timersToRender = timersToRender.filter(t => t.id === window.app.singleTimerId);
+        }
+
+        if (timersToRender.length === 0) {
+          timersGrid.innerHTML = '';
+          emptyState.style.display = 'block';
+          return;
+        }
+
+        emptyState.style.display = 'none';
+
+        timersToRender.forEach(timer => {
+          if (timer.type === 'countdown' && timer.isComplete() && !this.completedCountdowns.has(timer.id)) {
+            this.completedCountdowns.add(timer.id);
+            timer.pause();
+            this.flashTimerCard(timer.id);
+          }
+        });
+
+        state.timers.forEach(timer => {
+          const timerId = `timer-${timer.id}`;
+          let card = document.getElementById(timerId);
+
+          if (!card) {
+            card = this.createTimerCard(timer);
+            timersGrid.appendChild(card);
+          } else {
+            this.updateTimerCard(card, timer);
+          }
+        });
+
+        const existingIds = new Set(timersToRender.map(t => `timer-${t.id}`));
+        Array.from(timersGrid.children).forEach(child => {
+          if (!existingIds.has(child.id)) {
+            child.remove();
+          }
+        });
+      }
+
+      createTimerCard(timer) {
+        const card = document.createElement('div');
+        card.id = `timer-${timer.id}`;
+        card.className = 'timer-card glass-card tech-corners p-6 animate-fade-in';
+
+        const displayTime = formatTime(timer.getDisplayTime());
+        const totalTime = formatTime(timer.getTotalTime());
+
+        let countdownInput = '';
+        if (timer.type === 'countdown') {
+          countdownInput = `
+            <div class="mb-6">
+              <label class="text-xs text-amber-500/70 mb-2 block font-medium tracking-wide">TARGET TIME</label>
+              <input
+                type="text"
+                class="w-full font-mono"
+                id="countdown-input-${timer.id}"
+                value="${formatTime(timer.countdownDuration)}"
+                placeholder="HH:MM:SS"
+                ${timer.isRunning ? 'disabled' : ''}
+              >
+            </div>
+          `;
+        }
+
+        card.innerHTML = `
+          <!-- Pop-out button -->
+          <button class="btn-popout" id="popout-${timer.id}" title="Open in new window">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+              <polyline points="15 3 21 3 21 9"></polyline>
+              <line x1="10" y1="14" x2="21" y2="3"></line>
+            </svg>
+          </button>
+
+          <!-- Timer name -->
+          <div class="pr-12 mb-6">
+            <input
+              type="text"
+              id="timer-name-${timer.id}"
+              value="${timer.name}"
+              class="timer-name-input"
+              ${timer.isRunning ? 'disabled' : ''}
+            >
+          </div>
+
+          <!-- Timer type & status -->
+          <div class="flex items-center gap-4 mb-6">
+            <select
+              id="timer-type-${timer.id}"
+              class="flex-1"
+              ${timer.isRunning ? 'disabled' : ''}
+            >
+              <option value="stopwatch" ${timer.type === 'stopwatch' ? 'selected' : ''}>Stopwatch</option>
+              <option value="countdown" ${timer.type === 'countdown' ? 'selected' : ''}>Countdown</option>
+            </select>
+            <div class="flex items-center gap-2">
+              <div class="status-dot ${timer.isRunning ? 'running' : ''}"></div>
+              <span class="text-xs text-gray-500 uppercase tracking-wide">${timer.isRunning ? 'Running' : 'Paused'}</span>
+            </div>
+          </div>
+
+          ${countdownInput}
+
+          <!-- Timer display -->
+          <div class="text-center py-6">
+            <div class="timer-display ${timer.isRunning ? 'running' : ''}" id="display-${timer.id}">
+              ${displayTime}
+            </div>
+          </div>
+
+          <!-- Controls -->
+          <div class="flex gap-3 justify-center flex-wrap mb-4">
+            <button class="btn btn-primary" id="start-${timer.id}">
+              ${timer.isRunning ? 'Pause' : 'Start'}
+            </button>
+            <button class="btn btn-secondary" id="lap-${timer.id}" ${!timer.isRunning ? 'disabled' : ''}>
+              Lap
+            </button>
+            <button class="btn btn-ghost" id="reset-${timer.id}">
+              Reset
+            </button>
+            <button class="btn btn-ghost" id="delete-${timer.id}">
+              Delete
+            </button>
+          </div>
+
+          <!-- Toggle total -->
+          <div class="text-center">
+            <button class="text-xs text-gray-500 hover:text-amber-500 transition-colors" id="toggle-total-${timer.id}">
+              ${timer.showTotal ? 'Hide' : 'Show'} total time
+            </button>
+          </div>
+
+          <!-- Total time badge -->
+          ${timer.showTotal ? `
+            <div class="total-badge">
+              <span class="text-gray-500">Total:</span>
+              <span id="total-${timer.id}">${totalTime}</span>
+            </div>
+          ` : ''}
+
+          <!-- Laps -->
+          <div class="laps-container" id="laps-${timer.id}">
+            ${timer.laps.length === 0
+              ? '<div class="text-center text-gray-600 text-sm py-4">No laps recorded</div>'
+              : timer.laps.slice().reverse().map((lap, idx) => `
+                <div class="lap-item">
+                  <span class="lap-number">LAP ${timer.laps.length - idx}</span>
+                  <span class="lap-time">${formatTime(lap.time)}</span>
+                </div>
+              `).join('')
+            }
+          </div>
+        `;
+
+        this.attachEventListeners(card, timer);
+        return card;
+      }
+
+      updateTimerCard(card, timer) {
+        const display = card.querySelector(`#display-${timer.id}`);
+        if (display) {
+          display.textContent = formatTime(timer.getDisplayTime());
+          display.classList.toggle('running', timer.isRunning);
+        }
+
+        if (timer.showTotal) {
+          const totalDisplay = card.querySelector(`#total-${timer.id}`);
+          if (totalDisplay) {
+            totalDisplay.textContent = formatTime(timer.getTotalTime());
+          }
+        }
+
+        const startBtn = card.querySelector(`#start-${timer.id}`);
+        if (startBtn) {
+          startBtn.textContent = timer.isRunning ? 'Pause' : 'Start';
+        }
+
+        const lapBtn = card.querySelector(`#lap-${timer.id}`);
+        if (lapBtn) {
+          lapBtn.disabled = !timer.isRunning;
+        }
+
+        const statusDot = card.querySelector('.status-dot');
+        if (statusDot) {
+          statusDot.classList.toggle('running', timer.isRunning);
+          const statusText = statusDot.nextElementSibling;
+          if (statusText) {
+            statusText.textContent = timer.isRunning ? 'Running' : 'Paused';
+          }
+        }
+
+        const countdownInput = card.querySelector(`#countdown-input-${timer.id}`);
+        if (countdownInput) countdownInput.disabled = timer.isRunning;
+
+        const nameInput = card.querySelector(`#timer-name-${timer.id}`);
+        if (nameInput) nameInput.disabled = timer.isRunning;
+
+        const typeSelect = card.querySelector(`#timer-type-${timer.id}`);
+        if (typeSelect) typeSelect.disabled = timer.isRunning;
+
+        // Update laps container
+        const lapsContainer = card.querySelector(`#laps-${timer.id}`);
+        if (lapsContainer) {
+          if (timer.laps.length === 0) {
+            lapsContainer.innerHTML = '<div class="text-center text-gray-600 text-sm py-4">No laps recorded</div>';
+          } else {
+            lapsContainer.innerHTML = timer.laps.slice().reverse().map((lap, idx) => `
+              <div class="lap-item">
+                <span class="lap-number">LAP ${timer.laps.length - idx}</span>
+                <span class="lap-time">${formatTime(lap.time)}</span>
+              </div>
+            `).join('');
+          }
+        }
+      }
+
+      attachEventListeners(card, timer) {
+        const startBtn = card.querySelector(`#start-${timer.id}`);
+        const lapBtn = card.querySelector(`#lap-${timer.id}`);
+        const resetBtn = card.querySelector(`#reset-${timer.id}`);
+        const deleteBtn = card.querySelector(`#delete-${timer.id}`);
+        const toggleTotalBtn = card.querySelector(`#toggle-total-${timer.id}`);
+        const nameInput = card.querySelector(`#timer-name-${timer.id}`);
+        const typeSelect = card.querySelector(`#timer-type-${timer.id}`);
+        const countdownInput = card.querySelector(`#countdown-input-${timer.id}`);
+        const popoutBtn = card.querySelector(`#popout-${timer.id}`);
+
+        startBtn.addEventListener('click', () => {
+          if (timer.isRunning) {
+            timer.pause();
+          } else {
+            if (timer.type === 'countdown' && timer.countdownDuration <= 0) {
+              alert('Please set a valid countdown duration');
+              return;
+            }
+            timer.start();
+          }
+          this.store.notify();
+          this.storageSync.save(this.store.getState(), window.app.instanceId);
+        });
+
+        lapBtn.addEventListener('click', () => {
+          timer.lap();
+          this.store.notify();
+          this.storageSync.save(this.store.getState(), window.app.instanceId);
+        });
+
+        resetBtn.addEventListener('click', () => {
+          timer.reset();
+          this.completedCountdowns.delete(timer.id);
+          card.classList.remove('flash');
+          this.store.notify();
+          this.storageSync.save(this.store.getState(), window.app.instanceId);
+        });
+
+        deleteBtn.addEventListener('click', () => {
+          if (confirm(`Delete "${timer.name}"?`)) {
+            this.store.deleteTimer(timer.id);
+            this.completedCountdowns.delete(timer.id);
+            this.storageSync.save(this.store.getState(), window.app.instanceId);
+          }
+        });
+
+        toggleTotalBtn.addEventListener('click', () => {
+          timer.showTotal = !timer.showTotal;
+          this.store.notify();
+          this.storageSync.save(this.store.getState(), window.app.instanceId);
+        });
+
+        if (popoutBtn) {
+          popoutBtn.addEventListener('click', () => {
+            const url = `${window.location.pathname}?timer=${timer.id}`;
+            window.open(url, `timer-${timer.id}`, 'width=480,height=700,menubar=no,toolbar=no');
+          });
+        }
+
+        nameInput.addEventListener('change', () => {
+          timer.name = nameInput.value.trim() || 'Timer';
+          this.store.notify();
+          this.storageSync.save(this.store.getState(), window.app.instanceId);
+        });
+
+        typeSelect.addEventListener('change', () => {
+          timer.type = typeSelect.value;
+          if (timer.type === 'countdown') {
+            timer.pause();
+            timer.pausedTime = 0;
+          }
+          this.store.notify();
+          this.storageSync.save(this.store.getState(), window.app.instanceId);
+          this.render();
+        });
+
+        if (countdownInput) {
+          countdownInput.addEventListener('change', () => {
+            const ms = parseTimeInput(countdownInput.value);
+            if (ms > 0) {
+              timer.countdownDuration = ms;
+              this.storageSync.save(this.store.getState(), window.app.instanceId);
+            } else {
+              countdownInput.value = formatTime(timer.countdownDuration);
+            }
+          });
+        }
+      }
+
+      flashTimerCard(timerId) {
+        const card = document.getElementById(`timer-${timerId}`);
+        if (card) {
+          card.classList.add('flash');
+          setTimeout(() => card.classList.remove('flash'), 1500);
+        }
+      }
+    }
+
+    // ============================================
+    // MAIN APP
+    // ============================================
+
+    class CyberpunkTimerApp {
+      constructor() {
+        this.instanceId = generateId(); // Unique per window for cross-tab sync
+        this.store = new TimerStore();
+        this.storage = new StorageSync();
+        this.renderer = new UIRenderer(this.store, this.storage);
+        this.engine = new TimerEngine();
+        this.init();
+      }
+
+      init() {
+        this.loadFromStorage();
+        this.checkSingleTimerMode();
+
+        this.engine.start((timestamp) => {
+          this.store.tick(timestamp);
+          this.renderer.scheduleUpdate(timestamp);
+        });
+
+        // NOTE: Don't save on every tick - only save on user actions
+        // The individual event handlers call storage.save() directly
+
+        window.addEventListener('storage', (e) => {
+          if (e.key === this.storage.storageKey) {
+            // Check if this was our own save (ignore self-sync)
+            try {
+              const data = JSON.parse(e.newValue);
+              if (data && data.sourceInstance === this.instanceId) {
+                return; // Ignore our own saves
+              }
+            } catch (err) {
+              // Continue with merge if parsing fails
+            }
+            this.mergeFromStorage();
+          }
+        });
+
+        // Save immediately before page unloads (to capture running timer state)
+        window.addEventListener('beforeunload', () => {
+          this.storage._saveImmediate(this.store.getState(), this.instanceId);
+        });
+
+        // Also save when tab becomes hidden
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) {
+            this.storage._saveImmediate(this.store.getState(), this.instanceId);
+          }
+        });
+
+        this.renderer.render();
+
+        const addBtn = document.getElementById('addTimerBtn');
+        if (addBtn) {
+          addBtn.addEventListener('click', () => {
+            const timer = new Timer({ name: `Timer ${this.store.getAllTimers().length + 1}` });
+            this.store.addTimer(timer);
+            this.storage.save(this.store.getState(), this.instanceId);
+          });
+        }
+      }
+
+      checkSingleTimerMode() {
+        const params = new URLSearchParams(window.location.search);
+        const timerId = params.get('timer');
+
+        if (timerId) {
+          document.body.classList.add('single-timer-mode');
+          this.singleTimerId = timerId;
+          // Don't override getAllTimers - use UI-level filtering instead
+        }
+      }
+
+      loadFromStorage() {
+        const savedData = this.storage.load();
+        this.store.timers.clear();
+
+        if (savedData && savedData.timers) {
+          savedData.timers.forEach(timerData => {
+            const timer = Timer.fromJSON(timerData);
+            this.store.timers.set(timer.id, timer);
+          });
+        }
+      }
+
+      mergeFromStorage() {
+        const savedData = this.storage.load();
+        if (!savedData || !savedData.timers) return;
+
+        // Process each timer from storage
+        savedData.timers.forEach(timerData => {
+          const existingTimer = this.store.getTimer(timerData.id);
+
+          if (!existingTimer) {
+            // New timer from another window - add it
+            const timer = Timer.fromJSON(timerData);
+            this.store.timers.set(timer.id, timer);
+          } else {
+            // Timer exists - sync all properties including running state
+            existingTimer.name = timerData.name;
+            existingTimer.type = timerData.type;
+            existingTimer.showTotal = timerData.showTotal;
+            existingTimer.countdownDuration = timerData.countdownDuration;
+            existingTimer.laps = timerData.laps || [];
+
+            // Sync running state and timing
+            existingTimer.isRunning = timerData.isRunning;
+            existingTimer.pausedTime = timerData.pausedTime;
+
+            // Reconstruct firstStartTime from saved total time
+            if (timerData.savedTotalTime && timerData.savedTotalTime > 0) {
+              existingTimer.firstStartTime = performance.now() - timerData.savedTotalTime;
+            } else {
+              existingTimer.firstStartTime = null;
+            }
+
+            // Reconstruct startTime if running
+            if (timerData.isRunning) {
+              existingTimer.startTime = performance.now() - timerData.pausedTime;
+            } else {
+              existingTimer.startTime = null;
+            }
+          }
+        });
+
+        // Check for deleted timers
+        const savedIds = new Set(savedData.timers.map(t => t.id));
+        for (const [id, timer] of this.store.timers) {
+          if (!savedIds.has(id)) {
+            this.store.timers.delete(id);
+          }
+        }
+
+        this.renderer.render();
+      }
+    }
+
+    // ============================================
+    // INITIALIZATION
+    // ============================================
+
+    document.addEventListener('DOMContentLoaded', () => {
+      window.app = new CyberpunkTimerApp();
+    });
+  </script>
+</body>
+</html>
