@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { AuthLayout } from '@/components/auth'
+import { getOAuthUrl } from '@/lib/auth.functions'
 
 export const Route = createFileRoute('/auth/signup')({
   component: SignUpPage,
@@ -58,8 +59,11 @@ function SignUpPage() {
   const handleOAuthSignIn = async (provider: 'google' | 'github') => {
     try {
       setOauthLoading(provider)
-      await signIn({ provider })
-    } catch {
+      // Get OAuth URL from server and redirect directly (bypasses AuthKit hosted page)
+      const url = await getOAuthUrl({ data: { provider } })
+      window.location.href = url
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start OAuth')
       setOauthLoading(null)
     }
   }

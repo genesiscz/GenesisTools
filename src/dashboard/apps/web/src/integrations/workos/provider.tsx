@@ -11,6 +11,8 @@ if (!VITE_WORKOS_API_HOSTNAME) {
   throw new Error('Add your WorkOS API Hostname to the .env.local file')
 }
 
+const VITE_APP_URL = import.meta.env.VITE_APP_URL || 'http://localhost:3000'
+
 export default function AppWorkOSProvider({
   children,
 }: {
@@ -22,6 +24,7 @@ export default function AppWorkOSProvider({
     <AuthKitProvider
       clientId={VITE_WORKOS_CLIENT_ID}
       apiHostname={VITE_WORKOS_API_HOSTNAME}
+      redirectUri={`${VITE_APP_URL}/auth-callback`}
       onRedirectCallback={({ state, error }) => {
         // Handle OAuth errors
         if (error) {
