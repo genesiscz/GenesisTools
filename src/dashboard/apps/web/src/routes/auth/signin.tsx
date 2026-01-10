@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useSearch } from '@tanstack/react-router'
 import { useState } from 'react'
-import { useAuth } from '@workos-inc/authkit-react'
+import { useAuth } from '@workos/authkit-tanstack-react-start/client'
 import {
   Mail,
   Lock,
@@ -154,7 +154,7 @@ function SignInPage() {
         </div>
 
         {/* Sign In Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4" suppressHydrationWarning>
           {/* Email Field */}
           <div className="space-y-2">
             <label
