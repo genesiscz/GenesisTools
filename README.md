@@ -91,6 +91,7 @@ tools
 | **[MCP Web Reader](#12--mcp-web-reader)**            | 🌐 Fetch raw HTML or Markdown (Jina/local)    |
 | **[MCP TSC](#15--mcp-tsc)**                          | 🔍 TypeScript diagnostics (CLI & MCP)         |
 | **[MCP Manager](#17--mcp-manager)**                  | ⚙️ Cross-platform MCP configuration manager   |
+| **[Azure DevOps](#20--azure-devops)**                | 🔷 Fetch and manage Azure DevOps work items   |
 
 ### 📊 Monitoring & Watching
 
@@ -1259,6 +1260,176 @@ Returning TOON format
 
 -   Format comparison: See which format is more compact
 -   Data transformation: Convert between formats for different tools
+
+</details>
+
+---
+
+### 20. 🔷 Azure DevOps
+
+> Fetch, track, and manage Azure DevOps work items, queries, and dashboards with intelligent caching and change detection.
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+-   🔷 **Work Item Management**: Fetch individual work items with full details, comments, and relations
+-   📊 **Query Support**: Run Azure DevOps queries with change detection between runs
+-   📈 **Dashboard Integration**: Extract queries from dashboards automatically
+-   💾 **Smart Caching**: 5-minute cache for work items, 180-day cache for queries
+-   🔍 **Change Detection**: Automatically detects new items and updates (state, assignee, severity, title)
+-   📁 **Task File Generation**: Saves work items as JSON and Markdown files
+-   🗂️ **Category Organization**: Organize work items into categories (remembered per item)
+-   📦 **Batch Operations**: Fetch multiple work items or download all items from a query
+-   🎯 **Filtering**: Filter queries by state and severity
+-   📄 **Multiple Output Formats**: AI-optimized, Markdown, or JSON output
+
+</details>
+
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
+
+```bash
+# Configure for your project (first-time setup)
+tools azure-devops --configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
+
+# Fetch a work item
+tools azure-devops --workitem 12345
+
+# Fetch multiple work items
+tools azure-devops --workitem 12345,12346,12347
+
+# Fetch a query with change detection
+tools azure-devops --query d6e14134-9d22-4cbb-b897-b1514f888667
+
+# Filter query results by state
+tools azure-devops --query <id> --state Active,Development
+
+# Download all work items from a query
+tools azure-devops --query <id> --download-workitems
+
+# Organize into categories (remembered per work item)
+tools azure-devops --query <id> --download-workitems --category react19
+tools azure-devops --workitem 12345 --category hotfixes
+
+# Use task folders (each task in its own subfolder)
+tools azure-devops --workitem 12345 --task-folders
+
+# Get dashboard queries
+tools azure-devops --dashboard <url|id>
+
+# List all cached work items
+tools azure-devops --list
+
+# Force refresh (bypass cache)
+tools azure-devops --workitem 12345 --force
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ Options</b></summary>
+
+| Option                  | Alias | Description                                           | Default |
+| ----------------------- | ----- | ----------------------------------------------------- | ------- |
+| `--format <ai\|md\|json>` | -    | Output format                                        | `ai`    |
+| `--force`, `--refresh`  | -    | Force refresh, ignore cache                          | -       |
+| `--state <states>`      | -    | Filter by state (comma-separated)                    | -       |
+| `--severity <sev>`      | -    | Filter by severity (comma-separated)                | -       |
+| `--download-workitems`  | -    | With `--query`: download all work items to tasks/    | -       |
+| `--category <name>`     | -    | Save to tasks/<category>/ (remembered per work item)  | -       |
+| `--task-folders`        | -    | Save in tasks/<id>/ subfolder (only for new files)   | -       |
+| `--help`                | `-h`  | Show help message                                     | -       |
+
+</details>
+
+<details>
+<summary><b>🔧 First-Time Setup</b></summary>
+
+**Prerequisites:**
+
+1. Install Azure CLI: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli
+2. Install Azure DevOps extension:
+   ```bash
+   az extension add --name azure-devops
+   ```
+3. Login with device code:
+   ```bash
+   az login --allow-no-subscriptions --use-device-code
+   ```
+
+**Configure:**
+
+```bash
+tools azure-devops --configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
+```
+
+This auto-detects org, project, and projectId from the URL and saves to `.claude/azure/config.json`.
+
+</details>
+
+<details>
+<summary><b>📋 Storage Structure</b></summary>
+
+**Global Cache** (`~/.genesis-tools/azure-devops/cache/`):
+- Query cache: 180 days TTL
+- Work item cache: 5 minutes TTL
+- Dashboard cache: 180 days TTL
+
+**Project Storage** (`.claude/azure/`):
+- `config.json` - Project configuration
+- `tasks/` - Work item files (JSON + Markdown)
+  - Flat: `{id}-{Slug-Title}.json`
+  - With category: `{category}/{id}-{Slug-Title}.json`
+  - With task folders: `{id}/{id}-{Slug-Title}.json`
+
+Config search: Searches up to 3 parent levels from current directory.
+
+</details>
+
+<details>
+<summary><b>💡 Key Features</b></summary>
+
+**Change Detection:**
+- Detects new work items added to queries
+- Highlights changes to state, assignee, severity, title
+- Shows before/after values in AI format
+
+**Category Memory:**
+- Categories are remembered per work item in global cache
+- Future fetches automatically use the same category
+
+**Task Folders:**
+- Only applies to new files
+- Existing files stay in their current location
+- Prevents accidental reorganization
+
+**Batch Download:**
+- Download all work items from a query with one command
+- Automatically fetches full details (comments, relations) for each item
+
+</details>
+
+<details>
+<summary><b>🤖 Claude AI Skill</b></summary>
+
+This tool includes a Claude AI skill that enables AI assistants to automatically use the Azure DevOps tool when users ask about work items, queries, or tasks.
+
+**Installing the Skill:**
+
+```bash
+# Using skill-installer (if available)
+tools skill-installer install azure-devops
+
+# Or manually copy the skill file
+cp skills/azure-devops.skill ~/.codex/skills/
+```
+
+**Skill Features:**
+- Automatic tool invocation when users mention work items, queries, or Azure DevOps URLs
+- Work item analysis with codebase exploration agents
+- Automatic query handling and task organization
+
+The skill triggers on phrases like "get workitem", "fetch task", "show query", "download tasks", "analyze workitem", "analyze task", or Azure DevOps URLs.
 
 </details>
 
