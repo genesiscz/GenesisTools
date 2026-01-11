@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useAuth } from '@workos-inc/authkit-react'
+import { useAuth } from '@workos/authkit-tanstack-react-start/client'
 import {
   Timer,
   Brain,
@@ -131,40 +131,40 @@ function DashboardPage() {
     <DashboardLayout title="Dashboard" description="Your personal command center">
       <div className="space-y-8">
         {/* Welcome Section */}
-        <div className="relative overflow-hidden rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-500/5 via-transparent to-cyan-500/5 p-8">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
-          <div className="absolute bottom-0 left-0 w-48 h-48 bg-cyan-500/10 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2" />
+        <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/8 via-transparent to-accent/8 p-8 backdrop-blur-sm">
+          <div className="absolute top-0 right-0 w-96 h-96 bg-primary/15 rounded-full blur-3xl -translate-y-1/3 translate-x-1/3 opacity-50" />
+          <div className="absolute bottom-0 left-0 w-72 h-72 bg-accent/12 rounded-full blur-3xl translate-y-1/3 -translate-x-1/3 opacity-50" />
 
-          <div className="relative">
-            <div className="flex items-center gap-2 text-amber-500/60 text-xs tracking-widest uppercase mb-2">
-              <Sparkles className="h-3 w-3" />
+          <div className="relative z-10">
+            <div className="flex items-center gap-2 text-primary/70 text-xs tracking-widest uppercase mb-2 font-semibold">
+              <Sparkles className="h-3 w-3 animate-pulse-subtle" />
               <span>Welcome Back</span>
             </div>
-            <h2 className="text-3xl font-bold mb-2">
+            <h2 className="text-4xl font-bold mb-3">
               {greeting()}, <span className="gradient-text">{user?.firstName || 'Commander'}</span>
             </h2>
-            <p className="text-muted-foreground max-w-xl">
-              Your NEXUS command center is online. All systems operational. Ready to optimize your productivity.
+            <p className="text-foreground/70 max-w-xl leading-relaxed">
+              Your NEXUS command center is online. All systems operational and ready to optimize your productivity.
             </p>
 
             {/* Quick Stats */}
-            <div className="flex gap-6 mt-6">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-cyan-500/10">
-                  <Clock className="h-4 w-4 text-cyan-400" />
+            <div className="flex gap-6 mt-8">
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-accent/10 border border-accent/30 backdrop-blur-sm">
+                <div className="p-2 rounded-lg bg-accent/20">
+                  <Clock className="h-4 w-4 text-accent" />
                 </div>
                 <div>
-                  <div className="text-2xl font-mono font-bold text-cyan-400">0:00:00</div>
-                  <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Time Today</div>
+                  <div className="text-2xl font-mono font-bold text-accent">0:00:00</div>
+                  <div className="text-[10px] text-foreground/60 uppercase tracking-wider font-medium">Time Today</div>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-amber-500/10">
-                  <TrendingUp className="h-4 w-4 text-amber-400" />
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-primary/10 border border-primary/30 backdrop-blur-sm">
+                <div className="p-2 rounded-lg bg-primary/20">
+                  <TrendingUp className="h-4 w-4 text-primary" />
                 </div>
                 <div>
-                  <div className="text-2xl font-mono font-bold text-amber-400">0</div>
-                  <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Tasks Done</div>
+                  <div className="text-2xl font-mono font-bold text-primary">0</div>
+                  <div className="text-[10px] text-foreground/60 uppercase tracking-wider font-medium">Tasks Done</div>
                 </div>
               </div>
             </div>
@@ -173,24 +173,27 @@ function DashboardPage() {
 
         {/* Features Grid */}
         <div>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold">Tools & Features</h3>
-            <span className="text-xs text-muted-foreground">
-              {features.filter(f => f.badge === 'Active').length} active / {features.length} total
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-2xl font-bold">Tools & Features</h3>
+              <p className="text-foreground/50 text-sm mt-1">Your productivity toolkit</p>
+            </div>
+            <span className="text-xs font-semibold text-primary px-3 py-2 rounded-full bg-primary/10 border border-primary/30">
+              {features.filter(f => f.badge === 'Active').length}/{features.length} Active
             </span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {features.map((feature) => {
+            {features.map((feature, index) => {
               const colors = colorClasses[feature.color as keyof typeof colorClasses]
               const isActive = feature.badge === 'Active'
 
               return (
                 <Link key={feature.title} to={feature.href}>
-                  <Card className={`group relative overflow-hidden transition-all duration-300 ${colors.border} ${colors.glow} hover:shadow-lg bg-[#0a0a14]/80 backdrop-blur-sm h-full`}>
+                  <Card className={`group relative overflow-hidden transition-all duration-300 ${colors.border} ${colors.glow} hover:shadow-lg hover:shadow-primary/20 bg-card/80 backdrop-blur-sm h-full border-border hover:border-primary/50 animate-slide-up`} style={{ animationDelay: `${index * 50}ms` }}>
                     {/* Tech corner decorations */}
-                    <div className="absolute top-0 left-0 w-4 h-4 border-l-2 border-t-2 border-amber-500/30 rounded-tl" />
-                    <div className="absolute bottom-0 right-0 w-4 h-4 border-r-2 border-b-2 border-amber-500/30 rounded-br" />
+                    <div className="absolute top-0 left-0 w-4 h-4 border-l-2 border-t-2 border-primary/40 rounded-tl opacity-50 group-hover:opacity-100 transition-opacity" />
+                    <div className="absolute bottom-0 right-0 w-4 h-4 border-r-2 border-b-2 border-primary/40 rounded-br opacity-50 group-hover:opacity-100 transition-opacity" />
 
                     <CardHeader className="pb-2">
                       <div className="flex items-start justify-between">
