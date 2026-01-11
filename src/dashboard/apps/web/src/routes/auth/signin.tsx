@@ -53,11 +53,17 @@ function SignInPage() {
   const handleOAuthSignIn = async (provider: 'google' | 'github') => {
     try {
       setOauthLoading(provider)
+      setError(null)
       // Get OAuth URL from server and redirect directly (bypasses AuthKit hosted page)
       const url = await getOAuthUrl({ data: { provider } })
+      if (!url) {
+        throw new Error('No OAuth URL returned from server')
+      }
       window.location.href = url
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start OAuth')
+      const errorMsg = err instanceof Error ? err.message : 'Failed to start OAuth'
+      console.error('OAuth error:', errorMsg, err)
+      setError(errorMsg)
       setOauthLoading(null)
     }
   }
