@@ -12,16 +12,10 @@ import type {
  *
  * Flow:
  * 1. Client makes changes → PowerSync queues in CRUD batch
- * 2. uploadData() sends batch to /api/sync/upload
+ * 2. uploadData() calls server function to sync
  * 3. Nitro applies changes to server SQLite
  */
 export class DashboardConnector implements PowerSyncBackendConnector {
-  private apiUrl: string
-
-  constructor(apiUrl: string = '') {
-    this.apiUrl = apiUrl
-  }
-
   /**
    * Fetch PowerSync credentials
    *
@@ -37,42 +31,35 @@ export class DashboardConnector implements PowerSyncBackendConnector {
   /**
    * Upload local changes to the Nitro backend
    *
-   * Called by PowerSync when there are pending local changes.
-   * Sends CRUD batch to /api/sync/upload endpoint.
+   * Called manually after write operations.
+   * Uses TanStack Start server function for RPC.
    */
   async uploadData(database: AbstractPowerSyncDatabase): Promise<void> {
     // Get pending CRUD operations
     const batch = await database.getCrudBatch(100)
 
     if (!batch || batch.crud.length === 0) {
+      console.log('[PowerSync] No pending operations to sync')
       return
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/api/sync/upload`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          operations: batch.crud.map((op) => ({
-            id: op.id,
-            op: op.op,
-            table: op.table,
-            data: op.opData,
-          })),
-        }),
-      })
+      const operations = batch.crud.map((op) => ({
+        id: op.id,
+        op: op.op as 'PUT' | 'PATCH' | 'DELETE',
+        table: op.table,
+        data: op.opData as Record<string, unknown>,
+      }))
 
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(`Upload failed: ${response.status} - ${errorText}`)
-      }
+      console.log(`[PowerSync] Uploading ${operations.length} operations to server...`)
+
+      // Dynamic import to avoid bundling issues
+      const { uploadSyncBatch } = await import('@/lib/timer-sync.server')
+      await uploadSyncBatch({ data: { operations } })
 
       // Mark the batch as complete
       await batch.complete()
-      console.log(`[PowerSync] Uploaded ${batch.crud.length} operations to server`)
+      console.log(`[PowerSync] Uploaded ${operations.length} operations to server`)
     } catch (error) {
       console.error('[PowerSync] Error uploading data:', error)
       throw error // Rethrow to trigger retry

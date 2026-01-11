@@ -291,7 +291,7 @@ export class LocalStorageAdapter implements StorageAdapter {
     console.log('[LocalStorage] syncToServer not implemented')
   }
 
-  async syncFromServer(): Promise<void> {
+  async syncFromServer(_userId: string): Promise<void> {
     // TODO: Implement HTTP sync from server
     console.log('[LocalStorage] syncFromServer not implemented')
   }
