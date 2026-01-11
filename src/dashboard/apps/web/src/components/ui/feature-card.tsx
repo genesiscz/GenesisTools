@@ -18,41 +18,49 @@ const colorClasses: Record<FeatureCardColor, {
   border: string
   corner: string
   glow: string
+  shadow: string
 }> = {
   cyan: {
-    border: 'border-cyan-500/20',
-    corner: 'border-cyan-500/30',
+    border: 'border-cyan-500/20 hover:border-cyan-500/40',
+    corner: 'border-cyan-500/30 group-hover:border-cyan-500/60',
     glow: 'bg-cyan-500/10',
+    shadow: 'hover:shadow-lg hover:shadow-cyan-500/10',
   },
   purple: {
-    border: 'border-purple-500/20',
-    corner: 'border-purple-500/30',
+    border: 'border-purple-500/20 hover:border-purple-500/40',
+    corner: 'border-purple-500/30 group-hover:border-purple-500/60',
     glow: 'bg-purple-500/10',
+    shadow: 'hover:shadow-lg hover:shadow-purple-500/10',
   },
   amber: {
-    border: 'border-amber-500/20',
-    corner: 'border-amber-500/30',
+    border: 'border-amber-500/20 hover:border-amber-500/40',
+    corner: 'border-amber-500/30 group-hover:border-amber-500/60',
     glow: 'bg-amber-500/10',
+    shadow: 'hover:shadow-lg hover:shadow-amber-500/10',
   },
   emerald: {
-    border: 'border-emerald-500/20',
-    corner: 'border-emerald-500/30',
+    border: 'border-emerald-500/20 hover:border-emerald-500/40',
+    corner: 'border-emerald-500/30 group-hover:border-emerald-500/60',
     glow: 'bg-emerald-500/10',
+    shadow: 'hover:shadow-lg hover:shadow-emerald-500/10',
   },
   rose: {
-    border: 'border-rose-500/20',
-    corner: 'border-rose-500/30',
+    border: 'border-rose-500/20 hover:border-rose-500/40',
+    corner: 'border-rose-500/30 group-hover:border-rose-500/60',
     glow: 'bg-rose-500/10',
+    shadow: 'hover:shadow-lg hover:shadow-rose-500/10',
   },
   blue: {
-    border: 'border-blue-500/20',
-    corner: 'border-blue-500/30',
+    border: 'border-blue-500/20 hover:border-blue-500/40',
+    corner: 'border-blue-500/30 group-hover:border-blue-500/60',
     glow: 'bg-blue-500/10',
+    shadow: 'hover:shadow-lg hover:shadow-blue-500/10',
   },
   primary: {
-    border: 'border-primary/20',
-    corner: 'border-primary/30',
+    border: 'border-primary/20 hover:border-primary/40',
+    corner: 'border-primary/30 group-hover:border-primary/60',
     glow: 'bg-primary/10',
+    shadow: 'hover:shadow-lg hover:shadow-primary/10',
   },
 }
 
@@ -88,19 +96,21 @@ export function FeatureCard({
     <Wrapper
       onClick={onClick}
       className={cn(
-        'relative overflow-hidden rounded-xl',
+        'group relative overflow-hidden rounded-xl',
         'bg-[#0a0a14]/80 backdrop-blur-sm',
         'border',
         colors.border,
+        colors.shadow,
+        'transition-all duration-300',
         onClick && 'cursor-pointer',
         className
       )}
     >
       {/* Tech corner decorations */}
-      <div className={cn('absolute top-0 left-0 w-6 h-6 border-l-2 border-t-2 rounded-tl', colors.corner)} />
-      <div className={cn('absolute top-0 right-0 w-6 h-6 border-r-2 border-t-2 rounded-tr', colors.corner)} />
-      <div className={cn('absolute bottom-0 left-0 w-6 h-6 border-l-2 border-b-2 rounded-bl', colors.corner)} />
-      <div className={cn('absolute bottom-0 right-0 w-6 h-6 border-r-2 border-b-2 rounded-br', colors.corner)} />
+      <div className={cn('absolute top-0 left-0 w-6 h-6 border-l-2 border-t-2 rounded-tl transition-colors', colors.corner)} />
+      <div className={cn('absolute top-0 right-0 w-6 h-6 border-r-2 border-t-2 rounded-tr transition-colors', colors.corner)} />
+      <div className={cn('absolute bottom-0 left-0 w-6 h-6 border-l-2 border-b-2 rounded-bl transition-colors', colors.corner)} />
+      <div className={cn('absolute bottom-0 right-0 w-6 h-6 border-r-2 border-b-2 rounded-br transition-colors', colors.corner)} />
 
       {/* Glow effect */}
       <div
