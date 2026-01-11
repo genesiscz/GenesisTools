@@ -1,165 +1,108 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState, useEffect, useCallback } from 'react'
-import { Plus, Play, Pause, RotateCcw, Trash2, ExternalLink } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { formatTime, generateTimerId } from '@dashboard/shared'
-import type { Timer, TimerType } from '@dashboard/shared'
+import { useCallback, useMemo } from 'react'
+import { Plus, Loader2 } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { useAuth } from '@workos/authkit-tanstack-react-start/client'
+import { TimerCard, TimerHeader } from './components'
+import { useTimerStore } from './hooks/useTimerStore'
+import type { TimerInput } from '@dashboard/shared'
 import '@/components/auth/cyberpunk.css'
 
 export const Route = createFileRoute('/timer/')({
   component: TimerPage,
 })
 
-interface LocalTimer extends Omit<Timer, 'userId' | 'createdAt' | 'updatedAt'> {
-  startTime: number | null
-  firstStartTime: number | null
-}
-
 function TimerPage() {
-  const [timers, setTimers] = useState<LocalTimer[]>([])
-  const [, forceUpdate] = useState(0)
+  const { user, loading: authLoading } = useAuth()
+  const userId = user?.id ?? null
+
+  const { timers, loading, initialized, createTimer, deleteTimer } = useTimerStore(userId)
+
+  // Count running timers
+  const runningCount = useMemo(() => timers.filter((t) => t.isRunning).length, [timers])
 
   // Add new timer
-  const addTimer = useCallback(() => {
-    const newTimer: LocalTimer = {
-      id: generateTimerId(),
+  const handleAddTimer = useCallback(async () => {
+    const input: TimerInput = {
       name: `Timer ${timers.length + 1}`,
-      type: 'stopwatch' as TimerType,
+      timerType: 'stopwatch',
       isRunning: false,
-      pausedTime: 0,
-      countdownDuration: 5 * 60 * 1000, // 5 minutes default
+      elapsedTime: 0,
+      duration: 5 * 60 * 1000, // 5 minutes default for countdown
       laps: [],
-      startTime: null,
-      firstStartTime: null,
     }
-    setTimers(prev => [...prev, newTimer])
-  }, [timers.length])
-
-  // Start/pause timer
-  const toggleTimer = useCallback((id: string) => {
-    setTimers(prev => prev.map(timer => {
-      if (timer.id !== id) return timer
-
-      if (timer.isRunning) {
-        // Pause
-        const elapsed = timer.startTime ? performance.now() - timer.startTime : 0
-        return {
-          ...timer,
-          isRunning: false,
-          pausedTime: timer.pausedTime + elapsed,
-          startTime: null,
-        }
-      } else {
-        // Start
-        return {
-          ...timer,
-          isRunning: true,
-          startTime: performance.now(),
-          firstStartTime: timer.firstStartTime ?? performance.now(),
-        }
-      }
-    }))
-  }, [])
-
-  // Reset timer
-  const resetTimer = useCallback((id: string) => {
-    setTimers(prev => prev.map(timer => {
-      if (timer.id !== id) return timer
-      return {
-        ...timer,
-        isRunning: false,
-        pausedTime: 0,
-        startTime: null,
-        firstStartTime: null,
-        laps: [],
-      }
-    }))
-  }, [])
+    await createTimer(input)
+  }, [timers.length, createTimer])
 
   // Delete timer
-  const deleteTimer = useCallback((id: string) => {
-    setTimers(prev => prev.filter(timer => timer.id !== id))
+  const handleDeleteTimer = useCallback(
+    async (id: string) => {
+      await deleteTimer(id)
+    },
+    [deleteTimer]
+  )
+
+  // Pop out timer (Phase 2)
+  const handlePopoutTimer = useCallback((id: string) => {
+    // TODO: Implement pop-out window in Phase 2
+    const width = 400
+    const height = 500
+    const left = window.screen.width / 2 - width / 2
+    const top = window.screen.height / 2 - height / 2
+    window.open(
+      `/timer/${id}`,
+      `timer-${id}`,
+      `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no`
+    )
   }, [])
 
-  // Get current time for a timer
-  const getCurrentTime = useCallback((timer: LocalTimer): number => {
-    let elapsed = timer.pausedTime
-    if (timer.isRunning && timer.startTime) {
-      elapsed += performance.now() - timer.startTime
-    }
-
-    if (timer.type === 'countdown') {
-      return Math.max(0, timer.countdownDuration - elapsed)
-    }
-    return elapsed
-  }, [])
-
-  // Animation frame for running timers
-  useEffect(() => {
-    let animationId: number
-    const hasRunning = timers.some(t => t.isRunning)
-
-    const tick = () => {
-      if (hasRunning) {
-        forceUpdate(n => n + 1)
-        animationId = requestAnimationFrame(tick)
-      }
-    }
-
-    if (hasRunning) {
-      animationId = requestAnimationFrame(tick)
-    }
-
-    return () => {
-      if (animationId) cancelAnimationFrame(animationId)
-    }
-  }, [timers])
+  // Loading state
+  if (authLoading || (!initialized && loading)) {
+    return (
+      <div className="min-h-screen bg-[#030308] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-8 w-8 text-amber-500 animate-spin" />
+          <span className="text-gray-500 text-sm font-mono">Loading timers...</span>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-[#030308] text-white">
       {/* Cyberpunk background effects */}
-      <div className="fixed inset-0 cyber-grid opacity-20" />
+      <div className="fixed inset-0 cyber-grid opacity-20 pointer-events-none" />
       <div className="fixed inset-0 scan-lines pointer-events-none" />
 
+      {/* Ambient gradient orbs */}
+      <div className="fixed top-1/4 -left-1/4 w-1/2 h-1/2 bg-amber-500/5 rounded-full blur-[150px] pointer-events-none" />
+      <div className="fixed bottom-1/4 -right-1/4 w-1/2 h-1/2 bg-cyan-500/5 rounded-full blur-[150px] pointer-events-none" />
+
       {/* Header */}
-      <header className="relative z-10 border-b border-amber-500/20 bg-black/50 backdrop-blur-sm">
-        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
-          <h1 className="text-2xl font-bold gradient-text">CHRONO // TERMINAL</h1>
-          <Button
-            onClick={addTimer}
-            className="bg-amber-500 hover:bg-amber-600 text-black neon-glow"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Add Timer
-          </Button>
-        </div>
-      </header>
+      <TimerHeader
+        timerCount={timers.length}
+        runningCount={runningCount}
+        onAddTimer={handleAddTimer}
+      />
 
       {/* Main content */}
       <main className="relative z-10 container mx-auto px-6 py-8">
         {timers.length === 0 ? (
-          <div className="text-center py-20">
-            <div className="text-gray-500 mb-4">No timers yet</div>
-            <Button
-              onClick={addTimer}
-              variant="outline"
-              className="border-amber-500/30 hover:bg-amber-500/10"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Create your first timer
-            </Button>
-          </div>
+          <EmptyState onAddTimer={handleAddTimer} />
         ) : (
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {timers.map(timer => (
-              <TimerCard
+          <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+            {timers.map((timer, index) => (
+              <div
                 key={timer.id}
-                timer={timer}
-                currentTime={getCurrentTime(timer)}
-                onToggle={() => toggleTimer(timer.id)}
-                onReset={() => resetTimer(timer.id)}
-                onDelete={() => deleteTimer(timer.id)}
-              />
+                style={{ animationDelay: `${index * 100}ms` }}
+              >
+                <TimerCard
+                  timerId={timer.id}
+                  userId={userId}
+                  onDelete={handleDeleteTimer}
+                  onPopout={handlePopoutTimer}
+                />
+              </div>
             ))}
           </div>
         )}
@@ -168,81 +111,70 @@ function TimerPage() {
   )
 }
 
-interface TimerCardProps {
-  timer: LocalTimer
-  currentTime: number
-  onToggle: () => void
-  onReset: () => void
-  onDelete: () => void
-}
-
-function TimerCard({ timer, currentTime, onToggle, onReset, onDelete }: TimerCardProps) {
+/**
+ * Empty state with call to action
+ */
+function EmptyState({ onAddTimer }: { onAddTimer: () => void }) {
   return (
-    <div className="glass-card rounded-2xl p-6 neon-border tech-corner animate-fade-in-up">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <input
-          type="text"
-          defaultValue={timer.name}
-          className="bg-transparent border-none text-lg font-semibold text-white focus:outline-none focus:ring-1 focus:ring-amber-500/50 rounded px-1 -ml-1"
-        />
-        <button
-          onClick={onDelete}
-          className="p-2 rounded-lg hover:bg-red-500/10 text-gray-500 hover:text-red-400 transition-colors"
-          title="Delete timer"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-      </div>
-
-      {/* Timer type indicator */}
-      <div className="flex items-center gap-2 mb-4">
-        <span className={`text-xs uppercase tracking-wider ${timer.type === 'stopwatch' ? 'text-cyan-400' : 'text-amber-400'}`}>
-          {timer.type}
-        </span>
-        {timer.isRunning && (
-          <span className="flex items-center gap-1.5 text-xs text-emerald-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            Running
-          </span>
+    <div className="flex flex-col items-center justify-center py-24 px-6">
+      {/* Decorative element */}
+      <div
+        className={cn(
+          'relative w-32 h-32 mb-8',
+          'flex items-center justify-center',
+          'rounded-full',
+          'bg-gradient-to-br from-amber-500/10 to-amber-600/5',
+          'border border-amber-500/20',
+          'animate-pulse-glow'
         )}
-      </div>
+      >
+        {/* Ripple effects */}
+        <div className="absolute inset-0 rounded-full border border-amber-500/20 animate-ripple" />
+        <div className="absolute inset-0 rounded-full border border-amber-500/20 animate-ripple-delayed" />
+        <div className="absolute inset-0 rounded-full border border-amber-500/20 animate-ripple-delayed-2" />
 
-      {/* Time display */}
-      <div className={`text-4xl md:text-5xl font-mono text-center py-6 neon-cyan ${timer.isRunning ? 'animate-pulse-glow' : ''}`}>
-        {formatTime(currentTime)}
-      </div>
-
-      {/* Controls */}
-      <div className="flex items-center justify-center gap-3">
-        <Button
-          onClick={onToggle}
-          className={timer.isRunning
-            ? "bg-amber-500 hover:bg-amber-600 text-black"
-            : "bg-emerald-500 hover:bg-emerald-600 text-black"
-          }
+        <span
+          className="text-5xl font-mono font-bold text-amber-500/50"
+          style={{ fontFamily: "'JetBrains Mono', monospace" }}
         >
-          {timer.isRunning ? (
-            <><Pause className="h-4 w-4 mr-2" /> Pause</>
-          ) : (
-            <><Play className="h-4 w-4 mr-2" /> Start</>
+          00:00
+        </span>
+      </div>
+
+      {/* Text */}
+      <h2 className="text-xl font-semibold text-gray-400 mb-2">No timers yet</h2>
+      <p className="text-gray-600 text-center max-w-md mb-8">
+        Create your first timer to start tracking time. Stopwatch, countdown, or pomodoro - choose
+        what works for you.
+      </p>
+
+      {/* CTA Button */}
+      <button
+        onClick={onAddTimer}
+        className={cn(
+          'group relative flex items-center gap-3 px-8 py-4 rounded-xl',
+          'font-semibold text-lg text-black',
+          'bg-gradient-to-br from-amber-400 to-amber-500',
+          'shadow-[0_0_40px_rgba(255,149,0,0.4)]',
+          'transition-all duration-300',
+          'hover:shadow-[0_0_60px_rgba(255,149,0,0.6)]',
+          'hover:scale-[1.02] active:scale-[0.98]',
+          'overflow-hidden'
+        )}
+      >
+        {/* Shimmer effect */}
+        <div
+          className={cn(
+            'absolute inset-0 opacity-0 group-hover:opacity-100',
+            'bg-gradient-to-r from-transparent via-white/30 to-transparent',
+            'translate-x-[-100%] group-hover:translate-x-[100%]',
+            'transition-transform duration-700 ease-out'
           )}
-        </Button>
-        <Button
-          onClick={onReset}
-          variant="outline"
-          className="border-amber-500/30 hover:bg-amber-500/10"
-        >
-          <RotateCcw className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="outline"
-          className="border-amber-500/30 hover:bg-amber-500/10"
-          title="Pop out"
-        >
-          <ExternalLink className="h-4 w-4" />
-        </Button>
-      </div>
+        />
+
+        <Plus className="h-6 w-6 relative z-10" />
+        <span className="relative z-10">Create your first timer</span>
+      </button>
     </div>
   )
 }
