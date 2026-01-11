@@ -1,4 +1,4 @@
-import { memo, useState, useCallback, useMemo } from 'react'
+import { memo, useState } from 'react'
 import { Trash2, MoreVertical, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { TimerDisplay } from './TimerDisplay'
@@ -7,6 +7,9 @@ import { TimerNameInput } from './TimerNameInput'
 import { TimerTypeSelector } from './TimerTypeSelector'
 import { TotalTimeBadge } from './TotalTimeBadge'
 import { LapsList } from './LapsList'
+import { TimeEditor } from './TimeEditor'
+import { CountdownPicker } from './CountdownPicker'
+import { PomodoroSteps } from './PomodoroSteps'
 import { useTimer } from '../hooks/useTimer'
 import { formatTime } from '../hooks/useTimerEngine'
 
@@ -29,6 +32,7 @@ export const TimerCard = memo(function TimerCard({
   className,
 }: TimerCardProps) {
   const [showMenu, setShowMenu] = useState(false)
+  const [isEditingTime, setIsEditingTime] = useState(false)
 
   const {
     timer,
@@ -43,26 +47,41 @@ export const TimerCard = memo(function TimerCard({
     setType,
     toggleShowTotal,
     totalTimeElapsed,
+    editElapsedTime,
+    setDuration,
   } = useTimer({ userId, timerId })
 
   // Countdown completion check
-  const isCountdownComplete = useMemo(() => {
-    if (!timer || timer.timerType !== 'countdown') return false
-    return displayTime <= 0 && (timer.elapsedTime ?? 0) > 0
-  }, [timer, displayTime])
+  const isCountdownComplete = timer?.timerType === 'countdown' && displayTime <= 0 && (timer.elapsedTime ?? 0) > 0
 
-  const handleDelete = useCallback(() => {
+  function handleDelete() {
     if (onDelete) {
       onDelete(timerId)
     }
     setShowMenu(false)
-  }, [onDelete, timerId])
+  }
 
-  const handlePopout = useCallback(() => {
+  function handlePopout() {
     if (onPopout) {
       onPopout(timerId)
     }
-  }, [onPopout, timerId])
+  }
+
+  function handleTimeEdit() {
+    if (!isRunning) {
+      setIsEditingTime(true)
+    }
+  }
+
+  async function handleTimeSave(newTimeMs: number) {
+    await editElapsedTime(newTimeMs)
+    setIsEditingTime(false)
+  }
+
+  async function handleDurationSelect(durationMs: number) {
+    await setDuration(durationMs)
+    setIsEditingTime(false)
+  }
 
   if (!timer) {
     return (
@@ -184,20 +203,65 @@ export const TimerCard = memo(function TimerCard({
           />
         )}
 
-        {/* Timer display */}
-        <TimerDisplay
-          time={formattedTime}
-          isRunning={isRunning}
-          timerType={timer.timerType}
-          isCompleted={isCountdownComplete}
-        />
+        {/* Timer display - clickable when not running */}
+        {isEditingTime ? (
+          timer.timerType === 'stopwatch' ? (
+            <TimeEditor
+              timeMs={timer.elapsedTime ?? 0}
+              onSave={handleTimeSave}
+              onCancel={() => setIsEditingTime(false)}
+            />
+          ) : timer.timerType === 'countdown' ? (
+            <CountdownPicker
+              onSelect={handleDurationSelect}
+            />
+          ) : (
+            // Pomodoro - edit current phase duration
+            <TimeEditor
+              timeMs={displayTime}
+              onSave={handleTimeSave}
+              onCancel={() => setIsEditingTime(false)}
+            />
+          )
+        ) : (
+          <button
+            onClick={handleTimeEdit}
+            disabled={isRunning}
+            className={cn(
+              'w-full rounded-lg transition-colors',
+              !isRunning && 'hover:bg-gray-800/50 cursor-pointer',
+              isRunning && 'cursor-default'
+            )}
+          >
+            <TimerDisplay
+              time={formattedTime}
+              isRunning={isRunning}
+              timerType={timer.timerType}
+              isCompleted={isCountdownComplete}
+            />
+          </button>
+        )}
 
-        {/* Countdown duration display (when paused) */}
-        {timer.timerType === 'countdown' && !isRunning && timer.duration && (
+        {/* Countdown duration display (when paused and not editing) */}
+        {timer.timerType === 'countdown' && !isRunning && !isEditingTime && timer.duration && (
           <div className="flex items-center justify-center gap-2 text-sm text-amber-400/60">
             <Clock className="h-4 w-4" />
             <span>Duration: {formatTime(timer.duration, false)}</span>
           </div>
+        )}
+
+        {/* Pomodoro steps display */}
+        {timer.timerType === 'pomodoro' && (
+          <PomodoroSteps
+            settings={timer.pomodoroSettings ?? {
+              workDuration: 25 * 60 * 1000,
+              shortBreakDuration: 5 * 60 * 1000,
+              longBreakDuration: 15 * 60 * 1000,
+              sessionsBeforeLongBreak: 4,
+            }}
+            currentPhase={timer.pomodoroPhase}
+            sessionCount={timer.pomodoroSessionCount ?? 0}
+          />
         )}
 
         {/* Controls */}
