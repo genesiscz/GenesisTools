@@ -5,12 +5,25 @@ import viteReact from '@vitejs/plugin-react'
 import viteTsConfigPaths from 'vite-tsconfig-paths'
 import tailwindcss from '@tailwindcss/vite'
 import { nitro } from 'nitro/vite'
+import type { NitroConfig } from 'nitro/types'
+
+const nitroConfig: NitroConfig = {
+  experimental: {
+    database: true,
+  },
+  database: {
+    default: {
+      connector: 'sqlite',
+      options: { name: 'dashboard' },
+    },
+  },
+}
 import neon from './neon-vite-plugin.ts'
 
 const config = defineConfig({
   plugins: [
     devtools(),
-    nitro(),
+    nitro(nitroConfig),
     neon,
     // this is the plugin that enables path aliases
     viteTsConfigPaths({
