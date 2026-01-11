@@ -14,15 +14,15 @@ let powerSyncAdapter: StorageAdapter | null = null
  * Get the configured storage adapter
  *
  * Both adapters sync to backend SQLite:
- * - localStorage: Uses browser localStorage + HTTP sync
- * - PowerSync: Uses SQLite + automatic bi-directional sync
+ * - localStorage: Uses browser localStorage + HTTP sync (for dev/simple use)
+ * - PowerSync: Uses SQLite + automatic bi-directional sync (production)
  */
 export function getStorageAdapter(): StorageAdapter {
   if (usePowerSync()) {
     if (!powerSyncAdapter) {
-      // PowerSync adapter will be implemented in Phase 2
-      // For now, fall back to localStorage
-      console.warn('[Storage] PowerSync not yet implemented, falling back to localStorage')
+      // Note: PowerSyncAdapter is created lazily in initializeStorage
+      // to avoid bundling issues with Vite worker format
+      console.warn('[Storage] PowerSync adapter not initialized, falling back to localStorage')
       if (!localStorageAdapter) {
         localStorageAdapter = new LocalStorageAdapter()
       }
@@ -42,6 +42,12 @@ export function getStorageAdapter(): StorageAdapter {
  * Call this early in the app lifecycle
  */
 export async function initializeStorage(): Promise<StorageAdapter> {
+  if (usePowerSync() && !powerSyncAdapter) {
+    // Dynamic import to avoid Vite worker bundling issues
+    const { PowerSyncAdapter } = await import('./powersync-adapter')
+    powerSyncAdapter = new PowerSyncAdapter()
+  }
+
   const adapter = getStorageAdapter()
   if (!adapter.isInitialized()) {
     await adapter.initialize()
@@ -56,5 +62,5 @@ export function getStorageMode(): typeof STORAGE_MODE {
   return STORAGE_MODE
 }
 
-// Re-export the adapter class for testing
+// Re-export localStorage adapter (PowerSync is dynamically imported)
 export { LocalStorageAdapter }
