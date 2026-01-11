@@ -91,13 +91,13 @@ export const TimerCard = memo(function TimerCard({
       <div className="absolute bottom-0 left-0 w-4 h-4 border-l border-b border-amber-500/20 rounded-bl-lg" />
       <div className="absolute bottom-0 right-0 w-4 h-4 border-r border-b border-amber-500/20 rounded-br-lg" />
 
-      {/* Subtle centered glow based on timer type */}
+      {/* Subtle glow around content area */}
       <div
         className={cn(
-          'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 rounded-full blur-3xl pointer-events-none',
-          timer.timerType === 'stopwatch' && 'bg-cyan-500/8',
-          timer.timerType === 'countdown' && 'bg-amber-500/8',
-          timer.timerType === 'pomodoro' && 'bg-emerald-500/8'
+          'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full blur-2xl pointer-events-none',
+          timer.timerType === 'stopwatch' && 'bg-cyan-500/15',
+          timer.timerType === 'countdown' && 'bg-amber-500/15',
+          timer.timerType === 'pomodoro' && 'bg-emerald-500/15'
         )}
       />
 

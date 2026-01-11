@@ -15,6 +15,7 @@ import { Route as McpRouteImport } from './routes/mcp'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TimerIndexRouteImport } from './routes/timer/index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
+import { Route as TimerTimerIdRouteImport } from './routes/timer.$timerId'
 import { Route as DemoWorkosRouteImport } from './routes/demo/workos'
 import { Route as DemoTrpcTodoRouteImport } from './routes/demo/trpc-todo'
 import { Route as DemoTanstackQueryRouteImport } from './routes/demo/tanstack-query'
@@ -88,6 +89,11 @@ const TimerIndexRoute = TimerIndexRouteImport.update({
 const DashboardIndexRoute = DashboardIndexRouteImport.update({
   id: '/dashboard/',
   path: '/dashboard/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TimerTimerIdRoute = TimerTimerIdRouteImport.update({
+  id: '/timer/$timerId',
+  path: '/timer/$timerId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DemoWorkosRoute = DemoWorkosRouteImport.update({
@@ -341,6 +347,7 @@ export interface FileRoutesByFullPath {
   '/demo/tanstack-query': typeof DemoTanstackQueryRoute
   '/demo/trpc-todo': typeof DemoTrpcTodoRoute
   '/demo/workos': typeof DemoWorkosRoute
+  '/timer/$timerId': typeof TimerTimerIdRoute
   '/dashboard': typeof DashboardIndexRoute
   '/timer': typeof TimerIndexRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
@@ -393,6 +400,7 @@ export interface FileRoutesByTo {
   '/demo/tanstack-query': typeof DemoTanstackQueryRoute
   '/demo/trpc-todo': typeof DemoTrpcTodoRoute
   '/demo/workos': typeof DemoWorkosRoute
+  '/timer/$timerId': typeof TimerTimerIdRoute
   '/dashboard': typeof DashboardIndexRoute
   '/timer': typeof TimerIndexRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
@@ -446,6 +454,7 @@ export interface FileRoutesById {
   '/demo/tanstack-query': typeof DemoTanstackQueryRoute
   '/demo/trpc-todo': typeof DemoTrpcTodoRoute
   '/demo/workos': typeof DemoWorkosRoute
+  '/timer/$timerId': typeof TimerTimerIdRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/timer/': typeof TimerIndexRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
@@ -500,6 +509,7 @@ export interface FileRouteTypes {
     | '/demo/tanstack-query'
     | '/demo/trpc-todo'
     | '/demo/workos'
+    | '/timer/$timerId'
     | '/dashboard'
     | '/timer'
     | '/api/trpc/$'
@@ -552,6 +562,7 @@ export interface FileRouteTypes {
     | '/demo/tanstack-query'
     | '/demo/trpc-todo'
     | '/demo/workos'
+    | '/timer/$timerId'
     | '/dashboard'
     | '/timer'
     | '/api/trpc/$'
@@ -604,6 +615,7 @@ export interface FileRouteTypes {
     | '/demo/tanstack-query'
     | '/demo/trpc-todo'
     | '/demo/workos'
+    | '/timer/$timerId'
     | '/dashboard/'
     | '/timer/'
     | '/api/trpc/$'
@@ -657,6 +669,7 @@ export interface RootRouteChildren {
   DemoTanstackQueryRoute: typeof DemoTanstackQueryRoute
   DemoTrpcTodoRoute: typeof DemoTrpcTodoRoute
   DemoWorkosRoute: typeof DemoWorkosRoute
+  TimerTimerIdRoute: typeof TimerTimerIdRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
   TimerIndexRoute: typeof TimerIndexRoute
   ApiTrpcSplatRoute: typeof ApiTrpcSplatRoute
@@ -723,6 +736,13 @@ declare module '@tanstack/react-router' {
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof DashboardIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/timer/$timerId': {
+      id: '/timer/$timerId'
+      path: '/timer/$timerId'
+      fullPath: '/timer/$timerId'
+      preLoaderRoute: typeof TimerTimerIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/demo/workos': {
@@ -1065,6 +1085,7 @@ const rootRouteChildren: RootRouteChildren = {
   DemoTanstackQueryRoute: DemoTanstackQueryRoute,
   DemoTrpcTodoRoute: DemoTrpcTodoRoute,
   DemoWorkosRoute: DemoWorkosRoute,
+  TimerTimerIdRoute: TimerTimerIdRoute,
   DashboardIndexRoute: DashboardIndexRoute,
   TimerIndexRoute: TimerIndexRoute,
   ApiTrpcSplatRoute: ApiTrpcSplatRoute,
