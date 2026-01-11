@@ -1,6 +1,7 @@
 import { SidebarProvider, SidebarTrigger, SidebarInset } from '@/components/ui/sidebar'
 import { AppSidebar } from './app-sidebar'
 import { Separator } from '@/components/ui/separator'
+import { useSettings } from '@/hooks/useSettings'
 
 interface DashboardLayoutProps {
   children: React.ReactNode
@@ -9,11 +10,17 @@ interface DashboardLayoutProps {
 }
 
 export function DashboardLayout({ children, title, description }: DashboardLayoutProps) {
+  const { settings } = useSettings()
+
   return (
     <SidebarProvider>
-      {/* Background effects - increased visibility */}
-      <div className="fixed inset-0 cyber-grid opacity-40 pointer-events-none" />
-      <div className="fixed inset-0 scan-lines opacity-30 pointer-events-none" />
+      {/* Background effects - controlled by settings */}
+      {settings.gridBackground && (
+        <div className="fixed inset-0 cyber-grid opacity-40 pointer-events-none" />
+      )}
+      {settings.scanLinesEffect && (
+        <div className="fixed inset-0 scan-lines opacity-30 pointer-events-none" />
+      )}
 
       <AppSidebar />
       <SidebarInset className="bg-transparent">
