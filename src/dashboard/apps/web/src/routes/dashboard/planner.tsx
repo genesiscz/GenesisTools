@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { CalendarDays, Bell, Sparkles, Clock, ListChecks } from 'lucide-react'
 import { DashboardLayout } from '@/components/dashboard'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { FeatureCard, FeatureCardHeader, FeatureCardTitle, FeatureCardDescription, FeatureCardContent } from '@/components/ui/feature-card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 
@@ -13,17 +13,8 @@ function DailyPlannerPage() {
   return (
     <DashboardLayout title="Daily Planner" description="AI-assisted daily planning with smart scheduling and reminders">
       <div className="flex items-center justify-center min-h-[60vh]">
-        <Card className="relative overflow-hidden border-blue-500/20 bg-[#0a0a14]/80 backdrop-blur-sm max-w-lg w-full">
-          {/* Tech corner decorations */}
-          <div className="absolute top-0 left-0 w-6 h-6 border-l-2 border-t-2 border-blue-500/30 rounded-tl" />
-          <div className="absolute top-0 right-0 w-6 h-6 border-r-2 border-t-2 border-blue-500/30 rounded-tr" />
-          <div className="absolute bottom-0 left-0 w-6 h-6 border-l-2 border-b-2 border-blue-500/30 rounded-bl" />
-          <div className="absolute bottom-0 right-0 w-6 h-6 border-r-2 border-b-2 border-blue-500/30 rounded-br" />
-
-          {/* Glow effect */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl" />
-
-          <CardHeader className="text-center relative">
+        <FeatureCard color="blue" className="max-w-lg w-full">
+          <FeatureCardHeader className="text-center">
             <div className="flex justify-center mb-4">
               <div className="relative">
                 <div className="p-4 rounded-2xl bg-blue-500/10 border border-blue-500/20">
@@ -41,13 +32,13 @@ function DailyPlannerPage() {
               Coming Soon
             </Badge>
 
-            <CardTitle className="text-2xl">Daily Planner</CardTitle>
-            <CardDescription className="text-sm max-w-sm mx-auto">
+            <FeatureCardTitle>Daily Planner</FeatureCardTitle>
+            <FeatureCardDescription className="max-w-sm mx-auto">
               Plan your perfect day with AI assistance. Smart scheduling, time blocking, and intelligent reminders to keep you on track.
-            </CardDescription>
-          </CardHeader>
+            </FeatureCardDescription>
+          </FeatureCardHeader>
 
-          <CardContent className="space-y-6 relative">
+          <FeatureCardContent className="space-y-6">
             {/* Feature preview */}
             <div className="grid grid-cols-3 gap-3">
               <div className="flex flex-col items-center gap-2 p-3 rounded-lg bg-blue-500/5 border border-blue-500/10">
@@ -73,8 +64,8 @@ function DailyPlannerPage() {
                 Be the first to know when this feature launches
               </p>
             </div>
-          </CardContent>
-        </Card>
+          </FeatureCardContent>
+        </FeatureCard>
       </div>
     </DashboardLayout>
   )
