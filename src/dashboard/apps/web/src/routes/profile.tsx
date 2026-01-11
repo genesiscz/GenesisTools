@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useAuth } from '@workos-inc/authkit-react'
+import { useAuth } from '@workos/authkit-tanstack-react-start/client'
 import {
   User,
   Mail,
@@ -48,11 +48,11 @@ function ProfilePage() {
     <DashboardLayout title="Profile" description="Manage your NEXUS identity">
       <div className="max-w-3xl space-y-6">
         {/* Avatar & Basic Info */}
-        <Card className="border-amber-500/20 bg-[#0a0a14]/80 backdrop-blur-sm">
+        <Card className="border-primary/20 bg-card/80 backdrop-blur-sm hover:border-primary/40 transition-colors">
           <CardHeader>
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-amber-500/10">
-                <User className="h-4 w-4 text-amber-400" />
+              <div className="p-2 rounded-lg bg-primary/10">
+                <User className="h-4 w-4 text-primary" />
               </div>
               <div>
                 <CardTitle className="text-base">Profile Information</CardTitle>
@@ -66,9 +66,9 @@ function ProfilePage() {
             {/* Avatar Section */}
             <div className="flex items-center gap-6">
               <div className="relative group">
-                <Avatar className="h-20 w-20 border-2 border-amber-500/30">
+                <Avatar className="h-20 w-20 border-2 border-primary/30">
                   <AvatarImage src={user?.profilePictureUrl || undefined} alt={displayName} />
-                  <AvatarFallback className="bg-amber-500/20 text-amber-400 text-xl font-bold">
+                  <AvatarFallback className="bg-primary/20 text-primary text-xl font-bold">
                     {userInitials}
                   </AvatarFallback>
                 </Avatar>
@@ -76,7 +76,7 @@ function ProfilePage() {
                   className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
                   onClick={() => {/* TODO: Implement avatar upload */}}
                 >
-                  <Camera className="h-6 w-6 text-amber-400" />
+                  <Camera className="h-6 w-6 text-primary" />
                 </button>
               </div>
               <div className="space-y-1">
@@ -85,7 +85,7 @@ function ProfilePage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10 hover:text-amber-400"
+                    className="border-primary/30 text-primary hover:bg-primary/10 hover:text-primary"
                   >
                     <Camera className="h-3 w-3 mr-2" />
                     Upload
@@ -101,18 +101,18 @@ function ProfilePage() {
               </div>
             </div>
 
-            <Separator className="bg-amber-500/10" />
+            <Separator className="bg-primary/10" />
 
             {/* Display Name */}
             <div className="space-y-2">
               <Label htmlFor="displayName" className="text-sm flex items-center gap-2">
-                <User className="h-3 w-3 text-amber-400" />
+                <User className="h-3 w-3 text-primary" />
                 Display Name
               </Label>
               <Input
                 id="displayName"
                 defaultValue={displayName}
-                className="bg-black/30 border-amber-500/20 focus:border-amber-500/50"
+                className="bg-card/50 border-primary/20 focus:border-primary/50"
               />
               <p className="text-xs text-muted-foreground">
                 This is how you appear across NEXUS
@@ -122,24 +122,24 @@ function ProfilePage() {
             {/* Email */}
             <div className="space-y-2">
               <Label htmlFor="email" className="text-sm flex items-center gap-2">
-                <Mail className="h-3 w-3 text-amber-400" />
+                <Mail className="h-3 w-3 text-primary" />
                 Email Address
               </Label>
               <Input
                 id="email"
                 defaultValue={user?.email || ''}
                 disabled
-                className="bg-black/30 border-amber-500/20 opacity-60"
+                className="bg-card/50 border-primary/20 opacity-60"
               />
               <p className="text-xs text-muted-foreground">
                 Email cannot be changed. Contact support if needed.
               </p>
             </div>
 
-            <Separator className="bg-amber-500/10" />
+            <Separator className="bg-primary/10" />
 
             <div className="flex justify-end">
-              <Button className="bg-amber-500 text-black hover:bg-amber-400">
+              <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
                 Save Changes
               </Button>
             </div>
@@ -147,11 +147,11 @@ function ProfilePage() {
         </Card>
 
         {/* Account Details */}
-        <Card className="border-cyan-500/20 bg-[#0a0a14]/80 backdrop-blur-sm">
+        <Card className="border-accent/20 bg-card/80 backdrop-blur-sm hover:border-accent/40 transition-colors">
           <CardHeader>
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-cyan-500/10">
-                <Calendar className="h-4 w-4 text-cyan-400" />
+              <div className="p-2 rounded-lg bg-accent/10">
+                <Calendar className="h-4 w-4 text-accent" />
               </div>
               <div>
                 <CardTitle className="text-base">Account Details</CardTitle>
@@ -167,24 +167,24 @@ function ProfilePage() {
                 <Label className="text-sm">Account Created</Label>
                 <p className="text-xs text-muted-foreground">When you joined NEXUS</p>
               </div>
-              <Badge variant="outline" className="border-cyan-500/30 text-cyan-400">
+              <Badge variant="outline" className="border-accent/30 text-accent">
                 {createdAt}
               </Badge>
             </div>
 
-            <Separator className="bg-cyan-500/10" />
+            <Separator className="bg-accent/10" />
 
             <div className="flex items-center justify-between py-2">
               <div className="space-y-0.5">
                 <Label className="text-sm">User ID</Label>
                 <p className="text-xs text-muted-foreground">Your unique identifier</p>
               </div>
-              <code className="text-xs bg-black/30 px-2 py-1 rounded border border-cyan-500/20 text-cyan-400 font-mono">
+              <code className="text-xs bg-card/50 px-2 py-1 rounded border border-accent/20 text-accent font-mono">
                 {user?.id?.substring(0, 16) || 'N/A'}...
               </code>
             </div>
 
-            <Separator className="bg-cyan-500/10" />
+            <Separator className="bg-accent/10" />
 
             <div className="flex items-center justify-between py-2">
               <div className="space-y-0.5">
@@ -200,11 +200,11 @@ function ProfilePage() {
         </Card>
 
         {/* Connected Accounts */}
-        <Card className="border-purple-500/20 bg-[#0a0a14]/80 backdrop-blur-sm">
+        <Card className="border-secondary/20 bg-card/80 backdrop-blur-sm hover:border-secondary/40 transition-colors">
           <CardHeader>
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-purple-500/10">
-                <Link2 className="h-4 w-4 text-purple-400" />
+              <div className="p-2 rounded-lg bg-secondary/10">
+                <Link2 className="h-4 w-4 text-secondary" />
               </div>
               <div>
                 <CardTitle className="text-base">Connected Accounts</CardTitle>
@@ -246,13 +246,13 @@ function ProfilePage() {
               <Button
                 variant="outline"
                 size="sm"
-                className="border-purple-500/30 text-purple-400 hover:bg-purple-500/10 hover:text-purple-400"
+                className="border-secondary/30 text-secondary hover:bg-secondary/10 hover:text-secondary"
               >
                 Connect
               </Button>
             </div>
 
-            <Separator className="bg-purple-500/10" />
+            <Separator className="bg-secondary/10" />
 
             {/* GitHub */}
             <div className="flex items-center justify-between py-2">
@@ -277,14 +277,14 @@ function ProfilePage() {
         </Card>
 
         {/* Danger Zone */}
-        <Card className="border-red-500/30 bg-[#0a0a14]/80 backdrop-blur-sm">
+        <Card className="border-destructive/30 bg-card/80 backdrop-blur-sm hover:border-destructive/50 transition-colors">
           <CardHeader>
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-red-500/10">
-                <AlertTriangle className="h-4 w-4 text-red-400" />
+              <div className="p-2 rounded-lg bg-destructive/10">
+                <AlertTriangle className="h-4 w-4 text-destructive" />
               </div>
               <div>
-                <CardTitle className="text-base text-red-400">Danger Zone</CardTitle>
+                <CardTitle className="text-base text-destructive">Danger Zone</CardTitle>
                 <CardDescription className="text-xs">
                   Irreversible actions that affect your account
                 </CardDescription>
@@ -294,7 +294,7 @@ function ProfilePage() {
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between py-2">
               <div className="space-y-0.5">
-                <Label className="text-sm text-red-400">Delete Account</Label>
+                <Label className="text-sm text-destructive">Delete Account</Label>
                 <p className="text-xs text-muted-foreground">
                   Permanently remove your account and all associated data
                 </p>
@@ -302,17 +302,17 @@ function ProfilePage() {
               <Button
                 variant="outline"
                 size="sm"
-                className="border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-400"
+                className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
               >
                 <Trash2 className="h-3 w-3 mr-2" />
                 Delete Account
               </Button>
             </div>
 
-            <div className="p-3 rounded-lg bg-red-500/5 border border-red-500/20">
+            <div className="p-3 rounded-lg bg-destructive/5 border border-destructive/20">
               <div className="flex gap-2">
-                <X className="h-4 w-4 text-red-400 flex-shrink-0 mt-0.5" />
-                <div className="text-xs text-red-400/80">
+                <X className="h-4 w-4 text-destructive flex-shrink-0 mt-0.5" />
+                <div className="text-xs text-destructive/80">
                   <p className="font-medium">Warning: This action cannot be undone.</p>
                   <p className="mt-1">
                     All your data, including timers, projects, and settings will be permanently deleted.
