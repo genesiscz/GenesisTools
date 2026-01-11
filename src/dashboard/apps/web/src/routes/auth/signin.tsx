@@ -1,6 +1,5 @@
-import { createFileRoute, Link, useSearch } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate, useSearch } from '@tanstack/react-router'
 import { useState } from 'react'
-import { useAuth } from '@workos/authkit-tanstack-react-start/client'
 import {
   Mail,
   Lock,
@@ -11,59 +10,73 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { AuthLayout } from '@/components/auth'
-import { getOAuthUrl } from '@/lib/auth.functions'
+import { signInFn, getOAuthUrlFn } from '@/lib/auth-actions'
+import type { AuthError } from '@/lib/auth-actions'
 
 export const Route = createFileRoute('/auth/signin')({
   component: SignInPage,
   validateSearch: (search: Record<string, unknown>) => ({
     reset: search.reset === 'success',
-    error: search.error as string | undefined,
   }),
 })
 
 function SignInPage() {
-  const { reset: resetSuccess, error: urlError } = useSearch({ from: '/auth/signin' })
-  const { signIn } = useAuth()
+  const { reset: resetSuccess } = useSearch({ from: '/auth/signin' })
+  const navigate = useNavigate()
+  const [authState, setAuthState] = useState<AuthError | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [oauthLoading, setOauthLoading] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(urlError || null)
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setIsLoading(true)
-    setError(null)
+    setAuthState(null)
 
     const formData = new FormData(e.currentTarget)
     const email = formData.get('email') as string
     const password = formData.get('password') as string
 
     try {
-      // Use WorkOS AuthKit for authentication
-      await signIn({
-        email,
-        password,
+      const result = await signInFn({
+        data: { email, password },
       })
-      // On success, AuthKit will handle the redirect
+
+      // Check if result has success property (successful response)
+      if (result && typeof result === 'object' && 'success' in result && result.success) {
+        // Store session in localStorage or cookie
+        const sessionData = result as { success: true; session: string; user: unknown }
+        // Store encrypted session
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('wos-session', sessionData.session)
+        }
+        // Redirect to dashboard
+        await navigate({ to: '/dashboard' })
+      } else {
+        // Error response
+        setAuthState(result as AuthError)
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to sign in')
+      setAuthState({
+        code: 'unknown',
+        message: err instanceof Error ? err.message : 'An error occurred',
+      })
+    } finally {
       setIsLoading(false)
     }
   }
 
-  const handleOAuthSignIn = async (provider: 'google' | 'github') => {
+  const handleOAuthSignIn = async (provider: 'GoogleOAuth' | 'GitHubOAuth') => {
     try {
       setOauthLoading(provider)
-      setError(null)
-      // Get OAuth URL from server and redirect directly (bypasses AuthKit hosted page)
-      const url = await getOAuthUrl({ data: { provider } })
-      if (!url) {
-        throw new Error('No OAuth URL returned from server')
+      const url = await getOAuthUrlFn({ data: { provider } })
+      if (typeof window !== 'undefined') {
+        window.location.href = url
       }
-      window.location.href = url
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to start OAuth'
-      console.error('OAuth error:', errorMsg, err)
-      setError(errorMsg)
+      setAuthState({
+        code: 'unknown',
+        message: err instanceof Error ? err.message : 'Failed to start OAuth',
+      })
       setOauthLoading(null)
     }
   }
@@ -74,9 +87,7 @@ function SignInPage() {
         {/* Header */}
         <div className="text-center space-y-2">
           <h1 className="text-2xl font-bold tracking-tight text-white">Welcome back</h1>
-          <p className="text-gray-400">
-            Sign in to your account to continue
-          </p>
+          <p className="text-gray-400">Sign in to your account to continue</p>
         </div>
 
         {/* Success message for password reset */}
@@ -90,10 +101,10 @@ function SignInPage() {
         )}
 
         {/* Error message */}
-        {error && (
+        {authState && (
           <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
             <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{error}</span>
+            <span>{authState.message}</span>
           </div>
         )}
 
@@ -103,10 +114,10 @@ function SignInPage() {
             type="button"
             variant="outline"
             className="w-full h-11 border-amber-500/20 hover:border-amber-500/40 hover:bg-amber-500/5 text-white"
-            onClick={() => handleOAuthSignIn('google')}
+            onClick={() => handleOAuthSignIn('GoogleOAuth')}
             disabled={!!oauthLoading || isLoading}
           >
-            {oauthLoading === 'google' ? (
+            {oauthLoading === 'GoogleOAuth' ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
               <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
@@ -135,10 +146,10 @@ function SignInPage() {
             type="button"
             variant="outline"
             className="w-full h-11 border-amber-500/20 hover:border-amber-500/40 hover:bg-amber-500/5 text-white"
-            onClick={() => handleOAuthSignIn('github')}
+            onClick={() => handleOAuthSignIn('GitHubOAuth')}
             disabled={!!oauthLoading || isLoading}
           >
-            {oauthLoading === 'github' ? (
+            {oauthLoading === 'GitHubOAuth' ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
               <Github className="mr-2 h-4 w-4" />
@@ -153,9 +164,7 @@ function SignInPage() {
             <div className="w-full border-t border-amber-500/10" />
           </div>
           <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-[#0a0a14] px-4 text-gray-500">
-              Or continue with email
-            </span>
+            <span className="bg-[#030308] px-4 text-gray-500">Or continue with email</span>
           </div>
         </div>
 
@@ -163,10 +172,7 @@ function SignInPage() {
         <form onSubmit={handleSubmit} className="space-y-4" suppressHydrationWarning>
           {/* Email Field */}
           <div className="space-y-2">
-            <label
-              htmlFor="email"
-              className="text-sm font-medium text-gray-300"
-            >
+            <label htmlFor="email" className="text-sm font-medium text-gray-300">
               Email
             </label>
             <div className="relative">
@@ -179,7 +185,7 @@ function SignInPage() {
                 autoCapitalize="off"
                 required
                 placeholder="you@example.com"
-                className="w-full h-11 pl-10 pr-4 rounded-lg bg-black/50 border border-amber-500/20 focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20 outline-none transition-all placeholder:text-gray-600 text-white"
+                className="w-full h-11 pl-10 pr-4 rounded-lg bg-[#1a1a1f] border border-amber-500/20 focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20 outline-none transition-all placeholder:text-gray-600 text-white"
               />
             </div>
           </div>
@@ -187,10 +193,7 @@ function SignInPage() {
           {/* Password Field */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <label
-                htmlFor="password"
-                className="text-sm font-medium text-gray-300"
-              >
+              <label htmlFor="password" className="text-sm font-medium text-gray-300">
                 Password
               </label>
               <Link
@@ -209,7 +212,7 @@ function SignInPage() {
                 autoComplete="current-password"
                 required
                 placeholder="Enter your password"
-                className="w-full h-11 pl-10 pr-4 rounded-lg bg-black/50 border border-amber-500/20 focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20 outline-none transition-all placeholder:text-gray-600 text-white"
+                className="w-full h-11 pl-10 pr-4 rounded-lg bg-[#1a1a1f] border border-amber-500/20 focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20 outline-none transition-all placeholder:text-gray-600 text-white"
               />
             </div>
           </div>
@@ -217,7 +220,7 @@ function SignInPage() {
           {/* Submit Button */}
           <Button
             type="submit"
-            className="w-full h-11 text-base font-semibold bg-amber-500 hover:bg-amber-600 text-black neon-glow btn-glow"
+            className="w-full h-11 text-base font-semibold neon-glow btn-glow"
             disabled={isLoading || !!oauthLoading}
           >
             {isLoading ? (
@@ -233,13 +236,8 @@ function SignInPage() {
 
         {/* Sign Up Link */}
         <div className="text-center text-sm">
-          <span className="text-gray-500">
-            Don&apos;t have an account?{' '}
-          </span>
-          <Link
-            to="/auth/signup"
-            className="text-amber-500 font-medium hover:underline"
-          >
+          <span className="text-gray-500">Don't have an account? </span>
+          <Link to="/auth/signup" className="text-amber-500 font-medium hover:underline">
             Sign up
           </Link>
         </div>
