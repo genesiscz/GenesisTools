@@ -12,7 +12,7 @@ import {
   LogOut,
   ChevronUp,
 } from 'lucide-react'
-import { useAuth } from '@workos-inc/authkit-react'
+import { useAuth } from '@workos/authkit-tanstack-react-start/client'
 import {
   Sidebar,
   SidebarContent,
@@ -105,8 +105,8 @@ export function AppSidebar() {
     : user?.email?.[0]?.toUpperCase() ?? '?'
 
   return (
-    <Sidebar className="border-r border-amber-500/10">
-      <SidebarHeader className="border-b border-amber-500/10 p-4">
+    <Sidebar className="border-r border-sidebar-border bg-sidebar">
+      <SidebarHeader className="border-b border-sidebar-border p-4 bg-gradient-to-b from-sidebar to-sidebar/80">
         <Link to="/dashboard" className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 text-black font-bold text-sm">
             N
@@ -124,8 +124,8 @@ export function AppSidebar() {
 
       <SidebarContent className="px-2">
         <SidebarGroup>
-          <SidebarGroupLabel className="text-amber-500/60 text-[10px] tracking-widest">
-            MAIN
+          <SidebarGroupLabel className="text-sidebar-primary/70 text-[10px] tracking-widest uppercase font-semibold">
+            Main
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -134,7 +134,7 @@ export function AppSidebar() {
                   <SidebarMenuButton
                     asChild
                     isActive={isActive(item.url)}
-                    className="data-[active=true]:bg-amber-500/10 data-[active=true]:text-amber-500 data-[active=true]:border-l-2 data-[active=true]:border-amber-500 hover:bg-amber-500/5"
+                    className="data-[active=true]:bg-sidebar-primary/15 data-[active=true]:text-sidebar-primary data-[active=true]:border-l-2 data-[active=true]:border-sidebar-primary hover:bg-sidebar-primary/10 hover:text-sidebar-foreground transition-colors"
                   >
                     <Link to={item.url}>
                       <item.icon className="h-4 w-4" />
@@ -148,8 +148,8 @@ export function AppSidebar() {
         </SidebarGroup>
 
         <SidebarGroup>
-          <SidebarGroupLabel className="text-cyan-500/60 text-[10px] tracking-widest">
-            TOOLS
+          <SidebarGroupLabel className="text-sidebar-accent/70 text-[10px] tracking-widest uppercase font-semibold">
+            Tools
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -158,7 +158,7 @@ export function AppSidebar() {
                   <SidebarMenuButton
                     asChild
                     isActive={isActive(item.url)}
-                    className="data-[active=true]:bg-cyan-500/10 data-[active=true]:text-cyan-400 data-[active=true]:border-l-2 data-[active=true]:border-cyan-500 hover:bg-cyan-500/5"
+                    className="data-[active=true]:bg-sidebar-accent/15 data-[active=true]:text-sidebar-accent data-[active=true]:border-l-2 data-[active=true]:border-sidebar-accent hover:bg-sidebar-accent/10 hover:text-sidebar-foreground transition-colors"
                   >
                     <Link to={item.url}>
                       <item.icon className="h-4 w-4" />
@@ -172,8 +172,8 @@ export function AppSidebar() {
         </SidebarGroup>
 
         <SidebarGroup>
-          <SidebarGroupLabel className="text-muted-foreground/60 text-[10px] tracking-widest">
-            SYSTEM
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-[10px] tracking-widest uppercase font-semibold">
+            System
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -182,7 +182,7 @@ export function AppSidebar() {
                   <SidebarMenuButton
                     asChild
                     isActive={isActive(item.url)}
-                    className="data-[active=true]:bg-white/5 data-[active=true]:text-white hover:bg-white/5"
+                    className="data-[active=true]:bg-sidebar-foreground/10 data-[active=true]:text-sidebar-foreground hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground transition-colors"
                   >
                     <Link to={item.url}>
                       <item.icon className="h-4 w-4" />
@@ -196,33 +196,33 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-amber-500/10 p-2">
+      <SidebarFooter className="border-t border-sidebar-border p-2 bg-gradient-to-t from-sidebar to-sidebar/80">
         <SidebarMenu>
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <SidebarMenuButton className="h-12 hover:bg-amber-500/5">
-                  <Avatar className="h-7 w-7 border border-amber-500/30">
+                <SidebarMenuButton className="h-12 hover:bg-sidebar-accent/10 transition-colors">
+                  <Avatar className="h-7 w-7 border border-sidebar-primary/30">
                     <AvatarImage src={user?.profilePictureUrl ?? undefined} />
-                    <AvatarFallback className="bg-amber-500/10 text-amber-500 text-xs">
+                    <AvatarFallback className="bg-sidebar-primary/10 text-sidebar-primary text-xs font-semibold">
                       {userInitials}
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex flex-col items-start text-xs">
-                    <span className="font-medium">
+                    <span className="font-medium text-sidebar-foreground">
                       {user?.firstName ?? 'User'}
                     </span>
-                    <span className="text-muted-foreground text-[10px] truncate max-w-[120px]">
+                    <span className="text-sidebar-foreground/60 text-[10px] truncate max-w-[120px]">
                       {user?.email}
                     </span>
                   </div>
-                  <ChevronUp className="ml-auto h-4 w-4 text-muted-foreground" />
+                  <ChevronUp className="ml-auto h-4 w-4 text-sidebar-foreground/50" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 side="top"
                 align="start"
-                className="w-56 bg-[#0a0a14] border-amber-500/20"
+                className="w-56 bg-card border-border/50 shadow-lg"
               >
                 <DropdownMenuItem asChild>
                   <Link to="/profile" className="cursor-pointer">
