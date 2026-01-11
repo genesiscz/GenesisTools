@@ -42,6 +42,7 @@ import { Route as AuthForgotPasswordRouteImport } from './routes/auth/forgot-pas
 import { Route as AuthErrorRouteImport } from './routes/auth/error'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 import { Route as AssistantParkingRouteImport } from './routes/assistant/parking'
+import { Route as AssistantNextRouteImport } from './routes/assistant/next'
 import { Route as ExampleGuitarsIndexRouteImport } from './routes/example.guitars/index'
 import { Route as AssistantTasksIndexRouteImport } from './routes/assistant/tasks/index'
 import { Route as ExampleGuitarsGuitarIdRouteImport } from './routes/example.guitars/$guitarId'
@@ -230,6 +231,11 @@ const AssistantParkingRoute = AssistantParkingRouteImport.update({
   path: '/assistant/parking',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AssistantNextRoute = AssistantNextRouteImport.update({
+  id: '/assistant/next',
+  path: '/assistant/next',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ExampleGuitarsIndexRoute = ExampleGuitarsIndexRouteImport.update({
   id: '/example/guitars/',
   path: '/example/guitars/',
@@ -347,6 +353,7 @@ export interface FileRoutesByFullPath {
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
+  '/assistant/next': typeof AssistantNextRoute
   '/assistant/parking': typeof AssistantParkingRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/error': typeof AuthErrorRoute
@@ -404,6 +411,7 @@ export interface FileRoutesByTo {
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
+  '/assistant/next': typeof AssistantNextRoute
   '/assistant/parking': typeof AssistantParkingRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/error': typeof AuthErrorRoute
@@ -462,6 +470,7 @@ export interface FileRoutesById {
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
+  '/assistant/next': typeof AssistantNextRoute
   '/assistant/parking': typeof AssistantParkingRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/error': typeof AuthErrorRoute
@@ -521,6 +530,7 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/profile'
     | '/settings'
+    | '/assistant/next'
     | '/assistant/parking'
     | '/auth/callback'
     | '/auth/error'
@@ -578,6 +588,7 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/profile'
     | '/settings'
+    | '/assistant/next'
     | '/assistant/parking'
     | '/auth/callback'
     | '/auth/error'
@@ -635,6 +646,7 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/profile'
     | '/settings'
+    | '/assistant/next'
     | '/assistant/parking'
     | '/auth/callback'
     | '/auth/error'
@@ -693,6 +705,7 @@ export interface RootRouteChildren {
   McpRoute: typeof McpRoute
   ProfileRoute: typeof ProfileRoute
   SettingsRoute: typeof SettingsRoute
+  AssistantNextRoute: typeof AssistantNextRoute
   AssistantParkingRoute: typeof AssistantParkingRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
   AuthErrorRoute: typeof AuthErrorRoute
@@ -979,6 +992,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AssistantParkingRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/assistant/next': {
+      id: '/assistant/next'
+      path: '/assistant/next'
+      fullPath: '/assistant/next'
+      preLoaderRoute: typeof AssistantNextRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/example/guitars/': {
       id: '/example/guitars/'
       path: '/example/guitars'
@@ -1141,6 +1161,7 @@ const rootRouteChildren: RootRouteChildren = {
   McpRoute: McpRoute,
   ProfileRoute: ProfileRoute,
   SettingsRoute: SettingsRoute,
+  AssistantNextRoute: AssistantNextRoute,
   AssistantParkingRoute: AssistantParkingRoute,
   AuthCallbackRoute: AuthCallbackRoute,
   AuthErrorRoute: AuthErrorRoute,
