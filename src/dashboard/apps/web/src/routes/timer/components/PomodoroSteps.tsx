@@ -6,6 +6,8 @@ interface PomodoroStepsProps {
   settings: PomodoroSettings
   currentPhase: 'work' | 'short_break' | 'long_break' | undefined
   sessionCount: number
+  /** Progress through current phase (0-1) */
+  progress?: number
   className?: string
 }
 
@@ -23,11 +25,13 @@ function formatMinutes(ms: number): string {
 
 /**
  * Shows the Pomodoro cycle steps with current position highlighted
+ * and progress fill on the active step
  */
 export function PomodoroSteps({
   settings = DEFAULT_SETTINGS,
   currentPhase,
   sessionCount,
+  progress = 0,
   className,
 }: PomodoroStepsProps) {
   const config = { ...DEFAULT_SETTINGS, ...settings }
@@ -66,7 +70,7 @@ export function PomodoroSteps({
   // Calculate current step index
   // sessionCount is the number of completed work sessions
   // If we're in work phase, current step = sessionCount * 2
-  // If we're in break phase, current step = sessionCount * 2 + 1
+  // If we're in break phase, current step = sessionCount * 2 - 1
   let currentStepIndex = -1
   if (currentPhase === 'work') {
     currentStepIndex = Math.min(sessionCount * 2, steps.length - 1)
@@ -85,29 +89,48 @@ export function PomodoroSteps({
           const isWork = step.type === 'work'
           const isLongBreak = step.type === 'long_break'
 
+          // Calculate fill percentage for current step
+          const fillPercent = isCurrent ? Math.min(progress * 100, 100) : 0
+
           return (
             <div
               key={index}
               className={cn(
-                'flex items-center gap-1 px-2 py-1 rounded-md text-xs whitespace-nowrap',
+                'relative flex items-center gap-1 px-2 py-1 rounded-md text-xs whitespace-nowrap overflow-hidden',
                 'transition-all duration-200',
-                // Completed steps
-                isCompleted && isWork && 'bg-emerald-500/20 text-emerald-500/60',
-                isCompleted && !isWork && 'bg-amber-500/20 text-amber-500/60',
-                // Current step
-                isCurrent && isWork && 'bg-emerald-500/30 text-emerald-400 ring-1 ring-emerald-500/50',
-                isCurrent && !isWork && 'bg-amber-500/30 text-amber-400 ring-1 ring-amber-500/50',
+                // Base background for all states
+                'bg-gray-800/50',
+                // Completed steps - full color
+                isCompleted && isWork && 'bg-emerald-500/30 text-emerald-400',
+                isCompleted && !isWork && 'bg-amber-500/30 text-amber-400',
+                // Current step - ring highlight
+                isCurrent && isWork && 'ring-1 ring-emerald-500/50 text-emerald-400',
+                isCurrent && !isWork && 'ring-1 ring-amber-500/50 text-amber-400',
                 // Future steps
-                !isCompleted && !isCurrent && 'bg-gray-800/50 text-gray-500'
+                !isCompleted && !isCurrent && 'text-gray-500'
               )}
             >
-              {isWork ? (
-                <Zap className="h-3 w-3" />
-              ) : (
-                <Coffee className="h-3 w-3" />
+              {/* Progress fill bar */}
+              {isCurrent && fillPercent > 0 && (
+                <div
+                  className={cn(
+                    'absolute inset-0 transition-all duration-300 ease-out',
+                    isWork ? 'bg-emerald-500/30' : 'bg-amber-500/30'
+                  )}
+                  style={{ width: `${fillPercent}%` }}
+                />
               )}
-              <span className="font-medium">{step.duration}</span>
-              {isLongBreak && <span className="text-[10px] opacity-70">long</span>}
+
+              {/* Content */}
+              <div className="relative flex items-center gap-1">
+                {isWork ? (
+                  <Zap className="h-3 w-3" />
+                ) : (
+                  <Coffee className="h-3 w-3" />
+                )}
+                <span className="font-medium">{step.duration}</span>
+                {isLongBreak && <span className="text-[10px] opacity-70">long</span>}
+              </div>
             </div>
           )
         })}

@@ -251,18 +251,31 @@ export const TimerCard = memo(function TimerCard({
         )}
 
         {/* Pomodoro steps display */}
-        {timer.timerType === 'pomodoro' && (
-          <PomodoroSteps
-            settings={timer.pomodoroSettings ?? {
-              workDuration: 25 * 60 * 1000,
-              shortBreakDuration: 5 * 60 * 1000,
-              longBreakDuration: 15 * 60 * 1000,
-              sessionsBeforeLongBreak: 4,
-            }}
-            currentPhase={timer.pomodoroPhase}
-            sessionCount={timer.pomodoroSessionCount ?? 0}
-          />
-        )}
+        {timer.timerType === 'pomodoro' && (() => {
+          const pomodoroSettings = timer.pomodoroSettings ?? {
+            workDuration: 25 * 60 * 1000,
+            shortBreakDuration: 5 * 60 * 1000,
+            longBreakDuration: 15 * 60 * 1000,
+            sessionsBeforeLongBreak: 4,
+          }
+          // Calculate progress based on current phase
+          let phaseDuration = pomodoroSettings.workDuration
+          if (timer.pomodoroPhase === 'short_break') {
+            phaseDuration = pomodoroSettings.shortBreakDuration
+          } else if (timer.pomodoroPhase === 'long_break') {
+            phaseDuration = pomodoroSettings.longBreakDuration
+          }
+          const progress = phaseDuration > 0 ? displayTime / phaseDuration : 0
+
+          return (
+            <PomodoroSteps
+              settings={pomodoroSettings}
+              currentPhase={timer.pomodoroPhase}
+              sessionCount={timer.pomodoroSessionCount ?? 0}
+              progress={progress}
+            />
+          )
+        })()}
 
         {/* Controls */}
         <TimerControls
