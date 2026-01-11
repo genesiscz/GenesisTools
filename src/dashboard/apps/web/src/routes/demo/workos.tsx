@@ -1,15 +1,14 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { useAuth } from '@workos-inc/authkit-react'
+import { createFileRoute, Link } from '@tanstack/react-router'
+import { useAuth } from '@workos/authkit-tanstack-react-start/client'
 
 export const Route = createFileRoute('/demo/workos')({
-  ssr: false,
   component: App,
 })
 
 function App() {
-  const { user, isLoading, signIn, signOut } = useAuth()
+  const { user, loading, signOut } = useAuth()
 
-  if (isLoading) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center p-4">
         <div className="bg-gray-800/50 backdrop-blur-sm rounded-2xl shadow-2xl p-8 w-full max-w-md border border-gray-700/50">
@@ -96,13 +95,12 @@ function App() {
         <p className="text-gray-400 text-center mb-6">
           Sign in to view your profile information
         </p>
-        <button
-          onClick={() => signIn()}
-          disabled={isLoading}
-          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-lg transition-colors shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+        <Link
+          to="/auth/signin"
+          className="block w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-lg transition-colors shadow-lg hover:shadow-xl text-center"
         >
           Sign In with AuthKit
-        </button>
+        </Link>
       </div>
     </div>
   )

@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
-import { useAuth } from '@workos-inc/authkit-react'
+import { useAuth } from '@workos/authkit-tanstack-react-start/client'
 import {
   Mail,
   Lock,
@@ -11,7 +11,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { AuthLayout } from '@/components/auth'
-import { getOAuthUrl } from '@/lib/auth.functions'
+import { getOAuthUrlFn } from '@/lib/auth-actions'
 
 export const Route = createFileRoute('/auth/signup')({
   component: SignUpPage,
@@ -60,7 +60,7 @@ function SignUpPage() {
     try {
       setOauthLoading(provider)
       // Get OAuth URL from server and redirect directly (bypasses AuthKit hosted page)
-      const url = await getOAuthUrl({ data: { provider } })
+      const url = await getOAuthUrlFn({ data: { provider } })
       window.location.href = url
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start OAuth')

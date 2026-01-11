@@ -1,7 +1,7 @@
-import { useAuth } from '@workos-inc/authkit-react'
+import { useAuth } from '@workos/authkit-tanstack-react-start/client'
 
 export default function SignInButton({ large }: { large?: boolean }) {
-  const { user, isLoading, signIn, signOut } = useAuth()
+  const { user, loading, signOut } = useAuth()
 
   const buttonClasses = `${
     large ? 'px-6 py-3 text-base' : 'px-4 py-2 text-sm'
@@ -28,14 +28,11 @@ export default function SignInButton({ large }: { large?: boolean }) {
   }
 
   return (
-    <button
-      onClick={() => {
-        signIn()
-      }}
+    <a
+      href="/auth/signin"
       className={buttonClasses}
-      disabled={isLoading}
     >
       Sign In {large && 'with AuthKit'}
-    </button>
+    </a>
   )
 }
