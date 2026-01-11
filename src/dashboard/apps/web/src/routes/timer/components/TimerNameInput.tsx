@@ -62,12 +62,15 @@ export const TimerNameInput = memo(function TimerNameInput({
     [handleSave, handleCancel]
   )
 
+  // Fixed height container to prevent height jumps
+  const containerHeight = 'h-8'
+
   if (isEditing) {
     return (
-      <div className={cn('flex items-center gap-2', className)}>
+      <div className={cn('flex items-center gap-1.5', containerHeight, className)}>
         <div className="relative flex-1">
           {/* Terminal prompt */}
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-amber-500/70 font-mono text-sm">
+          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-amber-500/70 font-mono text-xs">
             {'>>'}
           </span>
           <input
@@ -78,8 +81,8 @@ export const TimerNameInput = memo(function TimerNameInput({
             onKeyDown={handleKeyDown}
             onBlur={handleSave}
             className={cn(
-              'w-full bg-black/50 border border-amber-500/40 rounded-lg',
-              'pl-10 pr-4 py-2 text-lg font-semibold text-white',
+              'w-full h-8 bg-black/50 border border-amber-500/40 rounded-md',
+              'pl-7 pr-3 text-sm font-semibold text-white',
               'font-mono tracking-wide',
               'focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/50',
               'placeholder:text-gray-600'
@@ -87,24 +90,22 @@ export const TimerNameInput = memo(function TimerNameInput({
             placeholder="Timer name..."
             maxLength={32}
           />
-          {/* Blinking cursor effect */}
-          <span className="absolute right-3 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-amber-500 animate-pulse" />
         </div>
 
-        {/* Action buttons */}
+        {/* Action buttons - smaller */}
         <button
           onClick={handleSave}
-          className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
+          className="p-1.5 rounded-md bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
           title="Save"
         >
-          <Check className="h-4 w-4" />
+          <Check className="h-3.5 w-3.5" />
         </button>
         <button
           onClick={handleCancel}
-          className="p-2 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
+          className="p-1.5 rounded-md bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
           title="Cancel"
         >
-          <X className="h-4 w-4" />
+          <X className="h-3.5 w-3.5" />
         </button>
       </div>
     )
@@ -114,17 +115,18 @@ export const TimerNameInput = memo(function TimerNameInput({
     <button
       onClick={() => setIsEditing(true)}
       className={cn(
-        'group flex items-center gap-2 text-left',
-        'hover:bg-amber-500/5 rounded-lg px-2 py-1 -mx-2 -my-1',
+        'group flex items-center gap-1.5 text-left',
+        containerHeight,
+        'hover:bg-amber-500/5 rounded-md px-1.5 -mx-1.5',
         'transition-colors duration-200',
         className
       )}
       title="Click to edit"
     >
-      <span className="text-lg font-semibold text-white truncate max-w-[200px]">
+      <span className="text-sm font-semibold text-white truncate max-w-[160px]">
         {name}
       </span>
-      <Pencil className="h-3.5 w-3.5 text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+      <Pencil className="h-3 w-3 text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
     </button>
   )
 })

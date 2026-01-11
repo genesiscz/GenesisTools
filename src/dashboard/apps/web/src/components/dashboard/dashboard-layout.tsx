@@ -11,15 +11,15 @@ interface DashboardLayoutProps {
 export function DashboardLayout({ children, title, description }: DashboardLayoutProps) {
   return (
     <SidebarProvider>
-      {/* Background effects */}
-      <div className="fixed inset-0 cyber-grid opacity-20 pointer-events-none" />
-      <div className="fixed inset-0 scan-lines pointer-events-none" />
+      {/* Background effects - increased visibility */}
+      <div className="fixed inset-0 cyber-grid opacity-40 pointer-events-none" />
+      <div className="fixed inset-0 scan-lines opacity-30 pointer-events-none" />
 
       <AppSidebar />
       <SidebarInset className="bg-[#030308]">
         {/* Header */}
         <header className="sticky top-0 z-10 flex h-14 items-center gap-4 border-b border-amber-500/10 bg-[#030308]/80 backdrop-blur-xl px-4">
-          <SidebarTrigger className="text-muted-foreground hover:text-amber-500 transition-colors" />
+          <SidebarTrigger className="size-9 p-2 text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 transition-colors rounded-lg" />
           <Separator orientation="vertical" className="h-4 bg-amber-500/20" />
           {title && (
             <div className="flex flex-col">

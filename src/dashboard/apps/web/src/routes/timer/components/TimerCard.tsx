@@ -66,58 +66,67 @@ export const TimerCard = memo(function TimerCard({
 
   if (!timer) {
     return (
-      <div className={cn('animate-pulse rounded-2xl bg-gray-800/50 h-64', className)} />
+      <div className={cn('animate-pulse rounded-xl bg-gray-800/50 h-48', className)} />
     )
   }
 
   return (
     <div
       className={cn(
-        'group relative rounded-2xl overflow-hidden',
-        'bg-gradient-to-br from-gray-900/90 via-gray-900/80 to-gray-950/90',
-        'backdrop-blur-xl',
-        'border border-amber-500/20',
-        'shadow-[0_0_30px_rgba(0,0,0,0.5)]',
-        'transition-all duration-500',
-        'hover:border-amber-500/40',
-        'hover:shadow-[0_0_40px_rgba(255,149,0,0.1)]',
+        'group relative rounded-xl overflow-hidden',
+        'bg-gray-900/95',
+        'backdrop-blur-md',
+        'border border-gray-800/80',
+        'shadow-lg',
+        'transition-all duration-300',
+        'hover:border-amber-500/30',
+        'hover:shadow-[0_0_20px_rgba(255,149,0,0.08)]',
         'animate-fade-in-up',
         className
       )}
     >
-      {/* Tech corner decorations */}
-      <div className="absolute top-0 left-0 w-6 h-6 border-l-2 border-t-2 border-amber-500/40 rounded-tl-xl" />
-      <div className="absolute top-0 right-0 w-6 h-6 border-r-2 border-t-2 border-amber-500/40 rounded-tr-xl" />
-      <div className="absolute bottom-0 left-0 w-6 h-6 border-l-2 border-b-2 border-amber-500/40 rounded-bl-xl" />
-      <div className="absolute bottom-0 right-0 w-6 h-6 border-r-2 border-b-2 border-amber-500/40 rounded-br-xl" />
+      {/* Subtle tech corner decorations */}
+      <div className="absolute top-0 left-0 w-4 h-4 border-l border-t border-amber-500/20 rounded-tl-lg" />
+      <div className="absolute top-0 right-0 w-4 h-4 border-r border-t border-amber-500/20 rounded-tr-lg" />
+      <div className="absolute bottom-0 left-0 w-4 h-4 border-l border-b border-amber-500/20 rounded-bl-lg" />
+      <div className="absolute bottom-0 right-0 w-4 h-4 border-r border-b border-amber-500/20 rounded-br-lg" />
 
-      {/* Ambient glow based on timer type */}
+      {/* Subtle centered glow based on timer type */}
       <div
         className={cn(
-          'absolute -inset-1 -z-10 blur-3xl opacity-10 transition-opacity duration-500',
-          timer.timerType === 'stopwatch' && 'bg-cyan-500',
-          timer.timerType === 'countdown' && 'bg-amber-500',
-          timer.timerType === 'pomodoro' && 'bg-emerald-500',
-          isRunning && 'opacity-20'
+          'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 rounded-full blur-3xl pointer-events-none',
+          timer.timerType === 'stopwatch' && 'bg-cyan-500/8',
+          timer.timerType === 'countdown' && 'bg-amber-500/8',
+          timer.timerType === 'pomodoro' && 'bg-emerald-500/8'
         )}
       />
 
       {/* Content */}
-      <div className="relative p-6 space-y-5">
+      <div className="relative p-4 space-y-3">
         {/* Header */}
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1 min-w-0">
-            <TimerNameInput name={timer.name} onNameChange={setName} />
-
-            {/* Timer type selector */}
-            <div className="mt-3">
-              <TimerTypeSelector
-                type={timer.timerType}
-                onChange={setType}
-                disabled={isRunning}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0 flex items-center gap-2">
+            {/* Active indicator - green glowing dot */}
+            {isRunning && (
+              <span
+                className={cn(
+                  'flex-shrink-0 h-2 w-2 rounded-full',
+                  timer.timerType === 'stopwatch' && 'bg-cyan-400 shadow-[0_0_8px_rgba(0,240,255,0.8)]',
+                  timer.timerType === 'countdown' && 'bg-amber-400 shadow-[0_0_8px_rgba(255,149,0,0.8)]',
+                  timer.timerType === 'pomodoro' && 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]',
+                  'animate-pulse'
+                )}
               />
-            </div>
+            )}
+            <TimerNameInput name={timer.name} onNameChange={setName} />
           </div>
+
+          {/* Timer type selector - moved to row */}
+          <TimerTypeSelector
+            type={timer.timerType}
+            onChange={setType}
+            disabled={isRunning}
+          />
 
           {/* Menu button */}
           <div className="relative">
@@ -201,9 +210,9 @@ export const TimerCard = memo(function TimerCard({
           onPopout={onPopout ? handlePopout : undefined}
         />
 
-        {/* Laps list (stopwatch only) */}
+        {/* Laps list (stopwatch only) - compact with max height */}
         {timer.timerType === 'stopwatch' && timer.laps && timer.laps.length > 0 && (
-          <LapsList laps={timer.laps} onClear={clearLaps} className="mt-6" />
+          <LapsList laps={timer.laps} onClear={clearLaps} className="mt-2" />
         )}
       </div>
     </div>
