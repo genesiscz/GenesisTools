@@ -1,4 +1,3 @@
-import { useCallback, useMemo } from 'react'
 import type { Timer, TimerType, ActivityLogInput } from '@dashboard/shared'
 import { useTimerStore } from './useTimerStore'
 import { useTimerEngine, formatTime, formatTimeCompact } from './useTimerEngine'
@@ -41,27 +40,24 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
   const timer = getTimer(timerId)
   const { displayTime, isRunning } = useTimerEngine(timer)
 
-  // Log activity
-  const logActivity = useCallback(
-    async (eventType: ActivityLogInput['eventType'], extras: Partial<ActivityLogInput> = {}) => {
-      if (!timer || !userId) return
+  // Log activity helper
+  async function logActivity(eventType: ActivityLogInput['eventType'], extras: Partial<ActivityLogInput> = {}) {
+    if (!timer || !userId) return
 
-      const adapter = getStorageAdapter()
-      await adapter.logActivity({
-        timerId: timer.id,
-        timerName: timer.name,
-        userId,
-        eventType,
-        timestamp: new Date(),
-        elapsedAtEvent: timer.elapsedTime ?? 0,
-        ...extras,
-      })
-    },
-    [timer, userId]
-  )
+    const adapter = getStorageAdapter()
+    await adapter.logActivity({
+      timerId: timer.id,
+      timerName: timer.name,
+      userId,
+      eventType,
+      timestamp: new Date(),
+      elapsedAtEvent: timer.elapsedTime ?? 0,
+      ...extras,
+    })
+  }
 
   // Start timer
-  const start = useCallback(async () => {
+  async function start() {
     if (!timer) return
 
     const now = new Date()
@@ -77,10 +73,10 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
 
     await updateTimer(timerId, updates)
     await logActivity('start')
-  }, [timer, timerId, updateTimer, logActivity])
+  }
 
   // Pause timer
-  const pause = useCallback(async () => {
+  async function pause() {
     if (!timer || !timer.isRunning || !timer.startTime) return
 
     const startTime = timer.startTime instanceof Date ? timer.startTime.getTime() : new Date(timer.startTime).getTime()
@@ -94,19 +90,19 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     })
 
     await logActivity('pause', { sessionDuration })
-  }, [timer, timerId, updateTimer, logActivity])
+  }
 
   // Toggle running state
-  const toggleRunning = useCallback(async () => {
+  async function toggleRunning() {
     if (timer?.isRunning) {
       await pause()
     } else {
       await start()
     }
-  }, [timer?.isRunning, start, pause])
+  }
 
   // Reset timer
-  const reset = useCallback(async () => {
+  async function reset() {
     if (!timer) return
 
     // Calculate elapsed at event before reset
@@ -127,10 +123,10 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     })
 
     await logActivity('reset', { elapsedAtEvent })
-  }, [timer, timerId, updateTimer, logActivity])
+  }
 
   // Add lap
-  const addLap = useCallback(async () => {
+  async function addLap() {
     if (!timer) return
 
     // Calculate current elapsed
@@ -148,79 +144,70 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
         metadata: { lapNumber: lap.number, lapTime: lap.lapTime },
       })
     }
-  }, [timer, timerId, addLapToStore, logActivity])
+  }
 
   // Clear laps
-  const clearLaps = useCallback(async () => {
+  async function clearLaps() {
     await clearLapsFromStore(timerId)
-  }, [timerId, clearLapsFromStore])
+  }
 
   // Set timer name
-  const setName = useCallback(
-    async (name: string) => {
-      await updateTimer(timerId, { name })
-    },
-    [timerId, updateTimer]
-  )
+  async function setName(name: string) {
+    await updateTimer(timerId, { name })
+  }
 
   // Set countdown duration (only when paused)
-  const setDuration = useCallback(
-    async (durationMs: number) => {
-      if (timer?.isRunning) return
-      await updateTimer(timerId, { duration: durationMs })
-    },
-    [timer?.isRunning, timerId, updateTimer]
-  )
+  async function setDuration(durationMs: number) {
+    if (timer?.isRunning) return
+    await updateTimer(timerId, { duration: durationMs })
+  }
 
   // Set timer type
-  const setType = useCallback(
-    async (type: TimerType) => {
-      await updateTimer(timerId, { timerType: type })
-    },
-    [timerId, updateTimer]
-  )
+  async function setType(type: TimerType) {
+    await updateTimer(timerId, { timerType: type })
+  }
 
   // Edit elapsed time (manual adjustment when paused)
-  const editElapsedTime = useCallback(
-    async (newElapsedMs: number) => {
-      if (!timer || timer.isRunning) return
+  async function editElapsedTime(newElapsedMs: number) {
+    if (!timer || timer.isRunning) return
 
-      const previousValue = timer.elapsedTime ?? 0
+    const previousValue = timer.elapsedTime ?? 0
 
-      await updateTimer(timerId, { elapsedTime: newElapsedMs })
+    await updateTimer(timerId, { elapsedTime: newElapsedMs })
 
-      await logActivity('time_edit', {
-        previousValue,
-        newValue: newElapsedMs,
-      })
-    },
-    [timer, timerId, updateTimer, logActivity]
-  )
+    await logActivity('time_edit', {
+      previousValue,
+      newValue: newElapsedMs,
+    })
+  }
 
   // Toggle show total time
-  const toggleShowTotal = useCallback(async () => {
+  async function toggleShowTotal() {
     if (!timer) return
     await updateTimer(timerId, { showTotal: !timer.showTotal })
-  }, [timer, timerId, updateTimer])
+  }
 
   // Calculate total time since first start
-  const totalTimeElapsed = useMemo(() => {
+  function calcTotalTimeElapsed(): number {
     if (!timer?.firstStartTime) return 0
 
     const firstStart =
       timer.firstStartTime instanceof Date ? timer.firstStartTime.getTime() : new Date(timer.firstStartTime).getTime()
 
     return Date.now() - firstStart
-  }, [timer?.firstStartTime])
+  }
 
   // Completion percentage (for countdown/pomodoro)
-  const completionPercentage = useMemo(() => {
+  function calcCompletionPercentage(): number {
     if (!timer || timer.timerType === 'stopwatch') return 0
     if (!timer.duration) return 0
 
     const elapsed = timer.elapsedTime ?? 0
     return Math.min(100, (elapsed / timer.duration) * 100)
-  }, [timer])
+  }
+
+  const totalTimeElapsed = calcTotalTimeElapsed()
+  const completionPercentage = calcCompletionPercentage()
 
   return {
     timer,

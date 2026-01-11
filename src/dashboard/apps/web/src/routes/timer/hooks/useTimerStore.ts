@@ -1,6 +1,6 @@
 import { Store } from '@tanstack/store'
 import { useStore } from '@tanstack/react-store'
-import { useCallback, useEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import type { Timer, TimerInput, TimerUpdate, LapEntry } from '@dashboard/shared'
 import { getStorageAdapter, initializeStorage } from '../lib/storage'
 
@@ -86,42 +86,51 @@ export function useTimerStore(userId: string | null) {
   }, [userId])
 
   // Create timer
-  const createTimer = useCallback(
-    async (input: TimerInput): Promise<Timer | null> => {
-      if (!userId) return null
+  async function createTimer(input: TimerInput): Promise<Timer | null> {
+    if (!userId) return null
 
-      try {
-        const adapter = getStorageAdapter()
-        const timer = await adapter.createTimer(input, userId)
-        return timer
-      } catch (err) {
-        timerStore.setState((s) => ({
-          ...s,
-          error: err instanceof Error ? err.message : 'Failed to create timer',
-        }))
-        return null
-      }
-    },
-    [userId]
-  )
+    try {
+      const adapter = getStorageAdapter()
+      const timer = await adapter.createTimer(input, userId)
+      return timer
+    } catch (err) {
+      timerStore.setState((s) => ({
+        ...s,
+        error: err instanceof Error ? err.message : 'Failed to create timer',
+      }))
+      return null
+    }
+  }
 
-  // Update timer
-  const updateTimer = useCallback(async (id: string, updates: TimerUpdate): Promise<Timer | null> => {
+  // Update timer with optimistic update
+  async function updateTimer(id: string, updates: TimerUpdate): Promise<Timer | null> {
+    // Optimistic update - immediately update store for responsive UI
+    timerStore.setState((s) => ({
+      ...s,
+      timers: s.timers.map((t) =>
+        t.id === id ? { ...t, ...updates, updatedAt: new Date() } : t
+      ),
+    }))
+
     try {
       const adapter = getStorageAdapter()
       const timer = await adapter.updateTimer(id, updates)
       return timer
     } catch (err) {
+      // Rollback on error - refetch from storage
+      const adapter = getStorageAdapter()
+      const timers = await adapter.getTimers(timerStore.state.timers[0]?.userId ?? '')
       timerStore.setState((s) => ({
         ...s,
+        timers,
         error: err instanceof Error ? err.message : 'Failed to update timer',
       }))
       return null
     }
-  }, [])
+  }
 
   // Delete timer
-  const deleteTimer = useCallback(async (id: string): Promise<boolean> => {
+  async function deleteTimer(id: string): Promise<boolean> {
     try {
       const adapter = getStorageAdapter()
       await adapter.deleteTimer(id)
@@ -133,53 +142,44 @@ export function useTimerStore(userId: string | null) {
       }))
       return false
     }
-  }, [])
+  }
 
   // Get single timer from state
-  const getTimer = useCallback(
-    (id: string): Timer | undefined => {
-      return state.timers.find((t) => t.id === id)
-    },
-    [state.timers]
-  )
+  function getTimer(id: string): Timer | undefined {
+    return state.timers.find((t) => t.id === id)
+  }
 
   // Add lap to timer
-  const addLap = useCallback(
-    async (timerId: string, elapsedMs: number): Promise<LapEntry | null> => {
-      const timer = state.timers.find((t) => t.id === timerId)
-      if (!timer) return null
+  async function addLap(timerId: string, elapsedMs: number): Promise<LapEntry | null> {
+    const timer = state.timers.find((t) => t.id === timerId)
+    if (!timer) return null
 
-      const lapNumber = (timer.laps?.length ?? 0) + 1
-      const previousLap = timer.laps?.[timer.laps.length - 1]
-      const lapTime = previousLap ? elapsedMs - previousLap.splitTime : elapsedMs
+    const lapNumber = (timer.laps?.length ?? 0) + 1
+    const previousLap = timer.laps?.[timer.laps.length - 1]
+    const lapTime = previousLap ? elapsedMs - previousLap.splitTime : elapsedMs
 
-      const newLap: LapEntry = {
-        number: lapNumber,
-        lapTime,
-        splitTime: elapsedMs,
-        timestamp: new Date(),
-      }
+    const newLap: LapEntry = {
+      number: lapNumber,
+      lapTime,
+      splitTime: elapsedMs,
+      timestamp: new Date(),
+    }
 
-      const updatedLaps = [...(timer.laps ?? []), newLap]
+    const updatedLaps = [...(timer.laps ?? []), newLap]
 
-      await updateTimer(timerId, { laps: updatedLaps })
-      return newLap
-    },
-    [state.timers, updateTimer]
-  )
+    await updateTimer(timerId, { laps: updatedLaps })
+    return newLap
+  }
 
   // Clear laps
-  const clearLaps = useCallback(
-    async (timerId: string): Promise<void> => {
-      await updateTimer(timerId, { laps: [] })
-    },
-    [updateTimer]
-  )
+  async function clearLaps(timerId: string): Promise<void> {
+    await updateTimer(timerId, { laps: [] })
+  }
 
   // Clear error
-  const clearError = useCallback(() => {
+  function clearError() {
     timerStore.setState((s) => ({ ...s, error: null }))
-  }, [])
+  }
 
   return {
     timers: state.timers,

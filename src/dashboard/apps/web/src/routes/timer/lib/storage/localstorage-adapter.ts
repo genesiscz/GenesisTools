@@ -12,6 +12,8 @@ import type { StorageAdapter, SyncMessage } from './types'
 import { STORAGE_KEYS, BROADCAST_CHANNEL_NAME } from './types'
 import { SYNC_CONFIG } from './config'
 
+// Note: debouncedWrite was removed in favor of immediate writes for responsive UI
+
 /**
  * localStorage-based storage adapter with cross-tab synchronization
  */
@@ -21,7 +23,6 @@ export class LocalStorageAdapter implements StorageAdapter {
   private tabId: string
   private timerWatchers: Map<string, (timers: Timer[]) => void> = new Map()
   private activityWatchers: Map<string, (entries: ActivityLogEntry[]) => void> = new Map()
-  private saveTimeout: ReturnType<typeof setTimeout> | null = null
 
   constructor() {
     this.tabId = `tab_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
@@ -84,7 +85,10 @@ export class LocalStorageAdapter implements StorageAdapter {
     this.writeStorage(STORAGE_KEYS.TIMERS, data)
 
     this.broadcast({ type: 'TIMER_CREATED', payload: timer, timestamp: Date.now(), sourceTab: this.tabId })
-    this.notifyTimerWatchers(userId)
+
+    // Pass updated timers directly to avoid re-reading stale data
+    const userTimers = Object.values(data).filter((t) => t.userId === userId)
+    this.notifyTimerWatchersDirect(userTimers)
 
     return timer
   }
@@ -104,10 +108,14 @@ export class LocalStorageAdapter implements StorageAdapter {
     }
 
     data[id] = updated
-    this.debouncedWrite(STORAGE_KEYS.TIMERS, data)
+    // Write immediately (not debounced) to avoid race condition with watchers
+    this.writeStorage(STORAGE_KEYS.TIMERS, data)
 
     this.broadcast({ type: 'TIMER_UPDATED', payload: updated, timestamp: Date.now(), sourceTab: this.tabId })
-    this.notifyTimerWatchers(existing.userId)
+
+    // Pass updated timers directly to avoid re-reading stale data
+    const userTimers = Object.values(data).filter((t) => t.userId === existing.userId)
+    this.notifyTimerWatchersDirect(userTimers)
 
     return updated
   }
@@ -117,10 +125,14 @@ export class LocalStorageAdapter implements StorageAdapter {
     const timer = data[id]
 
     if (timer) {
+      const userId = timer.userId
       delete data[id]
       this.writeStorage(STORAGE_KEYS.TIMERS, data)
       this.broadcast({ type: 'TIMER_DELETED', payload: { id }, timestamp: Date.now(), sourceTab: this.tabId })
-      this.notifyTimerWatchers(timer.userId)
+
+      // Pass updated timers directly to avoid re-reading stale data
+      const userTimers = Object.values(data).filter((t) => t.userId === userId)
+      this.notifyTimerWatchersDirect(userTimers)
     }
   }
 
@@ -303,15 +315,6 @@ export class LocalStorageAdapter implements StorageAdapter {
     localStorage.setItem(key, JSON.stringify(data))
   }
 
-  private debouncedWrite(key: string, data: unknown): void {
-    if (this.saveTimeout) {
-      clearTimeout(this.saveTimeout)
-    }
-    this.saveTimeout = setTimeout(() => {
-      this.writeStorage(key, data)
-    }, SYNC_CONFIG.SAVE_DEBOUNCE)
-  }
-
   private dateReviver(_key: string, value: unknown): unknown {
     // Convert ISO date strings back to Date objects for specific fields
     if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
@@ -372,6 +375,16 @@ export class LocalStorageAdapter implements StorageAdapter {
         callback(timers)
       }
     })
+  }
+
+  /**
+   * Notify watchers with timers directly (avoids re-reading from storage)
+   * Use this for same-tab updates where we already have the updated data
+   */
+  private notifyTimerWatchersDirect(timers: Timer[]): void {
+    for (const callback of this.timerWatchers.values()) {
+      callback(timers)
+    }
   }
 
   private notifyActivityWatchers(userId: string): void {
