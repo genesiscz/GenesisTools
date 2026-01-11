@@ -115,11 +115,11 @@ function TimerPage() {
       {timers.length === 0 ? (
         <EmptyState onAddTimer={handleAddTimer} />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 auto-rows-fr">
           {timers.map((timer, index) => (
             <div
               key={timer.id}
-              className="animate-fade-in-up"
+              className="animate-fade-in-up h-full"
               style={{ animationDelay: `${index * 100}ms` }}
             >
               <TimerCard
@@ -127,6 +127,7 @@ function TimerPage() {
                 userId={userId}
                 onDelete={handleDeleteTimer}
                 onPopout={handlePopoutTimer}
+                className="h-full"
               />
             </div>
           ))}
