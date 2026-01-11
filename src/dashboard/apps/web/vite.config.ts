@@ -30,6 +30,14 @@ const config = defineConfig({
       '@dashboard/ui': new URL('../../packages/ui/src/index.ts', import.meta.url).pathname,
     },
   },
+  // PowerSync web workers require 'es' format for code-splitting builds
+  worker: {
+    format: 'es',
+  },
+  // Optimize PowerSync dependencies
+  optimizeDeps: {
+    exclude: ['@journeyapps/wa-sqlite'],
+  },
 })
 
 export default config
