@@ -1,5 +1,5 @@
 import type { StorageAdapter } from './types'
-import { STORAGE_MODE, usePowerSync, useLocalStorage } from './config'
+import { STORAGE_MODE, usePowerSync } from './config'
 import { LocalStorageAdapter } from './localstorage-adapter'
 
 // Export types and config
