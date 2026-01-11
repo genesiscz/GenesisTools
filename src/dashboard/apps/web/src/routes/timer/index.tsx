@@ -19,7 +19,7 @@ function TimerPage() {
   const userId = user?.id ?? null
   const [activityLogOpen, setActivityLogOpen] = useState(false)
 
-  const { timers, loading, initialized, createTimer, deleteTimer } = useTimerStore(userId)
+  const { timers, initialized, createTimer, deleteTimer } = useTimerStore(userId)
 
   // Count running timers
   const runningCount = timers.filter((t) => t.isRunning).length
@@ -59,8 +59,8 @@ function TimerPage() {
     )
   }
 
-  // Loading state
-  if (authLoading || (!initialized && loading)) {
+  // Loading state - show until fully initialized
+  if (authLoading || !initialized) {
     return (
       <DashboardLayout title="Timer" description="Precision time tracking">
         <div className="flex items-center justify-center min-h-[60vh]">

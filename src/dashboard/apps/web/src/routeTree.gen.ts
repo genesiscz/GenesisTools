@@ -57,6 +57,7 @@ import { Route as DemoApiNamesRouteImport } from './routes/demo/api.names'
 import { Route as DemoApiMcpTodosRouteImport } from './routes/demo/api.mcp-todos'
 import { Route as DemoApiImageRouteImport } from './routes/demo/api.image'
 import { Route as DemoApiAvailableProvidersRouteImport } from './routes/demo/api.available-providers'
+import { Route as AssistantTasksTaskIdRouteImport } from './routes/assistant/tasks/$taskId'
 import { Route as ApiTrpcSplatRouteImport } from './routes/api.trpc.$'
 import { Route as DemoStartSsrIndexRouteImport } from './routes/demo/start.ssr.index'
 import { Route as DemoStartSsrSpaModeRouteImport } from './routes/demo/start.ssr.spa-mode'
@@ -304,6 +305,11 @@ const DemoApiAvailableProvidersRoute =
     path: '/demo/api/available-providers',
     getParentRoute: () => rootRouteImport,
   } as any)
+const AssistantTasksTaskIdRoute = AssistantTasksTaskIdRouteImport.update({
+  id: '/assistant/tasks/$taskId',
+  path: '/assistant/tasks/$taskId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiTrpcSplatRoute = ApiTrpcSplatRouteImport.update({
   id: '/api/trpc/$',
   path: '/api/trpc/$',
@@ -364,6 +370,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof DashboardIndexRoute
   '/timer': typeof TimerIndexRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
+  '/assistant/tasks/$taskId': typeof AssistantTasksTaskIdRoute
   '/demo/api/available-providers': typeof DemoApiAvailableProvidersRoute
   '/demo/api/image': typeof DemoApiImageRoute
   '/demo/api/mcp-todos': typeof DemoApiMcpTodosRoute
@@ -419,6 +426,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof DashboardIndexRoute
   '/timer': typeof TimerIndexRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
+  '/assistant/tasks/$taskId': typeof AssistantTasksTaskIdRoute
   '/demo/api/available-providers': typeof DemoApiAvailableProvidersRoute
   '/demo/api/image': typeof DemoApiImageRoute
   '/demo/api/mcp-todos': typeof DemoApiMcpTodosRoute
@@ -475,6 +483,7 @@ export interface FileRoutesById {
   '/dashboard/': typeof DashboardIndexRoute
   '/timer/': typeof TimerIndexRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
+  '/assistant/tasks/$taskId': typeof AssistantTasksTaskIdRoute
   '/demo/api/available-providers': typeof DemoApiAvailableProvidersRoute
   '/demo/api/image': typeof DemoApiImageRoute
   '/demo/api/mcp-todos': typeof DemoApiMcpTodosRoute
@@ -532,6 +541,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/timer'
     | '/api/trpc/$'
+    | '/assistant/tasks/$taskId'
     | '/demo/api/available-providers'
     | '/demo/api/image'
     | '/demo/api/mcp-todos'
@@ -587,6 +597,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/timer'
     | '/api/trpc/$'
+    | '/assistant/tasks/$taskId'
     | '/demo/api/available-providers'
     | '/demo/api/image'
     | '/demo/api/mcp-todos'
@@ -642,6 +653,7 @@ export interface FileRouteTypes {
     | '/dashboard/'
     | '/timer/'
     | '/api/trpc/$'
+    | '/assistant/tasks/$taskId'
     | '/demo/api/available-providers'
     | '/demo/api/image'
     | '/demo/api/mcp-todos'
@@ -698,6 +710,7 @@ export interface RootRouteChildren {
   DashboardIndexRoute: typeof DashboardIndexRoute
   TimerIndexRoute: typeof TimerIndexRoute
   ApiTrpcSplatRoute: typeof ApiTrpcSplatRoute
+  AssistantTasksTaskIdRoute: typeof AssistantTasksTaskIdRoute
   DemoApiAvailableProvidersRoute: typeof DemoApiAvailableProvidersRoute
   DemoApiImageRoute: typeof DemoApiImageRoute
   DemoApiMcpTodosRoute: typeof DemoApiMcpTodosRoute
@@ -1058,6 +1071,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DemoApiAvailableProvidersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/assistant/tasks/$taskId': {
+      id: '/assistant/tasks/$taskId'
+      path: '/assistant/tasks/$taskId'
+      fullPath: '/assistant/tasks/$taskId'
+      preLoaderRoute: typeof AssistantTasksTaskIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/trpc/$': {
       id: '/api/trpc/$'
       path: '/api/trpc/$'
@@ -1130,6 +1150,7 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardIndexRoute: DashboardIndexRoute,
   TimerIndexRoute: TimerIndexRoute,
   ApiTrpcSplatRoute: ApiTrpcSplatRoute,
+  AssistantTasksTaskIdRoute: AssistantTasksTaskIdRoute,
   DemoApiAvailableProvidersRoute: DemoApiAvailableProvidersRoute,
   DemoApiImageRoute: DemoApiImageRoute,
   DemoApiMcpTodosRoute: DemoApiMcpTodosRoute,
