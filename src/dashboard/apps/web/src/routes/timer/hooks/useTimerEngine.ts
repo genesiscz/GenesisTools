@@ -140,3 +140,27 @@ export function formatTimeCompact(ms: number): string {
 
   return `${seconds}.${centiseconds.toString().padStart(2, '0')}`
 }
+
+/**
+ * Format milliseconds to human-readable duration (e.g., "5h 33m 11s")
+ */
+export function formatDurationHuman(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  const parts: string[] = []
+
+  if (hours > 0) {
+    parts.push(`${hours}h`)
+  }
+  if (minutes > 0) {
+    parts.push(`${minutes}m`)
+  }
+  if (seconds > 0 || parts.length === 0) {
+    parts.push(`${seconds}s`)
+  }
+
+  return parts.join(' ')
+}

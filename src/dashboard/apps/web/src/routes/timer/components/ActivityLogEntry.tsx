@@ -1,6 +1,7 @@
 import { cn } from '@/lib/utils'
 import type { ActivityLogEntry as ActivityLogEntryType } from '@dashboard/shared'
-import { formatTimeCompact } from '../hooks/useTimerEngine'
+import { formatTimeCompact, formatDurationHuman } from '../hooks/useTimerEngine'
+import { useSettings } from '@/hooks/useSettings'
 import {
   Play,
   Pause,
@@ -70,6 +71,7 @@ const EVENT_CONFIG: Record<
  * Single activity log entry with cyberpunk timeline styling
  */
 export function ActivityLogEntry({ entry, className }: ActivityLogEntryProps) {
+  const { settings } = useSettings()
   const config = EVENT_CONFIG[entry.eventType] || {
     icon: Coffee,
     color: 'text-gray-400',
@@ -79,20 +81,25 @@ export function ActivityLogEntry({ entry, className }: ActivityLogEntryProps) {
 
   const Icon = config.icon
   const timestamp = new Date(entry.timestamp)
-  const timeStr = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const timeStr = timestamp.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: settings.timeFormat === '12h',
+  })
   const dateStr = timestamp.toLocaleDateString([], { month: 'short', day: 'numeric' })
 
   return (
     <div
       className={cn(
-        'group relative flex items-start gap-3 py-3 px-4',
-        'border-l-2 border-gray-700/50',
-        'hover:border-l-2 hover:bg-gray-800/30',
+        'group relative flex items-center gap-3 py-3 px-4',
+        // 'border-l-2 border-gray-700/50',
+        // 'hover:border-l-2',
+        'hover:bg-gray-800/30',
         'transition-all duration-200',
         className
       )}
     >
-      {/* Timeline dot */}
+      {/* Timeline dot - commented out since we have icons
       <div
         className={cn(
           'absolute -left-[9px] top-4',
@@ -109,6 +116,7 @@ export function ActivityLogEntry({ entry, className }: ActivityLogEntryProps) {
       >
         <div className={cn('h-1.5 w-1.5 rounded-full', config.color.replace('text-', 'bg-'))} />
       </div>
+      */}
 
       {/* Icon container */}
       <div
@@ -160,7 +168,7 @@ export function ActivityLogEntry({ entry, className }: ActivityLogEntryProps) {
               )}
             >
               <span className="text-amber-400/70">Session:</span>
-              <span className="text-amber-400 font-mono">{formatTimeCompact(entry.sessionDuration)}</span>
+              <span className="text-amber-400 font-mono">{formatDurationHuman(entry.sessionDuration)}</span>
             </div>
           )}
 
