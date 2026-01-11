@@ -4,19 +4,22 @@ import { createServerFn } from '@tanstack/react-start'
 export const getOAuthUrl = createServerFn({ method: 'GET' })
   .inputValidator((data: { provider: 'google' | 'github' }) => data)
   .handler(async ({ data }) => {
-    // Dynamic import to prevent bundling on client
-    const { WorkOS } = await import('@workos-inc/node')
-
-    const workos = new WorkOS(process.env.WORKOS_API_KEY)
-
     const provider = data.provider === 'google' ? 'GoogleOAuth' : 'GitHubOAuth'
+    const clientId = process.env.WORKOS_CLIENT_ID
+    const redirectUri = process.env.WORKOS_REDIRECT_URI
 
-    // Get direct OAuth authorization URL
-    const url = workos.userManagement.getAuthorizationUrl({
-      provider,
-      clientId: process.env.WORKOS_CLIENT_ID!,
-      redirectUri: process.env.WORKOS_REDIRECT_URI!,
+    if (!clientId || !redirectUri) {
+      throw new Error('Missing WorkOS configuration')
+    }
+
+    // Construct the OAuth authorization URL
+    // WorkOS OAuth endpoint for direct provider authorization
+    const params = new URLSearchParams({
+      client_id: clientId,
+      provider: provider.toLowerCase(),
+      redirect_uri: redirectUri,
+      response_type: 'code',
     })
 
-    return url
+    return `https://api.workos.com/oauth/authorize?${params.toString()}`
   })
