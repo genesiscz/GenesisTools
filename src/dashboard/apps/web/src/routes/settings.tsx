@@ -1,5 +1,4 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useAuth } from '@workos/authkit-tanstack-react-start/client'
 import {
   Bell,
   Moon,
@@ -8,7 +7,6 @@ import {
   Shield,
   Database,
   Palette,
-  Volume2,
   Monitor,
 } from 'lucide-react'
 import { DashboardLayout } from '@/components/dashboard'
@@ -18,12 +16,24 @@ import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
+import { useSettings } from '@/hooks/useSettings'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/settings')({
   component: SettingsPage,
 })
 
 function SettingsPage() {
+  const { settings, updateSetting } = useSettings()
+
+  const handleSettingChange = <K extends keyof typeof settings>(
+    key: K,
+    value: typeof settings[K],
+    label: string
+  ) => {
+    updateSetting(key, value)
+    toast.success(`${label} ${value ? 'enabled' : 'disabled'}`)
+  }
   return (
     <DashboardLayout title="Settings" description="Configure your NEXUS experience">
       <div className="max-w-3xl space-y-6">
@@ -79,7 +89,11 @@ function SettingsPage() {
                 <Label className="text-sm">Scan Lines Effect</Label>
                 <p className="text-xs text-muted-foreground">Enable retro CRT scan lines</p>
               </div>
-              <Switch defaultChecked className="data-[state=checked]:bg-primary" />
+              <Switch
+                checked={settings.scanLinesEffect}
+                onCheckedChange={(checked) => handleSettingChange('scanLinesEffect', checked, 'Scan lines')}
+                className="data-[state=checked]:bg-primary"
+              />
             </div>
 
             <div className="flex items-center justify-between">
@@ -87,7 +101,11 @@ function SettingsPage() {
                 <Label className="text-sm">Grid Background</Label>
                 <p className="text-xs text-muted-foreground">Show cyber grid background</p>
               </div>
-              <Switch defaultChecked className="data-[state=checked]:bg-primary" />
+              <Switch
+                checked={settings.gridBackground}
+                onCheckedChange={(checked) => handleSettingChange('gridBackground', checked, 'Grid background')}
+                className="data-[state=checked]:bg-primary"
+              />
             </div>
 
             <div className="flex items-center justify-between">
@@ -95,7 +113,11 @@ function SettingsPage() {
                 <Label className="text-sm">Reduced Motion</Label>
                 <p className="text-xs text-muted-foreground">Minimize animations</p>
               </div>
-              <Switch className="data-[state=checked]:bg-primary" />
+              <Switch
+                checked={settings.reducedMotion}
+                onCheckedChange={(checked) => handleSettingChange('reducedMotion', checked, 'Reduced motion')}
+                className="data-[state=checked]:bg-primary"
+              />
             </div>
           </CardContent>
         </Card>
@@ -121,7 +143,11 @@ function SettingsPage() {
                 <Label className="text-sm">Push Notifications</Label>
                 <p className="text-xs text-muted-foreground">Get notified in your browser</p>
               </div>
-              <Switch defaultChecked className="data-[state=checked]:bg-accent" />
+              <Switch
+                checked={settings.pushNotifications}
+                onCheckedChange={(checked) => handleSettingChange('pushNotifications', checked, 'Push notifications')}
+                className="data-[state=checked]:bg-accent"
+              />
             </div>
 
             <Separator className="bg-accent/10" />
@@ -131,7 +157,11 @@ function SettingsPage() {
                 <Label className="text-sm">Sound Effects</Label>
                 <p className="text-xs text-muted-foreground">Play sounds for timer events</p>
               </div>
-              <Switch defaultChecked className="data-[state=checked]:bg-accent" />
+              <Switch
+                checked={settings.soundEffects}
+                onCheckedChange={(checked) => handleSettingChange('soundEffects', checked, 'Sound effects')}
+                className="data-[state=checked]:bg-accent"
+              />
             </div>
 
             <div className="flex items-center justify-between">
@@ -139,7 +169,11 @@ function SettingsPage() {
                 <Label className="text-sm">Timer Complete Alert</Label>
                 <p className="text-xs text-muted-foreground">Visual flash when countdown ends</p>
               </div>
-              <Switch defaultChecked className="data-[state=checked]:bg-accent" />
+              <Switch
+                checked={settings.timerCompleteAlert}
+                onCheckedChange={(checked) => handleSettingChange('timerCompleteAlert', checked, 'Timer complete alert')}
+                className="data-[state=checked]:bg-accent"
+              />
             </div>
           </CardContent>
         </Card>
@@ -165,7 +199,11 @@ function SettingsPage() {
                 <Label className="text-sm">Cloud Sync</Label>
                 <p className="text-xs text-muted-foreground">Sync data across devices</p>
               </div>
-              <Switch defaultChecked className="data-[state=checked]:bg-secondary" />
+              <Switch
+                checked={settings.cloudSync}
+                onCheckedChange={(checked) => handleSettingChange('cloudSync', checked, 'Cloud sync')}
+                className="data-[state=checked]:bg-secondary"
+              />
             </div>
 
             <Separator className="bg-secondary/10" />
@@ -175,7 +213,11 @@ function SettingsPage() {
                 <Label className="text-sm">Local Storage</Label>
                 <p className="text-xs text-muted-foreground">Keep data offline</p>
               </div>
-              <Switch defaultChecked className="data-[state=checked]:bg-secondary" />
+              <Switch
+                checked={settings.localStorage}
+                onCheckedChange={(checked) => handleSettingChange('localStorage', checked, 'Local storage')}
+                className="data-[state=checked]:bg-secondary"
+              />
             </div>
 
             <div className="flex items-center justify-between">
@@ -183,7 +225,11 @@ function SettingsPage() {
                 <Label className="text-sm">Analytics</Label>
                 <p className="text-xs text-muted-foreground">Help improve NEXUS</p>
               </div>
-              <Switch className="data-[state=checked]:bg-secondary" />
+              <Switch
+                checked={settings.analytics}
+                onCheckedChange={(checked) => handleSettingChange('analytics', checked, 'Analytics')}
+                className="data-[state=checked]:bg-secondary"
+              />
             </div>
 
             <Separator className="bg-secondary/10" />
