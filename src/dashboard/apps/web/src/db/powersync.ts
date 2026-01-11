@@ -71,25 +71,61 @@ export const db = new PowerSyncDatabase({
         dbFilename: "dashboard.sqlite",
     },
     schema: APP_SCHEMA,
+    // Disable web worker for dev mode compatibility
+    // Note: This disables multi-tab sync but fixes the worker loading issue
+    flags: {
+        useWebWorker: false,
+    },
 });
 
 let initialized = false;
+const connector = createConnector();
 
 /**
- * Initialize the database and connect to backend for sync
+ * Initialize the database for local-only mode
  * Call this at app startup before using the database
  */
 export async function initializeDatabase(): Promise<void> {
-    if (initialized) return;
+    if (initialized) {
+        console.log("[PowerSync] Already initialized, skipping");
+        return;
+    }
 
-    await db.init();
+    console.log("[PowerSync] Starting db.init()...");
+    try {
+        await db.init();
+        console.log("[PowerSync] db.init() completed");
+    } catch (err) {
+        console.error("[PowerSync] db.init() failed:", err);
+        throw err;
+    }
 
-    // Connect with our Nitro backend connector for CRUD uploads
-    const connector = createConnector();
-    await db.connect(connector);
+    // For local-only mode (no PowerSync Cloud), we don't call db.connect()
+    // Instead, we manually trigger uploads via syncToServer()
+    // This prevents PowerSync from hanging while waiting for credentials
 
     initialized = true;
-    console.log("[PowerSync] Database initialized and connected to backend");
+    console.log("[PowerSync] Database initialized (local-only mode)");
+}
+
+/**
+ * Manually sync pending changes to server
+ * Call this after write operations (create, update, delete)
+ */
+export async function syncToServer(): Promise<void> {
+    if (!initialized) {
+        console.warn("[PowerSync] Cannot sync - database not initialized");
+        return;
+    }
+
+    try {
+        console.log("[PowerSync] Starting manual sync to server...");
+        await connector.uploadData(db);
+        console.log("[PowerSync] Manual sync completed");
+    } catch (err) {
+        console.error("[PowerSync] Manual sync failed:", err);
+        // Don't throw - let the app continue, sync will retry later
+    }
 }
 
 /**

@@ -1,4 +1,5 @@
-import { db, initializeDatabase } from '@/db/powersync'
+import { db, initializeDatabase, syncToServer } from '@/db/powersync'
+import { getTimersFromServer, getActivityLogsFromServer } from '@/lib/timer-sync.server'
 import { generateTimerId, generateActivityLogId } from '@dashboard/shared'
 import type {
   Timer,
@@ -39,10 +40,16 @@ export class PowerSyncAdapter implements StorageAdapter {
   }
 
   async initialize(): Promise<void> {
-    if (this.initialized) return
+    if (this.initialized) {
+      console.log('[PowerSyncAdapter] Already initialized')
+      return
+    }
+
+    console.log('[PowerSyncAdapter] Starting initialization...')
 
     // Initialize PowerSync database and connect to backend
     await initializeDatabase()
+    console.log('[PowerSyncAdapter] Database initialized')
 
     // Setup BroadcastChannel for cross-tab notifications
     if (typeof BroadcastChannel !== 'undefined') {
@@ -53,6 +60,7 @@ export class PowerSyncAdapter implements StorageAdapter {
     }
 
     this.initialized = true
+    console.log('[PowerSyncAdapter] Initialization complete')
   }
 
   isInitialized(): boolean {
@@ -64,11 +72,30 @@ export class PowerSyncAdapter implements StorageAdapter {
   // ============================================
 
   async getTimers(userId: string): Promise<Timer[]> {
-    const results = await db.getAll<TimerRow>(
-      'SELECT * FROM timers WHERE user_id = ? ORDER BY created_at DESC',
-      [userId]
-    )
-    return results.map(deserializeTimer)
+    console.log('[PowerSyncAdapter] getTimers called for user:', userId)
+    try {
+      let results = await db.getAll<TimerRow>(
+        'SELECT * FROM timers WHERE user_id = ? ORDER BY created_at DESC',
+        [userId]
+      )
+
+      // If local DB is empty, try to sync from server
+      if (results.length === 0) {
+        console.log('[PowerSyncAdapter] Local DB empty, syncing from server...')
+        await this.syncFromServer(userId)
+        // Re-query after sync
+        results = await db.getAll<TimerRow>(
+          'SELECT * FROM timers WHERE user_id = ? ORDER BY created_at DESC',
+          [userId]
+        )
+      }
+
+      console.log('[PowerSyncAdapter] getTimers returned', results.length, 'timers')
+      return results.map(deserializeTimer)
+    } catch (err) {
+      console.error('[PowerSyncAdapter] getTimers error:', err)
+      throw err
+    }
   }
 
   async getTimer(id: string): Promise<Timer | null> {
@@ -127,6 +154,9 @@ export class PowerSyncAdapter implements StorageAdapter {
 
     const timer = deserializeTimer(row)
     this.broadcast({ type: 'TIMER_CREATED', payload: timer, timestamp: Date.now(), sourceTab: this.tabId })
+
+    // Sync to server
+    syncToServer()
 
     return timer
   }
@@ -202,12 +232,18 @@ export class PowerSyncAdapter implements StorageAdapter {
       this.broadcast({ type: 'TIMER_UPDATED', payload: updated, timestamp: Date.now(), sourceTab: this.tabId })
     }
 
+    // Sync to server
+    syncToServer()
+
     return updated!
   }
 
   async deleteTimer(id: string): Promise<void> {
     await db.execute('DELETE FROM timers WHERE id = ?', [id])
     this.broadcast({ type: 'TIMER_DELETED', payload: { id }, timestamp: Date.now(), sourceTab: this.tabId })
+
+    // Sync to server
+    syncToServer()
   }
 
   // ============================================
@@ -241,6 +277,9 @@ export class PowerSyncAdapter implements StorageAdapter {
     )
 
     this.broadcast({ type: 'ACTIVITY_LOGGED', payload: entry, timestamp: Date.now(), sourceTab: this.tabId })
+
+    // Sync to server
+    syncToServer()
 
     return entry
   }
@@ -288,6 +327,9 @@ export class PowerSyncAdapter implements StorageAdapter {
 
   async clearActivityLog(userId: string): Promise<void> {
     await db.execute('DELETE FROM activity_logs WHERE user_id = ?', [userId])
+
+    // Sync to server
+    syncToServer()
   }
 
   // ============================================
@@ -426,12 +468,94 @@ export class PowerSyncAdapter implements StorageAdapter {
   }
 
   /**
-   * Sync from server - not implemented in local-only mode
-   * (would need PowerSync Cloud for bi-directional sync)
+   * Sync from server - fetches timers from Nitro backend and populates local DB
+   * Called when local DB is empty (e.g., after clearing IndexedDB)
    */
-  async syncFromServer(): Promise<void> {
-    // Local-only mode: no downsync from server
-    console.log('[PowerSync] Downsync not available in local-only mode')
+  async syncFromServer(userId: string): Promise<void> {
+    console.log('[PowerSyncAdapter] Syncing from server for user:', userId)
+
+    try {
+      // Fetch timers from server
+      const serverTimers = await getTimersFromServer({ data: userId })
+      console.log('[PowerSyncAdapter] Got', serverTimers?.length ?? 0, 'timers from server')
+
+      if (!serverTimers || serverTimers.length === 0) {
+        console.log('[PowerSyncAdapter] No timers on server')
+        return
+      }
+
+      // Insert each timer into local DB (skip if already exists)
+      for (const timer of serverTimers) {
+        const existing = await db.getOptional<{ id: string }>('SELECT id FROM timers WHERE id = ?', [timer.id])
+        if (!existing) {
+          await db.execute(
+            `INSERT INTO timers (
+              id, name, timer_type, is_running, elapsed_time, duration, laps, user_id,
+              created_at, updated_at, show_total, first_start_time, start_time,
+              pomodoro_settings, pomodoro_phase, pomodoro_session_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              timer.id,
+              timer.name,
+              timer.timerType,
+              timer.isRunning ? 1 : 0,
+              timer.elapsedTime,
+              timer.duration ?? null,
+              JSON.stringify(timer.laps ?? []),
+              timer.userId,
+              timer.createdAt,
+              timer.updatedAt,
+              timer.showTotal ? 1 : 0,
+              timer.firstStartTime ?? null,
+              timer.startTime ?? null,
+              timer.pomodoroSettings ? JSON.stringify(timer.pomodoroSettings) : null,
+              timer.pomodoroPhase ?? null,
+              timer.pomodoroSessionCount ?? 0,
+            ]
+          )
+        }
+      }
+
+      // Fetch activity logs from server
+      const serverLogs = await getActivityLogsFromServer({ data: userId })
+      console.log('[PowerSyncAdapter] Got', serverLogs?.length ?? 0, 'activity logs from server')
+
+      // Insert each log into local DB (skip if already exists)
+      if (!serverLogs || serverLogs.length === 0) {
+        console.log('[PowerSyncAdapter] No activity logs on server')
+        return
+      }
+
+      for (const log of serverLogs) {
+        const existing = await db.getOptional<{ id: string }>('SELECT id FROM activity_logs WHERE id = ?', [log.id])
+        if (!existing) {
+          await db.execute(
+            `INSERT INTO activity_logs (
+              id, timer_id, timer_name, user_id, event_type, timestamp,
+              elapsed_at_event, session_duration, previous_value, new_value, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              log.id,
+              log.timerId,
+              log.timerName,
+              log.userId,
+              log.eventType,
+              log.timestamp,
+              log.elapsedAtEvent,
+              log.sessionDuration ?? null,
+              log.previousValue ?? null,
+              log.newValue ?? null,
+              log.metadata ? JSON.stringify(log.metadata) : null,
+            ]
+          )
+        }
+      }
+
+      console.log('[PowerSyncAdapter] Server sync complete')
+    } catch (err) {
+      console.error('[PowerSyncAdapter] syncFromServer error:', err)
+      // Don't throw - let app continue with local data
+    }
   }
 
   // ============================================

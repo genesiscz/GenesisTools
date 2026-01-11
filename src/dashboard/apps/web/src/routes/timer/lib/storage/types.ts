@@ -44,7 +44,7 @@ export interface StorageAdapter {
 
   // Sync operations
   syncToServer(): Promise<void>
-  syncFromServer(): Promise<void>
+  syncFromServer(userId: string): Promise<void>
 
   // User session management (for sync)
   setUserId(userId: string): void
