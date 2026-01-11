@@ -1,4 +1,3 @@
-import { memo } from 'react'
 import { Plus, Activity, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -6,20 +5,18 @@ interface TimerHeaderProps {
   timerCount: number
   runningCount: number
   onAddTimer: () => void
-  onToggleActivityLog?: () => void
-  showActivityLog?: boolean
+  onOpenActivityLog?: () => void
   className?: string
 }
 
 /**
  * Timer page header with cyberpunk terminal styling
  */
-export const TimerHeader = memo(function TimerHeader({
+export function TimerHeader({
   timerCount,
   runningCount,
   onAddTimer,
-  onToggleActivityLog,
-  showActivityLog,
+  onOpenActivityLog,
   className,
 }: TimerHeaderProps) {
   return (
@@ -91,29 +88,21 @@ export const TimerHeader = memo(function TimerHeader({
 
           {/* Actions */}
           <div className="flex items-center gap-3">
-            {/* Activity log toggle */}
-            {onToggleActivityLog && (
+            {/* Activity log button */}
+            {onOpenActivityLog && (
               <button
-                onClick={onToggleActivityLog}
+                onClick={onOpenActivityLog}
                 className={cn(
-                  'flex items-center gap-2 px-4 py-2.5 rounded-xl',
+                  'hidden md:flex items-center gap-2 px-4 py-2.5 rounded-xl',
                   'text-sm font-medium transition-all duration-300',
-                  'border',
-                  showActivityLog
-                    ? [
-                        'bg-cyan-500/20 text-cyan-400',
-                        'border-cyan-500/40',
-                        'shadow-[0_0_15px_rgba(0,240,255,0.2)]',
-                      ]
-                    : [
-                        'bg-transparent text-gray-400',
-                        'border-gray-700 hover:border-gray-600',
-                        'hover:bg-gray-800/50 hover:text-gray-300',
-                      ]
+                  'border border-gray-700 hover:border-cyan-500/40',
+                  'bg-transparent text-gray-400 hover:text-cyan-400',
+                  'hover:bg-cyan-500/10',
+                  'hover:shadow-[0_0_15px_rgba(0,240,255,0.2)]'
                 )}
               >
                 <Activity className="h-4 w-4" />
-                <span className="hidden sm:inline">Activity</span>
+                <span>Activity</span>
               </button>
             )}
 
@@ -149,4 +138,4 @@ export const TimerHeader = memo(function TimerHeader({
       </div>
     </header>
   )
-})
+}

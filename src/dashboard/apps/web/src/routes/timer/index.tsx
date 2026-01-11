@@ -1,9 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useCallback, useMemo } from 'react'
-import { Plus, Loader2 } from 'lucide-react'
+import { useState } from 'react'
+import { Plus, Loader2, Activity } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@workos/authkit-tanstack-react-start/client'
-import { TimerCard, TimerHeader } from './components'
+import { TimerCard, TimerHeader, ActivityLogSidebar } from './components'
 import { useTimerStore } from './hooks/useTimerStore'
 import type { TimerInput } from '@dashboard/shared'
 import '@/components/auth/cyberpunk.css'
@@ -15,14 +15,15 @@ export const Route = createFileRoute('/timer/')({
 function TimerPage() {
   const { user, loading: authLoading } = useAuth()
   const userId = user?.id ?? null
+  const [activityLogOpen, setActivityLogOpen] = useState(false)
 
   const { timers, loading, initialized, createTimer, deleteTimer } = useTimerStore(userId)
 
   // Count running timers
-  const runningCount = useMemo(() => timers.filter((t) => t.isRunning).length, [timers])
+  const runningCount = timers.filter((t) => t.isRunning).length
 
   // Add new timer
-  const handleAddTimer = useCallback(async () => {
+  async function handleAddTimer() {
     const input: TimerInput = {
       name: `Timer ${timers.length + 1}`,
       timerType: 'stopwatch',
@@ -36,18 +37,15 @@ function TimerPage() {
       pomodoroSessionCount: 0,
     }
     await createTimer(input)
-  }, [timers.length, createTimer])
+  }
 
   // Delete timer
-  const handleDeleteTimer = useCallback(
-    async (id: string) => {
-      await deleteTimer(id)
-    },
-    [deleteTimer]
-  )
+  async function handleDeleteTimer(id: string) {
+    await deleteTimer(id)
+  }
 
   // Pop out timer (Phase 2)
-  const handlePopoutTimer = useCallback((id: string) => {
+  function handlePopoutTimer(id: string) {
     // TODO: Implement pop-out window in Phase 2
     const width = 400
     const height = 500
@@ -58,7 +56,7 @@ function TimerPage() {
       `timer-${id}`,
       `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no`
     )
-  }, [])
+  }
 
   // Loading state
   if (authLoading || (!initialized && loading)) {
@@ -87,6 +85,7 @@ function TimerPage() {
         timerCount={timers.length}
         runningCount={runningCount}
         onAddTimer={handleAddTimer}
+        onOpenActivityLog={() => setActivityLogOpen(true)}
       />
 
       {/* Main content */}
@@ -111,6 +110,32 @@ function TimerPage() {
           </div>
         )}
       </main>
+
+      {/* Activity Log Sidebar */}
+      <ActivityLogSidebar
+        userId={userId}
+        timers={timers}
+        isOpen={activityLogOpen}
+        onClose={() => setActivityLogOpen(false)}
+      />
+
+      {/* Floating activity log button (mobile) */}
+      <button
+        onClick={() => setActivityLogOpen(true)}
+        className={cn(
+          'fixed bottom-6 right-6 z-40',
+          'md:hidden',
+          'flex items-center justify-center',
+          'h-14 w-14 rounded-full',
+          'bg-gradient-to-br from-amber-500 to-amber-600',
+          'text-black shadow-[0_0_30px_rgba(255,149,0,0.4)]',
+          'transition-all duration-300',
+          'hover:shadow-[0_0_40px_rgba(255,149,0,0.6)]',
+          'hover:scale-105 active:scale-95'
+        )}
+      >
+        <Activity className="h-6 w-6" />
+      </button>
     </div>
   )
 }

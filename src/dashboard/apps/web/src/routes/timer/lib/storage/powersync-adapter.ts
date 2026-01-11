@@ -12,7 +12,6 @@ import type {
 } from '@dashboard/shared'
 import type { StorageAdapter, SyncMessage } from './types'
 import { BROADCAST_CHANNEL_NAME } from './types'
-import { SYNC_CONFIG } from './config'
 
 /**
  * PowerSync-based storage adapter with offline-first SQLite persistence
@@ -28,7 +27,6 @@ export class PowerSyncAdapter implements StorageAdapter {
   private tabId: string
   private timerWatchers: Map<string, (timers: Timer[]) => void> = new Map()
   private activityWatchers: Map<string, (entries: ActivityLogEntry[]) => void> = new Map()
-  private watchUnsubscribers: Map<string, () => void> = new Map()
 
   constructor() {
     this.tabId = `tab_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`

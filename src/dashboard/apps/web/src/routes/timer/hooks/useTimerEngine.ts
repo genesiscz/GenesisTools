@@ -1,13 +1,5 @@
-import { useRef, useCallback, useEffect, useState } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import type { Timer } from '@dashboard/shared'
-
-/**
- * Timer engine state
- */
-interface TimerEngineState {
-  displayTime: number
-  isRunning: boolean
-}
 
 /**
  * Hook that manages the timer display loop using requestAnimationFrame
@@ -16,16 +8,16 @@ interface TimerEngineState {
  * from the start timestamp rather than incrementing a counter
  */
 export function useTimerEngine(timer: Timer | null | undefined) {
-  const [state, setState] = useState<TimerEngineState>({
-    displayTime: 0,
-    isRunning: false,
-  })
+  // Derive isRunning directly from timer to avoid state lag
+  const isRunning = timer?.isRunning ?? false
+
+  const [displayTime, setDisplayTime] = useState<number>(0)
 
   const animationFrameRef = useRef<number | null>(null)
   const lastUpdateRef = useRef<number>(0)
 
   // Calculate current elapsed time based on timer state
-  const calculateElapsed = useCallback((): number => {
+  function calculateElapsed(): number {
     if (!timer) return 0
 
     const baseElapsed = timer.elapsedTime ?? 0
@@ -52,31 +44,28 @@ export function useTimerEngine(timer: Timer | null | undefined) {
     }
 
     return baseElapsed
-  }, [timer])
+  }
 
   // Animation loop
-  const tick = useCallback(() => {
+  function tick() {
     const now = performance.now()
 
     // Throttle updates to ~60fps (16.67ms)
     if (now - lastUpdateRef.current >= 16) {
       const elapsed = calculateElapsed()
-      setState((s) => ({ ...s, displayTime: elapsed }))
+      setDisplayTime(elapsed)
       lastUpdateRef.current = now
     }
 
     animationFrameRef.current = requestAnimationFrame(tick)
-  }, [calculateElapsed])
+  }
 
   // Start/stop the animation loop based on timer running state
   useEffect(() => {
-    const isRunning = timer?.isRunning ?? false
-
     if (isRunning) {
       // Start animation loop
       lastUpdateRef.current = performance.now()
       animationFrameRef.current = requestAnimationFrame(tick)
-      setState((s) => ({ ...s, isRunning: true }))
     } else {
       // Stop animation loop
       if (animationFrameRef.current) {
@@ -85,7 +74,7 @@ export function useTimerEngine(timer: Timer | null | undefined) {
       }
       // Update to final elapsed time
       const elapsed = calculateElapsed()
-      setState({ displayTime: elapsed, isRunning: false })
+      setDisplayTime(elapsed)
     }
 
     return () => {
@@ -94,19 +83,19 @@ export function useTimerEngine(timer: Timer | null | undefined) {
         animationFrameRef.current = null
       }
     }
-  }, [timer?.isRunning, timer?.startTime, tick, calculateElapsed])
+  })
 
   // Update display time when timer changes externally (e.g., reset)
   useEffect(() => {
-    if (!timer?.isRunning) {
+    if (!isRunning) {
       const elapsed = calculateElapsed()
-      setState((s) => ({ ...s, displayTime: elapsed }))
+      setDisplayTime(elapsed)
     }
-  }, [timer?.elapsedTime, timer?.duration, calculateElapsed, timer?.isRunning])
+  })
 
   return {
-    displayTime: state.displayTime,
-    isRunning: state.isRunning,
+    displayTime,
+    isRunning,
     calculateElapsed,
   }
 }
