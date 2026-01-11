@@ -296,6 +296,14 @@ export class LocalStorageAdapter implements StorageAdapter {
     console.log('[LocalStorage] syncFromServer not implemented')
   }
 
+  setUserId(_userId: string): void {
+    // No-op for localStorage - sync not implemented
+  }
+
+  clearSync(): void {
+    // No-op for localStorage - sync not implemented
+  }
+
   // ============================================
   // Private Helpers
   // ============================================

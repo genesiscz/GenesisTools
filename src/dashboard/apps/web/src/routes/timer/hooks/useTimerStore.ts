@@ -46,6 +46,9 @@ export function useTimerStore(userId: string | null) {
       try {
         const adapter = await initializeStorage()
 
+        // Set user ID for server sync
+        adapter.setUserId(currentUserId)
+
         // Initial load
         const timers = await adapter.getTimers(currentUserId)
         if (mounted) {
@@ -82,6 +85,9 @@ export function useTimerStore(userId: string | null) {
         unsubscribeRef.current()
         unsubscribeRef.current = null
       }
+      // Clear sync on unmount
+      const adapter = getStorageAdapter()
+      adapter.clearSync()
     }
   }, [userId])
 
