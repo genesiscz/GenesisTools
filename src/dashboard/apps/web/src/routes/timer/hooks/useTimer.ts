@@ -89,7 +89,7 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
       elapsedTime: newElapsed,
     })
 
-    await logActivity('pause', { sessionDuration })
+    await logActivity('pause', { sessionDuration, elapsedAtEvent: newElapsed })
   }
 
   // Toggle running state
