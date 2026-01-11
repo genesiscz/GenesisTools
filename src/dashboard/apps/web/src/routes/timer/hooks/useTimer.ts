@@ -66,13 +66,22 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
       startTime: now,
     }
 
+    // Calculate pause duration if timer was previously paused (not first start)
+    let pauseDuration: number | undefined
+    if (timer.updatedAt && !timer.isRunning && timer.elapsedTime && timer.elapsedTime > 0) {
+      const lastPausedAt = timer.updatedAt instanceof Date
+        ? timer.updatedAt.getTime()
+        : new Date(timer.updatedAt).getTime()
+      pauseDuration = now.getTime() - lastPausedAt
+    }
+
     // Set firstStartTime if this is the first time starting
     if (!timer.firstStartTime) {
       updates.firstStartTime = now
     }
 
     await updateTimer(timerId, updates)
-    await logActivity('start')
+    await logActivity('start', pauseDuration ? { metadata: { pauseDuration } } : {})
   }
 
   // Pause timer

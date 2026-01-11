@@ -159,7 +159,7 @@ export function ActivityLogEntry({ entry, className }: ActivityLogEntryProps) {
           </div>
 
           {/* Session duration (for pause events) */}
-          {entry.sessionDuration && (
+          {entry.sessionDuration !== undefined && (
             <div
               className={cn(
                 'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md',
@@ -169,6 +169,22 @@ export function ActivityLogEntry({ entry, className }: ActivityLogEntryProps) {
             >
               <span className="text-amber-400/70">Session:</span>
               <span className="text-amber-400 font-mono">{formatDurationHuman(entry.sessionDuration)}</span>
+            </div>
+          )}
+
+          {/* Pause duration (for start events after a pause) */}
+          {(entry.metadata as { pauseDuration?: number } | undefined)?.pauseDuration && (
+            <div
+              className={cn(
+                'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md',
+                'bg-gray-700/50 text-xs',
+                'border border-gray-600/30'
+              )}
+            >
+              <span className="text-gray-400/70">Paused for:</span>
+              <span className="text-gray-300 font-mono">
+                {formatDurationHuman((entry.metadata as { pauseDuration: number }).pauseDuration)}
+              </span>
             </div>
           )}
 
