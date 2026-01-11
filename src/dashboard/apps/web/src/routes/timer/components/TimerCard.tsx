@@ -125,7 +125,6 @@ export const TimerCard = memo(function TimerCard({
         'transition-all duration-300',
         'hover:shadow-lg',
         colors.shadow,
-        'animate-fade-in-up',
         className
       )}
     >
