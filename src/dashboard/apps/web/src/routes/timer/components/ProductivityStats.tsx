@@ -19,6 +19,7 @@ interface ProductivityStatsProps {
   endDate?: Date
   timeRangeLabel?: string
   timerId?: string
+  timerNames?: Record<string, string>
   className?: string
 }
 
@@ -31,6 +32,7 @@ export function ProductivityStats({
   endDate,
   timeRangeLabel = 'Today',
   timerId,
+  timerNames = {},
   className,
 }: ProductivityStatsProps) {
   const [stats, setStats] = useState<ProductivityStatsType | null>(null)

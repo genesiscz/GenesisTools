@@ -222,7 +222,7 @@ export class LocalStorageAdapter implements StorageAdapter {
 
     // Calculate stats from pause events (which have session duration)
     for (const log of logs) {
-      if (log.eventType === 'pause' && log.sessionDuration) {
+      if (log.eventType === 'pause' && log.sessionDuration !== undefined) {
         totalTimeTracked += log.sessionDuration
         sessionCount++
         longestSession = Math.max(longestSession, log.sessionDuration)

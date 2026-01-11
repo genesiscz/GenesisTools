@@ -43,6 +43,9 @@ import { Route as AuthErrorRouteImport } from './routes/auth/error'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 import { Route as AssistantParkingRouteImport } from './routes/assistant/parking'
 import { Route as AssistantNextRouteImport } from './routes/assistant/next'
+import { Route as AssistantDecisionsRouteImport } from './routes/assistant/decisions'
+import { Route as AssistantCommunicationRouteImport } from './routes/assistant/communication'
+import { Route as AssistantAnalyticsRouteImport } from './routes/assistant/analytics'
 import { Route as ExampleGuitarsIndexRouteImport } from './routes/example.guitars/index'
 import { Route as AssistantTasksIndexRouteImport } from './routes/assistant/tasks/index'
 import { Route as ExampleGuitarsGuitarIdRouteImport } from './routes/example.guitars/$guitarId'
@@ -236,6 +239,21 @@ const AssistantNextRoute = AssistantNextRouteImport.update({
   path: '/assistant/next',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AssistantDecisionsRoute = AssistantDecisionsRouteImport.update({
+  id: '/assistant/decisions',
+  path: '/assistant/decisions',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AssistantCommunicationRoute = AssistantCommunicationRouteImport.update({
+  id: '/assistant/communication',
+  path: '/assistant/communication',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AssistantAnalyticsRoute = AssistantAnalyticsRouteImport.update({
+  id: '/assistant/analytics',
+  path: '/assistant/analytics',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ExampleGuitarsIndexRoute = ExampleGuitarsIndexRouteImport.update({
   id: '/example/guitars/',
   path: '/example/guitars/',
@@ -353,6 +371,9 @@ export interface FileRoutesByFullPath {
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
+  '/assistant/analytics': typeof AssistantAnalyticsRoute
+  '/assistant/communication': typeof AssistantCommunicationRoute
+  '/assistant/decisions': typeof AssistantDecisionsRoute
   '/assistant/next': typeof AssistantNextRoute
   '/assistant/parking': typeof AssistantParkingRoute
   '/auth/callback': typeof AuthCallbackRoute
@@ -411,6 +432,9 @@ export interface FileRoutesByTo {
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
+  '/assistant/analytics': typeof AssistantAnalyticsRoute
+  '/assistant/communication': typeof AssistantCommunicationRoute
+  '/assistant/decisions': typeof AssistantDecisionsRoute
   '/assistant/next': typeof AssistantNextRoute
   '/assistant/parking': typeof AssistantParkingRoute
   '/auth/callback': typeof AuthCallbackRoute
@@ -470,6 +494,9 @@ export interface FileRoutesById {
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
+  '/assistant/analytics': typeof AssistantAnalyticsRoute
+  '/assistant/communication': typeof AssistantCommunicationRoute
+  '/assistant/decisions': typeof AssistantDecisionsRoute
   '/assistant/next': typeof AssistantNextRoute
   '/assistant/parking': typeof AssistantParkingRoute
   '/auth/callback': typeof AuthCallbackRoute
@@ -530,6 +557,9 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/profile'
     | '/settings'
+    | '/assistant/analytics'
+    | '/assistant/communication'
+    | '/assistant/decisions'
     | '/assistant/next'
     | '/assistant/parking'
     | '/auth/callback'
@@ -588,6 +618,9 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/profile'
     | '/settings'
+    | '/assistant/analytics'
+    | '/assistant/communication'
+    | '/assistant/decisions'
     | '/assistant/next'
     | '/assistant/parking'
     | '/auth/callback'
@@ -646,6 +679,9 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/profile'
     | '/settings'
+    | '/assistant/analytics'
+    | '/assistant/communication'
+    | '/assistant/decisions'
     | '/assistant/next'
     | '/assistant/parking'
     | '/auth/callback'
@@ -705,6 +741,9 @@ export interface RootRouteChildren {
   McpRoute: typeof McpRoute
   ProfileRoute: typeof ProfileRoute
   SettingsRoute: typeof SettingsRoute
+  AssistantAnalyticsRoute: typeof AssistantAnalyticsRoute
+  AssistantCommunicationRoute: typeof AssistantCommunicationRoute
+  AssistantDecisionsRoute: typeof AssistantDecisionsRoute
   AssistantNextRoute: typeof AssistantNextRoute
   AssistantParkingRoute: typeof AssistantParkingRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
@@ -999,6 +1038,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AssistantNextRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/assistant/decisions': {
+      id: '/assistant/decisions'
+      path: '/assistant/decisions'
+      fullPath: '/assistant/decisions'
+      preLoaderRoute: typeof AssistantDecisionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/assistant/communication': {
+      id: '/assistant/communication'
+      path: '/assistant/communication'
+      fullPath: '/assistant/communication'
+      preLoaderRoute: typeof AssistantCommunicationRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/assistant/analytics': {
+      id: '/assistant/analytics'
+      path: '/assistant/analytics'
+      fullPath: '/assistant/analytics'
+      preLoaderRoute: typeof AssistantAnalyticsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/example/guitars/': {
       id: '/example/guitars/'
       path: '/example/guitars'
@@ -1161,6 +1221,9 @@ const rootRouteChildren: RootRouteChildren = {
   McpRoute: McpRoute,
   ProfileRoute: ProfileRoute,
   SettingsRoute: SettingsRoute,
+  AssistantAnalyticsRoute: AssistantAnalyticsRoute,
+  AssistantCommunicationRoute: AssistantCommunicationRoute,
+  AssistantDecisionsRoute: AssistantDecisionsRoute,
   AssistantNextRoute: AssistantNextRoute,
   AssistantParkingRoute: AssistantParkingRoute,
   AuthCallbackRoute: AuthCallbackRoute,
