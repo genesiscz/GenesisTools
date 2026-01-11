@@ -7,7 +7,6 @@ import type {
   ActivityLogInput,
   ActivityLogQueryOptions,
   ProductivityStats,
-  LapEntry,
 } from '@dashboard/shared'
 import type { StorageAdapter, SyncMessage } from './types'
 import { STORAGE_KEYS, BROADCAST_CHANNEL_NAME } from './types'
