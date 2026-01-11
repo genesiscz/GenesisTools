@@ -24,6 +24,12 @@ const config = defineConfig({
       },
     }),
   ],
+  resolve: {
+    alias: {
+      '@dashboard/shared': new URL('../../packages/shared/src/index.ts', import.meta.url).pathname,
+      '@dashboard/ui': new URL('../../packages/ui/src/index.ts', import.meta.url).pathname,
+    },
+  },
 })
 
 export default config

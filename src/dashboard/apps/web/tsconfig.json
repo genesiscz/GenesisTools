@@ -22,7 +22,11 @@
     "noUncheckedSideEffectImports": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@dashboard/shared": ["../../packages/shared/src/index.ts"],
+      "@dashboard/shared/*": ["../../packages/shared/src/*"],
+      "@dashboard/ui": ["../../packages/ui/src/index.ts"],
+      "@dashboard/ui/*": ["../../packages/ui/src/*"]
     }
   }
 }
