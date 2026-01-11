@@ -5,10 +5,26 @@ import { Store } from '@tanstack/store'
 import { Send, X, ChevronRight } from 'lucide-react'
 import { Streamdown } from 'streamdown'
 
-import { useGuitarRecommendationChat } from '@/lib/example.ai-hook'
-import type { ChatMessages } from '@/lib/example.ai-hook'
+import { useGuitarRecommendationChat } from '@/lib/ai-example/ai-hook'
+import type { ChatMessages } from '@/lib/ai-example/ai-hook'
 
-import GuitarRecommendation from './example-GuitarRecommendation'
+/**
+ * Stubbed GuitarRecommendation component
+ * This is a placeholder for the guitar recommendation feature.
+ */
+function GuitarRecommendation({ id }: { id: string }) {
+  return (
+    <div className="rounded-lg border border-orange-500/20 bg-gray-800/50 p-4">
+      <h3 className="font-semibold text-white mb-2">Guitar Recommendation</h3>
+      <p className="text-sm text-gray-400 mb-3">
+        This is a placeholder for the guitar recommendation feature.
+      </p>
+      <div className="text-xs text-gray-500">
+        Recommendation ID: {id}
+      </div>
+    </div>
+  )
+}
 
 export const showAIAssistant = new Store(false)
 
