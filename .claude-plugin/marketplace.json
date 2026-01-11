@@ -1,0 +1,34 @@
+{
+    "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+    "name": "GenesisTools Plugins",
+    "version": "1.0.0",
+    "description": "Plugins for GenesisTools CLI development and management",
+    "owner": {
+        "name": "genesiscz",
+        "url": "https://github.com/genesiscz/genesis-tools"
+    },
+    "plugins": [
+        {
+            "name": "genesis-tools",
+            "description": "Skills and utilities for working with GenesisTools CLI toolkit. Provides guidance for discovering, executing, and troubleshooting genesis tools with integrated workflow support.",
+            "version": "1.0.0",
+            "author": {
+                "name": "GenesisTools"
+            },
+            "source": "./plugins/genesis-tools",
+            "category": "development",
+            "commands": [
+                {
+                    "name": "setup",
+                    "description": "Set up GenesisTools to make the 'tools' command function globally"
+                }
+            ],
+            "skills": [
+                {
+                    "name": "azure-devops",
+                    "description": "Interact with Azure DevOps work items, queries, and dashboards. Fetch, analyze, and manage work items using the tools azure-devops CLI"
+                }
+            ]
+        }
+    ]
+}
