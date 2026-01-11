@@ -170,8 +170,8 @@ export class CursorProvider extends MCPProvider {
 
         // Add/update all servers
         for (const [name, serverConfig] of Object.entries(servers)) {
-            // Read enabled state from _meta.enabled[providerName]
-            const isEnabled = serverConfig._meta?.enabled?.cursor !== false; // default to enabled if not specified
+            // Read enabled state using utility method
+            const isEnabled = this.isServerEnabledInMeta(serverConfig);
 
             // Cursor doesn't have native disable - only add if enabled, remove if disabled
             if (isEnabled) {
@@ -205,8 +205,8 @@ export class CursorProvider extends MCPProvider {
         };
 
         for (const [name, unified] of Object.entries(servers)) {
-            // Read enabled state from _meta.enabled[providerName]
-            const isEnabled = unified._meta?.enabled?.cursor !== false;
+            // Read enabled state using utility method
+            const isEnabled = this.isServerEnabledInMeta(unified);
 
             // Cursor doesn't have native disable - only include if enabled
             if (isEnabled) {
@@ -219,19 +219,29 @@ export class CursorProvider extends MCPProvider {
     }
 
     private cursorToUnified(cursor: CursorMCPServerConfig): UnifiedMCPServerConfig {
+        let type: "stdio" | "sse" | "http" = (cursor.type as any) || "stdio";
+        if (cursor.url && !cursor.command) {
+            type = "sse";
+        }
+
         return {
-            type: "stdio",
+            type,
             command: cursor.command,
             args: cursor.args,
             env: cursor.env,
+            url: cursor.url as string | undefined,
+            headers: cursor.headers as Record<string, string> | undefined,
         };
     }
 
     private unifiedToCursor(unified: UnifiedMCPServerConfig): CursorMCPServerConfig {
         return {
+            type: unified.type || "stdio",
             command: unified.command,
             args: unified.args,
             env: unified.env,
+            url: unified.url,
+            headers: unified.headers,
         };
     }
 }

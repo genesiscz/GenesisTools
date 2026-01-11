@@ -11,27 +11,46 @@ const prompter = new Enquirer();
  */
 export async function installServer(
     serverName: string | undefined,
-    commandString: string | undefined,
-    providers: MCPProvider[]
+    commandOrUrl: string | undefined,
+    providers: MCPProvider[],
+    options?: { type?: string }
 ): Promise<void> {
     const config = await readUnifiedConfig();
     let finalServerName = serverName;
     let serverConfig: UnifiedMCPServerConfig | undefined;
 
+    // Create new server constant
+    const CREATE_NEW = "__create_new__";
+
     // Scenario 1: No server name provided - prompt for it with autocomplete
     if (!finalServerName) {
         try {
-            const existingServers = Object.keys(config.mcpServers);
+            const existingServers = Object.keys(config.mcpServers).sort();
+            const choices = [
+                { name: CREATE_NEW, message: chalk.cyan("+ Create new server...") },
+                ...existingServers.map((name) => ({ name, message: name })),
+            ];
+
             const { inputServerName } = (await prompter.prompt({
                 type: "autocomplete",
                 name: "inputServerName",
-                message: "Enter server name (type new name or select existing):",
-                choices: existingServers.length > 0 ? existingServers : [""],
+                message: "Select server to install or create new:",
+                choices,
                 limit: 30,
                 scroll: false,
             } as any)) as { inputServerName: string };
 
-            finalServerName = inputServerName.trim();
+            if (inputServerName === CREATE_NEW) {
+                const { newServerName } = (await prompter.prompt({
+                    type: "input",
+                    name: "newServerName",
+                    message: "Enter name for the new server:",
+                    validate: (value: string) => (value.trim() ? true : "Server name cannot be empty."),
+                })) as { newServerName: string };
+                finalServerName = newServerName.trim();
+            } else {
+                finalServerName = inputServerName.trim();
+            }
 
             if (!finalServerName) {
                 logger.warn("Server name cannot be empty.");
@@ -49,23 +68,53 @@ export async function installServer(
     // Check if server exists in unified config
     serverConfig = config.mcpServers[finalServerName];
 
-    // Scenario 2 & 3: Server doesn't exist OR command string provided - collect server info
-    if (!serverConfig || commandString) {
-        let finalCommandString = commandString;
+    // Scenario 2 & 3: Server doesn't exist OR command/url provided - collect server info
+    if (!serverConfig || commandOrUrl || options?.type) {
+        let transportType = options?.type as "stdio" | "sse" | "http" | undefined;
 
-        // Scenario 3: No command provided - prompt for it
-        if (!finalCommandString) {
+        // If it's a new server or we're overwriting, ask for details
+        if (!transportType) {
             try {
-                const { inputCommand } = (await prompter.prompt({
+                const { inputType } = (await prompter.prompt({
+                    type: "select",
+                    name: "inputType",
+                    message: "Select transport type:",
+                    choices: [
+                        { name: "stdio", message: "stdio (Local executable/npx)" },
+                        { name: "sse", message: "sse (Server-Sent Events / Remote URL)" },
+                        { name: "http", message: "http (Remote HTTP endpoint)" },
+                    ],
+                    initial: serverConfig?.type || "stdio",
+                })) as { inputType: string };
+                transportType = inputType as any;
+            } catch (error: any) {
+                if (error.message === "canceled") {
+                    logger.info("\nOperation cancelled by user.");
+                    return;
+                }
+                throw error;
+            }
+        }
+
+        let finalCommandOrUrl = commandOrUrl;
+
+        // Prompt for command or URL based on type
+        if (!finalCommandOrUrl) {
+            try {
+                const isRemote = transportType === "sse" || transportType === "http";
+                const { inputVal } = (await prompter.prompt({
                     type: "input",
-                    name: "inputCommand",
-                    message: 'Enter command (e.g., "npx -y @modelcontextprotocol/server-github"):',
-                })) as { inputCommand: string };
+                    name: "inputVal",
+                    message: isRemote
+                        ? `Enter URL (e.g., "https://server.example.com/sse"):`
+                        : 'Enter command (e.g., "npx -y @modelcontextprotocol/server-github"):',
+                    initial: isRemote ? serverConfig?.url || serverConfig?.httpUrl : serverConfig?.command,
+                })) as { inputVal: string };
 
-                finalCommandString = inputCommand.trim();
+                finalCommandOrUrl = inputVal.trim();
 
-                if (!finalCommandString) {
-                    logger.warn("Command cannot be empty.");
+                if (!finalCommandOrUrl) {
+                    logger.warn("Value cannot be empty.");
                     return;
                 }
             } catch (error: any) {
@@ -77,46 +126,91 @@ export async function installServer(
             }
         }
 
-        // Parse command string
-        let command: string;
-        let args: string[];
+        // Build new server config
+        const newServerConfig: UnifiedMCPServerConfig = {
+            type: transportType,
+        };
 
-        try {
-            const parsed = parseCommandString(finalCommandString);
-            command = parsed.command;
-            args = parsed.args;
-        } catch (error: any) {
-            logger.error(`Failed to parse command: ${error.message}`);
-            return;
-        }
-
-        // Always ask for ENV variables
-        let env: Record<string, string> = {};
-        try {
-            const { inputEnv } = (await prompter.prompt({
-                type: "input",
-                name: "inputEnv",
-                message: "Enter ENV variables (format: KEY1=value1 KEY2=value2) or leave empty:",
-            })) as { inputEnv: string };
-
-            if (inputEnv.trim()) {
-                env = parseEnvString(inputEnv.trim());
-                logger.info(`Parsed ${Object.keys(env).length} environment variable(s)`);
+        if (transportType === "sse" || transportType === "http") {
+            newServerConfig.url = finalCommandOrUrl;
+            if (transportType === "http") {
+                newServerConfig.httpUrl = finalCommandOrUrl;
             }
-        } catch (error: any) {
-            if (error.message === "canceled") {
-                logger.info("\nOperation cancelled by user.");
+
+            // Optionally ask for headers
+            try {
+                const { inputHeaders } = (await prompter.prompt({
+                    type: "input",
+                    name: "inputHeaders",
+                    message: "Enter optional headers (JSON format or KEY=value KEY2=value) or leave empty:",
+                    initial: serverConfig?.headers ? JSON.stringify(serverConfig.headers) : "",
+                })) as { inputHeaders: string };
+
+                if (inputHeaders.trim()) {
+                    if (inputHeaders.trim().startsWith("{")) {
+                        newServerConfig.headers = JSON.parse(inputHeaders.trim());
+                    } else {
+                        newServerConfig.headers = parseEnvString(inputHeaders.trim());
+                    }
+                }
+            } catch (error: any) {
+                if (error.message === "canceled") {
+                    logger.info("\nOperation cancelled by user.");
+                    return;
+                }
+                logger.warn(`Failed to parse headers: ${error.message}. Skipping headers.`);
+            }
+        } else {
+            // stdio
+            try {
+                const parsed = parseCommandString(finalCommandOrUrl);
+                newServerConfig.command = parsed.command;
+                newServerConfig.args = parsed.args;
+            } catch (error: any) {
+                logger.error(`Failed to parse command: ${error.message}`);
                 return;
             }
-            throw error;
+
+            // Ask for ENV variables
+            let env: Record<string, string> = serverConfig?.env || {};
+            try {
+                const { inputEnv } = (await prompter.prompt({
+                    type: "input",
+                    name: "inputEnv",
+                    message: "Enter ENV variables (format: KEY1=value1 KEY2=value2) or leave empty:",
+                    initial: serverConfig?.env
+                        ? Object.entries(serverConfig.env)
+                              .map(([k, v]) => `${k}=${v}`)
+                              .join(" ")
+                        : "",
+                })) as { inputEnv: string };
+
+                if (inputEnv.trim()) {
+                    env = parseEnvString(inputEnv.trim());
+                    logger.info(`Parsed ${Object.keys(env).length} environment variable(s)`);
+                } else if (inputEnv.trim() === "" && serverConfig?.env) {
+                    // If user cleared it, we should probably clear it too, but parseEnvString returns {} for empty
+                    env = {};
+                }
+            } catch (error: any) {
+                if (error.message === "canceled") {
+                    logger.info("\nOperation cancelled by user.");
+                    return;
+                }
+                throw error;
+            }
+
+            if (Object.keys(env).length > 0) {
+                newServerConfig.env = env;
+            }
         }
 
-        // Create the server config
-        serverConfig = {
-            command,
-            args,
-            ...(Object.keys(env).length > 0 && { env }),
-        };
+        // Preserve _meta if it exists
+        if (serverConfig?._meta) {
+            newServerConfig._meta = serverConfig._meta;
+        }
+
+        serverConfig = newServerConfig;
 
         // Update unified config with new server
         config.mcpServers[finalServerName] = serverConfig;

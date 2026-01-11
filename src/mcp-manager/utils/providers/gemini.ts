@@ -191,8 +191,8 @@ export class GeminiProvider extends MCPProvider {
 
         // Add/update all servers
         for (const [name, serverConfig] of Object.entries(servers)) {
-            // Read enabled state from _meta.enabled[providerName]
-            const isEnabled = serverConfig._meta?.enabled?.gemini !== false; // default to enabled if not specified
+            // Read enabled state using utility method
+            const isEnabled = this.isServerEnabledInMeta(serverConfig);
 
             // Strip _meta before writing to provider config
             const cleanConfig = stripMeta(serverConfig);
@@ -239,8 +239,8 @@ export class GeminiProvider extends MCPProvider {
         };
 
         for (const [name, unified] of Object.entries(servers)) {
-            // Read enabled state from _meta.enabled[providerName]
-            const isEnabled = unified._meta?.enabled?.gemini !== false;
+            // Read enabled state using utility method
+            const isEnabled = this.isServerEnabledInMeta(unified);
 
             // Strip _meta before converting
             const cleanConfig = stripMeta(unified);

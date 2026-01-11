@@ -40,6 +40,7 @@ interface Options {
     show?: string;
     backupAll?: boolean;
     rename?: string;
+    type?: string;
     verbose?: boolean;
     help?: boolean;
 }
@@ -64,9 +65,10 @@ async function main() {
         alias: {
             v: "verbose",
             h: "help",
+            t: "type",
         },
         boolean: ["verbose", "help", "config", "sync", "syncFromProviders", "list", "backupAll"],
-        string: ["enable", "disable", "install", "show", "rename"],
+        string: ["enable", "disable", "install", "show", "rename", "type"],
     });
 
     if (argv.help) {
@@ -182,7 +184,7 @@ async function main() {
                 case "install": {
                     const serverName = argv.install || argv._[1] || "";
                     const commandString = argv._[2] || "";
-                    await installServer(serverName, commandString, providers);
+                    await installServer(serverName, commandString, providers, { type: argv.type });
                     break;
                 }
                 case "show":

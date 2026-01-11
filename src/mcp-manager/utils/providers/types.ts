@@ -152,9 +152,52 @@ export abstract class MCPProvider {
     }
 
     /**
+     * Get enabled state per project for all servers.
+     * For providers with project support, returns a map of server names to their per-project enabled states.
+     * For providers without project support, returns an empty map.
+     * @returns Map of server name to per-project enabled states (project path -> boolean)
+     */
+    async getServerEnabledStatesPerProject(): Promise<Map<string, Record<string, boolean>>> {
+        // Default implementation returns empty map (no project support)
+        return Promise.resolve(new Map());
+    }
+
+    /**
      * Install/add an MCP server configuration
      */
     abstract installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<void>;
+
+    /**
+     * Check if a server is enabled for this provider based on _meta.enabled state.
+     * For providers with project support, checks if enabled globally or for a specific project.
+     * @param serverConfig - Server configuration with _meta
+     * @param projectPath - Optional project path to check (for providers with project support)
+     * @returns true if enabled, false otherwise
+     */
+    isServerEnabledInMeta(serverConfig: UnifiedMCPServerConfig, projectPath?: string | null): boolean {
+        const providerName = this.providerName;
+        const enabledState = serverConfig._meta?.enabled?.[providerName as keyof typeof serverConfig._meta.enabled];
+
+        if (enabledState === undefined) {
+            // Not explicitly set - default to disabled
+            return false;
+        }
+
+        if (typeof enabledState === "boolean") {
+            // Simple boolean - global enablement
+            return enabledState;
+        }
+
+        // Per-project enablement object
+        if (projectPath === null || projectPath === undefined) {
+            // Check if enabled globally (any project has it enabled, or check for global key)
+            // For now, if it's an object, we consider it project-specific and not globally enabled
+            return false;
+        }
+
+        // Check specific project
+        return enabledState[projectPath] === true;
+    }
 
     /**
      * Sync servers from unified config to this provider.

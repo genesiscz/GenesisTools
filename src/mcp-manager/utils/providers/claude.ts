@@ -135,6 +135,51 @@ export class ClaudeProvider extends MCPProvider {
         return Object.keys(config.projects);
     }
 
+    async getServerEnabledStatesPerProject(): Promise<Map<string, Record<string, boolean>>> {
+        const config = await this.readConfig();
+        const result = new Map<string, Record<string, boolean>>();
+
+        // Get all global servers
+        const globalServerNames = config.mcpServers ? Object.keys(config.mcpServers) : [];
+
+        // Initialize map for all global servers
+        for (const serverName of globalServerNames) {
+            result.set(serverName, {});
+        }
+
+        // Process per-project disabledMcpServers
+        if (config.projects) {
+            for (const [projectPath, projectConfig] of Object.entries(config.projects)) {
+                const projectDisabled = new Set(projectConfig.disabledMcpServers || []);
+
+                // For each global server, check if it's disabled in this project
+                for (const serverName of globalServerNames) {
+                    const isDisabledInProject = projectDisabled.has(serverName);
+                    const isEnabledInProject = !isDisabledInProject;
+
+                    if (!result.has(serverName)) {
+                        result.set(serverName, {});
+                    }
+                    result.get(serverName)![projectPath] = isEnabledInProject;
+                }
+
+                // Also check project-specific servers
+                if (projectConfig.mcpServers) {
+                    for (const serverName of Object.keys(projectConfig.mcpServers)) {
+                        if (!result.has(serverName)) {
+                            result.set(serverName, {});
+                        }
+                        const isDisabledInProject = projectDisabled.has(serverName);
+                        const isEnabledInProject = !isDisabledInProject;
+                        result.get(serverName)![projectPath] = isEnabledInProject;
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
+
     async enableServer(serverName: string, projectPath?: string | null): Promise<void> {
         const config = await this.readConfig();
 
@@ -391,18 +436,49 @@ export class ClaudeProvider extends MCPProvider {
 
         // Add/update all servers
         for (const [name, serverConfig] of Object.entries(servers)) {
-            // Read enabled state from _meta.enabled[providerName]
-            const isEnabled = serverConfig._meta?.enabled?.claude !== false; // default to enabled if not specified
-
             // Strip _meta before writing to provider config
             const cleanConfig = stripMeta(serverConfig);
             config.mcpServers[name] = this.unifiedToClaude(cleanConfig);
 
-            // Update disabledMcpServers based on _meta.enabled.claude
-            if (isEnabled) {
+            // Check if enabled globally (boolean true or not set as per-project object)
+            const enabledState = serverConfig._meta?.enabled?.claude;
+            const isGloballyEnabled = typeof enabledState === "boolean" && enabledState === true;
+
+            // Update global disabledMcpServers based on global enablement
+            if (isGloballyEnabled) {
                 config.disabledMcpServers = config.disabledMcpServers.filter((n) => n !== name);
             } else if (!config.disabledMcpServers.includes(name)) {
                 config.disabledMcpServers.push(name);
+            }
+
+            // Sync enabled/disabled state to all existing projects
+            if (config.projects) {
+                for (const [projectPath, projectConfig] of Object.entries(config.projects)) {
+                    if (!projectConfig.disabledMcpServers) {
+                        projectConfig.disabledMcpServers = [];
+                    }
+
+                    // Check if enabled for this specific project
+                    const isEnabledForProject = this.isServerEnabledInMeta(serverConfig, projectPath);
+
+                    if (isEnabledForProject) {
+                        // Remove from project's disabled list
+                        projectConfig.disabledMcpServers = projectConfig.disabledMcpServers.filter((n) => n !== name);
+                        // If project has its own mcpServers entry, ensure it's synced to match global config
+                        if (projectConfig.mcpServers && projectConfig.mcpServers[name]) {
+                            projectConfig.mcpServers[name] = this.unifiedToClaude(cleanConfig);
+                        }
+                    } else {
+                        // Add to project's disabled list
+                        if (!projectConfig.disabledMcpServers.includes(name)) {
+                            projectConfig.disabledMcpServers.push(name);
+                        }
+                        // If project has its own mcpServers entry, remove it since it's disabled
+                        if (projectConfig.mcpServers && projectConfig.mcpServers[name]) {
+                            delete projectConfig.mcpServers[name];
+                        }
+                    }
+                }
             }
         }
 
@@ -439,8 +515,8 @@ export class ClaudeProvider extends MCPProvider {
         };
 
         for (const [name, unified] of Object.entries(servers)) {
-            // Read enabled state from _meta.enabled[providerName]
-            const isEnabled = unified._meta?.enabled?.claude !== false;
+            // Read enabled state using utility method (checks global enablement)
+            const isEnabled = this.isServerEnabledInMeta(unified);
 
             // Strip _meta before converting
             const cleanConfig = stripMeta(unified);
@@ -461,6 +537,7 @@ export class ClaudeProvider extends MCPProvider {
             args: claude.args,
             env: claude.env,
             url: claude.url,
+            headers: (claude as any).headers,
         };
     }
 
@@ -471,6 +548,7 @@ export class ClaudeProvider extends MCPProvider {
             args: unified.args,
             env: unified.env,
             url: unified.url,
-        };
+            ...(unified.headers && { headers: unified.headers }),
+        } as ClaudeMCPServerConfig;
     }
 }

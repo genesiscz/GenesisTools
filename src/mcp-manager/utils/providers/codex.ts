@@ -1,6 +1,6 @@
 import { MCPProvider } from "./types.js";
 import type { UnifiedMCPServerConfig, MCPServerInfo } from "./types.js";
-import type { CodexGenericConfig, CodexMCPServerConfig, CodexProjectConfig } from "./codex.types.js";
+import type { CodexGenericConfig, CodexMCPServerConfig } from "./codex.types.js";
 import { existsSync, mkdirSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
 import path from "path";
@@ -100,7 +100,7 @@ export class CodexProvider extends MCPProvider {
         return serverConfig ? this.codexToUnified(serverConfig) : null;
     }
 
-    async enableServer(serverName: string, projectPath?: string | null): Promise<void> {
+    async enableServer(serverName: string, _projectPath?: string | null): Promise<void> {
         // Codex doesn't have explicit enable/disable
         // Servers are enabled if they exist in config
         // This is a no-op, but we ensure the server exists
@@ -110,7 +110,7 @@ export class CodexProvider extends MCPProvider {
         }
     }
 
-    async disableServer(serverName: string, projectPath?: string | null): Promise<void> {
+    async disableServer(serverName: string, _projectPath?: string | null): Promise<void> {
         const config = await this.readConfig();
 
         // Remove the server from config (Codex doesn't have explicit disable)
@@ -175,8 +175,8 @@ export class CodexProvider extends MCPProvider {
 
         // Add/update all servers
         for (const [name, serverConfig] of Object.entries(servers)) {
-            // Read enabled state from _meta.enabled[providerName]
-            const isEnabled = serverConfig._meta?.enabled?.codex !== false; // default to enabled if not specified
+            // Read enabled state using utility method
+            const isEnabled = this.isServerEnabledInMeta(serverConfig);
 
             // Codex doesn't have native disable - only add if enabled, remove if disabled
             if (isEnabled) {
@@ -210,8 +210,8 @@ export class CodexProvider extends MCPProvider {
         };
 
         for (const [name, unified] of Object.entries(servers)) {
-            // Read enabled state from _meta.enabled[providerName]
-            const isEnabled = unified._meta?.enabled?.codex !== false;
+            // Read enabled state using utility method
+            const isEnabled = this.isServerEnabledInMeta(unified);
 
             // Codex doesn't have native disable - only include if enabled
             if (isEnabled) {
@@ -224,19 +224,29 @@ export class CodexProvider extends MCPProvider {
     }
 
     private codexToUnified(codex: CodexMCPServerConfig): UnifiedMCPServerConfig {
+        let type: "stdio" | "sse" | "http" = (codex.type as any) || "stdio";
+        if (codex.url && !codex.command) {
+            type = "sse";
+        }
+
         return {
-            type: "stdio",
+            type,
             command: codex.command,
             args: codex.args,
             env: codex.env,
+            url: codex.url as string | undefined,
+            headers: codex.headers as Record<string, string> | undefined,
         };
     }
 
     private unifiedToCodex(unified: UnifiedMCPServerConfig): CodexMCPServerConfig {
         return {
+            type: unified.type || "stdio",
             command: unified.command,
             args: unified.args,
             env: unified.env,
+            url: unified.url,
+            headers: unified.headers,
         };
     }
 }

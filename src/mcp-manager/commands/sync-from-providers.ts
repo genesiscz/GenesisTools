@@ -2,7 +2,7 @@ import Enquirer from "enquirer";
 import chalk from "chalk";
 import logger from "@app/logger";
 import type { MCPProvider, UnifiedMCPServerConfig } from "../utils/providers/types.js";
-import type { MCPProviderName } from "../utils/types.js";
+import type { MCPProviderName, PerProjectEnabledState, ProviderEnabledState } from "../utils/types.js";
 import { readUnifiedConfig, writeUnifiedConfig } from "../utils/config.utils.js";
 import { DiffUtil } from "@app/utils/diff";
 
@@ -68,10 +68,16 @@ export async function syncFromProviders(providers: MCPProvider[]): Promise<void>
             try {
                 logger.info(`Reading servers from ${providerName}...`);
 
+                // Check if provider supports projects
+                const projects = await provider.getProjects();
+                const providerSupportsProjects = projects.length > 0;
+
                 // Use listServers to get enabled state information
                 const serverInfos = await provider.listServers();
                 const providerServers: Record<string, UnifiedMCPServerConfig> = {};
-                const serverEnabledStates: Map<string, boolean> = new Map();
+                // Track enabled state: boolean for global, or PerProjectEnabledState for per-project
+                const serverEnabledStates: Map<string, ProviderEnabledState> = new Map();
+                const serverProjectStates: Map<string, Map<string, boolean>> = new Map();
 
                 // Build server configs and track enabled states
                 // Process all servers from this provider (both global and project-specific)
@@ -82,15 +88,51 @@ export async function syncFromProviders(providers: MCPProvider[]): Promise<void>
                         if (!providerServers[serverInfo.name]) {
                             providerServers[serverInfo.name] = serverInfo.config;
                         }
-                        // Track enabled state (true if enabled anywhere in this provider)
-                        if (!serverEnabledStates.has(serverInfo.name)) {
-                            serverEnabledStates.set(serverInfo.name, serverInfo.enabled);
+
+                        // Track enabled state per project
+                        if (serverInfo.provider.startsWith(`${providerName}:`)) {
+                            // Project-specific server
+                            const projectPath = serverInfo.provider.substring(providerName.length + 1);
+                            if (!serverProjectStates.has(serverInfo.name)) {
+                                serverProjectStates.set(serverInfo.name, new Map());
+                            }
+                            serverProjectStates.get(serverInfo.name)!.set(projectPath, serverInfo.enabled);
                         } else {
-                            // If already set, keep true if enabled anywhere
-                            serverEnabledStates.set(
-                                serverInfo.name,
-                                serverEnabledStates.get(serverInfo.name) || serverInfo.enabled
-                            );
+                            // Global server
+                            const currentState = serverEnabledStates.get(serverInfo.name);
+                            if (typeof currentState === "boolean") {
+                                // Already set as boolean, keep true if enabled anywhere
+                                serverEnabledStates.set(serverInfo.name, currentState || serverInfo.enabled);
+                            } else {
+                                // Not set or is per-project object, set as boolean
+                                serverEnabledStates.set(serverInfo.name, serverInfo.enabled);
+                            }
+                        }
+                    }
+                }
+
+                // For providers with projects, get complete per-project enabled states
+                if (providerSupportsProjects) {
+                    const perProjectStates = await provider.getServerEnabledStatesPerProject();
+
+                    // Merge per-project states into our tracking map
+                    for (const [serverName, projectStates] of perProjectStates.entries()) {
+                        // Ensure server config exists (might be global server not in listServers)
+                        if (!providerServers[serverName]) {
+                            const serverConfig = await provider.getServerConfig(serverName);
+                            if (serverConfig) {
+                                providerServers[serverName] = serverConfig;
+                            }
+                        }
+
+                        // Initialize project states map if not exists
+                        if (!serverProjectStates.has(serverName)) {
+                            serverProjectStates.set(serverName, new Map());
+                        }
+
+                        // Add all per-project states
+                        for (const [projectPath, enabled] of Object.entries(projectStates)) {
+                            serverProjectStates.get(serverName)!.set(projectPath, enabled);
                         }
                     }
                 }
@@ -98,7 +140,21 @@ export async function syncFromProviders(providers: MCPProvider[]): Promise<void>
                 // Check for conflicts before merging
                 for (const [serverName, serverConfig] of Object.entries(providerServers)) {
                     const existingConfig = mergedServers[serverName];
-                    const isEnabled = serverEnabledStates.get(serverName) ?? false;
+
+                    // Determine enabled state: per-project if provider supports projects, otherwise boolean
+                    let enabledState: ProviderEnabledState;
+                    const projectStates = serverProjectStates.get(serverName);
+                    if (providerSupportsProjects && projectStates && projectStates.size > 0) {
+                        // Per-project enablement - use project object
+                        const perProjectState: PerProjectEnabledState = {};
+                        for (const [projectPath, enabled] of projectStates.entries()) {
+                            perProjectState[projectPath] = enabled;
+                        }
+                        enabledState = perProjectState;
+                    } else {
+                        // Global enablement (boolean) or no projects
+                        enabledState = serverEnabledStates.get(serverName) ?? false;
+                    }
 
                     if (existingConfig) {
                         // Preserve _meta from existing config
@@ -108,7 +164,7 @@ export async function syncFromProviders(providers: MCPProvider[]): Promise<void>
                         if (!preservedMeta.enabled) {
                             preservedMeta.enabled = {};
                         }
-                        preservedMeta.enabled[providerName as MCPProviderName] = isEnabled;
+                        preservedMeta.enabled[providerName as MCPProviderName] = enabledState;
 
                         // Check if there's a conflict in args, env, or other critical fields
                         const conflictCheck = DiffUtil.detectConflicts(
@@ -134,7 +190,11 @@ export async function syncFromProviders(providers: MCPProvider[]): Promise<void>
                         } else {
                             // No conflict, safe to merge (preserve _meta with enabled state)
                             mergedServers[serverName] = { ...serverConfig, _meta: preservedMeta };
-                            logger.debug(`  Imported: ${serverName} (enabled: ${isEnabled})`);
+                            const enabledDisplay =
+                                typeof enabledState === "boolean"
+                                    ? enabledState.toString()
+                                    : `${Object.keys(enabledState).length} project(s)`;
+                            logger.debug(`  Imported: ${serverName} (enabled: ${enabledDisplay})`);
                         }
                     } else {
                         // New server, no conflict - set _meta with enabled state
@@ -142,11 +202,15 @@ export async function syncFromProviders(providers: MCPProvider[]): Promise<void>
                             ...serverConfig,
                             _meta: {
                                 enabled: {
-                                    [providerName]: isEnabled,
+                                    [providerName]: enabledState,
                                 },
                             },
                         };
-                        logger.debug(`  Imported: ${serverName} (enabled: ${isEnabled})`);
+                        const enabledDisplay =
+                            typeof enabledState === "boolean"
+                                ? enabledState.toString()
+                                : `${Object.keys(enabledState).length} project(s)`;
+                        logger.debug(`  Imported: ${serverName} (enabled: ${enabledDisplay})`);
                     }
                 }
 

@@ -23,8 +23,9 @@ Commands:
   disable <servers>         Disable MCP server(s) in a provider (comma-separated or interactive)
   install [server] ["cmd"]  Install/add an MCP server to a provider
                             - No args: Interactive prompt for all details
-                            - Name only: Prompt for command if server doesn't exist
+                            - Name only: Prompt for command/type if server doesn't exist
                             - Name + command: Create/update server and install
+                            - Supports --type sse|http|stdio (default: stdio)
   show <server>             Show full configuration of an MCP server
   backup-all                Backup all configs for all providers
   rename [old] [new]        Rename an MCP server key across unified config and providers
@@ -33,6 +34,7 @@ Commands:
                             - Old + new names: Rename directly
 
 Options:
+  -t, --type <type>        Transport type (stdio, sse, http) for install
   -v, --verbose            Enable verbose logging
   -h, --help               Show this help message
 
@@ -48,6 +50,7 @@ Examples:
   tools mcp-manager install
   tools mcp-manager install github
   tools mcp-manager install my-server "npx -y @modelcontextprotocol/server-github"
+  tools mcp-manager install remote-server "https://server.com/sse" --type sse
   tools mcp-manager show github
   tools mcp-manager backup-all
   tools mcp-manager rename

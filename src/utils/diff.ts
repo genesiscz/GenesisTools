@@ -36,9 +36,9 @@ export class DiffUtil {
             await writeFile(oldFile, oldContent, "utf-8");
             await writeFile(newFile, newContent, "utf-8");
 
-            // Run diff command
+            // Run diff command with at least 20 lines of context
             return new Promise((resolve) => {
-                const proc = spawn("diff", ["-u", oldFile, newFile], {
+                const proc = spawn("diff", ["-U", "20", oldFile, newFile], {
                     stdio: ["ignore", "pipe", "pipe"],
                 });
 
