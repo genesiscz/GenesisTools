@@ -35,6 +35,9 @@ export function useTimerStore(userId: string | null) {
   useEffect(() => {
     if (!userId) return
 
+    // Capture userId as a non-null value for use inside the effect
+    const currentUserId = userId
+
     let mounted = true
 
     async function init() {
@@ -44,7 +47,7 @@ export function useTimerStore(userId: string | null) {
         const adapter = await initializeStorage()
 
         // Initial load
-        const timers = await adapter.getTimers(userId)
+        const timers = await adapter.getTimers(currentUserId)
         if (mounted) {
           timerStore.setState((s) => ({
             ...s,
@@ -55,7 +58,7 @@ export function useTimerStore(userId: string | null) {
         }
 
         // Subscribe to updates (cross-tab sync)
-        unsubscribeRef.current = adapter.watchTimers(userId, (updatedTimers) => {
+        unsubscribeRef.current = adapter.watchTimers(currentUserId, (updatedTimers) => {
           if (mounted) {
             timerStore.setState((s) => ({ ...s, timers: updatedTimers }))
           }
