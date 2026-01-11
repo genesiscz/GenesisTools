@@ -199,7 +199,7 @@ export function ProductivityStats({
                   <div key={entryTimerId} className="space-y-1">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-gray-400 truncate max-w-[60%]">
-                        {entryTimerId.slice(0, 8)}...
+                        {timerNames[entryTimerId] || entryTimerId.slice(0, 8) + '...'}
                       </span>
                       <span className="text-gray-300 font-mono">{displayTime}</span>
                     </div>
