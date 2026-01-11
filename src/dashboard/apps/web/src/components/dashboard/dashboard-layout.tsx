@@ -16,9 +16,9 @@ export function DashboardLayout({ children, title, description }: DashboardLayou
       <div className="fixed inset-0 scan-lines opacity-30 pointer-events-none" />
 
       <AppSidebar />
-      <SidebarInset className="bg-[#030308]">
+      <SidebarInset className="bg-transparent">
         {/* Header */}
-        <header className="sticky top-0 z-10 flex h-14 items-center gap-4 border-b border-amber-500/10 bg-[#030308]/80 backdrop-blur-xl px-4">
+        <header className="sticky top-0 z-10 flex h-14 items-center gap-4 border-b border-amber-500/10 bg-[#030308]/70 backdrop-blur-xl px-4">
           <SidebarTrigger className="size-9 p-2 text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 transition-colors rounded-lg" />
           <Separator orientation="vertical" className="h-4 bg-amber-500/20" />
           {title && (
