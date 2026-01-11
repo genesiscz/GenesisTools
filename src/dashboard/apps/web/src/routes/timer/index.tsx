@@ -3,7 +3,9 @@ import { useState } from 'react'
 import { Plus, Loader2, Activity } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@workos/authkit-tanstack-react-start/client'
-import { TimerCard, TimerHeader, ActivityLogSidebar } from './components'
+import { DashboardLayout } from '@/components/dashboard'
+import { Button } from '@/components/ui/button'
+import { TimerCard, ActivityLogSidebar } from './components'
 import { useTimerStore } from './hooks/useTimerStore'
 import type { TimerInput } from '@dashboard/shared'
 import '@/components/auth/cyberpunk.css'
@@ -46,7 +48,6 @@ function TimerPage() {
 
   // Pop out timer (Phase 2)
   function handlePopoutTimer(id: string) {
-    // TODO: Implement pop-out window in Phase 2
     const width = 400
     const height = 500
     const left = window.screen.width / 2 - width / 2
@@ -61,55 +62,76 @@ function TimerPage() {
   // Loading state
   if (authLoading || (!initialized && loading)) {
     return (
-      <div className="min-h-screen bg-[#030308] flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="h-8 w-8 text-amber-500 animate-spin" />
-          <span className="text-gray-500 text-sm font-mono">Loading timers...</span>
+      <DashboardLayout title="Timer" description="Precision time tracking">
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="h-8 w-8 text-primary animate-spin" />
+            <span className="text-muted-foreground text-sm font-mono">Loading timers...</span>
+          </div>
         </div>
-      </div>
+      </DashboardLayout>
     )
   }
 
   return (
-    <div className="min-h-screen bg-[#030308] text-white">
-      {/* Cyberpunk background effects */}
-      <div className="fixed inset-0 cyber-grid opacity-20 pointer-events-none" />
-      <div className="fixed inset-0 scan-lines pointer-events-none" />
-
-      {/* Ambient gradient orbs */}
-      <div className="fixed top-1/4 -left-1/4 w-1/2 h-1/2 bg-amber-500/5 rounded-full blur-[150px] pointer-events-none" />
-      <div className="fixed bottom-1/4 -right-1/4 w-1/2 h-1/2 bg-cyan-500/5 rounded-full blur-[150px] pointer-events-none" />
-
-      {/* Header */}
-      <TimerHeader
-        timerCount={timers.length}
-        runningCount={runningCount}
-        onAddTimer={handleAddTimer}
-        onOpenActivityLog={() => setActivityLogOpen(true)}
-      />
-
-      {/* Main content */}
-      <main className="relative z-10 container mx-auto px-6 py-8">
-        {timers.length === 0 ? (
-          <EmptyState onAddTimer={handleAddTimer} />
-        ) : (
-          <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-            {timers.map((timer, index) => (
-              <div
-                key={timer.id}
-                style={{ animationDelay: `${index * 100}ms` }}
-              >
-                <TimerCard
-                  timerId={timer.id}
-                  userId={userId}
-                  onDelete={handleDeleteTimer}
-                  onPopout={handlePopoutTimer}
-                />
-              </div>
-            ))}
+    <DashboardLayout title="Timer" description="Precision time tracking">
+      {/* Timer toolbar */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">{timers.length} timer{timers.length !== 1 ? 's' : ''}</span>
+            {runningCount > 0 && (
+              <span className="flex items-center gap-1.5 text-emerald-400">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                {runningCount} running
+              </span>
+            )}
           </div>
-        )}
-      </main>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setActivityLogOpen(true)}
+            className="gap-2"
+          >
+            <Activity className="h-4 w-4" />
+            <span className="hidden sm:inline">Activity</span>
+          </Button>
+
+          <Button
+            onClick={handleAddTimer}
+            size="sm"
+            className="gap-2 bg-primary hover:bg-primary/90"
+          >
+            <Plus className="h-4 w-4" />
+            <span className="hidden sm:inline">Add Timer</span>
+          </Button>
+        </div>
+      </div>
+
+      {/* Timer grid */}
+      {timers.length === 0 ? (
+        <EmptyState onAddTimer={handleAddTimer} />
+      ) : (
+        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+          {timers.map((timer, index) => (
+            <div
+              key={timer.id}
+              className="animate-fade-in-up"
+              style={{ animationDelay: `${index * 100}ms` }}
+            >
+              <TimerCard
+                timerId={timer.id}
+                userId={userId}
+                onDelete={handleDeleteTimer}
+                onPopout={handlePopoutTimer}
+              />
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Activity Log Sidebar */}
       <ActivityLogSidebar
@@ -118,25 +140,7 @@ function TimerPage() {
         isOpen={activityLogOpen}
         onClose={() => setActivityLogOpen(false)}
       />
-
-      {/* Floating activity log button (mobile) */}
-      <button
-        onClick={() => setActivityLogOpen(true)}
-        className={cn(
-          'fixed bottom-6 right-6 z-40',
-          'md:hidden',
-          'flex items-center justify-center',
-          'h-14 w-14 rounded-full',
-          'bg-gradient-to-br from-amber-500 to-amber-600',
-          'text-black shadow-[0_0_30px_rgba(255,149,0,0.4)]',
-          'transition-all duration-300',
-          'hover:shadow-[0_0_40px_rgba(255,149,0,0.6)]',
-          'hover:scale-105 active:scale-95'
-        )}
-      >
-        <Activity className="h-6 w-6" />
-      </button>
-    </div>
+    </DashboardLayout>
   )
 }
 
@@ -152,18 +156,18 @@ function EmptyState({ onAddTimer }: { onAddTimer: () => void }) {
           'relative w-32 h-32 mb-8',
           'flex items-center justify-center',
           'rounded-full',
-          'bg-gradient-to-br from-amber-500/10 to-amber-600/5',
-          'border border-amber-500/20',
+          'bg-gradient-to-br from-primary/10 to-primary/5',
+          'border border-primary/20',
           'animate-pulse-glow'
         )}
       >
         {/* Ripple effects */}
-        <div className="absolute inset-0 rounded-full border border-amber-500/20 animate-ripple" />
-        <div className="absolute inset-0 rounded-full border border-amber-500/20 animate-ripple-delayed" />
-        <div className="absolute inset-0 rounded-full border border-amber-500/20 animate-ripple-delayed-2" />
+        <div className="absolute inset-0 rounded-full border border-primary/20 animate-ripple" />
+        <div className="absolute inset-0 rounded-full border border-primary/20 animate-ripple-delayed" />
+        <div className="absolute inset-0 rounded-full border border-primary/20 animate-ripple-delayed-2" />
 
         <span
-          className="text-5xl font-mono font-bold text-amber-500/50"
+          className="text-5xl font-mono font-bold text-primary/50"
           style={{ fontFamily: "'JetBrains Mono', monospace" }}
         >
           00:00
@@ -171,39 +175,21 @@ function EmptyState({ onAddTimer }: { onAddTimer: () => void }) {
       </div>
 
       {/* Text */}
-      <h2 className="text-xl font-semibold text-gray-400 mb-2">No timers yet</h2>
-      <p className="text-gray-600 text-center max-w-md mb-8">
+      <h2 className="text-xl font-semibold text-foreground/70 mb-2">No timers yet</h2>
+      <p className="text-muted-foreground text-center max-w-md mb-8">
         Create your first timer to start tracking time. Stopwatch, countdown, or pomodoro - choose
         what works for you.
       </p>
 
       {/* CTA Button */}
-      <button
+      <Button
         onClick={onAddTimer}
-        className={cn(
-          'group relative flex items-center gap-3 px-8 py-4 rounded-xl',
-          'font-semibold text-lg text-black',
-          'bg-gradient-to-br from-amber-400 to-amber-500',
-          'shadow-[0_0_40px_rgba(255,149,0,0.4)]',
-          'transition-all duration-300',
-          'hover:shadow-[0_0_60px_rgba(255,149,0,0.6)]',
-          'hover:scale-[1.02] active:scale-[0.98]',
-          'overflow-hidden'
-        )}
+        size="lg"
+        className="gap-3 bg-primary hover:bg-primary/90"
       >
-        {/* Shimmer effect */}
-        <div
-          className={cn(
-            'absolute inset-0 opacity-0 group-hover:opacity-100',
-            'bg-gradient-to-r from-transparent via-white/30 to-transparent',
-            'translate-x-[-100%] group-hover:translate-x-[100%]',
-            'transition-transform duration-700 ease-out'
-          )}
-        />
-
-        <Plus className="h-6 w-6 relative z-10" />
-        <span className="relative z-10">Create your first timer</span>
-      </button>
+        <Plus className="h-5 w-5" />
+        Create your first timer
+      </Button>
     </div>
   )
 }
