@@ -89,34 +89,57 @@ export const TimerCard = memo(function TimerCard({
     )
   }
 
+  // Color classes based on timer type
+  const colorClasses = {
+    stopwatch: {
+      border: 'border-cyan-500/30 hover:border-cyan-500/50',
+      corner: 'border-cyan-500/40 group-hover:border-cyan-500/70',
+      glow: 'bg-cyan-500/15',
+      shadow: 'hover:shadow-cyan-500/20',
+    },
+    countdown: {
+      border: 'border-amber-500/30 hover:border-amber-500/50',
+      corner: 'border-amber-500/40 group-hover:border-amber-500/70',
+      glow: 'bg-amber-500/15',
+      shadow: 'hover:shadow-amber-500/20',
+    },
+    pomodoro: {
+      border: 'border-emerald-500/30 hover:border-emerald-500/50',
+      corner: 'border-emerald-500/40 group-hover:border-emerald-500/70',
+      glow: 'bg-emerald-500/15',
+      shadow: 'hover:shadow-emerald-500/20',
+    },
+  }
+
+  const colors = colorClasses[timer.timerType]
+
   return (
     <div
       className={cn(
         'group relative rounded-xl overflow-hidden',
         'bg-gray-900/95',
         'backdrop-blur-md',
-        'border border-gray-800/80',
+        'border',
+        colors.border,
         'shadow-lg',
         'transition-all duration-300',
-        'hover:border-amber-500/30',
-        'hover:shadow-[0_0_20px_rgba(255,149,0,0.08)]',
+        'hover:shadow-lg',
+        colors.shadow,
         'animate-fade-in-up',
         className
       )}
     >
-      {/* Subtle tech corner decorations */}
-      <div className="absolute top-0 left-0 w-4 h-4 border-l border-t border-amber-500/20 rounded-tl-lg" />
-      <div className="absolute top-0 right-0 w-4 h-4 border-r border-t border-amber-500/20 rounded-tr-lg" />
-      <div className="absolute bottom-0 left-0 w-4 h-4 border-l border-b border-amber-500/20 rounded-bl-lg" />
-      <div className="absolute bottom-0 right-0 w-4 h-4 border-r border-b border-amber-500/20 rounded-br-lg" />
+      {/* Tech corner decorations */}
+      <div className={cn('absolute top-0 left-0 w-5 h-5 border-l-2 border-t-2 rounded-tl-lg transition-colors', colors.corner)} />
+      <div className={cn('absolute top-0 right-0 w-5 h-5 border-r-2 border-t-2 rounded-tr-lg transition-colors', colors.corner)} />
+      <div className={cn('absolute bottom-0 left-0 w-5 h-5 border-l-2 border-b-2 rounded-bl-lg transition-colors', colors.corner)} />
+      <div className={cn('absolute bottom-0 right-0 w-5 h-5 border-r-2 border-b-2 rounded-br-lg transition-colors', colors.corner)} />
 
       {/* Subtle glow around content area */}
       <div
         className={cn(
           'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full blur-2xl pointer-events-none',
-          timer.timerType === 'stopwatch' && 'bg-cyan-500/15',
-          timer.timerType === 'countdown' && 'bg-amber-500/15',
-          timer.timerType === 'pomodoro' && 'bg-emerald-500/15'
+          colors.glow
         )}
       />
 
