@@ -12,6 +12,7 @@ import type {
 } from '@dashboard/shared'
 import type { StorageAdapter, SyncMessage } from './types'
 import { BROADCAST_CHANNEL_NAME } from './types'
+import { SYNC_CONFIG } from './config'
 
 /**
  * PowerSync-based storage adapter with offline-first SQLite persistence
@@ -27,6 +28,9 @@ export class PowerSyncAdapter implements StorageAdapter {
   private tabId: string
   private timerWatchers: Map<string, (timers: Timer[]) => void> = new Map()
   private activityWatchers: Map<string, (entries: ActivityLogEntry[]) => void> = new Map()
+  private currentUserId: string | null = null
+  private syncInterval: ReturnType<typeof setInterval> | null = null
+  private lastSyncAt: string | null = null
 
   constructor() {
     this.tabId = `tab_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
@@ -395,15 +399,234 @@ export class PowerSyncAdapter implements StorageAdapter {
   // Sync Operations
   // ============================================
 
+  /**
+   * Set the current user ID for sync operations
+   * Call this when the user logs in
+   */
+  setUserId(userId: string): void {
+    this.currentUserId = userId
+
+    // Start periodic sync when user is set
+    if (!this.syncInterval) {
+      this.syncInterval = setInterval(() => {
+        this.syncWithServer().catch((err) => {
+          console.error('[PowerSync] Periodic sync failed:', err)
+        })
+      }, SYNC_CONFIG.SERVER_SYNC_INTERVAL)
+
+      // Initial sync
+      this.syncWithServer().catch((err) => {
+        console.error('[PowerSync] Initial sync failed:', err)
+      })
+    }
+  }
+
+  /**
+   * Clear sync state (call on logout)
+   */
+  clearSync(): void {
+    this.currentUserId = null
+    this.lastSyncAt = null
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval)
+      this.syncInterval = null
+    }
+  }
+
+  /**
+   * Full bi-directional sync with server
+   */
+  async syncWithServer(): Promise<void> {
+    if (!this.currentUserId) {
+      console.log('[PowerSync] No user ID set, skipping sync')
+      return
+    }
+
+    try {
+      // Dynamic import to avoid bundling server code in client
+      const { syncTimers } = await import('@/lib/timer-sync.server')
+
+      // Get local data
+      const timers = await this.getTimers(this.currentUserId)
+      const activityLogs = await this.getActivityLog(this.currentUserId)
+
+      // Sync with server
+      const result = await syncTimers({
+        data: {
+          userId: this.currentUserId,
+          timers: timers.map((t) => ({
+            id: t.id,
+            name: t.name,
+            timerType: t.timerType,
+            isRunning: t.isRunning,
+            elapsedTime: t.elapsedTime,
+            duration: t.duration,
+            laps: t.laps,
+            userId: t.userId,
+            createdAt: t.createdAt.toISOString(),
+            updatedAt: t.updatedAt.toISOString(),
+            showTotal: t.showTotal,
+            firstStartTime: t.firstStartTime?.toISOString(),
+            startTime: t.startTime?.toISOString(),
+            pomodoroSettings: t.pomodoroSettings,
+            pomodoroPhase: t.pomodoroPhase,
+            pomodoroSessionCount: t.pomodoroSessionCount,
+          })),
+          activityLogs: activityLogs.map((l) => ({
+            id: l.id,
+            timerId: l.timerId,
+            timerName: l.timerName,
+            userId: l.userId,
+            eventType: l.eventType,
+            timestamp: l.timestamp.toISOString(),
+            elapsedAtEvent: l.elapsedAtEvent,
+            sessionDuration: l.sessionDuration,
+            previousValue: l.previousValue,
+            newValue: l.newValue,
+            metadata: l.metadata,
+          })),
+          lastSyncAt: this.lastSyncAt ?? undefined,
+        },
+      })
+
+      // Update local database with server data
+      await this.mergeServerData(result.timers, result.activityLogs)
+
+      this.lastSyncAt = result.syncedAt
+      console.log('[PowerSync] Sync completed at', result.syncedAt)
+    } catch (err) {
+      console.error('[PowerSync] Sync failed:', err)
+      throw err
+    }
+  }
+
+  /**
+   * Merge server data into local database
+   */
+  private async mergeServerData(
+    serverTimers: Array<{
+      id: string
+      name: string
+      timerType: 'stopwatch' | 'countdown' | 'pomodoro'
+      isRunning: boolean
+      elapsedTime: number
+      duration?: number
+      laps: Array<{ id: string; time: number; delta: number }>
+      userId: string
+      createdAt: string
+      updatedAt: string
+      showTotal: boolean
+      firstStartTime?: string
+      startTime?: string
+      pomodoroSettings?: {
+        workDuration: number
+        shortBreakDuration: number
+        longBreakDuration: number
+        sessionsBeforeLongBreak: number
+      }
+      pomodoroPhase?: 'work' | 'short_break' | 'long_break'
+      pomodoroSessionCount: number
+    }>,
+    serverActivityLogs: Array<{
+      id: string
+      timerId: string
+      timerName: string
+      userId: string
+      eventType: string
+      timestamp: string
+      elapsedAtEvent: number
+      sessionDuration?: number
+      previousValue?: number
+      newValue?: number
+      metadata?: Record<string, unknown>
+    }>
+  ): Promise<void> {
+    // Upsert timers
+    for (const timer of serverTimers) {
+      const existingTimer = await db.getOptional<TimerRow>(
+        'SELECT * FROM timers WHERE id = ?',
+        [timer.id]
+      )
+
+      if (!existingTimer || new Date(timer.updatedAt) > new Date(existingTimer.updated_at)) {
+        await db.execute(
+          `INSERT OR REPLACE INTO timers (
+            id, name, timer_type, is_running, elapsed_time, duration, laps, user_id,
+            created_at, updated_at, show_total, first_start_time, start_time,
+            pomodoro_settings, pomodoro_phase, pomodoro_session_count
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            timer.id,
+            timer.name,
+            timer.timerType,
+            timer.isRunning ? 1 : 0,
+            timer.elapsedTime,
+            timer.duration ?? null,
+            JSON.stringify(timer.laps),
+            timer.userId,
+            timer.createdAt,
+            timer.updatedAt,
+            timer.showTotal ? 1 : 0,
+            timer.firstStartTime ?? null,
+            timer.startTime ?? null,
+            timer.pomodoroSettings ? JSON.stringify(timer.pomodoroSettings) : null,
+            timer.pomodoroPhase ?? null,
+            timer.pomodoroSessionCount,
+          ]
+        )
+      }
+    }
+
+    // Insert activity logs (they're immutable, so just insert if missing)
+    for (const log of serverActivityLogs) {
+      const exists = await db.getOptional<{ id: string }>(
+        'SELECT id FROM activity_logs WHERE id = ?',
+        [log.id]
+      )
+
+      if (!exists) {
+        await db.execute(
+          `INSERT INTO activity_logs (
+            id, timer_id, timer_name, user_id, event_type, timestamp,
+            elapsed_at_event, session_duration, previous_value, new_value, metadata
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            log.id,
+            log.timerId,
+            log.timerName,
+            log.userId,
+            log.eventType,
+            log.timestamp,
+            log.elapsedAtEvent,
+            log.sessionDuration ?? null,
+            log.previousValue ?? null,
+            log.newValue ?? null,
+            log.metadata ? JSON.stringify(log.metadata) : null,
+          ]
+        )
+      }
+    }
+
+    // Notify watchers
+    if (this.currentUserId) {
+      const updatedTimers = await this.getTimers(this.currentUserId)
+      for (const callback of this.timerWatchers.values()) {
+        callback(updatedTimers)
+      }
+
+      const updatedLogs = await this.getActivityLog(this.currentUserId)
+      for (const callback of this.activityWatchers.values()) {
+        callback(updatedLogs)
+      }
+    }
+  }
+
   async syncToServer(): Promise<void> {
-    // PowerSync handles sync automatically when connected
-    // This is a no-op as sync is continuous
-    console.log('[PowerSync] Sync is handled automatically')
+    await this.syncWithServer()
   }
 
   async syncFromServer(): Promise<void> {
-    // PowerSync handles sync automatically when connected
-    console.log('[PowerSync] Sync is handled automatically')
+    await this.syncWithServer()
   }
 
   // ============================================
