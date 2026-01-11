@@ -8,12 +8,18 @@ import '@journeyapps/wa-sqlite'
  *
  * This defines the local SQLite schema that will be synced with the backend.
  * All tables here will be available offline and sync automatically when online.
+ *
+ * TODO: Update timers table to match new @dashboard/shared types:
+ * - Rename: type → timer_type, paused_time → elapsed_time, countdown_duration → duration
+ * - Add: show_total, first_start_time, start_time, pomodoro_settings, pomodoro_phase, pomodoro_session_count
+ * - Update laps format to new LapEntry schema (number, lapTime, splitTime, timestamp)
+ * See: /packages/shared/src/types/timer.ts for reference
  */
 export const APP_SCHEMA = new Schema({
   timers: new Table({
     // Core fields
     name: column.text,
-    type: column.text, // 'stopwatch' | 'countdown'
+    type: column.text, // 'stopwatch' | 'countdown' | 'pomodoro'
 
     // State fields (SQLite stores booleans as integers)
     is_running: column.integer, // 0 = false, 1 = true

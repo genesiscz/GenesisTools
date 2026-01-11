@@ -115,34 +115,3 @@ export const DEFAULT_POMODORO_SETTINGS: PomodoroSettings = {
   sessionsBeforeLongBreak: 4,
 }
 
-/**
- * Generate unique timer ID
- */
-export function generateTimerId(): string {
-  return `tmr_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
-}
-
-/**
- * Format milliseconds to display string
- */
-export function formatTime(ms: number, showMilliseconds = true): string {
-  const totalSeconds = Math.floor(Math.abs(ms) / 1000)
-  const hours = Math.floor(totalSeconds / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
-  const seconds = totalSeconds % 60
-  const milliseconds = Math.floor((Math.abs(ms) % 1000) / 10)
-
-  let result = ''
-
-  if (hours > 0) {
-    result = `${hours.toString().padStart(2, '0')}:`
-  }
-
-  result += `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
-
-  if (showMilliseconds) {
-    result += `.${milliseconds.toString().padStart(2, '0')}`
-  }
-
-  return result
-}

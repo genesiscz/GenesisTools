@@ -1,3 +1,6 @@
+// TODO: Update field names to match @dashboard/shared types and add pomodoro support
+// Will be used by PowerSyncAdapter in /routes/timer/lib/storage/
+
 import { z } from 'zod'
 import { db, APP_SCHEMA } from '../db/powersync'
 
