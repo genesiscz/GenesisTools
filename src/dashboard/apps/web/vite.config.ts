@@ -47,9 +47,11 @@ const config = defineConfig({
   worker: {
     format: 'es',
   },
-  // Optimize PowerSync dependencies
+  // PowerSync worker/WASM configuration
+  // Exclude packages with workers/WASM from optimization
   optimizeDeps: {
-    exclude: ['@journeyapps/wa-sqlite'],
+    exclude: ['@journeyapps/wa-sqlite', '@powersync/web'],
+    include: ['@powersync/web > js-logger'],
   },
 })
 
