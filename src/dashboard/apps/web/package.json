@@ -40,6 +40,7 @@
     "@tanstack/ai-openai": "latest",
     "@tanstack/ai-react": "latest",
     "@tanstack/match-sorter-utils": "^8.19.4",
+    "@tanstack/powersync-db-collection": "^0.1.22",
     "@tanstack/query-db-collection": "^1.0.8",
     "@tanstack/react-ai-devtools": "latest",
     "@tanstack/react-db": "^0.1.1",
