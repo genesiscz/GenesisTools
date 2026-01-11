@@ -7,53 +7,38 @@ import type {
 /**
  * Dashboard PowerSync Backend Connector
  *
- * This connector handles:
- * 1. Authentication - Gets credentials from WorkOS session
- * 2. Data upload - Sends local changes to the Nitro server
+ * This connector handles uploading local changes to the Nitro backend.
+ * Runs in "local-only" mode - no PowerSync Cloud, just client SQLite + server SQLite.
  *
- * The connector is required for bi-directional sync with the backend.
+ * Flow:
+ * 1. Client makes changes → PowerSync queues in CRUD batch
+ * 2. uploadData() sends batch to /api/sync/upload
+ * 3. Nitro applies changes to server SQLite
  */
 export class DashboardConnector implements PowerSyncBackendConnector {
   private apiUrl: string
 
-  constructor(apiUrl: string = '/api') {
+  constructor(apiUrl: string = '') {
     this.apiUrl = apiUrl
   }
 
   /**
-   * Fetch PowerSync credentials from the backend
+   * Fetch PowerSync credentials
    *
-   * This exchanges the WorkOS session for PowerSync-compatible credentials.
-   * The backend validates the session and returns a JWT for PowerSync.
+   * For local-only mode (no PowerSync Cloud), return null.
+   * This disables the PowerSync sync service connection.
    */
   async fetchCredentials(): Promise<PowerSyncCredentials | null> {
-    try {
-      const response = await fetch(`${this.apiUrl}/auth/powersync-token`, {
-        credentials: 'include', // Include cookies for session auth
-      })
-
-      if (!response.ok) {
-        console.error('Failed to fetch PowerSync credentials:', response.status)
-        return null
-      }
-
-      const data = await response.json()
-      return {
-        endpoint: data.endpoint,
-        token: data.token,
-        expiresAt: data.expiresAt ? new Date(data.expiresAt) : undefined,
-      }
-    } catch (error) {
-      console.error('Error fetching PowerSync credentials:', error)
-      return null
-    }
+    // Local-only mode - no PowerSync Cloud
+    // Return null to disable sync service connection
+    return null
   }
 
   /**
-   * Upload local changes to the backend
+   * Upload local changes to the Nitro backend
    *
-   * This is called by PowerSync when there are pending local changes
-   * that need to be synced to the server.
+   * Called by PowerSync when there are pending local changes.
+   * Sends CRUD batch to /api/sync/upload endpoint.
    */
   async uploadData(database: AbstractPowerSyncDatabase): Promise<void> {
     // Get pending CRUD operations
@@ -64,7 +49,7 @@ export class DashboardConnector implements PowerSyncBackendConnector {
     }
 
     try {
-      const response = await fetch(`${this.apiUrl}/sync/upload`, {
+      const response = await fetch(`${this.apiUrl}/api/sync/upload`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -81,22 +66,23 @@ export class DashboardConnector implements PowerSyncBackendConnector {
       })
 
       if (!response.ok) {
-        throw new Error(`Upload failed: ${response.status}`)
+        const errorText = await response.text()
+        throw new Error(`Upload failed: ${response.status} - ${errorText}`)
       }
 
       // Mark the batch as complete
       await batch.complete()
+      console.log(`[PowerSync] Uploaded ${batch.crud.length} operations to server`)
     } catch (error) {
-      console.error('Error uploading data:', error)
+      console.error('[PowerSync] Error uploading data:', error)
       throw error // Rethrow to trigger retry
     }
   }
 }
 
 /**
- * Create a connector instance with the configured API URL
+ * Create a connector instance
  */
 export function createConnector(): DashboardConnector {
-  const apiUrl = import.meta.env.VITE_API_URL || '/api'
-  return new DashboardConnector(apiUrl)
+  return new DashboardConnector()
 }
