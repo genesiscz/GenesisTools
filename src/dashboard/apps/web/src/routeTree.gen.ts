@@ -15,6 +15,7 @@ import { Route as McpRouteImport } from './routes/mcp'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TimerIndexRouteImport } from './routes/timer/index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
+import { Route as AssistantIndexRouteImport } from './routes/assistant/index'
 import { Route as TimerTimerIdRouteImport } from './routes/timer.$timerId'
 import { Route as DemoWorkosRouteImport } from './routes/demo/workos'
 import { Route as DemoTrpcTodoRouteImport } from './routes/demo/trpc-todo'
@@ -41,6 +42,7 @@ import { Route as AuthForgotPasswordRouteImport } from './routes/auth/forgot-pas
 import { Route as AuthErrorRouteImport } from './routes/auth/error'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 import { Route as ExampleGuitarsIndexRouteImport } from './routes/example.guitars/index'
+import { Route as AssistantTasksIndexRouteImport } from './routes/assistant/tasks/index'
 import { Route as ExampleGuitarsGuitarIdRouteImport } from './routes/example.guitars/$guitarId'
 import { Route as DemoStartServerFuncsRouteImport } from './routes/demo/start.server-funcs'
 import { Route as DemoStartApiRequestRouteImport } from './routes/demo/start.api-request'
@@ -89,6 +91,11 @@ const TimerIndexRoute = TimerIndexRouteImport.update({
 const DashboardIndexRoute = DashboardIndexRouteImport.update({
   id: '/dashboard/',
   path: '/dashboard/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AssistantIndexRoute = AssistantIndexRouteImport.update({
+  id: '/assistant/',
+  path: '/assistant/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TimerTimerIdRoute = TimerTimerIdRouteImport.update({
@@ -221,6 +228,11 @@ const ExampleGuitarsIndexRoute = ExampleGuitarsIndexRouteImport.update({
   path: '/example/guitars/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AssistantTasksIndexRoute = AssistantTasksIndexRouteImport.update({
+  id: '/assistant/tasks/',
+  path: '/assistant/tasks/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ExampleGuitarsGuitarIdRoute = ExampleGuitarsGuitarIdRouteImport.update({
   id: '/example/guitars/$guitarId',
   path: '/example/guitars/$guitarId',
@@ -348,6 +360,7 @@ export interface FileRoutesByFullPath {
   '/demo/trpc-todo': typeof DemoTrpcTodoRoute
   '/demo/workos': typeof DemoWorkosRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
+  '/assistant': typeof AssistantIndexRoute
   '/dashboard': typeof DashboardIndexRoute
   '/timer': typeof TimerIndexRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
@@ -365,6 +378,7 @@ export interface FileRoutesByFullPath {
   '/demo/start/api-request': typeof DemoStartApiRequestRoute
   '/demo/start/server-funcs': typeof DemoStartServerFuncsRoute
   '/example/guitars/$guitarId': typeof ExampleGuitarsGuitarIdRoute
+  '/assistant/tasks': typeof AssistantTasksIndexRoute
   '/example/guitars': typeof ExampleGuitarsIndexRoute
   '/demo/start/ssr/data-only': typeof DemoStartSsrDataOnlyRoute
   '/demo/start/ssr/full-ssr': typeof DemoStartSsrFullSsrRoute
@@ -401,6 +415,7 @@ export interface FileRoutesByTo {
   '/demo/trpc-todo': typeof DemoTrpcTodoRoute
   '/demo/workos': typeof DemoWorkosRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
+  '/assistant': typeof AssistantIndexRoute
   '/dashboard': typeof DashboardIndexRoute
   '/timer': typeof TimerIndexRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
@@ -418,6 +433,7 @@ export interface FileRoutesByTo {
   '/demo/start/api-request': typeof DemoStartApiRequestRoute
   '/demo/start/server-funcs': typeof DemoStartServerFuncsRoute
   '/example/guitars/$guitarId': typeof ExampleGuitarsGuitarIdRoute
+  '/assistant/tasks': typeof AssistantTasksIndexRoute
   '/example/guitars': typeof ExampleGuitarsIndexRoute
   '/demo/start/ssr/data-only': typeof DemoStartSsrDataOnlyRoute
   '/demo/start/ssr/full-ssr': typeof DemoStartSsrFullSsrRoute
@@ -455,6 +471,7 @@ export interface FileRoutesById {
   '/demo/trpc-todo': typeof DemoTrpcTodoRoute
   '/demo/workos': typeof DemoWorkosRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
+  '/assistant/': typeof AssistantIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/timer/': typeof TimerIndexRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
@@ -472,6 +489,7 @@ export interface FileRoutesById {
   '/demo/start/api-request': typeof DemoStartApiRequestRoute
   '/demo/start/server-funcs': typeof DemoStartServerFuncsRoute
   '/example/guitars/$guitarId': typeof ExampleGuitarsGuitarIdRoute
+  '/assistant/tasks/': typeof AssistantTasksIndexRoute
   '/example/guitars/': typeof ExampleGuitarsIndexRoute
   '/demo/start/ssr/data-only': typeof DemoStartSsrDataOnlyRoute
   '/demo/start/ssr/full-ssr': typeof DemoStartSsrFullSsrRoute
@@ -510,6 +528,7 @@ export interface FileRouteTypes {
     | '/demo/trpc-todo'
     | '/demo/workos'
     | '/timer/$timerId'
+    | '/assistant'
     | '/dashboard'
     | '/timer'
     | '/api/trpc/$'
@@ -527,6 +546,7 @@ export interface FileRouteTypes {
     | '/demo/start/api-request'
     | '/demo/start/server-funcs'
     | '/example/guitars/$guitarId'
+    | '/assistant/tasks'
     | '/example/guitars'
     | '/demo/start/ssr/data-only'
     | '/demo/start/ssr/full-ssr'
@@ -563,6 +583,7 @@ export interface FileRouteTypes {
     | '/demo/trpc-todo'
     | '/demo/workos'
     | '/timer/$timerId'
+    | '/assistant'
     | '/dashboard'
     | '/timer'
     | '/api/trpc/$'
@@ -580,6 +601,7 @@ export interface FileRouteTypes {
     | '/demo/start/api-request'
     | '/demo/start/server-funcs'
     | '/example/guitars/$guitarId'
+    | '/assistant/tasks'
     | '/example/guitars'
     | '/demo/start/ssr/data-only'
     | '/demo/start/ssr/full-ssr'
@@ -616,6 +638,7 @@ export interface FileRouteTypes {
     | '/demo/trpc-todo'
     | '/demo/workos'
     | '/timer/$timerId'
+    | '/assistant/'
     | '/dashboard/'
     | '/timer/'
     | '/api/trpc/$'
@@ -633,6 +656,7 @@ export interface FileRouteTypes {
     | '/demo/start/api-request'
     | '/demo/start/server-funcs'
     | '/example/guitars/$guitarId'
+    | '/assistant/tasks/'
     | '/example/guitars/'
     | '/demo/start/ssr/data-only'
     | '/demo/start/ssr/full-ssr'
@@ -670,6 +694,7 @@ export interface RootRouteChildren {
   DemoTrpcTodoRoute: typeof DemoTrpcTodoRoute
   DemoWorkosRoute: typeof DemoWorkosRoute
   TimerTimerIdRoute: typeof TimerTimerIdRoute
+  AssistantIndexRoute: typeof AssistantIndexRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
   TimerIndexRoute: typeof TimerIndexRoute
   ApiTrpcSplatRoute: typeof ApiTrpcSplatRoute
@@ -687,6 +712,7 @@ export interface RootRouteChildren {
   DemoStartApiRequestRoute: typeof DemoStartApiRequestRoute
   DemoStartServerFuncsRoute: typeof DemoStartServerFuncsRoute
   ExampleGuitarsGuitarIdRoute: typeof ExampleGuitarsGuitarIdRoute
+  AssistantTasksIndexRoute: typeof AssistantTasksIndexRoute
   ExampleGuitarsIndexRoute: typeof ExampleGuitarsIndexRoute
   DemoStartSsrDataOnlyRoute: typeof DemoStartSsrDataOnlyRoute
   DemoStartSsrFullSsrRoute: typeof DemoStartSsrFullSsrRoute
@@ -736,6 +762,13 @@ declare module '@tanstack/react-router' {
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof DashboardIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/assistant/': {
+      id: '/assistant/'
+      path: '/assistant'
+      fullPath: '/assistant'
+      preLoaderRoute: typeof AssistantIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/timer/$timerId': {
@@ -920,6 +953,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ExampleGuitarsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/assistant/tasks/': {
+      id: '/assistant/tasks/'
+      path: '/assistant/tasks'
+      fullPath: '/assistant/tasks'
+      preLoaderRoute: typeof AssistantTasksIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/example/guitars/$guitarId': {
       id: '/example/guitars/$guitarId'
       path: '/example/guitars/$guitarId'
@@ -1086,6 +1126,7 @@ const rootRouteChildren: RootRouteChildren = {
   DemoTrpcTodoRoute: DemoTrpcTodoRoute,
   DemoWorkosRoute: DemoWorkosRoute,
   TimerTimerIdRoute: TimerTimerIdRoute,
+  AssistantIndexRoute: AssistantIndexRoute,
   DashboardIndexRoute: DashboardIndexRoute,
   TimerIndexRoute: TimerIndexRoute,
   ApiTrpcSplatRoute: ApiTrpcSplatRoute,
@@ -1103,6 +1144,7 @@ const rootRouteChildren: RootRouteChildren = {
   DemoStartApiRequestRoute: DemoStartApiRequestRoute,
   DemoStartServerFuncsRoute: DemoStartServerFuncsRoute,
   ExampleGuitarsGuitarIdRoute: ExampleGuitarsGuitarIdRoute,
+  AssistantTasksIndexRoute: AssistantTasksIndexRoute,
   ExampleGuitarsIndexRoute: ExampleGuitarsIndexRoute,
   DemoStartSsrDataOnlyRoute: DemoStartSsrDataOnlyRoute,
   DemoStartSsrFullSsrRoute: DemoStartSsrFullSsrRoute,
