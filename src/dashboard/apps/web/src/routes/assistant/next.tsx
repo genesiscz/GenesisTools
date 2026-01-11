@@ -23,9 +23,9 @@ import {
   FeatureCardHeader,
   FeatureCardContent,
 } from '@/components/ui/feature-card'
-import { useTaskStore } from './hooks'
-import type { Task, ContextParking, UrgencyLevel } from './types'
-import { getUrgencyColor } from './types'
+import { useTaskStore } from './-hooks'
+import type { Task, ContextParking, UrgencyLevel } from './-types'
+import { getUrgencyColor } from './-types'
 
 export const Route = createFileRoute('/assistant/next')({
   component: WhatsNextPage,
@@ -54,10 +54,16 @@ function WhatsNextPage() {
 
   // Calculate recommendations when tasks change
   useEffect(() => {
+    let mounted = true
+
     async function calculateRecommendations() {
-      if (activeTasks.length === 0) {
-        setRecommendation(null)
-        setAlternatives([])
+      const active = tasks.filter((t) => t.status !== 'completed')
+
+      if (active.length === 0) {
+        if (mounted) {
+          setRecommendation(null)
+          setAlternatives([])
+        }
         return
       }
 
@@ -66,7 +72,7 @@ function WhatsNextPage() {
       try {
         const scored: Recommendation[] = []
 
-        for (const task of activeTasks) {
+        for (const task of active) {
           const { score, reasons } = calculatePriorityScore(task)
           const parkingContext = await getActiveParking(task.id)
 
@@ -81,20 +87,25 @@ function WhatsNextPage() {
         // Sort by score descending
         scored.sort((a, b) => b.score - a.score)
 
-        // Top recommendation
-        setRecommendation(scored[0] || null)
+        if (mounted) {
+          // Top recommendation
+          setRecommendation(scored[0] || null)
 
-        // Next 3 alternatives
-        setAlternatives(scored.slice(1, 4))
+          // Next 3 alternatives
+          setAlternatives(scored.slice(1, 4))
+        }
       } finally {
-        setLoadingRecommendation(false)
+        if (mounted) setLoadingRecommendation(false)
       }
     }
 
     if (initialized) {
       calculateRecommendations()
     }
-  }, [activeTasks, initialized, getActiveParking])
+
+    return () => { mounted = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, initialized])
 
   /**
    * Calculate priority score for a task

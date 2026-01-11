@@ -17,7 +17,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import type { Task, ContextParkingInput } from '../types'
+import type { Task, ContextParkingInput } from '../-types'
 
 interface ContextParkingModalProps {
   open: boolean
@@ -52,11 +52,14 @@ export function ContextParkingModal({
   // Reset form when modal opens
   useEffect(() => {
     if (open) {
-      setSelectedTaskId(currentTaskId ?? activeTasks[0]?.id ?? '')
+      // Find first active task for default selection
+      const firstActiveTask = tasks.find((t) => t.status !== 'completed')
+      setSelectedTaskId(currentTaskId ?? firstActiveTask?.id ?? '')
       setContent('')
       setNextSteps('')
     }
-  }, [open, currentTaskId, activeTasks])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, currentTaskId, tasks.length])
 
   async function handleSubmit() {
     if (!selectedTaskId || !content.trim()) return

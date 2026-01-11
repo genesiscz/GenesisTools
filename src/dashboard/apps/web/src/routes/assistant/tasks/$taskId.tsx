@@ -30,9 +30,9 @@ import {
   FeatureCardHeader,
   FeatureCardContent,
 } from '@/components/ui/feature-card'
-import { useTaskStore } from '../hooks'
-import type { Task, TaskUpdate, UrgencyLevel, TaskStatus, ContextParking } from '../types'
-import { getUrgencyColor } from '../types'
+import { useTaskStore } from '../-hooks'
+import type { Task, TaskUpdate, UrgencyLevel, TaskStatus, ContextParking } from '../-types'
+import { getUrgencyColor } from '../-types'
 
 export const Route = createFileRoute('/assistant/tasks/$taskId')({
   component: TaskDetailPage,
@@ -86,19 +86,24 @@ function TaskDetailPage() {
     }
   }, [task])
 
-  // Load parking context
+  // Load parking context - only run when taskId changes
   useEffect(() => {
+    let mounted = true
+
     async function loadParking() {
-      if (taskId) {
+      if (taskId && initialized) {
         const active = await getActiveParking(taskId)
-        setActiveParking(active)
+        if (mounted) setActiveParking(active)
 
         const history = await getParkingHistory(taskId)
-        setParkingHistory(history.slice(0, 5)) // Last 5 entries
+        if (mounted) setParkingHistory(history.slice(0, 5)) // Last 5 entries
       }
     }
     loadParking()
-  }, [taskId, getActiveParking, getParkingHistory])
+
+    return () => { mounted = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId, initialized])
 
   function formatDateForInput(date: Date): string {
     return date.toISOString().split('T')[0]

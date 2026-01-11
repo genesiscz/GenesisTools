@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import type { Streak, Badge } from '../types'
-import { getAssistantStorageAdapter, initializeAssistantStorage } from '../lib/storage'
+import type { Streak, Badge } from '../-types'
+import { getAssistantStorageAdapter, initializeAssistantStorage } from '../-lib/storage'
 
 /**
  * Hook to manage streak state and badge checking
