@@ -13,9 +13,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu'
-import { TaskCard, TaskForm, ContextParkingModal } from '../components'
-import { useTaskStore, useContextParking } from '../hooks'
-import type { TaskInput, ContextParkingInput, UrgencyLevel } from '../types'
+import { TaskCard, TaskForm, ContextParkingModal } from '../-components'
+import { useTaskStore, useContextParking } from '../-hooks'
+import type { TaskInput, ContextParkingInput, UrgencyLevel } from '../-types'
 
 export const Route = createFileRoute('/assistant/tasks/')({
   component: TasksPage,

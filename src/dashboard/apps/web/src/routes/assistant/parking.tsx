@@ -26,8 +26,8 @@ import {
   FeatureCardHeader,
   FeatureCardContent,
 } from '@/components/ui/feature-card'
-import { useTaskStore } from './hooks'
-import type { ContextParking, ParkingStatus } from './types'
+import { useTaskStore } from './-hooks'
+import type { ContextParking, ParkingStatus } from './-types'
 
 export const Route = createFileRoute('/assistant/parking')({
   component: ParkingPage,
@@ -47,21 +47,24 @@ function ParkingPage() {
 
   // Load parking history
   useEffect(() => {
+    let mounted = true
+
     async function loadHistory() {
-      if (!userId) return
+      if (!userId || !initialized) return
       setHistoryLoading(true)
       try {
         const history = await getParkingHistory()
-        setParkingHistory(history)
+        if (mounted) setParkingHistory(history)
       } finally {
-        setHistoryLoading(false)
+        if (mounted) setHistoryLoading(false)
       }
     }
 
-    if (initialized) {
-      loadHistory()
-    }
-  }, [userId, initialized, getParkingHistory])
+    loadHistory()
+
+    return () => { mounted = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, initialized])
 
   // Filter parking entries
   const filteredHistory = parkingHistory.filter((p) => {
