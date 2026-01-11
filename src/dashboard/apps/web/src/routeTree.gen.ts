@@ -41,6 +41,7 @@ import { Route as AuthResetPasswordRouteImport } from './routes/auth/reset-passw
 import { Route as AuthForgotPasswordRouteImport } from './routes/auth/forgot-password'
 import { Route as AuthErrorRouteImport } from './routes/auth/error'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
+import { Route as AssistantParkingRouteImport } from './routes/assistant/parking'
 import { Route as ExampleGuitarsIndexRouteImport } from './routes/example.guitars/index'
 import { Route as AssistantTasksIndexRouteImport } from './routes/assistant/tasks/index'
 import { Route as ExampleGuitarsGuitarIdRouteImport } from './routes/example.guitars/$guitarId'
@@ -224,6 +225,11 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
   path: '/auth/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AssistantParkingRoute = AssistantParkingRouteImport.update({
+  id: '/assistant/parking',
+  path: '/assistant/parking',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ExampleGuitarsIndexRoute = ExampleGuitarsIndexRouteImport.update({
   id: '/example/guitars/',
   path: '/example/guitars/',
@@ -341,6 +347,7 @@ export interface FileRoutesByFullPath {
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
+  '/assistant/parking': typeof AssistantParkingRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/error': typeof AuthErrorRoute
   '/auth/forgot-password': typeof AuthForgotPasswordRoute
@@ -397,6 +404,7 @@ export interface FileRoutesByTo {
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
+  '/assistant/parking': typeof AssistantParkingRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/error': typeof AuthErrorRoute
   '/auth/forgot-password': typeof AuthForgotPasswordRoute
@@ -454,6 +462,7 @@ export interface FileRoutesById {
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
+  '/assistant/parking': typeof AssistantParkingRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/error': typeof AuthErrorRoute
   '/auth/forgot-password': typeof AuthForgotPasswordRoute
@@ -512,6 +521,7 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/profile'
     | '/settings'
+    | '/assistant/parking'
     | '/auth/callback'
     | '/auth/error'
     | '/auth/forgot-password'
@@ -568,6 +578,7 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/profile'
     | '/settings'
+    | '/assistant/parking'
     | '/auth/callback'
     | '/auth/error'
     | '/auth/forgot-password'
@@ -624,6 +635,7 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/profile'
     | '/settings'
+    | '/assistant/parking'
     | '/auth/callback'
     | '/auth/error'
     | '/auth/forgot-password'
@@ -681,6 +693,7 @@ export interface RootRouteChildren {
   McpRoute: typeof McpRoute
   ProfileRoute: typeof ProfileRoute
   SettingsRoute: typeof SettingsRoute
+  AssistantParkingRoute: typeof AssistantParkingRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
   AuthErrorRoute: typeof AuthErrorRoute
   AuthForgotPasswordRoute: typeof AuthForgotPasswordRoute
@@ -959,6 +972,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/assistant/parking': {
+      id: '/assistant/parking'
+      path: '/assistant/parking'
+      fullPath: '/assistant/parking'
+      preLoaderRoute: typeof AssistantParkingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/example/guitars/': {
       id: '/example/guitars/'
       path: '/example/guitars'
@@ -1121,6 +1141,7 @@ const rootRouteChildren: RootRouteChildren = {
   McpRoute: McpRoute,
   ProfileRoute: ProfileRoute,
   SettingsRoute: SettingsRoute,
+  AssistantParkingRoute: AssistantParkingRoute,
   AuthCallbackRoute: AuthCallbackRoute,
   AuthErrorRoute: AuthErrorRoute,
   AuthForgotPasswordRoute: AuthForgotPasswordRoute,

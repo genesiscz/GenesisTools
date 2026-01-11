@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
-import { Plus, Loader2, ListTodo, Filter, Flame } from 'lucide-react'
+import { Plus, Loader2, ListTodo, Filter, Flame, ParkingCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@workos/authkit-tanstack-react-start/client'
 import { DashboardLayout } from '@/components/dashboard'
@@ -13,9 +13,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu'
-import { TaskCard, TaskForm } from '../components'
-import { useTaskStore } from '../hooks'
-import type { TaskInput, TaskStatus, UrgencyLevel } from '../types'
+import { TaskCard, TaskForm, ContextParkingModal } from '../components'
+import { useTaskStore, useContextParking } from '../hooks'
+import type { TaskInput, ContextParkingInput, UrgencyLevel } from '../types'
 
 export const Route = createFileRoute('/assistant/tasks/')({
   component: TasksPage,
@@ -36,10 +36,14 @@ function TasksPage() {
     updateTask,
     deleteTask,
     completeTask,
+    parkContext,
   } = useTaskStore(userId)
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [filterMode, setFilterMode] = useState<FilterMode>('active')
+
+  // Context parking modal with Cmd+P shortcut
+  const contextParking = useContextParking()
 
   // Filter tasks based on current filter mode
   const filteredTasks = tasks.filter((task) => {
@@ -115,6 +119,11 @@ function TasksPage() {
     await deleteTask(taskId)
   }
 
+  // Handle context parking
+  async function handleParkContext(input: ContextParkingInput) {
+    await parkContext(input)
+  }
+
   // Loading state
   if (authLoading || (!initialized && loading)) {
     return (
@@ -157,6 +166,21 @@ function TasksPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Park context button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={contextParking.open}
+            className="gap-2"
+            title="Park context (Cmd+P)"
+          >
+            <ParkingCircle className="h-4 w-4" />
+            <span className="hidden sm:inline">Park</span>
+            <kbd className="hidden lg:inline-flex h-5 items-center gap-1 rounded border bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
+              <span className="text-xs">Cmd</span>P
+            </kbd>
+          </Button>
+
           {/* Filter dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -235,6 +259,14 @@ function TasksPage() {
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         onSubmit={handleCreateTask}
+      />
+
+      {/* Context parking modal (Cmd+P) */}
+      <ContextParkingModal
+        open={contextParking.isOpen}
+        onOpenChange={contextParking.setIsOpen}
+        tasks={tasks}
+        onPark={handleParkContext}
       />
     </DashboardLayout>
   )
