@@ -92,6 +92,10 @@ export function PomodoroSteps({
           // Calculate fill percentage for current step
           const fillPercent = isCurrent ? Math.min(progress * 100, 100) : 0
 
+          // Determine fill color based on step type
+          const fillColor = isWork ? 'emerald' : 'amber'
+          const textActiveClass = isWork ? 'text-emerald-400' : 'text-amber-400'
+
           return (
             <div
               key={index}
@@ -100,24 +104,28 @@ export function PomodoroSteps({
                 'transition-all duration-200',
                 // Base background for all states
                 'bg-gray-800/50',
-                // Completed steps - full color
-                isCompleted && isWork && 'bg-emerald-500/30 text-emerald-400',
-                isCompleted && !isWork && 'bg-amber-500/30 text-amber-400',
                 // Current step - ring highlight
-                isCurrent && isWork && 'ring-1 ring-emerald-500/50 text-emerald-400',
-                isCurrent && !isWork && 'ring-1 ring-amber-500/50 text-amber-400',
-                // Future steps
+                isCurrent && isWork && 'ring-1 ring-emerald-500/50',
+                isCurrent && !isWork && 'ring-1 ring-amber-500/50',
+                // Text colors
+                (isCompleted || isCurrent) && textActiveClass,
                 !isCompleted && !isCurrent && 'text-gray-500'
               )}
             >
-              {/* Progress fill bar */}
-              {isCurrent && fillPercent > 0 && (
+              {/* Progress fill bar - full for completed, partial for current */}
+              {(isCompleted || (isCurrent && fillPercent > 0)) && (
                 <div
-                  className={cn(
-                    'absolute inset-0 transition-all duration-300 ease-out',
-                    isWork ? 'bg-emerald-500/30' : 'bg-amber-500/30'
-                  )}
-                  style={{ width: `${fillPercent}%` }}
+                  className="absolute inset-0 transition-all duration-300 ease-out"
+                  style={{
+                    width: isCompleted ? '100%' : `${fillPercent}%`,
+                    background: isCompleted
+                      ? fillColor === 'emerald'
+                        ? 'rgba(16, 185, 129, 0.3)'
+                        : 'rgba(245, 158, 11, 0.3)'
+                      : fillColor === 'emerald'
+                        ? 'linear-gradient(90deg, rgba(16, 185, 129, 0.3) 0%, rgba(16, 185, 129, 0.3) 85%, rgba(16, 185, 129, 0) 100%)'
+                        : 'linear-gradient(90deg, rgba(245, 158, 11, 0.3) 0%, rgba(245, 158, 11, 0.3) 85%, rgba(245, 158, 11, 0) 100%)',
+                  }}
                 />
               )}
 
