@@ -318,6 +318,7 @@ export function ActivityLogSidebar({
             endDate={dateRange?.end}
             timeRangeLabel={timeRange === 'all' ? 'All time' : `This ${timeRange}`}
             timerId={selectedTimerId || undefined}
+            timerNames={Object.fromEntries(timers.map(t => [t.id, t.name]))}
           />
         )}
       </div>

@@ -304,7 +304,7 @@ export class PowerSyncAdapter implements StorageAdapter {
     const dailyBreakdown: Record<string, number> = {}
 
     for (const log of logs) {
-      if (log.eventType === 'pause' && log.sessionDuration) {
+      if (log.eventType === 'pause' && log.sessionDuration !== undefined) {
         totalTimeTracked += log.sessionDuration
         sessionCount++
         longestSession = Math.max(longestSession, log.sessionDuration)
