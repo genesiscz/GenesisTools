@@ -1,23 +1,21 @@
 import { useEffect } from 'react'
-import { useAuth } from '@workos-inc/authkit-react'
-import { useLocation } from '@tanstack/react-router'
-
-type UserOrNull = ReturnType<typeof useAuth>['user']
+import { useAuth } from '@workos/authkit-tanstack-react-start/client'
+import { useLocation, useNavigate } from '@tanstack/react-router'
 
 // redirects to the sign-in page if the user is not signed in
-export const useUser = (): UserOrNull => {
-  const { user, isLoading, signIn } = useAuth()
+export const useUser = () => {
+  const { user, loading } = useAuth()
   const location = useLocation()
+  const navigate = useNavigate()
 
   useEffect(() => {
-    if (!isLoading && !user) {
-      signIn({
-        state: { returnTo: location.pathname },
+    if (!loading && !user) {
+      navigate({
+        to: '/auth/signin',
+        search: { returnTo: location.pathname },
       })
-    } else {
-      console.log(user)
     }
-  }, [isLoading, user])
+  }, [loading, user, location.pathname, navigate])
 
   return user
 }
