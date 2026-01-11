@@ -17,7 +17,7 @@ interface LapsListProps {
 export const LapsList = memo(function LapsList({
   laps,
   onClear,
-  maxVisible = 5,
+  maxVisible = 3,
   className,
 }: LapsListProps) {
   const [expanded, setExpanded] = useState(false)
@@ -83,12 +83,12 @@ export const LapsList = memo(function LapsList({
         )}
       </div>
 
-      {/* Laps list with scan line effect */}
+      {/* Laps list with scan line effect - more compact */}
       <div
         className={cn(
-          'relative rounded-xl overflow-hidden',
+          'relative rounded-lg overflow-hidden',
           'border border-cyan-500/20 bg-black/40',
-          'max-h-52 overflow-y-auto cyberpunk-scrollbar'
+          'max-h-36 overflow-y-auto cyberpunk-scrollbar'
         )}
       >
         {/* Subtle scan line overlay */}

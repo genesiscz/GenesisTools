@@ -33,7 +33,7 @@ function TimerPage() {
       elapsedTime: 0,
       duration: 5 * 60 * 1000, // 5 minutes default for countdown
       laps: [],
-      showTotal: false,
+      showTotal: true, // Default to visible
       firstStartTime: null,
       startTime: null,
       pomodoroSessionCount: 0,
