@@ -156,10 +156,10 @@ export function useTimer({ userId, timerId }: UseTimerOptions): UseTimerReturn {
     await updateTimer(timerId, { name })
   }
 
-  // Set countdown duration (only when paused)
+  // Set countdown duration (only when paused) - also reset elapsedTime
   async function setDuration(durationMs: number) {
     if (timer?.isRunning) return
-    await updateTimer(timerId, { duration: durationMs })
+    await updateTimer(timerId, { duration: durationMs, elapsedTime: 0 })
   }
 
   // Set timer type
