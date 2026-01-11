@@ -208,9 +208,10 @@ export class LocalStorageAdapter implements StorageAdapter {
   async getProductivityStats(
     userId: string,
     startDate: Date,
-    endDate: Date
+    endDate: Date,
+    timerId?: string
   ): Promise<ProductivityStats> {
-    const logs = await this.getActivityLog(userId, { startDate, endDate })
+    const logs = await this.getActivityLog(userId, { startDate, endDate, timerId })
 
     let totalTimeTracked = 0
     let sessionCount = 0
