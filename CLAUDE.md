@@ -334,6 +334,13 @@ echo "input" | tools your-tool-name
 -   **TypeScript Config**: Strict mode enabled, ES modules, no emit (Bun runs TS directly)
 -   **Logging**: Check `/logs/` directory for debug information if tools encounter errors
 
+## Dashboard React Guidelines
+
+When working on the dashboard (`src/dashboard/`):
+
+-   **Do NOT use `useCallback` or `useMemo`** - The project uses React Compiler which handles memoization automatically
+-   **Use plain functions** - Just define functions normally, React Compiler will optimize them
+
 ## Context7 Documentation References
 
 When working with the dashboard project (`src/dashboard/`), use these context7 library IDs for up-to-date documentation:
