@@ -288,8 +288,13 @@ export class PowerSyncAdapter implements StorageAdapter {
   // Statistics
   // ============================================
 
-  async getProductivityStats(userId: string, startDate: Date, endDate: Date): Promise<ProductivityStats> {
-    const logs = await this.getActivityLog(userId, { startDate, endDate })
+  async getProductivityStats(
+    userId: string,
+    startDate: Date,
+    endDate: Date,
+    timerId?: string
+  ): Promise<ProductivityStats> {
+    const logs = await this.getActivityLog(userId, { startDate, endDate, timerId })
 
     let totalTimeTracked = 0
     let sessionCount = 0

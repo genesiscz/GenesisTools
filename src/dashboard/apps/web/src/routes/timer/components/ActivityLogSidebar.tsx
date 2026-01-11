@@ -317,6 +317,7 @@ export function ActivityLogSidebar({
             startDate={dateRange?.start}
             endDate={dateRange?.end}
             timeRangeLabel={timeRange === 'all' ? 'All time' : `This ${timeRange}`}
+            timerId={selectedTimerId || undefined}
           />
         )}
       </div>

@@ -18,6 +18,7 @@ interface ProductivityStatsProps {
   startDate?: Date
   endDate?: Date
   timeRangeLabel?: string
+  timerId?: string
   className?: string
 }
 
@@ -29,6 +30,7 @@ export function ProductivityStats({
   startDate,
   endDate,
   timeRangeLabel = 'Today',
+  timerId,
   className,
 }: ProductivityStatsProps) {
   const [stats, setStats] = useState<ProductivityStatsType | null>(null)
@@ -48,7 +50,7 @@ export function ProductivityStats({
         const adapter = getStorageAdapter()
         const start = startDate || new Date(0)
         const end = endDate || new Date()
-        const result = await adapter.getProductivityStats(userId, start, end)
+        const result = await adapter.getProductivityStats(userId, start, end, timerId)
         setStats(result)
         setError(null)
       } catch (err) {
@@ -59,7 +61,7 @@ export function ProductivityStats({
     }
 
     fetchStats()
-  }, [userId, startDate?.getTime(), endDate?.getTime()])
+  }, [userId, startDate?.getTime(), endDate?.getTime(), timerId])
 
   if (loading) {
     return (
@@ -170,8 +172,8 @@ export function ProductivityStats({
         </div>
       )}
 
-      {/* Timer breakdown */}
-      {timerEntries.length > 0 && (
+      {/* Timer breakdown - only show when not filtering by a specific timer */}
+      {timerEntries.length > 0 && !timerId && (
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-sm text-gray-400">
             <Zap className="h-4 w-4" />
@@ -182,7 +184,7 @@ export function ProductivityStats({
             {timerEntries
               .sort(([, a], [, b]) => b - a)
               .slice(0, 5)
-              .map(([timerId, time]) => {
+              .map(([entryTimerId, time]) => {
                 const percentage = (time / stats.totalTimeTracked) * 100
                 const minutes = Math.floor(time / 60000)
                 const hours = Math.floor(minutes / 60)
@@ -192,10 +194,10 @@ export function ProductivityStats({
                     : `${minutes}m`
 
                 return (
-                  <div key={timerId} className="space-y-1">
+                  <div key={entryTimerId} className="space-y-1">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-gray-400 truncate max-w-[60%]">
-                        {timerId.slice(0, 8)}...
+                        {entryTimerId.slice(0, 8)}...
                       </span>
                       <span className="text-gray-300 font-mono">{displayTime}</span>
                     </div>

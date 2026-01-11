@@ -31,7 +31,8 @@ export interface StorageAdapter {
   getProductivityStats(
     userId: string,
     startDate: Date,
-    endDate: Date
+    endDate: Date,
+    timerId?: string
   ): Promise<ProductivityStats>
 
   // Real-time subscriptions
