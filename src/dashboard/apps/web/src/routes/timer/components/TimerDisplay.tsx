@@ -51,7 +51,7 @@ export const TimerDisplay = memo(function TimerDisplay({
       glow: 'drop-shadow-[0_0_10px_rgba(52,211,153,0.5)] drop-shadow-[0_0_30px_rgba(52,211,153,0.3)]',
       separator: 'text-emerald-600',
     },
-  }[timerType]
+  }[timerType as 'stopwatch' | 'countdown' | 'pomodoro']
 
   return (
     <div

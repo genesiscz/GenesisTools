@@ -99,7 +99,7 @@ export function ProductivityStats({
   const longestSessionMinutes = Math.floor(stats.longestSession / 60000)
 
   // Get timer entries for breakdown
-  const timerEntries = Object.entries(stats.timerBreakdown)
+  const timerEntries: [string, number][] = Object.entries(stats.timerBreakdown)
 
   return (
     <div className={cn('p-4 space-y-4', className)}>
@@ -227,11 +227,11 @@ export function ProductivityStats({
           </div>
 
           <div className="flex items-end gap-1 h-20">
-            {Object.entries(stats.dailyBreakdown)
+            {(Object.entries(stats.dailyBreakdown) as [string, number][])
               .sort(([a], [b]) => a.localeCompare(b))
               .slice(-7)
               .map(([date, time]) => {
-                const maxTime = Math.max(...Object.values(stats.dailyBreakdown))
+                const maxTime = Math.max(...(Object.values(stats.dailyBreakdown) as number[]))
                 const height = maxTime > 0 ? (time / maxTime) * 100 : 0
                 const day = new Date(date).toLocaleDateString([], { weekday: 'short' })
 

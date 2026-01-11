@@ -111,7 +111,7 @@ export const TimerCard = memo(function TimerCard({
     },
   }
 
-  const colors = colorClasses[timer.timerType]
+  const colors = colorClasses[timer.timerType as keyof typeof colorClasses]
 
   return (
     <div
