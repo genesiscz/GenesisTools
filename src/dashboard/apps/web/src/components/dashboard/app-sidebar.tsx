@@ -11,6 +11,12 @@ import {
   User,
   LogOut,
   ChevronUp,
+  ListTodo,
+  Compass,
+  ParkingCircle,
+  Scale,
+  MessageSquare,
+  BarChart3,
 } from 'lucide-react'
 import { useAuth } from '@workos/authkit-tanstack-react-start/client'
 import {
@@ -48,7 +54,42 @@ const mainNavItems = [
   },
 ]
 
-const toolsNavItems = [
+// Assistant navigation items (purple theme)
+const assistantNavItems = [
+  {
+    title: 'Tasks',
+    url: '/assistant/tasks',
+    icon: ListTodo,
+  },
+  {
+    title: "What's Next",
+    url: '/assistant/next',
+    icon: Compass,
+  },
+  {
+    title: 'Context Parking',
+    url: '/assistant/parking',
+    icon: ParkingCircle,
+  },
+  {
+    title: 'Decisions',
+    url: '/assistant/decisions',
+    icon: Scale,
+  },
+  {
+    title: 'Communication',
+    url: '/assistant/communication',
+    icon: MessageSquare,
+  },
+  {
+    title: 'Analytics',
+    url: '/assistant/analytics',
+    icon: BarChart3,
+  },
+]
+
+// Apps navigation items (existing tools, renamed from "Tools")
+const appsNavItems = [
   {
     title: 'AI Assistant',
     url: '/dashboard/ai',
@@ -147,13 +188,38 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
+        {/* Assistant group with purple theme */}
         <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-accent/70 text-[10px] tracking-widest uppercase font-semibold">
-            Tools
+          <SidebarGroupLabel className="text-purple-400/70 text-[10px] tracking-widest uppercase font-semibold">
+            Assistant
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {toolsNavItems.map((item) => (
+              {assistantNavItems.map((item) => (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isActive(item.url)}
+                    className="data-[active=true]:bg-purple-500/15 data-[active=true]:text-purple-400 data-[active=true]:border-l-2 data-[active=true]:border-purple-500 hover:bg-purple-500/10 hover:text-sidebar-foreground transition-colors"
+                  >
+                    <Link to={item.url}>
+                      <item.icon className="h-4 w-4" />
+                      <span>{item.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-accent/70 text-[10px] tracking-widest uppercase font-semibold">
+            Apps
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {appsNavItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton
                     asChild
