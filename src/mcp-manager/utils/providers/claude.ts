@@ -31,7 +31,7 @@ export class ClaudeProvider extends MCPProvider {
         return JSON.parse(content) as ClaudeGenericConfig;
     }
 
-    async writeConfig(config: unknown): Promise<void> {
+    async writeConfig(config: unknown): Promise<boolean> {
         // Read old content for backup and diff
         let oldContent = "";
         let backupPath = "";
@@ -58,13 +58,14 @@ export class ClaudeProvider extends MCPProvider {
                         await this.backupManager.restoreFromBackup(this.configPath, backupPath);
                     }
                     logger.info(chalk.yellow("Changes reverted."));
-                    return;
+                    return false;
                 }
             }
         }
 
         await writeFile(this.configPath, newContent, "utf-8");
         logger.info(chalk.green(`✓ Configuration written to ${this.configPath}`));
+        return true;
     }
 
     async listServers(): Promise<MCPServerInfo[]> {
@@ -394,7 +395,7 @@ export class ClaudeProvider extends MCPProvider {
         await this.writeConfig(config);
     }
 
-    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<void> {
+    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<boolean> {
         // Strip _meta before processing (unified utility ensures _meta never reaches providers)
         const cleanConfig = stripMeta(config);
         const claudeConfig = await this.readConfig();
@@ -421,7 +422,7 @@ export class ClaudeProvider extends MCPProvider {
             }
         }
 
-        await this.writeConfig(claudeConfig);
+        return this.writeConfig(claudeConfig);
     }
 
     async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<void> {
