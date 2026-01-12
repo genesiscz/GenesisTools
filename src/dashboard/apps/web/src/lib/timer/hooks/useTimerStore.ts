@@ -2,7 +2,7 @@ import { Store } from '@tanstack/store'
 import { useStore } from '@tanstack/react-store'
 import { useEffect, useRef } from 'react'
 import type { Timer, TimerInput, TimerUpdate, LapEntry } from '@dashboard/shared'
-import { getStorageAdapter, initializeStorage } from '../lib/storage'
+import { getStorageAdapter, initializeStorage } from '@/lib/timer/storage'
 
 /**
  * Timer store state

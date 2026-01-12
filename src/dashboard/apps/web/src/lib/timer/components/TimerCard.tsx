@@ -10,8 +10,8 @@ import { LapsList } from './LapsList'
 import { TimeEditor } from './TimeEditor'
 import { CountdownPicker } from './CountdownPicker'
 import { PomodoroSteps } from './PomodoroSteps'
-import { useTimer } from '../hooks/useTimer'
-import { formatTime } from '../hooks/useTimerEngine'
+import { useTimer } from '@/lib/timer/hooks/useTimer'
+import { formatTime } from '@/lib/timer/hooks/useTimerEngine'
 
 interface TimerCardProps {
   timerId: string

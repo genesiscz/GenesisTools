@@ -17,19 +17,6 @@ import { Route as TimerIndexRouteImport } from './routes/timer/index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
 import { Route as AssistantIndexRouteImport } from './routes/assistant/index'
 import { Route as TimerTimerIdRouteImport } from './routes/timer.$timerId'
-import { Route as DemoWorkosRouteImport } from './routes/demo/workos'
-import { Route as DemoTrpcTodoRouteImport } from './routes/demo/trpc-todo'
-import { Route as DemoTanstackQueryRouteImport } from './routes/demo/tanstack-query'
-import { Route as DemoTanchatRouteImport } from './routes/demo/tanchat'
-import { Route as DemoTableRouteImport } from './routes/demo/table'
-import { Route as DemoStructuredRouteImport } from './routes/demo/structured'
-import { Route as DemoStoreRouteImport } from './routes/demo/store'
-import { Route as DemoNeonRouteImport } from './routes/demo/neon'
-import { Route as DemoMcpTodosRouteImport } from './routes/demo/mcp-todos'
-import { Route as DemoImageRouteImport } from './routes/demo/image'
-import { Route as DemoDbChatApiRouteImport } from './routes/demo/db-chat-api'
-import { Route as DemoDbChatRouteImport } from './routes/demo/db-chat'
-import { Route as DemoConvexRouteImport } from './routes/demo/convex'
 import { Route as DashboardPlannerRouteImport } from './routes/dashboard/planner'
 import { Route as DashboardNotesRouteImport } from './routes/dashboard/notes'
 import { Route as DashboardFocusRouteImport } from './routes/dashboard/focus'
@@ -46,28 +33,9 @@ import { Route as AssistantNextRouteImport } from './routes/assistant/next'
 import { Route as AssistantDecisionsRouteImport } from './routes/assistant/decisions'
 import { Route as AssistantCommunicationRouteImport } from './routes/assistant/communication'
 import { Route as AssistantAnalyticsRouteImport } from './routes/assistant/analytics'
-import { Route as ExampleGuitarsIndexRouteImport } from './routes/example.guitars/index'
 import { Route as AssistantTasksIndexRouteImport } from './routes/assistant/tasks/index'
-import { Route as ExampleGuitarsGuitarIdRouteImport } from './routes/example.guitars/$guitarId'
-import { Route as DemoStartServerFuncsRouteImport } from './routes/demo/start.server-funcs'
-import { Route as DemoStartApiRequestRouteImport } from './routes/demo/start.api-request'
-import { Route as DemoFormSimpleRouteImport } from './routes/demo/form.simple'
-import { Route as DemoFormAddressRouteImport } from './routes/demo/form.address'
-import { Route as DemoApiTtsRouteImport } from './routes/demo/api.tts'
-import { Route as DemoApiTranscriptionRouteImport } from './routes/demo/api.transcription'
-import { Route as DemoApiTqTodosRouteImport } from './routes/demo/api.tq-todos'
-import { Route as DemoApiTanchatRouteImport } from './routes/demo/api.tanchat'
-import { Route as DemoApiStructuredRouteImport } from './routes/demo/api.structured'
-import { Route as DemoApiNamesRouteImport } from './routes/demo/api.names'
-import { Route as DemoApiMcpTodosRouteImport } from './routes/demo/api.mcp-todos'
-import { Route as DemoApiImageRouteImport } from './routes/demo/api.image'
-import { Route as DemoApiAvailableProvidersRouteImport } from './routes/demo/api.available-providers'
 import { Route as AssistantTasksTaskIdRouteImport } from './routes/assistant/tasks/$taskId'
 import { Route as ApiTrpcSplatRouteImport } from './routes/api.trpc.$'
-import { Route as DemoStartSsrIndexRouteImport } from './routes/demo/start.ssr.index'
-import { Route as DemoStartSsrSpaModeRouteImport } from './routes/demo/start.ssr.spa-mode'
-import { Route as DemoStartSsrFullSsrRouteImport } from './routes/demo/start.ssr.full-ssr'
-import { Route as DemoStartSsrDataOnlyRouteImport } from './routes/demo/start.ssr.data-only'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -107,71 +75,6 @@ const AssistantIndexRoute = AssistantIndexRouteImport.update({
 const TimerTimerIdRoute = TimerTimerIdRouteImport.update({
   id: '/timer/$timerId',
   path: '/timer/$timerId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoWorkosRoute = DemoWorkosRouteImport.update({
-  id: '/demo/workos',
-  path: '/demo/workos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoTrpcTodoRoute = DemoTrpcTodoRouteImport.update({
-  id: '/demo/trpc-todo',
-  path: '/demo/trpc-todo',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoTanstackQueryRoute = DemoTanstackQueryRouteImport.update({
-  id: '/demo/tanstack-query',
-  path: '/demo/tanstack-query',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoTanchatRoute = DemoTanchatRouteImport.update({
-  id: '/demo/tanchat',
-  path: '/demo/tanchat',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoTableRoute = DemoTableRouteImport.update({
-  id: '/demo/table',
-  path: '/demo/table',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoStructuredRoute = DemoStructuredRouteImport.update({
-  id: '/demo/structured',
-  path: '/demo/structured',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoStoreRoute = DemoStoreRouteImport.update({
-  id: '/demo/store',
-  path: '/demo/store',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoNeonRoute = DemoNeonRouteImport.update({
-  id: '/demo/neon',
-  path: '/demo/neon',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoMcpTodosRoute = DemoMcpTodosRouteImport.update({
-  id: '/demo/mcp-todos',
-  path: '/demo/mcp-todos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoImageRoute = DemoImageRouteImport.update({
-  id: '/demo/image',
-  path: '/demo/image',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoDbChatApiRoute = DemoDbChatApiRouteImport.update({
-  id: '/demo/db-chat-api',
-  path: '/demo/db-chat-api',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoDbChatRoute = DemoDbChatRouteImport.update({
-  id: '/demo/db-chat',
-  path: '/demo/db-chat',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoConvexRoute = DemoConvexRouteImport.update({
-  id: '/demo/convex',
-  path: '/demo/convex',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardPlannerRoute = DashboardPlannerRouteImport.update({
@@ -254,87 +157,11 @@ const AssistantAnalyticsRoute = AssistantAnalyticsRouteImport.update({
   path: '/assistant/analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ExampleGuitarsIndexRoute = ExampleGuitarsIndexRouteImport.update({
-  id: '/example/guitars/',
-  path: '/example/guitars/',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AssistantTasksIndexRoute = AssistantTasksIndexRouteImport.update({
   id: '/assistant/tasks/',
   path: '/assistant/tasks/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ExampleGuitarsGuitarIdRoute = ExampleGuitarsGuitarIdRouteImport.update({
-  id: '/example/guitars/$guitarId',
-  path: '/example/guitars/$guitarId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoStartServerFuncsRoute = DemoStartServerFuncsRouteImport.update({
-  id: '/demo/start/server-funcs',
-  path: '/demo/start/server-funcs',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoStartApiRequestRoute = DemoStartApiRequestRouteImport.update({
-  id: '/demo/start/api-request',
-  path: '/demo/start/api-request',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoFormSimpleRoute = DemoFormSimpleRouteImport.update({
-  id: '/demo/form/simple',
-  path: '/demo/form/simple',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoFormAddressRoute = DemoFormAddressRouteImport.update({
-  id: '/demo/form/address',
-  path: '/demo/form/address',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoApiTtsRoute = DemoApiTtsRouteImport.update({
-  id: '/demo/api/tts',
-  path: '/demo/api/tts',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoApiTranscriptionRoute = DemoApiTranscriptionRouteImport.update({
-  id: '/demo/api/transcription',
-  path: '/demo/api/transcription',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoApiTqTodosRoute = DemoApiTqTodosRouteImport.update({
-  id: '/demo/api/tq-todos',
-  path: '/demo/api/tq-todos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoApiTanchatRoute = DemoApiTanchatRouteImport.update({
-  id: '/demo/api/tanchat',
-  path: '/demo/api/tanchat',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoApiStructuredRoute = DemoApiStructuredRouteImport.update({
-  id: '/demo/api/structured',
-  path: '/demo/api/structured',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoApiNamesRoute = DemoApiNamesRouteImport.update({
-  id: '/demo/api/names',
-  path: '/demo/api/names',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoApiMcpTodosRoute = DemoApiMcpTodosRouteImport.update({
-  id: '/demo/api/mcp-todos',
-  path: '/demo/api/mcp-todos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoApiImageRoute = DemoApiImageRouteImport.update({
-  id: '/demo/api/image',
-  path: '/demo/api/image',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoApiAvailableProvidersRoute =
-  DemoApiAvailableProvidersRouteImport.update({
-    id: '/demo/api/available-providers',
-    path: '/demo/api/available-providers',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 const AssistantTasksTaskIdRoute = AssistantTasksTaskIdRouteImport.update({
   id: '/assistant/tasks/$taskId',
   path: '/assistant/tasks/$taskId',
@@ -343,26 +170,6 @@ const AssistantTasksTaskIdRoute = AssistantTasksTaskIdRouteImport.update({
 const ApiTrpcSplatRoute = ApiTrpcSplatRouteImport.update({
   id: '/api/trpc/$',
   path: '/api/trpc/$',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoStartSsrIndexRoute = DemoStartSsrIndexRouteImport.update({
-  id: '/demo/start/ssr/',
-  path: '/demo/start/ssr/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoStartSsrSpaModeRoute = DemoStartSsrSpaModeRouteImport.update({
-  id: '/demo/start/ssr/spa-mode',
-  path: '/demo/start/ssr/spa-mode',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoStartSsrFullSsrRoute = DemoStartSsrFullSsrRouteImport.update({
-  id: '/demo/start/ssr/full-ssr',
-  path: '/demo/start/ssr/full-ssr',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DemoStartSsrDataOnlyRoute = DemoStartSsrDataOnlyRouteImport.update({
-  id: '/demo/start/ssr/data-only',
-  path: '/demo/start/ssr/data-only',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -387,45 +194,13 @@ export interface FileRoutesByFullPath {
   '/dashboard/focus': typeof DashboardFocusRoute
   '/dashboard/notes': typeof DashboardNotesRoute
   '/dashboard/planner': typeof DashboardPlannerRoute
-  '/demo/convex': typeof DemoConvexRoute
-  '/demo/db-chat': typeof DemoDbChatRoute
-  '/demo/db-chat-api': typeof DemoDbChatApiRoute
-  '/demo/image': typeof DemoImageRoute
-  '/demo/mcp-todos': typeof DemoMcpTodosRoute
-  '/demo/neon': typeof DemoNeonRoute
-  '/demo/store': typeof DemoStoreRoute
-  '/demo/structured': typeof DemoStructuredRoute
-  '/demo/table': typeof DemoTableRoute
-  '/demo/tanchat': typeof DemoTanchatRoute
-  '/demo/tanstack-query': typeof DemoTanstackQueryRoute
-  '/demo/trpc-todo': typeof DemoTrpcTodoRoute
-  '/demo/workos': typeof DemoWorkosRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
   '/assistant': typeof AssistantIndexRoute
   '/dashboard': typeof DashboardIndexRoute
   '/timer': typeof TimerIndexRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
   '/assistant/tasks/$taskId': typeof AssistantTasksTaskIdRoute
-  '/demo/api/available-providers': typeof DemoApiAvailableProvidersRoute
-  '/demo/api/image': typeof DemoApiImageRoute
-  '/demo/api/mcp-todos': typeof DemoApiMcpTodosRoute
-  '/demo/api/names': typeof DemoApiNamesRoute
-  '/demo/api/structured': typeof DemoApiStructuredRoute
-  '/demo/api/tanchat': typeof DemoApiTanchatRoute
-  '/demo/api/tq-todos': typeof DemoApiTqTodosRoute
-  '/demo/api/transcription': typeof DemoApiTranscriptionRoute
-  '/demo/api/tts': typeof DemoApiTtsRoute
-  '/demo/form/address': typeof DemoFormAddressRoute
-  '/demo/form/simple': typeof DemoFormSimpleRoute
-  '/demo/start/api-request': typeof DemoStartApiRequestRoute
-  '/demo/start/server-funcs': typeof DemoStartServerFuncsRoute
-  '/example/guitars/$guitarId': typeof ExampleGuitarsGuitarIdRoute
   '/assistant/tasks': typeof AssistantTasksIndexRoute
-  '/example/guitars': typeof ExampleGuitarsIndexRoute
-  '/demo/start/ssr/data-only': typeof DemoStartSsrDataOnlyRoute
-  '/demo/start/ssr/full-ssr': typeof DemoStartSsrFullSsrRoute
-  '/demo/start/ssr/spa-mode': typeof DemoStartSsrSpaModeRoute
-  '/demo/start/ssr': typeof DemoStartSsrIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -448,45 +223,13 @@ export interface FileRoutesByTo {
   '/dashboard/focus': typeof DashboardFocusRoute
   '/dashboard/notes': typeof DashboardNotesRoute
   '/dashboard/planner': typeof DashboardPlannerRoute
-  '/demo/convex': typeof DemoConvexRoute
-  '/demo/db-chat': typeof DemoDbChatRoute
-  '/demo/db-chat-api': typeof DemoDbChatApiRoute
-  '/demo/image': typeof DemoImageRoute
-  '/demo/mcp-todos': typeof DemoMcpTodosRoute
-  '/demo/neon': typeof DemoNeonRoute
-  '/demo/store': typeof DemoStoreRoute
-  '/demo/structured': typeof DemoStructuredRoute
-  '/demo/table': typeof DemoTableRoute
-  '/demo/tanchat': typeof DemoTanchatRoute
-  '/demo/tanstack-query': typeof DemoTanstackQueryRoute
-  '/demo/trpc-todo': typeof DemoTrpcTodoRoute
-  '/demo/workos': typeof DemoWorkosRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
   '/assistant': typeof AssistantIndexRoute
   '/dashboard': typeof DashboardIndexRoute
   '/timer': typeof TimerIndexRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
   '/assistant/tasks/$taskId': typeof AssistantTasksTaskIdRoute
-  '/demo/api/available-providers': typeof DemoApiAvailableProvidersRoute
-  '/demo/api/image': typeof DemoApiImageRoute
-  '/demo/api/mcp-todos': typeof DemoApiMcpTodosRoute
-  '/demo/api/names': typeof DemoApiNamesRoute
-  '/demo/api/structured': typeof DemoApiStructuredRoute
-  '/demo/api/tanchat': typeof DemoApiTanchatRoute
-  '/demo/api/tq-todos': typeof DemoApiTqTodosRoute
-  '/demo/api/transcription': typeof DemoApiTranscriptionRoute
-  '/demo/api/tts': typeof DemoApiTtsRoute
-  '/demo/form/address': typeof DemoFormAddressRoute
-  '/demo/form/simple': typeof DemoFormSimpleRoute
-  '/demo/start/api-request': typeof DemoStartApiRequestRoute
-  '/demo/start/server-funcs': typeof DemoStartServerFuncsRoute
-  '/example/guitars/$guitarId': typeof ExampleGuitarsGuitarIdRoute
   '/assistant/tasks': typeof AssistantTasksIndexRoute
-  '/example/guitars': typeof ExampleGuitarsIndexRoute
-  '/demo/start/ssr/data-only': typeof DemoStartSsrDataOnlyRoute
-  '/demo/start/ssr/full-ssr': typeof DemoStartSsrFullSsrRoute
-  '/demo/start/ssr/spa-mode': typeof DemoStartSsrSpaModeRoute
-  '/demo/start/ssr': typeof DemoStartSsrIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -510,45 +253,13 @@ export interface FileRoutesById {
   '/dashboard/focus': typeof DashboardFocusRoute
   '/dashboard/notes': typeof DashboardNotesRoute
   '/dashboard/planner': typeof DashboardPlannerRoute
-  '/demo/convex': typeof DemoConvexRoute
-  '/demo/db-chat': typeof DemoDbChatRoute
-  '/demo/db-chat-api': typeof DemoDbChatApiRoute
-  '/demo/image': typeof DemoImageRoute
-  '/demo/mcp-todos': typeof DemoMcpTodosRoute
-  '/demo/neon': typeof DemoNeonRoute
-  '/demo/store': typeof DemoStoreRoute
-  '/demo/structured': typeof DemoStructuredRoute
-  '/demo/table': typeof DemoTableRoute
-  '/demo/tanchat': typeof DemoTanchatRoute
-  '/demo/tanstack-query': typeof DemoTanstackQueryRoute
-  '/demo/trpc-todo': typeof DemoTrpcTodoRoute
-  '/demo/workos': typeof DemoWorkosRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
   '/assistant/': typeof AssistantIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/timer/': typeof TimerIndexRoute
   '/api/trpc/$': typeof ApiTrpcSplatRoute
   '/assistant/tasks/$taskId': typeof AssistantTasksTaskIdRoute
-  '/demo/api/available-providers': typeof DemoApiAvailableProvidersRoute
-  '/demo/api/image': typeof DemoApiImageRoute
-  '/demo/api/mcp-todos': typeof DemoApiMcpTodosRoute
-  '/demo/api/names': typeof DemoApiNamesRoute
-  '/demo/api/structured': typeof DemoApiStructuredRoute
-  '/demo/api/tanchat': typeof DemoApiTanchatRoute
-  '/demo/api/tq-todos': typeof DemoApiTqTodosRoute
-  '/demo/api/transcription': typeof DemoApiTranscriptionRoute
-  '/demo/api/tts': typeof DemoApiTtsRoute
-  '/demo/form/address': typeof DemoFormAddressRoute
-  '/demo/form/simple': typeof DemoFormSimpleRoute
-  '/demo/start/api-request': typeof DemoStartApiRequestRoute
-  '/demo/start/server-funcs': typeof DemoStartServerFuncsRoute
-  '/example/guitars/$guitarId': typeof ExampleGuitarsGuitarIdRoute
   '/assistant/tasks/': typeof AssistantTasksIndexRoute
-  '/example/guitars/': typeof ExampleGuitarsIndexRoute
-  '/demo/start/ssr/data-only': typeof DemoStartSsrDataOnlyRoute
-  '/demo/start/ssr/full-ssr': typeof DemoStartSsrFullSsrRoute
-  '/demo/start/ssr/spa-mode': typeof DemoStartSsrSpaModeRoute
-  '/demo/start/ssr/': typeof DemoStartSsrIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -573,45 +284,13 @@ export interface FileRouteTypes {
     | '/dashboard/focus'
     | '/dashboard/notes'
     | '/dashboard/planner'
-    | '/demo/convex'
-    | '/demo/db-chat'
-    | '/demo/db-chat-api'
-    | '/demo/image'
-    | '/demo/mcp-todos'
-    | '/demo/neon'
-    | '/demo/store'
-    | '/demo/structured'
-    | '/demo/table'
-    | '/demo/tanchat'
-    | '/demo/tanstack-query'
-    | '/demo/trpc-todo'
-    | '/demo/workos'
     | '/timer/$timerId'
     | '/assistant'
     | '/dashboard'
     | '/timer'
     | '/api/trpc/$'
     | '/assistant/tasks/$taskId'
-    | '/demo/api/available-providers'
-    | '/demo/api/image'
-    | '/demo/api/mcp-todos'
-    | '/demo/api/names'
-    | '/demo/api/structured'
-    | '/demo/api/tanchat'
-    | '/demo/api/tq-todos'
-    | '/demo/api/transcription'
-    | '/demo/api/tts'
-    | '/demo/form/address'
-    | '/demo/form/simple'
-    | '/demo/start/api-request'
-    | '/demo/start/server-funcs'
-    | '/example/guitars/$guitarId'
     | '/assistant/tasks'
-    | '/example/guitars'
-    | '/demo/start/ssr/data-only'
-    | '/demo/start/ssr/full-ssr'
-    | '/demo/start/ssr/spa-mode'
-    | '/demo/start/ssr'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -634,45 +313,13 @@ export interface FileRouteTypes {
     | '/dashboard/focus'
     | '/dashboard/notes'
     | '/dashboard/planner'
-    | '/demo/convex'
-    | '/demo/db-chat'
-    | '/demo/db-chat-api'
-    | '/demo/image'
-    | '/demo/mcp-todos'
-    | '/demo/neon'
-    | '/demo/store'
-    | '/demo/structured'
-    | '/demo/table'
-    | '/demo/tanchat'
-    | '/demo/tanstack-query'
-    | '/demo/trpc-todo'
-    | '/demo/workos'
     | '/timer/$timerId'
     | '/assistant'
     | '/dashboard'
     | '/timer'
     | '/api/trpc/$'
     | '/assistant/tasks/$taskId'
-    | '/demo/api/available-providers'
-    | '/demo/api/image'
-    | '/demo/api/mcp-todos'
-    | '/demo/api/names'
-    | '/demo/api/structured'
-    | '/demo/api/tanchat'
-    | '/demo/api/tq-todos'
-    | '/demo/api/transcription'
-    | '/demo/api/tts'
-    | '/demo/form/address'
-    | '/demo/form/simple'
-    | '/demo/start/api-request'
-    | '/demo/start/server-funcs'
-    | '/example/guitars/$guitarId'
     | '/assistant/tasks'
-    | '/example/guitars'
-    | '/demo/start/ssr/data-only'
-    | '/demo/start/ssr/full-ssr'
-    | '/demo/start/ssr/spa-mode'
-    | '/demo/start/ssr'
   id:
     | '__root__'
     | '/'
@@ -695,45 +342,13 @@ export interface FileRouteTypes {
     | '/dashboard/focus'
     | '/dashboard/notes'
     | '/dashboard/planner'
-    | '/demo/convex'
-    | '/demo/db-chat'
-    | '/demo/db-chat-api'
-    | '/demo/image'
-    | '/demo/mcp-todos'
-    | '/demo/neon'
-    | '/demo/store'
-    | '/demo/structured'
-    | '/demo/table'
-    | '/demo/tanchat'
-    | '/demo/tanstack-query'
-    | '/demo/trpc-todo'
-    | '/demo/workos'
     | '/timer/$timerId'
     | '/assistant/'
     | '/dashboard/'
     | '/timer/'
     | '/api/trpc/$'
     | '/assistant/tasks/$taskId'
-    | '/demo/api/available-providers'
-    | '/demo/api/image'
-    | '/demo/api/mcp-todos'
-    | '/demo/api/names'
-    | '/demo/api/structured'
-    | '/demo/api/tanchat'
-    | '/demo/api/tq-todos'
-    | '/demo/api/transcription'
-    | '/demo/api/tts'
-    | '/demo/form/address'
-    | '/demo/form/simple'
-    | '/demo/start/api-request'
-    | '/demo/start/server-funcs'
-    | '/example/guitars/$guitarId'
     | '/assistant/tasks/'
-    | '/example/guitars/'
-    | '/demo/start/ssr/data-only'
-    | '/demo/start/ssr/full-ssr'
-    | '/demo/start/ssr/spa-mode'
-    | '/demo/start/ssr/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -757,45 +372,13 @@ export interface RootRouteChildren {
   DashboardFocusRoute: typeof DashboardFocusRoute
   DashboardNotesRoute: typeof DashboardNotesRoute
   DashboardPlannerRoute: typeof DashboardPlannerRoute
-  DemoConvexRoute: typeof DemoConvexRoute
-  DemoDbChatRoute: typeof DemoDbChatRoute
-  DemoDbChatApiRoute: typeof DemoDbChatApiRoute
-  DemoImageRoute: typeof DemoImageRoute
-  DemoMcpTodosRoute: typeof DemoMcpTodosRoute
-  DemoNeonRoute: typeof DemoNeonRoute
-  DemoStoreRoute: typeof DemoStoreRoute
-  DemoStructuredRoute: typeof DemoStructuredRoute
-  DemoTableRoute: typeof DemoTableRoute
-  DemoTanchatRoute: typeof DemoTanchatRoute
-  DemoTanstackQueryRoute: typeof DemoTanstackQueryRoute
-  DemoTrpcTodoRoute: typeof DemoTrpcTodoRoute
-  DemoWorkosRoute: typeof DemoWorkosRoute
   TimerTimerIdRoute: typeof TimerTimerIdRoute
   AssistantIndexRoute: typeof AssistantIndexRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
   TimerIndexRoute: typeof TimerIndexRoute
   ApiTrpcSplatRoute: typeof ApiTrpcSplatRoute
   AssistantTasksTaskIdRoute: typeof AssistantTasksTaskIdRoute
-  DemoApiAvailableProvidersRoute: typeof DemoApiAvailableProvidersRoute
-  DemoApiImageRoute: typeof DemoApiImageRoute
-  DemoApiMcpTodosRoute: typeof DemoApiMcpTodosRoute
-  DemoApiNamesRoute: typeof DemoApiNamesRoute
-  DemoApiStructuredRoute: typeof DemoApiStructuredRoute
-  DemoApiTanchatRoute: typeof DemoApiTanchatRoute
-  DemoApiTqTodosRoute: typeof DemoApiTqTodosRoute
-  DemoApiTranscriptionRoute: typeof DemoApiTranscriptionRoute
-  DemoApiTtsRoute: typeof DemoApiTtsRoute
-  DemoFormAddressRoute: typeof DemoFormAddressRoute
-  DemoFormSimpleRoute: typeof DemoFormSimpleRoute
-  DemoStartApiRequestRoute: typeof DemoStartApiRequestRoute
-  DemoStartServerFuncsRoute: typeof DemoStartServerFuncsRoute
-  ExampleGuitarsGuitarIdRoute: typeof ExampleGuitarsGuitarIdRoute
   AssistantTasksIndexRoute: typeof AssistantTasksIndexRoute
-  ExampleGuitarsIndexRoute: typeof ExampleGuitarsIndexRoute
-  DemoStartSsrDataOnlyRoute: typeof DemoStartSsrDataOnlyRoute
-  DemoStartSsrFullSsrRoute: typeof DemoStartSsrFullSsrRoute
-  DemoStartSsrSpaModeRoute: typeof DemoStartSsrSpaModeRoute
-  DemoStartSsrIndexRoute: typeof DemoStartSsrIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -854,97 +437,6 @@ declare module '@tanstack/react-router' {
       path: '/timer/$timerId'
       fullPath: '/timer/$timerId'
       preLoaderRoute: typeof TimerTimerIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/workos': {
-      id: '/demo/workos'
-      path: '/demo/workos'
-      fullPath: '/demo/workos'
-      preLoaderRoute: typeof DemoWorkosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/trpc-todo': {
-      id: '/demo/trpc-todo'
-      path: '/demo/trpc-todo'
-      fullPath: '/demo/trpc-todo'
-      preLoaderRoute: typeof DemoTrpcTodoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/tanstack-query': {
-      id: '/demo/tanstack-query'
-      path: '/demo/tanstack-query'
-      fullPath: '/demo/tanstack-query'
-      preLoaderRoute: typeof DemoTanstackQueryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/tanchat': {
-      id: '/demo/tanchat'
-      path: '/demo/tanchat'
-      fullPath: '/demo/tanchat'
-      preLoaderRoute: typeof DemoTanchatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/table': {
-      id: '/demo/table'
-      path: '/demo/table'
-      fullPath: '/demo/table'
-      preLoaderRoute: typeof DemoTableRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/structured': {
-      id: '/demo/structured'
-      path: '/demo/structured'
-      fullPath: '/demo/structured'
-      preLoaderRoute: typeof DemoStructuredRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/store': {
-      id: '/demo/store'
-      path: '/demo/store'
-      fullPath: '/demo/store'
-      preLoaderRoute: typeof DemoStoreRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/neon': {
-      id: '/demo/neon'
-      path: '/demo/neon'
-      fullPath: '/demo/neon'
-      preLoaderRoute: typeof DemoNeonRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/mcp-todos': {
-      id: '/demo/mcp-todos'
-      path: '/demo/mcp-todos'
-      fullPath: '/demo/mcp-todos'
-      preLoaderRoute: typeof DemoMcpTodosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/image': {
-      id: '/demo/image'
-      path: '/demo/image'
-      fullPath: '/demo/image'
-      preLoaderRoute: typeof DemoImageRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/db-chat-api': {
-      id: '/demo/db-chat-api'
-      path: '/demo/db-chat-api'
-      fullPath: '/demo/db-chat-api'
-      preLoaderRoute: typeof DemoDbChatApiRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/db-chat': {
-      id: '/demo/db-chat'
-      path: '/demo/db-chat'
-      fullPath: '/demo/db-chat'
-      preLoaderRoute: typeof DemoDbChatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/convex': {
-      id: '/demo/convex'
-      path: '/demo/convex'
-      fullPath: '/demo/convex'
-      preLoaderRoute: typeof DemoConvexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard/planner': {
@@ -1059,116 +551,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AssistantAnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/example/guitars/': {
-      id: '/example/guitars/'
-      path: '/example/guitars'
-      fullPath: '/example/guitars'
-      preLoaderRoute: typeof ExampleGuitarsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/assistant/tasks/': {
       id: '/assistant/tasks/'
       path: '/assistant/tasks'
       fullPath: '/assistant/tasks'
       preLoaderRoute: typeof AssistantTasksIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/example/guitars/$guitarId': {
-      id: '/example/guitars/$guitarId'
-      path: '/example/guitars/$guitarId'
-      fullPath: '/example/guitars/$guitarId'
-      preLoaderRoute: typeof ExampleGuitarsGuitarIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/start/server-funcs': {
-      id: '/demo/start/server-funcs'
-      path: '/demo/start/server-funcs'
-      fullPath: '/demo/start/server-funcs'
-      preLoaderRoute: typeof DemoStartServerFuncsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/start/api-request': {
-      id: '/demo/start/api-request'
-      path: '/demo/start/api-request'
-      fullPath: '/demo/start/api-request'
-      preLoaderRoute: typeof DemoStartApiRequestRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/form/simple': {
-      id: '/demo/form/simple'
-      path: '/demo/form/simple'
-      fullPath: '/demo/form/simple'
-      preLoaderRoute: typeof DemoFormSimpleRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/form/address': {
-      id: '/demo/form/address'
-      path: '/demo/form/address'
-      fullPath: '/demo/form/address'
-      preLoaderRoute: typeof DemoFormAddressRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/api/tts': {
-      id: '/demo/api/tts'
-      path: '/demo/api/tts'
-      fullPath: '/demo/api/tts'
-      preLoaderRoute: typeof DemoApiTtsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/api/transcription': {
-      id: '/demo/api/transcription'
-      path: '/demo/api/transcription'
-      fullPath: '/demo/api/transcription'
-      preLoaderRoute: typeof DemoApiTranscriptionRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/api/tq-todos': {
-      id: '/demo/api/tq-todos'
-      path: '/demo/api/tq-todos'
-      fullPath: '/demo/api/tq-todos'
-      preLoaderRoute: typeof DemoApiTqTodosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/api/tanchat': {
-      id: '/demo/api/tanchat'
-      path: '/demo/api/tanchat'
-      fullPath: '/demo/api/tanchat'
-      preLoaderRoute: typeof DemoApiTanchatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/api/structured': {
-      id: '/demo/api/structured'
-      path: '/demo/api/structured'
-      fullPath: '/demo/api/structured'
-      preLoaderRoute: typeof DemoApiStructuredRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/api/names': {
-      id: '/demo/api/names'
-      path: '/demo/api/names'
-      fullPath: '/demo/api/names'
-      preLoaderRoute: typeof DemoApiNamesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/api/mcp-todos': {
-      id: '/demo/api/mcp-todos'
-      path: '/demo/api/mcp-todos'
-      fullPath: '/demo/api/mcp-todos'
-      preLoaderRoute: typeof DemoApiMcpTodosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/api/image': {
-      id: '/demo/api/image'
-      path: '/demo/api/image'
-      fullPath: '/demo/api/image'
-      preLoaderRoute: typeof DemoApiImageRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/api/available-providers': {
-      id: '/demo/api/available-providers'
-      path: '/demo/api/available-providers'
-      fullPath: '/demo/api/available-providers'
-      preLoaderRoute: typeof DemoApiAvailableProvidersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/assistant/tasks/$taskId': {
@@ -1183,34 +570,6 @@ declare module '@tanstack/react-router' {
       path: '/api/trpc/$'
       fullPath: '/api/trpc/$'
       preLoaderRoute: typeof ApiTrpcSplatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/start/ssr/': {
-      id: '/demo/start/ssr/'
-      path: '/demo/start/ssr'
-      fullPath: '/demo/start/ssr'
-      preLoaderRoute: typeof DemoStartSsrIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/start/ssr/spa-mode': {
-      id: '/demo/start/ssr/spa-mode'
-      path: '/demo/start/ssr/spa-mode'
-      fullPath: '/demo/start/ssr/spa-mode'
-      preLoaderRoute: typeof DemoStartSsrSpaModeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/start/ssr/full-ssr': {
-      id: '/demo/start/ssr/full-ssr'
-      path: '/demo/start/ssr/full-ssr'
-      fullPath: '/demo/start/ssr/full-ssr'
-      preLoaderRoute: typeof DemoStartSsrFullSsrRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/demo/start/ssr/data-only': {
-      id: '/demo/start/ssr/data-only'
-      path: '/demo/start/ssr/data-only'
-      fullPath: '/demo/start/ssr/data-only'
-      preLoaderRoute: typeof DemoStartSsrDataOnlyRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -1237,45 +596,13 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardFocusRoute: DashboardFocusRoute,
   DashboardNotesRoute: DashboardNotesRoute,
   DashboardPlannerRoute: DashboardPlannerRoute,
-  DemoConvexRoute: DemoConvexRoute,
-  DemoDbChatRoute: DemoDbChatRoute,
-  DemoDbChatApiRoute: DemoDbChatApiRoute,
-  DemoImageRoute: DemoImageRoute,
-  DemoMcpTodosRoute: DemoMcpTodosRoute,
-  DemoNeonRoute: DemoNeonRoute,
-  DemoStoreRoute: DemoStoreRoute,
-  DemoStructuredRoute: DemoStructuredRoute,
-  DemoTableRoute: DemoTableRoute,
-  DemoTanchatRoute: DemoTanchatRoute,
-  DemoTanstackQueryRoute: DemoTanstackQueryRoute,
-  DemoTrpcTodoRoute: DemoTrpcTodoRoute,
-  DemoWorkosRoute: DemoWorkosRoute,
   TimerTimerIdRoute: TimerTimerIdRoute,
   AssistantIndexRoute: AssistantIndexRoute,
   DashboardIndexRoute: DashboardIndexRoute,
   TimerIndexRoute: TimerIndexRoute,
   ApiTrpcSplatRoute: ApiTrpcSplatRoute,
   AssistantTasksTaskIdRoute: AssistantTasksTaskIdRoute,
-  DemoApiAvailableProvidersRoute: DemoApiAvailableProvidersRoute,
-  DemoApiImageRoute: DemoApiImageRoute,
-  DemoApiMcpTodosRoute: DemoApiMcpTodosRoute,
-  DemoApiNamesRoute: DemoApiNamesRoute,
-  DemoApiStructuredRoute: DemoApiStructuredRoute,
-  DemoApiTanchatRoute: DemoApiTanchatRoute,
-  DemoApiTqTodosRoute: DemoApiTqTodosRoute,
-  DemoApiTranscriptionRoute: DemoApiTranscriptionRoute,
-  DemoApiTtsRoute: DemoApiTtsRoute,
-  DemoFormAddressRoute: DemoFormAddressRoute,
-  DemoFormSimpleRoute: DemoFormSimpleRoute,
-  DemoStartApiRequestRoute: DemoStartApiRequestRoute,
-  DemoStartServerFuncsRoute: DemoStartServerFuncsRoute,
-  ExampleGuitarsGuitarIdRoute: ExampleGuitarsGuitarIdRoute,
   AssistantTasksIndexRoute: AssistantTasksIndexRoute,
-  ExampleGuitarsIndexRoute: ExampleGuitarsIndexRoute,
-  DemoStartSsrDataOnlyRoute: DemoStartSsrDataOnlyRoute,
-  DemoStartSsrFullSsrRoute: DemoStartSsrFullSsrRoute,
-  DemoStartSsrSpaModeRoute: DemoStartSsrSpaModeRoute,
-  DemoStartSsrIndexRoute: DemoStartSsrIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

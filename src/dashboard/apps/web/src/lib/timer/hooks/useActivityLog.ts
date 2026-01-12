@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import type { ActivityLogEntry, ActivityLogQueryOptions, ProductivityStats } from '@dashboard/shared'
-import { getStorageAdapter, initializeStorage } from '../lib/storage'
+import { getStorageAdapter, initializeStorage } from '@/lib/timer/storage'
 
 interface UseActivityLogOptions {
   userId: string | null

@@ -3,17 +3,13 @@ import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { TanStackDevtools } from "@tanstack/react-devtools";
 import { Toaster } from "sonner";
 
-import Header from "../components/Header";
+import WorkOSProvider from "@/integrations/workos/provider";
 
-import WorkOSProvider from "../integrations/workos/provider";
+import TanStackQueryDevtools from "@/integrations/tanstack-query/devtools";
 
-import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
+import AiDevtools from "@/lib/ai-example/ai-devtools";
 
-import StoreDevtools from "../lib/demo-store-devtools";
-
-import AiDevtools from "../lib/ai-devtools";
-
-import appCss from "../styles.css?url";
+import appCss from "@/styles.css?url";
 
 import type { QueryClient } from "@tanstack/react-query";
 
@@ -59,7 +55,6 @@ function RootDocument({ children }: { children: React.ReactNode }) {
             </head>
             <body>
                 <WorkOSProvider>
-                    {/* <Header /> */}
                     {children}
                     <Toaster
                         theme="dark"
@@ -72,20 +67,21 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                             },
                         }}
                     />
-                    <TanStackDevtools
-                        config={{
-                            position: "bottom-right",
-                        }}
-                        plugins={[
-                            {
-                                name: "Tanstack Router",
-                                render: <TanStackRouterDevtoolsPanel />,
-                            },
-                            TanStackQueryDevtools,
-                            StoreDevtools,
-                            AiDevtools,
-                        ]}
-                    />
+                    {import.meta.env.DEV && (
+                        <TanStackDevtools
+                            config={{
+                                position: "bottom-right",
+                            }}
+                            plugins={[
+                                {
+                                    name: "Tanstack Router",
+                                    render: <TanStackRouterDevtoolsPanel />,
+                                },
+                                TanStackQueryDevtools,
+                                AiDevtools,
+                            ]}
+                        />
+                    )}
                 </WorkOSProvider>
                 <Scripts />
             </body>

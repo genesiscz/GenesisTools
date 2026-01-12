@@ -16,7 +16,7 @@ import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
-import { useSettings } from '@/hooks/useSettings'
+import { useSettings } from '@/lib/hooks/useSettings'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/settings')({

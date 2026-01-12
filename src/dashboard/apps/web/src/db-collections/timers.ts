@@ -2,7 +2,7 @@
 // Will be used by PowerSyncAdapter in /routes/timer/lib/storage/
 
 import { z } from 'zod'
-import { db, APP_SCHEMA } from '../db/powersync'
+import { db, APP_SCHEMA } from '@/lib/db/powersync'
 
 /**
  * Timer Schema for validation and type inference

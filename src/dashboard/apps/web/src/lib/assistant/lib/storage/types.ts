@@ -8,7 +8,7 @@ import type {
   CompletionEventInput,
   Streak,
   Badge,
-} from '../../-types'
+} from '@/lib/assistant/types'
 
 /**
  * Storage adapter interface for Assistant module

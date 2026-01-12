@@ -8,7 +8,7 @@ import type {
   CompletionEventInput,
   Streak,
   Badge,
-} from '../../-types'
+} from '@/lib/assistant/types'
 import {
   ASSISTANT_STORAGE_KEYS,
   ASSISTANT_BROADCAST_CHANNEL,
@@ -17,7 +17,7 @@ import {
   generateCompletionId,
   generateBadgeId,
   BADGE_DEFINITIONS,
-} from '../../-types'
+} from '@/lib/assistant/types'
 import type {
   AssistantStorageAdapter,
   AssistantSyncMessage,

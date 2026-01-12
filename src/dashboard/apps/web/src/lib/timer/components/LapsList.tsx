@@ -1,7 +1,7 @@
 import { memo, useMemo, useState } from 'react'
 import { Trash2, ChevronDown, ChevronUp, Trophy, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { formatTimeCompact } from '../hooks/useTimerEngine'
+import { formatTimeCompact } from '@/lib/timer/hooks/useTimerEngine'
 import type { LapEntry } from '@dashboard/shared'
 
 interface LapsListProps {

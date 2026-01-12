@@ -17,7 +17,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import type { Task, ContextParkingInput } from '../-types'
+import type { Task, ContextParkingInput } from '@/lib/assistant/types'
 
 interface ContextParkingModalProps {
   open: boolean

@@ -30,9 +30,9 @@ import {
   FeatureCardHeader,
   FeatureCardContent,
 } from '@/components/ui/feature-card'
-import { useTaskStore } from '../-hooks'
-import type { Task, TaskUpdate, UrgencyLevel, TaskStatus, ContextParking } from '../-types'
-import { getUrgencyColor } from '../-types'
+import { useTaskStore } from '@/lib/assistant/hooks'
+import type { Task, TaskUpdate, UrgencyLevel, TaskStatus, ContextParking } from '@/lib/assistant/types'
+import { getUrgencyColor } from '@/lib/assistant/types'
 
 export const Route = createFileRoute('/assistant/tasks/$taskId')({
   component: TaskDetailPage,

@@ -10,9 +10,9 @@ import type {
   CompletionEvent,
   Streak,
   Badge,
-} from '../-types'
-import { getAssistantStorageAdapter, initializeAssistantStorage } from '../-lib/storage'
-import type { CompletionStats } from '../-lib/storage/types'
+} from '@/lib/assistant/types'
+import { getAssistantStorageAdapter, initializeAssistantStorage } from '@/lib/assistant/lib/storage'
+import type { CompletionStats } from '@/lib/assistant/lib/storage/types'
 
 /**
  * Task store state

@@ -1,7 +1,7 @@
 import type { Timer, TimerType, ActivityLogInput } from '@dashboard/shared'
 import { useTimerStore } from './useTimerStore'
 import { useTimerEngine, formatTime, formatTimeCompact } from './useTimerEngine'
-import { getStorageAdapter } from '../lib/storage'
+import { getStorageAdapter } from '@/lib/timer/storage'
 
 interface UseTimerOptions {
   userId: string | null

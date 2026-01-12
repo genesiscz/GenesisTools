@@ -1,7 +1,7 @@
 import { SidebarProvider, SidebarTrigger, SidebarInset } from '@/components/ui/sidebar'
 import { AppSidebar } from './app-sidebar'
 import { Separator } from '@/components/ui/separator'
-import { useSettings } from '@/hooks/useSettings'
+import { useSettings } from '@/lib/hooks/useSettings'
 
 interface DashboardLayoutProps {
   children: React.ReactNode

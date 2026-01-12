@@ -14,8 +14,8 @@ import {
   FeatureCardHeader,
   FeatureCardContent,
 } from '@/components/ui/feature-card'
-import type { Task, UrgencyLevel, TaskStatus } from '../-types'
-import { getUrgencyColor } from '../-types'
+import type { Task, UrgencyLevel, TaskStatus } from '@/lib/assistant/types'
+import { getUrgencyColor } from '@/lib/assistant/types'
 
 interface TaskCardProps {
   task: Task

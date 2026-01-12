@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils'
 import type { ActivityLogEntry as ActivityLogEntryType } from '@dashboard/shared'
-import { formatTimeCompact, formatDurationHuman } from '../hooks/useTimerEngine'
-import { useSettings } from '@/hooks/useSettings'
+import { formatTimeCompact, formatDurationHuman } from '@/lib/timer/hooks/useTimerEngine'
+import { useSettings } from '@/lib/hooks/useSettings'
 import {
   Play,
   Pause,
