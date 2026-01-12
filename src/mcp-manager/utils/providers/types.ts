@@ -97,7 +97,7 @@ export abstract class MCPProvider {
     /**
      * Write the configuration file
      */
-    abstract writeConfig(config: unknown): Promise<void>;
+    abstract writeConfig(config: unknown): Promise<boolean>;
 
     /**
      * Get list of all MCP servers (enabled and disabled)
@@ -164,8 +164,9 @@ export abstract class MCPProvider {
 
     /**
      * Install/add an MCP server configuration
+     * @returns true if changes were applied, false if reverted
      */
-    abstract installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<void>;
+    abstract installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<boolean>;
 
     /**
      * Check if a server is enabled for this provider based on _meta.enabled state.

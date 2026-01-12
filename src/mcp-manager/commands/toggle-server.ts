@@ -4,16 +4,22 @@ import type { MCPProviderName, PerProjectEnabledState } from "../utils/types.js"
 import { readUnifiedConfig, writeUnifiedConfig, stripMeta } from "../utils/config.utils.js";
 import { getServerNames, promptForProviders, promptForProjects } from "../utils/command.utils.js";
 
+export interface ToggleOptions {
+    provider?: string; // Provider name for non-interactive mode
+}
+
 /**
  * Toggle MCP server(s) enabled/disabled state in selected provider(s)
  * @param enabled - true to enable, false to disable
  * @param serverNameArg - Optional server name from command line
  * @param providers - List of available providers
+ * @param options - Additional options for non-interactive mode
  */
 export async function toggleServer(
     enabled: boolean,
     serverNameArg: string | undefined,
-    providers: MCPProvider[]
+    providers: MCPProvider[],
+    options: ToggleOptions = {}
 ): Promise<void> {
     const action = enabled ? "enable" : "disable";
     const actionPast = enabled ? "enabled" : "disabled";
@@ -42,15 +48,20 @@ export async function toggleServer(
         }
     }
 
-    // Prompt for providers
-    const selectedProviderNames = await promptForProviders(
-        availableProviders,
-        `Select providers to ${action} server(s) in:`
-    );
+    let selectedProviderNames: string[] | null;
+    if (options.provider) {
+        selectedProviderNames = availableProviders.map((p) => p.getName());
+    } else {
+        selectedProviderNames = await promptForProviders(availableProviders, `Select providers to ${action} server(s) in:`);
+    }
+
     if (!selectedProviderNames || selectedProviderNames.length === 0) {
         logger.info("No providers selected.");
         return;
     }
+
+    // Determine if we're in non-interactive mode
+    const isNonInteractive = !!options.provider;
 
     // For each provider, check if it supports projects and prompt for project selection
     for (const providerName of selectedProviderNames) {
@@ -62,15 +73,20 @@ export async function toggleServer(
         let projectChoices: Array<{ projectPath: string | null; displayName: string }> | null = null;
 
         if (projects.length > 0) {
-            // Provider supports projects - prompt for selection
-            projectChoices = await promptForProjects(
-                projects,
-                `Select projects for ${providerName} (or "Global" for all):`
-            );
+            if (isNonInteractive) {
+                // Non-interactive: apply globally to all projects
+                projectChoices = [{ projectPath: null, displayName: "Global (all projects)" }];
+            } else {
+                // Interactive: prompt for selection
+                projectChoices = await promptForProjects(
+                    projects,
+                    `Select projects for ${providerName} (or "Global" for all):`
+                );
 
-            if (!projectChoices || projectChoices.length === 0) {
-                logger.info(`No projects selected for ${providerName}.`);
-                continue;
+                if (!projectChoices || projectChoices.length === 0) {
+                    logger.info(`No projects selected for ${providerName}.`);
+                    continue;
+                }
             }
         }
 

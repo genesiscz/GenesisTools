@@ -8,10 +8,14 @@ import { DiffUtil } from "@app/utils/diff";
 
 const prompter = new Enquirer();
 
+export interface SyncFromOptions {
+    provider?: string; // Provider name(s), comma-separated for non-interactive mode
+}
+
 /**
  * Sync servers FROM providers TO unified config
  */
-export async function syncFromProviders(providers: MCPProvider[]): Promise<void> {
+export async function syncFromProviders(providers: MCPProvider[], options: SyncFromOptions = {}): Promise<void> {
     const availableProviders: MCPProvider[] = [];
 
     // Check which providers have configs
@@ -26,24 +30,37 @@ export async function syncFromProviders(providers: MCPProvider[]): Promise<void>
         return;
     }
 
-    try {
-        const { selectedProviders } = (await prompter.prompt({
-            type: "multiselect",
-            name: "selectedProviders",
-            message: "Select providers to sync from:",
-            choices: availableProviders.map((p) => ({
-                name: p.getName(),
-                message: `${p.getName()} (${p.getConfigPath()})`,
-            })),
-        })) as { selectedProviders: string[] };
+    let selectedProviders: string[];
+    if (options.provider) {
+        selectedProviders = availableProviders.map((p) => p.getName());
+    } else {
+        try {
+            const { selected } = (await prompter.prompt({
+                type: "multiselect",
+                name: "selected",
+                message: "Select providers to sync from:",
+                choices: availableProviders.map((p) => ({
+                    name: p.getName(),
+                    message: `${p.getName()} (${p.getConfigPath()})`,
+                })),
+            })) as { selected: string[] };
+            selectedProviders = selected;
 
-        if (selectedProviders.length === 0) {
-            logger.info("No providers selected. Cancelled.");
-            return;
+            if (selectedProviders.length === 0) {
+                logger.info("No providers selected. Cancelled.");
+                return;
+            }
+        } catch (error: any) {
+            if (error.message === "canceled") {
+                logger.info("\nOperation cancelled by user.");
+                return;
+            }
+            throw error;
         }
+    }
 
-        // Read current unified config
-        const unifiedConfig = await readUnifiedConfig();
+    // Read current unified config
+    const unifiedConfig = await readUnifiedConfig();
         // Preserve _meta from existing config when merging
         const mergedServers: Record<string, UnifiedMCPServerConfig> = {};
         for (const [name, config] of Object.entries(unifiedConfig.mcpServers)) {
@@ -292,19 +309,12 @@ export async function syncFromProviders(providers: MCPProvider[]): Promise<void>
             }
         }
 
-        // Update unified config with merged servers
-        unifiedConfig.mcpServers = mergedServers;
-        // Sync enabledMcpServers with _meta.enabled before writing
-        await writeUnifiedConfig(unifiedConfig);
+    // Update unified config with merged servers
+    unifiedConfig.mcpServers = mergedServers;
+    // Sync enabledMcpServers with _meta.enabled before writing
+    await writeUnifiedConfig(unifiedConfig);
 
-        logger.info(
-            chalk.green(`✓ Successfully synced ${Object.keys(mergedServers).length} server(s) to unified config`)
-        );
-    } catch (error: any) {
-        if (error.message === "canceled") {
-            logger.info("\nOperation cancelled by user.");
-            return;
-        }
-        throw error;
-    }
+    logger.info(
+        chalk.green(`✓ Successfully synced ${Object.keys(mergedServers).length} server(s) to unified config`)
+    );
 }

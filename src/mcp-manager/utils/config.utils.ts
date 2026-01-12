@@ -9,6 +9,21 @@ import chalk from "chalk";
 // Initialize Storage instance for mcp-manager
 const storage = new Storage("mcp-manager");
 
+// Global options that can be set from main entry point
+export interface GlobalOptions {
+    yes?: boolean; // Auto-confirm changes without prompting
+}
+
+let globalOptions: GlobalOptions = {};
+
+export function setGlobalOptions(options: GlobalOptions): void {
+    globalOptions = options;
+}
+
+export function getGlobalOptions(): GlobalOptions {
+    return globalOptions;
+}
+
 /**
  * Get the path to the unified config file
  */

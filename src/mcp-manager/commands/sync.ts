@@ -5,12 +5,16 @@ import { readUnifiedConfig, stripMeta } from "../utils/config.utils.js";
 
 const prompter = new Enquirer();
 
+export interface SyncOptions {
+    provider?: string; // Provider name(s), comma-separated for non-interactive mode
+}
+
 /**
  * Sync servers from unified config to selected providers.
  * Providers read _meta.enabled[providerName] to determine enabled state.
  * Ensures servers are installed and properly enabled/disabled in each provider.
  */
-export async function syncServers(providers: MCPProvider[]): Promise<void> {
+export async function syncServers(providers: MCPProvider[], options: SyncOptions = {}): Promise<void> {
     const config = await readUnifiedConfig();
 
     if (Object.keys(config.mcpServers).length === 0) {
@@ -31,54 +35,60 @@ export async function syncServers(providers: MCPProvider[]): Promise<void> {
         return;
     }
 
-    try {
-        const { selectedProviders } = (await prompter.prompt({
-            type: "multiselect",
-            name: "selectedProviders",
-            message: "Select providers to sync to:",
-            choices: availableProviders.map((p) => ({
-                name: p.getName(),
-                message: `${p.getName()} (${p.getConfigPath()})`,
-            })),
-        })) as { selectedProviders: string[] };
+    let selectedProviders: string[];
+    if (options.provider) {
+        selectedProviders = availableProviders.map((p) => p.getName());
+    } else {
+        try {
+            const { selected } = (await prompter.prompt({
+                type: "multiselect",
+                name: "selected",
+                message: "Select providers to sync to:",
+                choices: availableProviders.map((p) => ({
+                    name: p.getName(),
+                    message: `${p.getName()} (${p.getConfigPath()})`,
+                })),
+            })) as { selected: string[] };
+            selectedProviders = selected;
 
-        if (selectedProviders.length === 0) {
-            logger.info("No providers selected. Cancelled.");
-            return;
-        }
-
-        // For each provider, ensure servers are installed and properly synced
-        for (const providerName of selectedProviders) {
-            const provider = availableProviders.find((p) => p.getName() === providerName);
-            if (!provider) continue;
-
-            try {
-                logger.info(`Syncing to ${providerName}...`);
-
-                // First, ensure all servers are installed in the provider
-                for (const [serverName, serverConfig] of Object.entries(config.mcpServers)) {
-                    const existingServerConfig = await provider.getServerConfig(serverName);
-                    if (!existingServerConfig) {
-                        // Server not installed - install it first
-                        logger.info(`  Installing '${serverName}' in ${providerName}...`);
-                        const configToInstall = stripMeta(serverConfig);
-                        await provider.installServer(serverName, configToInstall);
-                    }
-                }
-
-                // Now sync all servers (with enabled/disabled state from _meta.enabled[providerName])
-                // Pass servers WITH _meta intact - providers read _meta.enabled[providerName] for enabled state
-                await provider.syncServers(config.mcpServers);
-                logger.info(`✓ Synced to ${providerName}`);
-            } catch (error: any) {
-                logger.error(`✗ Failed to sync to ${providerName}: ${error.message}`);
+            if (selectedProviders.length === 0) {
+                logger.info("No providers selected. Cancelled.");
+                return;
             }
+        } catch (error: any) {
+            if (error.message === "canceled") {
+                logger.info("\nOperation cancelled by user.");
+                return;
+            }
+            throw error;
         }
-    } catch (error: any) {
-        if (error.message === "canceled") {
-            logger.info("\nOperation cancelled by user.");
-            return;
+    }
+
+    // For each provider, ensure servers are installed and properly synced
+    for (const providerName of selectedProviders) {
+        const provider = availableProviders.find((p) => p.getName() === providerName);
+        if (!provider) continue;
+
+        try {
+            logger.info(`Syncing to ${providerName}...`);
+
+            // First, ensure all servers are installed in the provider
+            for (const [serverName, serverConfig] of Object.entries(config.mcpServers)) {
+                const existingServerConfig = await provider.getServerConfig(serverName);
+                if (!existingServerConfig) {
+                    // Server not installed - install it first
+                    logger.info(`  Installing '${serverName}' in ${providerName}...`);
+                    const configToInstall = stripMeta(serverConfig);
+                    await provider.installServer(serverName, configToInstall);
+                }
+            }
+
+            // Now sync all servers (with enabled/disabled state from _meta.enabled[providerName])
+            // Pass servers WITH _meta intact - providers read _meta.enabled[providerName] for enabled state
+            await provider.syncServers(config.mcpServers);
+            logger.info(`✓ Synced to ${providerName}`);
+        } catch (error: any) {
+            logger.error(`✗ Failed to sync to ${providerName}: ${error.message}`);
         }
-        throw error;
     }
 }
