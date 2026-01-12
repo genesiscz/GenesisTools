@@ -6,7 +6,7 @@ import {
 import type { InferChatMessages } from '@tanstack/ai-react'
 import { clientTools } from '@tanstack/ai-client'
 
-import { recommendGuitarToolDef } from '@/lib/example.guitar-tools'
+import { recommendGuitarToolDef } from '@/lib/ai-example/guitar-tools'
 
 const recommendGuitarToolClient = recommendGuitarToolDef.client(({ id }) => ({
   id: +id,

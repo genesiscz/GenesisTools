@@ -54,7 +54,7 @@ export class DashboardConnector implements PowerSyncBackendConnector {
       console.log(`[PowerSync] Uploading ${operations.length} operations to server...`)
 
       // Dynamic import to avoid bundling issues
-      const { uploadSyncBatch } = await import('@/lib/timer-sync.server')
+      const { uploadSyncBatch } = await import('@/lib/timer/timer-sync.server')
       await uploadSyncBatch({ data: { operations } })
 
       // Mark the batch as complete

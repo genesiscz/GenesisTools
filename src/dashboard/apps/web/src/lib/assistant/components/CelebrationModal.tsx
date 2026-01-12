@@ -6,7 +6,7 @@ import {
   Dialog,
   DialogContent,
 } from '@/components/ui/dialog'
-import type { Task, Badge, Streak } from '../-types'
+import type { Task, Badge, Streak } from '@/lib/assistant/types'
 
 interface CelebrationModalProps {
   open: boolean

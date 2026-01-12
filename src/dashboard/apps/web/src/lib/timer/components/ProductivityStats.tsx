@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { cn } from '@/lib/utils'
 import type { ProductivityStats as ProductivityStatsType } from '@dashboard/shared'
-import { getStorageAdapter } from '../lib/storage'
+import { getStorageAdapter } from '@/lib/timer/storage'
 import {
   Clock,
   Zap,

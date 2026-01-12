@@ -1,5 +1,5 @@
-import { db, initializeDatabase, syncToServer } from '@/db/powersync'
-import { getTimersFromServer, getActivityLogsFromServer } from '@/lib/timer-sync.server'
+import { db, initializeDatabase, syncToServer } from '@/lib/db/powersync'
+import { getTimersFromServer, getActivityLogsFromServer } from '@/lib/timer/timer-sync.server'
 import { generateTimerId, generateActivityLogId } from '@dashboard/shared'
 import type {
   Timer,

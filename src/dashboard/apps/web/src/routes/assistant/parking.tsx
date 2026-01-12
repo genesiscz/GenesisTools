@@ -26,8 +26,8 @@ import {
   FeatureCardHeader,
   FeatureCardContent,
 } from '@/components/ui/feature-card'
-import { useTaskStore } from './-hooks'
-import type { ContextParking, ParkingStatus } from './-types'
+import { useTaskStore } from '@/lib/assistant/hooks'
+import type { ContextParking, ParkingStatus } from '@/lib/assistant/types'
 
 export const Route = createFileRoute('/assistant/parking')({
   component: ParkingPage,

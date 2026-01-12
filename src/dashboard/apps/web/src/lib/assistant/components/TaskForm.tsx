@@ -12,7 +12,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import type { TaskInput, UrgencyLevel } from '../-types'
+import type { TaskInput, UrgencyLevel } from '@/lib/assistant/types'
 
 interface TaskFormProps {
   open: boolean

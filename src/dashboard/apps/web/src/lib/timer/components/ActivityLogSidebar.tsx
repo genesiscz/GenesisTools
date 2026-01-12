@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import type { Timer } from '@dashboard/shared'
-import { useActivityLog, getTodayRange, getWeekRange, getMonthRange } from '../hooks/useActivityLog'
+import { useActivityLog, getTodayRange, getWeekRange, getMonthRange } from '@/lib/timer/hooks/useActivityLog'
 import { ActivityLogEntry } from './ActivityLogEntry'
 import { ProductivityStats } from './ProductivityStats'
 import {
