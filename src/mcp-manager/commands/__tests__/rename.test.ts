@@ -17,7 +17,7 @@ describe("renameServer", () => {
         const mockConfig = createMockUnifiedConfig();
         
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue();
+        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
         spyOn(logger, "info");
         spyOn(logger, "warn");
         spyOn(logger, "error");
@@ -52,7 +52,7 @@ describe("renameServer", () => {
         mockConfig.mcpServers["existing-server"] = createMockUnifiedConfig().mcpServers["test-server"];
         
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue();
+        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
         spyOn(logger, "info");
         spyOn(logger, "warn");
         
@@ -116,7 +116,7 @@ describe("renameServer", () => {
         mockProvider.listServersResult = [mockServerInfo];
         
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue();
+        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
         spyOn(logger, "info");
         spyOn(logger, "warn");
         
@@ -146,7 +146,7 @@ describe("renameServer", () => {
         };
         
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue();
+        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
         spyOn(logger, "info");
         
         const mockPrompt = spyOn(require("enquirer"), "default").mockImplementation(() => ({
