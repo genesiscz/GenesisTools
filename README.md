@@ -19,6 +19,7 @@
 
 ## 📚 Table of Contents
 
+-   [🎯 Claude Code Plugin](#-claude-code-plugin)
 -   [🚀 Quick Start](#-quick-start)
 -   [🛠️ Available Tools](#️-available-tools)
     -   [🔍 Git & Version Control](#-git--version-control)
@@ -26,6 +27,39 @@
     -   [📊 Monitoring & Watching](#-monitoring--watching)
     -   [📦 Package Management](#-package-management)
 -   [💡 Tool Details](#-tool-details)
+
+---
+
+## 🎯 Claude Code Plugin
+
+GenesisTools includes a Claude Code plugin with skills and commands to enhance your AI-assisted development workflow.
+
+### Installation for Claude Code
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/genesiscz/GenesisTools.git
+cd GenesisTools
+
+# 2. Install the marketplace
+# Add this repository as a marketplace in your Claude Code settings
+# The marketplace file is located at: .claude-plugin/marketplace.json
+
+# 3. The plugin includes:
+# - Setup command: Guide you through GenesisTools installation
+# - Azure DevOps skill: Fetch and manage work items, queries, and dashboards
+```
+
+### What's Included in the Plugin
+
+| Component | Name | Description |
+|-----------|------|-------------|
+| **Command** | `setup` | Interactive setup guide for installing GenesisTools globally |
+| **Skill** | `azure-devops` | Automatically helps with Azure DevOps work items and queries |
+
+To use the plugin in Claude Code:
+- Commands are invoked with `/genesis-tools:setup`
+- Skills are automatically triggered when you ask about Azure DevOps work items
 
 ---
 
