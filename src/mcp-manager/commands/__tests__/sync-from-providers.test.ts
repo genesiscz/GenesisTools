@@ -37,8 +37,8 @@ describe("syncFromProviders", () => {
         
         let capturedConfig: any = null;
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-        spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any) => {
-            capturedConfig = config;
+        spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
+            capturedConfig = config; return true;
         });
         spyOn(logger, "info");
         spyOn(logger, "debug");
@@ -73,8 +73,8 @@ describe("syncFromProviders", () => {
         
         let capturedConfig: any = null;
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-        spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any) => {
-            capturedConfig = config;
+        spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
+            capturedConfig = config; return true;
         });
         spyOn(logger, "info");
         spyOn(logger, "debug");
@@ -107,7 +107,7 @@ describe("syncFromProviders", () => {
         mockProvider.listServersResult = [conflictingServer];
         
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue();
+        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
         spyOn(logger, "info");
         spyOn(logger, "warn");
         
@@ -137,8 +137,8 @@ describe("syncFromProviders", () => {
         
         let capturedConfig: any = null;
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-        spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any) => {
-            capturedConfig = config;
+        spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
+            capturedConfig = config; return true;
         });
         spyOn(logger, "info");
         spyOn(logger, "warn");

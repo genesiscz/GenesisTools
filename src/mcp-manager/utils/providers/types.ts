@@ -129,18 +129,20 @@ export abstract class MCPProvider {
     abstract disableServerForAllProjects(serverName: string): Promise<void>;
 
     /**
-     * Enable multiple MCP servers in a single batch operation (one backup, one diff, one save)
+     * Enable multiple MCP servers in a single batch operation
      * @param serverNames - Names of the servers to enable
      * @param projectPath - Optional project path for project-specific enabling
+     * @returns true if changes were applied, false if no changes or rejected
      */
-    abstract enableServers(serverNames: string[], projectPath?: string | null): Promise<void>;
+    abstract enableServers(serverNames: string[], projectPath?: string | null): Promise<boolean>;
 
     /**
-     * Disable multiple MCP servers in a single batch operation (one backup, one diff, one save)
+     * Disable multiple MCP servers in a single batch operation
      * @param serverNames - Names of the servers to disable
      * @param projectPath - Optional project path for project-specific disabling
+     * @returns true if changes were applied, false if no changes or rejected
      */
-    abstract disableServers(serverNames: string[], projectPath?: string | null): Promise<void>;
+    abstract disableServers(serverNames: string[], projectPath?: string | null): Promise<boolean>;
 
     /**
      * Get available projects (if provider supports project-level configuration)
@@ -204,8 +206,9 @@ export abstract class MCPProvider {
      * Sync servers from unified config to this provider.
      * Reads _meta.enabled[providerName] to determine enabled state per server.
      * @param servers - Server configurations to sync (with _meta intact)
+     * @returns true if changes were applied, false if no changes or rejected
      */
-    abstract syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<void>;
+    abstract syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<boolean>;
 
     /**
      * Convert provider-specific config to unified format

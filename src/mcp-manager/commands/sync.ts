@@ -76,17 +76,17 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
             for (const [serverName, serverConfig] of Object.entries(config.mcpServers)) {
                 const existingServerConfig = await provider.getServerConfig(serverName);
                 if (!existingServerConfig) {
-                    // Server not installed - install it first
                     logger.info(`  Installing '${serverName}' in ${providerName}...`);
                     const configToInstall = stripMeta(serverConfig);
                     await provider.installServer(serverName, configToInstall);
                 }
             }
 
-            // Now sync all servers (with enabled/disabled state from _meta.enabled[providerName])
-            // Pass servers WITH _meta intact - providers read _meta.enabled[providerName] for enabled state
-            await provider.syncServers(config.mcpServers);
-            logger.info(`✓ Synced to ${providerName}`);
+            // Sync all servers (with enabled/disabled state from _meta.enabled[providerName])
+            const synced = await provider.syncServers(config.mcpServers);
+            if (synced) {
+                logger.info(`✓ Synced to ${providerName}`);
+            }
         } catch (error: any) {
             logger.error(`✗ Failed to sync to ${providerName}: ${error.message}`);
         }

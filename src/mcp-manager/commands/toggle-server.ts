@@ -193,44 +193,43 @@ export async function toggleServer(
             }
         }
 
-        // Batch toggle all servers in this provider (one backup, one diff, one save)
+        // Batch toggle all servers in this provider
         if (serversToToggle.length > 0) {
             try {
                 if (projectChoices) {
-                    // Toggle for each project selection
                     for (const projectChoice of projectChoices) {
-                        if (enabled) {
-                            await provider.enableServers(serversToToggle, projectChoice.projectPath);
-                        } else {
-                            await provider.disableServers(serversToToggle, projectChoice.projectPath);
-                        }
+                        const changed = enabled
+                            ? await provider.enableServers(serversToToggle, projectChoice.projectPath)
+                            : await provider.disableServers(serversToToggle, projectChoice.projectPath);
 
-                        if (projectChoice.projectPath === null) {
-                            logger.info(
-                                `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
-                                    serversToToggle.length
-                                } server(s) globally in ${providerName}`
-                            );
-                        } else {
-                            logger.info(
-                                `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
-                                    serversToToggle.length
-                                } server(s) in ${providerName} for project: ${projectChoice.displayName}`
-                            );
+                        if (changed) {
+                            if (projectChoice.projectPath === null) {
+                                logger.info(
+                                    `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
+                                        serversToToggle.length
+                                    } server(s) globally in ${providerName}`
+                                );
+                            } else {
+                                logger.info(
+                                    `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
+                                        serversToToggle.length
+                                    } server(s) in ${providerName} for project: ${projectChoice.displayName}`
+                                );
+                            }
                         }
                     }
                 } else {
-                    // No projects - just toggle globally
-                    if (enabled) {
-                        await provider.enableServers(serversToToggle);
-                    } else {
-                        await provider.disableServers(serversToToggle);
+                    const changed = enabled
+                        ? await provider.enableServers(serversToToggle)
+                        : await provider.disableServers(serversToToggle);
+
+                    if (changed) {
+                        logger.info(
+                            `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
+                                serversToToggle.length
+                            } server(s) globally in ${providerName}`
+                        );
                     }
-                    logger.info(
-                        `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
-                            serversToToggle.length
-                        } server(s) globally in ${providerName}`
-                    );
                 }
             } catch (error: any) {
                 logger.error(`✗ Failed to ${action} servers in ${providerName}: ${error.message}`);
