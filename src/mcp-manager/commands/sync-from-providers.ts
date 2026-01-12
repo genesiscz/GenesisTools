@@ -311,10 +311,11 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
 
     // Update unified config with merged servers
     unifiedConfig.mcpServers = mergedServers;
-    // Sync enabledMcpServers with _meta.enabled before writing
-    await writeUnifiedConfig(unifiedConfig);
+    const written = await writeUnifiedConfig(unifiedConfig);
 
-    logger.info(
-        chalk.green(`✓ Successfully synced ${Object.keys(mergedServers).length} server(s) to unified config`)
-    );
+    if (written) {
+        logger.info(
+            chalk.green(`✓ Successfully synced ${Object.keys(mergedServers).length} server(s) to unified config`)
+        );
+    }
 }
