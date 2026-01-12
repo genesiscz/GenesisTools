@@ -38,11 +38,12 @@ export class MockMCPProvider extends MCPProvider {
         return this.readConfigResult;
     }
 
-    async writeConfig(config: unknown): Promise<void> {
+    async writeConfig(config: unknown): Promise<boolean> {
         if (this.errors.has("writeConfig")) {
             throw this.errors.get("writeConfig")!;
         }
         this.writeConfigCalls.push(config);
+        return true;
     }
 
     async listServers(): Promise<MCPServerInfo[]> {
@@ -100,11 +101,12 @@ export class MockMCPProvider extends MCPProvider {
         return this.getProjectsResult;
     }
 
-    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<void> {
+    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<boolean> {
         if (this.errors.has("installServer")) {
             throw this.errors.get("installServer")!;
         }
         this.installServerCalls.push({ serverName, config });
+        return true;
     }
 
     async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<void> {

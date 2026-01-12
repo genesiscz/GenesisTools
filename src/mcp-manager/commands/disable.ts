@@ -1,9 +1,13 @@
 import type { MCPProvider } from "../utils/providers/types.js";
-import { toggleServer } from "./toggle-server.js";
+import { toggleServer, type ToggleOptions } from "./toggle-server.js";
 
 /**
  * Disable MCP server(s) in selected provider(s)
  */
-export async function disableServer(serverNameArg: string | undefined, providers: MCPProvider[]): Promise<void> {
-    await toggleServer(false, serverNameArg, providers);
+export async function disableServer(
+    serverNameArg: string | undefined,
+    providers: MCPProvider[],
+    options: ToggleOptions = {}
+): Promise<void> {
+    await toggleServer(false, serverNameArg, providers, options);
 }

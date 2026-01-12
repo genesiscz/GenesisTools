@@ -33,7 +33,7 @@ export class CodexProvider extends MCPProvider {
         return TOML.parse(content) as CodexGenericConfig;
     }
 
-    async writeConfig(config: unknown): Promise<void> {
+    async writeConfig(config: unknown): Promise<boolean> {
         // Ensure directory exists
         const dir = path.dirname(this.configPath);
         if (!existsSync(dir)) {
@@ -66,13 +66,14 @@ export class CodexProvider extends MCPProvider {
                         await this.backupManager.restoreFromBackup(this.configPath, backupPath);
                     }
                     logger.info(chalk.yellow("Changes reverted."));
-                    return;
+                    return false;
                 }
             }
         }
 
         await writeFile(this.configPath, newContent, "utf-8");
         logger.info(chalk.green(`✓ Configuration written to ${this.configPath}`));
+        return true;
     }
 
     async listServers(): Promise<MCPServerInfo[]> {
@@ -152,7 +153,7 @@ export class CodexProvider extends MCPProvider {
         }
     }
 
-    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<void> {
+    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<boolean> {
         // Strip _meta before processing (unified utility ensures _meta never reaches providers)
         const cleanConfig = stripMeta(config);
         const codexConfig = await this.readConfig();
@@ -163,7 +164,7 @@ export class CodexProvider extends MCPProvider {
 
         codexConfig.mcp_servers[serverName] = this.unifiedToCodex(cleanConfig);
 
-        await this.writeConfig(codexConfig);
+        return this.writeConfig(codexConfig);
     }
 
     async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<void> {

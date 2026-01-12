@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, spyOn } from "bun:test";
 import { openConfig } from "../config.js";
 import * as configUtils from "../../utils/config.utils.js";
-import * as storageUtils from "../../utils/storage/index.js";
+import { Storage } from "@app/utils/storage";
 import logger from "@app/logger";
 
 describe("openConfig", () => {
@@ -11,13 +11,13 @@ describe("openConfig", () => {
 
     it("should create default config if it doesn't exist", async () => {
         const mockConfigPath = "/mock/config.json";
-        
-        spyOn(storageUtils.Storage.prototype, "ensureDirs").mockResolvedValue();
-        spyOn(storageUtils.Storage.prototype, "getConfig").mockResolvedValue(null);
-        spyOn(storageUtils.Storage.prototype, "setConfig").mockResolvedValue();
+
+        spyOn(Storage.prototype, "ensureDirs").mockResolvedValue(undefined);
+        spyOn(Storage.prototype, "getConfig").mockResolvedValue(null);
+        spyOn(Storage.prototype, "setConfig").mockResolvedValue(undefined);
         spyOn(configUtils, "getUnifiedConfigPath").mockReturnValue(mockConfigPath);
         spyOn(logger, "info");
-        
+
         // Mock Bun.spawn
         const mockSpawn = spyOn(Bun, "spawn").mockImplementation(() => ({
             exited: Promise.resolve({ exitCode: 0 }),
@@ -25,7 +25,7 @@ describe("openConfig", () => {
 
         await openConfig();
 
-        expect(storageUtils.Storage.prototype.setConfig).toHaveBeenCalledWith({
+        expect(Storage.prototype.setConfig).toHaveBeenCalledWith({
             mcpServers: {},
         });
         expect(logger.info).toHaveBeenCalledWith(
@@ -37,8 +37,8 @@ describe("openConfig", () => {
         const mockConfigPath = "/mock/config.json";
         const mockConfig = { mcpServers: { "test": {} } };
         
-        spyOn(storageUtils.Storage.prototype, "ensureDirs").mockResolvedValue();
-        spyOn(storageUtils.Storage.prototype, "getConfig").mockResolvedValue(mockConfig);
+        spyOn(Storage.prototype, "ensureDirs").mockResolvedValue(undefined);
+        spyOn(Storage.prototype, "getConfig").mockResolvedValue(mockConfig);
         spyOn(configUtils, "getUnifiedConfigPath").mockReturnValue(mockConfigPath);
         spyOn(logger, "info");
         
@@ -59,8 +59,8 @@ describe("openConfig", () => {
         process.env.EDITOR = "vim";
         
         const mockConfigPath = "/mock/config.json";
-        spyOn(storageUtils.Storage.prototype, "ensureDirs").mockResolvedValue();
-        spyOn(storageUtils.Storage.prototype, "getConfig").mockResolvedValue({ mcpServers: {} });
+        spyOn(Storage.prototype, "ensureDirs").mockResolvedValue(undefined);
+        spyOn(Storage.prototype, "getConfig").mockResolvedValue({ mcpServers: {} });
         spyOn(configUtils, "getUnifiedConfigPath").mockReturnValue(mockConfigPath);
         spyOn(logger, "info");
         
@@ -88,8 +88,8 @@ describe("openConfig", () => {
         process.env.EDITOR = "code --wait";
         
         const mockConfigPath = "/mock/config.json";
-        spyOn(storageUtils.Storage.prototype, "ensureDirs").mockResolvedValue();
-        spyOn(storageUtils.Storage.prototype, "getConfig").mockResolvedValue({ mcpServers: {} });
+        spyOn(Storage.prototype, "ensureDirs").mockResolvedValue(undefined);
+        spyOn(Storage.prototype, "getConfig").mockResolvedValue({ mcpServers: {} });
         spyOn(configUtils, "getUnifiedConfigPath").mockReturnValue(mockConfigPath);
         spyOn(logger, "info");
         
