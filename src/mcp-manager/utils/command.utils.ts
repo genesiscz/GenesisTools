@@ -1,9 +1,8 @@
-import Enquirer from "enquirer";
+import { checkbox } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import logger from "@app/logger";
 import type { UnifiedMCPConfig } from "./providers/types.js";
 import type { MCPProvider } from "./providers/types.js";
-
-const prompter = new Enquirer();
 
 /**
  * Show help message for the mcp-manager tool
@@ -293,18 +292,16 @@ export async function promptForServers(config: UnifiedMCPConfig, message: string
 
     try {
         console.log(serverNames);
-        const { selectedServers } = (await prompter.prompt({
-            type: "multiselect",
-            name: "selectedServers",
+        const selectedServers = await checkbox({
             message,
-            choices: serverNames,
-            limit: 30,
-            scroll: false,
-        } as any)) as { selectedServers: string[] };
+            choices: serverNames.map((name) => ({ value: name, name })),
+            pageSize: 30,
+            loop: false,
+        });
 
         return selectedServers;
-    } catch (error: any) {
-        if (error.message === "canceled") {
+    } catch (error) {
+        if (error instanceof ExitPromptError) {
             logger.info("\nOperation cancelled by user.");
             return null;
         }
@@ -348,19 +345,17 @@ export async function promptForProviders(availableProviders: MCPProvider[], mess
     }
 
     try {
-        const { selectedProviders } = (await prompter.prompt({
-            type: "multiselect",
-            name: "selectedProviders",
+        const selectedProviders = await checkbox({
             message,
             choices: availableProviders.map((p) => ({
-                name: p.getName(),
-                message: `${p.getName()} (${p.getConfigPath()})`,
+                value: p.getName(),
+                name: `${p.getName()} (${p.getConfigPath()})`,
             })),
-        })) as { selectedProviders: string[] };
+        });
 
         return selectedProviders;
-    } catch (error: any) {
-        if (error.message === "canceled") {
+    } catch (error) {
+        if (error instanceof ExitPromptError) {
             logger.info("\nOperation cancelled by user.");
             return null;
         }
@@ -382,24 +377,22 @@ export interface ProjectChoice {
 export async function promptForProjects(projects: string[], message: string): Promise<ProjectChoice[] | null> {
     const choices = [
         {
-            name: "global",
-            message: "Global (all projects)",
+            value: "global",
+            name: "Global (all projects)",
         },
         ...projects.map((projectPath) => ({
+            value: projectPath,
             name: projectPath,
-            message: projectPath,
         })),
     ];
 
     try {
-        const { selectedProjects } = (await prompter.prompt({
-            type: "multiselect",
-            name: "selectedProjects",
+        const selectedProjects = await checkbox({
             message,
             choices,
-            limit: 200,
-            scroll: false,
-        } as any)) as { selectedProjects: string[] };
+            pageSize: 200,
+            loop: false,
+        });
 
         return selectedProjects.map((choice) => {
             if (choice === "global") {
@@ -413,8 +406,8 @@ export async function promptForProjects(projects: string[], message: string): Pr
                 displayName: choice,
             };
         });
-    } catch (error: any) {
-        if (error.message === "canceled") {
+    } catch (error) {
+        if (error instanceof ExitPromptError) {
             logger.info("\nOperation cancelled by user.");
             return null;
         }
