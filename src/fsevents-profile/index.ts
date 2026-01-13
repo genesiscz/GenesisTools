@@ -1,8 +1,8 @@
 import { spawn } from "bun";
 import chalk from "chalk";
+import { Command } from "commander";
 import Enquirer from "enquirer";
 import * as fsevents from "fsevents";
-import minimist from "minimist";
 import * as path from "path";
 import logger from "@app/logger";
 
@@ -10,14 +10,8 @@ import logger from "@app/logger";
 interface Options {
     duration?: number;
     top?: number;
-    path?: string;
     verbose?: boolean;
     watchers?: boolean;
-    help?: boolean;
-}
-
-interface Args extends Options {
-    _: string[];
 }
 
 // Create Enquirer instance for interactive prompts
@@ -64,57 +58,59 @@ ${chalk.bold("Notes:")}
 }
 
 async function main() {
-    // Parse command line arguments
-    const argv = minimist<Args>(process.argv.slice(2), {
-        alias: {
-            d: "duration",
-            t: "top",
-            w: "watchers",
-            v: "verbose",
-            h: "help",
-        },
-        boolean: ["verbose", "help", "watchers"],
-        default: {
-            duration: DEFAULT_DURATION,
-            top: DEFAULT_TOP_N,
-            path: DEFAULT_PATH,
-        },
-    });
+    // Parse command line arguments with Commander
+    const program = new Command()
+        .name("fsevents-profile")
+        .description("Profile file system events using fsevents")
+        .argument("[path]", "Path to monitor", DEFAULT_PATH)
+        .option("-d, --duration <seconds>", "How long to monitor events", String(DEFAULT_DURATION))
+        .option("-t, --top <number>", "How many top directories to display", String(DEFAULT_TOP_N))
+        .option("-w, --watchers", "Show processes currently watching fsevents")
+        .option("-v, --verbose", "Enable verbose logging")
+        .option("--help-old", "Show extended help message (deprecated)")
+        .parse();
 
-    // Show help if requested
-    if (argv.help) {
+    const options: Options = {
+        duration: parseInt(program.opts().duration, 10),
+        top: parseInt(program.opts().top, 10),
+        verbose: program.opts().verbose || false,
+        watchers: program.opts().watchers || false,
+    };
+
+    // Show extended help if requested
+    if (program.opts().helpOld) {
         showHelp();
         process.exit(0);
     }
 
     // Show fsevents watchers if requested
-    if (argv.watchers) {
+    if (options.watchers) {
         await showFseventsWatchers();
         process.exit(0);
     }
 
-    // Get monitoring path
-    let monitorPath = argv.path || argv._[0] || DEFAULT_PATH;
+    // Get monitoring path from argument
+    const monitorPath = program.args[0] || DEFAULT_PATH;
 
     // Validate duration
-    if (argv.duration! <= 0) {
+    if (options.duration! <= 0) {
         logger.error("Duration must be a positive number");
         process.exit(1);
     }
 
     // Validate top count
-    if (argv.top! <= 0) {
+    if (options.top! <= 0) {
         logger.error("Top count must be a positive number");
         process.exit(1);
     }
 
-    if (argv.verbose) {
+    if (options.verbose) {
         logger.info(`Monitoring path: ${monitorPath}`);
-        logger.info(`Duration: ${argv.duration} seconds`);
-        logger.info(`Top directories to show: ${argv.top}`);
+        logger.info(`Duration: ${options.duration} seconds`);
+        logger.info(`Top directories to show: ${options.top}`);
     }
 
-    logger.info(`Starting fsevents profiler for ${argv.duration} seconds...`);
+    logger.info(`Starting fsevents profiler for ${options.duration} seconds...`);
     logger.info(`Monitoring file system events from "${monitorPath}"`);
     logger.info(`Press Ctrl+C to stop early and see results`);
 
@@ -125,7 +121,7 @@ async function main() {
         const eventInfo = fsevents.getInfo(path, flags);
         events.push({ path: eventInfo.path, event: eventInfo.event });
 
-        if (argv.verbose) {
+        if (options.verbose) {
             logger.info(`Event: ${eventInfo.event}(${eventInfo.type}) - ${eventInfo.path}`);
         }
     });
@@ -135,7 +131,7 @@ async function main() {
         logger.info("\nStopping watcher and analyzing results...");
         try {
             await stopWatching();
-            analyzeEvents(events, argv.top!);
+            analyzeEvents(events, options.top!);
             process.exit(0);
         } catch (error) {
             logger.error(`Error stopping watcher: ${error}`);
@@ -147,7 +143,7 @@ async function main() {
     process.on("SIGINT", stopAndAnalyze);
 
     // After the specified duration, stop the watcher and analyze the data
-    setTimeout(stopAndAnalyze, argv.duration! * 1000);
+    setTimeout(stopAndAnalyze, options.duration! * 1000);
 }
 
 function analyzeEvents(events: Event[], topCount: number) {
