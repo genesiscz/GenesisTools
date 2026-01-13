@@ -25,6 +25,7 @@ export function useWeeklyReview(userId: string | null) {
     }
 
     let mounted = true
+    const currentUserId = userId
 
     async function load() {
       setLoading(true)
@@ -33,10 +34,10 @@ export function useWeeklyReview(userId: string | null) {
         const adapter = getAssistantStorageAdapter()
 
         // Load recent reviews
-        const data = await adapter.getWeeklyReviews(userId, 10)
+        const data = await adapter.getWeeklyReviews(currentUserId, 10)
 
         // Check for current week review
-        const current = await adapter.getCurrentWeekReview(userId)
+        const current = await adapter.getCurrentWeekReview(currentUserId)
 
         if (mounted) {
           setReviews(data)

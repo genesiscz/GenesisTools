@@ -17,11 +17,12 @@ export function useStreak(userId: string | null) {
       return
     }
 
+    const currentUserId = userId
     async function loadStreak() {
       try {
         await initializeAssistantStorage()
         const adapter = getAssistantStorageAdapter()
-        const currentStreak = await adapter.getStreak(userId)
+        const currentStreak = await adapter.getStreak(currentUserId)
         setStreak(currentStreak)
       } finally {
         setLoading(false)
