@@ -1,14 +1,16 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Plus, Loader2, ListTodo, Flame, ParkingCircle, LayoutGrid, Kanban } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@workos/authkit-tanstack-react-start/client'
 import { DashboardLayout } from '@/components/dashboard'
 import { Button } from '@/components/ui/button'
 import { TaskCard, TaskForm, ContextParkingModal } from '@/lib/assistant/components'
-import { useTaskStore, useContextParking } from '@/lib/assistant/hooks'
+import { useTaskStore, useContextParking, useDeadlineRisk } from '@/lib/assistant/hooks'
 import { KanbanBoard } from '../-components/kanban'
-import type { Task, TaskInput, TaskStatus, ContextParkingInput, UrgencyLevel } from '@/lib/assistant/types'
+import { EscalationWidget, EscalationAlert } from '../-components/escalation'
+import type { EscalationResolutionData } from '../-components/escalation'
+import type { Task, TaskInput, TaskStatus, ContextParkingInput, UrgencyLevel, DeadlineRisk } from '@/lib/assistant/types'
 
 export const Route = createFileRoute('/assistant/tasks/')({
   component: TasksPage,
@@ -30,12 +32,35 @@ function TasksPage() {
     parkContext,
   } = useTaskStore(userId)
 
+  const {
+    risks,
+    calculateAllRisks,
+  } = useDeadlineRisk(userId)
+
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('kanban')
   const [defaultStatus, setDefaultStatus] = useState<TaskStatus>('backlog')
 
+  // Escalation modal state
+  const [escalationModalData, setEscalationModalData] = useState<{
+    task: Task
+    risk: DeadlineRisk
+  } | null>(null)
+
   // Context parking modal with Cmd+P shortcut
   const contextParking = useContextParking()
+
+  // Calculate risks when tasks change
+  useEffect(() => {
+    if (userId && tasks.length > 0) {
+      calculateAllRisks(tasks)
+    }
+  }, [userId, tasks])
+
+  // Get risk for a specific task
+  function getRiskForTask(taskId: string): DeadlineRisk | undefined {
+    return risks.find((r) => r.taskId === taskId)
+  }
 
   // Counts for stats
   const counts = {
@@ -67,6 +92,52 @@ function TasksPage() {
   // Handle context parking
   async function handleParkContext(input: ContextParkingInput) {
     await parkContext(input)
+  }
+
+  // Handle risk click - opens escalation modal
+  function handleRiskClick(taskId: string) {
+    const task = tasks.find((t) => t.id === taskId)
+    const risk = getRiskForTask(taskId)
+    if (task && risk) {
+      setEscalationModalData({ task, risk })
+    }
+  }
+
+  // Handle escalation resolution
+  async function handleEscalationResolve(taskId: string, data: EscalationResolutionData) {
+    // Handle different resolution options
+    switch (data.option) {
+      case 'extend':
+        if (data.newDeadline) {
+          await updateTask(taskId, { deadline: data.newDeadline })
+        }
+        break
+      case 'help':
+        // Could log a communication entry here
+        // For now, just log to console
+        console.log('Help requested:', data.helperName, data.helperNotes)
+        break
+      case 'scope':
+        // Could update task description with cut scope items
+        if (data.scopeItems && data.scopeItems.length > 0) {
+          const task = tasks.find((t) => t.id === taskId)
+          if (task) {
+            const scopeNote = `\n\n[Scope Cut]\n- ${data.scopeItems.join('\n- ')}`
+            await updateTask(taskId, {
+              description: (task.description || '') + scopeNote,
+            })
+          }
+        }
+        break
+      case 'accept':
+        // Log acceptance
+        console.log('Risk accepted:', data.acceptanceNote)
+        break
+    }
+
+    // Recalculate risks
+    await calculateAllRisks(tasks)
+    setEscalationModalData(null)
   }
 
   // Loading state
@@ -118,6 +189,13 @@ function TasksPage() {
               <span className="font-semibold">{streak.currentStreakDays} day streak</span>
             </div>
           )}
+
+          {/* Escalation widget - shows deadline risks */}
+          <EscalationWidget
+            userId={userId}
+            tasks={tasks}
+            onResolve={handleEscalationResolve}
+          />
         </div>
 
         <div className="flex items-center gap-2">
@@ -190,7 +268,11 @@ function TasksPage() {
           onOpenTaskForm={handleOpenTaskForm}
         />
       ) : (
-        <GridView tasks={tasks} />
+        <GridView
+          tasks={tasks}
+          risks={risks}
+          onRiskClick={handleRiskClick}
+        />
       )}
 
       {/* Create task dialog */}
@@ -208,6 +290,17 @@ function TasksPage() {
         tasks={tasks}
         onPark={handleParkContext}
       />
+
+      {/* Escalation modal */}
+      {escalationModalData && (
+        <EscalationAlert
+          open={!!escalationModalData}
+          onOpenChange={(open) => !open && setEscalationModalData(null)}
+          task={escalationModalData.task}
+          risk={escalationModalData.risk}
+          onResolve={handleEscalationResolve}
+        />
+      )}
     </DashboardLayout>
   )
 }
@@ -215,12 +308,25 @@ function TasksPage() {
 /**
  * Grid view component (preserves original grid functionality)
  */
-function GridView({ tasks }: { tasks: Task[] }) {
+function GridView({
+  tasks,
+  risks,
+  onRiskClick,
+}: {
+  tasks: Task[]
+  risks: DeadlineRisk[]
+  onRiskClick: (taskId: string) => void
+}) {
   // Urgency order for sorting
   const urgencyOrder: Record<UrgencyLevel, number> = {
     critical: 0,
     important: 1,
     'nice-to-have': 2,
+  }
+
+  // Get risk for a specific task
+  function getRiskForTask(taskId: string): DeadlineRisk | undefined {
+    return risks.find((r) => r.taskId === taskId)
   }
 
   // Sort: critical first, then important, then nice-to-have, then by deadline
@@ -245,15 +351,24 @@ function GridView({ tasks }: { tasks: Task[] }) {
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 auto-rows-fr">
-      {sortedTasks.map((task, index) => (
-        <div
-          key={task.id}
-          className="animate-fade-in-up h-full"
-          style={{ animationDelay: `${index * 50}ms` }}
-        >
-          <TaskCard task={task} className="h-full" />
-        </div>
-      ))}
+      {sortedTasks.map((task, index) => {
+        const risk = getRiskForTask(task.id)
+        return (
+          <div
+            key={task.id}
+            className="animate-fade-in-up h-full"
+            style={{ animationDelay: `${index * 50}ms` }}
+          >
+            <TaskCard
+              task={task}
+              riskLevel={risk?.riskLevel}
+              daysLate={risk?.daysLate}
+              onRiskClick={onRiskClick}
+              className="h-full"
+            />
+          </div>
+        )
+      })}
     </div>
   )
 }
