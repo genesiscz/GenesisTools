@@ -31,6 +31,10 @@ export class MockMCPProvider extends MCPProvider {
         return this.configExistsResult;
     }
 
+    supportsDisabledState(): boolean {
+        return true; // Default mock behavior - can be overridden for testing
+    }
+
     async readConfig(): Promise<unknown> {
         if (this.errors.has("readConfig")) {
             throw this.errors.get("readConfig")!;
@@ -38,11 +42,12 @@ export class MockMCPProvider extends MCPProvider {
         return this.readConfigResult;
     }
 
-    async writeConfig(config: unknown): Promise<void> {
+    async writeConfig(config: unknown): Promise<boolean> {
         if (this.errors.has("writeConfig")) {
             throw this.errors.get("writeConfig")!;
         }
         this.writeConfigCalls.push(config);
+        return true;
     }
 
     async listServers(): Promise<MCPServerInfo[]> {
@@ -79,18 +84,20 @@ export class MockMCPProvider extends MCPProvider {
         }
     }
 
-    async enableServers(serverNames: string[], projectPath?: string | null): Promise<void> {
+    async enableServers(serverNames: string[], projectPath?: string | null): Promise<boolean> {
         if (this.errors.has("enableServers")) {
             throw this.errors.get("enableServers")!;
         }
         this.enableServersCalls.push({ serverNames, projectPath });
+        return true;
     }
 
-    async disableServers(serverNames: string[], projectPath?: string | null): Promise<void> {
+    async disableServers(serverNames: string[], projectPath?: string | null): Promise<boolean> {
         if (this.errors.has("disableServers")) {
             throw this.errors.get("disableServers")!;
         }
         this.disableServersCalls.push({ serverNames, projectPath });
+        return true;
     }
 
     async getProjects(): Promise<string[]> {
@@ -100,18 +107,20 @@ export class MockMCPProvider extends MCPProvider {
         return this.getProjectsResult;
     }
 
-    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<void> {
+    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<boolean> {
         if (this.errors.has("installServer")) {
             throw this.errors.get("installServer")!;
         }
         this.installServerCalls.push({ serverName, config });
+        return true;
     }
 
-    async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<void> {
+    async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<boolean> {
         if (this.errors.has("syncServers")) {
             throw this.errors.get("syncServers")!;
         }
         this.syncServersCalls.push({ servers });
+        return true;
     }
 
     toUnifiedConfig(_config: unknown): Record<string, UnifiedMCPServerConfig> {

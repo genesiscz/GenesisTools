@@ -5,10 +5,15 @@ import { getUnifiedConfigPath } from "../utils/config.utils.js";
 
 const storage = new Storage("mcp-manager");
 
+export interface ConfigOptions {
+    path?: boolean; // Only show path, don't open editor
+}
+
 /**
  * Open the unified config file in the user's editor
+ * @param options.path - If true, only prints the path without opening
  */
-export async function openConfig(): Promise<void> {
+export async function openConfig(options: ConfigOptions = {}): Promise<void> {
     await storage.ensureDirs();
     const configPath = getUnifiedConfigPath();
 
@@ -22,6 +27,14 @@ export async function openConfig(): Promise<void> {
         logger.info(`Created default config at ${configPath}`);
     }
 
+    // Always show the path first
+    logger.info(`Config file: ${configPath}`);
+
+    // If --path flag, just show the path and exit
+    if (options.path) {
+        return;
+    }
+
     // Try to open in editor
     const editor = process.env.EDITOR || process.env.VISUAL || "nano";
     // Split editor command in case it has arguments (e.g., "code --wait")
@@ -32,5 +45,4 @@ export async function openConfig(): Promise<void> {
     });
 
     await proc.exited;
-    logger.info(`Config file: ${configPath}`);
 }

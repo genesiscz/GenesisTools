@@ -17,7 +17,7 @@ describe("installServer", () => {
         const mockConfig = createMockUnifiedConfig();
         
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue();
+        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
         spyOn(configUtils, "stripMeta").mockImplementation((config) => {
             const { _meta, ...rest } = config;
             return rest;
@@ -42,7 +42,7 @@ describe("installServer", () => {
         const mockConfig = createMockUnifiedConfig();
         
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue();
+        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
         spyOn(configUtils, "stripMeta").mockImplementation((config) => {
             const { _meta, ...rest } = config;
             return rest;
@@ -80,7 +80,7 @@ describe("installServer", () => {
         const mockConfig = createMockUnifiedConfig();
         
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue();
+        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
         spyOn(configUtils, "stripMeta").mockImplementation((config) => {
             const { _meta, ...rest } = config;
             return rest;
@@ -102,7 +102,7 @@ describe("installServer", () => {
         const mockConfig = createMockUnifiedConfig();
         
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue();
+        spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
         spyOn(configUtils, "stripMeta").mockImplementation((config) => {
             const { _meta, ...rest } = config;
             return rest;

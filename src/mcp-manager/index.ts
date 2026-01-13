@@ -18,7 +18,9 @@ import {
     showServerConfig,
     backupAllConfigs,
     renameServer,
+    configJson,
 } from "./commands/index.js";
+import { setGlobalOptions } from "./utils/config.utils.js";
 
 // Configure logger to include timestamps in console output and enable sync mode
 // Sync mode ensures logs appear before Enquirer prompts
@@ -31,6 +33,7 @@ configureLogger({
 // Define options interface
 interface Options {
     config?: boolean;
+    path?: boolean; // For config --path
     sync?: boolean;
     syncFromProviders?: boolean;
     list?: boolean;
@@ -40,7 +43,18 @@ interface Options {
     show?: string;
     backupAll?: boolean;
     rename?: string;
+    configJson?: boolean;
+    client?: string; // For config-json --client
+    enabledOnly?: boolean; // For config-json --enabled-only
+    servers?: string; // For config-json --servers
+    bare?: boolean; // For config-json --bare
+    clipboard?: boolean; // For config-json --clipboard
     type?: string;
+    headers?: string | string[]; // For install --headers (supports multiple flags)
+    env?: string | string[]; // For install --env (supports multiple flags)
+    provider?: string; // For install/enable/disable --provider
+    providers?: string; // Alias for --provider
+    yes?: boolean; // Auto-confirm changes without prompting
     verbose?: boolean;
     help?: boolean;
 }
@@ -66,9 +80,15 @@ async function main() {
             v: "verbose",
             h: "help",
             t: "type",
+            p: ["provider", "providers"], // Both --provider and --providers work
+            H: "headers",
+            e: "env",
+            y: "yes",
+            c: "clipboard",
+            "enabled-only": "enabledOnly",
         },
-        boolean: ["verbose", "help", "config", "sync", "syncFromProviders", "list", "backupAll"],
-        string: ["enable", "disable", "install", "show", "rename", "type"],
+        boolean: ["verbose", "help", "config", "sync", "syncFromProviders", "list", "backupAll", "path", "yes", "configJson", "enabledOnly", "bare", "clipboard"],
+        string: ["enable", "disable", "install", "show", "rename", "type", "headers", "env", "provider", "providers", "client", "servers"],
     });
 
     if (argv.help) {
@@ -76,7 +96,43 @@ async function main() {
         process.exit(0);
     }
 
-    const providers = getProviders();
+    // Set global options for use by BackupManager and other utilities
+    setGlobalOptions({ yes: argv.yes });
+
+    const allProviders = getProviders();
+
+    // Parse and validate --provider/--providers flag if specified
+    // Supports: --provider claude,gemini OR --provider claude --provider gemini OR --provider all
+    let providers = allProviders;
+    const providerArg = argv.provider || argv.providers;
+    if (providerArg) {
+        // Handle both string and array (multiple --provider flags)
+        const rawNames: string[] = Array.isArray(providerArg)
+            ? providerArg.flatMap((p: string) => p.split(","))
+            : providerArg.split(",");
+        const requestedNames = rawNames.map((p) => p.trim()).filter(Boolean);
+
+        // Handle "all" special case
+        if (requestedNames.length === 1 && requestedNames[0].toLowerCase() === "all") {
+            providers = allProviders;
+        } else {
+            const validatedProviders: typeof allProviders = [];
+            for (const name of requestedNames) {
+                const provider = allProviders.find((p) => p.getName().toLowerCase() === name.toLowerCase());
+                if (!provider) {
+                    logger.error(
+                        `Provider '${name}' not found. Available: ${allProviders.map((p) => p.getName()).join(", ")}, all`
+                    );
+                    process.exit(1);
+                }
+                // Avoid duplicates
+                if (!validatedProviders.includes(provider)) {
+                    validatedProviders.push(provider);
+                }
+            }
+            providers = validatedProviders;
+        }
+    }
 
     try {
         const command =
@@ -91,6 +147,8 @@ async function main() {
                 ? "list"
                 : argv.backupAll || argv["backup-all"]
                 ? "backup-all"
+                : argv.configJson || argv["config-json"]
+                ? "config-json"
                 : null);
 
         if (!command) {
@@ -116,7 +174,7 @@ async function main() {
 
                 switch (action) {
                     case "config":
-                        await openConfig();
+                        await openConfig({ path: argv.path });
                         break;
                     case "sync":
                         await syncServers(providers);
@@ -163,28 +221,33 @@ async function main() {
             // Command mode
             switch (command) {
                 case "config":
-                    await openConfig();
+                    await openConfig({ path: argv.path });
                     break;
                 case "sync":
-                    await syncServers(providers);
+                    await syncServers(providers, { provider: argv.provider });
                     break;
                 case "sync-from-providers":
                 case "syncFromProviders":
-                    await syncFromProviders(providers);
+                    await syncFromProviders(providers, { provider: argv.provider });
                     break;
                 case "list":
                     await listServers(providers);
                     break;
                 case "enable":
-                    await enableServer(argv.enable || argv._[1] || undefined, providers);
+                    await enableServer(argv.enable || argv._[1] || undefined, providers, { provider: argv.provider });
                     break;
                 case "disable":
-                    await disableServer(argv.disable || argv._[1] || undefined, providers);
+                    await disableServer(argv.disable || argv._[1] || undefined, providers, { provider: argv.provider });
                     break;
                 case "install": {
                     const serverName = argv.install || argv._[1] || "";
                     const commandString = argv._[2] || "";
-                    await installServer(serverName, commandString, providers, { type: argv.type });
+                    await installServer(serverName, commandString, providers, {
+                        type: argv.type,
+                        headers: argv.headers,
+                        env: argv.env,
+                        provider: argv.provider,
+                    });
                     break;
                 }
                 case "show":
@@ -200,6 +263,16 @@ async function main() {
                     await renameServer(oldName, newName, providers);
                     break;
                 }
+                case "config-json":
+                case "configJson":
+                    await configJson({
+                        client: argv.client as "standard" | "cursor" | "claude" | undefined,
+                        enabledOnly: argv.enabledOnly,
+                        servers: argv.servers,
+                        bare: argv.bare,
+                        clipboard: argv.clipboard,
+                    });
+                    break;
                 default:
                     logger.error(`Unknown command: ${command}`);
                     showHelp();
