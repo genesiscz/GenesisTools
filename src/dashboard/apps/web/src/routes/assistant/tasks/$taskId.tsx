@@ -20,6 +20,7 @@ import {
   User,
   Bell,
   FileText,
+  GitBranch,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@workos/authkit-tanstack-react-start/client'
@@ -57,6 +58,7 @@ import {
   HandoffHistoryWidget,
   HandoffHistory,
 } from '../-components/handoff'
+import { DependencySelector, BottleneckAlert } from '../-components/critical-path'
 
 export const Route = createFileRoute('/assistant/tasks/$taskId')({
   component: TaskDetailPage,
@@ -136,6 +138,11 @@ function TaskDetailPage() {
   // Get related decisions and blockers for handoff
   const taskDecisions = decisions.filter((d) => d.relatedTaskIds.includes(taskId))
   const taskBlockers = getBlockersForTask(taskId)
+
+  // Get tasks blocked by this task (for bottleneck alert)
+  const blockedTasks = tasks.filter(
+    (t) => t.blockedBy?.includes(taskId) && t.id !== taskId
+  )
 
   // Initialize form with task data
   useEffect(() => {
@@ -266,6 +273,12 @@ function TaskDetailPage() {
     }
   }
 
+  async function handleDependencyUpdate(dependencies: string[]) {
+    if (!task) return
+    await updateTask(task.id, { blockedBy: dependencies })
+    markChanged()
+  }
+
   // Loading state
   if (authLoading || (!initialized && loading)) {
     return (
@@ -381,6 +394,15 @@ function TaskDetailPage() {
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Main content - 2 columns */}
         <div className="lg:col-span-2 space-y-6">
+          {/* Bottleneck Alert - shown if this task blocks other tasks */}
+          {blockedTasks.length > 0 && !isCompleted && (
+            <BottleneckAlert
+              task={task}
+              blockedTasks={blockedTasks}
+              onViewGraph={() => navigate({ to: '/assistant/next' })}
+            />
+          )}
+
           {/* Title and description */}
           <FeatureCard color="purple">
             <FeatureCardHeader>
@@ -472,6 +494,22 @@ function TaskDetailPage() {
                   </Label>
                 </div>
               )}
+            </FeatureCardHeader>
+          </FeatureCard>
+
+          {/* Dependencies Section */}
+          <FeatureCard color="blue">
+            <FeatureCardHeader>
+              <div className="flex items-center gap-2 mb-3">
+                <GitBranch className="h-5 w-5 text-blue-400" />
+                <Label className="text-sm font-medium">Dependencies</Label>
+              </div>
+              <DependencySelector
+                taskId={taskId}
+                currentDependencies={task.blockedBy ?? []}
+                allTasks={tasks}
+                onUpdate={handleDependencyUpdate}
+              />
             </FeatureCardHeader>
           </FeatureCard>
 
