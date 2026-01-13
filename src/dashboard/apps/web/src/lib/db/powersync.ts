@@ -1,111 +1,215 @@
-import { PowerSyncDatabase, Schema, Table, column } from "@powersync/web";
-
-// Import WASM SQLite for browser support
-import "@journeyapps/wa-sqlite";
-
-import { createConnector } from "./powersync-connector";
-
 /**
- * PowerSync Schema Definition
+ * PowerSync Database - Client-only module
  *
- * This defines the local SQLite schema that will be synced with the backend.
- * All tables here will be available offline and sync automatically when online.
+ * PowerSync is browser-only (uses IndexedDB, Web Workers, WASM).
+ * This module guards against SSR imports by checking for window.
  */
-export const APP_SCHEMA = new Schema({
-    timers: new Table({
+
+// No imports from @powersync/web at module level to avoid SSR issues
+// Types are defined inline or obtained dynamically
+
+// PowerSync Schema Definition (safe - no runtime dependencies)
+// We need to dynamically import the schema classes for SSR safety
+// biome-ignore lint/suspicious/noExplicitAny: Avoid PowerSync type imports during SSR
+let APP_SCHEMA: any = null;
+
+// Database instance (client-only)
+// biome-ignore lint/suspicious/noExplicitAny: Avoid PowerSync type imports during SSR
+let db: any = null;
+let initialized = false;
+let connector: ReturnType<typeof import("./powersync-connector").createConnector> | null = null;
+
+// Schema definition (will be initialized on client)
+const schemaConfig = {
+    timers: {
         // Core fields
-        name: column.text,
-        timer_type: column.text, // 'stopwatch' | 'countdown' | 'pomodoro'
+        name: "text" as const,
+        timer_type: "text" as const, // 'stopwatch' | 'countdown' | 'pomodoro'
 
         // State fields (SQLite stores booleans as integers)
-        is_running: column.integer, // 0 = false, 1 = true
-        elapsed_time: column.integer, // Elapsed time in milliseconds
-        duration: column.integer, // Duration for countdown/pomodoro timers
+        is_running: "integer" as const, // 0 = false, 1 = true
+        elapsed_time: "integer" as const, // Elapsed time in milliseconds
+        duration: "integer" as const, // Duration for countdown/pomodoro timers
 
         // Laps stored as JSON string (array of LapEntry)
-        laps: column.text,
+        laps: "text" as const,
 
         // User ownership
-        user_id: column.text,
+        user_id: "text" as const,
 
         // Timestamps (ISO strings)
-        created_at: column.text,
-        updated_at: column.text,
+        created_at: "text" as const,
+        updated_at: "text" as const,
 
         // Enhanced functionality
-        show_total: column.integer, // 0 or 1 - toggle total time display
-        first_start_time: column.text, // ISO string - first time timer was started
-        start_time: column.text, // ISO string - current session start time
+        show_total: "integer" as const, // 0 or 1 - toggle total time display
+        first_start_time: "text" as const, // ISO string - first time timer was started
+        start_time: "text" as const, // ISO string - current session start time
 
         // Pomodoro-specific fields
-        pomodoro_settings: column.text, // JSON stringified PomodoroSettings
-        pomodoro_phase: column.text, // 'work' | 'short_break' | 'long_break'
-        pomodoro_session_count: column.integer,
-    }),
+        pomodoro_settings: "text" as const, // JSON stringified PomodoroSettings
+        pomodoro_phase: "text" as const, // 'work' | 'short_break' | 'long_break'
+        pomodoro_session_count: "integer" as const,
+    },
 
-    activity_logs: new Table({
+    activity_logs: {
         // Core fields
-        timer_id: column.text,
-        timer_name: column.text,
-        user_id: column.text,
-        event_type: column.text, // 'start' | 'pause' | 'reset' | 'lap' | 'complete' | 'time_edit' | 'pomodoro_phase_change'
-        timestamp: column.text, // ISO string
+        timer_id: "text" as const,
+        timer_name: "text" as const,
+        user_id: "text" as const,
+        event_type: "text" as const, // 'start' | 'pause' | 'reset' | 'lap' | 'complete' | 'time_edit' | 'pomodoro_phase_change'
+        timestamp: "text" as const, // ISO string
 
         // Event details
-        elapsed_at_event: column.integer, // ms elapsed when event occurred
-        session_duration: column.integer, // For pause events: duration of this session
-        previous_value: column.integer, // For time_edit: previous elapsed time
-        new_value: column.integer, // For time_edit: new elapsed time
-        metadata: column.text, // JSON stringified additional data
-    }),
-});
+        elapsed_at_event: "integer" as const, // ms elapsed when event occurred
+        session_duration: "integer" as const, // For pause events: duration of this session
+        previous_value: "integer" as const, // For time_edit: previous elapsed time
+        new_value: "integer" as const, // For time_edit: new elapsed time
+        metadata: "text" as const, // JSON stringified additional data
+    },
+
+    // Example: Todos table for live sync demo
+    todos: {
+        text: "text" as const,
+        completed: "integer" as const, // 0 or 1
+        user_id: "text" as const,
+        created_at: "text" as const,
+        updated_at: "text" as const,
+    },
+};
 
 /**
- * PowerSync Database Instance
- *
- * This is the main database instance used throughout the app.
- * It provides offline-first SQLite storage with automatic sync.
+ * Initialize PowerSync on the client
+ * This must be called before using db or APP_SCHEMA
  */
-export const db = new PowerSyncDatabase({
-    database: {
-        dbFilename: "dashboard.sqlite",
-    },
-    schema: APP_SCHEMA,
-    // Disable web worker for dev mode compatibility
-    // Note: This disables multi-tab sync but fixes the worker loading issue
-    flags: {
-        useWebWorker: false,
-    },
-});
+async function ensurePowerSync() {
+    if (typeof window === "undefined") {
+        throw new Error("[PowerSync] Cannot initialize on server - browser only");
+    }
 
-let initialized = false;
-const connector = createConnector();
+    if (db && APP_SCHEMA) {
+        return { db, APP_SCHEMA };
+    }
+
+    // Dynamic import of PowerSync (browser-only)
+    const { PowerSyncDatabase, Schema, Table, column } = await import("@powersync/web");
+
+    // Import WASM SQLite
+    await import("@journeyapps/wa-sqlite");
+
+    // Import connector
+    const { createConnector } = await import("./powersync-connector");
+
+    // Build schema from config
+    APP_SCHEMA = new Schema({
+        timers: new Table({
+            name: column.text,
+            timer_type: column.text,
+            is_running: column.integer,
+            elapsed_time: column.integer,
+            duration: column.integer,
+            laps: column.text,
+            user_id: column.text,
+            created_at: column.text,
+            updated_at: column.text,
+            show_total: column.integer,
+            first_start_time: column.text,
+            start_time: column.text,
+            pomodoro_settings: column.text,
+            pomodoro_phase: column.text,
+            pomodoro_session_count: column.integer,
+        }),
+        activity_logs: new Table({
+            timer_id: column.text,
+            timer_name: column.text,
+            user_id: column.text,
+            event_type: column.text,
+            timestamp: column.text,
+            elapsed_at_event: column.integer,
+            session_duration: column.integer,
+            previous_value: column.integer,
+            new_value: column.integer,
+            metadata: column.text,
+        }),
+        todos: new Table({
+            text: column.text,
+            completed: column.integer,
+            user_id: column.text,
+            created_at: column.text,
+            updated_at: column.text,
+        }),
+    });
+
+    // Create database instance
+    db = new PowerSyncDatabase({
+        database: {
+            dbFilename: "dashboard.sqlite",
+        },
+        schema: APP_SCHEMA,
+        flags: {
+            useWebWorker: false,
+        },
+    });
+
+    connector = createConnector();
+
+    return { db, APP_SCHEMA };
+}
+
+/**
+ * Get the PowerSync database instance
+ * Throws if called on server or before initialization
+ */
+// biome-ignore lint/suspicious/noExplicitAny: Avoid PowerSync type imports during SSR
+export function getDb(): any {
+    if (!db) {
+        throw new Error("[PowerSync] Database not initialized. Call initializeDatabase() first.");
+    }
+    return db;
+}
+
+/**
+ * Get the schema - for use with TanStack DB collections
+ * Returns null on server, schema on client after init
+ */
+export function getSchema() {
+    return APP_SCHEMA;
+}
+
+// For backwards compatibility - these getters ensure client-only access
+// Using Object.defineProperty to create lazy getters
+export { db, APP_SCHEMA };
 
 /**
  * Initialize the database for local-only mode
  * Call this at app startup before using the database
  */
 export async function initializeDatabase(): Promise<void> {
+    if (typeof window === "undefined") {
+        console.log("[PowerSync] Skipping init on server");
+        return;
+    }
+
     if (initialized) {
         console.log("[PowerSync] Already initialized, skipping");
         return;
     }
 
-    console.log("[PowerSync] Starting db.init()...");
+    console.log("[PowerSync] Starting initialization...");
+
     try {
-        await db.init();
+        const { db: database } = await ensurePowerSync();
+
+        console.log("[PowerSync] Starting db.init()...");
+        await database.init();
         console.log("[PowerSync] db.init() completed");
+
+        initialized = true;
+        console.log("[PowerSync] Database initialized (local-only mode)");
     } catch (err) {
-        console.error("[PowerSync] db.init() failed:", err);
+        console.error("[PowerSync] Initialization failed:", err);
         throw err;
     }
-
-    // For local-only mode (no PowerSync Cloud), we don't call db.connect()
-    // Instead, we manually trigger uploads via syncToServer()
-    // This prevents PowerSync from hanging while waiting for credentials
-
-    initialized = true;
-    console.log("[PowerSync] Database initialized (local-only mode)");
 }
 
 /**
@@ -113,7 +217,12 @@ export async function initializeDatabase(): Promise<void> {
  * Call this after write operations (create, update, delete)
  */
 export async function syncToServer(): Promise<void> {
-    if (!initialized) {
+    if (typeof window === "undefined") {
+        console.log("[PowerSync] Skipping sync on server");
+        return;
+    }
+
+    if (!initialized || !connector || !db) {
         console.warn("[PowerSync] Cannot sync - database not initialized");
         return;
     }
@@ -140,6 +249,8 @@ export function isDatabaseInitialized(): boolean {
  * Call this during logout or app cleanup
  */
 export async function disconnectDatabase(): Promise<void> {
-    await db.disconnectAndClear();
+    if (db) {
+        await db.disconnectAndClear();
+    }
     initialized = false;
 }

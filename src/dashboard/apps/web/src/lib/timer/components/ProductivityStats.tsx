@@ -21,6 +21,8 @@ interface ProductivityStatsProps {
   timerId?: string
   timerNames?: Record<string, string>
   className?: string
+  /** Change this value to trigger a refresh of stats */
+  refreshTrigger?: number
 }
 
 /**
@@ -34,6 +36,7 @@ export function ProductivityStats({
   timerId,
   timerNames = {},
   className,
+  refreshTrigger,
 }: ProductivityStatsProps) {
   const [stats, setStats] = useState<ProductivityStatsType | null>(null)
   const [loading, setLoading] = useState(true)
@@ -63,7 +66,7 @@ export function ProductivityStats({
     }
 
     fetchStats()
-  }, [userId, startDate?.getTime(), endDate?.getTime(), timerId])
+  }, [userId, startDate?.getTime(), endDate?.getTime(), timerId, refreshTrigger])
 
   if (loading) {
     return (
@@ -97,8 +100,11 @@ export function ProductivityStats({
   // Calculate display values
   const totalHours = Math.floor(stats.totalTimeTracked / 3600000)
   const totalMinutes = Math.floor((stats.totalTimeTracked % 3600000) / 60000)
+  const totalSeconds = Math.floor((stats.totalTimeTracked % 60000) / 1000)
   const avgSessionMinutes = Math.floor(stats.averageSessionDuration / 60000)
+  const avgSessionSeconds = Math.floor((stats.averageSessionDuration % 60000) / 1000)
   const longestSessionMinutes = Math.floor(stats.longestSession / 60000)
+  const longestSessionSeconds = Math.floor((stats.longestSession % 60000) / 1000)
 
   // Get timer entries for breakdown
   const timerEntries: [string, number][] = Object.entries(stats.timerBreakdown)
@@ -119,8 +125,10 @@ export function ProductivityStats({
           label="Total Tracked"
           value={
             totalHours > 0
-              ? `${totalHours}h ${totalMinutes}m`
-              : `${totalMinutes}m`
+              ? `${totalHours}h ${totalMinutes}m ${totalSeconds}s`
+              : totalMinutes > 0
+                ? `${totalMinutes}m ${totalSeconds}s`
+                : `${totalSeconds}s`
           }
           color="cyan"
           highlight
@@ -138,7 +146,11 @@ export function ProductivityStats({
         <StatCard
           icon={Target}
           label="Avg Session"
-          value={avgSessionMinutes > 0 ? `${avgSessionMinutes}m` : '< 1m'}
+          value={
+            avgSessionMinutes > 0
+              ? `${avgSessionMinutes}m ${avgSessionSeconds}s`
+              : `${avgSessionSeconds}s`
+          }
           color="purple"
         />
 
@@ -146,7 +158,11 @@ export function ProductivityStats({
         <StatCard
           icon={Flame}
           label="Longest"
-          value={longestSessionMinutes > 0 ? `${longestSessionMinutes}m` : '< 1m'}
+          value={
+            longestSessionMinutes > 0
+              ? `${longestSessionMinutes}m ${longestSessionSeconds}s`
+              : `${longestSessionSeconds}s`
+          }
           color="orange"
         />
       </div>

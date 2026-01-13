@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Plus, Loader2, Activity } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@workos/authkit-tanstack-react-start/client'
@@ -23,6 +23,31 @@ function TimerPage() {
 
   // Count running timers
   const runningCount = timers.filter((t) => t.isRunning).length
+
+  // Track running state changes to refresh activity stats
+  const [statsRefreshTrigger, setStatsRefreshTrigger] = useState(0)
+  const prevRunningRef = useRef<Record<string, boolean>>({})
+
+  useEffect(() => {
+    // Check if any timer's running state changed
+    const currentRunning: Record<string, boolean> = {}
+    let changed = false
+
+    for (const timer of timers) {
+      currentRunning[timer.id] = timer.isRunning
+      if (prevRunningRef.current[timer.id] !== undefined &&
+          prevRunningRef.current[timer.id] !== timer.isRunning) {
+        changed = true
+      }
+    }
+
+    prevRunningRef.current = currentRunning
+
+    if (changed) {
+      // Trigger stats refresh when any timer starts or pauses
+      setStatsRefreshTrigger(prev => prev + 1)
+    }
+  }, [timers])
 
   // Add new timer
   async function handleAddTimer() {
@@ -140,6 +165,7 @@ function TimerPage() {
         timers={timers}
         isOpen={activityLogOpen}
         onClose={() => setActivityLogOpen(false)}
+        refreshTrigger={statsRefreshTrigger}
       />
     </DashboardLayout>
   )

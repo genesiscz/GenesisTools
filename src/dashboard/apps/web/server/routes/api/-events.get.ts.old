@@ -1,0 +1,98 @@
+import { getEventEmitter } from '../../../src/lib/events/server'
+
+/**
+ * Generic Server-Sent Events (SSE) endpoint (Nitro API route)
+ *
+ * Query Parameters:
+ * - userId (required): User ID for authentication
+ * - channels (optional): Comma-separated list of channels
+ *
+ * Example: /api/events?userId=user123&channels=timer:user123
+ */
+export default defineEventHandler(async (event) => {
+  const query = getQuery(event)
+  const userId = query.userId as string | undefined
+  const channelsParam = query.channels as string | undefined
+
+  // Validate required parameters
+  if (!userId) {
+    setResponseStatus(event, 400)
+    return { error: 'Missing userId parameter' }
+  }
+
+  // Parse channels
+  const channels = channelsParam
+    ? channelsParam.split(',').map(ch => ch.trim()).filter(Boolean)
+    : [`timer:${userId}`, `notification:${userId}`]
+
+  console.log(`[SSE] Client connected - userId: ${userId}, channels: ${channels.join(', ')}`)
+
+  const emitter = getEventEmitter()
+
+  // Set SSE response headers
+  setHeaders(event, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  })
+
+  // Create SSE stream
+  const eventStream = createEventStream(event)
+
+  // Send initial connection message
+  await eventStream.push(JSON.stringify({
+    type: 'connected',
+    userId,
+    channels,
+    timestamp: Date.now()
+  }))
+
+  // Create listeners for all channels
+  const listeners = new Map<string, (data: unknown) => void>()
+
+  for (const channel of channels) {
+    const listener = async (data: unknown) => {
+      const message = {
+        channel,
+        data,
+        timestamp: Date.now()
+      }
+
+      try {
+        await eventStream.push(JSON.stringify(message))
+      } catch (error) {
+        console.error(`[SSE] Error sending to client:`, error)
+      }
+    }
+
+    listeners.set(channel, listener)
+    emitter.on(channel, listener)
+    console.log(`[SSE] Subscribed to channel: ${channel}`)
+  }
+
+  // Keepalive every 30 seconds
+  const keepaliveInterval = setInterval(async () => {
+    try {
+      await eventStream.push('keepalive', 'comment')
+    } catch (error) {
+      console.error(`[SSE] Keepalive error:`, error)
+      clearInterval(keepaliveInterval)
+    }
+  }, 30000)
+
+  // Cleanup on close
+  eventStream.onClosed(async () => {
+    console.log(`[SSE] Client disconnected - userId: ${userId}`)
+
+    for (const [channel, listener] of listeners) {
+      emitter.off(channel, listener)
+      console.log(`[SSE] Unsubscribed from channel: ${channel}`)
+    }
+
+    clearInterval(keepaliveInterval)
+    await eventStream.close()
+  })
+
+  return eventStream.send()
+})
