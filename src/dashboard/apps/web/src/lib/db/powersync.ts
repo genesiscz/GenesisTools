@@ -98,9 +98,13 @@ async function ensurePowerSync() {
     const { PowerSyncDatabase, Schema, Table, column } = PowerSyncModule;
     console.log('[PowerSync] ✓ PowerSync imported', Object.keys(PowerSyncModule));
 
-    // Import WASM SQLite - check if it exports anything we need
+    // Import WASM SQLite
     const sqliteModule = await import("@journeyapps/wa-sqlite");
     console.log('[PowerSync] ✓ WASM SQLite imported', Object.keys(sqliteModule));
+
+    // Import wa-sqlite factory - needed for WASM initialization
+    const { default: SQLiteESMFactory } = await import("@journeyapps/wa-sqlite/dist/wa-sqlite.mjs");
+    console.log('[PowerSync] ✓ SQLite factory imported');
 
     // Import connector
     const { createConnector } = await import("./powersync-connector");
