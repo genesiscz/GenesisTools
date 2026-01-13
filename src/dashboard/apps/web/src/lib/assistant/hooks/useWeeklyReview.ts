@@ -1,65 +1,136 @@
-import { useState, useEffect } from 'react'
+/**
+ * Weekly Review Hook - Server-first with localStorage fallback
+ *
+ * Uses TanStack Query for server data with refetchOnWindowFocus.
+ * Falls back to localStorage when server is unavailable.
+ */
+
+import { useState, useEffect, useMemo } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import type { WeeklyReview, WeeklyReviewInput } from '@/lib/assistant/types'
+import { generateWeeklyReviewId } from '@/lib/assistant/types'
 import {
   getAssistantStorageAdapter,
   initializeAssistantStorage,
 } from '@/lib/assistant/lib/storage'
+import {
+  useAssistantWeeklyReviewsQuery,
+  useAssistantCurrentWeekReviewQuery,
+  useCreateAssistantWeeklyReviewMutation,
+  assistantKeys,
+} from './useAssistantQueries'
 
 /**
  * Hook to generate and manage weekly reviews
+ * Server-first with localStorage fallback
  */
 export function useWeeklyReview(userId: string | null) {
-  const [reviews, setReviews] = useState<WeeklyReview[]>([])
-  const [currentReview, setCurrentReview] = useState<WeeklyReview | null>(null)
-  const [loading, setLoading] = useState(true)
+  const queryClient = useQueryClient()
+  const [fallbackMode, setFallbackMode] = useState(false)
+  const [fallbackReviews, setFallbackReviews] = useState<WeeklyReview[]>([])
+  const [fallbackCurrentReview, setFallbackCurrentReview] = useState<WeeklyReview | null>(null)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Load reviews on mount
+  // Server queries
+  const reviewsQuery = useAssistantWeeklyReviewsQuery(userId, 10)
+  const currentReviewQuery = useAssistantCurrentWeekReviewQuery(userId)
+
+  // Server mutations
+  const createMutation = useCreateAssistantWeeklyReviewMutation()
+
+  // Determine if we should use fallback mode
+  const useFallback = fallbackMode || (reviewsQuery.isError && !reviewsQuery.data)
+
+  // Initialize localStorage fallback if server fails
   useEffect(() => {
-    if (!userId) {
-      setReviews([])
-      setCurrentReview(null)
-      setLoading(false)
-      return
-    }
+    if (!userId) return
 
-    let mounted = true
-    const currentUserId = userId
+    if (reviewsQuery.isError && !fallbackMode) {
+      const currentUserId = userId
 
-    async function load() {
-      setLoading(true)
-      try {
-        await initializeAssistantStorage()
-        const adapter = getAssistantStorageAdapter()
+      async function loadFallback() {
+        try {
+          const adapter = await initializeAssistantStorage()
+          const data = await adapter.getWeeklyReviews(currentUserId, 10)
+          const current = await adapter.getCurrentWeekReview(currentUserId)
 
-        // Load recent reviews
-        const data = await adapter.getWeeklyReviews(currentUserId, 10)
-
-        // Check for current week review
-        const current = await adapter.getCurrentWeekReview(currentUserId)
-
-        if (mounted) {
-          setReviews(data)
-          setCurrentReview(current)
-        }
-      } catch (err) {
-        if (mounted) {
-          setError(err instanceof Error ? err.message : 'Failed to load weekly reviews')
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false)
+          setFallbackMode(true)
+          setFallbackReviews(data)
+          setFallbackCurrentReview(current)
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to load fallback')
         }
       }
-    }
 
-    load()
-
-    return () => {
-      mounted = false
+      loadFallback()
     }
-  }, [userId])
+  }, [userId, reviewsQuery.isError, fallbackMode])
+
+  // Convert server reviews to app WeeklyReview type
+  const reviews: WeeklyReview[] = useMemo(() => {
+    if (useFallback) return fallbackReviews
+
+    return (reviewsQuery.data ?? []).map((r) => ({
+      id: r.id,
+      userId: r.userId,
+      weekStart: new Date(r.weekStart),
+      weekEnd: new Date(r.weekEnd),
+      tasksCompleted: r.tasksCompleted,
+      tasksCompletedLastWeek: r.tasksCompletedLastWeek,
+      tasksCreated: r.tasksCreated,
+      deadlinesHit: r.deadlinesHit,
+      deadlinesTotal: r.deadlinesTotal,
+      deepFocusMinutes: r.deepFocusMinutes,
+      meetingMinutes: r.meetingMinutes,
+      totalMinutes: r.totalMinutes,
+      averageEnergy: r.averageEnergy,
+      averageFocusQuality: r.averageFocusQuality,
+      totalDistractions: r.totalDistractions,
+      topDistraction: r.topDistraction ?? undefined,
+      streakDays: r.streakDays,
+      badgesEarned: (r.badgesEarned as string[]) ?? [],
+      highlights: (r.highlights as string[]) ?? [],
+      areasToImprove: (r.areasToImprove as string[]) ?? [],
+      generatedAt: new Date(r.generatedAt),
+      createdAt: new Date(r.createdAt),
+    }))
+  }, [useFallback, fallbackReviews, reviewsQuery.data])
+
+  // Convert server current review
+  const currentReview: WeeklyReview | null = useMemo(() => {
+    if (useFallback) return fallbackCurrentReview
+    if (!currentReviewQuery.data) return null
+
+    const r = currentReviewQuery.data
+    return {
+      id: r.id,
+      userId: r.userId,
+      weekStart: new Date(r.weekStart),
+      weekEnd: new Date(r.weekEnd),
+      tasksCompleted: r.tasksCompleted,
+      tasksCompletedLastWeek: r.tasksCompletedLastWeek,
+      tasksCreated: r.tasksCreated,
+      deadlinesHit: r.deadlinesHit,
+      deadlinesTotal: r.deadlinesTotal,
+      deepFocusMinutes: r.deepFocusMinutes,
+      meetingMinutes: r.meetingMinutes,
+      totalMinutes: r.totalMinutes,
+      averageEnergy: r.averageEnergy,
+      averageFocusQuality: r.averageFocusQuality,
+      totalDistractions: r.totalDistractions,
+      topDistraction: r.topDistraction ?? undefined,
+      streakDays: r.streakDays,
+      badgesEarned: (r.badgesEarned as string[]) ?? [],
+      highlights: (r.highlights as string[]) ?? [],
+      areasToImprove: (r.areasToImprove as string[]) ?? [],
+      generatedAt: new Date(r.generatedAt),
+      createdAt: new Date(r.createdAt),
+    }
+  }, [useFallback, fallbackCurrentReview, currentReviewQuery.data])
+
+  // Loading state
+  const loading = reviewsQuery.isLoading || currentReviewQuery.isLoading
 
   /**
    * Generate a weekly review for a specific week
@@ -68,24 +139,61 @@ export function useWeeklyReview(userId: string | null) {
     if (!userId) return null
 
     setGenerating(true)
+    const now = new Date()
+    const reviewId = generateWeeklyReviewId()
+
     try {
-      const adapter = getAssistantStorageAdapter()
-      const review = await adapter.generateWeeklyReview(input, userId)
+      if (useFallback) {
+        const adapter = getAssistantStorageAdapter()
+        const review = await adapter.generateWeeklyReview(input, userId)
 
-      // Add to local state
-      setReviews((prev) => [review, ...prev.filter((r) => r.id !== review.id)])
+        setFallbackReviews((prev) => [review, ...prev.filter((r) => r.id !== review.id)])
 
-      // Update current review if it's this week
-      const now = new Date()
-      const startOfWeek = new Date(now)
-      startOfWeek.setDate(now.getDate() - now.getDay())
-      startOfWeek.setHours(0, 0, 0, 0)
+        // Update current review if it's this week
+        const startOfWeek = new Date(now)
+        startOfWeek.setDate(now.getDate() - now.getDay())
+        startOfWeek.setHours(0, 0, 0, 0)
 
-      if (new Date(review.weekStart).getTime() === startOfWeek.getTime()) {
-        setCurrentReview(review)
+        if (new Date(review.weekStart).getTime() === startOfWeek.getTime()) {
+          setFallbackCurrentReview(review)
+        }
+
+        return review
       }
 
-      return review
+      // For server mode, we need to compute the review data
+      // This would typically be done server-side, but we'll compute locally
+      const adapter = await initializeAssistantStorage()
+      const localReview = await adapter.generateWeeklyReview(input, userId)
+
+      const result = await createMutation.mutateAsync({
+        id: reviewId,
+        userId,
+        weekStart: input.weekStart.toISOString(),
+        weekEnd: input.weekEnd.toISOString(),
+        tasksCompleted: localReview.tasksCompleted,
+        tasksCompletedLastWeek: localReview.tasksCompletedLastWeek,
+        tasksCreated: localReview.tasksCreated,
+        deadlinesHit: localReview.deadlinesHit,
+        deadlinesTotal: localReview.deadlinesTotal,
+        deepFocusMinutes: localReview.deepFocusMinutes,
+        meetingMinutes: localReview.meetingMinutes,
+        totalMinutes: localReview.totalMinutes,
+        averageEnergy: localReview.averageEnergy,
+        averageFocusQuality: localReview.averageFocusQuality,
+        totalDistractions: localReview.totalDistractions,
+        topDistraction: localReview.topDistraction ?? null,
+        streakDays: localReview.streakDays,
+        badgesEarned: localReview.badgesEarned,
+        highlights: localReview.highlights,
+        areasToImprove: localReview.areasToImprove,
+        generatedAt: now.toISOString(),
+        createdAt: now.toISOString(),
+      })
+
+      if (!result) throw new Error('Failed to generate weekly review')
+
+      return localReview
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate weekly review')
       return null
@@ -219,8 +327,8 @@ export function useWeeklyReview(userId: string | null) {
    * Format week range
    */
   function formatWeekRange(review: WeeklyReview): string {
-    const startDate = new Date(review.weekStart)
-    const endDate = new Date(review.weekEnd)
+    const startDate = review.weekStart
+    const endDate = review.weekEnd
 
     const startMonth = startDate.toLocaleString('default', { month: 'short' })
     const endMonth = endDate.toLocaleString('default', { month: 'short' })
@@ -300,6 +408,16 @@ export function useWeeklyReview(userId: string | null) {
     setError(null)
   }
 
+  /**
+   * Manual refresh
+   */
+  function refresh() {
+    if (userId) {
+      queryClient.invalidateQueries({ queryKey: assistantKeys.weeklyReviewList(userId) })
+      queryClient.invalidateQueries({ queryKey: assistantKeys.weeklyReviewCurrent(userId) })
+    }
+  }
+
   return {
     // State
     reviews,
@@ -330,5 +448,9 @@ export function useWeeklyReview(userId: string | null) {
     getEnergyColor,
     generateSummaryText,
     clearError,
+    refresh,
+
+    // Server status
+    isServerMode: !useFallback,
   }
 }
