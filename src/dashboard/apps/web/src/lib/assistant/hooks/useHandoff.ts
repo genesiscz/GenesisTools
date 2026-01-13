@@ -27,13 +27,14 @@ export function useHandoff(userId: string | null) {
     }
 
     let mounted = true
+    const currentUserId = userId
 
     async function load() {
       setLoading(true)
       try {
         await initializeAssistantStorage()
         const adapter = getAssistantStorageAdapter()
-        const data = await adapter.getHandoffs(userId)
+        const data = await adapter.getHandoffs(currentUserId)
         if (mounted) {
           setHandoffs(data)
         }
