@@ -68,7 +68,7 @@ export const Route = createFileRoute('/api/events')({
               console.log(`[SSE] Subscribed to channel: ${channel}`)
             }
 
-            // Send keepalive every 30 seconds
+            // Send keepalive every 15 seconds (faster connection health checks)
             const keepaliveInterval = setInterval(() => {
               try {
                 controller.enqueue(encoder.encode(': keepalive\n\n'))
@@ -76,7 +76,7 @@ export const Route = createFileRoute('/api/events')({
                 console.error(`[SSE] Keepalive error:`, error)
                 clearInterval(keepaliveInterval)
               }
-            }, 30000)
+            }, 15000)
 
             // Cleanup on connection close
             request.signal.addEventListener('abort', () => {

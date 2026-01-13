@@ -49,8 +49,14 @@ export class DashboardConnector {
      * Uses TanStack Start server function for RPC.
      */
     async uploadData(database: AbstractPowerSyncDatabase): Promise<void> {
-        // Get pending CRUD operations
-        const batch = await database.getCrudBatch(100);
+        const startTime = Date.now();
+        console.log('[PowerSync] Starting uploadData...');
+
+        // Get pending CRUD operations IMMEDIATELY (batch size of 1 forces immediate upload)
+        // Changed from 100 to 1 to eliminate the 20-second batching delay
+        const batch = await database.getCrudBatch(1);
+        const batchTime = Date.now() - startTime;
+        console.log(`[PowerSync] getCrudBatch took ${batchTime}ms`);
 
         if (!batch || batch.crud.length === 0) {
             console.log("[PowerSync] No pending operations to sync");
@@ -58,6 +64,7 @@ export class DashboardConnector {
         }
 
         try {
+            console.log(`[PowerSync] Uploading ${batch.crud.length} operations...`);
             console.log("[PowerSync] Raw CRUD batch:", JSON.stringify(batch.crud.slice(0, 2), null, 2));
 
             const operations = batch.crud.map(
@@ -79,7 +86,8 @@ export class DashboardConnector {
 
             // Mark the batch as complete
             await batch.complete();
-            console.log(`[PowerSync] Uploaded ${operations.length} operations to server`);
+            const totalTime = Date.now() - startTime;
+            console.log(`[PowerSync] Upload completed in ${totalTime}ms (${operations.length} operations)`);
         } catch (error) {
             console.error("[PowerSync] Error uploading data:", error);
             throw error; // Rethrow to trigger retry
