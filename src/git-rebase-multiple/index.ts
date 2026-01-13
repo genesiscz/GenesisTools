@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import minimist from "minimist";
+import { Command } from "commander";
 import { backupManager } from "./backup";
 import { forkPointManager } from "./forkpoint";
 import { git } from "./git";
@@ -8,9 +8,9 @@ import { stateManager } from "./state";
 import type { CLIOptions, PlanStep, RebaseConfig, RebaseSummary, RebaseState } from "./types";
 
 /**
- * Show help message
+ * Show detailed help message (legacy)
  */
-function showHelp(): void {
+function showHelpOld(): void {
 	console.log(`
 ${chalk.bold("git-rebase-multiple")} - Safe branch hierarchy rebasing
 
@@ -18,7 +18,7 @@ ${chalk.bold("USAGE:")}
   tools git-rebase-multiple [options]
 
 ${chalk.bold("OPTIONS:")}
-  -h, --help              Show this help message
+  --help-old              Show this detailed help message
   -a, --abort             Abort and restore all branches to original state
   -c, --continue          Continue after resolving conflicts
   -s, --status            Show current state and existing backups
@@ -629,57 +629,59 @@ async function runNonInteractive(options: CLIOptions): Promise<void> {
  * Main entry point
  */
 async function main(): Promise<void> {
-	const argv = minimist<CLIOptions>(process.argv.slice(2), {
-		alias: {
-			h: "help",
-			a: "abort",
-			c: "continue",
-			s: "status",
-			r: "restore",
-		},
-		boolean: ["help", "abort", "continue", "status", "cleanup", "dryRun", "dry-run"],
-		string: ["restore", "parent", "target", "children"],
-	});
+	const program = new Command()
+		.name("git-rebase-multiple")
+		.description("Safe branch hierarchy rebasing")
+		.option("-a, --abort", "Abort and restore all branches to original state")
+		.option("-c, --continue", "Continue after resolving conflicts")
+		.option("-s, --status", "Show current state and existing backups")
+		.option("-r, --restore [branch]", "Restore single branch from backup")
+		.option("--cleanup", "Remove all backup refs and fork tags")
+		.option("--dry-run", "Show execution plan without running")
+		.option("--parent <branch>", "Parent branch to rebase")
+		.option("--target <branch>", "Target branch to rebase onto")
+		.option("--children <branches>", "Comma-separated child branches")
+		.option("--help-old", "Show detailed help message")
+		.parse();
 
-	// Handle dry-run alias
-	const dryRun = argv.dryRun || argv["dry-run"];
+	const options = program.opts<CLIOptions & { helpOld?: boolean }>();
 
 	try {
-		if (argv.help) {
-			showHelp();
+		if (options.helpOld) {
+			showHelpOld();
 			process.exit(0);
 		}
 
-		if (argv.status) {
+		if (options.status) {
 			await showStatus();
 			process.exit(0);
 		}
 
-		if (argv.abort) {
+		if (options.abort) {
 			await abort();
 			process.exit(0);
 		}
 
-		if (argv.continue) {
+		if (options.continue) {
 			await continueRebase();
 			process.exit(0);
 		}
 
-		if (argv.cleanup) {
+		if (options.cleanup) {
 			await cleanup();
 			process.exit(0);
 		}
 
-		if (argv.restore !== undefined) {
-			await restoreSingleBranch(argv.restore || undefined);
+		if (options.restore !== undefined) {
+			await restoreSingleBranch(options.restore || undefined);
 			process.exit(0);
 		}
 
 		// Check if non-interactive mode
-		if (argv.parent || argv.target) {
-			await runNonInteractive({ ...argv, dryRun: dryRun as boolean });
+		if (options.parent || options.target) {
+			await runNonInteractive({ ...options, dryRun: options.dryRun });
 		} else {
-			await runInteractive(dryRun as boolean);
+			await runInteractive(options.dryRun);
 		}
 	} catch (error) {
 		if (error instanceof Error) {
