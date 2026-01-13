@@ -56,7 +56,6 @@
         "commander": "^14.0.2",
         "diff": "^8.0.2",
         "diff2html": "^3.4.51",
-        "enquirer": "^2.4.1",
         "fb-watchman": "^2.0.2",
         "filesize": "^10.1.6",
         "fsevents": "^2.3.3",
