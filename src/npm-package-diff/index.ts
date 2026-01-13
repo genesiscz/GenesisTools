@@ -1,5 +1,5 @@
 import chokidar from "chokidar";
-import minimist from "minimist";
+import { Command } from "commander";
 import path from "path";
 import fs from "fs";
 import os from "os";
@@ -7,7 +7,7 @@ import chalk from "chalk";
 import { spawn } from "child_process";
 import * as diff from "diff";
 import { minimatch } from "minimatch";
-import ora from "ora";
+import ora, { type Ora } from "ora";
 import Table from "cli-table3";
 import { filesize } from "filesize";
 import boxen from "boxen";
@@ -72,46 +72,6 @@ const createSimpleLogger = () => {
 
 const logger = createSimpleLogger();
 
-const argv = minimist(process.argv.slice(2), {
-    alias: {
-        v: "verbose",
-        f: "filter",
-        h: "help",
-        o: "output",
-        F: "format",
-        e: "exclude",
-        p: "patch",
-        c: "config",
-        s: "silent",
-        m: "package-manager",
-        k: "keep",
-    },
-    default: {
-        filter: "**/*.d.ts",
-        format: "terminal",
-        output: null,
-        lineNumbers: true,
-        context: 10,
-        timeout: 120000, // 2 minutes default
-        packageManager: "auto",
-        paging: false,
-    },
-    boolean: [
-        "verbose",
-        "help",
-        "silent",
-        "stats",
-        "sizes",
-        "line-numbers",
-        "word-diff",
-        "use-delta",
-        "paging",
-        "keep",
-    ],
-    string: ["filter", "output", "format", "exclude", "patch", "config", "delta-theme", "npmrc", "package-manager"],
-    number: ["timeout", "context"],
-});
-
 // Configuration loading
 const loadConfig = (configPath?: string): any => {
     const defaultConfigPath = path.join(process.cwd(), ".npmpackagediffrc");
@@ -129,11 +89,42 @@ const loadConfig = (configPath?: string): any => {
     return {};
 };
 
+const program = new Command()
+    .name("npm-package-diff")
+    .argument("<package-name>", "Package name")
+    .argument("<version1>", "First version")
+    .argument("<version2>", "Second version")
+    .option("-v, --verbose", "Enable verbose logging")
+    .option("-f, --filter <pattern>", "Glob pattern to filter files", "**/*.d.ts")
+    .option("-h, --help-old", "Show this help message")
+    .option("-o, --output <file>", "Output file path")
+    .option("-F, --format <format>", "Output format: terminal, unified, html, json, side-by-side", "terminal")
+    .option("-e, --exclude <pattern>", "Glob pattern to exclude files")
+    .option("-p, --patch <file>", "Generate patch file")
+    .option("-c, --config <path>", "Path to config file")
+    .option("-s, --silent", "Suppress all output except errors")
+    .option("-m, --package-manager <manager>", "Package manager: auto, npm, yarn, pnpm, bun", "auto")
+    .option("-k, --keep", "Keep temporary directories after comparison")
+    .option("--stats", "Show statistics summary")
+    .option("--sizes", "Compare file sizes")
+    .option("--line-numbers", "Show line numbers", true)
+    .option("--word-diff", "Show word-level differences")
+    .option("--use-delta", "Use delta for terminal output (if installed)")
+    .option("--paging", "Enable terminal pagination with color support")
+    .option("--delta-theme <theme>", "Delta theme to use (light/dark)")
+    .option("--npmrc <path>", "Path to .npmrc file for authentication")
+    .option("--timeout <ms>", "Installation timeout in ms", "120000")
+    .option("--context <lines>", "Number of context lines", "10")
+    .parse();
+
+const options = program.opts();
+const [packageName, version1, version2] = program.args;
+
 // Merge config with CLI args
-const config = { ...loadConfig(argv.config), ...argv };
+const config = { ...loadConfig(options.config), ...options, _: [packageName, version1, version2] };
 
 // Help message
-if (config.help) {
+if (config.helpOld) {
     const helpText = `
 ${boxen(chalk.bold.cyan("NPM Package Diff"), {
     padding: 1,
@@ -226,9 +217,6 @@ ${chalk.gray(`{
     process.exit(0);
 }
 
-// Get arguments
-const [packageName, version1, version2] = config._;
-
 if (!packageName || !version1 || !version2) {
     logger.error(chalk.red("Error: Missing required arguments"));
     logger.info(chalk.yellow("Usage: npm-package-diff <package-name> <version1> <version2>"));
@@ -264,7 +252,7 @@ class EnhancedPackageComparison {
     private addedFiles1: FileMetadata[] = [];
     private addedFiles2: FileMetadata[] = [];
     private watchers: any[] = [];
-    private spinner?: ora.Ora;
+    private spinner?: Ora;
     private results: DiffResult[] = [];
     private packageManager: PackageManager;
     private pagerProcess?: any;
@@ -1300,7 +1288,7 @@ class EnhancedPackageComparison {
                 const newSize = result.newSize ? filesize(result.newSize) : "-";
                 const sizeDiff =
                     result.oldSize && result.newSize
-                        ? filesize(result.newSize - result.oldSize, { signed: true })
+                        ? filesize(result.newSize - result.oldSize)
                         : "-";
 
                 const status = {
@@ -1310,7 +1298,7 @@ class EnhancedPackageComparison {
                     identical: chalk.gray("Identical"),
                 }[result.status];
 
-                table.push([result.file, status, oldSize, newSize, sizeDiff]);
+                table.push([result.file, status, String(oldSize), String(newSize), String(sizeDiff)]);
             });
 
         this.write("\n" + table.toString());
