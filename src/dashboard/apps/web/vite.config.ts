@@ -10,6 +10,7 @@ import type { NitroConfig } from 'nitro/types'
 const nitroConfig: NitroConfig = {
   experimental: {
     database: true,
+    websocket: true, // Enable WebSocket support for live sync
   },
   database: {
     default: {
@@ -17,6 +18,8 @@ const nitroConfig: NitroConfig = {
       options: { name: 'dashboard' },
     },
   },
+  // Scan server/routes directory for API and WebSocket handlers
+  scanDirs: ['./server'],
 }
 import neon from './neon-vite-plugin.ts'
 
@@ -43,6 +46,16 @@ const config = defineConfig({
       '@dashboard/ui': new URL('../../packages/ui/src/index.ts', import.meta.url).pathname,
     },
   },
+  // SSR config - mark browser-only packages and nitro internals as external
+  ssr: {
+    external: [
+      'nitro/database',
+      '#nitro-internal-virtual/database',
+      '@powersync/web',
+      '@journeyapps/wa-sqlite',
+    ],
+    noExternal: [],
+  },
   // PowerSync web workers require 'es' format for code-splitting builds
   worker: {
     format: 'es',
@@ -50,7 +63,7 @@ const config = defineConfig({
   // PowerSync worker/WASM configuration
   // Exclude packages with workers/WASM from optimization
   optimizeDeps: {
-    exclude: ['@journeyapps/wa-sqlite', '@powersync/web'],
+    exclude: ['@journeyapps/wa-sqlite', '@powersync/web', 'nitro', 'nitro/database'],
     include: ['@powersync/web > js-logger'],
   },
 })

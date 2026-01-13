@@ -22,6 +22,8 @@ interface ActivityLogSidebarProps {
   isOpen: boolean
   onClose: () => void
   className?: string
+  /** Change this value to trigger a refresh of stats */
+  refreshTrigger?: number
 }
 
 type TimeRange = 'today' | 'week' | 'month' | 'all'
@@ -36,6 +38,7 @@ export function ActivityLogSidebar({
   isOpen,
   onClose,
   className,
+  refreshTrigger,
 }: ActivityLogSidebarProps) {
   const [activeTab, setActiveTab] = useState<TabView>('timeline')
   const [timeRange, setTimeRange] = useState<TimeRange>('today')
@@ -319,6 +322,7 @@ export function ActivityLogSidebar({
             timeRangeLabel={timeRange === 'all' ? 'All time' : `This ${timeRange}`}
             timerId={selectedTimerId || undefined}
             timerNames={Object.fromEntries(timers.map(t => [t.id, t.name]))}
+            refreshTrigger={refreshTrigger}
           />
         )}
       </div>

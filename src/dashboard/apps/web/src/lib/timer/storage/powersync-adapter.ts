@@ -1,6 +1,7 @@
 import { db, initializeDatabase, syncToServer } from '@/lib/db/powersync'
 import { getTimersFromServer, getActivityLogsFromServer } from '@/lib/timer/timer-sync.server'
 import { generateTimerId, generateActivityLogId } from '@dashboard/shared'
+import { getEventClient } from '@/lib/events/client'
 import type {
   Timer,
   TimerInput,
@@ -34,6 +35,10 @@ export class PowerSyncAdapter implements StorageAdapter {
   private tabId: string
   private timerWatchers: Map<string, (timers: Timer[]) => void> = new Map()
   private activityWatchers: Map<string, (entries: ActivityLogEntry[]) => void> = new Map()
+  private eventClient = getEventClient()
+  private eventUnsubscribe: (() => void) | null = null
+  private currentUserId: string | null = null
+  private initialSyncPromise: Promise<void> | null = null
 
   constructor() {
     this.tabId = `tab_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
@@ -74,21 +79,17 @@ export class PowerSyncAdapter implements StorageAdapter {
   async getTimers(userId: string): Promise<Timer[]> {
     console.log('[PowerSyncAdapter] getTimers called for user:', userId)
     try {
-      let results = await db.getAll<TimerRow>(
+      // Wait for initial sync to complete if it's in progress
+      if (this.initialSyncPromise) {
+        console.log('[PowerSyncAdapter] Waiting for initial sync to complete...')
+        await this.initialSyncPromise
+        this.initialSyncPromise = null
+      }
+
+      const results = await db.getAll<TimerRow>(
         'SELECT * FROM timers WHERE user_id = ? ORDER BY created_at DESC',
         [userId]
       )
-
-      // If local DB is empty, try to sync from server
-      if (results.length === 0) {
-        console.log('[PowerSyncAdapter] Local DB empty, syncing from server...')
-        await this.syncFromServer(userId)
-        // Re-query after sync
-        results = await db.getAll<TimerRow>(
-          'SELECT * FROM timers WHERE user_id = ? ORDER BY created_at DESC',
-          [userId]
-        )
-      }
 
       console.log('[PowerSyncAdapter] getTimers returned', results.length, 'timers')
       return results.map(deserializeTimer)
@@ -156,7 +157,10 @@ export class PowerSyncAdapter implements StorageAdapter {
     this.broadcast({ type: 'TIMER_CREATED', payload: timer, timestamp: Date.now(), sourceTab: this.tabId })
 
     // Sync to server
-    syncToServer()
+    console.log('[PowerSyncAdapter] Triggering sync to server after create')
+    syncToServer().catch(err => {
+      console.error('[PowerSyncAdapter] Sync failed after create:', err)
+    })
 
     return timer
   }
@@ -444,19 +448,62 @@ export class PowerSyncAdapter implements StorageAdapter {
   // ============================================
 
   /**
-   * Set the current user ID
-   * PowerSync handles sync automatically via the connector
+   * Set the current user ID and connect to real-time event stream
+   * This enables server-to-client synchronization via SSE
    */
-  setUserId(_userId: string): void {
-    // No-op - PowerSync connector handles sync automatically
-    // The connector's uploadData() is called by PowerSync when changes occur
+  setUserId(userId: string): void {
+    this.currentUserId = userId
+
+    // Unsubscribe from previous events
+    if (this.eventUnsubscribe) {
+      this.eventUnsubscribe()
+      this.eventUnsubscribe = null
+    }
+
+    // Connect to SSE event stream if not already connected
+    if (!this.eventClient.isConnected()) {
+      this.eventClient.connect(userId, [`timer:${userId}`])
+      console.log('[PowerSyncAdapter] Connected to event stream for user:', userId)
+    }
+
+    // Subscribe to timer events from server
+    this.eventUnsubscribe = this.eventClient.subscribe(`timer:${userId}`, async (data: unknown) => {
+      const event = data as { type: string; timestamp: number }
+      console.log('[PowerSyncAdapter] Received server event:', event)
+
+      if (event.type === 'sync') {
+        // Server has new data, download from server
+        console.log('[PowerSyncAdapter] Server notified of changes, syncing...')
+        await this.syncFromServer(userId)
+      }
+    })
+
+    console.log('[PowerSyncAdapter] Subscribed to timer events for user:', userId)
+
+    // Always sync from server when user ID is set
+    // This ensures fresh data when opening new tabs or reloading
+    this.initialSyncPromise = this.syncFromServer(userId).catch((err) => {
+      console.error('[PowerSyncAdapter] Initial sync failed:', err)
+    })
   }
 
   /**
    * Clear sync state (call on logout)
+   * Disconnects from event stream and clears user context
    */
   clearSync(): void {
-    // No-op - PowerSync handles this
+    // Unsubscribe from events
+    if (this.eventUnsubscribe) {
+      this.eventUnsubscribe()
+      this.eventUnsubscribe = null
+    }
+
+    // Note: We don't disconnect the event client here as it's a singleton
+    // shared across the application. The client will handle reconnection
+    // when setUserId is called again.
+
+    this.currentUserId = null
+    console.log('[PowerSyncAdapter] Cleared sync state')
   }
 
   /**

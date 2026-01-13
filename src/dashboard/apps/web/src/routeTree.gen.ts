@@ -17,6 +17,7 @@ import { Route as TimerIndexRouteImport } from './routes/timer/index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
 import { Route as AssistantIndexRouteImport } from './routes/assistant/index'
 import { Route as TimerTimerIdRouteImport } from './routes/timer.$timerId'
+import { Route as ExampleTodoRouteImport } from './routes/example/todo'
 import { Route as DashboardPlannerRouteImport } from './routes/dashboard/planner'
 import { Route as DashboardNotesRouteImport } from './routes/dashboard/notes'
 import { Route as DashboardFocusRouteImport } from './routes/dashboard/focus'
@@ -33,6 +34,7 @@ import { Route as AssistantNextRouteImport } from './routes/assistant/next'
 import { Route as AssistantDecisionsRouteImport } from './routes/assistant/decisions'
 import { Route as AssistantCommunicationRouteImport } from './routes/assistant/communication'
 import { Route as AssistantAnalyticsRouteImport } from './routes/assistant/analytics'
+import { Route as ApiEventsRouteImport } from './routes/api.events'
 import { Route as AssistantTasksIndexRouteImport } from './routes/assistant/tasks/index'
 import { Route as AssistantTasksTaskIdRouteImport } from './routes/assistant/tasks/$taskId'
 import { Route as ApiTrpcSplatRouteImport } from './routes/api.trpc.$'
@@ -75,6 +77,11 @@ const AssistantIndexRoute = AssistantIndexRouteImport.update({
 const TimerTimerIdRoute = TimerTimerIdRouteImport.update({
   id: '/timer/$timerId',
   path: '/timer/$timerId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ExampleTodoRoute = ExampleTodoRouteImport.update({
+  id: '/example/todo',
+  path: '/example/todo',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardPlannerRoute = DashboardPlannerRouteImport.update({
@@ -157,6 +164,11 @@ const AssistantAnalyticsRoute = AssistantAnalyticsRouteImport.update({
   path: '/assistant/analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiEventsRoute = ApiEventsRouteImport.update({
+  id: '/api/events',
+  path: '/api/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AssistantTasksIndexRoute = AssistantTasksIndexRouteImport.update({
   id: '/assistant/tasks/',
   path: '/assistant/tasks/',
@@ -178,6 +190,7 @@ export interface FileRoutesByFullPath {
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
+  '/api/events': typeof ApiEventsRoute
   '/assistant/analytics': typeof AssistantAnalyticsRoute
   '/assistant/communication': typeof AssistantCommunicationRoute
   '/assistant/decisions': typeof AssistantDecisionsRoute
@@ -194,6 +207,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/focus': typeof DashboardFocusRoute
   '/dashboard/notes': typeof DashboardNotesRoute
   '/dashboard/planner': typeof DashboardPlannerRoute
+  '/example/todo': typeof ExampleTodoRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
   '/assistant': typeof AssistantIndexRoute
   '/dashboard': typeof DashboardIndexRoute
@@ -207,6 +221,7 @@ export interface FileRoutesByTo {
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
+  '/api/events': typeof ApiEventsRoute
   '/assistant/analytics': typeof AssistantAnalyticsRoute
   '/assistant/communication': typeof AssistantCommunicationRoute
   '/assistant/decisions': typeof AssistantDecisionsRoute
@@ -223,6 +238,7 @@ export interface FileRoutesByTo {
   '/dashboard/focus': typeof DashboardFocusRoute
   '/dashboard/notes': typeof DashboardNotesRoute
   '/dashboard/planner': typeof DashboardPlannerRoute
+  '/example/todo': typeof ExampleTodoRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
   '/assistant': typeof AssistantIndexRoute
   '/dashboard': typeof DashboardIndexRoute
@@ -237,6 +253,7 @@ export interface FileRoutesById {
   '/mcp': typeof McpRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRoute
+  '/api/events': typeof ApiEventsRoute
   '/assistant/analytics': typeof AssistantAnalyticsRoute
   '/assistant/communication': typeof AssistantCommunicationRoute
   '/assistant/decisions': typeof AssistantDecisionsRoute
@@ -253,6 +270,7 @@ export interface FileRoutesById {
   '/dashboard/focus': typeof DashboardFocusRoute
   '/dashboard/notes': typeof DashboardNotesRoute
   '/dashboard/planner': typeof DashboardPlannerRoute
+  '/example/todo': typeof ExampleTodoRoute
   '/timer/$timerId': typeof TimerTimerIdRoute
   '/assistant/': typeof AssistantIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
@@ -268,6 +286,7 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/profile'
     | '/settings'
+    | '/api/events'
     | '/assistant/analytics'
     | '/assistant/communication'
     | '/assistant/decisions'
@@ -284,6 +303,7 @@ export interface FileRouteTypes {
     | '/dashboard/focus'
     | '/dashboard/notes'
     | '/dashboard/planner'
+    | '/example/todo'
     | '/timer/$timerId'
     | '/assistant'
     | '/dashboard'
@@ -297,6 +317,7 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/profile'
     | '/settings'
+    | '/api/events'
     | '/assistant/analytics'
     | '/assistant/communication'
     | '/assistant/decisions'
@@ -313,6 +334,7 @@ export interface FileRouteTypes {
     | '/dashboard/focus'
     | '/dashboard/notes'
     | '/dashboard/planner'
+    | '/example/todo'
     | '/timer/$timerId'
     | '/assistant'
     | '/dashboard'
@@ -326,6 +348,7 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/profile'
     | '/settings'
+    | '/api/events'
     | '/assistant/analytics'
     | '/assistant/communication'
     | '/assistant/decisions'
@@ -342,6 +365,7 @@ export interface FileRouteTypes {
     | '/dashboard/focus'
     | '/dashboard/notes'
     | '/dashboard/planner'
+    | '/example/todo'
     | '/timer/$timerId'
     | '/assistant/'
     | '/dashboard/'
@@ -356,6 +380,7 @@ export interface RootRouteChildren {
   McpRoute: typeof McpRoute
   ProfileRoute: typeof ProfileRoute
   SettingsRoute: typeof SettingsRoute
+  ApiEventsRoute: typeof ApiEventsRoute
   AssistantAnalyticsRoute: typeof AssistantAnalyticsRoute
   AssistantCommunicationRoute: typeof AssistantCommunicationRoute
   AssistantDecisionsRoute: typeof AssistantDecisionsRoute
@@ -372,6 +397,7 @@ export interface RootRouteChildren {
   DashboardFocusRoute: typeof DashboardFocusRoute
   DashboardNotesRoute: typeof DashboardNotesRoute
   DashboardPlannerRoute: typeof DashboardPlannerRoute
+  ExampleTodoRoute: typeof ExampleTodoRoute
   TimerTimerIdRoute: typeof TimerTimerIdRoute
   AssistantIndexRoute: typeof AssistantIndexRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
@@ -437,6 +463,13 @@ declare module '@tanstack/react-router' {
       path: '/timer/$timerId'
       fullPath: '/timer/$timerId'
       preLoaderRoute: typeof TimerTimerIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/example/todo': {
+      id: '/example/todo'
+      path: '/example/todo'
+      fullPath: '/example/todo'
+      preLoaderRoute: typeof ExampleTodoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard/planner': {
@@ -551,6 +584,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AssistantAnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/events': {
+      id: '/api/events'
+      path: '/api/events'
+      fullPath: '/api/events'
+      preLoaderRoute: typeof ApiEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/assistant/tasks/': {
       id: '/assistant/tasks/'
       path: '/assistant/tasks'
@@ -580,6 +620,7 @@ const rootRouteChildren: RootRouteChildren = {
   McpRoute: McpRoute,
   ProfileRoute: ProfileRoute,
   SettingsRoute: SettingsRoute,
+  ApiEventsRoute: ApiEventsRoute,
   AssistantAnalyticsRoute: AssistantAnalyticsRoute,
   AssistantCommunicationRoute: AssistantCommunicationRoute,
   AssistantDecisionsRoute: AssistantDecisionsRoute,
@@ -596,6 +637,7 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardFocusRoute: DashboardFocusRoute,
   DashboardNotesRoute: DashboardNotesRoute,
   DashboardPlannerRoute: DashboardPlannerRoute,
+  ExampleTodoRoute: ExampleTodoRoute,
   TimerTimerIdRoute: TimerTimerIdRoute,
   AssistantIndexRoute: AssistantIndexRoute,
   DashboardIndexRoute: DashboardIndexRoute,

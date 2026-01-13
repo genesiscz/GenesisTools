@@ -1,5 +1,10 @@
 import { createAPIFileRoute } from '@tanstack/react-start/api'
-import { useDatabase } from 'nitro/database'
+
+// Dynamic import to avoid SSR resolution issues with Nitro's virtual modules
+const getDatabase = async () => {
+  const { useDatabase } = await import('nitro/database')
+  return useDatabase()
+}
 
 interface CrudOperation {
   id: string
@@ -29,7 +34,7 @@ export const APIRoute = createAPIFileRoute('/api/sync/upload')({
         })
       }
 
-      const db = useDatabase()
+      const db = await getDatabase()
 
       // Ensure tables exist
       await ensureTables(db)
@@ -56,7 +61,8 @@ export const APIRoute = createAPIFileRoute('/api/sync/upload')({
   },
 })
 
-async function ensureTables(db: ReturnType<typeof useDatabase>) {
+// biome-ignore lint/suspicious/noExplicitAny: Dynamic database type from Nitro
+async function ensureTables(db: any) {
   // Create timers table
   await db.sql`
     CREATE TABLE IF NOT EXISTS timers (
@@ -97,8 +103,9 @@ async function ensureTables(db: ReturnType<typeof useDatabase>) {
   `
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: Dynamic database type from Nitro
 async function processOperation(
-  db: ReturnType<typeof useDatabase>,
+  db: any,
   op: CrudOperation
 ) {
   const { table, data } = op

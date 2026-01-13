@@ -1,225 +1,23 @@
-import { createServerFn } from '@tanstack/react-start'
-import { useDatabase } from 'nitro/database'
-
-// Types matching the client-side Timer type
-interface TimerData {
-  id: string
-  name: string
-  timerType: 'stopwatch' | 'countdown' | 'pomodoro'
-  isRunning: boolean
-  elapsedTime: number
-  duration?: number
-  laps: Array<{ id: string; time: number; delta: number }>
-  userId: string
-  createdAt: string
-  updatedAt: string
-  showTotal: boolean
-  firstStartTime?: string
-  startTime?: string
-  pomodoroSettings?: {
-    workDuration: number
-    shortBreakDuration: number
-    longBreakDuration: number
-    sessionsBeforeLongBreak: number
-  }
-  pomodoroPhase?: 'work' | 'short_break' | 'long_break'
-  pomodoroSessionCount: number
-}
-
-interface ActivityLogData {
-  id: string
-  timerId: string
-  timerName: string
-  userId: string
-  eventType: string
-  timestamp: string
-  elapsedAtEvent: number
-  sessionDuration?: number
-  previousValue?: number
-  newValue?: number
-  metadata?: Record<string, unknown>
-}
-
-interface SyncInput {
-  userId: string
-  timers: TimerData[]
-  activityLogs: ActivityLogData[]
-  lastSyncAt?: string
-}
-
-interface SyncOutput {
-  timers: TimerData[]
-  activityLogs: ActivityLogData[]
-  syncedAt: string
-}
-
-// Database row types
-interface TimerRow {
-  id: string
-  name: string
-  timer_type: string
-  is_running: number
-  elapsed_time: number
-  duration: number | null
-  laps: string
-  user_id: string
-  created_at: string
-  updated_at: string
-  show_total: number
-  first_start_time: string | null
-  start_time: string | null
-  pomodoro_settings: string | null
-  pomodoro_phase: string | null
-  pomodoro_session_count: number
-}
-
-interface ActivityLogRow {
-  id: string
-  timer_id: string
-  timer_name: string
-  user_id: string
-  event_type: string
-  timestamp: string
-  elapsed_at_event: number
-  session_duration: number | null
-  previous_value: number | null
-  new_value: number | null
-  metadata: string
-}
-
-// Convert client timer to database row values
-function timerToRow(timer: TimerData): TimerRow {
-  return {
-    id: timer.id,
-    name: timer.name,
-    timer_type: timer.timerType,
-    is_running: timer.isRunning ? 1 : 0,
-    elapsed_time: timer.elapsedTime,
-    duration: timer.duration ?? null,
-    laps: JSON.stringify(timer.laps),
-    user_id: timer.userId,
-    created_at: timer.createdAt,
-    updated_at: timer.updatedAt,
-    show_total: timer.showTotal ? 1 : 0,
-    first_start_time: timer.firstStartTime ?? null,
-    start_time: timer.startTime ?? null,
-    pomodoro_settings: timer.pomodoroSettings ? JSON.stringify(timer.pomodoroSettings) : null,
-    pomodoro_phase: timer.pomodoroPhase ?? null,
-    pomodoro_session_count: timer.pomodoroSessionCount ?? 0,
-  }
-}
-
-// Convert database row to client timer
-function rowToTimer(row: TimerRow): TimerData {
-  return {
-    id: row.id,
-    name: row.name,
-    timerType: row.timer_type as TimerData['timerType'],
-    isRunning: row.is_running === 1,
-    elapsedTime: row.elapsed_time,
-    duration: row.duration ?? undefined,
-    laps: JSON.parse(row.laps || '[]'),
-    userId: row.user_id,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    showTotal: row.show_total === 1,
-    firstStartTime: row.first_start_time ?? undefined,
-    startTime: row.start_time ?? undefined,
-    pomodoroSettings: row.pomodoro_settings ? JSON.parse(row.pomodoro_settings) : undefined,
-    pomodoroPhase: row.pomodoro_phase as TimerData['pomodoroPhase'],
-    pomodoroSessionCount: row.pomodoro_session_count,
-  }
-}
-
-// Convert client activity log to database row
-function activityToRow(log: ActivityLogData): ActivityLogRow {
-  return {
-    id: log.id,
-    timer_id: log.timerId,
-    timer_name: log.timerName,
-    user_id: log.userId,
-    event_type: log.eventType,
-    timestamp: log.timestamp,
-    elapsed_at_event: log.elapsedAtEvent,
-    session_duration: log.sessionDuration ?? null,
-    previous_value: log.previousValue ?? null,
-    new_value: log.newValue ?? null,
-    metadata: JSON.stringify(log.metadata || {}),
-  }
-}
-
-// Convert database row to client activity log
-function rowToActivity(row: ActivityLogRow): ActivityLogData {
-  return {
-    id: row.id,
-    timerId: row.timer_id,
-    timerName: row.timer_name,
-    userId: row.user_id,
-    eventType: row.event_type,
-    timestamp: row.timestamp,
-    elapsedAtEvent: row.elapsed_at_event,
-    sessionDuration: row.session_duration ?? undefined,
-    previousValue: row.previous_value ?? undefined,
-    newValue: row.new_value ?? undefined,
-    metadata: JSON.parse(row.metadata || '{}'),
-  }
-}
-
 /**
- * Initialize database tables
+ * Timer Sync Server - Drizzle + Generic Events
+ *
+ * Migrated from raw SQL to Drizzle ORM with:
+ * - Full type safety
+ * - Automatic type inference
+ * - Generic event broadcasting for real-time updates
+ * - No manual type conversions needed
  */
-async function ensureTables() {
-  const db = useDatabase()
 
-  // Create timers table
-  await db.sql`
-    CREATE TABLE IF NOT EXISTS timers (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      timer_type TEXT NOT NULL,
-      is_running INTEGER NOT NULL DEFAULT 0,
-      elapsed_time INTEGER NOT NULL DEFAULT 0,
-      duration INTEGER,
-      laps TEXT DEFAULT '[]',
-      user_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      show_total INTEGER NOT NULL DEFAULT 0,
-      first_start_time TEXT,
-      start_time TEXT,
-      pomodoro_settings TEXT,
-      pomodoro_phase TEXT,
-      pomodoro_session_count INTEGER DEFAULT 0
-    )
-  `
-
-  // Create activity logs table
-  await db.sql`
-    CREATE TABLE IF NOT EXISTS activity_logs (
-      id TEXT PRIMARY KEY,
-      timer_id TEXT NOT NULL,
-      timer_name TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      event_type TEXT NOT NULL,
-      timestamp TEXT NOT NULL,
-      elapsed_at_event INTEGER NOT NULL DEFAULT 0,
-      session_duration INTEGER,
-      previous_value INTEGER,
-      new_value INTEGER,
-      metadata TEXT DEFAULT '{}'
-    )
-  `
-
-  // Create indexes
-  await db.sql`CREATE INDEX IF NOT EXISTS idx_timers_user_id ON timers(user_id)`
-  await db.sql`CREATE INDEX IF NOT EXISTS idx_activity_logs_user_id ON activity_logs(user_id)`
-  await db.sql`CREATE INDEX IF NOT EXISTS idx_activity_logs_timer_id ON activity_logs(timer_id)`
-}
+import { createServerFn } from '@tanstack/react-start'
+import { db, timers, activityLogs, type Timer, type ActivityLog } from '@/drizzle'
+import { eq, desc } from 'drizzle-orm'
+import { broadcastToUser } from '@/lib/events/server'
 
 // ============================================
-// CRUD Batch Upload (PowerSync Sync)
+// Types (now inferred from Drizzle schema!)
 // ============================================
 
+// CRUD operation types for PowerSync sync
 interface CrudOperation {
   id: string
   op: 'PUT' | 'PATCH' | 'DELETE'
@@ -231,9 +29,26 @@ interface UploadBatchInput {
   operations: CrudOperation[]
 }
 
+// ============================================
+// CRUD Batch Upload (PowerSync Sync)
+// ============================================
+
 /**
  * Upload CRUD batch from PowerSync to server database
- * This is the main sync endpoint called by the connector
+ *
+ * Now uses:
+ * - Drizzle ORM for type-safe queries
+ * - Generic event broadcaster for real-time updates
+ *
+ * @example
+ * ```ts
+ * await uploadSyncBatch({
+ *   operations: [
+ *     { id: '123', op: 'PUT', table: 'timers', data: {...} },
+ *     { id: '456', op: 'DELETE', table: 'timers', data: { id: '456' } }
+ *   ]
+ * })
+ * ```
  */
 export const uploadSyncBatch = createServerFn({
   method: 'POST',
@@ -246,94 +61,193 @@ export const uploadSyncBatch = createServerFn({
       return { success: true }
     }
 
-    await ensureTables()
-    const db = useDatabase()
-
     console.log(`[Sync] Processing ${operations.length} operations...`)
 
+    const affectedUserIds = new Set<string>()
+
+    // Process each operation
     for (const op of operations) {
-      await processOperation(db, op)
+      if (!op.id || !op.data) {
+        console.warn('[Sync] Skipping operation with missing id/data:', op)
+        continue
+      }
+
+      // Track affected users for event broadcasting
+      if (op.data.user_id) {
+        affectedUserIds.add(op.data.user_id as string)
+      }
+
+      // Process based on table
+      try {
+        if (op.table === 'timers') {
+          console.log('[Sync] Processing timer operation:', op.op, op.id)
+          await processTimerOperation(op)
+        } else if (op.table === 'activity_logs') {
+          console.log('[Sync] Processing activity log operation:', op.op, op.id)
+          await processActivityLogOperation(op)
+        }
+      } catch (error) {
+        console.error(`[Sync] Failed to process ${op.table} operation ${op.op}:`, error)
+        console.error('[Sync] Operation data:', JSON.stringify(op, null, 2))
+        // Continue processing other operations
+      }
+    }
+
+    // Broadcast events to affected users
+    for (const userId of affectedUserIds) {
+      broadcastToUser('timer', userId, {
+        type: 'sync',
+        timestamp: Date.now()
+      })
+      console.log(`[Sync] Broadcasted event to user: ${userId}`)
     }
 
     console.log(`[Sync] Completed ${operations.length} operations`)
     return { success: true }
   })
 
-async function processOperation(
-  db: ReturnType<typeof useDatabase>,
-  op: CrudOperation
-) {
-  const { table, data } = op
+/**
+ * Process timer CRUD operation with Drizzle
+ */
+async function processTimerOperation(op: CrudOperation) {
+  const data = op.data
 
   switch (op.op) {
     case 'PUT':
-      if (table === 'timers') {
-        await db.sql`
-          INSERT OR REPLACE INTO timers (
-            id, name, timer_type, is_running, elapsed_time, duration, laps,
-            user_id, created_at, updated_at, show_total, first_start_time,
-            start_time, pomodoro_settings, pomodoro_phase, pomodoro_session_count
-          ) VALUES (
-            ${data.id}, ${data.name}, ${data.timer_type}, ${data.is_running ?? 0},
-            ${data.elapsed_time ?? 0}, ${data.duration}, ${data.laps ?? '[]'},
-            ${data.user_id}, ${data.created_at}, ${data.updated_at},
-            ${data.show_total ?? 0}, ${data.first_start_time}, ${data.start_time},
-            ${data.pomodoro_settings}, ${data.pomodoro_phase}, ${data.pomodoro_session_count ?? 0}
-          )
-        `
-      } else if (table === 'activity_logs') {
-        await db.sql`
-          INSERT OR REPLACE INTO activity_logs (
-            id, timer_id, timer_name, user_id, event_type, timestamp,
-            elapsed_at_event, session_duration, previous_value, new_value, metadata
-          ) VALUES (
-            ${data.id}, ${data.timer_id}, ${data.timer_name}, ${data.user_id},
-            ${data.event_type}, ${data.timestamp}, ${data.elapsed_at_event ?? 0},
-            ${data.session_duration}, ${data.previous_value}, ${data.new_value},
-            ${data.metadata ?? '{}'}
-          )
-        `
-      }
+      // Upsert timer (insert or replace)
+      console.log('[Sync] PUT operation data:', JSON.stringify(data, null, 2))
+      await db.insert(timers)
+        .values({
+          id: op.id,
+          name: data.name as string,
+          timerType: data.timer_type as 'stopwatch' | 'countdown' | 'pomodoro',
+          isRunning: (data.is_running as number) ?? 0,
+          elapsedTime: (data.elapsed_time as number) ?? 0,
+          duration: (data.duration as number | null) ?? null,
+          laps: (data.laps as Array<{ number: number; lapTime: number; splitTime: number; timestamp: string }>) ?? [],
+          userId: data.user_id as string,
+          createdAt: data.created_at as string,
+          updatedAt: data.updated_at as string,
+          showTotal: (data.show_total as number) ?? 0,
+          firstStartTime: (data.first_start_time as string | null) ?? null,
+          startTime: (data.start_time as string | null) ?? null,
+          pomodoroSettings: (data.pomodoro_settings as { workDuration: number; shortBreakDuration: number; longBreakDuration: number; sessionsBeforeLongBreak: number } | null) ?? null,
+          pomodoroPhase: (data.pomodoro_phase as 'work' | 'short_break' | 'long_break' | null) ?? null,
+          pomodoroSessionCount: (data.pomodoro_session_count as number) ?? 0,
+        })
+        .onConflictDoUpdate({
+          target: timers.id,
+          set: {
+            name: data.name as string,
+            timerType: data.timer_type as 'stopwatch' | 'countdown' | 'pomodoro',
+            isRunning: (data.is_running as number) ?? 0,
+            elapsedTime: (data.elapsed_time as number) ?? 0,
+            duration: (data.duration as number | null) ?? null,
+            laps: (data.laps as Array<{ number: number; lapTime: number; splitTime: number; timestamp: string }>) ?? [],
+            updatedAt: data.updated_at as string,
+            showTotal: (data.show_total as number) ?? 0,
+            firstStartTime: (data.first_start_time as string | null) ?? null,
+            startTime: (data.start_time as string | null) ?? null,
+            pomodoroSettings: (data.pomodoro_settings as { workDuration: number; shortBreakDuration: number; longBreakDuration: number; sessionsBeforeLongBreak: number } | null) ?? null,
+            pomodoroPhase: (data.pomodoro_phase as 'work' | 'short_break' | 'long_break' | null) ?? null,
+            pomodoroSessionCount: (data.pomodoro_session_count as number) ?? 0,
+          }
+        })
       break
 
     case 'PATCH':
-      if (table === 'timers') {
-        await db.sql`
-          UPDATE timers SET updated_at = ${data.updated_at ?? new Date().toISOString()}
-          WHERE id = ${data.id}
-        `
+      // Update specific fields (only update what's provided)
+      const updates: Partial<typeof timers.$inferInsert> = {
+        updatedAt: (data.updated_at as string) ?? new Date().toISOString()
       }
+
+      // Add any provided fields
+      if (data.name !== undefined) updates.name = data.name as string
+      if (data.timer_type !== undefined) updates.timerType = data.timer_type as 'stopwatch' | 'countdown' | 'pomodoro'
+      if (data.is_running !== undefined) updates.isRunning = data.is_running as number
+      if (data.elapsed_time !== undefined) updates.elapsedTime = data.elapsed_time as number
+      if (data.duration !== undefined) updates.duration = data.duration as number | null
+      if (data.laps !== undefined) updates.laps = data.laps as Array<{ number: number; lapTime: number; splitTime: number; timestamp: string }>
+      if (data.show_total !== undefined) updates.showTotal = data.show_total as number
+      if (data.first_start_time !== undefined) updates.firstStartTime = data.first_start_time as string | null
+      if (data.start_time !== undefined) updates.startTime = data.start_time as string | null
+      if (data.pomodoro_settings !== undefined) updates.pomodoroSettings = data.pomodoro_settings as { workDuration: number; shortBreakDuration: number; longBreakDuration: number; sessionsBeforeLongBreak: number } | null
+      if (data.pomodoro_phase !== undefined) updates.pomodoroPhase = data.pomodoro_phase as 'work' | 'short_break' | 'long_break' | null
+      if (data.pomodoro_session_count !== undefined) updates.pomodoroSessionCount = data.pomodoro_session_count as number
+
+      console.log('[Sync] PATCH updates:', updates)
+      await db.update(timers)
+        .set(updates)
+        .where(eq(timers.id, op.id))
       break
 
     case 'DELETE':
-      if (table === 'timers') {
-        await db.sql`DELETE FROM timers WHERE id = ${data.id}`
-      } else if (table === 'activity_logs') {
-        await db.sql`DELETE FROM activity_logs WHERE id = ${data.id}`
-      }
+      // Delete timer
+      await db.delete(timers)
+        .where(eq(timers.id, op.id))
       break
   }
 }
 
 /**
+ * Process activity log CRUD operation with Drizzle
+ */
+async function processActivityLogOperation(op: CrudOperation) {
+  const data = op.data
+
+  switch (op.op) {
+    case 'PUT':
+      // Insert activity log (logs are immutable, so just insert)
+      await db.insert(activityLogs)
+        .values({
+          id: op.id,
+          timerId: data.timer_id as string,
+          timerName: data.timer_name as string,
+          userId: data.user_id as string,
+          eventType: data.event_type as ActivityLog['eventType'],
+          timestamp: data.timestamp as string,
+          elapsedAtEvent: (data.elapsed_at_event as number) ?? 0,
+          sessionDuration: (data.session_duration as number | null) ?? null,
+          previousValue: (data.previous_value as number | null) ?? null,
+          newValue: (data.new_value as number | null) ?? null,
+          metadata: (data.metadata as Record<string, unknown>) ?? {},
+        })
+        .onConflictDoNothing() // Activity logs are immutable
+      break
+
+    case 'DELETE':
+      // Delete activity log
+      await db.delete(activityLogs)
+        .where(eq(activityLogs.id, op.id))
+      break
+  }
+}
+
+// ============================================
+// Fetch Operations
+// ============================================
+
+/**
  * Get all timers for a user from the server database
+ *
+ * Now uses Drizzle select with automatic type inference.
+ * No manual row conversions needed!
  */
 export const getTimersFromServer = createServerFn({
   method: 'GET',
 })
   .inputValidator((d: string) => d) // userId
-  .handler(async ({ data: userId }) => {
+  .handler(async ({ data: userId }): Promise<Timer[]> => {
     try {
       console.log('[Server] getTimersFromServer called for user:', userId)
-      await ensureTables()
-      const db = useDatabase()
 
-      const { rows } = await db.sql<TimerRow>`
-        SELECT * FROM timers WHERE user_id = ${userId} ORDER BY created_at DESC
-      `
+      const results = await db.select()
+        .from(timers)
+        .where(eq(timers.userId, userId))
+        .orderBy(desc(timers.createdAt))
 
-      console.log('[Server] getTimersFromServer returning', rows?.length ?? 0, 'timers')
-      return (rows ?? []).map(rowToTimer)
+      console.log('[Server] Returning', results.length, 'timers')
+      return results
     } catch (error) {
       console.error('[Server] getTimersFromServer error:', error)
       return []
@@ -342,120 +256,58 @@ export const getTimersFromServer = createServerFn({
 
 /**
  * Get all activity logs for a user from the server database
+ *
+ * Now uses Drizzle select with automatic type inference.
  */
 export const getActivityLogsFromServer = createServerFn({
   method: 'GET',
 })
   .inputValidator((d: string) => d) // userId
-  .handler(async ({ data: userId }) => {
+  .handler(async ({ data: userId }): Promise<ActivityLog[]> => {
     try {
       console.log('[Server] getActivityLogsFromServer called for user:', userId)
-      await ensureTables()
-      const db = useDatabase()
 
-      const { rows } = await db.sql<ActivityLogRow>`
-        SELECT * FROM activity_logs WHERE user_id = ${userId} ORDER BY timestamp DESC LIMIT 1000
-      `
+      const results = await db.select()
+        .from(activityLogs)
+        .where(eq(activityLogs.userId, userId))
+        .orderBy(desc(activityLogs.timestamp))
+        .limit(1000)
 
-      console.log('[Server] getActivityLogsFromServer returning', rows?.length ?? 0, 'logs')
-      return (rows ?? []).map(rowToActivity)
+      console.log('[Server] Returning', results.length, 'activity logs')
+      return results
     } catch (error) {
       console.error('[Server] getActivityLogsFromServer error:', error)
       return []
     }
   })
 
-/**
- * Full sync - upload local changes and download server changes
- * Uses last-write-wins conflict resolution based on updatedAt timestamp
- */
-export const syncTimers = createServerFn({
-  method: 'POST',
-})
-  .inputValidator((d: SyncInput) => d)
-  .handler(async ({ data }): Promise<SyncOutput> => {
-    await ensureTables()
-    const db = useDatabase()
-
-    const { userId, timers: clientTimers, activityLogs: clientLogs } = data
-    const syncedAt = new Date().toISOString()
-
-    // Get current server state
-    const { rows: serverTimerRows } = await db.sql<TimerRow>`
-      SELECT * FROM timers WHERE user_id = ${userId}
-    `
-    const serverTimerMap = new Map((serverTimerRows ?? []).map((t) => [t.id, t]))
-
-    // Process client timers - upsert with last-write-wins
-    for (const timer of clientTimers) {
-      const serverTimer = serverTimerMap.get(timer.id)
-
-      // If server has newer version, skip client update
-      if (serverTimer && new Date(serverTimer.updated_at) > new Date(timer.updatedAt)) {
-        continue
-      }
-
-      const row = timerToRow(timer)
-
-      // Upsert using INSERT OR REPLACE
-      await db.sql`
-        INSERT OR REPLACE INTO timers (
-          id, name, timer_type, is_running, elapsed_time, duration, laps,
-          user_id, created_at, updated_at, show_total, first_start_time,
-          start_time, pomodoro_settings, pomodoro_phase, pomodoro_session_count
-        ) VALUES (
-          ${row.id}, ${row.name}, ${row.timer_type}, ${row.is_running}, ${row.elapsed_time},
-          ${row.duration}, ${row.laps}, ${row.user_id}, ${row.created_at}, ${row.updated_at},
-          ${row.show_total}, ${row.first_start_time}, ${row.start_time},
-          ${row.pomodoro_settings}, ${row.pomodoro_phase}, ${row.pomodoro_session_count}
-        )
-      `
-    }
-
-    // Process activity logs - just insert new ones (they're immutable)
-    for (const log of clientLogs) {
-      const row = activityToRow(log)
-
-      // Insert if not exists
-      await db.sql`
-        INSERT OR IGNORE INTO activity_logs (
-          id, timer_id, timer_name, user_id, event_type, timestamp,
-          elapsed_at_event, session_duration, previous_value, new_value, metadata
-        ) VALUES (
-          ${row.id}, ${row.timer_id}, ${row.timer_name}, ${row.user_id}, ${row.event_type},
-          ${row.timestamp}, ${row.elapsed_at_event}, ${row.session_duration},
-          ${row.previous_value}, ${row.new_value}, ${row.metadata}
-        )
-      `
-    }
-
-    // Return merged state from server
-    const { rows: mergedTimerRows } = await db.sql<TimerRow>`
-      SELECT * FROM timers WHERE user_id = ${userId} ORDER BY created_at DESC
-    `
-    const { rows: mergedLogRows } = await db.sql<ActivityLogRow>`
-      SELECT * FROM activity_logs WHERE user_id = ${userId} ORDER BY timestamp DESC LIMIT 1000
-    `
-
-    return {
-      timers: (mergedTimerRows ?? []).map(rowToTimer),
-      activityLogs: (mergedLogRows ?? []).map(rowToActivity),
-      syncedAt,
-    }
-  })
+// ============================================
+// Delete Operations
+// ============================================
 
 /**
  * Delete a timer from the server database
+ *
+ * Now uses Drizzle delete with type-safe where clause.
  */
 export const deleteTimerFromServer = createServerFn({
   method: 'POST',
 })
   .inputValidator((d: { timerId: string; userId: string }) => d)
-  .handler(async ({ data }) => {
-    await ensureTables()
-    const db = useDatabase()
+  .handler(async ({ data }): Promise<{ success: boolean }> => {
+    try {
+      await db.delete(timers)
+        .where(eq(timers.id, data.timerId))
 
-    await db.sql`DELETE FROM timers WHERE id = ${data.timerId}`
+      // Broadcast event to user
+      broadcastToUser('timer', data.userId, {
+        type: 'sync',
+        timestamp: Date.now()
+      })
 
-    return { success: true }
+      return { success: true }
+    } catch (error) {
+      console.error('[Server] deleteTimerFromServer error:', error)
+      return { success: false }
+    }
   })
