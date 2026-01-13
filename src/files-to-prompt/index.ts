@@ -1,4 +1,4 @@
-import minimist from "minimist";
+import { Command } from "commander";
 import { basename, dirname, extname, join, resolve, relative } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile } from "node:fs/promises";
@@ -6,38 +6,6 @@ import { minimatch } from "minimatch";
 import logger from "@app/logger";
 import type { FileSink } from "bun";
 import { estimateTokens, formatTokens } from "@ask/utils/helpers";
-
-// --- Interfaces ---
-interface Options {
-    paths?: string[];
-    extension?: string[];
-    includeHidden?: boolean;
-    ignoreFilesOnly?: boolean;
-    ignoreGitignore?: boolean;
-    ignore?: string[];
-    output?: string;
-    cxml?: boolean;
-    markdown?: boolean;
-    lineNumbers?: boolean;
-    flatFolder?: boolean;
-    null?: boolean;
-    help?: boolean;
-    version?: boolean;
-    dry?: boolean;
-    // Aliases
-    e?: string[];
-    o?: string;
-    c?: boolean;
-    m?: boolean;
-    n?: boolean;
-    f?: boolean;
-    h?: boolean;
-    0?: boolean;
-}
-
-interface Args extends Options {
-    _: string[]; // Positional arguments
-}
 
 interface IgnoredFile {
     path: string;
@@ -820,46 +788,37 @@ Examples:
 async function main(): Promise<void> {
     try {
         // Wrap main logic
-        const argv = minimist<Args>(process.argv.slice(2), {
-            alias: {
-                e: "extension",
-                o: "output",
-                c: "cxml",
-                m: "markdown",
-                h: "help",
-                v: "version",
-                "0": "null",
-                f: "flatFolder",
-            },
-            boolean: [
-                "includeHidden",
-                "ignoreFilesOnly",
-                "ignoreGitignore",
-                "cxml",
-                "markdown",
-                "lineNumbers", // IMPORTANT: Treat -n as boolean if no value given
-                "null",
-                "help",
-                "version",
-                "flatFolder",
-                "dry",
-            ],
-            string: ["output"],
-            // Declare potentially multi-value args explicitly if needed by minimist typing/parsing
-            // minimist might need hints for array types if they aren't consistently used with multiple flags
-            // For now, assuming basic parsing works for -e val1 -e val2
-        });
+        const program = new Command()
+            .name("files-to-prompt")
+            .argument("[paths...]", "One or more paths to files or directories")
+            .option("-e, --extension <ext...>", "File extensions to include (can use multiple times)")
+            .option("--include-hidden", "Include files and folders starting with .")
+            .option("--ignore-files-only", "--ignore option only ignores files")
+            .option("--ignore-gitignore", "Ignore .gitignore files and include all files")
+            .option("--ignore <pattern...>", "List of patterns to ignore (can use multiple times)")
+            .option("-o, --output <file>", "Output to a file instead of stdout (or directory for --flat-folder)")
+            .option("-c, --cxml", "Output in XML-ish format suitable for Claude")
+            .option("-m, --markdown", "Output Markdown with fenced code blocks")
+            .option("-n, --line-numbers", "Add line numbers to the output")
+            .option("-f, --flat-folder", "Copy files to a flat folder structure with renamed files")
+            .option("-0, --null", "Use NUL character as separator when reading from stdin")
+            .option("--dry", "Show statistics about what would be processed without actually processing")
+            .option("-h, --help-old", "Show this help message")
+            .option("--version", "Show version information")
+            .parse();
 
-        if (argv.help) {
+        const options = program.opts();
+        const paths = program.args;
+
+        if (options.helpOld) {
             showHelp();
             process.exit(0);
         }
-        if (argv.version) {
+        if (options.version) {
             showVersion();
             process.exit(0);
         }
 
-        const paths = argv._;
         if (paths.length === 0 && process.stdin.isTTY) {
             logger.error("Error: No input paths provided.");
             showHelp();
@@ -867,23 +826,27 @@ async function main(): Promise<void> {
         }
 
         const extensions = (
-            Array.isArray(argv.extension) ? argv.extension : typeof argv.extension === "string" ? [argv.extension] : []
+            Array.isArray(options.extension)
+                ? options.extension
+                : typeof options.extension === "string"
+                ? [options.extension]
+                : []
         ).map((ext) => ext.toLowerCase().replace(/^\./, "")); // Normalize extensions
-        const includeHidden = !!argv.includeHidden;
-        const ignoreFilesOnly = !!argv.ignoreFilesOnly;
-        const ignoreGitignore = !!argv.ignoreGitignore;
-        const ignorePatterns = Array.isArray(argv.ignore)
-            ? argv.ignore
-            : typeof argv.ignore === "string"
-            ? [argv.ignore]
+        const includeHidden = !!options.includeHidden;
+        const ignoreFilesOnly = !!options.ignoreFilesOnly;
+        const ignoreGitignore = !!options.ignoreGitignore;
+        const ignorePatterns = Array.isArray(options.ignore)
+            ? options.ignore
+            : typeof options.ignore === "string"
+            ? [options.ignore]
             : [];
-        const outputFile = argv.output;
-        const claudeXml = !!argv.cxml;
-        const markdown = !!argv.markdown;
-        const lineNumbers = !!argv.lineNumbers; // Now correctly uses boolean flag value
-        const readStdinNull = !!argv.null;
-        const flatFolder = !!(argv.flatFolder || argv["flat-folder"]);
-        const dry = !!argv.dry;
+        const outputFile = options.output;
+        const claudeXml = !!options.cxml;
+        const markdown = !!options.markdown;
+        const lineNumbers = !!options.lineNumbers; // Now correctly uses boolean flag value
+        const readStdinNull = !!options.null;
+        const flatFolder = !!options.flatFolder;
+        const dry = !!options.dry;
 
         // Validate options
         if (flatFolder && !outputFile) {
