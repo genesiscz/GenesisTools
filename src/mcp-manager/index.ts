@@ -18,6 +18,7 @@ import {
     showServerConfig,
     backupAllConfigs,
     renameServer,
+    configJson,
 } from "./commands/index.js";
 import { setGlobalOptions } from "./utils/config.utils.js";
 
@@ -42,9 +43,15 @@ interface Options {
     show?: string;
     backupAll?: boolean;
     rename?: string;
+    configJson?: boolean;
+    client?: string; // For config-json --client
+    enabledOnly?: boolean; // For config-json --enabled-only
+    servers?: string; // For config-json --servers
+    bare?: boolean; // For config-json --bare
+    clipboard?: boolean; // For config-json --clipboard
     type?: string;
-    headers?: string; // For install --headers
-    env?: string; // For install --env
+    headers?: string | string[]; // For install --headers (supports multiple flags)
+    env?: string | string[]; // For install --env (supports multiple flags)
     provider?: string; // For install/enable/disable --provider
     providers?: string; // Alias for --provider
     yes?: boolean; // Auto-confirm changes without prompting
@@ -77,9 +84,11 @@ async function main() {
             H: "headers",
             e: "env",
             y: "yes",
+            c: "clipboard",
+            "enabled-only": "enabledOnly",
         },
-        boolean: ["verbose", "help", "config", "sync", "syncFromProviders", "list", "backupAll", "path", "yes"],
-        string: ["enable", "disable", "install", "show", "rename", "type", "headers", "env", "provider", "providers"],
+        boolean: ["verbose", "help", "config", "sync", "syncFromProviders", "list", "backupAll", "path", "yes", "configJson", "enabledOnly", "bare", "clipboard"],
+        string: ["enable", "disable", "install", "show", "rename", "type", "headers", "env", "provider", "providers", "client", "servers"],
     });
 
     if (argv.help) {
@@ -138,6 +147,8 @@ async function main() {
                 ? "list"
                 : argv.backupAll || argv["backup-all"]
                 ? "backup-all"
+                : argv.configJson || argv["config-json"]
+                ? "config-json"
                 : null);
 
         if (!command) {
@@ -252,6 +263,16 @@ async function main() {
                     await renameServer(oldName, newName, providers);
                     break;
                 }
+                case "config-json":
+                case "configJson":
+                    await configJson({
+                        client: argv.client as "standard" | "cursor" | "claude" | undefined,
+                        enabledOnly: argv.enabledOnly,
+                        servers: argv.servers,
+                        bare: argv.bare,
+                        clipboard: argv.clipboard,
+                    });
+                    break;
                 default:
                     logger.error(`Unknown command: ${command}`);
                     showHelp();

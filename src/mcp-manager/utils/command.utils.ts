@@ -35,12 +35,16 @@ Commands:
                             - No args: Interactive prompts for old and new names
                             - Old name only: Prompt for new name
                             - Old + new names: Rename directly
+  config-json               Output servers as JSON in standard client format
+                            Options: --client, --enabled-only, --servers, --bare, --clipboard
 
 Options:
   --path                   (config) Only print config file path, don't open editor
   -t, --type <type>        Transport type (stdio, sse, http) for install
-  -H, --headers <str>      Headers for http/sse (supports spaces: "Auth=Bearer token")
-  -e, --env <str>          Env vars for stdio ("KEY=val" or 'KEY="val with spaces"')
+  -H, --headers <str>      Headers for http/sse (uses colon separator: "Key: value")
+                           Can be used multiple times: --headers "Auth: token" --headers "X-Api: key"
+  -e, --env <str>          Env vars for stdio (uses equals separator: "KEY=value")
+                           Can be used multiple times: --env "KEY1=val1" --env "KEY2=val2"
   -p, --provider <name>    Provider name for non-interactive mode (claude, cursor, gemini, codex)
   -v, --verbose            Enable verbose logging
   -h, --help               Show this help message
@@ -61,13 +65,17 @@ Non-Interactive Examples (for scripts and AI assistants):
   tools mcp-manager sync --provider claude,gemini,codex,cursor
   tools mcp-manager sync-from-providers --provider claude
 
-  # Install stdio server with env vars
+  # Install stdio server with env vars (multiple --env flags supported)
   tools mcp-manager install my-server "npx -y @org/server" --type stdio \\
-    --env "API_KEY=xxx TOKEN=yyy" --provider claude
+    --env "API_KEY=xxx" --env "TOKEN=yyy" --provider claude
 
-  # Install http server with headers (spaces in value work)
+  # Install http server with headers (uses colon separator, multiple flags supported)
   tools mcp-manager install jina-ai "https://api.jina.ai/mcp" --type http \\
-    --headers "Authorization=Bearer YOUR_TOKEN" --provider claude
+    --headers "Authorization: Bearer YOUR_TOKEN" --provider claude
+
+  # Install with Basic Auth (base64 values with = padding work correctly)
+  tools mcp-manager install jenkins "https://jenkins.example.com/mcp" --type http \\
+    --headers "Authorization: Basic cWtmb2x0eW5tYXI6YWJjMTIz==" --provider claude
 
   # Enable/disable with specific provider
   tools mcp-manager enable github --provider claude
@@ -75,6 +83,18 @@ Non-Interactive Examples (for scripts and AI assistants):
 
   # Show server config
   tools mcp-manager show github
+
+  # Output servers as JSON (all servers)
+  tools mcp-manager config-json
+
+  # Output only enabled servers for claude format
+  tools mcp-manager config-json --client claude --enabled-only
+
+  # Output specific servers, copy to clipboard
+  tools mcp-manager config-json --servers github,filesystem --clipboard
+
+  # Output bare mcpServers object without wrapper
+  tools mcp-manager config-json --bare
 `);
 }
 
@@ -93,50 +113,111 @@ export function parseCommandString(commandString: string): { command: string; ar
 }
 
 /**
- * Parse ENV/headers string into object.
- * Supports:
- *   - Unquoted: KEY=value (no spaces in value)
- *   - Quoted: KEY="value with spaces" or KEY='value with spaces'
- *   - Single pair: Authorization=Bearer token (entire rest is value)
- * Examples:
- *   "KEY1=value1 KEY2=value2" -> { "KEY1": "value1", "KEY2": "value2" }
- *   'Authorization="Bearer token"' -> { "Authorization": "Bearer token" }
- *   "Authorization=Bearer token" -> { "Authorization": "Bearer token" } (single pair)
+ * Parse a single key-value pair using a separator.
+ * Only splits on the FIRST occurrence of the separator.
+ * @param input - The input string (e.g., "Key: value" or "KEY=value")
+ * @param separator - The separator character (e.g., ":" or "=")
+ * @returns The key-value pair, or null if invalid format
  */
-export function parseEnvString(envString: string): Record<string, string> {
-    if (!envString.trim()) {
-        return {};
+function parseSinglePair(input: string, separator: string): { key: string; value: string } | null {
+    const str = input.trim();
+    if (!str) return null;
+
+    const sepIndex = str.indexOf(separator);
+    if (sepIndex <= 0) return null; // No separator or starts with separator
+
+    const key = str.slice(0, sepIndex).trim();
+    let value = str.slice(sepIndex + 1).trim();
+
+    // Strip surrounding quotes if present
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
     }
 
-    const env: Record<string, string> = {};
-    const str = envString.trim();
+    return { key, value };
+}
 
-    // Check if it's a single KEY=value pair (no other = signs after the first one's value)
-    const firstEq = str.indexOf("=");
-    if (firstEq > 0) {
-        const afterFirst = str.slice(firstEq + 1);
-        // If no unquoted KEY= pattern in the rest, treat as single pair
-        if (!/\s+\w+=/.test(afterFirst)) {
-            const key = str.slice(0, firstEq);
-            let value = afterFirst;
-            // Strip surrounding quotes if present
-            if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-                value = value.slice(1, -1);
+/**
+ * Parse header string(s) into object.
+ * Uses COLON as separator (follows HTTP header format).
+ * Supports:
+ *   - Single header: "Authorization: Bearer token"
+ *   - Multiple headers via array: ["Auth: token", "X-Custom: value"]
+ *   - JSON format: '{"Key": "value"}'
+ *
+ * Examples:
+ *   "Authorization: Basic abc123==" -> { "Authorization": "Basic abc123==" }
+ *   ["Auth: token", "X-Api-Key: secret"] -> { "Auth": "token", "X-Api-Key": "secret" }
+ */
+export function parseHeaderString(input: string | string[]): Record<string, string> {
+    const headers: Record<string, string> = {};
+
+    // Handle array input (multiple --headers flags)
+    const inputs = Array.isArray(input) ? input : [input];
+
+    for (const item of inputs) {
+        const trimmed = item.trim();
+        if (!trimmed) continue;
+
+        // Try JSON format first
+        if (trimmed.startsWith("{")) {
+            try {
+                const parsed = JSON.parse(trimmed);
+                Object.assign(headers, parsed);
+                continue;
+            } catch {
+                // Not valid JSON, try as key:value pair
             }
-            env[key] = value;
-            return env;
+        }
+
+        // Parse as "Key: value" format
+        const pair = parseSinglePair(trimmed, ":");
+        if (pair) {
+            headers[pair.key] = pair.value;
         }
     }
 
-    // Multiple pairs: match KEY=value or KEY="value" or KEY='value'
-    const regex = /(\w+)=(?:"([^"]*)"|'([^']*)'|([^\s]+))/g;
-    let match;
+    return headers;
+}
 
-    while ((match = regex.exec(str)) !== null) {
-        const key = match[1];
-        // Value is in group 2 (double-quoted), 3 (single-quoted), or 4 (unquoted)
-        const value = match[2] ?? match[3] ?? match[4];
-        env[key] = value;
+/**
+ * Parse ENV string(s) into object.
+ * Uses EQUALS as separator.
+ * Supports:
+ *   - Single env: "KEY=value with spaces and = signs"
+ *   - Multiple envs via array: ["KEY1=val1", "KEY2=val2"]
+ *   - JSON format: '{"KEY": "value"}'
+ *
+ * Examples:
+ *   "API_KEY=abc123==" -> { "API_KEY": "abc123==" }
+ *   ["KEY1=val1", "KEY2=val2"] -> { "KEY1": "val1", "KEY2": "val2" }
+ */
+export function parseEnvString(input: string | string[]): Record<string, string> {
+    const env: Record<string, string> = {};
+
+    // Handle array input (multiple --env flags)
+    const inputs = Array.isArray(input) ? input : [input];
+
+    for (const item of inputs) {
+        const trimmed = item.trim();
+        if (!trimmed) continue;
+
+        // Try JSON format first
+        if (trimmed.startsWith("{")) {
+            try {
+                const parsed = JSON.parse(trimmed);
+                Object.assign(env, parsed);
+                continue;
+            } catch {
+                // Not valid JSON, try as key=value pair
+            }
+        }
+
+        // Parse as "KEY=value" format (split on first = only)
+        const pair = parseSinglePair(trimmed, "=");
+        if (pair) {
+            env[pair.key] = pair.value;
+        }
     }
 
     return env;

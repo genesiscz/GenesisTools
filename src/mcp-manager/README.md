@@ -65,8 +65,38 @@ tools mcp-manager show github
 ### Options
 
 ```bash
--v, --verbose    Enable verbose logging
--h, --help       Show help message
+-t, --type <type>        Transport type (stdio, sse, http) for install
+-H, --headers <str>      Headers for http/sse (colon separator: "Key: value")
+-e, --env <str>          Env vars for stdio (equals separator: "KEY=value")
+-p, --provider <name>    Provider name (claude, cursor, gemini, codex)
+-v, --verbose            Enable verbose logging
+-h, --help               Show help message
+```
+
+### Header and Env Format
+
+**Headers** use **colon (`:`)** as separator (like HTTP headers):
+```bash
+# Single header
+--headers "Authorization: Bearer YOUR_TOKEN"
+
+# Multiple headers (use multiple flags)
+--headers "Authorization: Basic abc123==" --headers "X-Api-Key: secret"
+```
+
+**Env vars** use **equals (`=`)** as separator:
+```bash
+# Single env var
+--env "API_KEY=your-key"
+
+# Multiple env vars (use multiple flags)
+--env "API_KEY=xxx" --env "TOKEN=yyy"
+```
+
+Both support JSON format as alternative:
+```bash
+--headers '{"Authorization": "Bearer token"}'
+--env '{"API_KEY": "xxx", "TOKEN": "yyy"}'
 ```
 
 ## Unified Configuration
