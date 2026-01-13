@@ -1,5 +1,5 @@
 export { HandoffDocument } from './HandoffDocument'
 export { HandoffPreview } from './HandoffPreview'
 export { HandoffEditor } from './HandoffEditor'
-export { HandoffHistory } from './HandoffHistory'
+export { HandoffHistory, HandoffHistoryWidget } from './HandoffHistory'
 export { HandoffBanner } from './HandoffBanner'
