@@ -1,5 +1,5 @@
 import chokidar from "chokidar";
-import minimist from "minimist";
+import { Command } from "commander";
 import path from "path";
 import fs from "fs";
 import type { WatchEventType, WatchOptions } from "fs";
@@ -8,50 +8,21 @@ import { glob } from "glob";
 import { consoleLog as logger } from "@app/logger";
 import chalk from "chalk";
 
-const argv = minimist(process.argv.slice(2), {
-    alias: {
-        s: "seconds",
-        v: "verbose",
-        f: "follow",
-        n: "lines",
-    },
-    default: {
-        seconds: 1,
-        lines: 50,
-    },
-    boolean: ["verbose", "follow"],
-});
+const program = new Command()
+    .name("watch")
+    .description("Watch files matching a glob pattern and display changes in real-time")
+    .argument("<pattern>", "Glob pattern to watch")
+    .option("-s, --seconds <n>", "Polling interval in seconds for directory rescans", "1")
+    .option("-v, --verbose", "Enable verbose logging", false)
+    .option("-f, --follow", "Follow mode: continuously watch files for changes (like tail -f)", false)
+    .option("-n, --lines <n>", "Number of lines to display from each file", "50")
+    .parse();
 
-// Set up help message
-if (argv.help || argv.h) {
-    logger.info(
-        chalk.cyan(`
-watch - Watch files matching a glob pattern and display changes in real-time
-
-Usage:
-  tools watch [glob-pattern] [options]
-
-Options:
-  --seconds, -s    Polling interval in seconds for directory rescans (default: 3)
-  --verbose, -v    Enable verbose logging
-  --follow, -f     Follow mode: continuously watch files for changes (like tail -f)
-  --lines, -n      Number of lines to display from each file (default: 50)
-  --help, -h       Show help message
-
-Examples:
-  tools watch "src/**/*.ts" --seconds 1
-  tools watch "~/projects/**/*.{js,ts,tsx}" -v -f -n 100
-
-Behavior:
-  Without -f: Shows files ordered by modified time (oldest first, newest last) and exits
-  With -f:    Shows files and continuously watches for changes
-`)
-    );
-    process.exit(0);
-}
+const options = program.opts();
+const args = program.args;
 
 // Get the glob pattern from arguments
-let globPatterns = argv._;
+let globPatterns = args;
 if (globPatterns.length === 0) {
     logger.error(chalk.red("Error: No glob pattern provided"));
     logger.info(chalk.yellow("Use --help for usage information"));
@@ -90,14 +61,14 @@ globPatterns = globPatterns.map((pattern) => {
 const cwd = process.cwd();
 
 // For debug purposes
-if (argv.verbose) {
+if (options.verbose) {
     logger.info(`CWD: ${cwd}`);
     logger.info(`Patterns: ${JSON.stringify(globPatterns)}`);
 }
 
 const log = {
     info: (message: string) => logger.info(chalk.blue("ℹ️ ") + message),
-    debug: (message: string) => (argv.verbose ? logger.info(chalk.gray("🔍 ") + message) : null),
+    debug: (message: string) => (options.verbose ? logger.info(chalk.gray("🔍 ") + message) : null),
     error: (message: string, err?: any) => logger.error(chalk.red("❌ ") + message + (err ? ": " + err : "")),
     warn: (message: string) => logger.info(chalk.yellow("⚠️ ") + message),
     file: {
@@ -140,12 +111,12 @@ const log = {
 
 log.info(`Watching files matching pattern: ${chalk.cyan(path.join(cwd, globPatterns.join(", ")).replace(/\\/g, "/"))}`);
 log.info(`Base directory: ${chalk.cyan(cwd)}`);
-log.info(`Directory rescan interval: ${chalk.yellow(argv.seconds.toString())} seconds`);
-log.info(`Lines to display: ${chalk.yellow(argv.lines.toString())}`);
-if (argv.follow) {
+log.info(`Directory rescan interval: ${chalk.yellow(options.seconds.toString())} seconds`);
+log.info(`Lines to display: ${chalk.yellow(options.lines.toString())}`);
+if (options.follow) {
     log.info("Follow mode enabled: continuously tailing files");
 }
-if (argv.verbose) {
+if (options.verbose) {
     log.info("Verbose logging enabled");
 }
 
@@ -279,7 +250,7 @@ function tailFile({ filepath, follow = false, isInitialDisplay = false }: TailFi
                 startPosition,
                 fileSize,
                 fd,
-                isNewFile || isInitialDisplay ? parseInt(argv.lines.toString()) : 0
+                isNewFile || isInitialDisplay ? parseInt(options.lines.toString()) : 0
             );
 
             // Format the last modified time
@@ -455,7 +426,7 @@ async function startWatcher() {
     let sortedFiles = getSortedFilesByModTime().reverse();
 
     // If not in follow mode, display content and exit
-    if (!argv.follow) {
+    if (!options.follow) {
         for (const file of sortedFiles) {
             tailFile({ filepath: file, follow: false, isInitialDisplay: true });
         }
@@ -678,7 +649,7 @@ async function startWatcher() {
         } catch (err) {
             log.error(`Error during rescan`, err);
         }
-    }, argv.seconds * 1000);
+    }, parseInt(options.seconds) * 1000);
 
     // Handle process termination
     process.on("SIGINT", () => {
