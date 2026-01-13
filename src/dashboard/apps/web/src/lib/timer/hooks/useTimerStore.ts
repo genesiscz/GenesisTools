@@ -108,27 +108,16 @@ export function useTimerStore(userId: string | null) {
     }
   }
 
-  // Update timer with optimistic update
+  // Update timer - PowerSync watch() will update state automatically
   async function updateTimer(id: string, updates: TimerUpdate): Promise<Timer | null> {
-    // Optimistic update - immediately update store for responsive UI
-    timerStore.setState((s) => ({
-      ...s,
-      timers: s.timers.map((t) =>
-        t.id === id ? { ...t, ...updates, updatedAt: new Date() } : t
-      ),
-    }))
-
     try {
       const adapter = getStorageAdapter()
       const timer = await adapter.updateTimer(id, updates)
+      // PowerSync watch() will update state automatically
       return timer
     } catch (err) {
-      // Rollback on error - refetch from storage
-      const adapter = getStorageAdapter()
-      const timers = await adapter.getTimers(timerStore.state.timers[0]?.userId ?? '')
       timerStore.setState((s) => ({
         ...s,
-        timers,
         error: err instanceof Error ? err.message : 'Failed to update timer',
       }))
       return null
