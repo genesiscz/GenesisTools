@@ -103,6 +103,10 @@ export function useHandoff(userId: string | null) {
     const now = new Date()
     const handoffId = generateHandoffId()
 
+    // Input type does not have handedOffFrom or handoffAt - provide defaults
+    const handedOffFrom = userId // Default: current user is the one handing off
+    const handoffAt = now // Default: handoff happens now
+
     if (useFallback) {
       try {
         const adapter = getAssistantStorageAdapter()
@@ -126,12 +130,12 @@ export function useHandoff(userId: string | null) {
         gotchas: input.gotchas ?? null,
         decisions: input.decisions ?? [],
         blockers: input.blockers ?? [],
-        handedOffFrom: input.handedOffFrom,
+        handedOffFrom: handedOffFrom,
         handedOffTo: input.handedOffTo,
         contact: input.contact,
         reviewed: 0,
         reviewedAt: null,
-        handoffAt: input.handoffAt.toISOString(),
+        handoffAt: handoffAt.toISOString(),
         createdAt: now.toISOString(),
         updatedAt: now.toISOString(),
       })
@@ -148,11 +152,11 @@ export function useHandoff(userId: string | null) {
         gotchas: input.gotchas,
         decisions: input.decisions ?? [],
         blockers: input.blockers ?? [],
-        handedOffFrom: input.handedOffFrom,
+        handedOffFrom: handedOffFrom,
         handedOffTo: input.handedOffTo,
         contact: input.contact,
         reviewed: false,
-        handoffAt: input.handoffAt,
+        handoffAt: handoffAt,
         createdAt: now,
         updatedAt: now,
       }
@@ -179,7 +183,7 @@ export function useHandoff(userId: string | null) {
   ): Promise<HandoffDocument | null> {
     if (!userId) return null
 
-    // Convert updates for server
+    // Convert updates for server - HandoffDocumentUpdate does NOT include handedOffTo
     const serverUpdates: Record<string, unknown> = {}
     if (updates.summary !== undefined) serverUpdates.summary = updates.summary
     if (updates.contextNotes !== undefined) serverUpdates.contextNotes = updates.contextNotes
@@ -187,7 +191,6 @@ export function useHandoff(userId: string | null) {
     if (updates.gotchas !== undefined) serverUpdates.gotchas = updates.gotchas
     if (updates.decisions !== undefined) serverUpdates.decisions = updates.decisions
     if (updates.blockers !== undefined) serverUpdates.blockers = updates.blockers
-    if (updates.handedOffTo !== undefined) serverUpdates.handedOffTo = updates.handedOffTo
     if (updates.contact !== undefined) serverUpdates.contact = updates.contact
     if (updates.reviewed !== undefined) serverUpdates.reviewed = updates.reviewed ? 1 : 0
     if (updates.reviewedAt !== undefined)

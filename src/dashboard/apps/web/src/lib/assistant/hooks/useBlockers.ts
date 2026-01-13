@@ -94,7 +94,7 @@ export function useBlockers(userId: string | null) {
       id: b.id,
       userId: b.userId,
       taskId: b.taskId,
-      blockerReason: b.blockerReason,
+      reason: b.reason,
       blockerOwner: b.blockerOwner ?? undefined,
       blockedSince: new Date(b.blockedSince),
       unblockedAt: b.unblockedAt ? new Date(b.unblockedAt) : undefined,
@@ -135,7 +135,7 @@ export function useBlockers(userId: string | null) {
         id: blockerId,
         userId,
         taskId: input.taskId,
-        blockerReason: input.blockerReason,
+        reason: input.reason,
         blockerOwner: input.blockerOwner ?? null,
         blockedSince: now.toISOString(),
         unblockedAt: null,
@@ -150,7 +150,7 @@ export function useBlockers(userId: string | null) {
         id: result.id,
         userId,
         taskId: input.taskId,
-        blockerReason: input.blockerReason,
+        reason: input.reason,
         blockerOwner: input.blockerOwner,
         blockedSince: now,
         reminderSet: input.reminderSet,
@@ -180,7 +180,7 @@ export function useBlockers(userId: string | null) {
 
     // Convert updates for server
     const serverUpdates: Record<string, unknown> = {}
-    if (updates.blockerReason !== undefined) serverUpdates.blockerReason = updates.blockerReason
+    if (updates.reason !== undefined) serverUpdates.reason = updates.reason
     if (updates.blockerOwner !== undefined) serverUpdates.blockerOwner = updates.blockerOwner
     if (updates.reminderSet !== undefined)
       serverUpdates.reminderSet = updates.reminderSet?.toISOString() ?? null

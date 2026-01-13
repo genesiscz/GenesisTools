@@ -401,7 +401,7 @@ export function useEnergyData(userId: string | null) {
    */
   function refresh() {
     if (userId) {
-      queryClient.invalidateQueries({ queryKey: assistantKeys.energyList(userId) })
+      queryClient.invalidateQueries({ queryKey: assistantKeys.energySnapshotList(userId) })
     }
   }
 
