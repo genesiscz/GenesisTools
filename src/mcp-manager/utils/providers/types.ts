@@ -171,6 +171,13 @@ export abstract class MCPProvider {
     abstract installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<boolean>;
 
     /**
+     * Check if this provider supports a "disabled" state for servers.
+     * - Claude/Gemini: true (have disabledMcpServers/mcp.excluded lists)
+     * - Cursor/Codex: false (presence in config = enabled, no separate disabled state)
+     */
+    abstract supportsDisabledState(): boolean;
+
+    /**
      * Check if a server is enabled for this provider based on _meta.enabled state.
      * For providers with project support, checks if enabled globally or for a specific project.
      * @param serverConfig - Server configuration with _meta

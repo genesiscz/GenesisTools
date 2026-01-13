@@ -46,6 +46,7 @@ interface Options {
     headers?: string; // For install --headers
     env?: string; // For install --env
     provider?: string; // For install/enable/disable --provider
+    providers?: string; // Alias for --provider
     yes?: boolean; // Auto-confirm changes without prompting
     verbose?: boolean;
     help?: boolean;
@@ -72,13 +73,13 @@ async function main() {
             v: "verbose",
             h: "help",
             t: "type",
-            p: "provider",
+            p: ["provider", "providers"], // Both --provider and --providers work
             H: "headers",
             e: "env",
             y: "yes",
         },
         boolean: ["verbose", "help", "config", "sync", "syncFromProviders", "list", "backupAll", "path", "yes"],
-        string: ["enable", "disable", "install", "show", "rename", "type", "headers", "env", "provider"],
+        string: ["enable", "disable", "install", "show", "rename", "type", "headers", "env", "provider", "providers"],
     });
 
     if (argv.help) {
@@ -91,32 +92,37 @@ async function main() {
 
     const allProviders = getProviders();
 
-    // Parse and validate --provider flag if specified
-    // Supports: --provider claude,gemini OR --provider claude --provider gemini
+    // Parse and validate --provider/--providers flag if specified
+    // Supports: --provider claude,gemini OR --provider claude --provider gemini OR --provider all
     let providers = allProviders;
-    if (argv.provider) {
+    const providerArg = argv.provider || argv.providers;
+    if (providerArg) {
         // Handle both string and array (multiple --provider flags)
-        const providerArg = argv.provider;
         const rawNames: string[] = Array.isArray(providerArg)
             ? providerArg.flatMap((p: string) => p.split(","))
             : providerArg.split(",");
         const requestedNames = rawNames.map((p) => p.trim()).filter(Boolean);
 
-        const validatedProviders: typeof allProviders = [];
-        for (const name of requestedNames) {
-            const provider = allProviders.find((p) => p.getName().toLowerCase() === name.toLowerCase());
-            if (!provider) {
-                logger.error(
-                    `Provider '${name}' not found. Available: ${allProviders.map((p) => p.getName()).join(", ")}`
-                );
-                process.exit(1);
+        // Handle "all" special case
+        if (requestedNames.length === 1 && requestedNames[0].toLowerCase() === "all") {
+            providers = allProviders;
+        } else {
+            const validatedProviders: typeof allProviders = [];
+            for (const name of requestedNames) {
+                const provider = allProviders.find((p) => p.getName().toLowerCase() === name.toLowerCase());
+                if (!provider) {
+                    logger.error(
+                        `Provider '${name}' not found. Available: ${allProviders.map((p) => p.getName()).join(", ")}, all`
+                    );
+                    process.exit(1);
+                }
+                // Avoid duplicates
+                if (!validatedProviders.includes(provider)) {
+                    validatedProviders.push(provider);
+                }
             }
-            // Avoid duplicates
-            if (!validatedProviders.includes(provider)) {
-                validatedProviders.push(provider);
-            }
+            providers = validatedProviders;
         }
-        providers = validatedProviders;
     }
 
     try {
