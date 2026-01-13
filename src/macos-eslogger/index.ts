@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from "child_process";
-import minimist from "minimist";
-import Enquirer from "enquirer";
+import { Command } from "commander";
+import { select, checkbox } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import logger, { consoleLog } from "@app/logger";
 
@@ -716,26 +717,6 @@ function formatEvent(event: ESLoggerEvent): string {
 // CLI Options and Help
 // ============================================================================
 
-interface Options {
-    events?: string;
-    category?: string;
-    output?: string;
-    verbose?: boolean;
-    silent?: boolean;
-    help?: boolean;
-    dryRun?: boolean;
-    debug?: boolean;
-    includeFork?: boolean;
-    filterEvent?: string;
-}
-
-interface Args extends Options {
-    _: string[];
-}
-
-// Create Enquirer instance for interactive prompts
-const prompter = new Enquirer();
-
 // Show help message
 function showHelp() {
     console.log(`
@@ -756,7 +737,7 @@ ${chalk.bold("ARGUMENTS:")}
   --debug                 Show raw JSON for each event (useful for debugging)
   --include-fork          Automatically include 'fork' events when monitoring 'exec'
   --filter-event <expr>   Filter events using JSON path expression (e.g., '.event.target.executable.path == ".*Cursor.*"')
-  -h, --help              Show this help message
+  -h, --help-old          Show this help message
 
 ${chalk.bold("EVENT CATEGORIES:")}
   ${Object.keys(EVENT_CATEGORIES).join(", ")}
@@ -937,67 +918,56 @@ function monitorWithESF(
 async function getEventTypesInteractively(): Promise<string[]> {
     consoleLog.info(chalk.cyan("🔍 macOS ESLogger Real-time Event Monitor\n"));
 
-    const response = (await prompter.prompt({
-        type: "select",
-        name: "mode",
+    const mode = await select({
         message: "Choose monitoring mode:",
         choices: [
-            { name: "📂 Category (pre-defined event groups)", value: "category" },
-            { name: "🎯 Custom (select specific events)", value: "custom" },
-            { name: "🔥 Popular (most commonly monitored)", value: "popular" },
+            { value: "category", name: "📂 Category (pre-defined event groups)" },
+            { value: "custom", name: "🎯 Custom (select specific events)" },
+            { value: "popular", name: "🔥 Popular (most commonly monitored)" },
         ],
-    })) as { mode: string };
+    });
 
-    if (!response.mode) {
-        consoleLog.info("Cancelled.");
-        process.exit(0);
-    }
-
-    if (response.mode === "popular") {
+    if (mode === "popular") {
         return ["exec", "fork", "exit", "open", "write", "authentication", "sudo"];
-    } else if (response.mode === "category") {
-        const categoryResponse = (await prompter.prompt({
-            type: "multiselect",
-            name: "categories",
+    } else if (mode === "category") {
+        const categories = await checkbox({
             message: "Select event categories to monitor:",
             choices: Object.keys(EVENT_CATEGORIES).map((cat) => ({
+                value: cat,
                 name: `${cat.charAt(0).toUpperCase() + cat.slice(1)} (${
                     EVENT_CATEGORIES[cat as keyof typeof EVENT_CATEGORIES].length
                 } events)`,
-                value: cat,
-                selected: cat === "process", // Default select process
+                checked: cat === "process", // Default select process
             })),
-        })) as { categories: string[] };
+        });
 
-        if (!categoryResponse.categories || categoryResponse.categories.length === 0) {
+        if (!categories || categories.length === 0) {
             consoleLog.info("No categories selected. Exiting.");
             process.exit(0);
         }
 
         const eventTypes: string[] = [];
-        categoryResponse.categories.forEach((cat: string) => {
+        categories.forEach((cat: string) => {
             eventTypes.push(...EVENT_CATEGORIES[cat as keyof typeof EVENT_CATEGORIES]);
         });
         return eventTypes;
     } else {
         // Custom event selection
-        const eventResponse = (await prompter.prompt({
-            type: "multiselect",
-            name: "events",
+        const events = await checkbox({
             message: "Select events to monitor (type to filter):",
             choices: ALL_EVENTS.map((evt) => ({
-                name: evt,
                 value: evt,
-                selected: evt === "exec", // Default select exec
+                name: evt,
+                checked: evt === "exec", // Default select exec
             })),
-        })) as { events: string[] };
+        });
 
-        if (!eventResponse.events || eventResponse.events.length === 0) {
+        if (!events || events.length === 0) {
             consoleLog.info("No events selected. Exiting.");
             process.exit(0);
         }
 
-        return eventResponse.events;
+        return events;
     }
 }
 
@@ -1007,22 +977,24 @@ async function getEventTypesInteractively(): Promise<string[]> {
 
 async function main() {
     // Parse command line arguments
-    const argv = minimist<Args>(process.argv.slice(2), {
-        alias: {
-            e: "events",
-            c: "category",
-            o: "output",
-            v: "verbose",
-            s: "silent",
-            d: "dry-run",
-            h: "help",
-        },
-        boolean: ["verbose", "silent", "dry-run", "help", "debug", "include-fork"],
-        string: ["events", "category", "output", "filter-event"],
-    } as any);
+    const program = new Command()
+        .name("macos-eslogger")
+        .option("-e, --events <list>", "Comma-separated list of event types to monitor")
+        .option("-c, --category <cat>", "Monitor all events in a category")
+        .option("-o, --output <file>", "Write output to file instead of stdout")
+        .option("-v, --verbose", "Enable verbose logging")
+        .option("-s, --silent", "Suppress non-error messages")
+        .option("-d, --dry-run", "Show what would be monitored without running eslogger")
+        .option("--debug", "Show raw JSON for each event (useful for debugging)")
+        .option("--include-fork", "Automatically include 'fork' events when monitoring 'exec'")
+        .option("--filter-event <expr>", "Filter events using JSON path expression")
+        .option("-h, --help-old", "Show this help message")
+        .parse();
+
+    const options = program.opts();
 
     // Show help if requested
-    if (argv.help) {
+    if (options.helpOld) {
         showHelp();
         process.exit(0);
     }
@@ -1030,8 +1002,8 @@ async function main() {
     let eventTypes: string[] = [];
 
     // Check if events were provided via command line
-    if (argv.events) {
-        eventTypes = argv.events.split(",").map((e: string) => e.trim());
+    if (options.events) {
+        eventTypes = options.events.split(",").map((e: string) => e.trim());
 
         // Validate event types
         const invalid = eventTypes.filter((e) => !ALL_EVENTS.includes(e));
@@ -1041,8 +1013,8 @@ async function main() {
             console.log(ALL_EVENTS.join(", "));
             process.exit(1);
         }
-    } else if (argv.category) {
-        const category = argv.category.toLowerCase();
+    } else if (options.category) {
+        const category = options.category.toLowerCase();
         if (EVENT_CATEGORIES[category as keyof typeof EVENT_CATEGORIES]) {
             eventTypes = EVENT_CATEGORIES[category as keyof typeof EVENT_CATEGORIES];
         } else {
@@ -1055,7 +1027,7 @@ async function main() {
         try {
             eventTypes = await getEventTypesInteractively();
         } catch (error: any) {
-            if (error.message === "canceled") {
+            if (error instanceof ExitPromptError) {
                 logger.info("\nOperation cancelled by user.");
                 process.exit(0);
             }
@@ -1073,21 +1045,21 @@ async function main() {
     eventTypes = [...new Set(eventTypes)];
 
     // If include-fork is set and exec is in the list, add fork
-    if (argv["include-fork"] && eventTypes.includes("exec") && !eventTypes.includes("fork")) {
+    if (options.includeFork && eventTypes.includes("exec") && !eventTypes.includes("fork")) {
         eventTypes.push("fork");
-        if (!argv.silent) {
+        if (!options.silent) {
             consoleLog.info(chalk.yellow("ℹ️  Added 'fork' event monitoring (fork happens before exec)"));
         }
     }
 
     // Warn about shell builtins if monitoring exec
-    if (eventTypes.includes("exec") && !argv.silent) {
+    if (eventTypes.includes("exec") && !options.silent) {
         consoleLog.info(chalk.yellow("💡 Tip: Shell builtins (like 'which' in zsh) don't trigger exec events."));
         consoleLog.info(chalk.yellow("   Use external executables like /usr/bin/which or add --include-fork"));
     }
 
     // Start monitoring
-    monitorWithESF(eventTypes, argv.output, argv.silent, argv["dry-run"], argv.debug, argv["filter-event"]);
+    monitorWithESF(eventTypes, options.output, options.silent, options.dryRun, options.debug, options.filterEvent);
 }
 
 // Run the tool
