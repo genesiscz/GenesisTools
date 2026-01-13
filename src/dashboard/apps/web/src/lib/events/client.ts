@@ -77,9 +77,12 @@ export class EventStreamClient {
 
       // Handle channel events
       const { channel, data } = message
+      console.log(`[EventClient] 📩 Message received on channel "${channel}":`, data)
+
       const handlers = this.handlers.get(channel)
 
       if (handlers) {
+        console.log(`[EventClient] Found ${handlers.size} handlers for channel "${channel}"`)
         handlers.forEach(handler => {
           try {
             handler(data)
@@ -87,6 +90,8 @@ export class EventStreamClient {
             console.error(`[EventClient] Handler error for channel ${channel}:`, error)
           }
         })
+      } else {
+        console.warn(`[EventClient] No handlers registered for channel "${channel}"`)
       }
     }
 

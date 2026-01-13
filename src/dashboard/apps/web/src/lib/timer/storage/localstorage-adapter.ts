@@ -357,8 +357,9 @@ export class LocalStorageAdapter implements StorageAdapter {
 
     // Subscribe to SSE events
     const eventClient = getEventClient()
+    console.log('[LocalStorage] Subscribing to SSE channel:', `timer:${userId}`)
     this.eventUnsubscribe = eventClient.subscribe(`timer:${userId}`, async (event) => {
-      console.log('[LocalStorage] SSE event received:', event)
+      console.log('[LocalStorage] ✨ SSE EVENT RECEIVED ✨', event)
 
       // Fetch latest timers from server
       try {

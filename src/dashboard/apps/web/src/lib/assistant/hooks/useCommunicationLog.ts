@@ -296,11 +296,11 @@ export function useCommunicationLog(userId: string | null) {
     if (options.sentiment) {
       filtered = filtered.filter((e) => e.sentiment === options.sentiment)
     }
-    if (options.taskId) {
-      filtered = filtered.filter((e) => e.relatedTaskIds.includes(options.taskId!))
+    if (options.relatedTaskId) {
+      filtered = filtered.filter((e) => e.relatedTaskIds.includes(options.relatedTaskId!))
     }
-    if (options.tag) {
-      filtered = filtered.filter((e) => e.tags.includes(options.tag!))
+    if (options.tags && options.tags.length > 0) {
+      filtered = filtered.filter((e) => options.tags!.some((tag) => e.tags.includes(tag)))
     }
     if (options.startDate) {
       filtered = filtered.filter((e) => e.discussedAt >= options.startDate!)

@@ -166,9 +166,6 @@ export function useEnergyData(userId: string | null) {
     if (options?.workType) {
       filtered = filtered.filter((s) => s.typeOfWork === options.workType)
     }
-    if (options?.minQuality) {
-      filtered = filtered.filter((s) => s.focusQuality >= options.minQuality!)
-    }
 
     return filtered.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
   }
