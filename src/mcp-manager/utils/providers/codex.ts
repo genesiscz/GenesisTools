@@ -24,6 +24,10 @@ export class CodexProvider extends MCPProvider {
         return existsSync(this.configPath);
     }
 
+    supportsDisabledState(): boolean {
+        return false; // Codex: presence in config = enabled
+    }
+
     async readConfig(): Promise<CodexGenericConfig> {
         if (!(await this.configExists())) {
             return { mcp_servers: {} };

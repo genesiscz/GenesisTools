@@ -72,10 +72,17 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
         try {
             logger.info(`Syncing to ${providerName}...`);
 
-            // First, ensure all servers are installed in the provider
+            // First, install servers that need to be in this provider's config
             for (const [serverName, serverConfig] of Object.entries(config.mcpServers)) {
                 const existingServerConfig = await provider.getServerConfig(serverName);
                 if (!existingServerConfig) {
+                    // For providers without native disable (Cursor/Codex), only install if enabled
+                    if (!provider.supportsDisabledState()) {
+                        const isEnabled = provider.isServerEnabledInMeta(serverConfig);
+                        if (!isEnabled) {
+                            continue; // Skip - will be handled (deleted) by syncServers
+                        }
+                    }
                     logger.info(`  Installing '${serverName}' in ${providerName}...`);
                     const configToInstall = stripMeta(serverConfig);
                     await provider.installServer(serverName, configToInstall);

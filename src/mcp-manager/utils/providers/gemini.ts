@@ -23,6 +23,10 @@ export class GeminiProvider extends MCPProvider {
         return existsSync(this.configPath);
     }
 
+    supportsDisabledState(): boolean {
+        return true; // Gemini has mcp.excluded list
+    }
+
     async readConfig(): Promise<GeminiGenericConfig> {
         if (!(await this.configExists())) {
             return { mcpServers: {} };
