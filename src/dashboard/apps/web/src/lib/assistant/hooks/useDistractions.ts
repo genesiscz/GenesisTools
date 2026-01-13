@@ -171,6 +171,7 @@ export function useDistractions(userId: string | null) {
 
   /**
    * Get distractions with filters (local filtering)
+   * Note: DistractionQueryOptions doesn't have taskId - filter by source instead
    */
   async function getDistractions(options?: DistractionQueryOptions): Promise<Distraction[]> {
     if (!userId) return []
@@ -185,9 +186,6 @@ export function useDistractions(userId: string | null) {
     }
     if (options?.source) {
       filtered = filtered.filter((d) => d.source === options.source)
-    }
-    if (options?.taskId) {
-      filtered = filtered.filter((d) => d.taskInterrupted === options.taskId)
     }
 
     return filtered.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
@@ -205,30 +203,30 @@ export function useDistractions(userId: string | null) {
 
     if (filtered.length === 0) {
       return {
-        total: 0,
+        totalDistractions: 0,
+        totalDurationMinutes: 0,
         bySource: {},
-        averageDuration: 0,
+        averagePerDay: 0,
         resumptionRate: 0,
-        peakHour: 0,
+        mostCommonSource: '',
+        mostDisruptiveSource: '',
       }
     }
 
     // Compute stats
-    const bySource: Record<string, number> = {}
-    const hourCounts: Record<number, number> = {}
+    const bySource: Record<string, { count: number; duration: number }> = {}
     let totalDuration = 0
-    let durationCount = 0
     let resumedCount = 0
 
     for (const d of filtered) {
-      bySource[d.source] = (bySource[d.source] || 0) + 1
-
-      const hour = d.timestamp.getHours()
-      hourCounts[hour] = (hourCounts[hour] || 0) + 1
+      if (!bySource[d.source]) {
+        bySource[d.source] = { count: 0, duration: 0 }
+      }
+      bySource[d.source].count += 1
+      bySource[d.source].duration += d.duration ?? 0
 
       if (d.duration) {
         totalDuration += d.duration
-        durationCount++
       }
 
       if (d.resumedTask) {
@@ -236,22 +234,37 @@ export function useDistractions(userId: string | null) {
       }
     }
 
-    // Find peak hour
-    let peakHour = 0
-    let peakCount = 0
-    for (const [hour, count] of Object.entries(hourCounts)) {
-      if (count > peakCount) {
-        peakCount = count
-        peakHour = parseInt(hour)
+    // Calculate days in range for averagePerDay
+    const daysDiff = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)))
+
+    // Find most common source (by count)
+    let mostCommonSource = ''
+    let maxCount = 0
+    for (const [source, stats] of Object.entries(bySource)) {
+      if (stats.count > maxCount) {
+        maxCount = stats.count
+        mostCommonSource = source
+      }
+    }
+
+    // Find most disruptive source (by duration)
+    let mostDisruptiveSource = ''
+    let maxDuration = 0
+    for (const [source, stats] of Object.entries(bySource)) {
+      if (stats.duration > maxDuration) {
+        maxDuration = stats.duration
+        mostDisruptiveSource = source
       }
     }
 
     return {
-      total: filtered.length,
+      totalDistractions: filtered.length,
+      totalDurationMinutes: totalDuration,
       bySource,
-      averageDuration: durationCount > 0 ? totalDuration / durationCount : 0,
+      averagePerDay: filtered.length / daysDiff,
       resumptionRate: (resumedCount / filtered.length) * 100,
-      peakHour,
+      mostCommonSource,
+      mostDisruptiveSource,
     }
   }
 

@@ -11,6 +11,8 @@ import type {
 import type { StorageAdapter, SyncMessage } from './types'
 import { STORAGE_KEYS, BROADCAST_CHANNEL_NAME } from './types'
 import { SYNC_CONFIG } from './config'
+import { getEventClient } from '@/lib/events/client'
+import { uploadSyncBatch, getTimersFromServer, getActivityLogsFromServer } from '../timer-sync.server'
 
 // Note: debouncedWrite was removed in favor of immediate writes for responsive UI
 
@@ -23,6 +25,8 @@ export class LocalStorageAdapter implements StorageAdapter {
   private tabId: string
   private timerWatchers: Map<string, (timers: Timer[]) => void> = new Map()
   private activityWatchers: Map<string, (entries: ActivityLogEntry[]) => void> = new Map()
+  private userId: string | null = null
+  private eventUnsubscribe: (() => void) | null = null
 
   constructor() {
     this.tabId = `tab_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
@@ -90,6 +94,11 @@ export class LocalStorageAdapter implements StorageAdapter {
     const userTimers = Object.values(data).filter((t) => t.userId === userId)
     this.notifyTimerWatchersDirect(userTimers)
 
+    // Sync to server immediately
+    this.syncTimerToServer('create', timer).catch((err: Error) => {
+      console.error('[LocalStorage] Failed to sync create to server:', err)
+    })
+
     return timer
   }
 
@@ -117,6 +126,11 @@ export class LocalStorageAdapter implements StorageAdapter {
     const userTimers = Object.values(data).filter((t) => t.userId === existing.userId)
     this.notifyTimerWatchersDirect(userTimers)
 
+    // Sync to server immediately
+    this.syncTimerToServer('update', updated).catch((err: Error) => {
+      console.error('[LocalStorage] Failed to sync update to server:', err)
+    })
+
     return updated
   }
 
@@ -133,6 +147,11 @@ export class LocalStorageAdapter implements StorageAdapter {
       // Pass updated timers directly to avoid re-reading stale data
       const userTimers = Object.values(data).filter((t) => t.userId === userId)
       this.notifyTimerWatchersDirect(userTimers)
+
+      // Sync to server immediately
+      this.syncTimerToServer('delete', timer).catch((err: Error) => {
+        console.error('[LocalStorage] Failed to sync delete to server:', err)
+      })
     }
   }
 
@@ -283,25 +302,107 @@ export class LocalStorageAdapter implements StorageAdapter {
   }
 
   // ============================================
-  // Sync Operations (stub for localStorage - real sync in PowerSync adapter)
+  // Sync Operations
   // ============================================
 
+  private async syncTimerToServer(operation: 'create' | 'update' | 'delete', timer: Timer): Promise<void> {
+    console.log(`[LocalStorage] Syncing ${operation} to server:`, timer.id)
+
+    try {
+      // Create sync batch in PowerSync format
+      const op = operation === 'create' || operation === 'update' ? 'PUT' : 'DELETE'
+      const operations = [{
+        id: timer.id,
+        op: op as 'PUT' | 'DELETE',
+        table: 'timers',
+        data: {
+          id: timer.id,
+          name: timer.name,
+          timer_type: timer.timerType,
+          is_running: timer.isRunning ? 1 : 0,
+          elapsed_time: timer.elapsedTime,
+          duration: timer.duration,
+          laps: JSON.stringify(timer.laps),
+          user_id: timer.userId,
+          created_at: timer.createdAt,
+          updated_at: timer.updatedAt,
+          show_total: timer.showTotal ? 1 : 0,
+          first_start_time: timer.firstStartTime,
+          start_time: timer.startTime,
+          pomodoro_settings: timer.pomodoroSettings ? JSON.stringify(timer.pomodoroSettings) : null,
+          pomodoro_phase: timer.pomodoroPhase,
+          pomodoro_session_count: timer.pomodoroSessionCount,
+        },
+      }]
+
+      await uploadSyncBatch({ data: { operations } })
+      console.log(`[LocalStorage] ✓ Synced ${operation} to server`)
+    } catch (err) {
+      console.error(`[LocalStorage] Failed to sync ${operation}:`, err)
+      throw err
+    }
+  }
+
   async syncToServer(): Promise<void> {
-    // TODO: Implement HTTP sync to server
-    console.log('[LocalStorage] syncToServer not implemented')
+    // No-op - individual operations sync automatically
   }
 
   async syncFromServer(_userId: string): Promise<void> {
-    // TODO: Implement HTTP sync from server
-    console.log('[LocalStorage] syncFromServer not implemented')
+    // Handled by SSE subscription in setUserId
   }
 
-  setUserId(_userId: string): void {
-    // No-op for localStorage - sync not implemented
+  setUserId(userId: string): void {
+    this.userId = userId
+    console.log('[LocalStorage] Setting up SSE for user:', userId)
+
+    // Subscribe to SSE events
+    const eventClient = getEventClient()
+    this.eventUnsubscribe = eventClient.subscribe(`timer:${userId}`, async (event) => {
+      console.log('[LocalStorage] SSE event received:', event)
+
+      // Fetch latest timers from server
+      try {
+        const serverTimers = await getTimersFromServer({ data: userId })
+        console.log('[LocalStorage] Fetched', serverTimers.length, 'timers from server')
+
+        // Parse server timers (convert number to boolean for isRunning, parse dates, etc.)
+        const parsedTimers: Timer[] = serverTimers.map(t => ({
+          ...t,
+          isRunning: Boolean(t.isRunning),
+          laps: Array.isArray(t.laps) ? t.laps.map(l => ({
+            ...l,
+            timestamp: new Date(l.timestamp)
+          })) : [],
+          createdAt: new Date(t.createdAt),
+          updatedAt: new Date(t.updatedAt),
+          duration: t.duration ?? null,
+          firstStartTime: t.firstStartTime ? new Date(t.firstStartTime) : null,
+          startTime: t.startTime ? new Date(t.startTime) : null,
+        }))
+
+        // Update localStorage
+        const data = this.readStorage<Record<string, Timer>>(STORAGE_KEYS.TIMERS) || {}
+        for (const timer of parsedTimers) {
+          data[timer.id] = timer
+        }
+        this.writeStorage(STORAGE_KEYS.TIMERS, data)
+
+        // Notify watchers
+        this.notifyTimerWatchersDirect(parsedTimers)
+      } catch (err) {
+        console.error('[LocalStorage] Failed to sync from server:', err)
+      }
+    })
+
+    console.log('[LocalStorage] ✓ SSE subscription active')
   }
 
   clearSync(): void {
-    // No-op for localStorage - sync not implemented
+    console.log('[LocalStorage] Clearing sync')
+    if (this.eventUnsubscribe) {
+      this.eventUnsubscribe()
+      this.eventUnsubscribe = null
+    }
   }
 
   // ============================================
