@@ -1,4 +1,4 @@
-import minimist from "minimist";
+import { Command } from "commander";
 import type { CliArgs, CommandType, TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import { LspServer } from "@app/mcp-tsc/providers/LspServer.js";
 import { TscServer } from "@app/mcp-tsc/providers/TscServer.js";
@@ -11,38 +11,54 @@ export class CliHandler {
      * Parse command line arguments
      */
     parseArgs(): CliArgs {
-        const parsed = minimist<CliArgs>(process.argv.slice(2), {
-            boolean: ["mcp", "diagnostics", "hover", "use-tsc", "warnings", "raw", "kill-server", "all", "help"],
-            string: ["line", "char", "text", "root", "timeout"],
-            alias: {
-                h: "help",
-                d: "diagnostics",
-                w: "warnings",
-                l: "line",
-                c: "char",
-                t: "text",
-                r: "root",
-                k: "kill-server",
-            },
-            default: {
-                "use-tsc": false,
-                warnings: false,
-                raw: false,
-                "kill-server": false,
-                all: false,
-                timeout: "30",
-            },
-        });
+        const program = new Command()
+            .name("mcp-tsc")
+            .description("TypeScript diagnostics MCP server")
+            .option("-d, --diagnostics", "Check TypeScript files for errors (default)")
+            .option("-w, --warnings", "Show warnings in addition to errors")
+            .option("-l, --line <num>", "Line number (required with --hover)")
+            .option("-c, --char <num>", "Character position (optional)")
+            .option("-t, --text <string>", "Text to search for on line (optional)")
+            .option("-r, --root <path>", "Override working directory (default: current directory)")
+            .option("--mcp", "Run as MCP server")
+            .option("--hover", "Get hover information at a specific location")
+            .option("--use-tsc", "Use TypeScript Compiler API instead of LSP")
+            .option("--raw", "Show full JSON with raw LSP data")
+            .option("-k, --kill-server", "Kill persistent LSP server(s)")
+            .option("--all", "Kill all servers (use with --kill-server)")
+            .option("--timeout <seconds>", "Timeout for diagnostics in seconds", "30")
+            .option("--help-old", "Show detailed help message")
+            .argument("[files...]", "Files to analyze")
+            .allowUnknownOption(false)
+            .parse();
+
+        const opts = program.opts();
+        const args = program.args;
+
+        // Handle --help-old to show our custom help
+        if (opts.helpOld) {
+            this.showHelp();
+            process.exit(0);
+        }
 
         // Convert timeout to number
-        const timeoutValue = parsed.timeout
-            ? typeof parsed.timeout === "string"
-                ? Number(parsed.timeout)
-                : parsed.timeout
-            : 30;
+        const timeoutValue = opts.timeout ? Number(opts.timeout) : 30;
 
         return {
-            ...parsed,
+            _: args,
+            mcp: opts.mcp ?? false,
+            diagnostics: opts.diagnostics ?? false,
+            hover: opts.hover ?? false,
+            "use-tsc": opts.useTsc ?? false,
+            warnings: opts.warnings ?? false,
+            raw: opts.raw ?? false,
+            line: opts.line,
+            char: opts.char,
+            text: opts.text,
+            root: opts.root,
+            "kill-server": opts.killServer ?? false,
+            all: opts.all ?? false,
+            help: false, // Commander handles --help automatically
             timeout: timeoutValue,
         };
     }
