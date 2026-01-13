@@ -201,7 +201,16 @@ export async function initializeDatabase(): Promise<void> {
         const { db: database } = await ensurePowerSync();
 
         console.log("[PowerSync] Starting db.init()...");
-        await database.init();
+
+        // Add timeout to detect stuck initialization
+        const initPromise = database.init();
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => {
+                reject(new Error('PowerSync init timeout - database may be corrupted. Run: indexedDB.deleteDatabase("dashboard.sqlite") then refresh.'));
+            }, 10000); // 10 second timeout
+        });
+
+        await Promise.race([initPromise, timeoutPromise]);
         console.log("[PowerSync] db.init() completed");
 
         initialized = true;
