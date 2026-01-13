@@ -1,13 +1,38 @@
+import { Command } from "commander";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
 import { TimelyService } from "../api/service";
 import { formatDuration } from "../utils/date";
-import type { TimelyArgs, TimelyEvent } from "../types";
+import type { TimelyEvent } from "../types";
 
-export async function eventsCommand(args: TimelyArgs, storage: Storage, service: TimelyService): Promise<void> {
+export function registerEventsCommand(program: Command, storage: Storage, service: TimelyService): void {
+    program
+        .command("events")
+        .description("List time entries")
+        .option("-f, --format <format>", "Output format: json, table, csv", "table")
+        .option("-a, --account <id>", "Override account ID")
+        .option("--since <date>", "Start date (YYYY-MM-DD)")
+        .option("--upto <date>", "End date (YYYY-MM-DD)")
+        .option("--day <date>", "Single day (YYYY-MM-DD)")
+        .action(async (options) => {
+            await eventsAction(storage, service, options);
+        });
+}
+
+interface EventsOptions {
+    format?: string;
+    account?: string;
+    since?: string;
+    upto?: string;
+    day?: string;
+}
+
+async function eventsAction(storage: Storage, service: TimelyService, options: EventsOptions): Promise<void> {
     // Get account ID
-    const accountId = args.account || (await storage.getConfigValue<number>("selectedAccountId"));
+    const accountId = options.account
+        ? parseInt(options.account, 10)
+        : await storage.getConfigValue<number>("selectedAccountId");
     if (!accountId) {
         logger.error("No account selected. Run 'tools timely accounts --select' first.");
         process.exit(1);
@@ -15,9 +40,9 @@ export async function eventsCommand(args: TimelyArgs, storage: Storage, service:
 
     // Build params from args
     const params: { since?: string; upto?: string; day?: string } = {};
-    if (args.since) params.since = args.since;
-    if (args.upto) params.upto = args.upto;
-    if (args.day) params.day = args.day;
+    if (options.since) params.since = options.since;
+    if (options.upto) params.upto = options.upto;
+    if (options.day) params.day = options.day;
 
     if (!params.since && !params.upto && !params.day) {
         logger.error("Please provide at least one date filter: --since, --upto, or --day");
@@ -34,12 +59,12 @@ export async function eventsCommand(args: TimelyArgs, storage: Storage, service:
     }
 
     // Output based on format
-    if (args.format === "json") {
+    if (options.format === "json") {
         console.log(JSON.stringify(events, null, 2));
         return;
     }
 
-    if (args.format === "csv") {
+    if (options.format === "csv") {
         // CSV output
         console.log("date,project,note,hours,minutes,duration_formatted");
         for (const event of events) {

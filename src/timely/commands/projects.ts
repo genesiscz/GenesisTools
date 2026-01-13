@@ -1,15 +1,43 @@
-import Enquirer from "enquirer";
+import { Command } from "commander";
+import { select } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
 import { TimelyService } from "../api/service";
-import type { TimelyArgs, TimelyProject, TimelyClient } from "../types";
+import type { TimelyProject, TimelyClient } from "../types";
 
-const prompter = new Enquirer();
+export function registerProjectsCommand(program: Command, storage: Storage, service: TimelyService): void {
+    program
+        .command("projects")
+        .description("List all projects (--select to choose default)")
+        .option("-f, --format <format>", "Output format: json, table", "table")
+        .option("-s, --select", "Interactively select default project")
+        .option("-a, --account <id>", "Override account ID")
+        .action(async (options) => {
+            try {
+                await projectsAction(storage, service, options);
+            } catch (error) {
+                if (error instanceof ExitPromptError) {
+                    logger.info("\nOperation cancelled.");
+                    process.exit(0);
+                }
+                throw error;
+            }
+        });
+}
 
-export async function projectsCommand(args: TimelyArgs, storage: Storage, service: TimelyService): Promise<void> {
+interface ProjectsOptions {
+    format?: string;
+    select?: boolean;
+    account?: string;
+}
+
+async function projectsAction(storage: Storage, service: TimelyService, options: ProjectsOptions): Promise<void> {
     // Get account ID
-    const accountId = args.account || (await storage.getConfigValue<number>("selectedAccountId"));
+    const accountId = options.account
+        ? parseInt(options.account, 10)
+        : await storage.getConfigValue<number>("selectedAccountId");
     if (!accountId) {
         logger.error("No account selected. Run 'tools timely accounts --select' first.");
         process.exit(1);
@@ -29,7 +57,7 @@ export async function projectsCommand(args: TimelyArgs, storage: Storage, servic
     logger.debug(`Saved ${projects.length} project(s) to config`);
 
     // Output based on format
-    if (args.format === "json") {
+    if (options.format === "json") {
         console.log(JSON.stringify(projects, null, 2));
         return;
     }
@@ -61,23 +89,21 @@ export async function projectsCommand(args: TimelyArgs, storage: Storage, servic
     }
 
     // Interactive selection
-    if (args.select) {
+    if (options.select) {
         const choices = projects
             .filter((p) => p.active)
             .map((p) => {
                 const client: TimelyClient | null = p.client;
                 return {
-                    name: p.id.toString(),
-                    message: `${p.name}${client ? ` (${client.name})` : ""}`,
+                    value: p.id.toString(),
+                    name: `${p.name}${client ? ` (${client.name})` : ""}`,
                 };
             });
 
-        const { projectId } = (await prompter.prompt({
-            type: "select",
-            name: "projectId",
+        const projectId = await select({
             message: "Select default project:",
             choices,
-        })) as { projectId: string };
+        });
 
         await storage.setConfigValue("selectedProjectId", parseInt(projectId, 10));
         logger.info(chalk.green(`Default project set to ID: ${projectId}`));

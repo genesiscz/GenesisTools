@@ -1,23 +1,38 @@
-import Enquirer from "enquirer";
+import { Command } from "commander";
+import { confirm, input, password } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
 import { TimelyApiClient } from "../api/client";
-import type { TimelyArgs, OAuthApplication } from "../types";
+import type { OAuthApplication } from "../types";
 
-const prompter = new Enquirer();
+export function registerLoginCommand(program: Command, storage: Storage, client: TimelyApiClient): void {
+    program
+        .command("login")
+        .description("Authenticate with Timely via OAuth2")
+        .action(async () => {
+            try {
+                await loginAction(storage, client);
+            } catch (error) {
+                if (error instanceof ExitPromptError) {
+                    logger.info("\nOperation cancelled.");
+                    process.exit(0);
+                }
+                throw error;
+            }
+        });
+}
 
-export async function loginCommand(args: TimelyArgs, storage: Storage, client: TimelyApiClient): Promise<void> {
+async function loginAction(storage: Storage, client: TimelyApiClient): Promise<void> {
     // Check if already logged in
     if (await client.isAuthenticated()) {
-        const { confirm } = (await prompter.prompt({
-            type: "confirm",
-            name: "confirm",
+        const shouldReauth = await confirm({
             message: "You are already logged in. Do you want to re-authenticate?",
-            initial: false,
-        })) as { confirm: boolean };
+            default: false,
+        });
 
-        if (!confirm) {
+        if (!shouldReauth) {
             logger.info("Login cancelled.");
             return;
         }
@@ -30,24 +45,18 @@ export async function loginCommand(args: TimelyArgs, storage: Storage, client: T
         logger.info(chalk.yellow("\nOAuth application credentials not found."));
         logger.info("Create an OAuth application at: https://app.timelyapp.com/settings/oauth_applications\n");
 
-        const { clientId, clientSecret, redirectUri } = (await prompter.prompt([
-            {
-                type: "input",
-                name: "clientId",
-                message: "Client ID:",
-            },
-            {
-                type: "password",
-                name: "clientSecret",
-                message: "Client Secret:",
-            },
-            {
-                type: "input",
-                name: "redirectUri",
-                message: "Redirect URI (press Enter for default):",
-                initial: "urn:ietf:wg:oauth:2.0:oob",
-            },
-        ])) as { clientId: string; clientSecret: string; redirectUri: string };
+        const clientId = await input({
+            message: "Client ID:",
+        });
+
+        const clientSecret = await password({
+            message: "Client Secret:",
+        });
+
+        const redirectUri = await input({
+            message: "Redirect URI (press Enter for default):",
+            default: "urn:ietf:wg:oauth:2.0:oob",
+        });
 
         oauth = {
             client_id: clientId,
@@ -79,11 +88,9 @@ export async function loginCommand(args: TimelyArgs, storage: Storage, client: T
     }
 
     // Prompt for authorization code
-    const { code } = (await prompter.prompt({
-        type: "input",
-        name: "code",
+    const code = await input({
         message: "Paste the authorization code:",
-    })) as { code: string };
+    });
 
     // Exchange code for tokens
     logger.info(chalk.yellow("Exchanging code for tokens..."));
