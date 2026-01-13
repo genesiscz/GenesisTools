@@ -1,51 +1,73 @@
 import * as watchman from "fb-watchman";
-import minimist from "minimist";
-import Enquirer from "enquirer";
+import { Command } from "commander";
+import { search } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import logger from "@app/logger";
 
 const client = new watchman.Client();
-const prompter = new Enquirer();
 
-const argv = minimist(process.argv.slice(2), {
-    alias: { c: "current" },
-    boolean: ["current"],
-});
+// Parse command line arguments using Commander
+const program = new Command()
+    .option("-c, --current", "Use current working directory")
+    .option("--help-old", "Show old help message")
+    .parse();
+
+const options = program.opts<{ current?: boolean; helpOld?: boolean }>();
 
 async function getDirOfInterest(): Promise<string> {
     // If -c or --current is passed, use process.cwd()
-    if (argv.current) {
+    if (options.current) {
         return process.cwd();
     }
 
     // If a positional argument is provided, try to resolve it
-    const arg = argv._[0];
+    const args = program.args;
+    const arg = args[0];
     if (arg) {
         if (arg.startsWith(".") || arg.startsWith("/")) {
             return arg;
         }
-        logger.error("Invalid directory path provided:", arg);
+        logger.error(`Invalid directory path provided: ${arg}`);
     }
 
     // No valid argument, show interactive selection
     // Get watched directories from watchman
     const watchedDirs: string[] = await new Promise((resolve) => {
-        client.command(["watch-list"], (err, resp) => {
+        (client as any).command(["watch-list"], (err: unknown, resp: any) => {
             if (err || !resp || !resp.roots) return resolve([]);
             resolve(resp.roots);
         });
     });
-    const dynamicChoices = watchedDirs.map((dir) => ({ name: `watchman: ${dir}`, value: dir }));
 
-    const choices = [...dynamicChoices, { name: `Current directory (${process.cwd()})`, value: process.cwd() }];
+    const allChoices = [
+        ...watchedDirs.map((dir) => ({
+            name: `watchman: ${dir}`,
+            value: dir,
+        })),
+        {
+            name: `Current directory (${process.cwd()})`,
+            value: process.cwd(),
+        },
+    ];
 
-    const answer = (await prompter.prompt({
-        type: "autocomplete",
-        maxChoices: 1,
-        name: "directory",
-        message: "Select a directory to watch:",
-        choices,
-    })) as { directory: string };
-    return answer.directory;
+    try {
+        const selected = await search({
+            message: "Select a directory to watch:",
+            source: async (term) => {
+                if (!term) return allChoices;
+                return allChoices.filter((c) =>
+                    c.value.toLowerCase().includes(term.toLowerCase())
+                );
+            },
+        });
+        return selected;
+    } catch (error) {
+        if (error instanceof ExitPromptError) {
+            logger.info("Directory selection cancelled by user.");
+            process.exit(0);
+        }
+        throw error;
+    }
 }
 
 function makeSubscription(
@@ -64,10 +86,10 @@ function makeSubscription(
         subscription["relative_root"] = relativePath;
     }
 
-    client.command(["subscribe", watch, "mysubscription", subscription], (error, resp) => {
+    (client as any).command(["subscribe", watch, "mysubscription", subscription], (error: unknown, resp: any) => {
         if (error) {
             if (retryCount < 15) {
-                logger.error(`Failed to subscribe (attempt ${retryCount + 1}/15):`, error);
+                logger.error(`Failed to subscribe (attempt ${retryCount + 1}/15): ${error}`);
                 setTimeout(() => makeSubscription(client, watch, relativePath, retryCount + 1), 1000);
             } else {
                 logger.error("Failed to subscribe after 15 attempts. Exiting.");
@@ -123,7 +145,7 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
                         setTimeout(resolve, 1000);
                         return;
                     }
-                    client.command(["watch-project", dirOfInterest], (watchError: any, watchResp: any) => {
+                    (client as any).command(["watch-project", dirOfInterest], (watchError: any, watchResp: any) => {
                         if (watchError) {
                             logger.error(`Error initiating watch (attempt ${attempt + 1}/${maxRetries}):`, watchError);
                             lastError = watchError;
@@ -153,6 +175,6 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
 
 (async () => {
     const dirOfInterest = await getDirOfInterest();
-    logger.info("Directory of interest:", dirOfInterest);
+    logger.info(`Directory of interest: ${dirOfInterest}`);
     await watchWithRetry(dirOfInterest);
 })();
