@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Plus, Loader2, ListTodo, Flame, ParkingCircle, LayoutGrid, Kanban } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@workos/authkit-tanstack-react-start/client'
@@ -9,12 +9,27 @@ import { TaskCard, TaskForm, ContextParkingModal } from '@/lib/assistant/compone
 import { useTaskStore, useContextParking, useDeadlineRisk } from '@/lib/assistant/hooks'
 import { KanbanBoard } from '../-components/kanban'
 import { EscalationWidget, EscalationAlert } from '../-components/escalation'
+import {
+  CelebrationManagerProvider,
+  useCelebrationManager,
+} from '../-components/celebrations'
 import type { EscalationResolutionData } from '../-components/escalation'
 import type { Task, TaskInput, TaskStatus, ContextParkingInput, UrgencyLevel, DeadlineRisk } from '@/lib/assistant/types'
 
 export const Route = createFileRoute('/assistant/tasks/')({
-  component: TasksPage,
+  component: TasksPageWrapper,
 })
+
+/**
+ * Wrapper component that provides the celebration context
+ */
+function TasksPageWrapper() {
+  return (
+    <CelebrationManagerProvider>
+      <TasksPage />
+    </CelebrationManagerProvider>
+  )
+}
 
 type ViewMode = 'kanban' | 'grid'
 
@@ -25,17 +40,22 @@ function TasksPage() {
   const {
     tasks,
     streak,
+    badges,
     loading,
     initialized,
     createTask,
     updateTask,
+    completeTask,
     parkContext,
+    getCompletionStats,
   } = useTaskStore(userId)
 
   const {
     risks,
     calculateAllRisks,
   } = useDeadlineRisk(userId)
+
+  const celebrations = useCelebrationManager()
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('kanban')
@@ -49,6 +69,29 @@ function TasksPage() {
 
   // Context parking modal with Cmd+P shortcut
   const contextParking = useContextParking()
+
+  // Track tasks completed today
+  const tasksCompletedTodayRef = useRef(0)
+  const lastCheckDateRef = useRef<string>('')
+
+  // Calculate tasks completed today
+  useEffect(() => {
+    const today = new Date().toDateString()
+
+    // Reset counter if day changed
+    if (lastCheckDateRef.current !== today) {
+      tasksCompletedTodayRef.current = 0
+      lastCheckDateRef.current = today
+    }
+
+    // Count tasks completed today
+    const completedToday = tasks.filter((t) => {
+      if (t.status !== 'completed' || !t.completedAt) return false
+      return new Date(t.completedAt).toDateString() === today
+    }).length
+
+    tasksCompletedTodayRef.current = completedToday
+  }, [tasks])
 
   // Calculate risks when tasks change
   useEffect(() => {
@@ -78,9 +121,53 @@ function TasksPage() {
     })
   }
 
+  // Handle task completion with celebrations
+  async function handleCompleteTask(taskId: string) {
+    const result = await completeTask(taskId)
+
+    if (result) {
+      const { task, newBadges } = result
+      const stats = await getCompletionStats()
+      const totalCompleted = stats?.totalTasks ?? 0
+
+      // Trigger celebration
+      celebrations.celebrateTaskCompletion(task, streak, newBadges, totalCompleted)
+
+      // Update today's count and check for daily goal/speedrunner
+      const today = new Date().toDateString()
+      if (lastCheckDateRef.current === today) {
+        tasksCompletedTodayRef.current += 1
+        const todayCount = tasksCompletedTodayRef.current
+
+        // Check for daily goal (3 tasks) or speedrunner (5 tasks)
+        if (todayCount === 3 || todayCount === 5) {
+          celebrations.celebrateDailyGoal(todayCount)
+        }
+      }
+
+      // Check for streak milestone
+      if (streak && streak.currentStreakDays > 0) {
+        const milestones = [1, 3, 5, 7, 14, 30, 60, 100]
+        if (milestones.includes(streak.currentStreakDays)) {
+          celebrations.celebrateStreakMilestone(streak.currentStreakDays)
+        }
+      }
+
+      // Celebrate new badges
+      for (const badge of newBadges) {
+        celebrations.celebrateBadgeEarned(badge)
+      }
+    }
+  }
+
   // Handle status change from Kanban drag
   async function handleStatusChange(taskId: string, newStatus: TaskStatus) {
-    await updateTask(taskId, { status: newStatus })
+    // If moving to completed, use completeTask for celebration
+    if (newStatus === 'completed') {
+      await handleCompleteTask(taskId)
+    } else {
+      await updateTask(taskId, { status: newStatus })
+    }
   }
 
   // Open task form with default status for column
@@ -272,6 +359,7 @@ function TasksPage() {
           tasks={tasks}
           risks={risks}
           onRiskClick={handleRiskClick}
+          onComplete={handleCompleteTask}
         />
       )}
 
@@ -312,10 +400,12 @@ function GridView({
   tasks,
   risks,
   onRiskClick,
+  onComplete,
 }: {
   tasks: Task[]
   risks: DeadlineRisk[]
   onRiskClick: (taskId: string) => void
+  onComplete?: (taskId: string) => void
 }) {
   // Urgency order for sorting
   const urgencyOrder: Record<UrgencyLevel, number> = {
@@ -364,6 +454,7 @@ function GridView({
               riskLevel={risk?.riskLevel}
               daysLate={risk?.daysLate}
               onRiskClick={onRiskClick}
+              onComplete={onComplete}
               className="h-full"
             />
           </div>

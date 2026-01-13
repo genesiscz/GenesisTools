@@ -17,6 +17,9 @@ import {
   ParkingCircle,
   ExternalLink,
   Github,
+  User,
+  Bell,
+  FileText,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@workos/authkit-tanstack-react-start/client'
@@ -30,9 +33,30 @@ import {
   FeatureCardHeader,
   FeatureCardContent,
 } from '@/components/ui/feature-card'
-import { useTaskStore } from '@/lib/assistant/hooks'
-import type { Task, TaskUpdate, UrgencyLevel, TaskStatus, ContextParking } from '@/lib/assistant/types'
+import {
+  useTaskStore,
+  useBlockers,
+  useHandoff,
+  useDecisionLog,
+} from '@/lib/assistant/hooks'
+import type {
+  Task,
+  TaskUpdate,
+  UrgencyLevel,
+  TaskStatus,
+  ContextParking,
+  TaskBlockerInput,
+  TaskBlocker,
+  HandoffDocumentInput,
+} from '@/lib/assistant/types'
 import { getUrgencyColor } from '@/lib/assistant/types'
+import { BlockerModal } from '../-components/blockers'
+import {
+  HandoffBanner,
+  HandoffEditor,
+  HandoffHistoryWidget,
+  HandoffHistory,
+} from '../-components/handoff'
 
 export const Route = createFileRoute('/assistant/tasks/$taskId')({
   component: TaskDetailPage,
@@ -55,6 +79,27 @@ function TaskDetailPage() {
     getParkingHistory,
   } = useTaskStore(userId)
 
+  const {
+    blockers,
+    getActiveBlockerForTask,
+    getBlockersForTask,
+    addBlocker,
+    resolveBlocker,
+    updateBlocker,
+    initialized: blockersInitialized,
+  } = useBlockers(userId)
+
+  // Handoff hooks
+  const {
+    handoffs,
+    createHandoff,
+    acknowledgeHandoff,
+    getHandoffsForTask,
+  } = useHandoff(userId)
+
+  // Decision hook for handoff compilation
+  const { decisions } = useDecisionLog(userId)
+
   const task = tasks.find((t) => t.id === taskId)
 
   // Form state
@@ -71,6 +116,26 @@ function TaskDetailPage() {
   // Context parking state
   const [activeParking, setActiveParking] = useState<ContextParking | null>(null)
   const [parkingHistory, setParkingHistory] = useState<ContextParking[]>([])
+
+  // Blocker state
+  const [blockerModalOpen, setBlockerModalOpen] = useState(false)
+  const [activeBlocker, setActiveBlocker] = useState<TaskBlocker | null>(null)
+
+  // Handoff state
+  const [showHandoffEditor, setShowHandoffEditor] = useState(false)
+  const [showHandoffHistory, setShowHandoffHistory] = useState(false)
+
+  // Get handoffs for this task
+  const taskHandoffs = getHandoffsForTask(taskId)
+
+  // Get pending handoff for this task (handed to current user)
+  const pendingHandoff = taskHandoffs.find(
+    (h) => h.handedOffTo === userId && !h.reviewed
+  )
+
+  // Get related decisions and blockers for handoff
+  const taskDecisions = decisions.filter((d) => d.relatedTaskIds.includes(taskId))
+  const taskBlockers = getBlockersForTask(taskId)
 
   // Initialize form with task data
   useEffect(() => {
@@ -104,6 +169,14 @@ function TaskDetailPage() {
     return () => { mounted = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId, initialized])
+
+  // Load active blocker for this task
+  useEffect(() => {
+    if (taskId && blockersInitialized) {
+      const blocker = getActiveBlockerForTask(taskId)
+      setActiveBlocker(blocker || null)
+    }
+  }, [taskId, blockersInitialized, getActiveBlockerForTask])
 
   function formatDateForInput(date: Date): string {
     return date.toISOString().split('T')[0]
@@ -164,6 +237,35 @@ function TaskDetailPage() {
     setStatus('in-progress')
   }
 
+  async function handleMarkAsBlocked(input: TaskBlockerInput) {
+    const blocker = await addBlocker(input)
+    if (blocker) {
+      setActiveBlocker(blocker)
+      // Update task status to blocked
+      await updateTask(input.taskId, { status: 'blocked' })
+      setStatus('blocked')
+    }
+  }
+
+  async function handleResolveBlocker() {
+    if (!activeBlocker || !task) return
+    await resolveBlocker(activeBlocker.id)
+    setActiveBlocker(null)
+    // Update task status back to in-progress
+    await updateTask(task.id, { status: 'in-progress' })
+    setStatus('in-progress')
+  }
+
+  async function handleCreateHandoff(input: HandoffDocumentInput) {
+    await createHandoff(input)
+  }
+
+  async function handleAcknowledgeHandoff() {
+    if (pendingHandoff) {
+      await acknowledgeHandoff(pendingHandoff.id)
+    }
+  }
+
   // Loading state
   if (authLoading || (!initialized && loading)) {
     return (
@@ -197,9 +299,21 @@ function TaskDetailPage() {
 
   const urgencyColors = getUrgencyColor(urgency)
   const isCompleted = status === 'completed'
+  const isBlocked = status === 'blocked'
 
   return (
     <DashboardLayout title="Edit Task" description={task.title}>
+      {/* Handoff banner - show if task was handed to current user */}
+      {pendingHandoff && (
+        <HandoffBanner
+          handoff={pendingHandoff}
+          decisions={taskDecisions}
+          blockers={taskBlockers.filter((b) => !b.unblockedAt)}
+          onAcknowledge={handleAcknowledgeHandoff}
+          className="mb-6"
+        />
+      )}
+
       {/* Header with back button */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
@@ -215,6 +329,19 @@ function TaskDetailPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Handoff button */}
+          {!isCompleted && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowHandoffEditor(true)}
+              className="gap-2 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+            >
+              <FileText className="h-4 w-4" />
+              Hand Off
+            </Button>
+          )}
+
           {/* Delete button */}
           <Button
             variant="ghost"
@@ -348,6 +475,111 @@ function TaskDetailPage() {
             </FeatureCardHeader>
           </FeatureCard>
 
+          {/* Blocker Section */}
+          <FeatureCard color="rose">
+            <FeatureCardHeader>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Ban className="h-5 w-5 text-rose-400" />
+                  <Label className="text-sm font-medium">Blocker Status</Label>
+                </div>
+                {!isCompleted && !activeBlocker && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setBlockerModalOpen(true)}
+                    className="gap-2 border-rose-500/30 hover:border-rose-500/50 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10"
+                  >
+                    <Ban className="h-4 w-4" />
+                    Mark as Blocked
+                  </Button>
+                )}
+              </div>
+
+              {activeBlocker ? (
+                <div className="p-4 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                  {/* Blocker header */}
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="relative h-2 w-2 rounded-full bg-rose-500">
+                        <span className="absolute inset-0 rounded-full bg-rose-500 animate-ping" />
+                      </div>
+                      <span className="text-xs text-rose-300 font-medium">
+                        Blocked since {formatDateTime(new Date(activeBlocker.blockedSince))}
+                      </span>
+                    </div>
+                    <BlockedDuration blockedSince={new Date(activeBlocker.blockedSince)} />
+                  </div>
+
+                  {/* Blocker reason */}
+                  <div className="flex items-start gap-2 mb-3">
+                    <AlertTriangle className="h-4 w-4 text-rose-400 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm text-rose-200">{activeBlocker.reason}</p>
+                  </div>
+
+                  {/* Blocker owner */}
+                  {activeBlocker.blockerOwner && (
+                    <div className="flex items-center gap-1.5 mb-3">
+                      <User className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span className="text-xs text-muted-foreground">
+                        Blocked by{' '}
+                        <span className="text-rose-300 font-medium">{activeBlocker.blockerOwner}</span>
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Reminder set indicator */}
+                  {activeBlocker.reminderSet && (
+                    <div className="flex items-center gap-1.5 mb-3">
+                      <Bell className="h-3.5 w-3.5 text-amber-400" />
+                      <span className="text-xs text-amber-300">
+                        Reminder: {new Date(activeBlocker.reminderSet).toLocaleDateString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-2 pt-3 border-t border-rose-500/20">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleResolveBlocker}
+                      className="gap-2 border-green-500/30 hover:border-green-500/50 text-green-400 hover:text-green-300 hover:bg-green-500/10"
+                    >
+                      <CheckCircle className="h-4 w-4" />
+                      Resolve Blocker
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      asChild
+                      className="gap-2 border-purple-500/30 hover:border-purple-500/50 text-purple-400 hover:text-purple-300 hover:bg-purple-500/10"
+                    >
+                      <Link to="/assistant/next">
+                        Switch Task
+                      </Link>
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-6 text-center rounded-lg border border-dashed border-rose-500/30">
+                  <CheckCircle className="h-8 w-8 text-green-400/50 mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">
+                    This task is not blocked.
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    If something is preventing progress, mark it as blocked.
+                  </p>
+                </div>
+              )}
+            </FeatureCardHeader>
+          </FeatureCard>
+
           {/* Context Parking Lot */}
           <FeatureCard color="purple">
             <FeatureCardHeader>
@@ -443,6 +675,14 @@ function TaskDetailPage() {
               <Play className="h-4 w-4" />
               Start Working
             </Button>
+          )}
+
+          {/* Handoff History Widget */}
+          {taskHandoffs.length > 0 && (
+            <HandoffHistoryWidget
+              handoffs={taskHandoffs}
+              onViewAll={() => setShowHandoffHistory(true)}
+            />
           )}
 
           {/* Deadline */}
@@ -550,6 +790,51 @@ function TaskDetailPage() {
           </FeatureCard>
         </div>
       </div>
+
+      {/* Blocker Modal */}
+      <BlockerModal
+        open={blockerModalOpen}
+        onOpenChange={setBlockerModalOpen}
+        task={task}
+        onSubmit={handleMarkAsBlocked}
+      />
+
+      {/* Handoff Editor Sheet */}
+      {task && (
+        <HandoffEditor
+          open={showHandoffEditor}
+          onOpenChange={setShowHandoffEditor}
+          task={task}
+          activeParking={activeParking}
+          availableDecisions={taskDecisions}
+          availableBlockers={taskBlockers}
+          onSubmit={handleCreateHandoff}
+        />
+      )}
+
+      {/* Handoff History Modal */}
+      {showHandoffHistory && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-[#0a0a14]/95 rounded-xl border border-cyan-500/30 p-6">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowHandoffHistory(false)}
+              className="absolute top-4 right-4 text-cyan-400 hover:bg-cyan-500/10"
+            >
+              <span className="sr-only">Close</span>
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </Button>
+            <HandoffHistory
+              handoffs={taskHandoffs}
+              decisions={decisions}
+              blockers={blockers}
+            />
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   )
 }
@@ -696,6 +981,47 @@ function DeadlineDisplay({ deadline }: { deadline: Date }) {
 
   return (
     <p className={cn('text-xs mt-2 font-medium', colorClass)}>{message}</p>
+  )
+}
+
+function BlockedDuration({ blockedSince }: { blockedSince: Date }) {
+  const now = new Date()
+  const diff = now.getTime() - blockedSince.getTime()
+  const hours = Math.floor(diff / (1000 * 60 * 60))
+  const days = Math.floor(hours / 24)
+
+  let message: string
+  let colorClass: string
+
+  if (days === 0) {
+    if (hours === 0) {
+      message = 'Just now'
+      colorClass = 'text-rose-300'
+    } else {
+      message = `${hours}h`
+      colorClass = 'text-rose-300'
+    }
+  } else if (days === 1) {
+    message = '1 day'
+    colorClass = 'text-rose-400'
+  } else if (days <= 2) {
+    message = `${days} days`
+    colorClass = 'text-rose-400'
+  } else {
+    message = `${days} days`
+    colorClass = 'text-red-400'
+  }
+
+  return (
+    <span
+      className={cn(
+        'text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide',
+        'bg-rose-500/20',
+        colorClass
+      )}
+    >
+      {message}
+    </span>
   )
 }
 
