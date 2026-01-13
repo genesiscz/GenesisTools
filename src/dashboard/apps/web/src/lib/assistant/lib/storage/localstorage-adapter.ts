@@ -8,6 +8,33 @@ import type {
   CompletionEventInput,
   Streak,
   Badge,
+  BadgeProgress,
+  CelebrationTier,
+  // Phase 2 types
+  CommunicationEntry,
+  CommunicationEntryInput,
+  CommunicationEntryUpdate,
+  Decision,
+  DecisionInput,
+  DecisionUpdate,
+  TaskBlocker,
+  TaskBlockerInput,
+  TaskBlockerUpdate,
+  HandoffDocument,
+  HandoffDocumentInput,
+  HandoffDocumentUpdate,
+  DeadlineRisk,
+  DeadlineRiskInput,
+  DeadlineRiskLevel,
+  DeadlineRiskOption,
+  // Phase 3 types
+  EnergySnapshot,
+  EnergySnapshotInput,
+  Distraction,
+  DistractionInput,
+  WeeklyReview,
+  WeeklyReviewInput,
+  Celebration,
 } from '@/lib/assistant/types'
 import {
   ASSISTANT_STORAGE_KEYS,
@@ -16,6 +43,15 @@ import {
   generateParkingId,
   generateCompletionId,
   generateBadgeId,
+  generateCommunicationId,
+  generateDecisionId,
+  generateBlockerId,
+  generateHandoffId,
+  generateDeadlineRiskId,
+  generateEnergySnapshotId,
+  generateDistractionId,
+  generateWeeklyReviewId,
+  generateCelebrationId,
   BADGE_DEFINITIONS,
 } from '@/lib/assistant/types'
 import type {
@@ -23,6 +59,12 @@ import type {
   AssistantSyncMessage,
   CompletionQueryOptions,
   CompletionStats,
+  CommunicationQueryOptions,
+  DecisionQueryOptions,
+  EnergyQueryOptions,
+  DistractionQueryOptions,
+  EnergyHeatmapData,
+  DistractionStats,
 } from './types'
 import { ASSISTANT_SYNC_CONFIG } from './config'
 
@@ -37,6 +79,10 @@ export class AssistantLocalStorageAdapter implements AssistantStorageAdapter {
   private taskWatchers: Map<string, (tasks: Task[]) => void> = new Map()
   private streakWatchers: Map<string, (streak: Streak | null) => void> = new Map()
   private badgeWatchers: Map<string, (badges: Badge[]) => void> = new Map()
+  private communicationWatchers: Map<string, (entries: CommunicationEntry[]) => void> = new Map()
+  private decisionWatchers: Map<string, (decisions: Decision[]) => void> = new Map()
+  private blockerWatchers: Map<string, (blockers: TaskBlocker[]) => void> = new Map()
+  private celebrationWatchers: Map<string, (celebrations: Celebration[]) => void> = new Map()
 
   constructor() {
     this.tabId = `tab_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
@@ -528,6 +574,8 @@ export class AssistantLocalStorageAdapter implements AssistantStorageAdapter {
     const earnedTypes = new Set(earnedBadges.map((b) => b.badgeType))
 
     const stats = await this.getCompletionStats(userId)
+    const communications = await this.getCommunicationEntries(userId)
+    const decisions = await this.getDecisions(userId)
     const eligibleBadges: string[] = []
 
     for (const definition of BADGE_DEFINITIONS) {
@@ -548,6 +596,15 @@ export class AssistantLocalStorageAdapter implements AssistantStorageAdapter {
             eligible = stats.criticalTasksCompleted >= definition.requirement.value
           }
           break
+        case 'focus-time':
+          eligible = stats.totalFocusTime >= definition.requirement.value
+          break
+        case 'decision-count':
+          eligible = decisions.length >= definition.requirement.value
+          break
+        case 'communication-count':
+          eligible = communications.length >= definition.requirement.value
+          break
       }
 
       if (eligible) {
@@ -556,6 +613,1286 @@ export class AssistantLocalStorageAdapter implements AssistantStorageAdapter {
     }
 
     return eligibleBadges
+  }
+
+  // ============================================
+  // Communication Log Operations (Phase 2)
+  // ============================================
+
+  async getCommunicationEntries(
+    userId: string,
+    options?: CommunicationQueryOptions
+  ): Promise<CommunicationEntry[]> {
+    const data =
+      this.readStorage<Record<string, CommunicationEntry>>(ASSISTANT_STORAGE_KEYS.COMMUNICATIONS) || {}
+
+    let filtered = Object.values(data).filter((c) => c.userId === userId)
+
+    if (options?.source) {
+      filtered = filtered.filter((c) => c.source === options.source)
+    }
+    if (options?.sentiment) {
+      filtered = filtered.filter((c) => c.sentiment === options.sentiment)
+    }
+    if (options?.tags && options.tags.length > 0) {
+      filtered = filtered.filter((c) => options.tags!.some((tag) => c.tags.includes(tag)))
+    }
+    if (options?.relatedTaskId) {
+      filtered = filtered.filter((c) => c.relatedTaskIds.includes(options.relatedTaskId!))
+    }
+    if (options?.startDate) {
+      filtered = filtered.filter((c) => new Date(c.discussedAt) >= options.startDate!)
+    }
+    if (options?.endDate) {
+      filtered = filtered.filter((c) => new Date(c.discussedAt) <= options.endDate!)
+    }
+
+    // Sort by discussedAt descending
+    filtered.sort((a, b) => new Date(b.discussedAt).getTime() - new Date(a.discussedAt).getTime())
+
+    if (options?.offset) {
+      filtered = filtered.slice(options.offset)
+    }
+    if (options?.limit) {
+      filtered = filtered.slice(0, options.limit)
+    }
+
+    return filtered
+  }
+
+  async getCommunicationEntry(id: string): Promise<CommunicationEntry | null> {
+    const data =
+      this.readStorage<Record<string, CommunicationEntry>>(ASSISTANT_STORAGE_KEYS.COMMUNICATIONS) || {}
+    return data[id] || null
+  }
+
+  async createCommunicationEntry(
+    input: CommunicationEntryInput,
+    userId: string
+  ): Promise<CommunicationEntry> {
+    const now = new Date()
+    const entry: CommunicationEntry = {
+      id: generateCommunicationId(),
+      userId,
+      source: input.source,
+      title: input.title,
+      content: input.content,
+      sourceUrl: input.sourceUrl,
+      discussedAt: input.discussedAt ?? now,
+      tags: input.tags ?? [],
+      relatedTaskIds: input.relatedTaskIds ?? [],
+      sentiment: input.sentiment ?? 'context',
+      createdAt: now,
+      updatedAt: now,
+    }
+
+    const data =
+      this.readStorage<Record<string, CommunicationEntry>>(ASSISTANT_STORAGE_KEYS.COMMUNICATIONS) || {}
+    data[entry.id] = entry
+    this.writeStorage(ASSISTANT_STORAGE_KEYS.COMMUNICATIONS, data)
+
+    this.broadcast({
+      type: 'COMMUNICATION_CREATED',
+      payload: entry,
+      timestamp: Date.now(),
+      sourceTab: this.tabId,
+    })
+
+    const userEntries = Object.values(data).filter((e) => e.userId === userId)
+    this.notifyCommunicationWatchers(userId, userEntries)
+
+    return entry
+  }
+
+  async updateCommunicationEntry(
+    id: string,
+    updates: CommunicationEntryUpdate
+  ): Promise<CommunicationEntry> {
+    const data =
+      this.readStorage<Record<string, CommunicationEntry>>(ASSISTANT_STORAGE_KEYS.COMMUNICATIONS) || {}
+    const existing = data[id]
+
+    if (!existing) {
+      throw new Error(`Communication entry ${id} not found`)
+    }
+
+    const updated: CommunicationEntry = {
+      ...existing,
+      ...updates,
+      updatedAt: new Date(),
+    }
+
+    data[id] = updated
+    this.writeStorage(ASSISTANT_STORAGE_KEYS.COMMUNICATIONS, data)
+
+    this.broadcast({
+      type: 'COMMUNICATION_UPDATED',
+      payload: updated,
+      timestamp: Date.now(),
+      sourceTab: this.tabId,
+    })
+
+    const userEntries = Object.values(data).filter((e) => e.userId === existing.userId)
+    this.notifyCommunicationWatchers(existing.userId, userEntries)
+
+    return updated
+  }
+
+  async deleteCommunicationEntry(id: string): Promise<void> {
+    const data =
+      this.readStorage<Record<string, CommunicationEntry>>(ASSISTANT_STORAGE_KEYS.COMMUNICATIONS) || {}
+    const entry = data[id]
+
+    if (entry) {
+      const userId = entry.userId
+      delete data[id]
+      this.writeStorage(ASSISTANT_STORAGE_KEYS.COMMUNICATIONS, data)
+
+      this.broadcast({
+        type: 'COMMUNICATION_DELETED',
+        payload: { id },
+        timestamp: Date.now(),
+        sourceTab: this.tabId,
+      })
+
+      const userEntries = Object.values(data).filter((e) => e.userId === userId)
+      this.notifyCommunicationWatchers(userId, userEntries)
+    }
+  }
+
+  // ============================================
+  // Decision Log Operations (Phase 2)
+  // ============================================
+
+  async getDecisions(userId: string, options?: DecisionQueryOptions): Promise<Decision[]> {
+    const data =
+      this.readStorage<Record<string, Decision>>(ASSISTANT_STORAGE_KEYS.DECISIONS) || {}
+
+    let filtered = Object.values(data).filter((d) => d.userId === userId)
+
+    if (options?.status) {
+      filtered = filtered.filter((d) => d.status === options.status)
+    }
+    if (options?.impactArea) {
+      filtered = filtered.filter((d) => d.impactArea === options.impactArea)
+    }
+    if (options?.tags && options.tags.length > 0) {
+      filtered = filtered.filter((d) => options.tags!.some((tag) => d.tags.includes(tag)))
+    }
+    if (options?.relatedTaskId) {
+      filtered = filtered.filter((d) => d.relatedTaskIds.includes(options.relatedTaskId!))
+    }
+    if (options?.startDate) {
+      filtered = filtered.filter((d) => new Date(d.decidedAt) >= options.startDate!)
+    }
+    if (options?.endDate) {
+      filtered = filtered.filter((d) => new Date(d.decidedAt) <= options.endDate!)
+    }
+
+    // Sort by decidedAt descending
+    filtered.sort((a, b) => new Date(b.decidedAt).getTime() - new Date(a.decidedAt).getTime())
+
+    if (options?.offset) {
+      filtered = filtered.slice(options.offset)
+    }
+    if (options?.limit) {
+      filtered = filtered.slice(0, options.limit)
+    }
+
+    return filtered
+  }
+
+  async getDecision(id: string): Promise<Decision | null> {
+    const data =
+      this.readStorage<Record<string, Decision>>(ASSISTANT_STORAGE_KEYS.DECISIONS) || {}
+    return data[id] || null
+  }
+
+  async createDecision(input: DecisionInput, userId: string): Promise<Decision> {
+    const now = new Date()
+    const decision: Decision = {
+      id: generateDecisionId(),
+      userId,
+      title: input.title,
+      reasoning: input.reasoning,
+      alternativesConsidered: input.alternativesConsidered ?? [],
+      decidedAt: input.decidedAt ?? now,
+      decidedBy: input.decidedBy ?? 'self',
+      status: 'active',
+      impactArea: input.impactArea,
+      relatedTaskIds: input.relatedTaskIds ?? [],
+      tags: input.tags ?? [],
+      createdAt: now,
+      updatedAt: now,
+    }
+
+    const data =
+      this.readStorage<Record<string, Decision>>(ASSISTANT_STORAGE_KEYS.DECISIONS) || {}
+    data[decision.id] = decision
+    this.writeStorage(ASSISTANT_STORAGE_KEYS.DECISIONS, data)
+
+    this.broadcast({
+      type: 'DECISION_CREATED',
+      payload: decision,
+      timestamp: Date.now(),
+      sourceTab: this.tabId,
+    })
+
+    const userDecisions = Object.values(data).filter((d) => d.userId === userId)
+    this.notifyDecisionWatchers(userId, userDecisions)
+
+    return decision
+  }
+
+  async updateDecision(id: string, updates: DecisionUpdate): Promise<Decision> {
+    const data =
+      this.readStorage<Record<string, Decision>>(ASSISTANT_STORAGE_KEYS.DECISIONS) || {}
+    const existing = data[id]
+
+    if (!existing) {
+      throw new Error(`Decision ${id} not found`)
+    }
+
+    const updated: Decision = {
+      ...existing,
+      ...updates,
+      updatedAt: new Date(),
+    }
+
+    data[id] = updated
+    this.writeStorage(ASSISTANT_STORAGE_KEYS.DECISIONS, data)
+
+    this.broadcast({
+      type: 'DECISION_UPDATED',
+      payload: updated,
+      timestamp: Date.now(),
+      sourceTab: this.tabId,
+    })
+
+    const userDecisions = Object.values(data).filter((d) => d.userId === existing.userId)
+    this.notifyDecisionWatchers(existing.userId, userDecisions)
+
+    return updated
+  }
+
+  async deleteDecision(id: string): Promise<void> {
+    const data =
+      this.readStorage<Record<string, Decision>>(ASSISTANT_STORAGE_KEYS.DECISIONS) || {}
+    const decision = data[id]
+
+    if (decision) {
+      const userId = decision.userId
+      delete data[id]
+      this.writeStorage(ASSISTANT_STORAGE_KEYS.DECISIONS, data)
+
+      this.broadcast({
+        type: 'DECISION_DELETED',
+        payload: { id },
+        timestamp: Date.now(),
+        sourceTab: this.tabId,
+      })
+
+      const userDecisions = Object.values(data).filter((d) => d.userId === userId)
+      this.notifyDecisionWatchers(userId, userDecisions)
+    }
+  }
+
+  async supersedeDecision(id: string, newDecisionId: string): Promise<Decision> {
+    return this.updateDecision(id, {
+      status: 'superseded',
+      supersededBy: newDecisionId,
+    })
+  }
+
+  async reverseDecision(id: string, reason: string): Promise<Decision> {
+    return this.updateDecision(id, {
+      status: 'reversed',
+      reversalReason: reason,
+    })
+  }
+
+  // ============================================
+  // Task Blocker Operations (Phase 2)
+  // ============================================
+
+  async getBlockers(userId: string, taskId?: string): Promise<TaskBlocker[]> {
+    const data =
+      this.readStorage<Record<string, TaskBlocker>>(ASSISTANT_STORAGE_KEYS.BLOCKERS) || {}
+
+    let filtered = Object.values(data).filter((b) => b.userId === userId)
+
+    if (taskId) {
+      filtered = filtered.filter((b) => b.taskId === taskId)
+    }
+
+    // Sort by blockedSince descending
+    return filtered.sort(
+      (a, b) => new Date(b.blockedSince).getTime() - new Date(a.blockedSince).getTime()
+    )
+  }
+
+  async getActiveBlocker(taskId: string): Promise<TaskBlocker | null> {
+    const data =
+      this.readStorage<Record<string, TaskBlocker>>(ASSISTANT_STORAGE_KEYS.BLOCKERS) || {}
+
+    const active = Object.values(data).filter(
+      (b) => b.taskId === taskId && !b.unblockedAt
+    )
+
+    return active[0] || null
+  }
+
+  async createBlocker(input: TaskBlockerInput, userId: string): Promise<TaskBlocker> {
+    const now = new Date()
+    const blocker: TaskBlocker = {
+      id: generateBlockerId(),
+      userId,
+      taskId: input.taskId,
+      reason: input.reason,
+      blockedSince: now,
+      blockerOwner: input.blockerOwner,
+      followUpAction: input.followUpAction,
+      reminderSet: input.reminderSet,
+      createdAt: now,
+      updatedAt: now,
+    }
+
+    const data =
+      this.readStorage<Record<string, TaskBlocker>>(ASSISTANT_STORAGE_KEYS.BLOCKERS) || {}
+    data[blocker.id] = blocker
+    this.writeStorage(ASSISTANT_STORAGE_KEYS.BLOCKERS, data)
+
+    // Update task status to blocked
+    await this.updateTask(input.taskId, { status: 'blocked' })
+
+    this.broadcast({
+      type: 'BLOCKER_CREATED',
+      payload: blocker,
+      timestamp: Date.now(),
+      sourceTab: this.tabId,
+    })
+
+    const userBlockers = Object.values(data).filter((b) => b.userId === userId)
+    this.notifyBlockerWatchers(userId, userBlockers)
+
+    return blocker
+  }
+
+  async updateBlocker(id: string, updates: TaskBlockerUpdate): Promise<TaskBlocker> {
+    const data =
+      this.readStorage<Record<string, TaskBlocker>>(ASSISTANT_STORAGE_KEYS.BLOCKERS) || {}
+    const existing = data[id]
+
+    if (!existing) {
+      throw new Error(`Blocker ${id} not found`)
+    }
+
+    const updated: TaskBlocker = {
+      ...existing,
+      ...updates,
+      updatedAt: new Date(),
+    }
+
+    data[id] = updated
+    this.writeStorage(ASSISTANT_STORAGE_KEYS.BLOCKERS, data)
+
+    this.broadcast({
+      type: 'BLOCKER_UPDATED',
+      payload: updated,
+      timestamp: Date.now(),
+      sourceTab: this.tabId,
+    })
+
+    const userBlockers = Object.values(data).filter((b) => b.userId === existing.userId)
+    this.notifyBlockerWatchers(existing.userId, userBlockers)
+
+    return updated
+  }
+
+  async resolveBlocker(id: string): Promise<TaskBlocker> {
+    const data =
+      this.readStorage<Record<string, TaskBlocker>>(ASSISTANT_STORAGE_KEYS.BLOCKERS) || {}
+    const existing = data[id]
+
+    if (!existing) {
+      throw new Error(`Blocker ${id} not found`)
+    }
+
+    const resolved = await this.updateBlocker(id, { unblockedAt: new Date() })
+
+    // Update task status to in-progress if no other active blockers
+    const remainingBlockers = await this.getActiveBlocker(existing.taskId)
+    if (!remainingBlockers) {
+      await this.updateTask(existing.taskId, { status: 'in-progress' })
+    }
+
+    this.broadcast({
+      type: 'BLOCKER_RESOLVED',
+      payload: resolved,
+      timestamp: Date.now(),
+      sourceTab: this.tabId,
+    })
+
+    return resolved
+  }
+
+  async deleteBlocker(id: string): Promise<void> {
+    const data =
+      this.readStorage<Record<string, TaskBlocker>>(ASSISTANT_STORAGE_KEYS.BLOCKERS) || {}
+    const blocker = data[id]
+
+    if (blocker) {
+      const userId = blocker.userId
+      delete data[id]
+      this.writeStorage(ASSISTANT_STORAGE_KEYS.BLOCKERS, data)
+
+      const userBlockers = Object.values(data).filter((b) => b.userId === userId)
+      this.notifyBlockerWatchers(userId, userBlockers)
+    }
+  }
+
+  // ============================================
+  // Handoff Document Operations (Phase 2)
+  // ============================================
+
+  async getHandoffs(userId: string, taskId?: string): Promise<HandoffDocument[]> {
+    const data =
+      this.readStorage<Record<string, HandoffDocument>>(ASSISTANT_STORAGE_KEYS.HANDOFFS) || {}
+
+    let filtered = Object.values(data).filter((h) => h.userId === userId)
+
+    if (taskId) {
+      filtered = filtered.filter((h) => h.taskId === taskId)
+    }
+
+    return filtered.sort(
+      (a, b) => new Date(b.handoffAt).getTime() - new Date(a.handoffAt).getTime()
+    )
+  }
+
+  async getHandoff(id: string): Promise<HandoffDocument | null> {
+    const data =
+      this.readStorage<Record<string, HandoffDocument>>(ASSISTANT_STORAGE_KEYS.HANDOFFS) || {}
+    return data[id] || null
+  }
+
+  async createHandoff(input: HandoffDocumentInput, userId: string): Promise<HandoffDocument> {
+    const now = new Date()
+    const handoff: HandoffDocument = {
+      id: generateHandoffId(),
+      userId,
+      taskId: input.taskId,
+      handedOffFrom: userId, // Current user
+      handedOffTo: input.handedOffTo,
+      handoffAt: now,
+      summary: input.summary,
+      contextNotes: input.contextNotes,
+      decisions: input.decisions ?? [],
+      blockers: input.blockers ?? [],
+      nextSteps: input.nextSteps,
+      gotchas: input.gotchas,
+      contact: input.contact,
+      reviewed: false,
+      createdAt: now,
+      updatedAt: now,
+    }
+
+    const data =
+      this.readStorage<Record<string, HandoffDocument>>(ASSISTANT_STORAGE_KEYS.HANDOFFS) || {}
+    data[handoff.id] = handoff
+    this.writeStorage(ASSISTANT_STORAGE_KEYS.HANDOFFS, data)
+
+    this.broadcast({
+      type: 'HANDOFF_CREATED',
+      payload: handoff,
+      timestamp: Date.now(),
+      sourceTab: this.tabId,
+    })
+
+    return handoff
+  }
+
+  async updateHandoff(id: string, updates: HandoffDocumentUpdate): Promise<HandoffDocument> {
+    const data =
+      this.readStorage<Record<string, HandoffDocument>>(ASSISTANT_STORAGE_KEYS.HANDOFFS) || {}
+    const existing = data[id]
+
+    if (!existing) {
+      throw new Error(`Handoff ${id} not found`)
+    }
+
+    const updated: HandoffDocument = {
+      ...existing,
+      ...updates,
+      updatedAt: new Date(),
+    }
+
+    data[id] = updated
+    this.writeStorage(ASSISTANT_STORAGE_KEYS.HANDOFFS, data)
+
+    return updated
+  }
+
+  async acknowledgeHandoff(id: string): Promise<HandoffDocument> {
+    const updated = await this.updateHandoff(id, {
+      reviewed: true,
+      reviewedAt: new Date(),
+    })
+
+    this.broadcast({
+      type: 'HANDOFF_ACKNOWLEDGED',
+      payload: updated,
+      timestamp: Date.now(),
+      sourceTab: this.tabId,
+    })
+
+    return updated
+  }
+
+  async deleteHandoff(id: string): Promise<void> {
+    const data =
+      this.readStorage<Record<string, HandoffDocument>>(ASSISTANT_STORAGE_KEYS.HANDOFFS) || {}
+
+    if (data[id]) {
+      delete data[id]
+      this.writeStorage(ASSISTANT_STORAGE_KEYS.HANDOFFS, data)
+    }
+  }
+
+  // ============================================
+  // Deadline Risk Operations (Phase 2)
+  // ============================================
+
+  async getDeadlineRisks(userId: string): Promise<DeadlineRisk[]> {
+    const data =
+      this.readStorage<Record<string, DeadlineRisk>>(ASSISTANT_STORAGE_KEYS.DEADLINE_RISKS) || {}
+
+    return Object.values(data)
+      .filter((r) => r.userId === userId)
+      .sort((a, b) => new Date(b.calculatedAt).getTime() - new Date(a.calculatedAt).getTime())
+  }
+
+  async calculateDeadlineRisk(input: DeadlineRiskInput, userId: string): Promise<DeadlineRisk> {
+    const task = await this.getTask(input.taskId)
+    if (!task) {
+      throw new Error(`Task ${input.taskId} not found`)
+    }
+
+    if (!task.deadline) {
+      throw new Error(`Task ${input.taskId} has no deadline`)
+    }
+
+    const now = new Date()
+    const deadline = new Date(task.deadline)
+    const percentComplete = input.percentComplete ?? 0
+
+    // Calculate days remaining
+    const daysRemaining = Math.ceil(
+      (deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
+    )
+
+    // Estimate projected completion based on progress
+    let projectedCompletionDate: Date
+    if (percentComplete > 0) {
+      const daysElapsed = Math.ceil(
+        (now.getTime() - new Date(task.createdAt).getTime()) / (1000 * 60 * 60 * 24)
+      )
+      const estimatedTotalDays = Math.ceil(daysElapsed / (percentComplete / 100))
+      projectedCompletionDate = new Date(task.createdAt)
+      projectedCompletionDate.setDate(projectedCompletionDate.getDate() + estimatedTotalDays)
+    } else {
+      projectedCompletionDate = input.projectedCompletionDate ?? deadline
+    }
+
+    // Calculate days late (negative means early)
+    const daysLate = Math.ceil(
+      (projectedCompletionDate.getTime() - deadline.getTime()) / (1000 * 60 * 60 * 24)
+    )
+
+    // Determine risk level
+    let riskLevel: DeadlineRiskLevel
+    if (daysLate > 0 || daysRemaining < 0) {
+      riskLevel = 'red'
+    } else if (daysRemaining <= 2 || (percentComplete < 50 && daysRemaining <= 5)) {
+      riskLevel = 'yellow'
+    } else {
+      riskLevel = 'green'
+    }
+
+    // Recommend action
+    let recommendedOption: DeadlineRiskOption
+    if (riskLevel === 'red') {
+      if (percentComplete < 30) {
+        recommendedOption = 'scope'
+      } else {
+        recommendedOption = 'extend'
+      }
+    } else if (riskLevel === 'yellow') {
+      if (percentComplete < 50) {
+        recommendedOption = 'help'
+      } else {
+        recommendedOption = 'accept'
+      }
+    } else {
+      recommendedOption = 'accept'
+    }
+
+    const risk: DeadlineRisk = {
+      id: generateDeadlineRiskId(),
+      userId,
+      taskId: input.taskId,
+      riskLevel,
+      projectedCompletionDate,
+      daysLate,
+      daysRemaining,
+      percentComplete,
+      recommendedOption,
+      calculatedAt: now,
+      createdAt: now,
+    }
+
+    const data =
+      this.readStorage<Record<string, DeadlineRisk>>(ASSISTANT_STORAGE_KEYS.DEADLINE_RISKS) || {}
+    data[risk.id] = risk
+    this.writeStorage(ASSISTANT_STORAGE_KEYS.DEADLINE_RISKS, data)
+
+    return risk
+  }
+
+  async getDeadlineRiskForTask(taskId: string): Promise<DeadlineRisk | null> {
+    const data =
+      this.readStorage<Record<string, DeadlineRisk>>(ASSISTANT_STORAGE_KEYS.DEADLINE_RISKS) || {}
+
+    const risks = Object.values(data)
+      .filter((r) => r.taskId === taskId)
+      .sort((a, b) => new Date(b.calculatedAt).getTime() - new Date(a.calculatedAt).getTime())
+
+    return risks[0] || null
+  }
+
+  // ============================================
+  // Energy Snapshot Operations (Phase 3)
+  // ============================================
+
+  async getEnergySnapshots(userId: string, options?: EnergyQueryOptions): Promise<EnergySnapshot[]> {
+    const data =
+      this.readStorage<Record<string, EnergySnapshot>>(ASSISTANT_STORAGE_KEYS.ENERGY_SNAPSHOTS) || {}
+
+    let filtered = Object.values(data).filter((e) => e.userId === userId)
+
+    if (options?.startDate) {
+      filtered = filtered.filter((e) => new Date(e.timestamp) >= options.startDate!)
+    }
+    if (options?.endDate) {
+      filtered = filtered.filter((e) => new Date(e.timestamp) <= options.endDate!)
+    }
+    if (options?.workType) {
+      filtered = filtered.filter((e) => e.typeOfWork === options.workType)
+    }
+
+    // Sort by timestamp descending
+    filtered.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+
+    if (options?.offset) {
+      filtered = filtered.slice(options.offset)
+    }
+    if (options?.limit) {
+      filtered = filtered.slice(0, options.limit)
+    }
+
+    return filtered
+  }
+
+  async logEnergySnapshot(input: EnergySnapshotInput, userId: string): Promise<EnergySnapshot> {
+    const now = new Date()
+    const snapshot: EnergySnapshot = {
+      id: generateEnergySnapshotId(),
+      userId,
+      timestamp: input.timestamp ?? now,
+      focusQuality: input.focusQuality,
+      contextSwitches: input.contextSwitches ?? 0,
+      tasksCompleted: input.tasksCompleted ?? 0,
+      typeOfWork: input.typeOfWork,
+      notes: input.notes,
+      createdAt: now,
+    }
+
+    const data =
+      this.readStorage<Record<string, EnergySnapshot>>(ASSISTANT_STORAGE_KEYS.ENERGY_SNAPSHOTS) || {}
+    data[snapshot.id] = snapshot
+    this.writeStorage(ASSISTANT_STORAGE_KEYS.ENERGY_SNAPSHOTS, data)
+
+    this.broadcast({
+      type: 'ENERGY_LOGGED',
+      payload: snapshot,
+      timestamp: Date.now(),
+      sourceTab: this.tabId,
+    })
+
+    return snapshot
+  }
+
+  async getEnergyHeatmapData(
+    userId: string,
+    startDate: Date,
+    endDate: Date
+  ): Promise<EnergyHeatmapData> {
+    const snapshots = await this.getEnergySnapshots(userId, { startDate, endDate })
+
+    // Group by date and hour
+    const cellMap: Map<string, { total: number; count: number }> = new Map()
+    const hourlyTotals: Record<number, { total: number; count: number }> = {}
+    const dailyTotals: Record<number, { total: number; count: number }> = {}
+
+    for (const snap of snapshots) {
+      const date = new Date(snap.timestamp)
+      const dateStr = date.toISOString().split('T')[0]
+      const hour = date.getHours()
+      const dayOfWeek = date.getDay()
+
+      // Cell data
+      const key = `${dateStr}-${hour}`
+      const existing = cellMap.get(key) || { total: 0, count: 0 }
+      cellMap.set(key, {
+        total: existing.total + snap.focusQuality,
+        count: existing.count + 1,
+      })
+
+      // Hourly averages
+      if (!hourlyTotals[hour]) hourlyTotals[hour] = { total: 0, count: 0 }
+      hourlyTotals[hour].total += snap.focusQuality
+      hourlyTotals[hour].count += 1
+
+      // Daily averages
+      if (!dailyTotals[dayOfWeek]) dailyTotals[dayOfWeek] = { total: 0, count: 0 }
+      dailyTotals[dayOfWeek].total += snap.focusQuality
+      dailyTotals[dayOfWeek].count += 1
+    }
+
+    // Convert to arrays/records
+    const cells = Array.from(cellMap.entries()).map(([key, value]) => {
+      const [date, hourStr] = key.split('-').length > 3
+        ? [key.slice(0, 10), parseInt(key.slice(11))]
+        : [key.slice(0, 10), parseInt(key.slice(11))]
+      return {
+        date: key.slice(0, 10),
+        hour: parseInt(key.slice(11)),
+        focusQuality: value.total / value.count,
+        count: value.count,
+      }
+    })
+
+    const hourlyAverages: Record<number, number> = {}
+    for (const [hour, data] of Object.entries(hourlyTotals)) {
+      hourlyAverages[parseInt(hour)] = data.total / data.count
+    }
+
+    const dailyAverages: Record<number, number> = {}
+    for (const [day, data] of Object.entries(dailyTotals)) {
+      dailyAverages[parseInt(day)] = data.total / data.count
+    }
+
+    // Find peak and low times
+    let peakTime = { hour: 0, day: 0, quality: 0 }
+    let lowTime = { hour: 0, day: 0, quality: 5 }
+
+    for (const cell of cells) {
+      const date = new Date(cell.date)
+      if (cell.focusQuality > peakTime.quality) {
+        peakTime = { hour: cell.hour, day: date.getDay(), quality: cell.focusQuality }
+      }
+      if (cell.focusQuality < lowTime.quality) {
+        lowTime = { hour: cell.hour, day: date.getDay(), quality: cell.focusQuality }
+      }
+    }
+
+    return {
+      cells,
+      hourlyAverages,
+      dailyAverages,
+      peakTime,
+      lowTime,
+    }
+  }
+
+  // ============================================
+  // Distraction Operations (Phase 3)
+  // ============================================
+
+  async getDistractions(userId: string, options?: DistractionQueryOptions): Promise<Distraction[]> {
+    const data =
+      this.readStorage<Record<string, Distraction>>(ASSISTANT_STORAGE_KEYS.DISTRACTIONS) || {}
+
+    let filtered = Object.values(data).filter((d) => d.userId === userId)
+
+    if (options?.source) {
+      filtered = filtered.filter((d) => d.source === options.source)
+    }
+    if (options?.startDate) {
+      filtered = filtered.filter((d) => new Date(d.timestamp) >= options.startDate!)
+    }
+    if (options?.endDate) {
+      filtered = filtered.filter((d) => new Date(d.timestamp) <= options.endDate!)
+    }
+
+    // Sort by timestamp descending
+    filtered.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+
+    if (options?.offset) {
+      filtered = filtered.slice(options.offset)
+    }
+    if (options?.limit) {
+      filtered = filtered.slice(0, options.limit)
+    }
+
+    return filtered
+  }
+
+  async logDistraction(input: DistractionInput, userId: string): Promise<Distraction> {
+    const now = new Date()
+    const distraction: Distraction = {
+      id: generateDistractionId(),
+      userId,
+      timestamp: input.timestamp ?? now,
+      source: input.source,
+      description: input.description,
+      duration: input.duration,
+      taskInterrupted: input.taskInterrupted,
+      resumedTask: input.resumedTask ?? false,
+      createdAt: now,
+    }
+
+    const data =
+      this.readStorage<Record<string, Distraction>>(ASSISTANT_STORAGE_KEYS.DISTRACTIONS) || {}
+    data[distraction.id] = distraction
+    this.writeStorage(ASSISTANT_STORAGE_KEYS.DISTRACTIONS, data)
+
+    this.broadcast({
+      type: 'DISTRACTION_LOGGED',
+      payload: distraction,
+      timestamp: Date.now(),
+      sourceTab: this.tabId,
+    })
+
+    return distraction
+  }
+
+  async getDistractionStats(
+    userId: string,
+    startDate: Date,
+    endDate: Date
+  ): Promise<DistractionStats> {
+    const distractions = await this.getDistractions(userId, { startDate, endDate })
+
+    const bySource: Record<string, { count: number; duration: number }> = {}
+    let totalDuration = 0
+    let resumedCount = 0
+
+    for (const d of distractions) {
+      if (!bySource[d.source]) {
+        bySource[d.source] = { count: 0, duration: 0 }
+      }
+      bySource[d.source].count += 1
+      bySource[d.source].duration += d.duration ?? 0
+      totalDuration += d.duration ?? 0
+      if (d.resumedTask) resumedCount += 1
+    }
+
+    // Calculate days in range
+    const daysInRange = Math.ceil(
+      (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)
+    )
+
+    // Find most common and disruptive sources
+    let mostCommonSource = ''
+    let mostCommonCount = 0
+    let mostDisruptiveSource = ''
+    let mostDisruptiveDuration = 0
+
+    for (const [source, data] of Object.entries(bySource)) {
+      if (data.count > mostCommonCount) {
+        mostCommonCount = data.count
+        mostCommonSource = source
+      }
+      if (data.duration > mostDisruptiveDuration) {
+        mostDisruptiveDuration = data.duration
+        mostDisruptiveSource = source
+      }
+    }
+
+    return {
+      totalDistractions: distractions.length,
+      totalDurationMinutes: totalDuration,
+      bySource,
+      averagePerDay: distractions.length / Math.max(daysInRange, 1),
+      resumptionRate: distractions.length > 0 ? (resumedCount / distractions.length) * 100 : 0,
+      mostCommonSource,
+      mostDisruptiveSource,
+    }
+  }
+
+  // ============================================
+  // Weekly Review Operations (Phase 3)
+  // ============================================
+
+  async getWeeklyReviews(userId: string, limit?: number): Promise<WeeklyReview[]> {
+    const data =
+      this.readStorage<Record<string, WeeklyReview>>(ASSISTANT_STORAGE_KEYS.WEEKLY_REVIEWS) || {}
+
+    let reviews = Object.values(data)
+      .filter((r) => r.userId === userId)
+      .sort((a, b) => new Date(b.weekStart).getTime() - new Date(a.weekStart).getTime())
+
+    if (limit) {
+      reviews = reviews.slice(0, limit)
+    }
+
+    return reviews
+  }
+
+  async getWeeklyReview(id: string): Promise<WeeklyReview | null> {
+    const data =
+      this.readStorage<Record<string, WeeklyReview>>(ASSISTANT_STORAGE_KEYS.WEEKLY_REVIEWS) || {}
+    return data[id] || null
+  }
+
+  async generateWeeklyReview(input: WeeklyReviewInput, userId: string): Promise<WeeklyReview> {
+    const now = new Date()
+
+    // Get completions for this week
+    const completions = await this.getCompletions(userId, {
+      startDate: input.weekStart,
+      endDate: input.weekEnd,
+    })
+    const taskCompletions = completions.filter((c) => c.completionType === 'task-complete')
+
+    // Get completions for last week
+    const lastWeekStart = new Date(input.weekStart)
+    lastWeekStart.setDate(lastWeekStart.getDate() - 7)
+    const lastWeekEnd = new Date(input.weekStart)
+    lastWeekEnd.setDate(lastWeekEnd.getDate() - 1)
+    const lastWeekCompletions = await this.getCompletions(userId, {
+      startDate: lastWeekStart,
+      endDate: lastWeekEnd,
+    })
+    const lastWeekTaskCompletions = lastWeekCompletions.filter(
+      (c) => c.completionType === 'task-complete'
+    )
+
+    // Get energy data
+    const energyData = await this.getEnergyHeatmapData(userId, input.weekStart, input.weekEnd)
+    const energySnapshots = await this.getEnergySnapshots(userId, {
+      startDate: input.weekStart,
+      endDate: input.weekEnd,
+    })
+
+    // Calculate energy by day
+    const energyByDay: Record<string, number> = {}
+    for (const snap of energySnapshots) {
+      const dateStr = new Date(snap.timestamp).toISOString().split('T')[0]
+      if (!energyByDay[dateStr]) {
+        energyByDay[dateStr] = 0
+      }
+      energyByDay[dateStr] += snap.focusQuality
+    }
+
+    // Calculate time totals
+    const totalMinutes = taskCompletions.reduce(
+      (sum, c) => sum + (c.metadata.focusTimeSpent ?? 0),
+      0
+    )
+    const deepFocusSnapshots = energySnapshots.filter((e) => e.typeOfWork === 'deep-work')
+    const meetingSnapshots = energySnapshots.filter((e) => e.typeOfWork === 'meeting')
+
+    // Get streak and badges
+    const streak = await this.getStreak(userId)
+    const badges = await this.getBadges(userId)
+    const weekBadges = badges.filter(
+      (b) =>
+        new Date(b.earnedAt) >= input.weekStart && new Date(b.earnedAt) <= input.weekEnd
+    )
+
+    // Calculate deadline stats (tasks with deadlines in this week)
+    const tasks = await this.getTasks(userId)
+    const tasksWithDeadlines = tasks.filter(
+      (t) =>
+        t.deadline &&
+        new Date(t.deadline) >= input.weekStart &&
+        new Date(t.deadline) <= input.weekEnd
+    )
+    const deadlinesHit = tasksWithDeadlines.filter((t) => t.status === 'completed').length
+
+    // Generate insights
+    const insights: string[] = []
+    if (taskCompletions.length > lastWeekTaskCompletions.length) {
+      insights.push(
+        `Completed ${taskCompletions.length - lastWeekTaskCompletions.length} more tasks than last week`
+      )
+    }
+    if (energyData.peakTime.quality > 0) {
+      const peakHour = energyData.peakTime.hour
+      const peakDay = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
+        energyData.peakTime.day
+      ]
+      insights.push(`Peak focus time: ${peakDay}s around ${peakHour}:00`)
+    }
+    if (deepFocusSnapshots.length > 0) {
+      insights.push(`${deepFocusSnapshots.length} deep work sessions logged`)
+    }
+
+    // Generate recommendations
+    const recommendations: string[] = []
+    if (energyData.lowTime.quality < 3) {
+      recommendations.push('Consider scheduling lighter tasks during low energy periods')
+    }
+    if (meetingSnapshots.length > deepFocusSnapshots.length) {
+      recommendations.push('Try to protect more time for deep work')
+    }
+    if (taskCompletions.length < 5) {
+      recommendations.push('Break larger tasks into smaller, completable chunks')
+    }
+
+    const review: WeeklyReview = {
+      id: generateWeeklyReviewId(),
+      userId,
+      weekStart: input.weekStart,
+      weekEnd: input.weekEnd,
+      tasksCompleted: taskCompletions.length,
+      tasksCompletedLastWeek: lastWeekTaskCompletions.length,
+      deadlinesHit,
+      deadlinesTotal: tasksWithDeadlines.length,
+      totalMinutes,
+      deepFocusMinutes: deepFocusSnapshots.length * 30, // Estimate 30 min per snapshot
+      meetingMinutes: meetingSnapshots.length * 30,
+      averageEnergy:
+        energySnapshots.length > 0
+          ? energySnapshots.reduce((sum, e) => sum + e.focusQuality, 0) / energySnapshots.length
+          : 0,
+      energyByDay,
+      peakFocusTime: `${energyData.peakTime.hour}:00`,
+      lowEnergyTime: `${energyData.lowTime.hour}:00`,
+      insights,
+      recommendations,
+      badgesEarned: weekBadges.map((b) => b.badgeType),
+      streakDays: streak?.currentStreakDays ?? 0,
+      generatedAt: now,
+      createdAt: now,
+    }
+
+    const data =
+      this.readStorage<Record<string, WeeklyReview>>(ASSISTANT_STORAGE_KEYS.WEEKLY_REVIEWS) || {}
+    data[review.id] = review
+    this.writeStorage(ASSISTANT_STORAGE_KEYS.WEEKLY_REVIEWS, data)
+
+    this.broadcast({
+      type: 'WEEKLY_REVIEW_GENERATED',
+      payload: review,
+      timestamp: Date.now(),
+      sourceTab: this.tabId,
+    })
+
+    return review
+  }
+
+  async getCurrentWeekReview(userId: string): Promise<WeeklyReview | null> {
+    const now = new Date()
+    const startOfWeek = new Date(now)
+    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay())
+    startOfWeek.setHours(0, 0, 0, 0)
+
+    const reviews = await this.getWeeklyReviews(userId, 1)
+    if (reviews.length > 0) {
+      const review = reviews[0]
+      if (new Date(review.weekStart).getTime() === startOfWeek.getTime()) {
+        return review
+      }
+    }
+    return null
+  }
+
+  // ============================================
+  // Celebration Operations (Phase 3)
+  // ============================================
+
+  async getPendingCelebrations(userId: string): Promise<Celebration[]> {
+    const data =
+      this.readStorage<Record<string, Celebration>>(ASSISTANT_STORAGE_KEYS.CELEBRATIONS) || {}
+
+    return Object.values(data)
+      .filter((c) => c.userId === userId && !c.dismissed && !c.shownAt)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+  }
+
+  async createCelebration(
+    userId: string,
+    tier: CelebrationTier,
+    title: string,
+    message: string,
+    triggerType: string,
+    triggerId?: string
+  ): Promise<Celebration> {
+    const now = new Date()
+    const celebration: Celebration = {
+      id: generateCelebrationId(),
+      userId,
+      tier,
+      title,
+      message,
+      triggerType: triggerType as Celebration['triggerType'],
+      triggerId,
+      dismissed: false,
+      createdAt: now,
+    }
+
+    const data =
+      this.readStorage<Record<string, Celebration>>(ASSISTANT_STORAGE_KEYS.CELEBRATIONS) || {}
+    data[celebration.id] = celebration
+    this.writeStorage(ASSISTANT_STORAGE_KEYS.CELEBRATIONS, data)
+
+    this.broadcast({
+      type: 'CELEBRATION_CREATED',
+      payload: celebration,
+      timestamp: Date.now(),
+      sourceTab: this.tabId,
+    })
+
+    const userCelebrations = Object.values(data).filter((c) => c.userId === userId)
+    this.notifyCelebrationWatchers(userId, userCelebrations)
+
+    return celebration
+  }
+
+  async markCelebrationShown(id: string): Promise<Celebration> {
+    const data =
+      this.readStorage<Record<string, Celebration>>(ASSISTANT_STORAGE_KEYS.CELEBRATIONS) || {}
+    const existing = data[id]
+
+    if (!existing) {
+      throw new Error(`Celebration ${id} not found`)
+    }
+
+    const updated: Celebration = {
+      ...existing,
+      shownAt: new Date(),
+    }
+
+    data[id] = updated
+    this.writeStorage(ASSISTANT_STORAGE_KEYS.CELEBRATIONS, data)
+
+    return updated
+  }
+
+  async dismissCelebration(id: string): Promise<void> {
+    const data =
+      this.readStorage<Record<string, Celebration>>(ASSISTANT_STORAGE_KEYS.CELEBRATIONS) || {}
+    const celebration = data[id]
+
+    if (celebration) {
+      const userId = celebration.userId
+      data[id] = { ...celebration, dismissed: true }
+      this.writeStorage(ASSISTANT_STORAGE_KEYS.CELEBRATIONS, data)
+
+      this.broadcast({
+        type: 'CELEBRATION_DISMISSED',
+        payload: { id },
+        timestamp: Date.now(),
+        sourceTab: this.tabId,
+      })
+
+      const userCelebrations = Object.values(data).filter((c) => c.userId === userId)
+      this.notifyCelebrationWatchers(userId, userCelebrations)
+    }
+  }
+
+  async determineCelebrationTier(userId: string, completionType: string): Promise<CelebrationTier> {
+    const stats = await this.getCompletionStats(userId)
+
+    // Full celebration for milestones
+    if (completionType === 'badge-earned') {
+      return 'badge'
+    }
+
+    if (completionType === 'streak-milestone') {
+      const streakMilestones = [7, 14, 30, 60, 100]
+      if (streakMilestones.includes(stats.currentStreak)) {
+        return 'full'
+      }
+      return 'badge'
+    }
+
+    // Task completion celebrations
+    const taskMilestones = [10, 25, 50, 100, 200]
+    if (taskMilestones.includes(stats.totalTasksCompleted)) {
+      return 'full'
+    }
+
+    // Badge celebration for completing 5 tasks
+    if (stats.totalTasksCompleted % 5 === 0) {
+      return 'badge'
+    }
+
+    // Default micro celebration
+    return 'micro'
+  }
+
+  // ============================================
+  // Badge Progress Operations (Phase 3)
+  // ============================================
+
+  async getBadgeProgress(userId: string): Promise<BadgeProgress[]> {
+    const earnedBadges = await this.getBadges(userId)
+    const earnedTypes = new Set(earnedBadges.map((b) => b.badgeType))
+
+    const stats = await this.getCompletionStats(userId)
+    const communications = await this.getCommunicationEntries(userId)
+    const decisions = await this.getDecisions(userId)
+
+    const progress: BadgeProgress[] = []
+
+    for (const definition of BADGE_DEFINITIONS) {
+      if (earnedTypes.has(definition.type)) continue
+
+      let current = 0
+      const target = definition.requirement.value
+
+      switch (definition.requirement.type) {
+        case 'task-count':
+          current = stats.totalTasksCompleted
+          break
+        case 'streak-days':
+          current = stats.currentStreak
+          break
+        case 'first-action':
+          if (definition.requirement.action === 'critical-complete') {
+            current = stats.criticalTasksCompleted
+          }
+          break
+        case 'focus-time':
+          current = stats.totalFocusTime
+          break
+        case 'decision-count':
+          current = decisions.length
+          break
+        case 'communication-count':
+          current = communications.length
+          break
+      }
+
+      progress.push({
+        badgeType: definition.type,
+        displayName: definition.displayName,
+        description: definition.description,
+        current,
+        target,
+        percentComplete: Math.min((current / target) * 100, 100),
+        rarity: definition.rarity,
+      })
+    }
+
+    // Sort by progress (closest to completion first)
+    progress.sort((a, b) => b.percentComplete - a.percentComplete)
+
+    return progress
   }
 
   // ============================================
@@ -595,6 +1932,57 @@ export class AssistantLocalStorageAdapter implements AssistantStorageAdapter {
 
     return () => {
       this.badgeWatchers.delete(watcherId)
+    }
+  }
+
+  watchCommunications(
+    userId: string,
+    callback: (entries: CommunicationEntry[]) => void
+  ): () => void {
+    const watcherId = `${userId}_${Date.now()}`
+    this.communicationWatchers.set(watcherId, callback)
+
+    // Initial call
+    this.getCommunicationEntries(userId).then(callback)
+
+    return () => {
+      this.communicationWatchers.delete(watcherId)
+    }
+  }
+
+  watchDecisions(userId: string, callback: (decisions: Decision[]) => void): () => void {
+    const watcherId = `${userId}_${Date.now()}`
+    this.decisionWatchers.set(watcherId, callback)
+
+    // Initial call
+    this.getDecisions(userId).then(callback)
+
+    return () => {
+      this.decisionWatchers.delete(watcherId)
+    }
+  }
+
+  watchBlockers(userId: string, callback: (blockers: TaskBlocker[]) => void): () => void {
+    const watcherId = `${userId}_${Date.now()}`
+    this.blockerWatchers.set(watcherId, callback)
+
+    // Initial call
+    this.getBlockers(userId).then(callback)
+
+    return () => {
+      this.blockerWatchers.delete(watcherId)
+    }
+  }
+
+  watchCelebrations(userId: string, callback: (celebrations: Celebration[]) => void): () => void {
+    const watcherId = `${userId}_${Date.now()}`
+    this.celebrationWatchers.set(watcherId, callback)
+
+    // Initial call
+    this.getPendingCelebrations(userId).then(callback)
+
+    return () => {
+      this.celebrationWatchers.delete(watcherId)
     }
   }
 
@@ -660,6 +2048,49 @@ export class AssistantLocalStorageAdapter implements AssistantStorageAdapter {
         }
         break
       }
+      case 'COMMUNICATION_CREATED':
+      case 'COMMUNICATION_UPDATED':
+      case 'COMMUNICATION_DELETED': {
+        const entry = message.payload as CommunicationEntry
+        if (entry?.userId) {
+          this.getCommunicationEntries(entry.userId).then((entries) => {
+            this.notifyCommunicationWatchers(entry.userId, entries)
+          })
+        }
+        break
+      }
+      case 'DECISION_CREATED':
+      case 'DECISION_UPDATED':
+      case 'DECISION_DELETED': {
+        const decision = message.payload as Decision
+        if (decision?.userId) {
+          this.getDecisions(decision.userId).then((decisions) => {
+            this.notifyDecisionWatchers(decision.userId, decisions)
+          })
+        }
+        break
+      }
+      case 'BLOCKER_CREATED':
+      case 'BLOCKER_UPDATED':
+      case 'BLOCKER_RESOLVED': {
+        const blocker = message.payload as TaskBlocker
+        if (blocker?.userId) {
+          this.getBlockers(blocker.userId).then((blockers) => {
+            this.notifyBlockerWatchers(blocker.userId, blockers)
+          })
+        }
+        break
+      }
+      case 'CELEBRATION_CREATED':
+      case 'CELEBRATION_DISMISSED': {
+        const celebration = message.payload as Celebration
+        if (celebration?.userId) {
+          this.getPendingCelebrations(celebration.userId).then((celebrations) => {
+            this.notifyCelebrationWatchers(celebration.userId, celebrations)
+          })
+        }
+        break
+      }
     }
   }
 
@@ -667,7 +2098,11 @@ export class AssistantLocalStorageAdapter implements AssistantStorageAdapter {
     if (
       event.key === ASSISTANT_STORAGE_KEYS.TASKS ||
       event.key === ASSISTANT_STORAGE_KEYS.STREAKS ||
-      event.key === ASSISTANT_STORAGE_KEYS.BADGES
+      event.key === ASSISTANT_STORAGE_KEYS.BADGES ||
+      event.key === ASSISTANT_STORAGE_KEYS.COMMUNICATIONS ||
+      event.key === ASSISTANT_STORAGE_KEYS.DECISIONS ||
+      event.key === ASSISTANT_STORAGE_KEYS.BLOCKERS ||
+      event.key === ASSISTANT_STORAGE_KEYS.CELEBRATIONS
     ) {
       // Re-notify all watchers
       for (const callback of this.taskWatchers.values()) {
@@ -700,6 +2135,30 @@ export class AssistantLocalStorageAdapter implements AssistantStorageAdapter {
   private notifyBadgeWatchers(userId: string, badges: Badge[]): void {
     for (const callback of this.badgeWatchers.values()) {
       callback(badges)
+    }
+  }
+
+  private notifyCommunicationWatchers(userId: string, entries: CommunicationEntry[]): void {
+    for (const callback of this.communicationWatchers.values()) {
+      callback(entries)
+    }
+  }
+
+  private notifyDecisionWatchers(userId: string, decisions: Decision[]): void {
+    for (const callback of this.decisionWatchers.values()) {
+      callback(decisions)
+    }
+  }
+
+  private notifyBlockerWatchers(userId: string, blockers: TaskBlocker[]): void {
+    for (const callback of this.blockerWatchers.values()) {
+      callback(blockers)
+    }
+  }
+
+  private notifyCelebrationWatchers(userId: string, celebrations: Celebration[]): void {
+    for (const callback of this.celebrationWatchers.values()) {
+      callback(celebrations)
     }
   }
 
