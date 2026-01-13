@@ -170,6 +170,9 @@ function AnalyticsPage() {
   const averageFocusQuality = energyData.getAverageFocusQuality()
   const totalContextSwitches = energyData.getTotalContextSwitches()
 
+  // Suppress unused variable warning for selectedBadge
+  void selectedBadge
+
   return (
     <DashboardLayout
       title="Analytics"
@@ -249,7 +252,6 @@ function AnalyticsPage() {
             {/* Distribution chart */}
             <DistractionStats
               stats={distractionStats}
-              distractions={distractionData.distractions}
               trend={distractionTrend}
               loading={statsLoading}
             />
