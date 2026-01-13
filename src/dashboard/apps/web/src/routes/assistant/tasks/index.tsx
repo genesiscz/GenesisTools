@@ -1,27 +1,20 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
-import { Plus, Loader2, ListTodo, Filter, Flame, ParkingCircle } from 'lucide-react'
+import { Plus, Loader2, ListTodo, Flame, ParkingCircle, LayoutGrid, Kanban } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@workos/authkit-tanstack-react-start/client'
 import { DashboardLayout } from '@/components/dashboard'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  DropdownMenuSeparator,
-  DropdownMenuLabel,
-} from '@/components/ui/dropdown-menu'
 import { TaskCard, TaskForm, ContextParkingModal } from '@/lib/assistant/components'
 import { useTaskStore, useContextParking } from '@/lib/assistant/hooks'
-import type { TaskInput, ContextParkingInput, UrgencyLevel } from '@/lib/assistant/types'
+import { KanbanBoard } from '../-components/kanban'
+import type { Task, TaskInput, TaskStatus, ContextParkingInput, UrgencyLevel } from '@/lib/assistant/types'
 
 export const Route = createFileRoute('/assistant/tasks/')({
   component: TasksPage,
 })
 
-type FilterMode = 'all' | 'active' | 'completed' | UrgencyLevel
+type ViewMode = 'kanban' | 'grid'
 
 function TasksPage() {
   const { user, loading: authLoading } = useAuth()
@@ -34,89 +27,41 @@ function TasksPage() {
     initialized,
     createTask,
     updateTask,
-    deleteTask,
-    completeTask,
     parkContext,
   } = useTaskStore(userId)
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
-  const [filterMode, setFilterMode] = useState<FilterMode>('active')
+  const [viewMode, setViewMode] = useState<ViewMode>('kanban')
+  const [defaultStatus, setDefaultStatus] = useState<TaskStatus>('backlog')
 
   // Context parking modal with Cmd+P shortcut
   const contextParking = useContextParking()
 
-  // Filter tasks based on current filter mode
-  const filteredTasks = tasks.filter((task) => {
-    switch (filterMode) {
-      case 'all':
-        return true
-      case 'active':
-        return task.status !== 'completed'
-      case 'completed':
-        return task.status === 'completed'
-      case 'critical':
-      case 'important':
-      case 'nice-to-have':
-        return task.urgencyLevel === filterMode && task.status !== 'completed'
-      default:
-        return true
-    }
-  })
-
-  // Sort: critical first, then important, then nice-to-have, then by deadline
-  const sortedTasks = [...filteredTasks].sort((a, b) => {
-    // Completed tasks at the end
-    if (a.status === 'completed' && b.status !== 'completed') return 1
-    if (a.status !== 'completed' && b.status === 'completed') return -1
-
-    // Urgency order
-    const urgencyOrder = { critical: 0, important: 1, 'nice-to-have': 2 }
-    const urgencyDiff = urgencyOrder[a.urgencyLevel] - urgencyOrder[b.urgencyLevel]
-    if (urgencyDiff !== 0) return urgencyDiff
-
-    // Deadline (earlier first, no deadline last)
-    if (a.deadline && b.deadline) {
-      return new Date(a.deadline).getTime() - new Date(b.deadline).getTime()
-    }
-    if (a.deadline) return -1
-    if (b.deadline) return 1
-
-    // Updated at (most recent first)
-    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-  })
-
-  // Counts for filter badges
+  // Counts for stats
   const counts = {
-    all: tasks.length,
     active: tasks.filter((t) => t.status !== 'completed').length,
-    completed: tasks.filter((t) => t.status === 'completed').length,
-    critical: tasks.filter((t) => t.urgencyLevel === 'critical' && t.status !== 'completed')
-      .length,
-    important: tasks.filter((t) => t.urgencyLevel === 'important' && t.status !== 'completed')
-      .length,
-    'nice-to-have': tasks.filter(
-      (t) => t.urgencyLevel === 'nice-to-have' && t.status !== 'completed'
-    ).length,
+    critical: tasks.filter((t) => t.urgencyLevel === 'critical' && t.status !== 'completed').length,
+    inProgress: tasks.filter((t) => t.status === 'in-progress').length,
+    blocked: tasks.filter((t) => t.status === 'blocked').length,
   }
 
   // Handle task creation
   async function handleCreateTask(input: TaskInput) {
-    await createTask(input)
+    await createTask({
+      ...input,
+      status: defaultStatus,
+    })
   }
 
-  // Handle task completion
-  async function handleCompleteTask(taskId: string) {
-    await completeTask(taskId)
+  // Handle status change from Kanban drag
+  async function handleStatusChange(taskId: string, newStatus: TaskStatus) {
+    await updateTask(taskId, { status: newStatus })
   }
 
-  // Handle start work
-  async function handleStartWork(taskId: string) {
-    await updateTask(taskId, { status: 'in-progress' })
-  }
-
-  // Handle task deletion
-  async function handleDeleteTask(taskId: string) {
-    await deleteTask(taskId)
+  // Open task form with default status for column
+  function handleOpenTaskForm(status: TaskStatus) {
+    setDefaultStatus(status)
+    setCreateDialogOpen(true)
   }
 
   // Handle context parking
@@ -139,19 +84,29 @@ function TasksPage() {
   }
 
   return (
-    <DashboardLayout title="Tasks" description="Manage your tasks with urgency-based prioritization">
+    <DashboardLayout title="Tasks" description="Drag tasks between columns to update status">
       {/* Toolbar */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-4">
           {/* Task counts */}
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex items-center gap-3 text-sm">
             <span className="text-muted-foreground">
-              {counts.active} active task{counts.active !== 1 ? 's' : ''}
+              {counts.active} active
             </span>
             {counts.critical > 0 && (
               <span className="flex items-center gap-1 text-red-400 font-medium">
                 <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
                 {counts.critical} critical
+              </span>
+            )}
+            {counts.inProgress > 0 && (
+              <span className="flex items-center gap-1 text-amber-400">
+                {counts.inProgress} in progress
+              </span>
+            )}
+            {counts.blocked > 0 && (
+              <span className="flex items-center gap-1 text-rose-400">
+                {counts.blocked} blocked
               </span>
             )}
           </div>
@@ -181,47 +136,40 @@ function TasksPage() {
             </kbd>
           </Button>
 
-          {/* Filter dropdown */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-2">
-                <Filter className="h-4 w-4" />
-                <span className="hidden sm:inline capitalize">
-                  {filterMode === 'nice-to-have' ? 'Nice to Have' : filterMode}
-                </span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuLabel>Filter by Status</DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => setFilterMode('all')}>
-                All ({counts.all})
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setFilterMode('active')}>
-                Active ({counts.active})
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setFilterMode('completed')}>
-                Completed ({counts.completed})
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel>Filter by Urgency</DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => setFilterMode('critical')}>
-                <span className="h-2 w-2 rounded-full bg-red-500 mr-2" />
-                Critical ({counts.critical})
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setFilterMode('important')}>
-                <span className="h-2 w-2 rounded-full bg-orange-500 mr-2" />
-                Important ({counts.important})
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setFilterMode('nice-to-have')}>
-                <span className="h-2 w-2 rounded-full bg-yellow-500 mr-2" />
-                Nice to Have ({counts['nice-to-have']})
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {/* View mode toggle */}
+          <div className="flex items-center border rounded-lg overflow-hidden">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setViewMode('kanban')}
+              className={cn(
+                'h-8 px-3 rounded-none',
+                viewMode === 'kanban' && 'bg-purple-500/20 text-purple-400'
+              )}
+              title="Kanban view"
+            >
+              <Kanban className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setViewMode('grid')}
+              className={cn(
+                'h-8 px-3 rounded-none',
+                viewMode === 'grid' && 'bg-purple-500/20 text-purple-400'
+              )}
+              title="Grid view"
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </Button>
+          </div>
 
           {/* Create button */}
           <Button
-            onClick={() => setCreateDialogOpen(true)}
+            onClick={() => {
+              setDefaultStatus('backlog')
+              setCreateDialogOpen(true)
+            }}
             size="sm"
             className="gap-2 bg-purple-600 hover:bg-purple-700"
           >
@@ -231,27 +179,18 @@ function TasksPage() {
         </div>
       </div>
 
-      {/* Task grid */}
-      {sortedTasks.length === 0 ? (
-        <EmptyState filterMode={filterMode} onAddTask={() => setCreateDialogOpen(true)} />
+      {/* Board/Grid content */}
+      {tasks.length === 0 ? (
+        <EmptyState onAddTask={() => setCreateDialogOpen(true)} />
+      ) : viewMode === 'kanban' ? (
+        <KanbanBoard
+          tasks={tasks}
+          onStatusChange={handleStatusChange}
+          onAddTask={handleCreateTask}
+          onOpenTaskForm={handleOpenTaskForm}
+        />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 auto-rows-fr">
-          {sortedTasks.map((task, index) => (
-            <div
-              key={task.id}
-              className="animate-fade-in-up h-full"
-              style={{ animationDelay: `${index * 50}ms` }}
-            >
-              <TaskCard
-                task={task}
-                onComplete={handleCompleteTask}
-                onStartWork={handleStartWork}
-                onDelete={handleDeleteTask}
-                className="h-full"
-              />
-            </div>
-          ))}
-        </div>
+        <GridView tasks={tasks} />
       )}
 
       {/* Create task dialog */}
@@ -259,6 +198,7 @@ function TasksPage() {
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         onSubmit={handleCreateTask}
+        initialValues={{ status: defaultStatus }}
       />
 
       {/* Context parking modal (Cmd+P) */}
@@ -273,47 +213,55 @@ function TasksPage() {
 }
 
 /**
- * Empty state component
+ * Grid view component (preserves original grid functionality)
  */
-function EmptyState({
-  filterMode,
-  onAddTask,
-}: {
-  filterMode: FilterMode
-  onAddTask: () => void
-}) {
-  const getMessage = () => {
-    switch (filterMode) {
-      case 'completed':
-        return {
-          title: 'No completed tasks',
-          description: 'Complete some tasks to see them here.',
-        }
-      case 'critical':
-        return {
-          title: 'No critical tasks',
-          description: 'Great job! You have no critical tasks to worry about.',
-        }
-      case 'important':
-        return {
-          title: 'No important tasks',
-          description: 'All important tasks are handled.',
-        }
-      case 'nice-to-have':
-        return {
-          title: 'No nice-to-have tasks',
-          description: 'Add some stretch goals when you have time.',
-        }
-      default:
-        return {
-          title: 'No tasks yet',
-          description: 'Create your first task to get started with urgency-based prioritization.',
-        }
-    }
+function GridView({ tasks }: { tasks: Task[] }) {
+  // Urgency order for sorting
+  const urgencyOrder: Record<UrgencyLevel, number> = {
+    critical: 0,
+    important: 1,
+    'nice-to-have': 2,
   }
 
-  const message = getMessage()
+  // Sort: critical first, then important, then nice-to-have, then by deadline
+  const sortedTasks = [...tasks].sort((a, b) => {
+    // Completed tasks at the end
+    if (a.status === 'completed' && b.status !== 'completed') return 1
+    if (a.status !== 'completed' && b.status === 'completed') return -1
 
+    // Urgency order
+    const urgencyDiff = urgencyOrder[a.urgencyLevel] - urgencyOrder[b.urgencyLevel]
+    if (urgencyDiff !== 0) return urgencyDiff
+
+    // Deadline (earlier first, no deadline last)
+    if (a.deadline && b.deadline) {
+      return new Date(a.deadline).getTime() - new Date(b.deadline).getTime()
+    }
+    if (a.deadline) return -1
+    if (b.deadline) return 1
+
+    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  })
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 auto-rows-fr">
+      {sortedTasks.map((task, index) => (
+        <div
+          key={task.id}
+          className="animate-fade-in-up h-full"
+          style={{ animationDelay: `${index * 50}ms` }}
+        >
+          <TaskCard task={task} className="h-full" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Empty state component
+ */
+function EmptyState({ onAddTask }: { onAddTask: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center py-24 px-6">
       {/* Decorative element */}
@@ -333,16 +281,17 @@ function EmptyState({
       </div>
 
       {/* Text */}
-      <h2 className="text-xl font-semibold text-foreground/70 mb-2">{message.title}</h2>
-      <p className="text-muted-foreground text-center max-w-md mb-8">{message.description}</p>
+      <h2 className="text-xl font-semibold text-foreground/70 mb-2">No tasks yet</h2>
+      <p className="text-muted-foreground text-center max-w-md mb-8">
+        Create your first task to get started with the Kanban board.
+        Drag tasks between columns to update their status.
+      </p>
 
       {/* CTA Button */}
-      {filterMode !== 'completed' && (
-        <Button onClick={onAddTask} size="lg" className="gap-3 bg-purple-600 hover:bg-purple-700">
-          <Plus className="h-5 w-5" />
-          Create your first task
-        </Button>
-      )}
+      <Button onClick={onAddTask} size="lg" className="gap-3 bg-purple-600 hover:bg-purple-700">
+        <Plus className="h-5 w-5" />
+        Create your first task
+      </Button>
     </div>
   )
 }
