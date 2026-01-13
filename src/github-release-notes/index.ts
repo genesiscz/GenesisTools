@@ -1,7 +1,7 @@
 import axios from "axios";
 import * as fs from "fs";
 import * as path from "path";
-import minimist from "minimist";
+import { Command } from "commander";
 import logger from "@app/logger";
 
 interface GitHubRelease {
@@ -163,16 +163,23 @@ Note:
 }
 
 function parseCommandLineArgs(): ScriptOptions {
-    const argv = minimist(process.argv.slice(2), {
-        alias: { h: "help" },
-        boolean: ["help", "oldest"],
-    });
+    const program = new Command()
+        .name("github-release-notes")
+        .description("Fetch release notes from GitHub repositories")
+        .argument("<repo>", "Repository (owner/repo or GitHub URL)")
+        .argument("[output]", "Output file path")
+        .option("--limit <n>", "Limit number of releases")
+        .option("--oldest", "Start from oldest releases")
+        .option("--help-old", "Show extended help")
+        .parse();
 
-    if (argv.help) {
+    const opts = program.opts();
+
+    if (opts.helpOld) {
         printHelpAndExit();
     }
 
-    const [repoArg, outputFile] = argv._;
+    const [repoArg, outputFile] = program.args;
 
     if (!repoArg) {
         printHelpAndExit();
@@ -186,8 +193,8 @@ function parseCommandLineArgs(): ScriptOptions {
 
     const options: ScriptOptions = { owner: repoInfo.owner, repo: repoInfo.repo, outputFile };
 
-    if (argv.limit) {
-        const limit = parseInt(argv.limit, 10);
+    if (opts.limit) {
+        const limit = parseInt(opts.limit, 10);
         if (!isNaN(limit) && limit > 0) {
             options.limit = limit;
         } else {
@@ -196,7 +203,7 @@ function parseCommandLineArgs(): ScriptOptions {
         }
     }
 
-    if (argv.oldest) {
+    if (opts.oldest) {
         options.oldest = true;
     }
 

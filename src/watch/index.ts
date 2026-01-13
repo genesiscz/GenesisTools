@@ -44,7 +44,7 @@ if (possibleShellExpansion) {
     logger.error(chalk.red("Error: It appears your glob patterns may have been expanded by the shell"));
     logger.info(chalk.yellow("To prevent this, please wrap each pattern in quotes:"));
     logger.info(chalk.green(`tools watch "src/**/*.ts"`));
-    logger.info();
+    logger.info("");
     logger.info(chalk.blue("Without quotes, the shell expands wildcards before passing arguments to the script."));
     process.exit(1);
 }
@@ -303,7 +303,7 @@ function getSortedFilesByModTime(): string[] {
 function printScannedPaths() {
     log.summary.directories(scannedDirectories);
     log.summary.files(matchedFiles);
-    logger.info(); // Add empty line for better readability
+    logger.info(""); // Add empty line for better readability
 }
 
 // Function to scan for files matching the glob pattern
