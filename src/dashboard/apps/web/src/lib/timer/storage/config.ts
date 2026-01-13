@@ -13,7 +13,7 @@ import type { StorageMode } from './types'
  *                  + automatic bi-directional sync to backend SQLite
  *                  + better for large datasets and complex queries
  */
-export const STORAGE_MODE: StorageMode = 'powersync'
+export const STORAGE_MODE: StorageMode = 'localstorage'
 
 /**
  * API endpoints for server sync
