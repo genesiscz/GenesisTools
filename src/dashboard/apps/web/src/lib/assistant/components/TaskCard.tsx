@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router'
-import { Calendar, Clock, CheckCircle, Play, Ban, Circle, MoreVertical, Trash2 } from 'lucide-react'
+import { Calendar, Clock, CheckCircle, Play, Ban, Circle, MoreVertical, Trash2, AlertTriangle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -14,14 +14,17 @@ import {
   FeatureCardHeader,
   FeatureCardContent,
 } from '@/components/ui/feature-card'
-import type { Task, UrgencyLevel, TaskStatus } from '@/lib/assistant/types'
+import type { Task, UrgencyLevel, TaskStatus, DeadlineRiskLevel } from '@/lib/assistant/types'
 import { getUrgencyColor } from '@/lib/assistant/types'
 
 interface TaskCardProps {
   task: Task
+  riskLevel?: DeadlineRiskLevel
+  daysLate?: number
   onComplete?: (taskId: string) => void
   onDelete?: (taskId: string) => void
   onStartWork?: (taskId: string) => void
+  onRiskClick?: (taskId: string) => void
   className?: string
 }
 
@@ -131,13 +134,53 @@ function getCardColor(urgency: UrgencyLevel): 'rose' | 'amber' | 'primary' {
 }
 
 /**
+ * Risk indicator configuration
+ */
+const riskConfig: Record<DeadlineRiskLevel, {
+  label: string
+  colorClass: string
+  bgClass: string
+  borderClass: string
+  dotColor: string
+  glowColor: string
+}> = {
+  green: {
+    label: 'On Track',
+    colorClass: 'text-green-400',
+    bgClass: 'bg-green-500/10',
+    borderClass: 'border-green-500/30',
+    dotColor: 'bg-green-500',
+    glowColor: '',
+  },
+  yellow: {
+    label: 'At Risk',
+    colorClass: 'text-yellow-400',
+    bgClass: 'bg-yellow-500/10',
+    borderClass: 'border-yellow-500/30',
+    dotColor: 'bg-yellow-500',
+    glowColor: 'rgba(234, 179, 8, 0.4)',
+  },
+  red: {
+    label: 'Critical',
+    colorClass: 'text-red-400',
+    bgClass: 'bg-red-500/10',
+    borderClass: 'border-red-500/30',
+    dotColor: 'bg-red-500',
+    glowColor: 'rgba(239, 68, 68, 0.5)',
+  },
+}
+
+/**
  * TaskCard component - Displays a task with urgency color coding
  */
 export function TaskCard({
   task,
+  riskLevel,
+  daysLate = 0,
   onComplete,
   onDelete,
   onStartWork,
+  onRiskClick,
   className,
 }: TaskCardProps) {
   const urgencyInfo = getUrgencyInfo(task.urgencyLevel)
@@ -145,6 +188,10 @@ export function TaskCard({
   const StatusIcon = statusInfo.icon
   const isCompleted = task.status === 'completed'
   const cardColor = getCardColor(task.urgencyLevel)
+
+  // Show risk indicator for yellow and red risks
+  const showRiskIndicator = riskLevel && riskLevel !== 'green'
+  const riskInfo = riskLevel ? riskConfig[riskLevel] : null
 
   return (
     <FeatureCard
@@ -156,7 +203,7 @@ export function TaskCard({
       )}
     >
       <FeatureCardHeader className="pb-2">
-        {/* Header row: Status + Urgency + Menu */}
+        {/* Header row: Status + Urgency + Risk + Menu */}
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <StatusIcon className={cn('h-4 w-4', statusInfo.colorClass)} />
@@ -166,6 +213,53 @@ export function TaskCard({
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Risk indicator */}
+            {showRiskIndicator && riskInfo && (
+              <button
+                onClick={() => onRiskClick?.(task.id)}
+                className={cn(
+                  'flex items-center gap-1.5 px-2 py-0.5 rounded-full',
+                  'transition-all duration-200',
+                  'border',
+                  riskInfo.bgClass,
+                  riskInfo.borderClass,
+                  onRiskClick && 'cursor-pointer hover:scale-105',
+                  riskLevel === 'red' && 'hover:shadow-lg hover:shadow-red-500/20',
+                  riskLevel === 'yellow' && 'hover:shadow-lg hover:shadow-yellow-500/20'
+                )}
+              >
+                {/* Animated dot */}
+                <span className="relative">
+                  <span
+                    className={cn(
+                      'block h-1.5 w-1.5 rounded-full',
+                      riskInfo.dotColor,
+                      riskLevel === 'red' && 'animate-pulse'
+                    )}
+                    style={{
+                      boxShadow: riskInfo.glowColor
+                        ? `0 0 8px ${riskInfo.glowColor}`
+                        : undefined
+                    }}
+                  />
+                  {riskLevel === 'red' && (
+                    <span
+                      className="absolute inset-0 rounded-full border border-red-400 animate-ping"
+                      style={{ animationDuration: '2s' }}
+                    />
+                  )}
+                </span>
+                <span className={cn('text-[10px] font-medium', riskInfo.colorClass)}>
+                  {riskInfo.label}
+                </span>
+                {daysLate > 0 && (
+                  <span className="text-[10px] text-red-400 font-semibold">
+                    +{daysLate}d
+                  </span>
+                )}
+              </button>
+            )}
+
             {/* Urgency badge */}
             <span
               className={cn(
@@ -202,6 +296,15 @@ export function TaskCard({
                     <Play className="mr-2 h-4 w-4 text-blue-400" />
                     Start Work
                   </DropdownMenuItem>
+                )}
+                {showRiskIndicator && onRiskClick && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => onRiskClick(task.id)}>
+                      <AlertTriangle className={cn('mr-2 h-4 w-4', riskInfo?.colorClass)} />
+                      Handle Risk
+                    </DropdownMenuItem>
+                  </>
                 )}
                 <DropdownMenuSeparator />
                 {onDelete && (
