@@ -99,10 +99,9 @@ export function useCommunicationLog(userId: string | null) {
       id: e.id,
       userId: e.userId,
       source: e.source as CommunicationEntry['source'],
-      participants: (e.participants as string[]) ?? [],
-      summary: e.summary,
-      keyPoints: (e.keyPoints as string[]) ?? [],
-      actionItems: (e.actionItems as CommunicationEntry['actionItems']) ?? [],
+      title: e.title,
+      content: e.content,
+      sourceUrl: e.sourceUrl ?? undefined,
       sentiment: e.sentiment as CommunicationEntry['sentiment'],
       relatedTaskIds: (e.relatedTaskIds as string[]) ?? [],
       tags: (e.tags as string[]) ?? [],
@@ -143,14 +142,13 @@ export function useCommunicationLog(userId: string | null) {
         id: entryId,
         userId,
         source: input.source,
-        participants: input.participants,
-        summary: input.summary,
-        keyPoints: input.keyPoints ?? [],
-        actionItems: input.actionItems ?? [],
+        title: input.title,
+        content: input.content,
+        sourceUrl: input.sourceUrl ?? null,
         sentiment: input.sentiment ?? 'neutral',
         relatedTaskIds: input.relatedTaskIds ?? [],
         tags: input.tags ?? [],
-        discussedAt: input.discussedAt.toISOString(),
+        discussedAt: (input.discussedAt ?? now).toISOString(),
         createdAt: now.toISOString(),
         updatedAt: now.toISOString(),
       })
@@ -161,14 +159,13 @@ export function useCommunicationLog(userId: string | null) {
         id: result.id,
         userId,
         source: input.source,
-        participants: input.participants,
-        summary: input.summary,
-        keyPoints: input.keyPoints ?? [],
-        actionItems: input.actionItems ?? [],
+        title: input.title,
+        content: input.content,
+        sourceUrl: input.sourceUrl,
         sentiment: input.sentiment ?? 'neutral',
         relatedTaskIds: input.relatedTaskIds ?? [],
         tags: input.tags ?? [],
-        discussedAt: input.discussedAt,
+        discussedAt: input.discussedAt ?? now,
         createdAt: now,
         updatedAt: now,
       }
@@ -196,13 +193,11 @@ export function useCommunicationLog(userId: string | null) {
   ): Promise<CommunicationEntry | null> {
     if (!userId) return null
 
-    // Convert updates for server
+    // Convert updates for server - use correct field names
     const serverUpdates: Record<string, unknown> = {}
-    if (updates.source !== undefined) serverUpdates.source = updates.source
-    if (updates.participants !== undefined) serverUpdates.participants = updates.participants
-    if (updates.summary !== undefined) serverUpdates.summary = updates.summary
-    if (updates.keyPoints !== undefined) serverUpdates.keyPoints = updates.keyPoints
-    if (updates.actionItems !== undefined) serverUpdates.actionItems = updates.actionItems
+    if (updates.title !== undefined) serverUpdates.title = updates.title
+    if (updates.content !== undefined) serverUpdates.content = updates.content
+    if (updates.sourceUrl !== undefined) serverUpdates.sourceUrl = updates.sourceUrl
     if (updates.sentiment !== undefined) serverUpdates.sentiment = updates.sentiment
     if (updates.relatedTaskIds !== undefined) serverUpdates.relatedTaskIds = updates.relatedTaskIds
     if (updates.tags !== undefined) serverUpdates.tags = updates.tags
