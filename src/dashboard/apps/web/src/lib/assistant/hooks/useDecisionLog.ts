@@ -360,11 +360,11 @@ export function useDecisionLog(userId: string | null) {
     if (options.impactArea) {
       filtered = filtered.filter((d) => d.impactArea === options.impactArea)
     }
-    if (options.taskId) {
-      filtered = filtered.filter((d) => d.relatedTaskIds.includes(options.taskId!))
+    if (options.relatedTaskId) {
+      filtered = filtered.filter((d) => d.relatedTaskIds.includes(options.relatedTaskId!))
     }
-    if (options.tag) {
-      filtered = filtered.filter((d) => d.tags.includes(options.tag!))
+    if (options.tags && options.tags.length > 0) {
+      filtered = filtered.filter((d) => options.tags!.some((tag) => d.tags.includes(tag)))
     }
     if (options.startDate) {
       filtered = filtered.filter((d) => d.decidedAt >= options.startDate!)
