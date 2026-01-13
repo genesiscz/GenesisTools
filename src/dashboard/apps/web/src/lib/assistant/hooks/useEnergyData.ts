@@ -183,25 +183,36 @@ export function useEnergyData(userId: string | null) {
 
     if (filtered.length === 0) {
       return {
+        cells: [],
         hourlyAverages: {},
         dailyAverages: {},
-        dataPoints: [],
+        peakTime: { hour: 9, day: 1, quality: 0 },
+        lowTime: { hour: 15, day: 5, quality: 0 },
       }
     }
 
-    // Compute hourly averages
+    // Compute hourly and daily averages
     const hourlyGroups: Record<number, number[]> = {}
     const dailyGroups: Record<number, number[]> = {}
+    const cellMap: Map<string, { total: number; count: number }> = new Map()
 
     for (const s of filtered) {
       const hour = s.timestamp.getHours()
       const day = s.timestamp.getDay()
+      const date = s.timestamp.toISOString().split('T')[0]
+      const cellKey = `${date}-${hour}`
 
       if (!hourlyGroups[hour]) hourlyGroups[hour] = []
       if (!dailyGroups[day]) dailyGroups[day] = []
 
       hourlyGroups[hour].push(s.focusQuality)
       dailyGroups[day].push(s.focusQuality)
+
+      const existing = cellMap.get(cellKey) ?? { total: 0, count: 0 }
+      cellMap.set(cellKey, {
+        total: existing.total + s.focusQuality,
+        count: existing.count + 1,
+      })
     }
 
     const hourlyAverages: Record<number, number> = {}
@@ -214,15 +225,37 @@ export function useEnergyData(userId: string | null) {
       dailyAverages[parseInt(day)] = values.reduce((a, b) => a + b, 0) / values.length
     }
 
+    // Build cells array
+    const cells = Array.from(cellMap.entries()).map(([key, data]) => {
+      const [date, hourStr] = key.split('-')
+      return {
+        date: date,
+        hour: parseInt(hourStr),
+        focusQuality: data.total / data.count,
+        count: data.count,
+      }
+    })
+
+    // Find peak and low times
+    let peakTime = { hour: 9, day: 1, quality: 0 }
+    let lowTime = { hour: 15, day: 5, quality: 5 }
+
+    for (const [hour, quality] of Object.entries(hourlyAverages)) {
+      const h = parseInt(hour)
+      if (quality > peakTime.quality) {
+        peakTime = { hour: h, day: 0, quality }
+      }
+      if (quality < lowTime.quality) {
+        lowTime = { hour: h, day: 0, quality }
+      }
+    }
+
     return {
+      cells,
       hourlyAverages,
       dailyAverages,
-      dataPoints: filtered.map((s) => ({
-        timestamp: s.timestamp,
-        focusQuality: s.focusQuality,
-        hour: s.timestamp.getHours(),
-        day: s.timestamp.getDay(),
-      })),
+      peakTime,
+      lowTime,
     }
   }
 
