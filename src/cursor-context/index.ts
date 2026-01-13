@@ -1,22 +1,13 @@
 #!/usr/bin/env bun
 
-import minimist from "minimist";
-import Enquirer from "enquirer";
+import { Command } from "commander";
+import { checkbox, confirm, input } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import clipboardy from "clipboardy";
 import logger from "../logger";
 import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
-
-interface Options {
-    input?: string;
-    output?: string;
-    help?: boolean;
-}
-
-interface Args extends Options {
-    _: string[];
-}
 
 interface ToolUseBlock {
     toolName: string;
@@ -28,8 +19,6 @@ interface ToolUseBlock {
     resultEnd?: number;
     statusStart?: number;
 }
-
-const prompter = new Enquirer();
 
 function showHelp() {
     logger.info(`
@@ -46,7 +35,7 @@ Arguments:
 Options:
   -i, --input FILE    Input SpecStory file path
   -o, --output FILE   Output file path (optional, defaults to clipboard only)
-  -h, --help          Show this help message
+  -h, --help-old      Show this help message
 
 Examples:
   tools cursor-context
@@ -230,23 +219,24 @@ function removeSections(
 }
 
 async function main() {
-    const argv = minimist<Args>(process.argv.slice(2), {
-        alias: {
-            i: "input",
-            o: "output",
-            h: "help",
-        },
-        boolean: ["help"],
-        string: ["input", "output"],
-    });
+    const program = new Command()
+        .name("cursor-context")
+        .argument("[file]", "Path to the SpecStory file", "logs/story.log")
+        .option("-i, --input <file>", "Input SpecStory file path")
+        .option("-o, --output <file>", "Output file path")
+        .option("-h, --help-old", "Show this help message")
+        .parse();
 
-    if (argv.help) {
+    const options = program.opts();
+    const [fileArg] = program.args;
+
+    if (options.helpOld) {
         showHelp();
         process.exit(0);
     }
 
     // Get input file path
-    let inputPath = argv.input || argv._[0] || "logs/story.log";
+    let inputPath = options.input || fileArg || "logs/story.log";
     inputPath = resolve(inputPath);
 
     try {
@@ -269,31 +259,25 @@ async function main() {
         logger.info(`Found ${toolNames.length} unique tool types`);
 
         // Build choices: for each tool, show input and output as separate options
-        const choices: Array<{ name: string; message: string; value: string }> = [];
+        const choices: Array<{ value: string; name: string; checked?: boolean }> = [];
         for (const toolName of toolNames) {
             choices.push({
-                name: `${toolName}:input`,
-                message: `${toolName} (input)`,
                 value: `${toolName}:input`,
+                name: `${toolName} (input)`,
             });
             choices.push({
-                name: `${toolName}:output`,
-                message: `${toolName} (output)`,
                 value: `${toolName}:output`,
+                name: `${toolName} (output)`,
             });
         }
 
         // Show tool names and let user select which to remove
-        const response = (await prompter.prompt({
-            type: "multiselect",
-            name: "selectedItems",
+        const selectedItems = await checkbox({
             message: "Select tool inputs/outputs to remove (use space to select, enter to confirm):",
             choices,
-        })) as { selectedItems: string[] };
+        });
 
-        const selectedItems = Array.isArray(response.selectedItems) ? response.selectedItems : [];
-
-        if (selectedItems.length === 0) {
+        if (!selectedItems || selectedItems.length === 0) {
             logger.info("No items selected for removal. Exiting.");
             process.exit(0);
         }
@@ -364,41 +348,38 @@ Statistics:
         logger.info("✔ Copied cleaned content to clipboard!");
 
         // Save to output file if specified
-        if (argv.output) {
-            const outputPath = resolve(argv.output);
+        if (options.output) {
+            const outputPath = resolve(options.output);
             writeFileSync(outputPath, cleaned, "utf-8");
             logger.info(`✔ Saved cleaned content to: ${outputPath}`);
         } else {
             // Ask if user wants to save to file
             try {
-                const { saveToFile } = (await prompter.prompt({
-                    type: "confirm",
-                    name: "saveToFile",
+                const saveToFile = await confirm({
                     message: "Save cleaned content to a file?",
-                    initial: false,
-                })) as { saveToFile: boolean };
+                    default: false,
+                });
 
                 if (saveToFile) {
-                    const { outputPath } = (await prompter.prompt({
-                        type: "input",
-                        name: "outputPath",
+                    const outputPath = await input({
                         message: "Enter output file path:",
-                        initial: inputPath.replace(/\.(log|md)$/, ".cleaned$1"),
-                    })) as { outputPath: string };
+                        default: inputPath.replace(/\.(log|md)$/, ".cleaned$1"),
+                    });
 
                     const resolvedOutputPath = resolve(outputPath);
                     writeFileSync(resolvedOutputPath, cleaned, "utf-8");
                     logger.info(`✔ Saved cleaned content to: ${resolvedOutputPath}`);
                 }
             } catch (error: any) {
-                if (error.message !== "canceled") {
-                    throw error;
+                if (error instanceof ExitPromptError) {
+                    // User cancelled, that's fine
+                    return;
                 }
-                // User cancelled, that's fine
+                throw error;
             }
         }
     } catch (error: any) {
-        if (error.message === "canceled") {
+        if (error instanceof ExitPromptError) {
             logger.info("\nOperation cancelled by user.");
             process.exit(0);
         }
