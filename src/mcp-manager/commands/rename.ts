@@ -1,11 +1,10 @@
-import Enquirer from "enquirer";
+import { search, input, confirm, checkbox } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import logger from "@app/logger";
 import chalk from "chalk";
 import type { MCPProvider } from "../utils/providers/types.js";
 import { readUnifiedConfig, writeUnifiedConfig } from "../utils/config.utils.js";
 import { DiffUtil } from "@app/utils/diff";
-
-const prompter = new Enquirer();
 
 /**
  * Rename an MCP server key across unified config and all providers
@@ -27,18 +26,21 @@ export async function renameServer(
     if (!finalOldName) {
         const serverNames = Object.keys(config.mcpServers).sort();
         try {
-            const { selectedOldName } = (await prompter.prompt({
-                type: "autocomplete",
-                name: "selectedOldName",
+            const selectedOldName = await search({
                 message: "Select server to rename:",
-                choices: serverNames,
-                limit: 30,
-                scroll: false,
-            } as any)) as { selectedOldName: string };
+                source: async (term) => {
+                    if (!term) return serverNames.map((name) => ({ value: name, name }));
+                    const lowerTerm = term.toLowerCase();
+                    return serverNames
+                        .filter((name) => name.toLowerCase().includes(lowerTerm))
+                        .map((name) => ({ value: name, name }));
+                },
+                pageSize: 30,
+            });
 
             finalOldName = selectedOldName.trim();
-        } catch (error: any) {
-            if (error.message === "canceled") {
+        } catch (error) {
+            if (error instanceof ExitPromptError) {
                 logger.info("\nOperation cancelled by user.");
                 return;
             }
@@ -56,16 +58,14 @@ export async function renameServer(
     let finalNewName = newName;
     if (!finalNewName) {
         try {
-            const { inputNewName } = (await prompter.prompt({
-                type: "input",
-                name: "inputNewName",
+            const inputNewName = await input({
                 message: `Enter new name for '${finalOldName}':`,
-                initial: finalOldName,
-            })) as { inputNewName: string };
+                default: finalOldName,
+            });
 
             finalNewName = inputNewName.trim();
-        } catch (error: any) {
-            if (error.message === "canceled") {
+        } catch (error) {
+            if (error instanceof ExitPromptError) {
                 logger.info("\nOperation cancelled by user.");
                 return;
             }
@@ -105,19 +105,17 @@ export async function renameServer(
         );
 
         try {
-            const { confirmed } = (await prompter.prompt({
-                type: "confirm",
-                name: "confirmed",
+            const confirmed = await confirm({
                 message: `Replace existing server '${finalNewName}' with '${finalOldName}'?`,
-                initial: false,
-            })) as { confirmed: boolean };
+                default: false,
+            });
 
             if (!confirmed) {
                 logger.info("Rename cancelled by user.");
                 return;
             }
-        } catch (error: any) {
-            if (error.message === "canceled") {
+        } catch (error) {
+            if (error instanceof ExitPromptError) {
                 logger.info("\nOperation cancelled by user.");
                 return;
             }
@@ -156,19 +154,15 @@ export async function renameServer(
     // Select providers to sync to
     let selectedProviderNames: string[];
     try {
-        const { selectedProviders } = (await prompter.prompt({
-            type: "multiselect",
-            name: "selectedProviders",
+        selectedProviderNames = await checkbox({
             message: "Select providers to sync rename to:",
             choices: availableProviders.map((p) => ({
-                name: p.getName(),
-                message: `${p.getName()} (${p.getConfigPath()})`,
+                value: p.getName(),
+                name: `${p.getName()} (${p.getConfigPath()})`,
             })),
-        })) as { selectedProviders: string[] };
-
-        selectedProviderNames = selectedProviders;
-    } catch (error: any) {
-        if (error.message === "canceled") {
+        });
+    } catch (error) {
+        if (error instanceof ExitPromptError) {
             logger.info("\nOperation cancelled by user.");
             return;
         }
@@ -188,8 +182,10 @@ export async function renameServer(
         try {
             await renameServerInProvider(provider, finalOldName, finalNewName, serverConfig);
             logger.info(`✓ Renamed '${finalOldName}' to '${finalNewName}' in ${providerName}`);
-        } catch (error: any) {
-            logger.error(`✗ Failed to rename in ${providerName}: ${error.message}`);
+        } catch (error: unknown) {
+            if (error instanceof Error) {
+                logger.error(`✗ Failed to rename in ${providerName}: ${error.message}`);
+            }
         }
     }
 }
@@ -201,7 +197,7 @@ async function renameServerInProvider(
     provider: MCPProvider,
     oldName: string,
     newName: string,
-    serverConfig: any
+    serverConfig: unknown
 ): Promise<void> {
     // Check if provider has the old or new server
     const providerServers = await provider.listServers();
@@ -233,19 +229,17 @@ async function renameServerInProvider(
         );
 
         try {
-            const { confirmed } = (await prompter.prompt({
-                type: "confirm",
-                name: "confirmed",
+            const confirmed = await confirm({
                 message: `Replace existing server '${newName}' in ${provider.getName()}?`,
-                initial: false,
-            })) as { confirmed: boolean };
+                default: false,
+            });
 
             if (!confirmed) {
                 logger.info(`Skipping rename in ${provider.getName()}.`);
                 return;
             }
-        } catch (error: any) {
-            if (error.message === "canceled") {
+        } catch (error) {
+            if (error instanceof ExitPromptError) {
                 logger.info(`\nSkipping rename in ${provider.getName()}.`);
                 return;
             }
@@ -255,7 +249,7 @@ async function renameServerInProvider(
 
     // Prepare unified servers map with renamed server
     // Start with current unified servers (keep _meta intact for enabled state)
-    const serversToSync: Record<string, any> = { ...unifiedServers };
+    const serversToSync: Record<string, unknown> = { ...unifiedServers };
 
     // If old server exists, rename it to new name
     if (serversToSync[oldName]) {
@@ -268,7 +262,7 @@ async function renameServerInProvider(
 
     // Now sync the updated servers to the provider (adds/updates the new name)
     // Provider reads _meta.enabled[providerName] for enabled state
-    await provider.syncServers(serversToSync);
+    await provider.syncServers(serversToSync as Record<string, import("../utils/providers/types.js").UnifiedMCPServerConfig>);
 
     // IMPORTANT: syncServers only adds/updates servers, it doesn't remove servers not in the map
     // We need to explicitly remove the old server name from the provider config after syncing
@@ -287,25 +281,25 @@ async function removeServerFromProvider(provider: MCPProvider, serverName: strin
     // Remove server based on provider-specific structure
     switch (providerName) {
         case "claude": {
-            const claudeConfig = config as any;
+            const claudeConfig = config as Record<string, unknown>;
             // Remove from global mcpServers
-            if (claudeConfig.mcpServers?.[serverName]) {
-                delete claudeConfig.mcpServers[serverName];
+            if ((claudeConfig.mcpServers as Record<string, unknown>)?.[serverName]) {
+                delete (claudeConfig.mcpServers as Record<string, unknown>)[serverName];
             }
             // Remove from disabledMcpServers array
             if (claudeConfig.disabledMcpServers) {
-                claudeConfig.disabledMcpServers = claudeConfig.disabledMcpServers.filter(
+                claudeConfig.disabledMcpServers = (claudeConfig.disabledMcpServers as string[]).filter(
                     (name: string) => name !== serverName
                 );
             }
             // Remove from project-specific configs
             if (claudeConfig.projects) {
-                for (const projectConfig of Object.values(claudeConfig.projects) as any[]) {
-                    if (projectConfig.mcpServers?.[serverName]) {
-                        delete projectConfig.mcpServers[serverName];
+                for (const projectConfig of Object.values(claudeConfig.projects) as Record<string, unknown>[]) {
+                    if ((projectConfig.mcpServers as Record<string, unknown>)?.[serverName]) {
+                        delete (projectConfig.mcpServers as Record<string, unknown>)[serverName];
                     }
                     if (projectConfig.disabledMcpServers) {
-                        projectConfig.disabledMcpServers = projectConfig.disabledMcpServers.filter(
+                        projectConfig.disabledMcpServers = (projectConfig.disabledMcpServers as string[]).filter(
                             (name: string) => name !== serverName
                         );
                     }
@@ -315,30 +309,30 @@ async function removeServerFromProvider(provider: MCPProvider, serverName: strin
             break;
         }
         case "codex": {
-            const codexConfig = config as any;
-            if (codexConfig.mcp_servers?.[serverName]) {
-                delete codexConfig.mcp_servers[serverName];
+            const codexConfig = config as Record<string, unknown>;
+            if ((codexConfig.mcp_servers as Record<string, unknown>)?.[serverName]) {
+                delete (codexConfig.mcp_servers as Record<string, unknown>)[serverName];
             }
             await provider.writeConfig(codexConfig);
             break;
         }
         case "cursor": {
-            const cursorConfig = config as any;
-            if (cursorConfig.mcpServers?.[serverName]) {
-                delete cursorConfig.mcpServers[serverName];
+            const cursorConfig = config as Record<string, unknown>;
+            if ((cursorConfig.mcpServers as Record<string, unknown>)?.[serverName]) {
+                delete (cursorConfig.mcpServers as Record<string, unknown>)[serverName];
             }
             await provider.writeConfig(cursorConfig);
             break;
         }
         case "gemini": {
-            const geminiConfig = config as any;
+            const geminiConfig = config as Record<string, unknown>;
             // Remove from mcpServers
-            if (geminiConfig.mcpServers?.[serverName]) {
-                delete geminiConfig.mcpServers[serverName];
+            if ((geminiConfig.mcpServers as Record<string, unknown>)?.[serverName]) {
+                delete (geminiConfig.mcpServers as Record<string, unknown>)[serverName];
             }
             // Remove from excluded list
-            if (geminiConfig.mcp?.excluded) {
-                geminiConfig.mcp.excluded = geminiConfig.mcp.excluded.filter((name: string) => name !== serverName);
+            if ((geminiConfig.mcp as Record<string, unknown>)?.excluded) {
+                (geminiConfig.mcp as Record<string, unknown>).excluded = ((geminiConfig.mcp as Record<string, unknown>).excluded as string[]).filter((name: string) => name !== serverName);
             }
             await provider.writeConfig(geminiConfig);
             break;

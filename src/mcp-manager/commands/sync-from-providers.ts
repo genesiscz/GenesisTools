@@ -1,12 +1,11 @@
-import Enquirer from "enquirer";
+import { checkbox, select } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import logger from "@app/logger";
 import type { MCPProvider, UnifiedMCPServerConfig } from "../utils/providers/types.js";
 import type { MCPProviderName, PerProjectEnabledState, ProviderEnabledState } from "../utils/types.js";
 import { readUnifiedConfig, writeUnifiedConfig } from "../utils/config.utils.js";
 import { DiffUtil } from "@app/utils/diff";
-
-const prompter = new Enquirer();
 
 export interface SyncFromOptions {
     provider?: string; // Provider name(s), comma-separated for non-interactive mode
@@ -35,23 +34,20 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
         selectedProviders = availableProviders.map((p) => p.getName());
     } else {
         try {
-            const { selected } = (await prompter.prompt({
-                type: "multiselect",
-                name: "selected",
+            selectedProviders = await checkbox({
                 message: "Select providers to sync from:",
                 choices: availableProviders.map((p) => ({
-                    name: p.getName(),
-                    message: `${p.getName()} (${p.getConfigPath()})`,
+                    value: p.getName(),
+                    name: `${p.getName()} (${p.getConfigPath()})`,
                 })),
-            })) as { selected: string[] };
-            selectedProviders = selected;
+            });
 
             if (selectedProviders.length === 0) {
                 logger.info("No providers selected. Cancelled.");
                 return;
             }
-        } catch (error: any) {
-            if (error.message === "canceled") {
+        } catch (error) {
+            if (error instanceof ExitPromptError) {
                 logger.info("\nOperation cancelled by user.");
                 return;
             }
@@ -232,8 +228,10 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
                 }
 
                 logger.info(`✓ Imported ${Object.keys(providerServers).length} server(s) from ${providerName}`);
-            } catch (error: any) {
-                logger.error(`✗ Failed to read from ${providerName}: ${error.message}`);
+            } catch (error: unknown) {
+                if (error instanceof Error) {
+                    logger.error(`✗ Failed to read from ${providerName}: ${error.message}`);
+                }
             }
         }
 
@@ -258,21 +256,19 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
 
                 // Ask user to choose
                 try {
-                    const { choice } = (await prompter.prompt({
-                        type: "select",
-                        name: "choice",
+                    const choice = await select({
                         message: `Which version should be kept for '${serverName}'?`,
                         choices: [
                             {
-                                name: "current",
-                                message: `Keep current (unified config)`,
+                                value: "current",
+                                name: `Keep current (unified config)`,
                             },
                             {
-                                name: "incoming",
-                                message: `Use incoming (${conflict.provider})`,
+                                value: "incoming",
+                                name: `Use incoming (${conflict.provider})`,
                             },
                         ],
-                    })) as { choice: string };
+                    });
 
                     if (choice === "incoming") {
                         // Merge _meta.enabled from both versions when using incoming version
@@ -299,8 +295,8 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
                         mergedServers[serverName] = { ...mergedServers[serverName], _meta: existingMeta };
                         logger.info(chalk.green(`✓ Keeping current version (merged enabled state)`));
                     }
-                } catch (error: any) {
-                    if (error.message === "canceled") {
+                } catch (error) {
+                    if (error instanceof ExitPromptError) {
                         logger.info("\nOperation cancelled by user.");
                         return;
                     }
