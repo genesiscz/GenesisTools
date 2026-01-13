@@ -36,6 +36,7 @@ export function useBlockers(userId: string | null) {
   useEffect(() => {
     if (!userId) return
 
+    const currentUserId = userId
     let mounted = true
 
     async function init() {
@@ -45,7 +46,7 @@ export function useBlockers(userId: string | null) {
         const adapter = await initializeAssistantStorage()
 
         // Initial load
-        const blockers = await adapter.getBlockers(userId)
+        const blockers = await adapter.getBlockers(currentUserId)
 
         if (mounted) {
           blockersStore.setState((s) => ({
@@ -57,7 +58,7 @@ export function useBlockers(userId: string | null) {
         }
 
         // Subscribe to updates
-        unsubscribeRef.current = adapter.watchBlockers(userId, (updatedBlockers) => {
+        unsubscribeRef.current = adapter.watchBlockers(currentUserId, (updatedBlockers) => {
           if (mounted) {
             blockersStore.setState((s) => ({ ...s, blockers: updatedBlockers }))
           }

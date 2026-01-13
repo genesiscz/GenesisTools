@@ -39,6 +39,7 @@ export function useCelebrations(userId: string | null) {
   useEffect(() => {
     if (!userId) return
 
+    const currentUserId = userId
     let mounted = true
 
     async function init() {
@@ -48,7 +49,7 @@ export function useCelebrations(userId: string | null) {
         const adapter = await initializeAssistantStorage()
 
         // Initial load
-        const celebrations = await adapter.getPendingCelebrations(userId)
+        const celebrations = await adapter.getPendingCelebrations(currentUserId)
 
         if (mounted) {
           celebrationStore.setState((s) => ({
@@ -60,7 +61,7 @@ export function useCelebrations(userId: string | null) {
         }
 
         // Subscribe to updates
-        unsubscribeRef.current = adapter.watchCelebrations(userId, (updatedCelebrations) => {
+        unsubscribeRef.current = adapter.watchCelebrations(currentUserId, (updatedCelebrations) => {
           if (mounted) {
             celebrationStore.setState((s) => ({
               ...s,

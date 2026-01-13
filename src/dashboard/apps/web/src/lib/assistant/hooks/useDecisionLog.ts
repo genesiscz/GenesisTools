@@ -37,6 +37,7 @@ export function useDecisionLog(userId: string | null) {
   useEffect(() => {
     if (!userId) return
 
+    const currentUserId = userId
     let mounted = true
 
     async function init() {
@@ -46,7 +47,7 @@ export function useDecisionLog(userId: string | null) {
         const adapter = await initializeAssistantStorage()
 
         // Initial load
-        const decisions = await adapter.getDecisions(userId)
+        const decisions = await adapter.getDecisions(currentUserId)
 
         if (mounted) {
           decisionStore.setState((s) => ({
@@ -58,7 +59,7 @@ export function useDecisionLog(userId: string | null) {
         }
 
         // Subscribe to updates
-        unsubscribeRef.current = adapter.watchDecisions(userId, (updatedDecisions) => {
+        unsubscribeRef.current = adapter.watchDecisions(currentUserId, (updatedDecisions) => {
           if (mounted) {
             decisionStore.setState((s) => ({ ...s, decisions: updatedDecisions }))
           }
