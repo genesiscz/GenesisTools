@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import minimist from "minimist";
+import { Command } from "commander";
 import chalk from "chalk";
 import Table from "cli-table3";
 import logger from "../logger";
@@ -12,11 +12,7 @@ interface Options {
     provider?: string;
     model?: string;
     format?: "table" | "json" | "summary";
-    help?: boolean;
-}
-
-interface Args extends Options {
-    _: string[];
+    helpOld?: boolean;
 }
 
 function showHelp() {
@@ -214,39 +210,36 @@ async function showJSON(db: UsageDatabase, days: number, _provider?: string, _mo
 }
 
 async function main() {
-    const argv = minimist<Args>(process.argv.slice(2), {
-        alias: {
-            d: "days",
-            p: "provider",
-            m: "model",
-            f: "format",
-            h: "help",
-        },
-        default: {
-            days: 30,
-            format: "table",
-        },
-        boolean: ["help"],
-        string: ["days", "provider", "model", "format"],
-    });
+    const program = new Command()
+        .name("usage")
+        .description("Display usage statistics and analytics for ASK tool")
+        .option("-d, --days <number>", "Number of days to analyze", "30")
+        .option("-p, --provider <name>", "Filter by provider name")
+        .option("-m, --model <name>", "Filter by model name")
+        .option("-f, --format <format>", "Output format: table, json, summary", "table")
+        .option("--help-old", "Show detailed help message")
+        .parse();
 
-    if (argv.help) {
+    const options = program.opts<Options>();
+
+    // Handle custom help option
+    if (options.helpOld) {
         showHelp();
         process.exit(0);
     }
 
     try {
         const db = new UsageDatabase();
-        const days = parseInt(argv.days?.toString() || "30", 10);
+        const days = parseInt(options.days?.toString() || "30", 10);
 
         if (isNaN(days) || days < 1) {
             logger.error("Invalid days value. Must be a positive number.");
             process.exit(1);
         }
 
-        if (argv.format === "json") {
-            await showJSON(db, days, argv.provider, argv.model);
-        } else if (argv.format === "summary") {
+        if (options.format === "json") {
+            await showJSON(db, days, options.provider, options.model);
+        } else if (options.format === "summary") {
             await showSummary(db, days);
         } else {
             // Default table format
