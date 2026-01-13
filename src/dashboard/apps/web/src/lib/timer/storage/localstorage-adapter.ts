@@ -365,10 +365,11 @@ export class LocalStorageAdapter implements StorageAdapter {
         const serverTimers = await getTimersFromServer({ data: userId })
         console.log('[LocalStorage] Fetched', serverTimers.length, 'timers from server')
 
-        // Parse server timers (convert number to boolean for isRunning, parse dates, etc.)
+        // Parse server timers (convert number to boolean, parse dates, etc.)
         const parsedTimers: Timer[] = serverTimers.map(t => ({
           ...t,
           isRunning: Boolean(t.isRunning),
+          showTotal: Boolean(t.showTotal),
           laps: Array.isArray(t.laps) ? t.laps.map(l => ({
             ...l,
             timestamp: new Date(l.timestamp)
