@@ -1,9 +1,8 @@
-import Enquirer from "enquirer";
+import { checkbox } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import logger from "@app/logger";
 import type { MCPProvider } from "../utils/providers/types.js";
 import { readUnifiedConfig, stripMeta } from "../utils/config.utils.js";
-
-const prompter = new Enquirer();
 
 export interface SyncOptions {
     provider?: string; // Provider name(s), comma-separated for non-interactive mode
@@ -40,23 +39,20 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
         selectedProviders = availableProviders.map((p) => p.getName());
     } else {
         try {
-            const { selected } = (await prompter.prompt({
-                type: "multiselect",
-                name: "selected",
+            selectedProviders = await checkbox({
                 message: "Select providers to sync to:",
                 choices: availableProviders.map((p) => ({
-                    name: p.getName(),
-                    message: `${p.getName()} (${p.getConfigPath()})`,
+                    value: p.getName(),
+                    name: `${p.getName()} (${p.getConfigPath()})`,
                 })),
-            })) as { selected: string[] };
-            selectedProviders = selected;
+            });
 
             if (selectedProviders.length === 0) {
                 logger.info("No providers selected. Cancelled.");
                 return;
             }
-        } catch (error: any) {
-            if (error.message === "canceled") {
+        } catch (error) {
+            if (error instanceof ExitPromptError) {
                 logger.info("\nOperation cancelled by user.");
                 return;
             }
@@ -94,8 +90,10 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
             if (synced) {
                 logger.info(`✓ Synced to ${providerName}`);
             }
-        } catch (error: any) {
-            logger.error(`✗ Failed to sync to ${providerName}: ${error.message}`);
+        } catch (error: unknown) {
+            if (error instanceof Error) {
+                logger.error(`✗ Failed to sync to ${providerName}: ${error.message}`);
+            }
         }
     }
 }

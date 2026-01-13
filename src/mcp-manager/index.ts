@@ -1,5 +1,6 @@
-import minimist from "minimist";
-import Enquirer from "enquirer";
+import { Command } from "commander";
+import { select, input } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import logger, { configureLogger } from "@app/logger";
 import { ClaudeProvider } from "./utils/providers/claude.js";
 import { GeminiProvider } from "./utils/providers/gemini.js";
@@ -23,48 +24,12 @@ import {
 import { setGlobalOptions } from "./utils/config.utils.js";
 
 // Configure logger to include timestamps in console output and enable sync mode
-// Sync mode ensures logs appear before Enquirer prompts
+// Sync mode ensures logs appear before Inquirer prompts
 configureLogger({
     includeTimestamp: true,
     timestampFormat: "HH:MM:ss",
     sync: true,
 });
-
-// Define options interface
-interface Options {
-    config?: boolean;
-    path?: boolean; // For config --path
-    sync?: boolean;
-    syncFromProviders?: boolean;
-    list?: boolean;
-    enable?: string;
-    disable?: string;
-    install?: string;
-    show?: string;
-    backupAll?: boolean;
-    rename?: string;
-    configJson?: boolean;
-    client?: string; // For config-json --client
-    enabledOnly?: boolean; // For config-json --enabled-only
-    servers?: string; // For config-json --servers
-    bare?: boolean; // For config-json --bare
-    clipboard?: boolean; // For config-json --clipboard
-    type?: string;
-    headers?: string | string[]; // For install --headers (supports multiple flags)
-    env?: string | string[]; // For install --env (supports multiple flags)
-    provider?: string; // For install/enable/disable --provider
-    providers?: string; // Alias for --provider
-    yes?: boolean; // Auto-confirm changes without prompting
-    verbose?: boolean;
-    help?: boolean;
-}
-
-interface Args extends Options {
-    _: string[];
-}
-
-// Create Enquirer instance
-const prompter = new Enquirer();
 
 /**
  * Get all available providers
@@ -73,216 +38,268 @@ function getProviders(): MCPProvider[] {
     return [new ClaudeProvider(), new GeminiProvider(), new CodexProvider(), new CursorProvider()];
 }
 
-// Main function
-async function main() {
-    const argv = minimist<Args>(process.argv.slice(2), {
-        alias: {
-            v: "verbose",
-            h: "help",
-            t: "type",
-            p: ["provider", "providers"], // Both --provider and --providers work
-            H: "headers",
-            e: "env",
-            y: "yes",
-            c: "clipboard",
-            "enabled-only": "enabledOnly",
-        },
-        boolean: ["verbose", "help", "config", "sync", "syncFromProviders", "list", "backupAll", "path", "yes", "configJson", "enabledOnly", "bare", "clipboard"],
-        string: ["enable", "disable", "install", "show", "rename", "type", "headers", "env", "provider", "providers", "client", "servers"],
+/**
+ * Parse and validate provider argument
+ */
+function parseProviderArg(providerArg: string | undefined, allProviders: MCPProvider[]): MCPProvider[] {
+    if (!providerArg) {
+        return allProviders;
+    }
+
+    // Handle both string and array (multiple --provider flags)
+    const rawNames: string[] = Array.isArray(providerArg)
+        ? providerArg.flatMap((p: string) => p.split(","))
+        : providerArg.split(",");
+    const requestedNames = rawNames.map((p) => p.trim()).filter(Boolean);
+
+    // Handle "all" special case
+    if (requestedNames.length === 1 && requestedNames[0].toLowerCase() === "all") {
+        return allProviders;
+    }
+
+    const validatedProviders: MCPProvider[] = [];
+    for (const name of requestedNames) {
+        const provider = allProviders.find((p) => p.getName().toLowerCase() === name.toLowerCase());
+        if (!provider) {
+            logger.error(
+                `Provider '${name}' not found. Available: ${allProviders.map((p) => p.getName()).join(", ")}, all`
+            );
+            process.exit(1);
+        }
+        // Avoid duplicates
+        if (!validatedProviders.includes(provider)) {
+            validatedProviders.push(provider);
+        }
+    }
+    return validatedProviders;
+}
+
+// Create the program
+const program = new Command()
+    .name("mcp-manager")
+    .description("Manage MCP (Model Context Protocol) servers across multiple AI assistants")
+    .option("-v, --verbose", "Enable verbose logging")
+    .option("-y, --yes", "Auto-confirm changes without prompting")
+    .option("-p, --provider <name>", "Provider name(s) for operations (claude, cursor, gemini, codex, or 'all')")
+    .option("--help-old", "Show detailed help message");
+
+// Handle --help-old to show custom help
+program.on("option:help-old", () => {
+    showHelp();
+    process.exit(0);
+});
+
+// config command
+program
+    .command("config")
+    .description("Open/create unified configuration file")
+    .option("--path", "Only print config file path, don't open editor")
+    .action(async (options) => {
+        await openConfig({ path: options.path });
     });
 
-    if (argv.help) {
-        showHelp();
-        process.exit(0);
-    }
+// sync command
+program
+    .command("sync")
+    .description("Sync MCP servers from unified config to providers")
+    .action(async () => {
+        const opts = program.opts();
+        const providers = parseProviderArg(opts.provider, getProviders());
+        await syncServers(providers, { provider: opts.provider });
+    });
+
+// sync-from-providers command
+program
+    .command("sync-from-providers")
+    .description("Sync servers FROM providers TO unified config")
+    .action(async () => {
+        const opts = program.opts();
+        const providers = parseProviderArg(opts.provider, getProviders());
+        await syncFromProviders(providers, { provider: opts.provider });
+    });
+
+// list command
+program
+    .command("list")
+    .description("List all MCP servers across all providers")
+    .action(async () => {
+        const opts = program.opts();
+        const providers = parseProviderArg(opts.provider, getProviders());
+        await listServers(providers);
+    });
+
+// enable command
+program
+    .command("enable [servers]")
+    .description("Enable MCP server(s) in provider(s)")
+    .action(async (servers) => {
+        const opts = program.opts();
+        const providers = parseProviderArg(opts.provider, getProviders());
+        await enableServer(servers, providers, { provider: opts.provider });
+    });
+
+// disable command
+program
+    .command("disable [servers]")
+    .description("Disable MCP server(s) in provider(s)")
+    .action(async (servers) => {
+        const opts = program.opts();
+        const providers = parseProviderArg(opts.provider, getProviders());
+        await disableServer(servers, providers, { provider: opts.provider });
+    });
+
+// install command
+program
+    .command("install [server] [command]")
+    .description("Install/add an MCP server to a provider")
+    .option("-t, --type <type>", "Transport type (stdio, sse, http)")
+    .option("-H, --headers <str>", "Headers for http/sse (uses colon separator: 'Key: value')", (val, prev: string[]) => prev ? [...prev, val] : [val], [])
+    .option("-e, --env <str>", "Env vars for stdio (uses equals separator: 'KEY=value')", (val, prev: string[]) => prev ? [...prev, val] : [val], [])
+    .action(async (server, command, options) => {
+        const opts = program.opts();
+        const providers = parseProviderArg(opts.provider, getProviders());
+        await installServer(server, command, providers, {
+            type: options.type,
+            headers: options.headers?.length > 0 ? options.headers : undefined,
+            env: options.env?.length > 0 ? options.env : undefined,
+            provider: opts.provider,
+        });
+    });
+
+// show command
+program
+    .command("show [server]")
+    .description("Show full configuration of an MCP server")
+    .action(async (server) => {
+        const opts = program.opts();
+        const providers = parseProviderArg(opts.provider, getProviders());
+        await showServerConfig(server || "", providers);
+    });
+
+// backup-all command
+program
+    .command("backup-all")
+    .description("Backup all configs for all providers")
+    .action(async () => {
+        const opts = program.opts();
+        const providers = parseProviderArg(opts.provider, getProviders());
+        await backupAllConfigs(providers);
+    });
+
+// rename command
+program
+    .command("rename [oldName] [newName]")
+    .description("Rename an MCP server key across unified config and providers")
+    .action(async (oldName, newName) => {
+        const opts = program.opts();
+        const providers = parseProviderArg(opts.provider, getProviders());
+        await renameServer(oldName, newName, providers);
+    });
+
+// config-json command
+program
+    .command("config-json")
+    .description("Output servers as JSON in standard client format")
+    .option("--client <type>", "Client format (standard, cursor, claude)")
+    .option("--enabled-only", "Only include enabled servers")
+    .option("--servers <names>", "Specific servers to include (comma-separated)")
+    .option("--bare", "Output bare mcpServers object without wrapper")
+    .option("-c, --clipboard", "Copy output to clipboard")
+    .action(async (options) => {
+        await configJson({
+            client: options.client as "standard" | "cursor" | "claude" | undefined,
+            enabledOnly: options.enabledOnly,
+            servers: options.servers,
+            bare: options.bare,
+            clipboard: options.clipboard,
+        });
+    });
+
+// Default action (interactive mode) when no command is specified
+program.action(async () => {
+    const opts = program.opts();
 
     // Set global options for use by BackupManager and other utilities
-    setGlobalOptions({ yes: argv.yes });
+    setGlobalOptions({ yes: opts.yes });
 
     const allProviders = getProviders();
-
-    // Parse and validate --provider/--providers flag if specified
-    // Supports: --provider claude,gemini OR --provider claude --provider gemini OR --provider all
-    let providers = allProviders;
-    const providerArg = argv.provider || argv.providers;
-    if (providerArg) {
-        // Handle both string and array (multiple --provider flags)
-        const rawNames: string[] = Array.isArray(providerArg)
-            ? providerArg.flatMap((p: string) => p.split(","))
-            : providerArg.split(",");
-        const requestedNames = rawNames.map((p) => p.trim()).filter(Boolean);
-
-        // Handle "all" special case
-        if (requestedNames.length === 1 && requestedNames[0].toLowerCase() === "all") {
-            providers = allProviders;
-        } else {
-            const validatedProviders: typeof allProviders = [];
-            for (const name of requestedNames) {
-                const provider = allProviders.find((p) => p.getName().toLowerCase() === name.toLowerCase());
-                if (!provider) {
-                    logger.error(
-                        `Provider '${name}' not found. Available: ${allProviders.map((p) => p.getName()).join(", ")}, all`
-                    );
-                    process.exit(1);
-                }
-                // Avoid duplicates
-                if (!validatedProviders.includes(provider)) {
-                    validatedProviders.push(provider);
-                }
-            }
-            providers = validatedProviders;
-        }
-    }
+    const providers = parseProviderArg(opts.provider, allProviders);
 
     try {
-        const command =
-            argv._[0] ||
-            (argv.config
-                ? "config"
-                : argv.sync
-                ? "sync"
-                : argv.syncFromProviders || argv["sync-from-providers"]
-                ? "sync-from-providers"
-                : argv.list
-                ? "list"
-                : argv.backupAll || argv["backup-all"]
-                ? "backup-all"
-                : argv.configJson || argv["config-json"]
-                ? "config-json"
-                : null);
+        const action = await select({
+            message: "What would you like to do?",
+            choices: [
+                { value: "config", name: "Open/edit unified configuration" },
+                { value: "sync", name: "Sync servers to providers" },
+                { value: "syncFromProviders", name: "Sync servers from providers" },
+                { value: "list", name: "List all servers" },
+                { value: "enable", name: "Enable servers" },
+                { value: "disable", name: "Disable servers" },
+                { value: "install", name: "Install a server" },
+                { value: "show", name: "Show server configuration" },
+                { value: "backupAll", name: "Backup all configs" },
+                { value: "rename", name: "Rename a server" },
+            ],
+        });
 
-        if (!command) {
-            // Interactive mode
-            try {
-                const { action } = (await prompter.prompt({
-                    type: "select",
-                    name: "action",
-                    message: "What would you like to do?",
-                    choices: [
-                        { name: "config", message: "Open/edit unified configuration" },
-                        { name: "sync", message: "Sync servers to providers" },
-                        { name: "syncFromProviders", message: "Sync servers from providers" },
-                        { name: "list", message: "List all servers" },
-                        { name: "enable", message: "Enable servers" },
-                        { name: "disable", message: "Disable servers" },
-                        { name: "install", message: "Install a server" },
-                        { name: "show", message: "Show server configuration" },
-                        { name: "backupAll", message: "Backup all configs" },
-                        { name: "rename", message: "Rename a server" },
-                    ],
-                })) as { action: string };
+        switch (action) {
+            case "config":
+                await openConfig({ path: opts.path });
+                break;
+            case "sync":
+                await syncServers(providers);
+                break;
+            case "syncFromProviders":
+                await syncFromProviders(providers);
+                break;
+            case "list":
+                await listServers(providers);
+                break;
+            case "enable":
+                await enableServer(undefined, providers);
+                break;
+            case "disable":
+                await disableServer(undefined, providers);
+                break;
+            case "install":
+                await installServer(undefined, undefined, providers);
+                break;
+            case "show": {
+                const serverName = await input({
+                    message: "Server name:",
+                });
+                await showServerConfig(serverName, providers);
+                break;
+            }
+            case "backupAll":
+                await backupAllConfigs(providers);
+                break;
+            case "rename":
+                await renameServer(undefined, undefined, providers);
+                break;
+        }
+    } catch (error) {
+        if (error instanceof ExitPromptError) {
+            logger.info("\nOperation cancelled by user.");
+            process.exit(0);
+        }
+        throw error;
+    }
+});
 
-                switch (action) {
-                    case "config":
-                        await openConfig({ path: argv.path });
-                        break;
-                    case "sync":
-                        await syncServers(providers);
-                        break;
-                    case "syncFromProviders":
-                        await syncFromProviders(providers);
-                        break;
-                    case "list":
-                        await listServers(providers);
-                        break;
-                    case "enable":
-                        await enableServer(undefined, providers);
-                        break;
-                    case "disable":
-                        await disableServer(undefined, providers);
-                        break;
-                    case "install":
-                        await installServer(undefined, undefined, providers);
-                        break;
-                    case "show": {
-                        const { serverName } = (await prompter.prompt({
-                            type: "input",
-                            name: "serverName",
-                            message: "Server name:",
-                        })) as { serverName: string };
-                        await showServerConfig(serverName, providers);
-                        break;
-                    }
-                    case "backupAll":
-                        await backupAllConfigs(providers);
-                        break;
-                    case "rename":
-                        await renameServer(undefined, undefined, providers);
-                        break;
-                }
-            } catch (error: any) {
-                if (error.message === "canceled") {
-                    logger.info("\nOperation cancelled by user.");
-                    process.exit(0);
-                }
-                throw error;
+// Main function
+async function main() {
+    try {
+        await program.parseAsync();
+    } catch (error: unknown) {
+        const opts = program.opts();
+        if (error instanceof Error) {
+            logger.error(`✖ Error: ${error.message}`);
+            if (opts.verbose) {
+                logger.error(error.stack);
             }
         } else {
-            // Command mode
-            switch (command) {
-                case "config":
-                    await openConfig({ path: argv.path });
-                    break;
-                case "sync":
-                    await syncServers(providers, { provider: argv.provider });
-                    break;
-                case "sync-from-providers":
-                case "syncFromProviders":
-                    await syncFromProviders(providers, { provider: argv.provider });
-                    break;
-                case "list":
-                    await listServers(providers);
-                    break;
-                case "enable":
-                    await enableServer(argv.enable || argv._[1] || undefined, providers, { provider: argv.provider });
-                    break;
-                case "disable":
-                    await disableServer(argv.disable || argv._[1] || undefined, providers, { provider: argv.provider });
-                    break;
-                case "install": {
-                    const serverName = argv.install || argv._[1] || "";
-                    const commandString = argv._[2] || "";
-                    await installServer(serverName, commandString, providers, {
-                        type: argv.type,
-                        headers: argv.headers,
-                        env: argv.env,
-                        provider: argv.provider,
-                    });
-                    break;
-                }
-                case "show":
-                    await showServerConfig(argv.show || argv._[1] || "", providers);
-                    break;
-                case "backup-all":
-                case "backupAll":
-                    await backupAllConfigs(providers);
-                    break;
-                case "rename": {
-                    const oldName = argv.rename || argv._[1] || undefined;
-                    const newName = argv._[2] || undefined;
-                    await renameServer(oldName, newName, providers);
-                    break;
-                }
-                case "config-json":
-                case "configJson":
-                    await configJson({
-                        client: argv.client as "standard" | "cursor" | "claude" | undefined,
-                        enabledOnly: argv.enabledOnly,
-                        servers: argv.servers,
-                        bare: argv.bare,
-                        clipboard: argv.clipboard,
-                    });
-                    break;
-                default:
-                    logger.error(`Unknown command: ${command}`);
-                    showHelp();
-                    process.exit(1);
-            }
-        }
-    } catch (error: any) {
-        logger.error(`✖ Error: ${error.message}`);
-        if (argv.verbose) {
-            logger.error(error.stack);
+            logger.error(`✖ Error: ${error}`);
         }
         process.exit(1);
     }
