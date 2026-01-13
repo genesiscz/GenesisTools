@@ -1,24 +1,8 @@
-import minimist from "minimist";
+import { Command } from "commander";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import logger from "../logger";
 import { encode, decode } from "@toon-format/toon";
-
-interface Options {
-    "to-toon"?: boolean;
-    "to-json"?: boolean;
-    verbose?: boolean;
-    help?: boolean;
-    // Aliases
-    t?: boolean;
-    j?: boolean;
-    v?: boolean;
-    h?: boolean;
-}
-
-interface Args extends Options {
-    _: string[]; // Positional arguments
-}
 
 type Format = "json" | "jsonl" | "toon" | "unknown";
 
@@ -88,49 +72,6 @@ function parseJSONL(input: string): any[] | null {
     return objects.length > 0 ? objects : null;
 }
 
-function showHelp(): void {
-    logger.info(`
-JSON/TOON Converter Tool
-
-Convert data between JSON and TOON (Token-Oriented Object Notation) formats.
-TOON can reduce token usage by 30-60% compared to standard JSON, making it ideal for LLM applications.
-
-Usage:
-  tools json [file] [options]
-  cat file.json | tools json [options]
-
-Arguments:
-  file                    Input file path (optional if reading from stdin)
-
-Options:
-  --to-toon, -t          Force conversion to TOON format
-  --to-json, -j          Force conversion to JSON format
-  --verbose, -v          Enable verbose logging (shows format detection, size comparison, etc.)
-  --help, -h             Show this help message
-
-Examples:
-  # Auto-detect format and convert
-  tools json data.json
-  cat data.json | tools json
-
-  # Force conversion to TOON
-  tools json data.json --to-toon
-  cat data.json | tools json --to-toon
-
-  # Force conversion to JSON
-  tools json data.toon --to-json
-  cat data.toon | tools json --to-json
-
-  # Verbose mode (shows statistics)
-  tools json data.json --verbose
-
-Notes:
-  - If no file is provided, reads from stdin
-  - Auto-detects input format (JSON or TOON) unless --to-toon or --to-json is specified
-  - When converting to TOON, compares with compact JSON and returns the smaller format
-  - By default, only outputs the result (or error). Use --verbose for detailed information.
-`);
-}
 
 function detectFormat(input: string): Format {
     // Try JSON first
@@ -191,24 +132,21 @@ function calculateSavings(original: number, compressed: number): { percentage: n
 }
 
 async function main(): Promise<void> {
-    const argv = minimist<Args>(process.argv.slice(2), {
-        alias: {
-            t: "to-toon",
-            j: "to-json",
-            v: "verbose",
-            h: "help",
-        },
-        boolean: ["to-toon", "to-json", "verbose", "help"],
-    });
+    const program = new Command()
+        .name("json")
+        .description("JSON/TOON converter - Convert data between JSON and TOON (Token-Oriented Object Notation) formats")
+        .argument("[file]", "Input file path (optional if reading from stdin)")
+        .option("-t, --to-toon", "Force conversion to TOON format")
+        .option("-j, --to-json", "Force conversion to JSON format")
+        .option("-v, --verbose", "Enable verbose logging (shows format detection, size comparison, etc.)")
+        .parse();
 
-    if (argv.help) {
-        showHelp();
-        process.exit(0);
-    }
+    const options = program.opts();
+    const args = program.args;
 
-    const forceToToon = argv["to-toon"] || false;
-    const forceToJson = argv["to-json"] || false;
-    const verbose = argv.verbose || false;
+    const forceToToon = options.toToon || false;
+    const forceToJson = options.toJson || false;
+    const verbose = options.verbose || false;
 
     // Validate flags
     if (forceToToon && forceToJson) {
@@ -218,7 +156,7 @@ async function main(): Promise<void> {
 
     try {
         // Get input file path (first positional argument)
-        const inputPath = argv._[0];
+        const inputPath = args[0];
         const input = await readInput(inputPath);
 
         if (!input) {
