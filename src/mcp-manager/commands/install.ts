@@ -3,14 +3,14 @@ import chalk from "chalk";
 import logger from "@app/logger";
 import type { UnifiedMCPServerConfig, MCPProvider } from "../utils/providers/types.js";
 import { readUnifiedConfig, writeUnifiedConfig, stripMeta } from "../utils/config.utils.js";
-import { parseCommandString, parseEnvString } from "../utils/command.utils.js";
+import { parseCommandString, parseEnvString, parseHeaderString } from "../utils/command.utils.js";
 
 const prompter = new Enquirer();
 
 export interface InstallOptions {
     type?: string; // stdio, sse, http
-    headers?: string; // JSON or KEY=value format for http/sse
-    env?: string; // KEY=value format for stdio
+    headers?: string | string[]; // "Key: value" format (colon separator) for http/sse
+    env?: string | string[]; // "KEY=value" format for stdio
     provider?: string; // Provider name to install to (non-interactive)
 }
 
@@ -164,13 +164,9 @@ export async function installServer(
 
             // Handle headers - from option or interactive prompt
             if (options.headers) {
-                // Non-interactive: use provided headers
+                // Non-interactive: use provided headers (supports "Key: value" format with colon separator)
                 try {
-                    if (options.headers.trim().startsWith("{")) {
-                        newServerConfig.headers = JSON.parse(options.headers.trim());
-                    } else {
-                        newServerConfig.headers = parseEnvString(options.headers.trim());
-                    }
+                    newServerConfig.headers = parseHeaderString(options.headers);
                 } catch (error: any) {
                     logger.error(`Failed to parse headers: ${error.message}`);
                     process.exit(1);
@@ -181,16 +177,12 @@ export async function installServer(
                     const { inputHeaders } = (await prompter.prompt({
                         type: "input",
                         name: "inputHeaders",
-                        message: "Enter optional headers (JSON format or KEY=value KEY2=value) or leave empty:",
+                        message: 'Enter optional headers ("Key: value" format or JSON) or leave empty:',
                         initial: serverConfig?.headers ? JSON.stringify(serverConfig.headers) : "",
                     })) as { inputHeaders: string };
 
                     if (inputHeaders.trim()) {
-                        if (inputHeaders.trim().startsWith("{")) {
-                            newServerConfig.headers = JSON.parse(inputHeaders.trim());
-                        } else {
-                            newServerConfig.headers = parseEnvString(inputHeaders.trim());
-                        }
+                        newServerConfig.headers = parseHeaderString(inputHeaders);
                     }
                 } catch (error: any) {
                     if (error.message === "canceled") {
@@ -211,11 +203,11 @@ export async function installServer(
                 return;
             }
 
-            // Handle ENV variables - from option or interactive prompt
+            // Handle ENV variables - from option or interactive prompt (supports "KEY=value" format)
             let env: Record<string, string> = serverConfig?.env || {};
             if (options.env) {
-                // Non-interactive: use provided env
-                env = parseEnvString(options.env.trim());
+                // Non-interactive: use provided env (supports array for multiple --env flags)
+                env = parseEnvString(options.env);
                 if (Object.keys(env).length > 0) {
                     logger.info(`Parsed ${Object.keys(env).length} environment variable(s)`);
                 }
@@ -225,7 +217,7 @@ export async function installServer(
                     const { inputEnv } = (await prompter.prompt({
                         type: "input",
                         name: "inputEnv",
-                        message: "Enter ENV variables (format: KEY1=value1 KEY2=value2) or leave empty:",
+                        message: 'Enter ENV variables ("KEY=value" format or JSON) or leave empty:',
                         initial: serverConfig?.env
                             ? Object.entries(serverConfig.env)
                                   .map(([k, v]) => `${k}=${v}`)
@@ -234,7 +226,7 @@ export async function installServer(
                     })) as { inputEnv: string };
 
                     if (inputEnv.trim()) {
-                        env = parseEnvString(inputEnv.trim());
+                        env = parseEnvString(inputEnv);
                         logger.info(`Parsed ${Object.keys(env).length} environment variable(s)`);
                     } else if (inputEnv.trim() === "" && serverConfig?.env) {
                         // If user cleared it, we should probably clear it too, but parseEnvString returns {} for empty
