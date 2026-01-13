@@ -85,9 +85,8 @@ export function useTimerStore(userId: string | null) {
         unsubscribeRef.current()
         unsubscribeRef.current = null
       }
-      // Clear sync on unmount
-      const adapter = getStorageAdapter()
-      adapter.clearSync()
+      // Don't call clearSync() here - it causes infinite loop in React Strict Mode
+      // The PowerSync watchTimers handles its own cleanup via unsubscribeRef
     }
   }, [userId])
 
