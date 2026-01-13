@@ -14,7 +14,7 @@ export { useDeadlineRisk } from './useDeadlineRisk'
 export { useEnergyData } from './useEnergyData'
 export { useDistractions } from './useDistractions'
 export { useWeeklyReview } from './useWeeklyReview'
-export { useCelebrations, celebrationStore } from './useCelebrations'
+export { useCelebrations } from './useCelebrations'
 export { useBadgeProgress } from './useBadgeProgress'
 
 // ============================================
