@@ -41,6 +41,7 @@ export function useCommunicationLog(userId: string | null) {
   useEffect(() => {
     if (!userId) return
 
+    const currentUserId = userId
     let mounted = true
 
     async function init() {
@@ -50,7 +51,7 @@ export function useCommunicationLog(userId: string | null) {
         const adapter = await initializeAssistantStorage()
 
         // Initial load
-        const entries = await adapter.getCommunicationEntries(userId)
+        const entries = await adapter.getCommunicationEntries(currentUserId)
 
         if (mounted) {
           communicationStore.setState((s) => ({
@@ -62,7 +63,7 @@ export function useCommunicationLog(userId: string | null) {
         }
 
         // Subscribe to updates
-        unsubscribeRef.current = adapter.watchCommunications(userId, (updatedEntries) => {
+        unsubscribeRef.current = adapter.watchCommunications(currentUserId, (updatedEntries) => {
           if (mounted) {
             communicationStore.setState((s) => ({ ...s, entries: updatedEntries }))
           }

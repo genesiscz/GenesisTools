@@ -21,6 +21,7 @@ export function useDeadlineRisk(userId: string | null) {
       return
     }
 
+    const currentUserId = userId
     let mounted = true
 
     async function load() {
@@ -28,7 +29,7 @@ export function useDeadlineRisk(userId: string | null) {
       try {
         await initializeAssistantStorage()
         const adapter = getAssistantStorageAdapter()
-        const data = await adapter.getDeadlineRisks(userId)
+        const data = await adapter.getDeadlineRisks(currentUserId)
         if (mounted) {
           setRisks(data)
         }

@@ -22,6 +22,7 @@ export function useDistractions(userId: string | null) {
       return
     }
 
+    const currentUserId = userId
     let mounted = true
 
     async function load() {
@@ -35,7 +36,7 @@ export function useDistractions(userId: string | null) {
         const startDate = new Date()
         startDate.setDate(startDate.getDate() - 7)
 
-        const data = await adapter.getDistractions(userId, { startDate, endDate })
+        const data = await adapter.getDistractions(currentUserId, { startDate, endDate })
         if (mounted) {
           setDistractions(data)
         }

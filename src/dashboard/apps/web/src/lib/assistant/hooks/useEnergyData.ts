@@ -25,6 +25,7 @@ export function useEnergyData(userId: string | null) {
       return
     }
 
+    const currentUserId = userId
     let mounted = true
 
     async function load() {
@@ -38,7 +39,7 @@ export function useEnergyData(userId: string | null) {
         const startDate = new Date()
         startDate.setDate(startDate.getDate() - 30)
 
-        const data = await adapter.getEnergySnapshots(userId, { startDate, endDate })
+        const data = await adapter.getEnergySnapshots(currentUserId, { startDate, endDate })
         if (mounted) {
           setSnapshots(data)
         }

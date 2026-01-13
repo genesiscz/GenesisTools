@@ -22,6 +22,7 @@ export function useBadgeProgress(userId: string | null) {
       return
     }
 
+    const currentUserId = userId
     let mounted = true
 
     async function load() {
@@ -29,7 +30,7 @@ export function useBadgeProgress(userId: string | null) {
       try {
         await initializeAssistantStorage()
         const adapter = getAssistantStorageAdapter()
-        const data = await adapter.getBadgeProgress(userId)
+        const data = await adapter.getBadgeProgress(currentUserId)
         if (mounted) {
           setProgress(data)
         }
