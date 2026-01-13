@@ -158,12 +158,9 @@ export class PowerSyncAdapter implements StorageAdapter {
 
     // Sync to server
     console.log('[PowerSyncAdapter] Triggering sync to server after create')
-    try {
-      await syncToServer()
-    } catch (err) {
+    syncToServer().catch(err => {
       console.error('[PowerSyncAdapter] Sync failed after create:', err)
-      // Queued operations will retry
-    }
+    })
 
     return timer
   }
@@ -240,12 +237,7 @@ export class PowerSyncAdapter implements StorageAdapter {
     }
 
     // Sync to server
-    try {
-      await syncToServer()
-    } catch (err) {
-      console.error('[PowerSyncAdapter] Sync failed after update:', err)
-      // Queued operations will retry
-    }
+    syncToServer()
 
     return updated!
   }
@@ -255,12 +247,7 @@ export class PowerSyncAdapter implements StorageAdapter {
     this.broadcast({ type: 'TIMER_DELETED', payload: { id }, timestamp: Date.now(), sourceTab: this.tabId })
 
     // Sync to server
-    try {
-      await syncToServer()
-    } catch (err) {
-      console.error('[PowerSyncAdapter] Sync failed after delete:', err)
-      // Queued operations will retry
-    }
+    syncToServer()
   }
 
   // ============================================
@@ -296,12 +283,7 @@ export class PowerSyncAdapter implements StorageAdapter {
     this.broadcast({ type: 'ACTIVITY_LOGGED', payload: entry, timestamp: Date.now(), sourceTab: this.tabId })
 
     // Sync to server
-    try {
-      await syncToServer()
-    } catch (err) {
-      console.error('[PowerSyncAdapter] Sync failed after logging activity:', err)
-      // Queued operations will retry
-    }
+    syncToServer()
 
     return entry
   }
@@ -351,12 +333,7 @@ export class PowerSyncAdapter implements StorageAdapter {
     await db.execute('DELETE FROM activity_logs WHERE user_id = ?', [userId])
 
     // Sync to server
-    try {
-      await syncToServer()
-    } catch (err) {
-      console.error('[PowerSyncAdapter] Sync failed after clearing activity log:', err)
-      // Queued operations will retry
-    }
+    syncToServer()
   }
 
   // ============================================
@@ -414,21 +391,14 @@ export class PowerSyncAdapter implements StorageAdapter {
     const watcherId = `${userId}_${Date.now()}`
     this.timerWatchers.set(watcherId, callback)
 
+    // Use PowerSync's reactive watch
+    const query = db.watch('SELECT * FROM timers WHERE user_id = ? ORDER BY created_at DESC', [userId], {
+      tables: ['timers'],
+    })
+
     // PowerSync watch returns an async iterable
     const processResults = async () => {
       try {
-        // Wait for initial sync to complete first
-        if (this.initialSyncPromise) {
-          console.log('[PowerSync] Waiting for initial sync before watch...')
-          await this.initialSyncPromise
-          this.initialSyncPromise = null
-        }
-
-        // Now start reactive watch
-        const query = db.watch('SELECT * FROM timers WHERE user_id = ? ORDER BY created_at DESC', [userId], {
-          tables: ['timers'],
-        })
-
         for await (const result of query) {
           const rows = (result as { rows?: { _array?: TimerRow[] } }).rows?._array ?? []
           const timers = rows.map(deserializeTimer)
@@ -561,80 +531,71 @@ export class PowerSyncAdapter implements StorageAdapter {
         return
       }
 
-      // Upsert each timer into local DB with timestamp-based conflict resolution
+      // Insert each timer into local DB (skip if already exists)
       for (const timer of serverTimers) {
-        // Check if local version exists and is newer
-        const localTimer = await this.getTimer(timer.id)
-
-        if (localTimer) {
-          const localUpdated = new Date(localTimer.updatedAt).getTime()
-          const serverUpdated = new Date(timer.updatedAt).getTime()
-
-          // Only overwrite if server version is newer
-          if (serverUpdated <= localUpdated) {
-            console.log(`[PowerSync] Local timer ${timer.id} is newer (local: ${localTimer.updatedAt}, server: ${timer.updatedAt}), skipping server data`)
-            continue
-          }
-          console.log(`[PowerSync] Server timer ${timer.id} is newer (local: ${localTimer.updatedAt}, server: ${timer.updatedAt}), updating local`)
+        const existing = await db.getOptional<{ id: string }>('SELECT id FROM timers WHERE id = ?', [timer.id])
+        if (!existing) {
+          await db.execute(
+            `INSERT INTO timers (
+              id, name, timer_type, is_running, elapsed_time, duration, laps, user_id,
+              created_at, updated_at, show_total, first_start_time, start_time,
+              pomodoro_settings, pomodoro_phase, pomodoro_session_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              timer.id,
+              timer.name,
+              timer.timerType,
+              timer.isRunning ? 1 : 0,
+              timer.elapsedTime,
+              timer.duration ?? null,
+              JSON.stringify(timer.laps ?? []),
+              timer.userId,
+              timer.createdAt,
+              timer.updatedAt,
+              timer.showTotal ? 1 : 0,
+              timer.firstStartTime ?? null,
+              timer.startTime ?? null,
+              timer.pomodoroSettings ? JSON.stringify(timer.pomodoroSettings) : null,
+              timer.pomodoroPhase ?? null,
+              timer.pomodoroSessionCount ?? 0,
+            ]
+          )
         }
-
-        await db.execute(
-          `INSERT OR REPLACE INTO timers (
-            id, name, timer_type, is_running, elapsed_time, duration, laps, user_id,
-            created_at, updated_at, show_total, first_start_time, start_time,
-            pomodoro_settings, pomodoro_phase, pomodoro_session_count
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            timer.id,
-            timer.name,
-            timer.timerType,
-            timer.isRunning ? 1 : 0,
-            timer.elapsedTime,
-            timer.duration ?? null,
-            JSON.stringify(timer.laps ?? []),
-            timer.userId,
-            timer.createdAt,
-            timer.updatedAt,
-            timer.showTotal ? 1 : 0,
-            timer.firstStartTime ?? null,
-            timer.startTime ?? null,
-            timer.pomodoroSettings ? JSON.stringify(timer.pomodoroSettings) : null,
-            timer.pomodoroPhase ?? null,
-            timer.pomodoroSessionCount ?? 0,
-          ]
-        )
       }
 
       // Fetch activity logs from server
       const serverLogs = await getActivityLogsFromServer({ data: userId })
       console.log('[PowerSyncAdapter] Got', serverLogs?.length ?? 0, 'activity logs from server')
 
-      // Insert each log into local DB (logs are immutable, so use INSERT OR IGNORE)
+      // Insert each log into local DB (skip if already exists)
       if (!serverLogs || serverLogs.length === 0) {
         console.log('[PowerSyncAdapter] No activity logs on server')
         return
       }
 
       for (const log of serverLogs) {
-        await db.execute(
-          `INSERT OR IGNORE INTO activity_logs (
-            id, timer_id, timer_name, user_id, event_type, timestamp,
-            elapsed_at_event, session_duration, previous_value, new_value, metadata
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            log.id,
-            log.timerId,
-            log.timerName,
-            log.userId,
-            log.eventType,
-            log.timestamp,
-            log.elapsedAtEvent,
-            log.sessionDuration ?? null,
-            log.previousValue ?? null,
-            log.newValue ?? null,
-            log.metadata ? JSON.stringify(log.metadata) : null,
-          ]
-        )
+        const existing = await db.getOptional<{ id: string }>('SELECT id FROM activity_logs WHERE id = ?', [log.id])
+        if (!existing) {
+          await db.execute(
+            `INSERT INTO activity_logs (
+              id, timer_id, timer_name, user_id, event_type, timestamp,
+              elapsed_at_event, session_duration, previous_value, new_value, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              log.id,
+              log.timerId,
+              log.timerName,
+              log.userId,
+              log.eventType,
+              log.timestamp,
+              log.elapsedAtEvent,
+              log.sessionDuration ?? null,
+              log.previousValue ?? null,
+              log.newValue ?? null,
+              log.metadata ? JSON.stringify(log.metadata) : null,
+            ]
+          )
+        }
       }
 
       console.log('[PowerSyncAdapter] Server sync complete')
