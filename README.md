@@ -112,6 +112,7 @@ tools
 | **[GitHub Release Notes](#3--github-release-notes)**   | 📋 Generate beautiful release notes             |
 | **[Last Changes](#13--last-changes)**                  | 📅 Show uncommitted changes grouped by time     |
 | **[Rename Commits](#18--rename-commits)**              | 🔄 Interactively rename commit messages         |
+| **[Git Rebase Multiple](#21--git-rebase-multiple)**    | 🌳 Safe branch hierarchy rebasing with rollback |
 
 ### 🤖 AI & Analysis
 
@@ -1704,6 +1705,89 @@ pipx install 'psrecord[plot]'
 
 # Record process usage
 psrecord <pid> --interval 1 --duration 60 --plot usage.png
+```
+
+</details>
+
+---
+
+### 21. 🌳 Git Rebase Multiple
+
+> Safe branch hierarchy rebasing with full rollback capability. Rebase a parent branch and automatically rebase all its child branches using correct fork points.
+
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
+
+```bash
+# Interactive mode (recommended)
+tools git-rebase-multiple
+
+# Show current state and backups
+tools git-rebase-multiple --status
+
+# Preview plan without making changes
+tools git-rebase-multiple --dry-run
+
+# Abort and restore all branches
+tools git-rebase-multiple --abort
+
+# Continue after resolving conflicts
+tools git-rebase-multiple --continue
+
+# Cleanup backup refs when done
+tools git-rebase-multiple --cleanup
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ Options</b></summary>
+
+| Option | Alias | Description |
+|--------|-------|-------------|
+| `--help` | `-h` | Show help message |
+| `--abort` | `-a` | Abort and restore all branches |
+| `--continue` | `-c` | Continue after resolving conflicts |
+| `--status` | `-s` | Show current state and backups |
+| `--cleanup` | | Remove all backup refs and fork tags |
+| `--restore <branch>` | `-r` | Restore single branch from backup |
+| `--dry-run` | | Show execution plan without running |
+
+</details>
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+- **Backup Refs**: Creates `refs/backup/grm/<branch>` refs that survive git gc
+- **Fork Point Tags**: Saves `fork/<child>` tags for accurate `--onto` rebasing
+- **State Persistence**: Tracks progress in `.git/rebase-multiple-state.json`
+- **Verbose Output**: Shows every git command being executed
+- **Full Rollback**: Abort at any point and restore all branches to original state
+- **Auto-Detection**: Automatically finds child branches of the parent being rebased
+
+</details>
+
+<details>
+<summary><b>📖 Example Scenario</b></summary>
+
+```
+Before:
+  main:     A---B---C---D
+                 \
+  feature:        E---F
+                       \
+  child-1:              G---H
+                       \
+  child-2:              I
+
+After rebasing feature onto main (with children):
+  main:     A---B---C---D
+                         \
+  feature:                E'--F'
+                               \
+  child-1:                      G'--H'
+                               \
+  child-2:                      I'
 ```
 
 </details>
