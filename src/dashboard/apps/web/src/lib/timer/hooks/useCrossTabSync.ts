@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { BROADCAST_CHANNEL_NAME, type SyncMessage } from '@/lib/timer/storage'
 
 interface CrossTabState {
@@ -152,14 +152,14 @@ export function useCrossTabSync(options: UseCrossTabSyncOptions = {}) {
   }
 
   // Public broadcast method
-  const broadcastMessage = useCallback((message: SyncMessage) => {
+  function broadcastMessage(message: SyncMessage) {
     channelRef.current?.postMessage(message)
-  }, [])
+  }
 
   // Update last sync time
-  const setLastSync = useCallback((date: Date) => {
+  function setLastSync(date: Date) {
     setState((s) => ({ ...s, lastSync: date }))
-  }, [])
+  }
 
   return {
     ...state,

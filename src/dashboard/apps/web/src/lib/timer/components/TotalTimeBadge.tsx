@@ -1,4 +1,3 @@
-import { memo, useMemo } from 'react'
 import { Clock, Eye, EyeOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -12,28 +11,29 @@ interface TotalTimeBadgeProps {
 /**
  * Total time since first start badge with holographic neon effect
  */
-export const TotalTimeBadge = memo(function TotalTimeBadge({
+export function TotalTimeBadge({
   totalTimeMs,
   showTotal,
   onToggle,
   className,
 }: TotalTimeBadgeProps) {
-  const formattedTotal = useMemo(() => {
-    if (totalTimeMs <= 0) return null
+  // React Compiler handles memoization automatically
+  let formattedTotal: string | null = null
 
+  if (totalTimeMs > 0) {
     const totalSeconds = Math.floor(totalTimeMs / 1000)
     const hours = Math.floor(totalSeconds / 3600)
     const minutes = Math.floor((totalSeconds % 3600) / 60)
     const seconds = totalSeconds % 60
 
     if (hours > 0) {
-      return `${hours}h ${minutes}m ${seconds}s`
+      formattedTotal = `${hours}h ${minutes}m ${seconds}s`
+    } else if (minutes > 0) {
+      formattedTotal = `${minutes}m ${seconds}s`
+    } else {
+      formattedTotal = `${seconds}s`
     }
-    if (minutes > 0) {
-      return `${minutes}m ${seconds}s`
-    }
-    return `${seconds}s`
-  }, [totalTimeMs])
+  }
 
   if (!formattedTotal) return null
 
@@ -86,7 +86,7 @@ export const TotalTimeBadge = memo(function TotalTimeBadge({
       )}
     </div>
   )
-})
+}
 
 // Add shimmer animation to styles
 const shimmerStyles = `
