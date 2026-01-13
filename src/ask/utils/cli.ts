@@ -1,41 +1,59 @@
-import minimist from "minimist";
+import { Command } from "commander";
 import logger from "@app/logger";
 import type { CLIOptions, Args, OutputFormat } from "@ask/types";
 
 export function parseCLIArguments(): Args {
-    const argv = minimist<Args>(process.argv.slice(2), {
-        alias: {
-            s: "sst",
-            m: "model",
-            p: "provider",
-            f: "format",
-            o: "output",
-            h: "help",
-            v: "verbose",
-            V: "version",
-            i: "interactive",
-            t: "temperature",
-            k: "maxTokens",
-        },
-        boolean: ["streaming", "help", "version", "verbose", "silent", "predictCost"],
-        string: [
-            "sst",
-            "model",
-            "provider",
-            "format",
-            "output",
-            "systemPrompt",
-            "temperature",
-            "maxTokens",
-            "sort",
-            "filterCapabilities",
-        ],
-        default: {
-            streaming: true,
-        },
-    });
+    const program = new Command()
+        .name("ask")
+        .description("Multi-provider LLM chat application")
+        .option("-s, --sst <file>", "Transcribe audio file")
+        .option("-m, --model <name>", "Model to use")
+        .option("-p, --provider <name>", "Provider")
+        .option("-f, --format <fmt>", "Output format (text/json/markdown/clipboard/file) or models format (table/json)")
+        .option("-o, --output <format>", "Output format")
+        .option("--sort <order>", "Sort models by: price_input/input/price_output/output/name")
+        .option("--filter-capabilities <caps>", "Filter models by capabilities (pipe-separated)")
+        .option("-i, --interactive", "Start interactive chat mode")
+        .option("--streaming", "Enable streaming responses", true)
+        .option("--no-streaming", "Disable streaming responses")
+        .option("-t, --temperature <n>", "Temperature (0.0-2.0)")
+        .option("-k, --max-tokens <n>", "Maximum tokens")
+        .option("--system-prompt <text>", "System prompt")
+        .option("-v, --verbose", "Enable verbose logging")
+        .option("--silent", "Silent mode")
+        .option("--predict-cost", "Show cost prediction before sending")
+        .option("--help-old", "Show detailed help message")
+        .option("-V, --version", "Show version information")
+        .argument("[prompt...]", "Initial prompt")
+        .allowUnknownOption(false)
+        .parse();
 
-    return argv;
+    const options = program.opts();
+    const args = program.args;
+
+    // Build Args object with Commander options mapped to CLIOptions structure
+    const result: Args = {
+        _: args,
+        sst: options.sst,
+        model: options.model,
+        provider: options.provider,
+        format: options.format,
+        output: options.output,
+        sort: options.sort,
+        filterCapabilities: options.filterCapabilities,
+        interactive: options.interactive,
+        streaming: options.streaming,
+        systemPrompt: options.systemPrompt,
+        temperature: options.temperature ? parseFloat(options.temperature) : undefined,
+        maxTokens: options.maxTokens ? parseInt(options.maxTokens) : undefined,
+        verbose: options.verbose,
+        silent: options.silent,
+        predictCost: options.predictCost,
+        help: options.helpOld,
+        version: options.version,
+    };
+
+    return result;
 }
 
 export function showHelp(): void {
