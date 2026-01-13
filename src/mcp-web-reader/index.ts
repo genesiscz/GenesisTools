@@ -2,10 +2,10 @@
 import { Readability } from "@mozilla/readability";
 import axios from "axios";
 import chalk from "chalk";
+import { Command } from "commander";
 import { createTwoFilesPatch } from "diff";
 import { decode, encode } from "gpt-3-encoder";
 import { JSDOM } from "jsdom";
-import minimist from "minimist";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 
@@ -430,45 +430,30 @@ function compactCodeBlocks(markdown: string): string {
     return result.join("\n");
 }
 
+// CLI options interface
+interface CliOptions {
+    url: string;
+    mode: string;
+    depth: string;
+    out?: string;
+    tokens?: string;
+    saveTokens: boolean;
+    headers?: string;
+}
+
 // CLI
-async function runCli(argv: minimist.ParsedArgs) {
-    if (argv.help || argv.h) {
-        console.log(`
-mcp-web-reader - Web content reader (MCP + CLI)
-
-Usage:
-  tools mcp-web-reader --url <URL> --mode <raw|markdown|jina> [--depth basic|advanced] [--tokens N] [--save-tokens]
-
-Options:
-  --url, -u        Source URL (required)
-  --mode, -m       raw | markdown | jina (required)
-  --depth, -d      Extraction depth for markdown/jina: basic | advanced (default: basic)
-  --tokens, -T     Max AI tokens to return (approx. GPT-3 encoder)
-  --save-tokens, -s  Compact code blocks and whitespace to save tokens
-  --out, -o        Output file path
-  --headers        Additional request headers as JSON (raw)
-  --server         Start as MCP server instead of CLI
-  --help, -h       Show help
-`);
-        process.exit(0);
-    }
-
-    const urlArg = argv.url || argv.u;
-    if (!urlArg) {
-        log.err("--url is required");
-        process.exit(1);
-    }
-    const url = ensureHttpUrl(String(urlArg));
-    const mode = String(argv.mode || argv.m);
-    const depth = String(argv.depth || argv.d || "basic") as ExtractDepth;
-    const out = argv.out || argv.o;
-    const maxTokens = argv.tokens ? Number(argv.tokens) : argv.T ? Number(argv.T) : undefined;
-    const saveTokens = Boolean(argv["save-tokens"]) || Boolean(argv.s);
+async function runCli(opts: CliOptions) {
+    const url = ensureHttpUrl(String(opts.url));
+    const mode = opts.mode;
+    const depth = (opts.depth || "basic") as ExtractDepth;
+    const out = opts.out;
+    const maxTokens = opts.tokens ? Number(opts.tokens) : undefined;
+    const saveTokens = opts.saveTokens;
 
     try {
         if (mode === "raw") {
             log.info(`Fetching raw HTML: ${chalk.cyan(url)}`);
-            const headers = argv.headers ? JSON.parse(String(argv.headers)) : undefined;
+            const headers = opts.headers ? JSON.parse(String(opts.headers)) : undefined;
             let html = await fetchText(url, headers);
             if (saveTokens) html = html.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n");
             const limited = limitToTokens(html, maxTokens);
@@ -644,14 +629,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 async function main() {
-    const argv = minimist(process.argv.slice(2));
-    if (argv.server) {
+    const program = new Command()
+        .name("mcp-web-reader")
+        .description("Web content reader (MCP + CLI)")
+        .option("-u, --url <url>", "Source URL (required)")
+        .option("-m, --mode <mode>", "raw | markdown | jina (required)")
+        .option("-d, --depth <depth>", "Extraction depth: basic | advanced", "basic")
+        .option("-T, --tokens <n>", "Max AI tokens to return")
+        .option("-s, --save-tokens", "Compact code blocks and whitespace")
+        .option("-o, --out <path>", "Output file path")
+        .option("--headers <json>", "Additional request headers as JSON")
+        .option("--server", "Start as MCP server instead of CLI")
+        .parse();
+
+    const opts = program.opts();
+
+    if (opts.server) {
         const transport = new StdioServerTransport();
         await server.connect(transport);
         console.error("mcp-web-reader server running");
         return;
     }
-    await runCli(argv);
+
+    if (!opts.url) {
+        log.err("--url is required");
+        process.exit(1);
+    }
+    if (!opts.mode) {
+        log.err("--mode is required (raw | markdown | jina)");
+        process.exit(1);
+    }
+
+    await runCli({
+        url: opts.url,
+        mode: opts.mode,
+        depth: opts.depth || "basic",
+        out: opts.out,
+        tokens: opts.tokens,
+        saveTokens: opts.saveTokens || false,
+        headers: opts.headers,
+    });
 }
 
 main().catch((e) => {

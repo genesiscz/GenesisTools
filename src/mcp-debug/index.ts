@@ -1,14 +1,4 @@
-import minimist from "minimist";
-
-interface Options {
-    help?: boolean;
-    verbose?: boolean;
-    env?: boolean;
-}
-
-interface Args extends Options {
-    _: string[]; // Command and its arguments
-}
+import { Command } from "commander";
 
 function showHelp() {
     // Write help to stderr to avoid polluting stdout
@@ -101,24 +91,26 @@ async function executeCommand(commandString: string): Promise<any> {
 }
 
 async function main() {
-    const argv = minimist<Args>(process.argv.slice(2), {
-        alias: {
-            v: "verbose",
-            h: "help",
-            e: "env",
-        },
-        boolean: ["verbose", "help", "env"],
-    });
+    const program = new Command()
+        .name("mcp-debug")
+        .description("Debug tool for MCP server configurations")
+        .option("-v, --verbose", "Enable verbose logging")
+        .option("-e, --env", "Execute 'env' command automatically")
+        .option("--help-old", "Show extended help message")
+        .argument("[command...]", "Command and arguments to execute")
+        .parse();
 
-    if (argv.help) {
+    const options = program.opts();
+
+    if (options.helpOld) {
         showHelp();
         process.exit(0);
     }
 
     // Get command and arguments
-    const commandArgs = argv._;
+    const commandArgs = program.args;
     const commandsEnv = process.env.COMMANDS;
-    const useEnv = argv.env;
+    const useEnv = options.env;
 
     // Check if we have either a command argument, COMMANDS env var, or --env flag
     if (commandArgs.length === 0 && !commandsEnv && !useEnv) {

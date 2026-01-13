@@ -1,6 +1,7 @@
 import { Storage } from "@app/utils/storage";
 import logger from "@app/logger";
-import Enquirer from "enquirer";
+import { input, password } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import type { OAuth2Tokens, OAuthApplication } from "../types";
 
@@ -9,8 +10,6 @@ export interface RequestOptions {
     headers?: Record<string, string>;
     skipAuth?: boolean;
 }
-
-const prompter = new Enquirer();
 
 export class TimelyApiClient {
     private baseUrl = "https://api.timelyapp.com/1.1";
@@ -35,24 +34,12 @@ export class TimelyApiClient {
             logger.info("Create an OAuth application at: https://app.timelyapp.com/settings/oauth_applications\n");
 
             try {
-                const { clientId, clientSecret, redirectUri } = (await prompter.prompt([
-                    {
-                        type: "input",
-                        name: "clientId",
-                        message: "Client ID (App ID):",
-                    },
-                    {
-                        type: "password",
-                        name: "clientSecret",
-                        message: "Client Secret:",
-                    },
-                    {
-                        type: "input",
-                        name: "redirectUri",
-                        message: "Callback URL (Redirect URI):",
-                        initial: "urn:ietf:wg:oauth:2.0:oob",
-                    },
-                ])) as { clientId: string; clientSecret: string; redirectUri: string };
+                const clientId = await input({ message: "Client ID (App ID):" });
+                const clientSecret = await password({ message: "Client Secret:" });
+                const redirectUri = await input({
+                    message: "Callback URL (Redirect URI):",
+                    default: "urn:ietf:wg:oauth:2.0:oob",
+                });
 
                 oauth = {
                     client_id: clientId,
@@ -62,8 +49,8 @@ export class TimelyApiClient {
 
                 await this.storage.setConfigValue("oauth", oauth);
                 logger.info(chalk.green("✓ OAuth credentials saved to config.\n"));
-            } catch (error: any) {
-                if (error.message === "canceled") {
+            } catch (error) {
+                if (error instanceof ExitPromptError) {
                     logger.info("\nOperation cancelled by user.");
                     process.exit(0);
                 }

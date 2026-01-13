@@ -1,7 +1,6 @@
 import { spawn } from "bun";
 import chalk from "chalk";
 import { Command } from "commander";
-import Enquirer from "enquirer";
 import * as fsevents from "fsevents";
 import * as path from "path";
 import logger from "@app/logger";
@@ -13,9 +12,6 @@ interface Options {
     verbose?: boolean;
     watchers?: boolean;
 }
-
-// Create Enquirer instance for interactive prompts
-const _prompter = new Enquirer();
 
 // Default configuration
 const DEFAULT_DURATION = 15; // How long to monitor events.
