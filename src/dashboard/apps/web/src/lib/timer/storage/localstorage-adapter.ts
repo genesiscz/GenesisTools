@@ -371,16 +371,17 @@ export class LocalStorageAdapter implements StorageAdapter {
           isRunning: Boolean(t.isRunning),
           showTotal: Boolean(t.showTotal),
           pomodoroSessionCount: t.pomodoroSessionCount ?? 0,
+          duration: t.duration ?? undefined,
+          pomodoroPhase: t.pomodoroPhase ?? undefined,
           laps: Array.isArray(t.laps) ? t.laps.map(l => ({
             ...l,
             timestamp: new Date(l.timestamp)
           })) : [],
           createdAt: new Date(t.createdAt),
           updatedAt: new Date(t.updatedAt),
-          duration: t.duration ?? null,
           firstStartTime: t.firstStartTime ? new Date(t.firstStartTime) : null,
           startTime: t.startTime ? new Date(t.startTime) : null,
-        }))
+        } as Timer))
 
         // Update localStorage
         const data = this.readStorage<Record<string, Timer>>(STORAGE_KEYS.TIMERS) || {}
