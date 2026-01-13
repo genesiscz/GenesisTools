@@ -1,3 +1,4 @@
+import { Command } from "commander";
 import chalk from "chalk";
 import Table from "cli-table3";
 import logger from "@app/logger";
@@ -5,11 +6,36 @@ import { Storage } from "@app/utils/storage";
 import { TimelyService } from "../api/service";
 import { getMonthDateRange, formatDuration, getDatesInMonth } from "../utils/date";
 import { generateReportMarkdown } from "../utils/entry-processor";
-import type { TimelyArgs, TimelyEvent } from "../types";
+import type { TimelyEvent } from "../types";
 
-export async function exportMonthCommand(args: TimelyArgs, storage: Storage, service: TimelyService): Promise<void> {
+export function registerExportMonthCommand(program: Command, storage: Storage, service: TimelyService): void {
+    program
+        .command("export-month")
+        .description("Export all entries for a month")
+        .argument("<month>", "Month in YYYY-MM format")
+        .option("-f, --format <format>", "Output format: json, csv, raw, table, summary, detailed-summary", "table")
+        .option("-a, --account <id>", "Override account ID")
+        .option("-s, --silent", "Suppress console output (only show file path)")
+        .option("-q, --quiet", "Alias for --silent")
+        .action(async (month, options) => {
+            await exportMonthAction(storage, service, month, options);
+        });
+}
+
+interface ExportMonthOptions {
+    format?: string;
+    account?: string;
+    silent?: boolean;
+    quiet?: boolean;
+}
+
+async function exportMonthAction(
+    storage: Storage,
+    service: TimelyService,
+    monthArg: string,
+    options: ExportMonthOptions
+): Promise<void> {
     // Parse month argument (YYYY-MM)
-    const monthArg = args.month || args._[1];
     if (!monthArg || !/^\d{4}-\d{2}$/.test(monthArg)) {
         logger.error("Please provide a month in YYYY-MM format.");
         logger.info("Example: tools timely export-month 2025-11");
@@ -17,7 +43,9 @@ export async function exportMonthCommand(args: TimelyArgs, storage: Storage, ser
     }
 
     // Get account ID
-    const accountId = args.account || (await storage.getConfigValue<number>("selectedAccountId"));
+    const accountId = options.account
+        ? parseInt(options.account, 10)
+        : await storage.getConfigValue<number>("selectedAccountId");
     if (!accountId) {
         logger.error("No account selected. Run 'tools timely accounts --select' first.");
         process.exit(1);
@@ -77,8 +105,9 @@ export async function exportMonthCommand(args: TimelyArgs, storage: Storage, ser
                 },
                 ttl
             );
-        } catch (error: any) {
-            logger.error(`Failed to download suggested_entries for ${date}: ${error.message}`);
+        } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            logger.error(`Failed to download suggested_entries for ${date}: ${errorMessage}`);
             // Continue with other dates even if one fails
         }
     }
@@ -106,8 +135,8 @@ export async function exportMonthCommand(args: TimelyArgs, storage: Storage, ser
     }
 
     // Output based on format
-    const format = args.format || "table";
-    const silent = args.silent || args.quiet || false;
+    const format = options.format || "table";
+    const silent = options.silent || options.quiet || false;
 
     switch (format) {
         case "json":

@@ -2,59 +2,32 @@
 
 // src/timely/index.ts
 
-import minimist from "minimist";
+import { Command } from "commander";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
 import { TimelyApiClient } from "./api/client";
 import { TimelyService } from "./api/service";
-import type { TimelyArgs } from "./types";
 
 // Commands
-import { loginCommand } from "./commands/login";
-import { logoutCommand } from "./commands/logout";
-import { statusCommand } from "./commands/status";
-import { accountsCommand } from "./commands/accounts";
-import { projectsCommand } from "./commands/projects";
-import { eventsCommand } from "./commands/events";
-import { exportMonthCommand } from "./commands/export-month";
-import { cacheCommand } from "./commands/cache";
+import { registerLoginCommand } from "./commands/login";
+import { registerLogoutCommand } from "./commands/logout";
+import { registerStatusCommand } from "./commands/status";
+import { registerAccountsCommand } from "./commands/accounts";
+import { registerProjectsCommand } from "./commands/projects";
+import { registerEventsCommand } from "./commands/events";
+import { registerExportMonthCommand } from "./commands/export-month";
+import { registerCacheCommand } from "./commands/cache";
 
-type CommandHandler = (
-    args: TimelyArgs,
-    storage: Storage,
-    client: TimelyApiClient,
-    service: TimelyService
-) => Promise<void>;
+// Initialize shared dependencies
+const storage = new Storage("timely");
+const client = new TimelyApiClient(storage);
+const service = new TimelyService(client, storage);
 
-const COMMANDS: Record<string, CommandHandler> = {
-    login: async (args, storage, client) => {
-        await loginCommand(args, storage, client);
-    },
-    logout: async (args, storage) => {
-        await logoutCommand(args, storage);
-    },
-    status: async (args, storage, client) => {
-        await statusCommand(args, storage, client);
-    },
-    accounts: async (args, storage, client, service) => {
-        await accountsCommand(args, storage, service);
-    },
-    projects: async (args, storage, client, service) => {
-        await projectsCommand(args, storage, service);
-    },
-    events: async (args, storage, client, service) => {
-        await eventsCommand(args, storage, service);
-    },
-    "export-month": async (args, storage, client, service) => {
-        await exportMonthCommand(args, storage, service);
-    },
-    cache: async (args, storage) => {
-        await cacheCommand(args, storage);
-    },
-};
+// Export dependencies for subcommands
+export { storage, client, service };
 
-function showHelp(): void {
+function showHelpOld(): void {
     console.log(`
 ${chalk.bold("Timely CLI")} - Interact with Timely time tracking
 
@@ -99,62 +72,32 @@ ${chalk.cyan("Examples:")}
 }
 
 async function main(): Promise<void> {
-    const args = minimist<TimelyArgs>(process.argv.slice(2), {
-        alias: {
-            h: "help",
-            v: "verbose",
-            f: "format",
-            a: "account",
-            p: "project",
-        },
-        boolean: ["help", "verbose", "select", "clipboard", "silent", "quiet"],
-        string: ["format", "since", "upto", "day", "month", "output"],
-    });
-
-    // Convert account and project to numbers if provided
-    if (args.account) {
-        args.account = typeof args.account === "string" ? parseInt(args.account, 10) : args.account;
-    }
-    if (args.project) {
-        args.project = typeof args.project === "string" ? parseInt(args.project, 10) : args.project;
-    }
-
-    // Show help if requested or no command
-    if (args.help || args._.length === 0) {
-        showHelp();
-        process.exit(0);
-    }
-
-    const command = args._[0];
-
-    // Check if command exists
-    if (!(command in COMMANDS)) {
-        logger.error(`Unknown command: ${command}`);
-        showHelp();
-        process.exit(1);
-    }
-
-    // Initialize storage, client, and service
-    const storage = new Storage("timely");
+    // Ensure storage directories exist
     await storage.ensureDirs();
 
-    const client = new TimelyApiClient(storage);
-    const service = new TimelyService(client, storage);
+    const program = new Command()
+        .name("timely")
+        .description("Timely time tracking CLI")
+        .option("--help-old", "Show old help message")
+        .action((options) => {
+            if (options.helpOld) {
+                showHelpOld();
+                process.exit(0);
+            }
+        });
 
-    // Execute command
-    try {
-        await COMMANDS[command](args, storage, client, service);
-    } catch (error) {
-        if (error instanceof Error && (error.message === "canceled" || error.message === "")) {
-            logger.info("\nOperation cancelled.");
-            process.exit(0);
-        }
-        logger.error(`Command failed: ${error}`);
-        if (args.verbose) {
-            console.error(error);
-        }
-        process.exit(1);
-    }
+    // Register all subcommands
+    registerLoginCommand(program, storage, client);
+    registerLogoutCommand(program, storage);
+    registerStatusCommand(program, storage, client);
+    registerAccountsCommand(program, storage, service);
+    registerProjectsCommand(program, storage, service);
+    registerEventsCommand(program, storage, service);
+    registerExportMonthCommand(program, storage, service);
+    registerCacheCommand(program, storage);
+
+    // Parse and execute
+    await program.parseAsync(process.argv);
 }
 
 main().catch((err) => {

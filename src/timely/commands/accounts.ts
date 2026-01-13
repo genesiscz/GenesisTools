@@ -1,13 +1,36 @@
-import Enquirer from "enquirer";
+import { Command } from "commander";
+import { select } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
 import { TimelyService } from "../api/service";
-import type { TimelyArgs, TimelyAccount } from "../types";
 
-const prompter = new Enquirer();
+export function registerAccountsCommand(program: Command, storage: Storage, service: TimelyService): void {
+    program
+        .command("accounts")
+        .description("List all accounts (--select to choose default)")
+        .option("-f, --format <format>", "Output format: json, table", "table")
+        .option("-s, --select", "Interactively select default account")
+        .action(async (options) => {
+            try {
+                await accountsAction(storage, service, options);
+            } catch (error) {
+                if (error instanceof ExitPromptError) {
+                    logger.info("\nOperation cancelled.");
+                    process.exit(0);
+                }
+                throw error;
+            }
+        });
+}
 
-export async function accountsCommand(args: TimelyArgs, storage: Storage, service: TimelyService): Promise<void> {
+interface AccountsOptions {
+    format?: string;
+    select?: boolean;
+}
+
+async function accountsAction(storage: Storage, service: TimelyService, options: AccountsOptions): Promise<void> {
     // Fetch accounts
     logger.info(chalk.yellow("Fetching accounts..."));
     const accounts = await service.getAccounts();
@@ -25,7 +48,7 @@ export async function accountsCommand(args: TimelyArgs, storage: Storage, servic
     const selectedId = await storage.getConfigValue<number>("selectedAccountId");
 
     // Display accounts
-    if (args.format === "json") {
+    if (options.format === "json") {
         console.log(JSON.stringify(accounts, null, 2));
         return;
     }
@@ -43,18 +66,16 @@ export async function accountsCommand(args: TimelyArgs, storage: Storage, servic
     }
 
     // Interactive selection
-    if (args.select || !selectedId) {
+    if (options.select || !selectedId) {
         const choices = accounts.map((a) => ({
-            name: a.id.toString(),
-            message: `${a.name} (${a.plan_name})`,
+            value: a.id.toString(),
+            name: `${a.name} (${a.plan_name})`,
         }));
 
-        const { accountId } = (await prompter.prompt({
-            type: "select",
-            name: "accountId",
+        const accountId = await select({
             message: "Select default account:",
             choices,
-        })) as { accountId: string };
+        });
 
         await storage.setConfigValue("selectedAccountId", parseInt(accountId, 10));
         logger.info(chalk.green(`Default account set to ID: ${accountId}`));
