@@ -94,12 +94,13 @@ async function ensurePowerSync() {
     console.log('[PowerSync] Importing PowerSync modules...');
 
     // Dynamic import of PowerSync (browser-only)
-    const { PowerSyncDatabase, Schema, Table, column } = await import("@powersync/web");
-    console.log('[PowerSync] ✓ PowerSync imported');
+    const PowerSyncModule = await import("@powersync/web");
+    const { PowerSyncDatabase, Schema, Table, column } = PowerSyncModule;
+    console.log('[PowerSync] ✓ PowerSync imported', Object.keys(PowerSyncModule));
 
-    // Import WASM SQLite
-    await import("@journeyapps/wa-sqlite");
-    console.log('[PowerSync] ✓ WASM SQLite imported');
+    // Import WASM SQLite - check if it exports anything we need
+    const sqliteModule = await import("@journeyapps/wa-sqlite");
+    console.log('[PowerSync] ✓ WASM SQLite imported', Object.keys(sqliteModule));
 
     // Import connector
     const { createConnector } = await import("./powersync-connector");
@@ -149,15 +150,23 @@ async function ensurePowerSync() {
 
     // Create database instance
     console.log('[PowerSync] Creating PowerSyncDatabase instance...');
-    db = new PowerSyncDatabase({
-        database: {
-            dbFilename: "dashboard.sqlite",
-            dbLocation: "default",
-        },
-        schema: APP_SCHEMA,
+
+    // Import WASQLite adapter
+    const { WASQLiteDBAdapter } = await import("@powersync/web");
+    console.log('[PowerSync] Creating WASQLite adapter...');
+
+    const adapter = new WASQLiteDBAdapter({
+        dbFilename: "dashboard.sqlite",
         flags: {
+            enableMultiTabs: false, // Disable for now to simplify
             useWebWorker: false,
         },
+    });
+    console.log('[PowerSync] ✓ Adapter created');
+
+    db = new PowerSyncDatabase({
+        database: adapter,
+        schema: APP_SCHEMA,
     });
     console.log('[PowerSync] ✓ Database instance created');
 
