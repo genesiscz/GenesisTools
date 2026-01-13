@@ -1,16 +1,15 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
-import { BarChart3, Clock, Loader2 } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Loader2, Activity, Zap } from 'lucide-react'
 import { useAuth } from '@workos/authkit-tanstack-react-start/client'
 import { DashboardLayout } from '@/components/dashboard'
 import {
   FeatureCard,
-  FeatureCardHeader,
-  FeatureCardContent,
 } from '@/components/ui/feature-card'
-import { useTaskStore } from '@/lib/assistant/hooks'
+import { useTaskStore, useEnergyData, useDistractions } from '@/lib/assistant/hooks'
 import { useBadgeProgress } from '@/lib/assistant/hooks/useBadgeProgress'
-import type { Badge } from '@/lib/assistant/types'
+import type { Badge, DistractionSource, Task } from '@/lib/assistant/types'
+import type { EnergyHeatmapData, DistractionStats as DistractionStatsType } from '@/lib/assistant/lib/storage/types'
 import {
   BadgeShowcase,
   BadgeProgress,
@@ -18,6 +17,20 @@ import {
   BadgeUnlockAnimation,
   useBadgeUnlock,
 } from './-components/badges'
+import {
+  EnergyHeatmap,
+  EmptyHeatmap,
+  EnergyInsights,
+  FocusRecommendation,
+  LogEnergyButton,
+  WeeklyReview,
+} from './-components/analytics'
+import {
+  QuickLogButton,
+  DistractionStats,
+  DistractionPatterns,
+  DistractionInsights,
+} from './-components/distractions'
 
 export const Route = createFileRoute('/assistant/analytics')({
   component: AnalyticsPage,
@@ -27,8 +40,71 @@ function AnalyticsPage() {
   const { user, loading: authLoading } = useAuth()
   const userId = user?.id ?? null
 
-  const { badges, loading: tasksLoading, initialized } = useTaskStore(userId)
+  const { tasks, badges, loading: tasksLoading, initialized } = useTaskStore(userId)
   const badgeProgressHook = useBadgeProgress(userId)
+
+  // Energy data hook
+  const energyData = useEnergyData(userId)
+  const [heatmapData, setHeatmapData] = useState<EnergyHeatmapData | null>(null)
+  const [heatmapLoading, setHeatmapLoading] = useState(false)
+
+  // Distraction data hook
+  const distractionData = useDistractions(userId)
+  const [distractionStats, setDistractionStats] = useState<DistractionStatsType | null>(null)
+  const [distractionTrend, setDistractionTrend] = useState<'improving' | 'worsening' | 'stable'>('stable')
+  const [statsLoading, setStatsLoading] = useState(false)
+
+  // Get current active task (for distraction logging)
+  const currentTask: Task | null = tasks.find((t) => t.status === 'in-progress') ?? null
+
+  // Load heatmap data
+  useEffect(() => {
+    async function loadHeatmap() {
+      if (!userId) return
+
+      setHeatmapLoading(true)
+      try {
+        const endDate = new Date()
+        const startDate = new Date()
+        startDate.setDate(startDate.getDate() - 30) // Last 30 days
+
+        const data = await energyData.getHeatmapData(startDate, endDate)
+        setHeatmapData(data)
+      } finally {
+        setHeatmapLoading(false)
+      }
+    }
+
+    if (userId && !energyData.loading) {
+      loadHeatmap()
+    }
+  }, [userId, energyData.loading])
+
+  // Load distraction stats
+  useEffect(() => {
+    async function loadDistractionStats() {
+      if (!userId) return
+
+      setStatsLoading(true)
+      try {
+        const endDate = new Date()
+        const startDate = new Date()
+        startDate.setDate(startDate.getDate() - 7) // Last 7 days
+
+        const stats = await distractionData.getStats(startDate, endDate)
+        setDistractionStats(stats)
+
+        const trend = await distractionData.getDistractionTrend()
+        setDistractionTrend(trend)
+      } finally {
+        setStatsLoading(false)
+      }
+    }
+
+    if (userId && !distractionData.loading) {
+      loadDistractionStats()
+    }
+  }, [userId, distractionData.loading, distractionData.distractions.length])
 
   // Badge unlock animation state
   const badgeUnlock = useBadgeUnlock()
@@ -39,6 +115,37 @@ function AnalyticsPage() {
   function handleBadgeClick(badge: Badge) {
     setSelectedBadge(badge)
     badgeUnlock.showUnlock(badge)
+  }
+
+  // Handle logging energy
+  async function handleLogEnergy(input: Parameters<typeof energyData.logSnapshot>[0]) {
+    await energyData.logSnapshot(input)
+    // Reload heatmap data after logging
+    const endDate = new Date()
+    const startDate = new Date()
+    startDate.setDate(startDate.getDate() - 30)
+    const data = await energyData.getHeatmapData(startDate, endDate)
+    setHeatmapData(data)
+  }
+
+  // Handle logging distraction
+  async function handleLogDistraction(
+    source: DistractionSource,
+    description?: string,
+    taskInterrupted?: string
+  ) {
+    await distractionData.logDistraction({
+      source,
+      description,
+      taskInterrupted,
+      resumedTask: false,
+    })
+    // Reload stats after logging
+    const endDate = new Date()
+    const startDate = new Date()
+    startDate.setDate(startDate.getDate() - 7)
+    const stats = await distractionData.getStats(startDate, endDate)
+    setDistractionStats(stats)
   }
 
   // Loading state
@@ -58,12 +165,109 @@ function AnalyticsPage() {
   // Get next achievable badge
   const nextBadge = badgeProgressHook.getNextAchievableBadge()
 
+  // Get energy analytics
+  const trend = energyData.getFocusQualityTrend()
+  const averageFocusQuality = energyData.getAverageFocusQuality()
+  const totalContextSwitches = energyData.getTotalContextSwitches()
+
   return (
     <DashboardLayout
       title="Analytics"
       description="Productivity insights and patterns"
     >
       <div className="space-y-8 max-w-6xl mx-auto">
+        {/* Weekly Review Dashboard - Main Section */}
+        <section>
+          <WeeklyReview userId={userId} />
+        </section>
+
+        {/* Focus Recommendation Banner */}
+        <FocusRecommendation
+          heatmapData={heatmapData}
+          tasks={tasks}
+        />
+
+        {/* Energy Heatmap Section */}
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
+                <Activity className="h-5 w-5 text-cyan-400" />
+              </div>
+              <div>
+                <h2 className="text-xl font-semibold text-slate-100">Energy Heatmap</h2>
+                <p className="text-sm text-slate-500">Your productivity patterns over the last 30 days</p>
+              </div>
+            </div>
+            <LogEnergyButton
+              onLogEnergy={handleLogEnergy}
+              loading={energyData.loading}
+            />
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+            {/* Heatmap Grid */}
+            <FeatureCard color="cyan" className="p-6">
+              {energyData.snapshots.length > 0 || heatmapLoading ? (
+                <EnergyHeatmap
+                  data={heatmapData}
+                  loading={heatmapLoading}
+                />
+              ) : (
+                <EmptyHeatmap />
+              )}
+            </FeatureCard>
+
+            {/* Insights Panel */}
+            <FeatureCard color="purple" className="p-6">
+              <EnergyInsights
+                data={heatmapData}
+                snapshots={energyData.snapshots}
+                trend={trend}
+                averageFocusQuality={averageFocusQuality}
+                totalContextSwitches={totalContextSwitches}
+              />
+            </FeatureCard>
+          </div>
+        </section>
+
+        {/* Distraction Tracker Section */}
+        <section className="space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
+              <Zap className="h-5 w-5 text-cyan-400" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold text-slate-100">Distraction Tracker</h2>
+              <p className="text-sm text-slate-500">
+                Understand and reduce interruptions (Last 7 days)
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            {/* Distribution chart */}
+            <DistractionStats
+              stats={distractionStats}
+              distractions={distractionData.distractions}
+              trend={distractionTrend}
+              loading={statsLoading}
+            />
+
+            {/* Pattern analysis */}
+            <DistractionPatterns
+              distractions={distractionData.distractions}
+              loading={distractionData.loading}
+            />
+          </div>
+
+          {/* Insights and recommendations */}
+          <DistractionInsights
+            stats={distractionStats}
+            distractions={distractionData.distractions}
+          />
+        </section>
+
         {/* Badges Section */}
         <section className="space-y-6">
           {/* Next badge preview + earned badges row */}
@@ -95,53 +299,14 @@ function AnalyticsPage() {
             />
           </FeatureCard>
         </section>
-
-        {/* Coming Soon Section */}
-        <section>
-          <FeatureCard color="purple" className="max-w-md mx-auto">
-            <FeatureCardHeader className="text-center">
-              <div className="w-20 h-20 mx-auto rounded-full bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mb-4">
-                <BarChart3 className="h-10 w-10 text-purple-400" />
-              </div>
-
-              <h2 className="text-2xl font-bold mb-2">More Analytics Coming</h2>
-              <p className="text-muted-foreground">
-                Additional productivity insights are on the way.
-              </p>
-            </FeatureCardHeader>
-
-            <FeatureCardContent>
-              <div className="flex items-center justify-center gap-2 py-4 px-6 rounded-lg bg-purple-500/10 border border-purple-500/20">
-                <Clock className="h-5 w-5 text-purple-400" />
-                <span className="font-semibold text-purple-300">Coming Soon</span>
-              </div>
-
-              <div className="mt-6 space-y-3 text-sm text-muted-foreground">
-                <p className="flex items-start gap-2">
-                  <span className="text-purple-400">-</span>
-                  Weekly review dashboard
-                </p>
-                <p className="flex items-start gap-2">
-                  <span className="text-purple-400">-</span>
-                  Task completion trends
-                </p>
-                <p className="flex items-start gap-2">
-                  <span className="text-purple-400">-</span>
-                  Focus time heatmap
-                </p>
-                <p className="flex items-start gap-2">
-                  <span className="text-purple-400">-</span>
-                  Distraction pattern detection
-                </p>
-                <p className="flex items-start gap-2">
-                  <span className="text-purple-400">-</span>
-                  AI-generated insights
-                </p>
-              </div>
-            </FeatureCardContent>
-          </FeatureCard>
-        </section>
       </div>
+
+      {/* Floating quick log button */}
+      <QuickLogButton
+        onLog={handleLogDistraction}
+        currentTask={currentTask}
+        loading={distractionData.loading}
+      />
 
       {/* Badge unlock animation modal */}
       <BadgeUnlockAnimation
