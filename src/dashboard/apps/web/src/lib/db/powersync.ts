@@ -91,16 +91,22 @@ async function ensurePowerSync() {
         return { db, APP_SCHEMA };
     }
 
+    console.log('[PowerSync] Importing PowerSync modules...');
+
     // Dynamic import of PowerSync (browser-only)
     const { PowerSyncDatabase, Schema, Table, column } = await import("@powersync/web");
+    console.log('[PowerSync] ✓ PowerSync imported');
 
     // Import WASM SQLite
     await import("@journeyapps/wa-sqlite");
+    console.log('[PowerSync] ✓ WASM SQLite imported');
 
     // Import connector
     const { createConnector } = await import("./powersync-connector");
+    console.log('[PowerSync] ✓ Connector imported');
 
     // Build schema from config
+    console.log('[PowerSync] Building schema...');
     APP_SCHEMA = new Schema({
         timers: new Table({
             name: column.text,
@@ -139,19 +145,25 @@ async function ensurePowerSync() {
             updated_at: column.text,
         }),
     });
+    console.log('[PowerSync] ✓ Schema created');
 
     // Create database instance
+    console.log('[PowerSync] Creating PowerSyncDatabase instance...');
     db = new PowerSyncDatabase({
         database: {
             dbFilename: "dashboard.sqlite",
+            dbLocation: "default",
         },
         schema: APP_SCHEMA,
         flags: {
             useWebWorker: false,
         },
     });
+    console.log('[PowerSync] ✓ Database instance created');
 
+    console.log('[PowerSync] Creating connector...');
     connector = createConnector();
+    console.log('[PowerSync] ✓ Connector created');
 
     return { db, APP_SCHEMA };
 }
@@ -201,17 +213,18 @@ export async function initializeDatabase(): Promise<void> {
         const { db: database } = await ensurePowerSync();
 
         console.log("[PowerSync] Starting db.init()...");
+        console.log("[PowerSync] This may take 5-30 seconds on first run...");
 
         // Add timeout to detect stuck initialization
         const initPromise = database.init();
         const timeoutPromise = new Promise((_, reject) => {
             setTimeout(() => {
-                reject(new Error('PowerSync init timeout - database may be corrupted. Run: indexedDB.deleteDatabase("dashboard.sqlite") then refresh.'));
-            }, 10000); // 10 second timeout
+                reject(new Error('PowerSync init timeout after 30 seconds. Check browser console for errors. Try: indexedDB.deleteDatabase("dashboard.sqlite") then refresh.'));
+            }, 30000); // 30 second timeout (first init can be slow)
         });
 
         await Promise.race([initPromise, timeoutPromise]);
-        console.log("[PowerSync] db.init() completed");
+        console.log("[PowerSync] ✓ db.init() completed");
 
         initialized = true;
         console.log("[PowerSync] Database initialized (local-only mode)");

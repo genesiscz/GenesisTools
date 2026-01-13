@@ -22,6 +22,22 @@ import {
 } from './useAssistantQueries'
 
 /**
+ * Helper to parse JSONB fields from server response
+ */
+function parseJsonbField<T>(value: unknown, defaultValue: T): T {
+  if (value === null || value === undefined) return defaultValue
+  if (Array.isArray(value)) return value as T
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T
+    } catch {
+      return defaultValue
+    }
+  }
+  return value as T
+}
+
+/**
  * Decision log store state for fallback mode
  */
 interface DecisionStoreState {
@@ -95,18 +111,16 @@ export function useDecisionLog(userId: string | null) {
       id: d.id,
       userId: d.userId,
       title: d.title,
-      description: d.description,
-      rationale: d.rationale ?? undefined,
-      impactArea: d.impactArea as Decision['impactArea'],
-      stakeholders: (d.stakeholders as string[]) ?? [],
-      alternatives: (d.alternatives as Decision['alternatives']) ?? [],
-      outcome: d.outcome ?? undefined,
+      reasoning: d.reasoning,
+      alternativesConsidered: parseJsonbField<string[]>(d.alternativesConsidered, []),
+      decidedAt: new Date(d.decidedAt),
+      decidedBy: d.decidedBy,
       status: d.status as Decision['status'],
       supersededBy: d.supersededBy ?? undefined,
       reversalReason: d.reversalReason ?? undefined,
-      relatedTaskIds: (d.relatedTaskIds as string[]) ?? [],
-      tags: (d.tags as string[]) ?? [],
-      decidedAt: new Date(d.decidedAt),
+      impactArea: d.impactArea as Decision['impactArea'],
+      relatedTaskIds: parseJsonbField<string[]>(d.relatedTaskIds, []),
+      tags: parseJsonbField<string[]>(d.tags, []),
       createdAt: new Date(d.createdAt),
       updatedAt: new Date(d.updatedAt),
     }))
@@ -124,6 +138,7 @@ export function useDecisionLog(userId: string | null) {
 
     const now = new Date()
     const decisionId = generateDecisionId()
+    const decidedAt = input.decidedAt ?? now
 
     if (useFallback) {
       try {
@@ -143,18 +158,16 @@ export function useDecisionLog(userId: string | null) {
         id: decisionId,
         userId,
         title: input.title,
-        description: input.description,
-        rationale: input.rationale ?? null,
-        impactArea: input.impactArea,
-        stakeholders: input.stakeholders ?? [],
-        alternatives: input.alternatives ?? [],
-        outcome: input.outcome ?? null,
+        reasoning: input.reasoning,
+        alternativesConsidered: input.alternativesConsidered ?? [],
+        decidedAt: decidedAt.toISOString(),
+        decidedBy: input.decidedBy ?? 'user',
         status: 'active',
         supersededBy: null,
         reversalReason: null,
+        impactArea: input.impactArea,
         relatedTaskIds: input.relatedTaskIds ?? [],
         tags: input.tags ?? [],
-        decidedAt: input.decidedAt.toISOString(),
         createdAt: now.toISOString(),
         updatedAt: now.toISOString(),
       })
@@ -165,16 +178,14 @@ export function useDecisionLog(userId: string | null) {
         id: result.id,
         userId,
         title: input.title,
-        description: input.description,
-        rationale: input.rationale,
-        impactArea: input.impactArea,
-        stakeholders: input.stakeholders ?? [],
-        alternatives: input.alternatives ?? [],
-        outcome: input.outcome,
+        reasoning: input.reasoning,
+        alternativesConsidered: input.alternativesConsidered ?? [],
+        decidedAt: decidedAt,
+        decidedBy: input.decidedBy ?? 'user',
         status: 'active',
+        impactArea: input.impactArea,
         relatedTaskIds: input.relatedTaskIds ?? [],
         tags: input.tags ?? [],
-        decidedAt: input.decidedAt,
         createdAt: now,
         updatedAt: now,
       }
@@ -199,21 +210,20 @@ export function useDecisionLog(userId: string | null) {
   async function updateDecision(id: string, updates: DecisionUpdate): Promise<Decision | null> {
     if (!userId) return null
 
-    // Convert updates for server
+    // Convert updates for server - use correct schema field names
     const serverUpdates: Record<string, unknown> = {}
     if (updates.title !== undefined) serverUpdates.title = updates.title
-    if (updates.description !== undefined) serverUpdates.description = updates.description
-    if (updates.rationale !== undefined) serverUpdates.rationale = updates.rationale
-    if (updates.impactArea !== undefined) serverUpdates.impactArea = updates.impactArea
-    if (updates.stakeholders !== undefined) serverUpdates.stakeholders = updates.stakeholders
-    if (updates.alternatives !== undefined) serverUpdates.alternatives = updates.alternatives
-    if (updates.outcome !== undefined) serverUpdates.outcome = updates.outcome
+    if (updates.reasoning !== undefined) serverUpdates.reasoning = updates.reasoning
+    if (updates.alternativesConsidered !== undefined)
+      serverUpdates.alternativesConsidered = updates.alternativesConsidered
+    if (updates.decidedAt !== undefined) serverUpdates.decidedAt = updates.decidedAt.toISOString()
+    if (updates.decidedBy !== undefined) serverUpdates.decidedBy = updates.decidedBy
     if (updates.status !== undefined) serverUpdates.status = updates.status
     if (updates.supersededBy !== undefined) serverUpdates.supersededBy = updates.supersededBy
     if (updates.reversalReason !== undefined) serverUpdates.reversalReason = updates.reversalReason
+    if (updates.impactArea !== undefined) serverUpdates.impactArea = updates.impactArea
     if (updates.relatedTaskIds !== undefined) serverUpdates.relatedTaskIds = updates.relatedTaskIds
     if (updates.tags !== undefined) serverUpdates.tags = updates.tags
-    if (updates.decidedAt !== undefined) serverUpdates.decidedAt = updates.decidedAt.toISOString()
 
     if (useFallback) {
       try {
