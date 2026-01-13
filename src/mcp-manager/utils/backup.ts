@@ -3,7 +3,8 @@ import { copyFile } from "fs/promises";
 import path from "path";
 import chalk from "chalk";
 import logger, { consoleLog } from "@app/logger";
-import Enquirer from "enquirer";
+import { confirm } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import { DiffUtil } from "@app/utils/diff";
 import { getGlobalOptions } from "./config.utils.js";
 
@@ -12,13 +13,11 @@ import { getGlobalOptions } from "./config.utils.js";
  */
 export class BackupManager {
     private backupDir: string;
-    private prompter: Enquirer;
 
     constructor() {
         const homeDir = process.env.HOME || process.env.USERPROFILE || "~";
         this.backupDir = path.join(homeDir, ".mcp-manager", "backups");
         this.ensureBackupDir();
-        this.prompter = new Enquirer();
     }
 
     private ensureBackupDir(): void {
@@ -109,16 +108,14 @@ export class BackupManager {
         }
 
         try {
-            const { confirmed } = (await this.prompter.prompt({
-                type: "confirm",
-                name: "confirmed",
+            const confirmed = await confirm({
                 message: "Are these changes okay?",
-                initial: true,
-            })) as { confirmed: boolean };
+                default: true,
+            });
 
             return confirmed;
-        } catch (error: any) {
-            if (error.message === "canceled") {
+        } catch (error) {
+            if (error instanceof ExitPromptError) {
                 logger.info("\nOperation cancelled by user.");
                 return false;
             }

@@ -1,13 +1,7 @@
 import chalk from "chalk";
-import Enquirer from "enquirer";
+import { search, checkbox, confirm, input, select } from "@inquirer/prompts";
 import { git } from "./git";
 import type { PlanStep } from "./types";
-
-const enquirer = new Enquirer();
-
-// Helper to bypass Enquirer's incomplete type definitions
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const prompt = <T>(options: Record<string, unknown>): Promise<T> => enquirer.prompt(options as any) as Promise<T>;
 
 /**
  * Prompt helpers for git-rebase-multiple
@@ -20,20 +14,20 @@ export const prompts = {
 		const branches = await git.getBranches();
 		const currentBranch = await git.getCurrentBranch();
 
-		const choices = branches.map((b) => ({
-			name: b.name,
-			message: b.name + (b.isCurrent ? chalk.dim(" (current)") : ""),
+		const allChoices = branches.map((b) => ({
+			value: b.name,
+			name: b.name + (b.isCurrent ? chalk.dim(" (current)") : ""),
 		}));
 
-		const response = await prompt<{ branch: string }>({
-			type: "autocomplete",
-			name: "branch",
+		return search({
 			message: "Which branch do you want to rebase?",
-			choices,
-			initial: currentBranch,
+			source: async (term) => {
+				if (!term) return allChoices;
+				const lower = term.toLowerCase();
+				return allChoices.filter((c) => c.value.toLowerCase().includes(lower));
+			},
+			default: currentBranch,
 		});
-
-		return response.branch;
 	},
 
 	/**
@@ -42,21 +36,21 @@ export const prompts = {
 	async selectTargetBranch(excludeBranch: string): Promise<string> {
 		const branches = await git.getBranches();
 
-		const choices = branches
+		const allChoices = branches
 			.filter((b) => b.name !== excludeBranch)
 			.map((b) => ({
+				value: b.name,
 				name: b.name,
-				message: b.name,
 			}));
 
-		const response = await prompt<{ branch: string }>({
-			type: "autocomplete",
-			name: "branch",
+		return search({
 			message: "Onto which branch?",
-			choices,
+			source: async (term) => {
+				if (!term) return allChoices;
+				const lower = term.toLowerCase();
+				return allChoices.filter((c) => c.value.toLowerCase().includes(lower));
+			},
 		});
-
-		return response.branch;
 	},
 
 	/**
@@ -71,23 +65,16 @@ export const prompts = {
 			return [];
 		}
 
-		const choices = potentialChildren.map((child) => ({
-			name: child.name,
-			message: `${child.name} ${chalk.dim(`(${child.commitsAhead} commits ahead)`)}`,
-			value: child.name,
-		}));
-
 		console.log(chalk.dim(`\nFound ${potentialChildren.length} branches that may depend on ${parentBranch}:`));
 
-		const response = await prompt<{ children: string[] }>({
-			type: "multiselect",
-			name: "children",
+		return checkbox({
 			message: "Select child branches to rebase (space to toggle):",
-			choices,
-			initial: potentialChildren.map((c) => c.name),
+			choices: potentialChildren.map((child) => ({
+				value: child.name,
+				name: `${child.name} ${chalk.dim(`(${child.commitsAhead} commits ahead)`)}`,
+				checked: true, // Pre-select all
+			})),
 		});
-
-		return response.children;
 	},
 
 	/**
@@ -105,23 +92,17 @@ export const prompts = {
 
 		console.log(chalk.yellow("\n⚠️  You can abort at ANY step with: tools git-rebase-multiple --abort"));
 
-		const response = await prompt<{ continue: boolean }>({
-			type: "confirm",
-			name: "continue",
+		return confirm({
 			message: "Continue?",
-			initial: true,
+			default: true,
 		});
-
-		return response.continue;
 	},
 
 	/**
 	 * Wait for user to press Enter
 	 */
 	async pressEnterToContinue(message = "Press Enter to continue..."): Promise<void> {
-		await prompt({
-			type: "input",
-			name: "continue",
+		await input({
 			message: chalk.dim(message),
 		});
 	},
@@ -130,59 +111,43 @@ export const prompts = {
 	 * Confirm abort operation
 	 */
 	async confirmAbort(): Promise<boolean> {
-		const response = await prompt<{ abort: boolean }>({
-			type: "confirm",
-			name: "abort",
+		return confirm({
 			message: "This will restore all branches to their original state. Continue?",
-			initial: true,
+			default: true,
 		});
-
-		return response.abort;
 	},
 
 	/**
 	 * Select cleanup options
 	 */
 	async selectCleanupOption(): Promise<"keep" | "delete-all" | "delete-tags-only"> {
-		const response = await prompt<{ option: "keep" | "delete-all" | "delete-tags-only" }>({
-			type: "select",
-			name: "option",
+		return select({
 			message: "What would you like to do with backup refs?",
 			choices: [
-				{ name: "keep", message: "Keep backups (recommended)" },
-				{ name: "delete-all", message: "Delete all backups and fork tags" },
-				{ name: "delete-tags-only", message: "Delete only fork tags, keep branch backups" },
+				{ value: "keep" as const, name: "Keep backups (recommended)" },
+				{ value: "delete-all" as const, name: "Delete all backups and fork tags" },
+				{ value: "delete-tags-only" as const, name: "Delete only fork tags, keep branch backups" },
 			],
 		});
-
-		return response.option;
 	},
 
 	/**
 	 * Select a branch to restore
 	 */
 	async selectBranchToRestore(branches: string[]): Promise<string> {
-		const response = await prompt<{ branch: string }>({
-			type: "select",
-			name: "branch",
+		return select({
 			message: "Which branch do you want to restore?",
-			choices: branches.map((b) => ({ name: b, message: b })),
+			choices: branches.map((b) => ({ value: b, name: b })),
 		});
-
-		return response.branch;
 	},
 
 	/**
 	 * Confirm continue after conflict resolution
 	 */
 	async confirmContinue(): Promise<boolean> {
-		const response = await prompt<{ continue: boolean }>({
-			type: "confirm",
-			name: "continue",
+		return confirm({
 			message: "Have you resolved all conflicts and staged the changes?",
-			initial: true,
+			default: true,
 		});
-
-		return response.continue;
 	},
 };
