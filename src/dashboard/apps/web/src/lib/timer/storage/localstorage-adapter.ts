@@ -370,6 +370,7 @@ export class LocalStorageAdapter implements StorageAdapter {
           ...t,
           isRunning: Boolean(t.isRunning),
           showTotal: Boolean(t.showTotal),
+          pomodoroSessionCount: t.pomodoroSessionCount ?? 0,
           laps: Array.isArray(t.laps) ? t.laps.map(l => ({
             ...l,
             timestamp: new Date(l.timestamp)
