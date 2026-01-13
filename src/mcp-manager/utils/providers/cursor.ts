@@ -26,6 +26,10 @@ export class CursorProvider extends MCPProvider {
         return existsSync(this.configPath);
     }
 
+    supportsDisabledState(): boolean {
+        return false; // Cursor: presence in config = enabled
+    }
+
     async readConfig(): Promise<CursorGenericConfig> {
         if (!(await this.configExists())) {
             return { mcpServers: {} };

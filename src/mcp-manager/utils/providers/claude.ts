@@ -22,6 +22,10 @@ export class ClaudeProvider extends MCPProvider {
         return existsSync(this.configPath);
     }
 
+    supportsDisabledState(): boolean {
+        return true; // Claude has disabledMcpServers list
+    }
+
     async readConfig(): Promise<ClaudeGenericConfig> {
         if (!(await this.configExists())) {
             return { mcpServers: {} };

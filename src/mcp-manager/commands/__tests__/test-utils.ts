@@ -31,6 +31,10 @@ export class MockMCPProvider extends MCPProvider {
         return this.configExistsResult;
     }
 
+    supportsDisabledState(): boolean {
+        return true; // Default mock behavior - can be overridden for testing
+    }
+
     async readConfig(): Promise<unknown> {
         if (this.errors.has("readConfig")) {
             throw this.errors.get("readConfig")!;
