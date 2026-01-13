@@ -157,6 +157,7 @@ async function processTimerOperation(op: CrudOperation) {
 
     case 'PATCH':
       // Update specific fields (only update what's provided)
+      console.log('[Sync] PATCH timer:', op.id, 'fields:', Object.keys(data))
       const updates: Partial<typeof timers.$inferInsert> = {
         updatedAt: (data.updated_at as string) ?? new Date().toISOString()
       }
@@ -247,7 +248,17 @@ export const getTimersFromServer = createServerFn({
         .orderBy(desc(timers.createdAt))
 
       console.log('[Server] Returning', results.length, 'timers')
-      return results
+
+      // Parse JSONB fields (neon-http doesn't auto-parse them)
+      const parsedResults = results.map(timer => ({
+        ...timer,
+        laps: typeof timer.laps === 'string' ? JSON.parse(timer.laps || '[]') : timer.laps,
+        pomodoroSettings: timer.pomodoroSettings && typeof timer.pomodoroSettings === 'string'
+          ? JSON.parse(timer.pomodoroSettings)
+          : timer.pomodoroSettings
+      }))
+
+      return parsedResults
     } catch (error) {
       console.error('[Server] getTimersFromServer error:', error)
       return []
@@ -274,7 +285,16 @@ export const getActivityLogsFromServer = createServerFn({
         .limit(1000)
 
       console.log('[Server] Returning', results.length, 'activity logs')
-      return results
+
+      // Parse JSONB fields (neon-http doesn't auto-parse them)
+      const parsedResults = results.map(log => ({
+        ...log,
+        metadata: log.metadata && typeof log.metadata === 'string'
+          ? JSON.parse(log.metadata)
+          : log.metadata
+      }))
+
+      return parsedResults
     } catch (error) {
       console.error('[Server] getActivityLogsFromServer error:', error)
       return []
