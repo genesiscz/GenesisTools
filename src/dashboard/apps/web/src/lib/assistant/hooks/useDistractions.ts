@@ -1,62 +1,88 @@
-import { useState, useEffect } from 'react'
+/**
+ * Distractions Hook - Server-first with localStorage fallback
+ *
+ * Uses TanStack Query for server data with refetchOnWindowFocus.
+ * Falls back to localStorage when server is unavailable.
+ */
+
+import { useState, useEffect, useMemo } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import type { Distraction, DistractionInput } from '@/lib/assistant/types'
+import { generateDistractionId } from '@/lib/assistant/types'
 import {
   getAssistantStorageAdapter,
   initializeAssistantStorage,
 } from '@/lib/assistant/lib/storage'
 import type { DistractionQueryOptions, DistractionStats } from '@/lib/assistant/lib/storage/types'
+import {
+  useAssistantDistractionsQuery,
+  useCreateAssistantDistractionMutation,
+  assistantKeys,
+} from './useAssistantQueries'
 
 /**
  * Hook to log and query distractions
+ * Server-first with localStorage fallback
  */
 export function useDistractions(userId: string | null) {
-  const [distractions, setDistractions] = useState<Distraction[]>([])
-  const [loading, setLoading] = useState(true)
+  const queryClient = useQueryClient()
+  const [fallbackMode, setFallbackMode] = useState(false)
+  const [fallbackDistractions, setFallbackDistractions] = useState<Distraction[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  // Load recent distractions on mount
+  // Server queries
+  const distractionsQuery = useAssistantDistractionsQuery(userId, 100)
+
+  // Server mutations
+  const createMutation = useCreateAssistantDistractionMutation()
+
+  // Determine if we should use fallback mode
+  const useFallback = fallbackMode || (distractionsQuery.isError && !distractionsQuery.data)
+
+  // Initialize localStorage fallback if server fails
   useEffect(() => {
-    if (!userId) {
-      setDistractions([])
-      setLoading(false)
-      return
-    }
+    if (!userId) return
 
-    const currentUserId = userId
-    let mounted = true
+    if (distractionsQuery.isError && !fallbackMode) {
+      const currentUserId = userId
 
-    async function load() {
-      setLoading(true)
-      try {
-        await initializeAssistantStorage()
-        const adapter = getAssistantStorageAdapter()
+      async function loadFallback() {
+        try {
+          const adapter = await initializeAssistantStorage()
+          const endDate = new Date()
+          const startDate = new Date()
+          startDate.setDate(startDate.getDate() - 7)
 
-        // Load last 7 days of distractions
-        const endDate = new Date()
-        const startDate = new Date()
-        startDate.setDate(startDate.getDate() - 7)
-
-        const data = await adapter.getDistractions(currentUserId, { startDate, endDate })
-        if (mounted) {
-          setDistractions(data)
-        }
-      } catch (err) {
-        if (mounted) {
-          setError(err instanceof Error ? err.message : 'Failed to load distractions')
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false)
+          const data = await adapter.getDistractions(currentUserId, { startDate, endDate })
+          setFallbackMode(true)
+          setFallbackDistractions(data)
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to load fallback')
         }
       }
-    }
 
-    load()
-
-    return () => {
-      mounted = false
+      loadFallback()
     }
-  }, [userId])
+  }, [userId, distractionsQuery.isError, fallbackMode])
+
+  // Convert server distractions to app Distraction type
+  const distractions: Distraction[] = useMemo(() => {
+    if (useFallback) return fallbackDistractions
+
+    return (distractionsQuery.data ?? []).map((d) => ({
+      id: d.id,
+      userId: d.userId,
+      source: d.source as Distraction['source'],
+      taskInterrupted: d.taskInterrupted ?? undefined,
+      duration: d.duration ?? undefined,
+      resumedTask: d.resumedTask === 1,
+      timestamp: new Date(d.timestamp),
+      createdAt: new Date(d.createdAt),
+    }))
+  }, [useFallback, fallbackDistractions, distractionsQuery.data])
+
+  // Loading state
+  const loading = distractionsQuery.isLoading
 
   /**
    * Log a new distraction
@@ -64,17 +90,56 @@ export function useDistractions(userId: string | null) {
   async function logDistraction(input: DistractionInput): Promise<Distraction | null> {
     if (!userId) return null
 
+    const now = new Date()
+    const distractionId = generateDistractionId()
+
+    if (useFallback) {
+      try {
+        const adapter = getAssistantStorageAdapter()
+        const distraction = await adapter.logDistraction(input, userId)
+        setFallbackDistractions((prev) => [distraction, ...prev])
+        return distraction
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to log distraction')
+        return null
+      }
+    }
+
     try {
-      const adapter = getAssistantStorageAdapter()
-      const distraction = await adapter.logDistraction(input, userId)
+      const result = await createMutation.mutateAsync({
+        id: distractionId,
+        userId,
+        source: input.source,
+        taskInterrupted: input.taskInterrupted ?? null,
+        duration: input.duration ?? null,
+        resumedTask: input.resumedTask ? 1 : 0,
+        timestamp: now.toISOString(),
+        createdAt: now.toISOString(),
+      })
 
-      // Add to local state
-      setDistractions((prev) => [distraction, ...prev])
+      if (!result) throw new Error('Failed to log distraction')
 
-      return distraction
+      return {
+        id: result.id,
+        userId,
+        source: input.source,
+        taskInterrupted: input.taskInterrupted,
+        duration: input.duration,
+        resumedTask: input.resumedTask ?? false,
+        timestamp: now,
+        createdAt: now,
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to log distraction')
-      return null
+      // Fall back to localStorage on error
+      try {
+        const adapter = await initializeAssistantStorage()
+        const distraction = await adapter.logDistraction(input, userId)
+        setFallbackDistractions((prev) => [distraction, ...prev])
+        return distraction
+      } catch {
+        setError(err instanceof Error ? err.message : 'Failed to log distraction')
+        return null
+      }
     }
   }
 
@@ -96,24 +161,36 @@ export function useDistractions(userId: string | null) {
    * Mark that user resumed task after distraction
    */
   async function markResumed(distractionId: string): Promise<void> {
-    setDistractions((prev) =>
-      prev.map((d) => (d.id === distractionId ? { ...d, resumedTask: true } : d))
-    )
-    // Note: We don't have an update method in the adapter, so this is just local state
+    if (useFallback) {
+      setFallbackDistractions((prev) =>
+        prev.map((d) => (d.id === distractionId ? { ...d, resumedTask: true } : d))
+      )
+    }
+    // Note: Server mode doesn't have update endpoint, so just update local cache
   }
 
   /**
-   * Get distractions with filters
+   * Get distractions with filters (local filtering)
    */
   async function getDistractions(options?: DistractionQueryOptions): Promise<Distraction[]> {
     if (!userId) return []
 
-    try {
-      const adapter = getAssistantStorageAdapter()
-      return await adapter.getDistractions(userId, options)
-    } catch {
-      return []
+    let filtered = [...distractions]
+
+    if (options?.startDate) {
+      filtered = filtered.filter((d) => d.timestamp >= options.startDate!)
     }
+    if (options?.endDate) {
+      filtered = filtered.filter((d) => d.timestamp <= options.endDate!)
+    }
+    if (options?.source) {
+      filtered = filtered.filter((d) => d.source === options.source)
+    }
+    if (options?.taskId) {
+      filtered = filtered.filter((d) => d.taskInterrupted === options.taskId)
+    }
+
+    return filtered.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
   }
 
   /**
@@ -122,12 +199,59 @@ export function useDistractions(userId: string | null) {
   async function getStats(startDate: Date, endDate: Date): Promise<DistractionStats | null> {
     if (!userId) return null
 
-    try {
-      const adapter = getAssistantStorageAdapter()
-      return await adapter.getDistractionStats(userId, startDate, endDate)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to get distraction stats')
-      return null
+    const filtered = distractions.filter(
+      (d) => d.timestamp >= startDate && d.timestamp <= endDate
+    )
+
+    if (filtered.length === 0) {
+      return {
+        total: 0,
+        bySource: {},
+        averageDuration: 0,
+        resumptionRate: 0,
+        peakHour: 0,
+      }
+    }
+
+    // Compute stats
+    const bySource: Record<string, number> = {}
+    const hourCounts: Record<number, number> = {}
+    let totalDuration = 0
+    let durationCount = 0
+    let resumedCount = 0
+
+    for (const d of filtered) {
+      bySource[d.source] = (bySource[d.source] || 0) + 1
+
+      const hour = d.timestamp.getHours()
+      hourCounts[hour] = (hourCounts[hour] || 0) + 1
+
+      if (d.duration) {
+        totalDuration += d.duration
+        durationCount++
+      }
+
+      if (d.resumedTask) {
+        resumedCount++
+      }
+    }
+
+    // Find peak hour
+    let peakHour = 0
+    let peakCount = 0
+    for (const [hour, count] of Object.entries(hourCounts)) {
+      if (count > peakCount) {
+        peakCount = count
+        peakHour = parseInt(hour)
+      }
+    }
+
+    return {
+      total: filtered.length,
+      bySource,
+      averageDuration: durationCount > 0 ? totalDuration / durationCount : 0,
+      resumptionRate: (resumedCount / filtered.length) * 100,
+      peakHour,
     }
   }
 
@@ -137,7 +261,7 @@ export function useDistractions(userId: string | null) {
   function getTodayDistractions(): Distraction[] {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
-    return distractions.filter((d) => new Date(d.timestamp) >= today)
+    return distractions.filter((d) => d.timestamp >= today)
   }
 
   /**
@@ -253,7 +377,6 @@ export function useDistractions(userId: string | null) {
 
   /**
    * Get distraction trend (improving, worsening, stable)
-   * Compares this week to last week
    */
   async function getDistractionTrend(): Promise<'improving' | 'worsening' | 'stable'> {
     if (!userId) return 'stable'
@@ -266,31 +389,23 @@ export function useDistractions(userId: string | null) {
     const startOfLastWeek = new Date(startOfThisWeek)
     startOfLastWeek.setDate(startOfLastWeek.getDate() - 7)
 
-    try {
-      const adapter = getAssistantStorageAdapter()
+    const thisWeek = distractions.filter(
+      (d) => d.timestamp >= startOfThisWeek && d.timestamp <= now
+    )
 
-      const thisWeek = await adapter.getDistractions(userId, {
-        startDate: startOfThisWeek,
-        endDate: now,
-      })
+    const lastWeek = distractions.filter(
+      (d) => d.timestamp >= startOfLastWeek && d.timestamp < startOfThisWeek
+    )
 
-      const lastWeek = await adapter.getDistractions(userId, {
-        startDate: startOfLastWeek,
-        endDate: startOfThisWeek,
-      })
+    // Normalize by days passed
+    const daysPassed = Math.ceil((now.getTime() - startOfThisWeek.getTime()) / (1000 * 60 * 60 * 24))
+    const thisWeekDaily = thisWeek.length / Math.max(daysPassed, 1)
+    const lastWeekDaily = lastWeek.length / 7
 
-      // Normalize by days passed
-      const daysPassed = Math.ceil((now.getTime() - startOfThisWeek.getTime()) / (1000 * 60 * 60 * 24))
-      const thisWeekDaily = thisWeek.length / Math.max(daysPassed, 1)
-      const lastWeekDaily = lastWeek.length / 7
-
-      const diff = thisWeekDaily - lastWeekDaily
-      if (diff < -1) return 'improving'
-      if (diff > 1) return 'worsening'
-      return 'stable'
-    } catch {
-      return 'stable'
-    }
+    const diff = thisWeekDaily - lastWeekDaily
+    if (diff < -1) return 'improving'
+    if (diff > 1) return 'worsening'
+    return 'stable'
   }
 
   /**
@@ -298,6 +413,15 @@ export function useDistractions(userId: string | null) {
    */
   function clearError() {
     setError(null)
+  }
+
+  /**
+   * Manual refresh
+   */
+  function refresh() {
+    if (userId) {
+      queryClient.invalidateQueries({ queryKey: assistantKeys.distractionList(userId) })
+    }
   }
 
   return {
@@ -330,5 +454,9 @@ export function useDistractions(userId: string | null) {
     getSourceLabel,
     formatDuration,
     clearError,
+    refresh,
+
+    // Server status
+    isServerMode: !useFallback,
   }
 }

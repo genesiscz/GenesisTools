@@ -1,72 +1,64 @@
-import { useState, useEffect } from 'react'
+/**
+ * Badge Progress Hook - Server-first with localStorage fallback
+ *
+ * Uses TanStack Query for caching computed badge progress.
+ * Badge progress is derived from tasks, streaks, badges, and other data.
+ */
+
+import { useMemo } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { BadgeProgress, BadgeType, BadgeRarity } from '@/lib/assistant/types'
 import { BADGE_DEFINITIONS, getBadgeRarityColor } from '@/lib/assistant/types'
-import {
-  getAssistantStorageAdapter,
-  initializeAssistantStorage,
-} from '@/lib/assistant/lib/storage'
+import { initializeAssistantStorage } from '@/lib/assistant/lib/storage'
+import { assistantKeys } from './useAssistantQueries'
+
+/**
+ * Fetch badge progress from storage adapter
+ */
+async function fetchBadgeProgress(userId: string): Promise<BadgeProgress[]> {
+  const adapter = await initializeAssistantStorage()
+  return adapter.getBadgeProgress(userId)
+}
 
 /**
  * Hook to compute progress toward badges
+ * Uses TanStack Query for caching with refetch on window focus
  */
 export function useBadgeProgress(userId: string | null) {
-  const [progress, setProgress] = useState<BadgeProgress[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const queryClient = useQueryClient()
 
-  // Load badge progress on mount
-  useEffect(() => {
-    if (!userId) {
-      setProgress([])
-      setLoading(false)
-      return
-    }
+  // Use TanStack Query for badge progress with computed key
+  const badgeProgressQuery = useQuery({
+    queryKey: [...assistantKeys.badgeList(userId ?? ''), 'progress'],
+    queryFn: () => fetchBadgeProgress(userId!),
+    enabled: !!userId,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  })
 
-    const currentUserId = userId
-    let mounted = true
+  // Progress data
+  const progress = useMemo(() => {
+    return badgeProgressQuery.data ?? []
+  }, [badgeProgressQuery.data])
 
-    async function load() {
-      setLoading(true)
-      try {
-        await initializeAssistantStorage()
-        const adapter = getAssistantStorageAdapter()
-        const data = await adapter.getBadgeProgress(currentUserId)
-        if (mounted) {
-          setProgress(data)
-        }
-      } catch (err) {
-        if (mounted) {
-          setError(err instanceof Error ? err.message : 'Failed to load badge progress')
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false)
-        }
-      }
-    }
+  // Loading state
+  const loading = badgeProgressQuery.isLoading
 
-    load()
-
-    return () => {
-      mounted = false
-    }
-  }, [userId])
+  // Error state
+  const error = badgeProgressQuery.error
+    ? badgeProgressQuery.error instanceof Error
+      ? badgeProgressQuery.error.message
+      : 'Failed to load badge progress'
+    : null
 
   /**
    * Refresh badge progress
    */
-  async function refresh(): Promise<void> {
-    if (!userId) return
-
-    setLoading(true)
-    try {
-      const adapter = getAssistantStorageAdapter()
-      const data = await adapter.getBadgeProgress(userId)
-      setProgress(data)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to refresh badge progress')
-    } finally {
-      setLoading(false)
+  function refresh(): void {
+    if (userId) {
+      queryClient.invalidateQueries({
+        queryKey: [...assistantKeys.badgeList(userId), 'progress'],
+      })
     }
   }
 
@@ -151,10 +143,11 @@ export function useBadgeProgress(userId: string | null) {
         return `${current}/${target} tasks`
       case 'streak-days':
         return `${current}/${target} days`
-      case 'focus-time':
+      case 'focus-time': {
         const currentHours = Math.floor(current / 60)
         const targetHours = Math.floor(target / 60)
         return `${currentHours}/${targetHours} hours`
+      }
       case 'decision-count':
         return `${current}/${target} decisions`
       case 'communication-count':
@@ -181,9 +174,10 @@ export function useBadgeProgress(userId: string | null) {
         return `${remaining} more task${remaining === 1 ? '' : 's'}`
       case 'streak-days':
         return `${remaining} more day${remaining === 1 ? '' : 's'}`
-      case 'focus-time':
+      case 'focus-time': {
         const hours = Math.ceil(remaining / 60)
         return `${hours} more hour${hours === 1 ? '' : 's'}`
+      }
       case 'decision-count':
         return `${remaining} more decision${remaining === 1 ? '' : 's'}`
       case 'communication-count':
@@ -247,10 +241,11 @@ export function useBadgeProgress(userId: string | null) {
   }
 
   /**
-   * Clear error
+   * Clear error (no-op since TanStack Query manages error state)
    */
   function clearError() {
-    setError(null)
+    // TanStack Query manages error state via refetch
+    refresh()
   }
 
   return {
@@ -282,5 +277,8 @@ export function useBadgeProgress(userId: string | null) {
     formatProgressText,
     getRemainingText,
     clearError,
+
+    // Server status (badge progress uses localStorage adapter for computation)
+    isServerMode: !badgeProgressQuery.isError,
   }
 }

@@ -1,90 +1,120 @@
+/**
+ * Decision Log Hook - Server-first with localStorage fallback
+ *
+ * Uses TanStack Query for server data with refetchOnWindowFocus.
+ * Falls back to localStorage when server is unavailable.
+ */
+
 import { Store } from '@tanstack/store'
 import { useStore } from '@tanstack/react-store'
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import type { Decision, DecisionInput, DecisionUpdate } from '@/lib/assistant/types'
+import { generateDecisionId } from '@/lib/assistant/types'
 import { getAssistantStorageAdapter, initializeAssistantStorage } from '@/lib/assistant/lib/storage'
 import type { DecisionQueryOptions } from '@/lib/assistant/lib/storage/types'
+import {
+  useAssistantDecisionsQuery,
+  useCreateAssistantDecisionMutation,
+  useUpdateAssistantDecisionMutation,
+  useDeleteAssistantDecisionMutation,
+  assistantKeys,
+} from './useAssistantQueries'
 
 /**
- * Decision log store state
+ * Decision log store state for fallback mode
  */
 interface DecisionStoreState {
-  decisions: Decision[]
-  loading: boolean
+  fallbackMode: boolean
+  fallbackDecisions: Decision[]
   error: string | null
-  initialized: boolean
 }
 
 /**
- * Create the decision store
+ * Create the decision store (for fallback state only)
  */
 export const decisionStore = new Store<DecisionStoreState>({
-  decisions: [],
-  loading: false,
+  fallbackMode: false,
+  fallbackDecisions: [],
   error: null,
-  initialized: false,
 })
 
 /**
  * Hook to manage decision log entries
- * Provides CRUD operations plus supersede/reverse functionality
+ * Server-first with localStorage fallback
  */
 export function useDecisionLog(userId: string | null) {
   const state = useStore(decisionStore)
-  const unsubscribeRef = useRef<(() => void) | null>(null)
+  const queryClient = useQueryClient()
 
-  // Initialize storage and subscribe to updates
+  // Server queries
+  const decisionsQuery = useAssistantDecisionsQuery(userId)
+
+  // Server mutations
+  const createMutation = useCreateAssistantDecisionMutation()
+  const updateMutation = useUpdateAssistantDecisionMutation()
+  const deleteMutation = useDeleteAssistantDecisionMutation()
+
+  // Determine if we should use fallback mode
+  const useFallback = state.fallbackMode || (decisionsQuery.isError && !decisionsQuery.data)
+
+  // Initialize localStorage fallback if server fails
   useEffect(() => {
     if (!userId) return
 
-    const currentUserId = userId
-    let mounted = true
+    if (decisionsQuery.isError && !state.fallbackMode) {
+      const currentUserId = userId
 
-    async function init() {
-      decisionStore.setState((s) => ({ ...s, loading: true }))
+      async function loadFallback() {
+        try {
+          const adapter = await initializeAssistantStorage()
+          const decisions = await adapter.getDecisions(currentUserId)
 
-      try {
-        const adapter = await initializeAssistantStorage()
-
-        // Initial load
-        const decisions = await adapter.getDecisions(currentUserId)
-
-        if (mounted) {
           decisionStore.setState((s) => ({
             ...s,
-            decisions,
-            loading: false,
-            initialized: true,
+            fallbackMode: true,
+            fallbackDecisions: decisions,
           }))
-        }
-
-        // Subscribe to updates
-        unsubscribeRef.current = adapter.watchDecisions(currentUserId, (updatedDecisions) => {
-          if (mounted) {
-            decisionStore.setState((s) => ({ ...s, decisions: updatedDecisions }))
-          }
-        })
-      } catch (err) {
-        if (mounted) {
+        } catch (err) {
           decisionStore.setState((s) => ({
             ...s,
-            error: err instanceof Error ? err.message : 'Failed to initialize decision log',
-            loading: false,
+            error: err instanceof Error ? err.message : 'Failed to load fallback',
           }))
         }
       }
-    }
 
-    init()
-
-    return () => {
-      mounted = false
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current()
-        unsubscribeRef.current = null
-      }
+      loadFallback()
     }
-  }, [userId])
+  }, [userId, decisionsQuery.isError, state.fallbackMode])
+
+  // Convert server decisions to app Decision type
+  const decisions: Decision[] = useMemo(() => {
+    if (useFallback) return state.fallbackDecisions
+
+    return (decisionsQuery.data ?? []).map((d) => ({
+      id: d.id,
+      userId: d.userId,
+      title: d.title,
+      description: d.description,
+      rationale: d.rationale ?? undefined,
+      impactArea: d.impactArea as Decision['impactArea'],
+      stakeholders: (d.stakeholders as string[]) ?? [],
+      alternatives: (d.alternatives as Decision['alternatives']) ?? [],
+      outcome: d.outcome ?? undefined,
+      status: d.status as Decision['status'],
+      supersededBy: d.supersededBy ?? undefined,
+      reversalReason: d.reversalReason ?? undefined,
+      relatedTaskIds: (d.relatedTaskIds as string[]) ?? [],
+      tags: (d.tags as string[]) ?? [],
+      decidedAt: new Date(d.decidedAt),
+      createdAt: new Date(d.createdAt),
+      updatedAt: new Date(d.updatedAt),
+    }))
+  }, [useFallback, state.fallbackDecisions, decisionsQuery.data])
+
+  // Loading state
+  const loading = decisionsQuery.isLoading
+  const initialized = !loading && (decisionsQuery.data !== undefined || useFallback)
 
   /**
    * Create a new decision
@@ -92,16 +122,74 @@ export function useDecisionLog(userId: string | null) {
   async function createDecision(input: DecisionInput): Promise<Decision | null> {
     if (!userId) return null
 
+    const now = new Date()
+    const decisionId = generateDecisionId()
+
+    if (useFallback) {
+      try {
+        const adapter = getAssistantStorageAdapter()
+        return await adapter.createDecision(input, userId)
+      } catch (err) {
+        decisionStore.setState((s) => ({
+          ...s,
+          error: err instanceof Error ? err.message : 'Failed to create decision',
+        }))
+        return null
+      }
+    }
+
     try {
-      const adapter = getAssistantStorageAdapter()
-      const decision = await adapter.createDecision(input, userId)
-      return decision
+      const result = await createMutation.mutateAsync({
+        id: decisionId,
+        userId,
+        title: input.title,
+        description: input.description,
+        rationale: input.rationale ?? null,
+        impactArea: input.impactArea,
+        stakeholders: input.stakeholders ?? [],
+        alternatives: input.alternatives ?? [],
+        outcome: input.outcome ?? null,
+        status: 'active',
+        supersededBy: null,
+        reversalReason: null,
+        relatedTaskIds: input.relatedTaskIds ?? [],
+        tags: input.tags ?? [],
+        decidedAt: input.decidedAt.toISOString(),
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      })
+
+      if (!result) throw new Error('Failed to create decision')
+
+      return {
+        id: result.id,
+        userId,
+        title: input.title,
+        description: input.description,
+        rationale: input.rationale,
+        impactArea: input.impactArea,
+        stakeholders: input.stakeholders ?? [],
+        alternatives: input.alternatives ?? [],
+        outcome: input.outcome,
+        status: 'active',
+        relatedTaskIds: input.relatedTaskIds ?? [],
+        tags: input.tags ?? [],
+        decidedAt: input.decidedAt,
+        createdAt: now,
+        updatedAt: now,
+      }
     } catch (err) {
-      decisionStore.setState((s) => ({
-        ...s,
-        error: err instanceof Error ? err.message : 'Failed to create decision',
-      }))
-      return null
+      // Fall back to localStorage on error
+      try {
+        const adapter = await initializeAssistantStorage()
+        return await adapter.createDecision(input, userId)
+      } catch {
+        decisionStore.setState((s) => ({
+          ...s,
+          error: err instanceof Error ? err.message : 'Failed to create decision',
+        }))
+        return null
+      }
     }
   }
 
@@ -109,30 +197,62 @@ export function useDecisionLog(userId: string | null) {
    * Update an existing decision
    */
   async function updateDecision(id: string, updates: DecisionUpdate): Promise<Decision | null> {
-    // Optimistic update
-    decisionStore.setState((s) => ({
-      ...s,
-      decisions: s.decisions.map((d) =>
-        d.id === id ? { ...d, ...updates, updatedAt: new Date() } : d
-      ),
-    }))
+    if (!userId) return null
 
-    try {
-      const adapter = getAssistantStorageAdapter()
-      const decision = await adapter.updateDecision(id, updates)
-      return decision
-    } catch (err) {
-      // Rollback on error
-      if (userId) {
+    // Convert updates for server
+    const serverUpdates: Record<string, unknown> = {}
+    if (updates.title !== undefined) serverUpdates.title = updates.title
+    if (updates.description !== undefined) serverUpdates.description = updates.description
+    if (updates.rationale !== undefined) serverUpdates.rationale = updates.rationale
+    if (updates.impactArea !== undefined) serverUpdates.impactArea = updates.impactArea
+    if (updates.stakeholders !== undefined) serverUpdates.stakeholders = updates.stakeholders
+    if (updates.alternatives !== undefined) serverUpdates.alternatives = updates.alternatives
+    if (updates.outcome !== undefined) serverUpdates.outcome = updates.outcome
+    if (updates.status !== undefined) serverUpdates.status = updates.status
+    if (updates.supersededBy !== undefined) serverUpdates.supersededBy = updates.supersededBy
+    if (updates.reversalReason !== undefined) serverUpdates.reversalReason = updates.reversalReason
+    if (updates.relatedTaskIds !== undefined) serverUpdates.relatedTaskIds = updates.relatedTaskIds
+    if (updates.tags !== undefined) serverUpdates.tags = updates.tags
+    if (updates.decidedAt !== undefined) serverUpdates.decidedAt = updates.decidedAt.toISOString()
+
+    if (useFallback) {
+      try {
         const adapter = getAssistantStorageAdapter()
-        const decisions = await adapter.getDecisions(userId)
+        return await adapter.updateDecision(id, updates)
+      } catch (err) {
         decisionStore.setState((s) => ({
           ...s,
-          decisions,
           error: err instanceof Error ? err.message : 'Failed to update decision',
         }))
+        return null
       }
-      return null
+    }
+
+    try {
+      const result = await updateMutation.mutateAsync({ id, data: serverUpdates, userId })
+      if (!result) throw new Error('Failed to update decision')
+
+      // Return the updated decision
+      const existingDecision = decisions.find((d) => d.id === id)
+      if (!existingDecision) return null
+
+      return {
+        ...existingDecision,
+        ...updates,
+        updatedAt: new Date(),
+      }
+    } catch (err) {
+      // Fall back to localStorage
+      try {
+        const adapter = await initializeAssistantStorage()
+        return await adapter.updateDecision(id, updates)
+      } catch {
+        decisionStore.setState((s) => ({
+          ...s,
+          error: err instanceof Error ? err.message : 'Failed to update decision',
+        }))
+        return null
+      }
     }
   }
 
@@ -140,10 +260,23 @@ export function useDecisionLog(userId: string | null) {
    * Delete a decision
    */
   async function deleteDecision(id: string): Promise<boolean> {
+    if (useFallback) {
+      try {
+        const adapter = getAssistantStorageAdapter()
+        await adapter.deleteDecision(id)
+        return true
+      } catch (err) {
+        decisionStore.setState((s) => ({
+          ...s,
+          error: err instanceof Error ? err.message : 'Failed to delete decision',
+        }))
+        return false
+      }
+    }
+
     try {
-      const adapter = getAssistantStorageAdapter()
-      await adapter.deleteDecision(id)
-      return true
+      const result = await deleteMutation.mutateAsync({ id, userId: userId! })
+      return result.success
     } catch (err) {
       decisionStore.setState((s) => ({
         ...s,
@@ -155,8 +288,6 @@ export function useDecisionLog(userId: string | null) {
 
   /**
    * Supersede a decision with a new one
-   * @param oldDecisionId The decision being superseded
-   * @param newDecision The new decision replacing it
    */
   async function supersedeDecision(
     oldDecisionId: string,
@@ -165,13 +296,17 @@ export function useDecisionLog(userId: string | null) {
     if (!userId) return null
 
     try {
-      const adapter = getAssistantStorageAdapter()
-
       // Create new decision first
-      const newDec = await adapter.createDecision(newDecision, userId)
+      const newDec = await createDecision(newDecision)
+      if (!newDec) throw new Error('Failed to create new decision')
 
       // Mark old decision as superseded
-      const oldDec = await adapter.supersedeDecision(oldDecisionId, newDec.id)
+      const oldDec = await updateDecision(oldDecisionId, {
+        status: 'superseded',
+        supersededBy: newDec.id,
+      })
+
+      if (!oldDec) throw new Error('Failed to mark old decision as superseded')
 
       return { oldDecision: oldDec, newDecision: newDec }
     } catch (err) {
@@ -185,93 +320,108 @@ export function useDecisionLog(userId: string | null) {
 
   /**
    * Reverse a decision
-   * @param id The decision to reverse
-   * @param reason Why the decision is being reversed
    */
   async function reverseDecision(id: string, reason: string): Promise<Decision | null> {
-    try {
-      const adapter = getAssistantStorageAdapter()
-      const decision = await adapter.reverseDecision(id, reason)
-      return decision
-    } catch (err) {
-      decisionStore.setState((s) => ({
-        ...s,
-        error: err instanceof Error ? err.message : 'Failed to reverse decision',
-      }))
-      return null
-    }
+    return updateDecision(id, {
+      status: 'reversed',
+      reversalReason: reason,
+    })
   }
 
   /**
    * Get a decision by ID
    */
   function getDecision(id: string): Decision | undefined {
-    return state.decisions.find((d) => d.id === id)
+    return decisions.find((d) => d.id === id)
   }
 
   /**
-   * Query decisions with filters
+   * Query decisions with filters (falls back to local filtering)
    */
   async function queryDecisions(options: DecisionQueryOptions): Promise<Decision[]> {
     if (!userId) return []
 
-    try {
-      const adapter = getAssistantStorageAdapter()
-      return await adapter.getDecisions(userId, options)
-    } catch {
-      return []
+    // For server mode, we filter locally since we have all decisions
+    let filtered = [...decisions]
+
+    if (options.status) {
+      filtered = filtered.filter((d) => d.status === options.status)
     }
+    if (options.impactArea) {
+      filtered = filtered.filter((d) => d.impactArea === options.impactArea)
+    }
+    if (options.taskId) {
+      filtered = filtered.filter((d) => d.relatedTaskIds.includes(options.taskId!))
+    }
+    if (options.tag) {
+      filtered = filtered.filter((d) => d.tags.includes(options.tag!))
+    }
+    if (options.startDate) {
+      filtered = filtered.filter((d) => d.decidedAt >= options.startDate!)
+    }
+    if (options.endDate) {
+      filtered = filtered.filter((d) => d.decidedAt <= options.endDate!)
+    }
+
+    // Sort by decidedAt descending
+    filtered.sort((a, b) => b.decidedAt.getTime() - a.decidedAt.getTime())
+
+    if (options.limit) {
+      filtered = filtered.slice(0, options.limit)
+    }
+
+    return filtered
   }
 
   /**
    * Get active decisions only
    */
   function getActiveDecisions(): Decision[] {
-    return state.decisions.filter((d) => d.status === 'active')
+    return decisions.filter((d) => d.status === 'active')
   }
 
   /**
    * Get superseded decisions
    */
   function getSupersededDecisions(): Decision[] {
-    return state.decisions.filter((d) => d.status === 'superseded')
+    return decisions.filter((d) => d.status === 'superseded')
   }
 
   /**
    * Get reversed decisions
    */
   function getReversedDecisions(): Decision[] {
-    return state.decisions.filter((d) => d.status === 'reversed')
+    return decisions.filter((d) => d.status === 'reversed')
   }
 
   /**
    * Get decisions by impact area
    */
   function getByImpactArea(impactArea: Decision['impactArea']): Decision[] {
-    return state.decisions.filter((d) => d.impactArea === impactArea)
+    return decisions.filter((d) => d.impactArea === impactArea)
   }
 
   /**
    * Get decisions related to a task
    */
   function getByTaskId(taskId: string): Decision[] {
-    return state.decisions.filter((d) => d.relatedTaskIds.includes(taskId))
+    return decisions.filter((d) => d.relatedTaskIds.includes(taskId))
   }
 
   /**
    * Get decisions with a specific tag
    */
   function getByTag(tag: string): Decision[] {
-    return state.decisions.filter((d) => d.tags.includes(tag))
+    return decisions.filter((d) => d.tags.includes(tag))
   }
 
   /**
    * Get decision that superseded another
    */
   function getSupersedingDecision(decisionId: string): Decision | undefined {
-    const decision = state.decisions.find((d) => d.id === decisionId)
+    const decision = decisions.find((d) => d.id === decisionId)
     if (decision?.supersededBy) {
-      return state.decisions.find((d) => d.id === decision.supersededBy)
+      return decisions.find((d) => d.id === decision.supersededBy)
     }
     return undefined
   }
@@ -281,12 +431,12 @@ export function useDecisionLog(userId: string | null) {
    */
   function getDecisionChain(decisionId: string): Decision[] {
     const chain: Decision[] = []
-    let current = state.decisions.find((d) => d.id === decisionId)
+    let current = decisions.find((d) => d.id === decisionId)
 
     while (current) {
       chain.push(current)
       if (current.supersededBy) {
-        current = state.decisions.find((d) => d.id === current!.supersededBy)
+        current = decisions.find((d) => d.id === current!.supersededBy)
       } else {
         break
       }
@@ -300,7 +450,7 @@ export function useDecisionLog(userId: string | null) {
    */
   function getAllTags(): string[] {
     const tagSet = new Set<string>()
-    for (const decision of state.decisions) {
+    for (const decision of decisions) {
       for (const tag of decision.tags) {
         tagSet.add(tag)
       }
@@ -314,7 +464,7 @@ export function useDecisionLog(userId: string | null) {
   function getRecentDecisions(days = 30): Decision[] {
     const cutoff = new Date()
     cutoff.setDate(cutoff.getDate() - days)
-    return state.decisions.filter((d) => new Date(d.decidedAt) >= cutoff)
+    return decisions.filter((d) => d.decidedAt >= cutoff)
   }
 
   /**
@@ -324,12 +474,21 @@ export function useDecisionLog(userId: string | null) {
     decisionStore.setState((s) => ({ ...s, error: null }))
   }
 
+  /**
+   * Manual refresh
+   */
+  function refresh() {
+    if (userId) {
+      queryClient.invalidateQueries({ queryKey: assistantKeys.decisionList(userId) })
+    }
+  }
+
   return {
     // State
-    decisions: state.decisions,
-    loading: state.loading,
+    decisions,
+    loading,
     error: state.error,
-    initialized: state.initialized,
+    initialized,
 
     // CRUD operations
     createDecision,
@@ -356,5 +515,9 @@ export function useDecisionLog(userId: string | null) {
 
     // Utilities
     clearError,
+    refresh,
+
+    // Server status
+    isServerMode: !useFallback,
   }
 }

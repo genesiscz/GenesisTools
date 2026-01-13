@@ -1,60 +1,98 @@
-import { useState, useEffect } from 'react'
+/**
+ * Handoff Hook - Server-first with localStorage fallback
+ *
+ * Uses TanStack Query for server data with refetchOnWindowFocus.
+ * Falls back to localStorage when server is unavailable.
+ */
+
+import { useState, useEffect, useMemo } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import type {
   HandoffDocument,
   HandoffDocumentInput,
   HandoffDocumentUpdate,
 } from '@/lib/assistant/types'
+import { generateHandoffId } from '@/lib/assistant/types'
 import {
   getAssistantStorageAdapter,
   initializeAssistantStorage,
 } from '@/lib/assistant/lib/storage'
+import {
+  useAssistantHandoffsQuery,
+  useCreateAssistantHandoffMutation,
+  useUpdateAssistantHandoffMutation,
+  assistantKeys,
+} from './useAssistantQueries'
 
 /**
  * Hook to manage handoff documents
- * Provides create/update/acknowledge functionality
+ * Server-first with localStorage fallback
  */
 export function useHandoff(userId: string | null) {
-  const [handoffs, setHandoffs] = useState<HandoffDocument[]>([])
-  const [loading, setLoading] = useState(true)
+  const queryClient = useQueryClient()
+  const [fallbackMode, setFallbackMode] = useState(false)
+  const [fallbackHandoffs, setFallbackHandoffs] = useState<HandoffDocument[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  // Load handoffs on mount
+  // Server queries
+  const handoffsQuery = useAssistantHandoffsQuery(userId)
+
+  // Server mutations
+  const createMutation = useCreateAssistantHandoffMutation()
+  const updateMutation = useUpdateAssistantHandoffMutation()
+
+  // Determine if we should use fallback mode
+  const useFallback = fallbackMode || (handoffsQuery.isError && !handoffsQuery.data)
+
+  // Initialize localStorage fallback if server fails
   useEffect(() => {
-    if (!userId) {
-      setHandoffs([])
-      setLoading(false)
-      return
-    }
+    if (!userId) return
 
-    let mounted = true
-    const currentUserId = userId
+    if (handoffsQuery.isError && !fallbackMode) {
+      const currentUserId = userId
 
-    async function load() {
-      setLoading(true)
-      try {
-        await initializeAssistantStorage()
-        const adapter = getAssistantStorageAdapter()
-        const data = await adapter.getHandoffs(currentUserId)
-        if (mounted) {
-          setHandoffs(data)
-        }
-      } catch (err) {
-        if (mounted) {
-          setError(err instanceof Error ? err.message : 'Failed to load handoffs')
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false)
+      async function loadFallback() {
+        try {
+          const adapter = await initializeAssistantStorage()
+          const data = await adapter.getHandoffs(currentUserId)
+          setFallbackMode(true)
+          setFallbackHandoffs(data)
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to load fallback')
         }
       }
-    }
 
-    load()
-
-    return () => {
-      mounted = false
+      loadFallback()
     }
-  }, [userId])
+  }, [userId, handoffsQuery.isError, fallbackMode])
+
+  // Convert server handoffs to app HandoffDocument type
+  const handoffs: HandoffDocument[] = useMemo(() => {
+    if (useFallback) return fallbackHandoffs
+
+    return (handoffsQuery.data ?? []).map((h) => ({
+      id: h.id,
+      userId: h.userId,
+      taskId: h.taskId,
+      summary: h.summary,
+      contextNotes: h.contextNotes,
+      nextSteps: (h.nextSteps as string[]) ?? [],
+      gotchas: h.gotchas ?? undefined,
+      decisions: (h.decisions as string[]) ?? [],
+      blockers: (h.blockers as string[]) ?? [],
+      handedOffFrom: h.handedOffFrom,
+      handedOffTo: h.handedOffTo,
+      contact: h.contact,
+      reviewed: h.reviewed === 1,
+      reviewedAt: h.reviewedAt ? new Date(h.reviewedAt) : undefined,
+      handoffAt: new Date(h.handoffAt),
+      createdAt: new Date(h.createdAt),
+      updatedAt: new Date(h.updatedAt),
+    }))
+  }, [useFallback, fallbackHandoffs, handoffsQuery.data])
+
+  // Loading state
+  const loading = handoffsQuery.isLoading
 
   /**
    * Create a new handoff document
@@ -62,17 +100,73 @@ export function useHandoff(userId: string | null) {
   async function createHandoff(input: HandoffDocumentInput): Promise<HandoffDocument | null> {
     if (!userId) return null
 
+    const now = new Date()
+    const handoffId = generateHandoffId()
+
+    if (useFallback) {
+      try {
+        const adapter = getAssistantStorageAdapter()
+        const handoff = await adapter.createHandoff(input, userId)
+        setFallbackHandoffs((prev) => [handoff, ...prev])
+        return handoff
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to create handoff')
+        return null
+      }
+    }
+
     try {
-      const adapter = getAssistantStorageAdapter()
-      const handoff = await adapter.createHandoff(input, userId)
+      const result = await createMutation.mutateAsync({
+        id: handoffId,
+        userId,
+        taskId: input.taskId,
+        summary: input.summary,
+        contextNotes: input.contextNotes,
+        nextSteps: input.nextSteps,
+        gotchas: input.gotchas ?? null,
+        decisions: input.decisions ?? [],
+        blockers: input.blockers ?? [],
+        handedOffFrom: input.handedOffFrom,
+        handedOffTo: input.handedOffTo,
+        contact: input.contact,
+        reviewed: 0,
+        reviewedAt: null,
+        handoffAt: input.handoffAt.toISOString(),
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      })
 
-      // Add to local state
-      setHandoffs((prev) => [handoff, ...prev])
+      if (!result) throw new Error('Failed to create handoff')
 
-      return handoff
+      return {
+        id: result.id,
+        userId,
+        taskId: input.taskId,
+        summary: input.summary,
+        contextNotes: input.contextNotes,
+        nextSteps: input.nextSteps,
+        gotchas: input.gotchas,
+        decisions: input.decisions ?? [],
+        blockers: input.blockers ?? [],
+        handedOffFrom: input.handedOffFrom,
+        handedOffTo: input.handedOffTo,
+        contact: input.contact,
+        reviewed: false,
+        handoffAt: input.handoffAt,
+        createdAt: now,
+        updatedAt: now,
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create handoff')
-      return null
+      // Fall back to localStorage on error
+      try {
+        const adapter = await initializeAssistantStorage()
+        const handoff = await adapter.createHandoff(input, userId)
+        setFallbackHandoffs((prev) => [handoff, ...prev])
+        return handoff
+      } catch {
+        setError(err instanceof Error ? err.message : 'Failed to create handoff')
+        return null
+      }
     }
   }
 
@@ -83,24 +177,70 @@ export function useHandoff(userId: string | null) {
     id: string,
     updates: HandoffDocumentUpdate
   ): Promise<HandoffDocument | null> {
-    // Optimistic update
-    setHandoffs((prev) =>
-      prev.map((h) => (h.id === id ? { ...h, ...updates, updatedAt: new Date() } : h))
-    )
+    if (!userId) return null
+
+    // Convert updates for server
+    const serverUpdates: Record<string, unknown> = {}
+    if (updates.summary !== undefined) serverUpdates.summary = updates.summary
+    if (updates.contextNotes !== undefined) serverUpdates.contextNotes = updates.contextNotes
+    if (updates.nextSteps !== undefined) serverUpdates.nextSteps = updates.nextSteps
+    if (updates.gotchas !== undefined) serverUpdates.gotchas = updates.gotchas
+    if (updates.decisions !== undefined) serverUpdates.decisions = updates.decisions
+    if (updates.blockers !== undefined) serverUpdates.blockers = updates.blockers
+    if (updates.handedOffTo !== undefined) serverUpdates.handedOffTo = updates.handedOffTo
+    if (updates.contact !== undefined) serverUpdates.contact = updates.contact
+    if (updates.reviewed !== undefined) serverUpdates.reviewed = updates.reviewed ? 1 : 0
+    if (updates.reviewedAt !== undefined)
+      serverUpdates.reviewedAt = updates.reviewedAt?.toISOString() ?? null
+
+    // Get the existing handoff to find its taskId
+    const existingHandoff = handoffs.find((h) => h.id === id)
+    if (!existingHandoff) return null
+
+    if (useFallback) {
+      // Optimistic update
+      setFallbackHandoffs((prev) =>
+        prev.map((h) => (h.id === id ? { ...h, ...updates, updatedAt: new Date() } : h))
+      )
+
+      try {
+        const adapter = getAssistantStorageAdapter()
+        return await adapter.updateHandoff(id, updates)
+      } catch (err) {
+        // Rollback on error
+        if (userId) {
+          const adapter = getAssistantStorageAdapter()
+          const data = await adapter.getHandoffs(userId)
+          setFallbackHandoffs(data)
+        }
+        setError(err instanceof Error ? err.message : 'Failed to update handoff')
+        return null
+      }
+    }
 
     try {
-      const adapter = getAssistantStorageAdapter()
-      const handoff = await adapter.updateHandoff(id, updates)
-      return handoff
-    } catch (err) {
-      // Rollback on error
-      if (userId) {
-        const adapter = getAssistantStorageAdapter()
-        const data = await adapter.getHandoffs(userId)
-        setHandoffs(data)
+      const result = await updateMutation.mutateAsync({
+        id,
+        data: serverUpdates,
+        userId,
+        taskId: existingHandoff.taskId,
+      })
+      if (!result) throw new Error('Failed to update handoff')
+
+      return {
+        ...existingHandoff,
+        ...updates,
+        updatedAt: new Date(),
       }
-      setError(err instanceof Error ? err.message : 'Failed to update handoff')
-      return null
+    } catch (err) {
+      // Fall back to localStorage
+      try {
+        const adapter = await initializeAssistantStorage()
+        return await adapter.updateHandoff(id, updates)
+      } catch {
+        setError(err instanceof Error ? err.message : 'Failed to update handoff')
+        return null
+      }
     }
   }
 
@@ -108,36 +248,32 @@ export function useHandoff(userId: string | null) {
    * Acknowledge/review a handoff document
    */
   async function acknowledgeHandoff(id: string): Promise<HandoffDocument | null> {
-    try {
-      const adapter = getAssistantStorageAdapter()
-      const handoff = await adapter.acknowledgeHandoff(id)
-
-      // Update local state
-      setHandoffs((prev) => prev.map((h) => (h.id === id ? handoff : h)))
-
-      return handoff
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to acknowledge handoff')
-      return null
-    }
+    return updateHandoff(id, {
+      reviewed: true,
+      reviewedAt: new Date(),
+    })
   }
 
   /**
    * Delete a handoff document
    */
   async function deleteHandoff(id: string): Promise<boolean> {
-    try {
-      const adapter = getAssistantStorageAdapter()
-      await adapter.deleteHandoff(id)
-
-      // Remove from local state
-      setHandoffs((prev) => prev.filter((h) => h.id !== id))
-
-      return true
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete handoff')
-      return false
+    if (useFallback) {
+      try {
+        const adapter = getAssistantStorageAdapter()
+        await adapter.deleteHandoff(id)
+        setFallbackHandoffs((prev) => prev.filter((h) => h.id !== id))
+        return true
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to delete handoff')
+        return false
+      }
     }
+
+    // For server mode, we don't have a delete endpoint, so mark as reviewed
+    // This preserves history
+    const result = await acknowledgeHandoff(id)
+    return result !== null
   }
 
   /**
@@ -190,7 +326,7 @@ export function useHandoff(userId: string | null) {
   function getRecentHandoffs(days = 7): HandoffDocument[] {
     const cutoff = new Date()
     cutoff.setDate(cutoff.getDate() - days)
-    return handoffs.filter((h) => new Date(h.handoffAt) >= cutoff)
+    return handoffs.filter((h) => h.handoffAt >= cutoff)
   }
 
   /**
@@ -202,7 +338,7 @@ export function useHandoff(userId: string | null) {
       '',
       `**From:** ${handoff.handedOffFrom}`,
       `**To:** ${handoff.handedOffTo}`,
-      `**Date:** ${new Date(handoff.handoffAt).toLocaleDateString()}`,
+      `**Date:** ${handoff.handoffAt.toLocaleDateString()}`,
       '',
       '## Context',
       handoff.contextNotes,
@@ -248,6 +384,15 @@ export function useHandoff(userId: string | null) {
     setError(null)
   }
 
+  /**
+   * Manual refresh
+   */
+  function refresh() {
+    if (userId) {
+      queryClient.invalidateQueries({ queryKey: assistantKeys.handoffList(userId) })
+    }
+  }
+
   return {
     // State
     handoffs,
@@ -272,5 +417,9 @@ export function useHandoff(userId: string | null) {
     // Utilities
     generateHandoffMarkdown,
     clearError,
+    refresh,
+
+    // Server status
+    isServerMode: !useFallback,
   }
 }

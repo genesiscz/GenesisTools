@@ -1,107 +1,174 @@
+/**
+ * Blockers Hook - Server-first with localStorage fallback
+ *
+ * Uses TanStack Query for server data with refetchOnWindowFocus.
+ * Falls back to localStorage when server is unavailable.
+ */
+
 import { Store } from '@tanstack/store'
 import { useStore } from '@tanstack/react-store'
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import type { TaskBlocker, TaskBlockerInput, TaskBlockerUpdate } from '@/lib/assistant/types'
+import { generateBlockerId } from '@/lib/assistant/types'
 import { getAssistantStorageAdapter, initializeAssistantStorage } from '@/lib/assistant/lib/storage'
+import {
+  useAssistantBlockersQuery,
+  useCreateAssistantBlockerMutation,
+  useUpdateAssistantBlockerMutation,
+  useResolveAssistantBlockerMutation,
+  assistantKeys,
+} from './useAssistantQueries'
 
 /**
- * Blockers store state
+ * Blockers store state for fallback mode
  */
 interface BlockersStoreState {
-  blockers: TaskBlocker[]
-  loading: boolean
+  fallbackMode: boolean
+  fallbackBlockers: TaskBlocker[]
   error: string | null
-  initialized: boolean
 }
 
 /**
- * Create the blockers store
+ * Create the blockers store (for fallback state only)
  */
 export const blockersStore = new Store<BlockersStoreState>({
-  blockers: [],
-  loading: false,
+  fallbackMode: false,
+  fallbackBlockers: [],
   error: null,
-  initialized: false,
 })
 
 /**
  * Hook to manage task blockers
- * Provides add/update/resolve blocker functionality
+ * Server-first with localStorage fallback
  */
 export function useBlockers(userId: string | null) {
   const state = useStore(blockersStore)
-  const unsubscribeRef = useRef<(() => void) | null>(null)
+  const queryClient = useQueryClient()
 
-  // Initialize storage and subscribe to updates
+  // Server queries
+  const blockersQuery = useAssistantBlockersQuery(userId)
+
+  // Server mutations
+  const createMutation = useCreateAssistantBlockerMutation()
+  const updateMutation = useUpdateAssistantBlockerMutation()
+  const resolveMutation = useResolveAssistantBlockerMutation()
+
+  // Determine if we should use fallback mode
+  const useFallback = state.fallbackMode || (blockersQuery.isError && !blockersQuery.data)
+
+  // Initialize localStorage fallback if server fails
   useEffect(() => {
     if (!userId) return
 
-    const currentUserId = userId
-    let mounted = true
+    if (blockersQuery.isError && !state.fallbackMode) {
+      const currentUserId = userId
 
-    async function init() {
-      blockersStore.setState((s) => ({ ...s, loading: true }))
+      async function loadFallback() {
+        try {
+          const adapter = await initializeAssistantStorage()
+          const blockers = await adapter.getBlockers(currentUserId)
 
-      try {
-        const adapter = await initializeAssistantStorage()
-
-        // Initial load
-        const blockers = await adapter.getBlockers(currentUserId)
-
-        if (mounted) {
           blockersStore.setState((s) => ({
             ...s,
-            blockers,
-            loading: false,
-            initialized: true,
+            fallbackMode: true,
+            fallbackBlockers: blockers,
           }))
-        }
-
-        // Subscribe to updates
-        unsubscribeRef.current = adapter.watchBlockers(currentUserId, (updatedBlockers) => {
-          if (mounted) {
-            blockersStore.setState((s) => ({ ...s, blockers: updatedBlockers }))
-          }
-        })
-      } catch (err) {
-        if (mounted) {
+        } catch (err) {
           blockersStore.setState((s) => ({
             ...s,
-            error: err instanceof Error ? err.message : 'Failed to initialize blockers',
-            loading: false,
+            error: err instanceof Error ? err.message : 'Failed to load fallback',
           }))
         }
       }
-    }
 
-    init()
-
-    return () => {
-      mounted = false
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current()
-        unsubscribeRef.current = null
-      }
+      loadFallback()
     }
-  }, [userId])
+  }, [userId, blockersQuery.isError, state.fallbackMode])
+
+  // Convert server blockers to app TaskBlocker type
+  const blockers: TaskBlocker[] = useMemo(() => {
+    if (useFallback) return state.fallbackBlockers
+
+    return (blockersQuery.data ?? []).map((b) => ({
+      id: b.id,
+      userId: b.userId,
+      taskId: b.taskId,
+      blockerReason: b.blockerReason,
+      blockerOwner: b.blockerOwner ?? undefined,
+      blockedSince: new Date(b.blockedSince),
+      unblockedAt: b.unblockedAt ? new Date(b.unblockedAt) : undefined,
+      reminderSet: b.reminderSet ? new Date(b.reminderSet) : undefined,
+      createdAt: new Date(b.createdAt),
+      updatedAt: new Date(b.updatedAt),
+    }))
+  }, [useFallback, state.fallbackBlockers, blockersQuery.data])
+
+  // Loading state
+  const loading = blockersQuery.isLoading
+  const initialized = !loading && (blockersQuery.data !== undefined || useFallback)
 
   /**
    * Add a new blocker to a task
-   * Also marks the task as blocked
    */
   async function addBlocker(input: TaskBlockerInput): Promise<TaskBlocker | null> {
     if (!userId) return null
 
+    const now = new Date()
+    const blockerId = generateBlockerId()
+
+    if (useFallback) {
+      try {
+        const adapter = getAssistantStorageAdapter()
+        return await adapter.createBlocker(input, userId)
+      } catch (err) {
+        blockersStore.setState((s) => ({
+          ...s,
+          error: err instanceof Error ? err.message : 'Failed to add blocker',
+        }))
+        return null
+      }
+    }
+
     try {
-      const adapter = getAssistantStorageAdapter()
-      const blocker = await adapter.createBlocker(input, userId)
-      return blocker
+      const result = await createMutation.mutateAsync({
+        id: blockerId,
+        userId,
+        taskId: input.taskId,
+        blockerReason: input.blockerReason,
+        blockerOwner: input.blockerOwner ?? null,
+        blockedSince: now.toISOString(),
+        unblockedAt: null,
+        reminderSet: input.reminderSet?.toISOString() ?? null,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      })
+
+      if (!result) throw new Error('Failed to add blocker')
+
+      return {
+        id: result.id,
+        userId,
+        taskId: input.taskId,
+        blockerReason: input.blockerReason,
+        blockerOwner: input.blockerOwner,
+        blockedSince: now,
+        reminderSet: input.reminderSet,
+        createdAt: now,
+        updatedAt: now,
+      }
     } catch (err) {
-      blockersStore.setState((s) => ({
-        ...s,
-        error: err instanceof Error ? err.message : 'Failed to add blocker',
-      }))
-      return null
+      // Fall back to localStorage on error
+      try {
+        const adapter = await initializeAssistantStorage()
+        return await adapter.createBlocker(input, userId)
+      } catch {
+        blockersStore.setState((s) => ({
+          ...s,
+          error: err instanceof Error ? err.message : 'Failed to add blocker',
+        }))
+        return null
+      }
     }
   }
 
@@ -109,42 +176,90 @@ export function useBlockers(userId: string | null) {
    * Update an existing blocker
    */
   async function updateBlocker(id: string, updates: TaskBlockerUpdate): Promise<TaskBlocker | null> {
-    // Optimistic update
-    blockersStore.setState((s) => ({
-      ...s,
-      blockers: s.blockers.map((b) =>
-        b.id === id ? { ...b, ...updates, updatedAt: new Date() } : b
-      ),
-    }))
+    if (!userId) return null
 
-    try {
-      const adapter = getAssistantStorageAdapter()
-      const blocker = await adapter.updateBlocker(id, updates)
-      return blocker
-    } catch (err) {
-      // Rollback on error
-      if (userId) {
+    // Convert updates for server
+    const serverUpdates: Record<string, unknown> = {}
+    if (updates.blockerReason !== undefined) serverUpdates.blockerReason = updates.blockerReason
+    if (updates.blockerOwner !== undefined) serverUpdates.blockerOwner = updates.blockerOwner
+    if (updates.reminderSet !== undefined)
+      serverUpdates.reminderSet = updates.reminderSet?.toISOString() ?? null
+
+    // Get the existing blocker to find its taskId
+    const existingBlocker = blockers.find((b) => b.id === id)
+    if (!existingBlocker) return null
+
+    if (useFallback) {
+      try {
         const adapter = getAssistantStorageAdapter()
-        const blockers = await adapter.getBlockers(userId)
+        return await adapter.updateBlocker(id, updates)
+      } catch (err) {
         blockersStore.setState((s) => ({
           ...s,
-          blockers,
           error: err instanceof Error ? err.message : 'Failed to update blocker',
         }))
+        return null
       }
-      return null
+    }
+
+    try {
+      const result = await updateMutation.mutateAsync({
+        id,
+        data: serverUpdates,
+        userId,
+        taskId: existingBlocker.taskId,
+      })
+      if (!result) throw new Error('Failed to update blocker')
+
+      return {
+        ...existingBlocker,
+        ...updates,
+        updatedAt: new Date(),
+      }
+    } catch (err) {
+      // Fall back to localStorage
+      try {
+        const adapter = await initializeAssistantStorage()
+        return await adapter.updateBlocker(id, updates)
+      } catch {
+        blockersStore.setState((s) => ({
+          ...s,
+          error: err instanceof Error ? err.message : 'Failed to update blocker',
+        }))
+        return null
+      }
     }
   }
 
   /**
    * Resolve a blocker (marks as unblocked)
-   * Also updates task status if no other active blockers
    */
   async function resolveBlocker(id: string): Promise<TaskBlocker | null> {
+    if (useFallback) {
+      try {
+        const adapter = getAssistantStorageAdapter()
+        return await adapter.resolveBlocker(id)
+      } catch (err) {
+        blockersStore.setState((s) => ({
+          ...s,
+          error: err instanceof Error ? err.message : 'Failed to resolve blocker',
+        }))
+        return null
+      }
+    }
+
     try {
-      const adapter = getAssistantStorageAdapter()
-      const blocker = await adapter.resolveBlocker(id)
-      return blocker
+      const existingBlocker = blockers.find((b) => b.id === id)
+      if (!existingBlocker) throw new Error('Blocker not found')
+
+      const result = await resolveMutation.mutateAsync({ id, userId: userId!, taskId: existingBlocker.taskId })
+      if (!result) throw new Error('Failed to resolve blocker')
+
+      return {
+        ...existingBlocker,
+        unblockedAt: new Date(),
+        updatedAt: new Date(),
+      }
     } catch (err) {
       blockersStore.setState((s) => ({
         ...s,
@@ -158,73 +273,80 @@ export function useBlockers(userId: string | null) {
    * Delete a blocker
    */
   async function deleteBlocker(id: string): Promise<boolean> {
-    try {
-      const adapter = getAssistantStorageAdapter()
-      await adapter.deleteBlocker(id)
-      return true
-    } catch (err) {
-      blockersStore.setState((s) => ({
-        ...s,
-        error: err instanceof Error ? err.message : 'Failed to delete blocker',
-      }))
-      return false
+    if (useFallback) {
+      try {
+        const adapter = getAssistantStorageAdapter()
+        await adapter.deleteBlocker(id)
+        return true
+      } catch (err) {
+        blockersStore.setState((s) => ({
+          ...s,
+          error: err instanceof Error ? err.message : 'Failed to delete blocker',
+        }))
+        return false
+      }
     }
+
+    // For server mode, we resolve the blocker instead of deleting
+    // This preserves history
+    const result = await resolveBlocker(id)
+    return result !== null
   }
 
   /**
    * Get a blocker by ID
    */
   function getBlocker(id: string): TaskBlocker | undefined {
-    return state.blockers.find((b) => b.id === id)
+    return blockers.find((b) => b.id === id)
   }
 
   /**
    * Get all active (unresolved) blockers
    */
   function getActiveBlockers(): TaskBlocker[] {
-    return state.blockers.filter((b) => !b.unblockedAt)
+    return blockers.filter((b) => !b.unblockedAt)
   }
 
   /**
    * Get all resolved blockers
    */
   function getResolvedBlockers(): TaskBlocker[] {
-    return state.blockers.filter((b) => b.unblockedAt)
+    return blockers.filter((b) => b.unblockedAt)
   }
 
   /**
    * Get blockers for a specific task
    */
   function getBlockersForTask(taskId: string): TaskBlocker[] {
-    return state.blockers.filter((b) => b.taskId === taskId)
+    return blockers.filter((b) => b.taskId === taskId)
   }
 
   /**
    * Get active blocker for a task (if any)
    */
   function getActiveBlockerForTask(taskId: string): TaskBlocker | undefined {
-    return state.blockers.find((b) => b.taskId === taskId && !b.unblockedAt)
+    return blockers.find((b) => b.taskId === taskId && !b.unblockedAt)
   }
 
   /**
    * Check if a task is blocked
    */
   function isTaskBlocked(taskId: string): boolean {
-    return state.blockers.some((b) => b.taskId === taskId && !b.unblockedAt)
+    return blockers.some((b) => b.taskId === taskId && !b.unblockedAt)
   }
 
   /**
    * Get blockers by owner
    */
   function getBlockersByOwner(owner: string): TaskBlocker[] {
-    return state.blockers.filter((b) => b.blockerOwner === owner)
+    return blockers.filter((b) => b.blockerOwner === owner)
   }
 
   /**
    * Get blockers with reminders set
    */
   function getBlockersWithReminders(): TaskBlocker[] {
-    return state.blockers.filter((b) => b.reminderSet && !b.unblockedAt)
+    return blockers.filter((b) => b.reminderSet && !b.unblockedAt)
   }
 
   /**
@@ -232,9 +354,7 @@ export function useBlockers(userId: string | null) {
    */
   function getBlockersWithDueReminders(): TaskBlocker[] {
     const now = new Date()
-    return state.blockers.filter(
-      (b) => b.reminderSet && !b.unblockedAt && new Date(b.reminderSet) <= now
-    )
+    return blockers.filter((b) => b.reminderSet && !b.unblockedAt && b.reminderSet <= now)
   }
 
   /**
@@ -243,17 +363,15 @@ export function useBlockers(userId: string | null) {
   function getLongStandingBlockers(days = 3): TaskBlocker[] {
     const cutoff = new Date()
     cutoff.setDate(cutoff.getDate() - days)
-    return state.blockers.filter(
-      (b) => !b.unblockedAt && new Date(b.blockedSince) <= cutoff
-    )
+    return blockers.filter((b) => !b.unblockedAt && b.blockedSince <= cutoff)
   }
 
   /**
    * Get blocker duration in days
    */
   function getBlockerDurationDays(blocker: TaskBlocker): number {
-    const endDate = blocker.unblockedAt ? new Date(blocker.unblockedAt) : new Date()
-    const startDate = new Date(blocker.blockedSince)
+    const endDate = blocker.unblockedAt ? blocker.unblockedAt : new Date()
+    const startDate = blocker.blockedSince
     return Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
   }
 
@@ -275,12 +393,21 @@ export function useBlockers(userId: string | null) {
     blockersStore.setState((s) => ({ ...s, error: null }))
   }
 
+  /**
+   * Manual refresh
+   */
+  function refresh() {
+    if (userId) {
+      queryClient.invalidateQueries({ queryKey: assistantKeys.blockerList(userId) })
+    }
+  }
+
   return {
     // State
-    blockers: state.blockers,
-    loading: state.loading,
+    blockers,
+    loading,
     error: state.error,
-    initialized: state.initialized,
+    initialized,
 
     // CRUD operations
     addBlocker,
@@ -306,5 +433,9 @@ export function useBlockers(userId: string | null) {
 
     // Utilities
     clearError,
+    refresh,
+
+    // Server status
+    isServerMode: !useFallback,
   }
 }
