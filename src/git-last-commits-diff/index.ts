@@ -1,21 +1,9 @@
-import minimist from "minimist";
-import Enquirer from "enquirer";
+import { Command } from "commander";
+import { search, select, input } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import { resolve, isAbsolute, join as pathJoin } from "node:path";
 import logger from "@app/logger";
 import clipboardy from "clipboardy";
-
-interface Options {
-    commits?: number;
-    output?: string | boolean; // boolean for -o without value
-    clipboard?: boolean;
-    help?: boolean;
-}
-
-interface Args extends Options {
-    _: string[];
-}
-
-const prompter = new Enquirer();
 
 function showHelp() {
     logger.info(`
@@ -34,7 +22,7 @@ Options:
   -cl, --clipboard Copy diff output directly to the clipboard. This option
                   overrides the interactive prompt. If --output is also given,
                   --output takes precedence.
-  -h, --help      Show this message.
+  -h, --help-old  Show this message.
 `);
 }
 
@@ -70,7 +58,7 @@ async function getTruncatedSha(repoDir: string, refName: string): Promise<string
     return trimmedStdout;
 }
 
-async function getAndSelectCommit(repoDir: string, enquirerInstance: Enquirer): Promise<string | undefined> {
+async function getAndSelectCommit(repoDir: string): Promise<string | undefined> {
     const gitLogArgs = ["log", "--pretty=format:%h %s", "-n", "200"];
     logger.debug(`⏳ Fetching last 200 commits from ${repoDir}...`);
 
@@ -124,11 +112,11 @@ async function getAndSelectCommit(repoDir: string, enquirerInstance: Enquirer): 
                 displayMessage = `${hash} - ${commitMessage}`;
             }
             return {
-                name: hash, // Required by Enquirer's Choice type, also typically the returned value part
-                message: displayMessage, // Displayed to the user
+                value: hash,
+                name: displayMessage,
             };
         })
-        .filter((choice) => choice.name); // Ensure valid name/hash
+        .filter((choice) => choice.value); // Ensure valid value/hash
 
     if (choices.length === 0) {
         logger.warn("ℹ No processable commits found to select from after parsing.");
@@ -136,24 +124,20 @@ async function getAndSelectCommit(repoDir: string, enquirerInstance: Enquirer): 
     }
 
     try {
-        const response = (await enquirerInstance.prompt({
-            type: "autocomplete",
-            name: "selectedCommitValue",
+        const selectedCommit = await search({
             message: "Select a commit (type to filter). The diff will be from this commit to HEAD:",
-            choices: choices,
-        })) as { selectedCommitValue?: string };
+            source: async (input) => {
+                if (!input) {
+                    return choices;
+                }
+                const lowerInput = input.toLowerCase();
+                return choices.filter((choice) => choice.name.toLowerCase().includes(lowerInput));
+            },
+        });
 
-        if (response && typeof response.selectedCommitValue === "string") {
-            return response.selectedCommitValue;
-        } else {
-            logger.warn("ℹ Commit selection did not return a valid value or was cancelled in an unexpected way.");
-            return undefined;
-        }
+        return selectedCommit;
     } catch (promptError: any) {
-        if (
-            promptError &&
-            (promptError.message === "canceled" || String(promptError).toLowerCase().includes("cancel"))
-        ) {
+        if (promptError instanceof ExitPromptError) {
             logger.info("\nℹ Commit selection cancelled by user.");
         } else {
             logger.error("\n✖ Error during commit selection prompt:", promptError);
@@ -163,23 +147,23 @@ async function getAndSelectCommit(repoDir: string, enquirerInstance: Enquirer): 
 }
 
 async function main() {
-    const argv = minimist<Args>(process.argv.slice(2), {
-        alias: {
-            c: "commits",
-            o: "output",
-            cl: "clipboard", // Added alias for clipboard
-            h: "help",
-        },
-        string: ["output"], // Ensures --output value is treated as string, even if empty like --output ""
-        // However, --output without a value will make argv.output true.
-    });
+    const program = new Command()
+        .name("git-last-commits-diff")
+        .argument("<directory>", "Path to the Git repository")
+        .option("-c, --commits <number>", "Number of recent commits to diff")
+        .option("-o, --output [file]", "Output file path")
+        .option("-cl, --clipboard", "Copy diff output to clipboard")
+        .option("-h, --help-old", "Show this help message")
+        .parse();
 
-    if (argv.help || argv._.length === 0) {
+    const options = program.opts();
+    const [repoDirArg] = program.args;
+
+    if (options.helpOld || !repoDirArg) {
         showHelp();
-        process.exit(argv.help ? 0 : 1);
+        process.exit(options.helpOld ? 0 : 1);
     }
 
-    const repoDirArg = argv._[0];
     if (typeof repoDirArg !== "string") {
         logger.error("✖ Error: Repository directory path is missing or invalid.");
         showHelp();
@@ -187,9 +171,9 @@ async function main() {
     }
     const repoDir = resolve(repoDirArg);
 
-    let commits = argv.commits;
-    const outputFileArg = argv.output; // Renamed for clarity
-    const clipboardArg = argv.clipboard;
+    let commits = options.commits ? parseInt(options.commits) : undefined;
+    const outputFileArg = options.output; // Renamed for clarity
+    const clipboardArg = options.clipboard;
     let diffStartRef: string;
 
     if (commits !== undefined) {
@@ -203,7 +187,7 @@ async function main() {
         logger.info(`ℹ Will diff the last ${numCommits} commit(s) (HEAD~${numCommits}..HEAD).`);
     } else {
         logger.info("ℹ --commits flag not provided. Attempting to list recent commits for selection.");
-        const selectedCommitHash = await getAndSelectCommit(repoDir, prompter);
+        const selectedCommitHash = await getAndSelectCommit(repoDir);
 
         if (!selectedCommitHash) {
             logger.info("✖ Commit selection aborted or failed. Exiting.");
@@ -240,24 +224,16 @@ async function main() {
         // Interactive prompt
         logger.info("ℹ No specific output method chosen via flags. Prompting for selection.");
         const outputChoices = [
-            { name: "file" as OutputAction, message: "Save to a file (path copied to clipboard)" },
-            { name: "clipboard" as OutputAction, message: "Copy to clipboard" },
-            { name: "stdout" as OutputAction, message: "Print to stdout (console)" },
+            { value: "file" as OutputAction, name: "Save to a file (path copied to clipboard)" },
+            { value: "clipboard" as OutputAction, name: "Copy to clipboard" },
+            { value: "stdout" as OutputAction, name: "Print to stdout (console)" },
         ];
 
         try {
-            const response = (await prompter.prompt({
-                type: "select",
-                name: "selectedAction",
+            outputAction = await select({
                 message: "Where would you like the diff output to go?",
                 choices: outputChoices,
-            })) as { selectedAction?: OutputAction };
-
-            if (!response || !response.selectedAction) {
-                logger.warn("ℹ Output destination selection was cancelled or failed. Exiting.");
-                process.exit(0);
-            }
-            outputAction = response.selectedAction;
+            });
 
             if (outputAction === "file") {
                 const firstShaRaw = await getTruncatedSha(repoDir, diffStartRef);
@@ -272,12 +248,10 @@ async function main() {
                 const currentDir = process.cwd();
                 const suggestedPath = pathJoin(currentDir, defaultFileName);
 
-                const { filePathResponse } = (await prompter.prompt({
-                    type: "input",
-                    name: "filePathResponse",
+                const filePathResponse = await input({
                     message: `Enter filename for the diff (will be created in ${currentDir}):`,
-                    initial: defaultFileName,
-                })) as { filePathResponse?: string };
+                    default: defaultFileName,
+                });
 
                 if (!filePathResponse || filePathResponse.trim().length === 0) {
                     logger.warn("ℹ No filename provided. Exiting.");
@@ -292,10 +266,7 @@ async function main() {
                 logger.info("ℹ Output will be written to stdout.");
             }
         } catch (promptError: any) {
-            if (
-                promptError &&
-                (promptError.message === "canceled" || String(promptError).toLowerCase().includes("cancel"))
-            ) {
+            if (promptError instanceof ExitPromptError) {
                 logger.info("\nℹ Output selection cancelled by user. Exiting.");
             } else {
                 logger.error("\n✖ Error during output selection prompt:", promptError);
@@ -358,7 +329,7 @@ async function main() {
                 await clipboardy.write(targetPath);
                 logger.info(`✔ Absolute path "${targetPath}" copied to clipboard.`);
             } catch (clipError) {
-                logger.error(`✖ Failed to copy file path to clipboard:`, clipError);
+                logger.error(`✖ Failed to copy file path to clipboard: ${clipError}`);
                 logger.warn(`ℹ You can manually copy the path: ${targetPath}`);
             }
         } else if (outputAction === "clipboard") {
@@ -378,7 +349,7 @@ async function main() {
             logger.info(`\n✔ Git diff completed successfully. Output to stdout.`);
         }
     } catch (finalOutputError) {
-        logger.error(`\n✖ An error occurred during final output handling:`, finalOutputError);
+        logger.error(`\n✖ An error occurred during final output handling: ${finalOutputError}`);
         process.exit(1);
     }
 }
