@@ -58,12 +58,17 @@ export class EventStreamClient {
       : ''
 
     const url = `/api/events?userId=${userId}${channelsParam}`
-    console.log(`[EventClient] Connecting to ${url}`)
+    console.log(`[EventClient] 🔌 Attempting to connect to ${url}`)
+    console.log(`[EventClient] Time: ${new Date().toISOString()}`)
 
     this.eventSource = new EventSource(url)
+    console.log(`[EventClient] EventSource created, initial readyState: ${this.eventSource.readyState}`)
+    console.log(`[EventClient] ReadyState values: CONNECTING=0, OPEN=1, CLOSED=2`)
 
     this.eventSource.onopen = () => {
-      console.log('[EventClient] Connected')
+      console.log('[EventClient] ✅ EventSource CONNECTED!')
+      console.log('[EventClient] readyState:', this.eventSource?.readyState)
+      console.log('[EventClient] Time:', new Date().toISOString())
     }
 
     this.eventSource.onmessage = (event) => {
