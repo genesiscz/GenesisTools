@@ -1,5 +1,6 @@
-import minimist from "minimist";
-import Enquirer from "enquirer";
+import { Command } from "commander";
+import { input, confirm, select, number } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import { resolve } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import chalk from "chalk";
@@ -16,11 +17,7 @@ const logger = {
 
 interface Options {
     commits?: number;
-    help?: boolean;
-}
-
-interface Args extends Options {
-    _: string[];
+    helpOld?: boolean;
     force?: boolean;
 }
 
@@ -31,9 +28,7 @@ interface CommitInfo {
     newMessage?: string;
 }
 
-const prompter = new Enquirer();
-
-function showHelp() {
+function showHelpOld() {
     logger.info(`
 Usage: tools rename-commits [--commits N] [--help]
 
@@ -45,7 +40,7 @@ Description:
 Options:
   -c, --commits   Number of recent commits to rename (default: prompts if not provided)
   -f, --force     Skip safety check (not recommended - use only if commits are backed up)
-  -h, --help      Show this help message
+  --help-old      Show this help message (Commander auto-generates --help)
 
 Examples:
   tools rename-commits --commits 3
@@ -451,43 +446,34 @@ async function promptForNewMessage(
     allCommits: CommitInfo[],
     defaultScope?: string | null
 ): Promise<string> {
-    try {
-        // Show current message clearly before the prompt
-        const suggestion = suggestCommitName(commit, allCommits, defaultScope);
-        console.log(chalk.dim(`\n  Current message: ${chalk.reset(commit.message)}`));
-        if (suggestion !== commit.message) {
-            console.log(chalk.dim(`  💡 Suggestion: ${chalk.green(suggestion)}`));
-        }
-
-        const response = (await prompter.prompt({
-            type: "input",
-            name: "newMessage",
-            message: `[${index + 1}/${total}] Enter new message for commit ${chalk.cyan(commit.shortHash)}:`,
-            initial: suggestion,
-        })) as { newMessage: string };
-
-        let newMessage = response.newMessage.trim();
-
-        // Extract just the message part from suggestion (remove type prefix if present)
-        // This handles cases where user types "feat(scope): <suggested>" and suggestion is "feat: message"
-        // We want "feat(scope): message" not "feat(scope): feat: message"
-        let suggestionMessage = suggestion;
-        const suggestionMatch = suggestion.match(/^\w+(?:\([^)]+\))?:\s*(.+)$/);
-        if (suggestionMatch) {
-            suggestionMessage = suggestionMatch[1]; // Just the message part after "type: "
-        }
-
-        // Replace placeholders
-        newMessage = newMessage.replace(/<suggested>/g, suggestionMessage);
-        newMessage = newMessage.replace(/<original>/g, commit.message);
-
-        return newMessage;
-    } catch (error: any) {
-        if (error.message === "canceled") {
-            throw new Error("Operation cancelled by user");
-        }
-        throw error;
+    // Show current message clearly before the prompt
+    const suggestion = suggestCommitName(commit, allCommits, defaultScope);
+    console.log(chalk.dim(`\n  Current message: ${chalk.reset(commit.message)}`));
+    if (suggestion !== commit.message) {
+        console.log(chalk.dim(`  💡 Suggestion: ${chalk.green(suggestion)}`));
     }
+
+    const newMessageRaw = await input({
+        message: `[${index + 1}/${total}] Enter new message for commit ${chalk.cyan(commit.shortHash)}:`,
+        default: suggestion,
+    });
+
+    let newMessage = newMessageRaw.trim();
+
+    // Extract just the message part from suggestion (remove type prefix if present)
+    // This handles cases where user types "feat(scope): <suggested>" and suggestion is "feat: message"
+    // We want "feat(scope): message" not "feat(scope): feat: message"
+    let suggestionMessage = suggestion;
+    const suggestionMatch = suggestion.match(/^\w+(?:\([^)]+\))?:\s*(.+)$/);
+    if (suggestionMatch) {
+        suggestionMessage = suggestionMatch[1]; // Just the message part after "type: "
+    }
+
+    // Replace placeholders
+    newMessage = newMessage.replace(/<suggested>/g, suggestionMessage);
+    newMessage = newMessage.replace(/<original>/g, commit.message);
+
+    return newMessage;
 }
 
 function showConfirmation(commits: CommitInfo[]): string {
@@ -953,21 +939,18 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
 }
 
 async function main() {
-    const argv = minimist<Args>(process.argv.slice(2), {
-        alias: {
-            c: "commits",
-            h: "help",
-            f: "force",
-        },
-        boolean: ["help", "force"],
-        default: {
-            commits: undefined,
-            force: false,
-        },
-    });
+    const program = new Command()
+        .name("rename-commits")
+        .description("Interactively rename git commits")
+        .option("-c, --commits <n>", "Number of commits to rename", parseInt)
+        .option("-f, --force", "Force: skip safety check (not recommended - use only if commits are backed up)")
+        .option("--help-old", "Show the old help message")
+        .parse();
 
-    if (argv.help) {
-        showHelp();
+    const opts = program.opts<Options>();
+
+    if (opts.helpOld) {
+        showHelpOld();
         process.exit(0);
     }
 
@@ -984,7 +967,7 @@ async function main() {
         console.log(`  Repository: ${chalk.cyan(repoDir)}\n`);
 
         // Safety check: ensure commits are pushed before rewriting
-        if (!argv.force) {
+        if (!opts.force) {
             const commitsArePushed = await checkCommitsArePushed(repoDir, currentBranch);
             if (!commitsArePushed) {
                 logger.error("\n✖ Safety check failed: Current commits are not pushed to origin.");
@@ -1001,7 +984,7 @@ async function main() {
         }
 
         // Get number of commits
-        let commitCount = argv.commits;
+        let commitCount = opts.commits;
 
         if (!commitCount) {
             // Show last 50 commits numbered so user can see which ones will be renamed
@@ -1038,29 +1021,20 @@ async function main() {
             });
             console.log();
 
-            try {
-                const response = (await prompter.prompt({
-                    type: "numeral",
-                    name: "commitCount",
-                    message: `How many commits do you want to rename? (1-${recentCommits.length})`,
-                    min: 1,
-                    max: recentCommits.length,
-                })) as { commitCount: number };
-
-                commitCount = response.commitCount;
-            } catch (error: any) {
-                if (error.message === "canceled") {
-                    logger.info("\n🚫 Operation cancelled by user.");
-                    process.exit(0);
-                }
-                throw error;
-            }
+            const maxCommits = recentCommits.length;
+            commitCount = await number({
+                message: `How many commits do you want to rename? (1-${maxCommits})`,
+                min: 1,
+                max: maxCommits,
+                default: 1,
+                validate: (v) => (v !== undefined && v >= 1 && v <= maxCommits) || `Enter a number between 1 and ${maxCommits}`,
+            });
         }
 
         const numCommits = Number(commitCount);
         if (!Number.isInteger(numCommits) || numCommits < 1) {
             logger.error("✖ Error: Number of commits must be a positive integer.");
-            showHelp();
+            showHelpOld();
             process.exit(1);
         }
 
@@ -1106,23 +1080,12 @@ async function main() {
 
         // If no scope found in commits, ask user for it
         if (!mostCommonScope) {
-            try {
-                const scopeResponse = (await prompter.prompt({
-                    type: "input",
-                    name: "scope",
-                    message:
-                        "What scope should be used for commit suggestions? (e.g., 'vouchers', 'invoices', 'auth'):",
-                    initial: "",
-                })) as { scope: string };
+            const scopeInput = await input({
+                message: "What scope should be used for commit suggestions? (e.g., 'vouchers', 'invoices', 'auth'):",
+                default: "",
+            });
 
-                defaultScope = scopeResponse.scope.trim() || null;
-            } catch (error: any) {
-                if (error.message === "canceled") {
-                    logger.info("\n🚫 Operation cancelled by user.");
-                    process.exit(0);
-                }
-                throw error;
-            }
+            defaultScope = scopeInput.trim() || null;
         } else {
             defaultScope = mostCommonScope;
         }
@@ -1136,14 +1099,12 @@ async function main() {
         // Show confirmation
         console.log(showConfirmation(commits));
 
-        const { confirm } = (await prompter.prompt({
-            type: "confirm",
-            name: "confirm",
+        const confirmed = await confirm({
             message: "Do you want to proceed with renaming these commits?",
-            initial: true,
-        })) as { confirm: boolean };
+            default: true,
+        });
 
-        if (!confirm) {
+        if (!confirmed) {
             logger.info("\n🚫 Operation cancelled by user.");
             process.exit(0);
         }
@@ -1152,14 +1113,19 @@ async function main() {
         await performRebase(repoDir, commits);
 
         logger.info("\n✨ All done! Your commits have been renamed.");
-    } catch (error: any) {
-        if (error.message === "canceled" || error.message?.includes("cancelled")) {
+    } catch (error: unknown) {
+        if (error instanceof ExitPromptError) {
             logger.info("\n🚫 Operation cancelled by user.");
             process.exit(0);
         }
-        logger.error(`\n✖ Error: ${error.message}`);
-        if (error.stack) {
-            logger.debug(error.stack);
+        const err = error as Error;
+        if (err.message === "canceled" || err.message?.includes("cancelled")) {
+            logger.info("\n🚫 Operation cancelled by user.");
+            process.exit(0);
+        }
+        logger.error(`\n✖ Error: ${err.message}`);
+        if (err.stack) {
+            logger.debug(err.stack);
         }
         process.exit(1);
     }
