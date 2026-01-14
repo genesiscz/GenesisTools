@@ -1,0 +1,380 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import './cyberpunk.css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================================================
+   TYPOGRAPHY & BASE STYLES
+   ============================================================================ */
+body {
+  @apply m-0;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu',
+    'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: 0.01em;
+}
+
+code {
+  font-family:
+    source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+}
+
+/* ============================================================================
+   CYBERPUNK COLOR SYSTEM - DARK MODE AS DEFAULT
+   ============================================================================ */
+
+:root {
+  /* CORE PALETTE - Deep dark background with neon accents */
+
+  /* Primary Background: Deep space black with subtle blue tint */
+  --background: oklch(0.06 0.01 280);
+  --foreground: oklch(0.93 0.005 0);
+
+  /* Cards: Slightly elevated from background */
+  --card: oklch(0.08 0.01 280);
+  --card-foreground: oklch(0.93 0.005 0);
+
+  /* Popovers: Match cards */
+  --popover: oklch(0.08 0.01 280);
+  --popover-foreground: oklch(0.93 0.005 0);
+
+  /* Primary: AMBER NEON - Cyberpunk gold */
+  --primary: oklch(0.78 0.19 75);
+  --primary-foreground: oklch(0.08 0.01 280);
+
+  /* Secondary: CYAN NEON - Cyber accent */
+  --secondary: oklch(0.68 0.17 195);
+  --secondary-foreground: oklch(0.08 0.01 280);
+
+  /* Muted: Dimmed secondary tones */
+  --muted: oklch(0.25 0.02 280);
+  --muted-foreground: oklch(0.65 0.01 280);
+
+  /* Accent: CYAN NEON - Main highlight */
+  --accent: oklch(0.68 0.17 195);
+  --accent-foreground: oklch(0.08 0.01 280);
+
+  /* Destructive: RED ALERT */
+  --destructive: oklch(0.60 0.22 25);
+  --destructive-foreground: oklch(0.93 0.005 0);
+
+  /* Borders: Subtle with neon glow potential */
+  --border: oklch(0.20 0.02 280);
+  --input: oklch(0.12 0.015 280);
+  --ring: oklch(0.78 0.19 75);
+
+  /* Chart Colors: Vibrant palette */
+  --chart-1: oklch(0.78 0.19 75);    /* Amber */
+  --chart-2: oklch(0.68 0.17 195);   /* Cyan */
+  --chart-3: oklch(0.65 0.18 145);   /* Green */
+  --chart-4: oklch(0.70 0.19 305);   /* Purple */
+  --chart-5: oklch(0.62 0.20 25);    /* Red */
+
+  /* Radius: Rounded edges with character */
+  --radius: 0.625rem;
+
+  /* SIDEBAR COLORS - Dark with vibrant accents */
+  --sidebar: oklch(0.08 0.01 280);
+  --sidebar-foreground: oklch(0.85 0.005 0);
+  --sidebar-primary: oklch(0.78 0.19 75);
+  --sidebar-primary-foreground: oklch(0.08 0.01 280);
+  --sidebar-accent: oklch(0.68 0.17 195);
+  --sidebar-accent-foreground: oklch(0.08 0.01 280);
+  --sidebar-border: oklch(0.15 0.01 280);
+  --sidebar-ring: oklch(0.78 0.19 75);
+}
+
+/* LIGHT MODE - Inverted scheme (optional, not primary) */
+.light {
+  --background: oklch(0.97 0 0);
+  --foreground: oklch(0.10 0.01 280);
+  --card: oklch(0.99 0 0);
+  --card-foreground: oklch(0.10 0.01 280);
+  --popover: oklch(0.99 0 0);
+  --popover-foreground: oklch(0.10 0.01 280);
+  --primary: oklch(0.55 0.15 75);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.45 0.12 195);
+  --secondary-foreground: oklch(0.99 0 0);
+  --muted: oklch(0.85 0.02 280);
+  --muted-foreground: oklch(0.45 0.01 280);
+  --accent: oklch(0.45 0.12 195);
+  --accent-foreground: oklch(0.99 0 0);
+  --destructive: oklch(0.55 0.18 25);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.90 0.01 280);
+  --input: oklch(0.93 0.01 280);
+  --ring: oklch(0.55 0.15 75);
+  --chart-1: oklch(0.55 0.15 75);
+  --chart-2: oklch(0.45 0.12 195);
+  --chart-3: oklch(0.50 0.14 145);
+  --chart-4: oklch(0.48 0.14 305);
+  --chart-5: oklch(0.52 0.16 25);
+  --sidebar: oklch(0.96 0 0);
+  --sidebar-foreground: oklch(0.15 0.01 280);
+  --sidebar-primary: oklch(0.55 0.15 75);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.45 0.12 195);
+  --sidebar-accent-foreground: oklch(0.99 0 0);
+  --sidebar-border: oklch(0.88 0.01 280);
+  --sidebar-ring: oklch(0.55 0.15 75);
+}
+
+/* Cyberpunk theme - dark mode by default */
+.cyberpunk {
+  /* Background: deep dark blue-black */
+  --background: oklch(0.08 0.02 280);
+  --foreground: oklch(0.95 0 0);
+  --card: oklch(0.12 0.02 280);
+  --card-foreground: oklch(0.95 0 0);
+  --popover: oklch(0.1 0.02 280);
+  --popover-foreground: oklch(0.95 0 0);
+
+  /* Primary: Amber (cyberpunk gold) */
+  --primary: oklch(0.75 0.18 75); /* amber-500 */
+  --primary-foreground: oklch(0.15 0.02 280);
+
+  /* Secondary: Cyan (neon accent) */
+  --secondary: oklch(0.65 0.15 195); /* cyan-500 */
+  --secondary-foreground: oklch(0.15 0.02 280);
+
+  /* Muted: dark with amber tint */
+  --muted: oklch(0.2 0.02 280);
+  --muted-foreground: oklch(0.6 0.01 280);
+
+  /* Accent: cyan for highlights */
+  --accent: oklch(0.65 0.15 195);
+  --accent-foreground: oklch(0.15 0.02 280);
+
+  /* Destructive: red alert */
+  --destructive: oklch(0.55 0.2 25);
+  --destructive-foreground: oklch(0.95 0 0);
+
+  /* Borders with amber glow */
+  --border: oklch(0.35 0.05 75);
+  --input: oklch(0.2 0.03 280);
+  --ring: oklch(0.75 0.18 75);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/* ============================================================================
+   GRADIENT & EFFECT UTILITIES
+   ============================================================================ */
+
+.gradient-text {
+  background: linear-gradient(135deg, oklch(0.78 0.19 75), oklch(0.68 0.17 195));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.neon-glow {
+  text-shadow:
+    0 0 10px rgba(251, 146, 60, 0.5),
+    0 0 20px rgba(34, 197, 94, 0.3);
+}
+
+.cyber-border {
+  border-image: linear-gradient(135deg, oklch(0.78 0.19 75), oklch(0.68 0.17 195)) 1;
+}
+
+/* ============================================================================
+   ANIMATIONS & TRANSITIONS
+   ============================================================================ */
+
+@keyframes pulse-subtle {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 5px oklch(0.78 0.19 75 / 0.2);
+  }
+  50% {
+    box-shadow: 0 0 15px oklch(0.78 0.19 75 / 0.4);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-glow-pulse {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+.animate-slide-up {
+  animation: slide-up 0.5s ease-out;
+}
+
+/* ============================================================================
+   LAYER BASE STYLES
+   ============================================================================ */
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight;
+  }
+
+  h1 {
+    @apply text-3xl;
+  }
+
+  h2 {
+    @apply text-2xl;
+  }
+
+  h3 {
+    @apply text-xl;
+  }
+
+  p {
+    @apply leading-7;
+  }
+
+  a {
+    @apply transition-colors duration-200;
+  }
+}
+
+/* ============================================================================
+   COMPONENT REFINEMENTS
+   ============================================================================ */
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: oklch(0.10 0.01 280);
+}
+
+::-webkit-scrollbar-thumb {
+  background: oklch(0.25 0.02 280);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.35 0.03 280);
+}
+
+/* Selection styling */
+::selection {
+  background-color: oklch(0.78 0.19 75 / 0.3);
+  color: oklch(0.93 0.005 0);
+}
+
+/* ============================================================================
+   SIDEBAR ENHANCEMENTS
+   ============================================================================ */
+
+.sidebar {
+  background-color: var(--sidebar);
+  border-color: var(--sidebar-border);
+}
+
+.sidebar-header {
+  border-bottom-color: var(--sidebar-border);
+}
+
+.sidebar-footer {
+  border-top-color: var(--sidebar-border);
+}
+
+/* ============================================================================
+   RESPONSIVE ADJUSTMENTS
+   ============================================================================ */
+
+@media (max-width: 768px) {
+  body {
+    font-size: 14px;
+  }
+
+  h1 {
+    @apply text-2xl;
+  }
+
+  h2 {
+    @apply text-xl;
+  }
+}
