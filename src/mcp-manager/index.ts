@@ -79,10 +79,15 @@ const program = new Command()
     .name("mcp-manager")
     .description("Manage MCP (Model Context Protocol) servers across multiple AI assistants")
     .option("-v, --verbose", "Enable verbose logging")
-    .option("-y, --yes", "Auto-confirm changes without prompting")
+    .option("-y, --yes", "Auto-confirm changes without prompting (only after you do the command without --yes and check the diff)")
     .option("-p, --provider <name>", "Provider name(s) for operations (claude, cursor, gemini, codex, or 'all')")
     .option("--help-old", "Show detailed help message")
-    .helpCommand(true);
+    .helpCommand(true)
+    .hook("preAction", () => {
+        // Set global options for all commands (enables --yes to work globally)
+        const opts = program.opts();
+        setGlobalOptions({ yes: opts.yes });
+    });
 
 // Handle --help-old to show custom help
 program.on("option:help-old", () => {
@@ -219,10 +224,6 @@ program
 // Default action (interactive mode) when no command is specified
 program.action(async () => {
     const opts = program.opts();
-
-    // Set global options for use by BackupManager and other utilities
-    setGlobalOptions({ yes: opts.yes });
-
     const allProviders = getProviders();
     const providers = parseProviderArg(opts.provider, allProviders);
 
