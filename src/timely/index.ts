@@ -79,6 +79,7 @@ async function main(): Promise<void> {
         .name("timely")
         .description("Timely time tracking CLI")
         .option("--help-old", "Show old help message")
+        .helpCommand(true)
         .action((options) => {
             if (options.helpOld) {
                 showHelpOld();
