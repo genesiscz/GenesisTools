@@ -9,6 +9,7 @@
 # @raycast.icon 🔪
 # @raycast.argument1 { "type": "text", "placeholder": "Port number (e.g. 8081)" }
 # @raycast.packageName Developer Utils
+# @raycast.needsConfirmation true
 
 # Documentation:
 # @raycast.description Kill what's running on port X with confirmation
@@ -96,13 +97,16 @@ PID_COUNT=$(echo "$PIDS" | wc -l | xargs)
 echo -e "${YELLOW}Found ${BOLD}$PID_COUNT${NC}${YELLOW} process(es) on port ${BOLD}$PORT${NC}"
 echo ""
 
-# Ask for confirmation
-echo -e -n "${BOLD}Kill these processes? ${NC}[${GREEN}y${NC}/${RED}N${NC}]: "
-read -r CONFIRM
-
-if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-    echo -e "${DIM}Aborted.${NC}"
-    exit 0
+# Ask for confirmation (skip if not interactive, e.g., Raycast)
+if [[ -t 0 ]]; then
+    echo -e -n "${BOLD}Kill these processes? ${NC}[${GREEN}y${NC}/${RED}N${NC}]: "
+    read -r CONFIRM
+    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+        echo -e "${DIM}Aborted.${NC}"
+        exit 0
+    fi
+else
+    echo -e "${YELLOW}Non-interactive mode: proceeding without confirmation${NC}"
 fi
 
 # Kill processes gracefully (SIGTERM)
@@ -147,12 +151,16 @@ for PID in $REMAINING_PIDS; do
 done
 
 echo ""
-echo -e -n "${BOLD}Force kill (SIGKILL -9)? ${NC}[${GREEN}y${NC}/${RED}N${NC}]: "
-read -r FORCE_CONFIRM
-
-if [[ ! "$FORCE_CONFIRM" =~ ^[Yy]$ ]]; then
-    echo -e "${DIM}Aborted. Processes may still be running.${NC}"
-    exit 1
+# Ask for force kill confirmation (auto-proceed if not interactive)
+if [[ -t 0 ]]; then
+    echo -e -n "${BOLD}Force kill (SIGKILL -9)? ${NC}[${GREEN}y${NC}/${RED}N${NC}]: "
+    read -r FORCE_CONFIRM
+    if [[ ! "$FORCE_CONFIRM" =~ ^[Yy]$ ]]; then
+        echo -e "${DIM}Aborted. Processes may still be running.${NC}"
+        exit 1
+    fi
+else
+    echo -e "${YELLOW}Non-interactive mode: force killing remaining processes${NC}"
 fi
 
 # Force kill
