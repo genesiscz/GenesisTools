@@ -19,10 +19,10 @@ Options:
   -o, --output    [FILE] Write diff to this file. If FILE is omitted or empty,
                   output goes to stdout. This option overrides --clipboard
                   and the interactive prompt.
-  -cl, --clipboard Copy diff output directly to the clipboard. This option
+  --clipboard     Copy diff output directly to the clipboard. This option
                   overrides the interactive prompt. If --output is also given,
                   --output takes precedence.
-  -h, --help-old  Show this message.
+  --help-old      Show this message.
 `);
 }
 
@@ -152,8 +152,8 @@ async function main() {
         .argument("<directory>", "Path to the Git repository")
         .option("-c, --commits <number>", "Number of recent commits to diff")
         .option("-o, --output [file]", "Output file path")
-        .option("-cl, --clipboard", "Copy diff output to clipboard")
-        .option("-h, --help-old", "Show this help message")
+        .option("--clipboard", "Copy diff output to clipboard")
+        .option("--help-old", "Show this help message")
         .parse();
 
     const options = program.opts();
