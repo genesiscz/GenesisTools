@@ -14,6 +14,18 @@ const JENKINS_URL = process.env.JENKINS_URL || '';
 const JENKINS_USER = process.env.JENKINS_USER || '';
 const JENKINS_TOKEN = process.env.JENKINS_TOKEN || '';
 
+// Validate required environment variables at startup
+if (!JENKINS_URL || !JENKINS_USER || !JENKINS_TOKEN) {
+  const missing = [
+    !JENKINS_URL && 'JENKINS_URL',
+    !JENKINS_USER && 'JENKINS_USER',
+    !JENKINS_TOKEN && 'JENKINS_TOKEN',
+  ].filter(Boolean).join(', ');
+  console.error(`Error: Missing required environment variables: ${missing}`);
+  console.error('Please set JENKINS_URL, JENKINS_USER, and JENKINS_TOKEN environment variables.');
+  process.exit(1);
+}
+
 // Interface for build status information
 interface BuildStatus {
   building: boolean;
