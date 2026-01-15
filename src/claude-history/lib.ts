@@ -7,6 +7,7 @@ import { glob } from "glob";
 import { homedir } from "os";
 import { resolve, basename } from "path";
 import { createReadStream } from "fs";
+import { stat } from "fs/promises";
 import { createInterface } from "readline";
 import type {
 	ConversationMessage,
@@ -70,8 +71,8 @@ export async function findConversationFiles(filters: SearchFilters): Promise<str
 	// Sort by modification time (most recent first)
 	const fileStats = await Promise.all(
 		files.map(async (f) => {
-			const stat = await Bun.file(f).stat();
-			return { path: f, mtime: stat?.mtime ?? new Date(0) };
+			const fileStat = await stat(f);
+			return { path: f, mtime: fileStat.mtime };
 		}),
 	);
 	fileStats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
