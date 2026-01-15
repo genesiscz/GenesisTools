@@ -2,7 +2,7 @@ import { MCPProvider } from "./types.js";
 import type { UnifiedMCPServerConfig, MCPServerInfo } from "./types.js";
 import type { ClaudeMCPServerConfig, ClaudeGenericConfig } from "./claude.types.js";
 import { existsSync } from "fs";
-import { readFile, writeFile } from "fs/promises";
+import { readFile } from "fs/promises";
 import path from "path";
 import logger from "@app/logger";
 import chalk from "chalk";
@@ -54,8 +54,8 @@ export class ClaudeProvider extends MCPProvider {
             return false;
         }
 
-        // Only now write to file
-        await writeFile(this.configPath, newContent, "utf-8");
+        // Only now write to file (with backup)
+        await this.writeFileWithBackup(newContent);
         logger.info(chalk.green(`✓ Configuration written to ${this.configPath}`));
         return true;
     }

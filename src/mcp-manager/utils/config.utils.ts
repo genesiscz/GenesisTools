@@ -149,6 +149,9 @@ export async function writeUnifiedConfig(config: UnifiedMCPConfig): Promise<bool
         return false;
     }
 
+    // Create backup before writing
+    await backupManager.createBackup(configPath, "unified");
+
     // Only now write to file
     await storage.setConfig(config);
     logger.info(chalk.green(`✓ Configuration written to ${configPath}`));
