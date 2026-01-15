@@ -1,7 +1,6 @@
 import { Command } from "commander";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import logger from "../logger";
 import { encode, decode } from "@toon-format/toon";
 
 type Format = "json" | "jsonl" | "toon" | "unknown";
@@ -104,20 +103,8 @@ async function readInput(filePath?: string): Promise<string> {
         return readFileSync(resolvedPath, "utf-8").trim();
     }
 
-    // Read from stdin
-    const reader = Bun.stdin.stream().getReader();
-    let input = "";
-
-    try {
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            input += Buffer.from(value).toString();
-        }
-    } finally {
-        reader.releaseLock();
-    }
-
+    // Read from stdin - use Bun.stdin.text() which properly waits for all data
+    const input = await Bun.stdin.text();
     return input.trim();
 }
 
