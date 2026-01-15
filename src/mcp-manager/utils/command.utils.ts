@@ -204,8 +204,15 @@ export function parseEnvString(input: string | string[]): Record<string, string>
         // Try JSON format first
         if (trimmed.startsWith("{")) {
             try {
-                const parsed = JSON.parse(trimmed);
-                Object.assign(env, parsed);
+                const parsed: unknown = JSON.parse(trimmed);
+                // Validate parsed JSON is a Record<string, string>
+                if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                    for (const [key, value] of Object.entries(parsed)) {
+                        if (typeof key === "string" && typeof value === "string") {
+                            env[key] = value;
+                        }
+                    }
+                }
                 continue;
             } catch {
                 // Not valid JSON, try as key=value pair
