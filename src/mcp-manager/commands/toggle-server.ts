@@ -202,8 +202,28 @@ export async function toggleServer(
             }
         }
 
-        // Batch toggle all servers in this provider
         if (serversToToggle.length > 0) {
+            const metaBackup = new Map<string, boolean | PerProjectEnabledState | undefined>();
+            for (const serverName of serversToToggle) {
+                const currentState = config.mcpServers[serverName]._meta?.enabled?.[providerName as MCPProviderName];
+                if (typeof currentState === "object" && currentState !== null) {
+                    metaBackup.set(serverName, { ...currentState } as PerProjectEnabledState);
+                } else {
+                    metaBackup.set(serverName, currentState);
+                }
+            }
+
+            const restoreBackup = () => {
+                for (const serverName of serversToToggle) {
+                    const backup = metaBackup.get(serverName);
+                    if (backup === undefined) {
+                        delete config.mcpServers[serverName]._meta?.enabled?.[providerName as MCPProviderName];
+                    } else {
+                        config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = backup;
+                    }
+                }
+            };
+
             try {
                 if (projectChoices) {
                     for (const projectChoice of projectChoices) {
@@ -212,27 +232,7 @@ export async function toggleServer(
                             : await provider.disableServers(serversToToggle, projectChoice.projectPath);
 
                         if (result === WriteResult.Rejected) {
-                            // User rejected the confirmation - revert _meta changes
-                            for (const serverName of serversToToggle) {
-                                const enabledState = config.mcpServers[serverName]._meta?.enabled?.[providerName as MCPProviderName];
-                                if (projects.length > 0) {
-                                    // Provider supports projects - revert project-specific state
-                                    if (typeof enabledState === "object" && enabledState !== null && !Array.isArray(enabledState)) {
-                                        if (projectChoice.projectPath === null) {
-                                            // Global - revert all projects
-                                            for (const projectPath of projects) {
-                                                (enabledState as PerProjectEnabledState)[projectPath] = !enabled;
-                                            }
-                                        } else {
-                                            // Per-project - revert specific project
-                                            (enabledState as PerProjectEnabledState)[projectChoice.projectPath] = !enabled;
-                                        }
-                                    }
-                                } else {
-                                    // Provider doesn't support projects - revert boolean
-                                    config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = !enabled;
-                                }
-                            }
+                            restoreBackup();
                             logger.info(`Skipped ${providerName} - user rejected confirmation`);
                             continue;
                         }
@@ -259,10 +259,7 @@ export async function toggleServer(
                         : await provider.disableServers(serversToToggle);
 
                     if (result === WriteResult.Rejected) {
-                        // User rejected the confirmation - revert _meta changes
-                        for (const serverName of serversToToggle) {
-                            config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = !enabled;
-                        }
+                        restoreBackup();
                         logger.info(`Skipped ${providerName} - user rejected confirmation`);
                         continue;
                     }
