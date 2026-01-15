@@ -207,6 +207,115 @@ export function matchesQuery(text: string, query: string, exact: boolean, regex:
 	return words.every((word) => lowerText.includes(word));
 }
 
+/**
+ * Calculate relevance score for a search result
+ * Higher score = better match
+ */
+export function calculateRelevanceScore(
+	query: string,
+	summary: string | undefined,
+	customTitle: string | undefined,
+	firstUserMessage: string | undefined,
+	allText: string,
+	timestamp: Date,
+): number {
+	if (!query) return 0;
+
+	let score = 0;
+	const queryWords = query.toLowerCase().split(/\s+/);
+	const queryLower = query.toLowerCase();
+
+	// Title/summary exact match (highest weight)
+	const titleText = (customTitle || summary || "").toLowerCase();
+	if (titleText.includes(queryLower)) {
+		score += 100; // Exact phrase in title
+	} else {
+		// Word matches in title (3x weight)
+		for (const word of queryWords) {
+			if (titleText.includes(word)) {
+				score += 15;
+			}
+		}
+	}
+
+	// First user message match (2x weight)
+	if (firstUserMessage) {
+		const firstMsgLower = firstUserMessage.toLowerCase();
+		if (firstMsgLower.includes(queryLower)) {
+			score += 50; // Exact phrase in first message
+		} else {
+			for (const word of queryWords) {
+				if (firstMsgLower.includes(word)) {
+					score += 10;
+				}
+			}
+		}
+	}
+
+	// General content match (1x weight)
+	const allTextLower = allText.toLowerCase();
+	for (const word of queryWords) {
+		// Count occurrences (capped)
+		const occurrences = Math.min((allTextLower.match(new RegExp(word, "gi")) || []).length, 10);
+		score += occurrences;
+	}
+
+	// Recency bonus (up to 20 points for conversations in last 7 days)
+	const daysSinceConversation = (Date.now() - timestamp.getTime()) / (1000 * 60 * 60 * 24);
+	if (daysSinceConversation < 7) {
+		score += Math.round(20 * (1 - daysSinceConversation / 7));
+	}
+
+	return score;
+}
+
+/**
+ * Extract git commit hashes from Bash tool calls in a conversation
+ */
+export function extractCommitHashes(messages: ConversationMessage[]): string[] {
+	const hashes = new Set<string>();
+	const commitPattern = /\b([a-f0-9]{7,40})\b/gi;
+	const gitCommitPattern = /git commit|committed|Commit:/i;
+
+	for (const msg of messages) {
+		if (msg.type === "user") {
+			const userMsg = msg as UserMessage;
+			if (Array.isArray(userMsg.message.content)) {
+				for (const block of userMsg.message.content) {
+					if (block.type === "tool_result" && typeof block.content === "string") {
+						// Look for commit hashes in tool results
+						if (gitCommitPattern.test(block.content)) {
+							const matches = block.content.match(commitPattern);
+							if (matches) {
+								for (const match of matches) {
+									// Filter out common false positives (too short or all same char)
+									if (match.length >= 7 && !/^(.)\1+$/.test(match)) {
+										hashes.add(match);
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		} else if (msg.type === "assistant") {
+			const assistantMsg = msg as AssistantMessage;
+			// Look for Bash commands with git commit
+			for (const block of assistantMsg.message.content) {
+				if (block.type === "tool_use" && block.name === "Bash") {
+					const input = block.input as Record<string, unknown>;
+					const cmd = (input.command as string) || "";
+					if (cmd.includes("git commit")) {
+						// The commit hash will be in the tool result
+					}
+				}
+			}
+		}
+	}
+
+	return [...hashes];
+}
+
 function matchesFilters(
 	message: ConversationMessage,
 	filters: SearchFilters,
@@ -261,7 +370,7 @@ function matchesFilters(
 // =============================================================================
 
 export async function searchConversations(filters: SearchFilters): Promise<SearchResult[]> {
-	const results: SearchResult[] = [];
+	let results: SearchResult[] = [];
 	const files = await findConversationFiles(filters);
 
 	for (const filePath of files) {
@@ -272,6 +381,207 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
 		const isSubagent = filePath.includes("/subagents/") || basename(filePath).startsWith("agent-");
 
 		// Extract metadata
+		let summary: string | undefined;
+		let customTitle: string | undefined;
+		let gitBranch: string | undefined;
+		let sessionId: string | undefined;
+		let firstTimestamp: Date | undefined;
+		let firstUserMessage: string | undefined;
+
+		for (const msg of messages) {
+			if (msg.type === "summary") {
+				summary = (msg as SummaryMessage).summary;
+			}
+			if (msg.type === "custom-title") {
+				customTitle = (msg as CustomTitleMessage).customTitle;
+			}
+			if ("gitBranch" in msg && msg.gitBranch) {
+				gitBranch = msg.gitBranch as string;
+			}
+			if ("sessionId" in msg && msg.sessionId) {
+				sessionId = msg.sessionId as string;
+			}
+			if ("timestamp" in msg && msg.timestamp && !firstTimestamp) {
+				firstTimestamp = new Date(msg.timestamp as string);
+			}
+			// Get first user message for relevance scoring
+			if (msg.type === "user" && !firstUserMessage) {
+				firstUserMessage = extractTextFromMessage(msg, true);
+			}
+		}
+
+		// Skip current session if requested
+		if (filters.excludeCurrentSession && sessionId === filters.excludeCurrentSession) {
+			continue;
+		}
+
+		// Conversation date filter (based on first message, not individual messages)
+		if (filters.conversationDate && firstTimestamp) {
+			if (firstTimestamp < filters.conversationDate) continue;
+		}
+		if (filters.conversationDateUntil && firstTimestamp) {
+			if (firstTimestamp > filters.conversationDateUntil) continue;
+		}
+
+		// Summary-only search mode
+		if (filters.summaryOnly) {
+			const titleText = customTitle || summary || "";
+			if (filters.query && !matchesQuery(titleText, filters.query, !!filters.exact, !!filters.regex)) {
+				continue;
+			}
+			// For summary-only, we match if the title/summary matches
+			results.push({
+				filePath,
+				project,
+				sessionId: sessionId || basename(filePath, ".jsonl"),
+				timestamp: firstTimestamp || new Date(),
+				summary,
+				customTitle,
+				gitBranch,
+				matchedMessages: [],
+				isSubagent,
+				relevanceScore: filters.query
+					? calculateRelevanceScore(filters.query, summary, customTitle, firstUserMessage, titleText, firstTimestamp || new Date())
+					: 0,
+			});
+			continue;
+		}
+
+		// Commit hash search
+		if (filters.commitHash) {
+			const commitHashes = extractCommitHashes(messages);
+			if (!commitHashes.some(h => h.toLowerCase().startsWith(filters.commitHash!.toLowerCase()))) {
+				continue;
+			}
+			results.push({
+				filePath,
+				project,
+				sessionId: sessionId || basename(filePath, ".jsonl"),
+				timestamp: firstTimestamp || new Date(),
+				summary,
+				customTitle,
+				gitBranch,
+				matchedMessages: messages.filter(m => m.type === "user" || m.type === "assistant"),
+				isSubagent,
+				commitHashes,
+			});
+			continue;
+		}
+
+		// Commit message search
+		if (filters.commitMessage) {
+			let foundCommitMsg = false;
+			for (const msg of messages) {
+				if (msg.type === "assistant") {
+					const assistantMsg = msg as AssistantMessage;
+					for (const block of assistantMsg.message.content) {
+						if (block.type === "tool_use" && block.name === "Bash") {
+							const input = block.input as Record<string, unknown>;
+							const cmd = (input.command as string) || "";
+							if (cmd.includes("git commit") && cmd.toLowerCase().includes(filters.commitMessage.toLowerCase())) {
+								foundCommitMsg = true;
+								break;
+							}
+						}
+					}
+				}
+				if (foundCommitMsg) break;
+			}
+			if (!foundCommitMsg) continue;
+
+			results.push({
+				filePath,
+				project,
+				sessionId: sessionId || basename(filePath, ".jsonl"),
+				timestamp: firstTimestamp || new Date(),
+				summary,
+				customTitle,
+				gitBranch,
+				matchedMessages: messages.filter(m => m.type === "user" || m.type === "assistant"),
+				isSubagent,
+				commitHashes: extractCommitHashes(messages),
+			});
+			continue;
+		}
+
+		// Standard search: find matching messages
+		const matchedMessages: ConversationMessage[] = [];
+		const matchedIndices: number[] = [];
+		let allText = "";
+
+		for (let i = 0; i < messages.length; i++) {
+			const msg = messages[i];
+			const text = extractTextFromMessage(msg, !!filters.excludeThinking);
+			allText += " " + text;
+
+			if (matchesFilters(msg, filters, text)) {
+				matchedMessages.push(msg);
+				matchedIndices.push(i);
+			}
+		}
+
+		if (matchedMessages.length > 0 || !filters.query) {
+			// Get context messages if requested
+			let contextMessages: ConversationMessage[] | undefined;
+			if (filters.context && filters.context > 0 && matchedIndices.length > 0) {
+				const contextSet = new Set<number>();
+				for (const idx of matchedIndices) {
+					for (let i = Math.max(0, idx - filters.context); i <= Math.min(messages.length - 1, idx + filters.context); i++) {
+						contextSet.add(i);
+					}
+				}
+				const sortedIndices = [...contextSet].sort((a, b) => a - b);
+				contextMessages = sortedIndices.map((i) => messages[i]);
+			}
+
+			// Calculate relevance score
+			const relevanceScore = filters.query
+				? calculateRelevanceScore(filters.query, summary, customTitle, firstUserMessage, allText, firstTimestamp || new Date())
+				: 0;
+
+			results.push({
+				filePath,
+				project,
+				sessionId: sessionId || basename(filePath, ".jsonl"),
+				timestamp: firstTimestamp || new Date(),
+				summary,
+				customTitle,
+				gitBranch,
+				matchedMessages,
+				contextMessages,
+				isSubagent,
+				relevanceScore,
+			});
+		}
+	}
+
+	// Sort by relevance if requested, otherwise by date (already sorted by file mtime)
+	if (filters.sortByRelevance && filters.query) {
+		results.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
+	}
+
+	// Apply limit after sorting
+	if (filters.limit && results.length > filters.limit) {
+		results = results.slice(0, filters.limit);
+	}
+
+	return results;
+}
+
+/**
+ * List conversation summaries (quick overview without full search)
+ */
+export async function listConversationSummaries(filters: SearchFilters): Promise<SearchResult[]> {
+	const results: SearchResult[] = [];
+	const files = await findConversationFiles(filters);
+
+	for (const filePath of files) {
+		const messages = await parseJsonlFile(filePath);
+		if (messages.length === 0) continue;
+
+		const project = extractProjectName(filePath);
+		const isSubagent = filePath.includes("/subagents/") || basename(filePath).startsWith("agent-");
+
 		let summary: string | undefined;
 		let customTitle: string | undefined;
 		let gitBranch: string | undefined;
@@ -296,49 +606,34 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
 			}
 		}
 
-		// Find matching messages
-		const matchedMessages: ConversationMessage[] = [];
-		const matchedIndices: number[] = [];
-
-		for (let i = 0; i < messages.length; i++) {
-			const msg = messages[i];
-			const text = extractTextFromMessage(msg, !!filters.excludeThinking);
-
-			if (matchesFilters(msg, filters, text)) {
-				matchedMessages.push(msg);
-				matchedIndices.push(i);
-			}
+		// Skip current session if requested
+		if (filters.excludeCurrentSession && sessionId === filters.excludeCurrentSession) {
+			continue;
 		}
 
-		if (matchedMessages.length > 0) {
-			// Get context messages if requested
-			let contextMessages: ConversationMessage[] | undefined;
-			if (filters.context && filters.context > 0) {
-				const contextSet = new Set<number>();
-				for (const idx of matchedIndices) {
-					for (let i = Math.max(0, idx - filters.context); i <= Math.min(messages.length - 1, idx + filters.context); i++) {
-						contextSet.add(i);
-					}
-				}
-				const sortedIndices = [...contextSet].sort((a, b) => a - b);
-				contextMessages = sortedIndices.map((i) => messages[i]);
-			}
-
-			results.push({
-				filePath,
-				project,
-				sessionId: sessionId || basename(filePath, ".jsonl"),
-				timestamp: firstTimestamp || new Date(),
-				summary,
-				customTitle,
-				gitBranch,
-				matchedMessages,
-				contextMessages,
-				isSubagent,
-			});
+		// Conversation date filter
+		if (filters.conversationDate && firstTimestamp) {
+			if (firstTimestamp < filters.conversationDate) continue;
+		}
+		if (filters.conversationDateUntil && firstTimestamp) {
+			if (firstTimestamp > filters.conversationDateUntil) continue;
 		}
 
-		// Check limit
+		// Skip if no summary/title
+		if (!summary && !customTitle) continue;
+
+		results.push({
+			filePath,
+			project,
+			sessionId: sessionId || basename(filePath, ".jsonl"),
+			timestamp: firstTimestamp || new Date(),
+			summary,
+			customTitle,
+			gitBranch,
+			matchedMessages: [],
+			isSubagent,
+		});
+
 		if (filters.limit && results.length >= filters.limit) {
 			break;
 		}

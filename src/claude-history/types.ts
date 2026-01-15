@@ -217,6 +217,13 @@ export interface SearchFilters {
 	excludeThinking?: boolean;
 	limit?: number;
 	context?: number;
+	summaryOnly?: boolean;
+	excludeCurrentSession?: string;
+	conversationDate?: Date;
+	conversationDateUntil?: Date;
+	commitHash?: string;
+	commitMessage?: string;
+	sortByRelevance?: boolean;
 }
 
 export interface SearchResult {
@@ -230,6 +237,8 @@ export interface SearchResult {
 	matchedMessages: ConversationMessage[];
 	contextMessages?: ConversationMessage[];
 	isSubagent: boolean;
+	relevanceScore?: number;
+	commitHashes?: string[];
 }
 
 export interface ConversationMetadata {

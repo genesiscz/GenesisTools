@@ -9,6 +9,7 @@ import { spawn } from "bun";
 import { resolve } from "path";
 import {
     searchConversations,
+    listConversationSummaries,
     getAvailableProjects,
     parseDate,
     type SearchFilters,
@@ -81,18 +82,30 @@ function formatResultsAsMarkdown(results: SearchResult[], filters: SearchFilters
     const lines: string[] = [];
 
     const queryDesc = filters.query ? `"${filters.query}"` : "all";
-    lines.push(`## Found ${results.length} conversation${results.length !== 1 ? "s" : ""} matching ${queryDesc}\n`);
+    const modeDesc = filters.summaryOnly ? " (summary-only)" : filters.sortByRelevance ? " (by relevance)" : "";
+    lines.push(`## Found ${results.length} conversation${results.length !== 1 ? "s" : ""} matching ${queryDesc}${modeDesc}\n`);
 
     for (let i = 0; i < results.length; i++) {
         const result = results[i];
         const title = result.customTitle || result.summary || result.sessionId;
         const date = result.timestamp.toISOString().split("T")[0];
 
-        lines.push(`### ${i + 1}. ${title} (${result.project})${result.isSubagent ? " [Subagent]" : ""}`);
+        // Show relevance score if sorting by relevance
+        const relevanceStr = filters.sortByRelevance && result.relevanceScore !== undefined
+            ? ` [score: ${result.relevanceScore}]`
+            : "";
+
+        lines.push(`### ${i + 1}. ${title} (${result.project})${result.isSubagent ? " [Subagent]" : ""}${relevanceStr}`);
         lines.push(`**Date:** ${date}${result.gitBranch ? ` | **Branch:** ${result.gitBranch}` : ""}`);
+        lines.push(`**Session ID:** \`${result.sessionId}\``);
 
         if (result.summary && result.summary !== title) {
             lines.push(`**Summary:** ${result.summary}`);
+        }
+
+        // Show commit hashes if found
+        if (result.commitHashes && result.commitHashes.length > 0) {
+            lines.push(`**Commits:** ${result.commitHashes.slice(0, 5).map(h => `\`${h.substring(0, 7)}\``).join(", ")}${result.commitHashes.length > 5 ? "..." : ""}`);
         }
 
         lines.push(`**File:** \`${result.filePath.replace(homedir(), "~")}\``);
@@ -197,6 +210,15 @@ program
     .option("--exclude-agents", "Exclude subagent conversations")
     .option("--exclude-thinking", "Exclude thinking blocks from search")
     .option("--format <type>", "Output format: ai (default), json", "ai")
+    .option("--summary-only", "Search only conversation titles/summaries (faster)")
+    .option("--exclude-current", "Exclude current session (uses $CLAUDE_CODE_SESSION_ID)")
+    .option("--exclude-session <id>", "Exclude specific session ID from results")
+    .option("--sort-relevance", "Sort results by relevance score instead of date")
+    .option("--commit <hash>", "Find conversation that made a specific git commit")
+    .option("--commit-msg <text>", "Find conversation by commit message content")
+    .option("--conv-date <date>", "Filter by conversation start date (not message date)")
+    .option("--conv-date-until <date>", "Filter conversation start date until")
+    .option("--list-summaries", "Quick list of conversation topics (no content search)")
     .action(async (query, options) => {
         try {
             let filters: SearchFilters;
@@ -217,6 +239,9 @@ program
                     }
                 }
 
+                // Get session ID to exclude (explicit or from env)
+                const currentSessionId = options.excludeSession || (options.excludeCurrent ? process.env.CLAUDE_CODE_SESSION_ID : undefined);
+
                 filters = {
                     query,
                     project: options.all ? undefined : project,
@@ -231,10 +256,20 @@ program
                     agentsOnly: options.agentsOnly,
                     excludeAgents: options.excludeAgents,
                     excludeThinking: options.excludeThinking,
+                    summaryOnly: options.summaryOnly,
+                    excludeCurrentSession: currentSessionId,
+                    sortByRelevance: options.sortRelevance,
+                    commitHash: options.commit,
+                    commitMessage: options.commitMsg,
+                    conversationDate: options.convDate ? parseDate(options.convDate) : undefined,
+                    conversationDateUntil: options.convDateUntil ? parseDate(options.convDateUntil) : undefined,
                 };
             }
 
-            const results = await searchConversations(filters);
+            // Use listConversationSummaries for --list-summaries mode
+            const results = options.listSummaries
+                ? await listConversationSummaries(filters)
+                : await searchConversations(filters);
 
             if (results.length === 0) {
                 console.log(chalk.yellow("No conversations found matching your criteria."));
