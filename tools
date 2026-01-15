@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 
 import clipboardy from "clipboardy";
-import Enquirer from "enquirer";
+import { search } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
@@ -58,32 +59,26 @@ async function selectToolAndCopyCommand(tools) {
     }
 
     try {
-        // Note: Enquirer might infer the type here, but explicitly removing <{ tool: string }>
-        const prompter = new Enquirer();
-        const response = await prompter.prompt({
-            type: "autocomplete",
-            name: "tool",
+        const tool = await search({
             message: "Select a tool to copy its command:",
-            choices: tools,
-            limit: 10, // Show up to 10 choices at once
+            source: async (term) => {
+                const filtered = tools.filter((t) =>
+                    t.toLowerCase().includes((term || "").toLowerCase())
+                );
+                return filtered.map((t) => ({ value: t, name: t }));
+            },
         });
 
-        // Check if response and response.tool exist (JS style)
-        if (response && response.tool) {
-            const commandToCopy = `${EXECUTABLE_NAME} ${response.tool}`;
-            await clipboardy.write(commandToCopy);
-            logger.info(`✔ Command "${commandToCopy}" copied to clipboard!`);
-        } else {
-            logger.info("✖ Tool selection cancelled.");
-        }
+        const commandToCopy = `${EXECUTABLE_NAME} ${tool}`;
+        await clipboardy.write(commandToCopy);
+        logger.info(`✔ Command "${commandToCopy}" copied to clipboard!`);
     } catch (error) {
-        // instanceof check works fine in JS
-        if (error instanceof Error && error.message === "User aborted") {
+        if (error instanceof ExitPromptError) {
             logger.info("\n✖ Tool selection cancelled.");
-        } else {
-            logger.error("\n✖ An error occurred during tool selection:", error);
+            process.exit(0);
         }
-        process.exit(1); // Exit on error or cancellation
+        logger.error("\n✖ An error occurred during tool selection:", error);
+        process.exit(1);
     }
 }
 
