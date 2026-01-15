@@ -1,4 +1,4 @@
-import minimist from "minimist";
+import { Command } from "commander";
 import { readdirSync, lstatSync } from "fs";
 import { resolve, join } from "path";
 import chalk from "chalk";
@@ -11,16 +11,6 @@ const log = {
     debug: (_msg: string) => {},
 };
 
-interface Options {
-    help?: boolean;
-    verbose?: boolean;
-    commits?: number;
-}
-
-interface Args extends Options {
-    _: string[];
-}
-
 interface FileChange {
     file: string;
     status: string;
@@ -30,20 +20,6 @@ interface FileChange {
 interface TimeGroup {
     label: string;
     files: FileChange[];
-}
-
-function showHelp() {
-    log.info(`
-Usage: tools last-changes [options]
-
-Shows uncommitted git changes grouped by modification time to help you
-understand what files were updated and when.
-
-Options:
-  -c, --commits X Show changes from the last X commits instead of uncommitted changes
-  -v, --verbose   Enable verbose logging
-  -h, --help      Show this help message
-`);
 }
 
 function formatRelativeTime(date: Date): string {
@@ -352,22 +328,19 @@ async function getCommittedFiles(numCommits: number, verbose: boolean): Promise<
 }
 
 async function main() {
-    const argv = minimist<Args>(process.argv.slice(2), {
-        alias: {
-            c: "commits",
-            v: "verbose",
-            h: "help",
-        },
-        boolean: ["verbose", "help"],
-        string: ["commits"],
-    });
+    const program = new Command()
+        .name("last-changes")
+        .description("Shows uncommitted git changes grouped by modification time to help you understand what files were updated and when.")
+        .option("-c, --commits <n>", "Show changes from the last N commits instead of uncommitted changes")
+        .option("-v, --verbose", "Enable verbose logging")
+        .parse();
 
-    if (argv.help) {
-        showHelp();
-        process.exit(0);
-    }
+    const options = program.opts<{
+        commits?: string;
+        verbose?: boolean;
+    }>();
 
-    const verbose = argv.verbose ?? false;
+    const verbose = options.verbose ?? false;
     if (verbose) {
         log.debug = (msg: string) => console.log(chalk.gray("🔍 " + msg));
     }
@@ -376,18 +349,19 @@ async function main() {
         let files: FileChange[];
         let title: string;
         let emptyMessage: string;
+        let isCommitMode = false;
 
-        if (argv.commits !== undefined) {
-            const numCommits = Number(argv.commits);
+        if (options.commits !== undefined) {
+            const numCommits = Number(options.commits);
             if (!Number.isInteger(numCommits) || numCommits < 1) {
                 log.err("Error: --commits value must be a positive integer.");
-                showHelp();
                 process.exit(1);
             }
 
             files = await getCommittedFiles(numCommits, verbose);
             title = `Last ${numCommits} Commit${numCommits !== 1 ? "s" : ""}`;
             emptyMessage = `No changes found in the last ${numCommits} commit${numCommits !== 1 ? "s" : ""}.`;
+            isCommitMode = true;
         } else {
             files = await getUncommittedFiles(verbose);
             title = "Uncommitted Changes";
@@ -414,7 +388,7 @@ async function main() {
                 const statusColor = getStatusColor(status);
                 const statusText = statusColor(status);
                 const description =
-                    argv.commits !== undefined
+                    isCommitMode
                         ? getCommitStatusDescription(status.trim())
                         : getStatusDescription(status);
                 const relativeTime = formatRelativeTime(mtime);

@@ -1,8 +1,6 @@
 #!/usr/bin/env bun
 import { program } from "commander";
-import { search } from "@inquirer/prompts";
-import select from "@inquirer/select";
-import input from "@inquirer/input";
+import { search, select, input } from "@inquirer/prompts";
 import { homedir } from "os";
 import chalk from "chalk";
 import { spawn } from "bun";
