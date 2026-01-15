@@ -831,7 +831,6 @@ Examples:
     .option('-m, --md', 'Save output as markdown file to .claude/reviews/', false)
     .option('-r, --respond <message>', 'Reply to a comment with this message')
     .option('-t, --thread-id <id>', 'Thread ID for operations like resolve')
-    .option('-c, --comment-id <id>', 'Comment ID for reply operations')
     .option('-R, --resolve-thread', 'Mark a thread as resolved', false)
     .option('--resolve', 'Alias for --resolve-thread', false);
 
