@@ -87,7 +87,17 @@ export async function installServer(
 
     // Scenario 2 & 3: Server doesn't exist OR command/url provided - collect server info
     if (!serverConfig || commandOrUrl || options.type) {
-        let transportType = options.type as "stdio" | "sse" | "http" | undefined;
+        const validTypes = ["stdio", "sse", "http"] as const;
+        let transportType: "stdio" | "sse" | "http" | undefined;
+
+        // Validate options.type if provided
+        if (options.type) {
+            if (!validTypes.includes(options.type as typeof validTypes[number])) {
+                logger.error(`Invalid transport type '${options.type}'. Must be one of: ${validTypes.join(", ")}`);
+                process.exit(1);
+            }
+            transportType = options.type as "stdio" | "sse" | "http";
+        }
 
         // If type not provided and non-interactive mode, error out
         if (!transportType && isNonInteractive) {

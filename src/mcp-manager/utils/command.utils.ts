@@ -298,7 +298,6 @@ export async function promptForServers(config: UnifiedMCPConfig, message: string
     }
 
     try {
-        console.log(serverNames);
         const selectedServers = await checkbox({
             message,
             choices: serverNames.map((name) => ({ value: name, name })),
