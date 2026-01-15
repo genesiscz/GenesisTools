@@ -316,14 +316,14 @@ tools ask --streaming "Tell me a story" | grep "moral"
 
 ### UI Dependencies
 
--   `enquirer`: Interactive prompts
+-   `@inquirer/prompts`: Interactive prompts
 -   `chalk`: Terminal colors
 -   `ora`: Loading spinners
 -   `clipboardy`: Clipboard operations
 
 ### Utility Dependencies
 
--   `minimist`: CLI argument parsing
+-   `commander`: CLI argument parsing
 -   `zod`: Schema validation
 -   `pino`: Structured logging
 
@@ -1319,8 +1319,9 @@ function isRetryableError(error: any): boolean {
 
 ```typescript
 #!/usr/bin/env bun
-import minimist from "minimist";
-import Enquirer from "enquirer";
+import { Command } from "commander";
+import { input, select } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import clipboardy from "clipboardy";
 import logger from "../logger";
@@ -1330,40 +1331,33 @@ interface Options {
     model?: string; // Specific model
     provider?: string; // Specific provider
     output?: string; // Output format
-    help?: boolean; // Show help
-    version?: boolean; // Show version
 }
 
-interface Args extends Options {
-    _: string[]; // Message to send
-}
+const program = new Command();
 
-const prompter = new Enquirer();
-
-async function main() {
-    const argv = minimist<Args>(process.argv.slice(2), {
-        alias: {
-            s: "sst",
-            m: "model",
-            p: "provider",
-            o: "output",
-            h: "help",
-            v: "version",
-        },
-        boolean: ["help", "version"],
-        string: ["sst", "model", "provider", "output"],
+program
+    .name("ask")
+    .description("AI chat tool")
+    .version("1.0.0")
+    .argument("[message...]", "Message to send")
+    .option("-s, --sst <file>", "Speech-to-text file")
+    .option("-m, --model <model>", "Specific model")
+    .option("-p, --provider <provider>", "Specific provider")
+    .option("-o, --output <format>", "Output format")
+    .action(async (messageArgs: string[], options: Options) => {
+        try {
+            await main(messageArgs, options);
+        } catch (error) {
+            if (error instanceof ExitPromptError) {
+                logger.info("\nOperation cancelled by user.");
+                process.exit(0);
+            }
+            throw error;
+        }
     });
 
-    // Show help if requested
-    if (argv.help) {
-        showHelp();
-        process.exit(0);
-    }
-
-    if (argv.version) {
-        console.log("ASK Tool v1.0.0");
-        process.exit(0);
-    }
+async function main(messageArgs: string[], options: Options) {
+    // Main logic here
 
     // Handle speech-to-text
     if (argv.sst) {
