@@ -50,7 +50,15 @@ export async function toggleServer(
 
     let selectedProviderNames: string[] | null;
     if (options.provider) {
-        selectedProviderNames = availableProviders.map((p) => p.getName());
+        // Filter to the specified provider
+        const matchedProvider = availableProviders.find(
+            (p) => p.getName().toLowerCase() === options.provider!.toLowerCase()
+        );
+        if (!matchedProvider) {
+            logger.warn(`Provider '${options.provider}' not found or has no config file.`);
+            return;
+        }
+        selectedProviderNames = [matchedProvider.getName()];
     } else {
         selectedProviderNames = await promptForProviders(availableProviders, `Select providers to ${action} server(s) in:`);
     }

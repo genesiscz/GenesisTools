@@ -31,7 +31,16 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
 
     let selectedProviders: string[];
     if (options.provider) {
-        selectedProviders = availableProviders.map((p) => p.getName());
+        // Parse comma-separated providers and filter to matching ones
+        const requestedProviders = options.provider.split(",").map((p: string) => p.trim().toLowerCase());
+        selectedProviders = availableProviders
+            .filter((p) => requestedProviders.includes(p.getName().toLowerCase()))
+            .map((p) => p.getName());
+
+        if (selectedProviders.length === 0) {
+            logger.warn(`No matching providers found for: ${options.provider}`);
+            return;
+        }
     } else {
         try {
             selectedProviders = await checkbox({

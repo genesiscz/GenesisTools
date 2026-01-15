@@ -140,7 +140,11 @@ export async function renameServer(
     }
 
     // Write unified config
-    await writeUnifiedConfig(config);
+    const written = await writeUnifiedConfig(config);
+    if (!written) {
+        // User cancelled or no changes - don't proceed with provider sync
+        return;
+    }
     logger.info(`✓ Renamed '${finalOldName}' to '${finalNewName}' in unified config`);
 
     // Sync to providers
