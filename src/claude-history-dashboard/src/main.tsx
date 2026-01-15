@@ -1,50 +1,13 @@
 import { StrictMode } from 'react'
 import ReactDOM from 'react-dom/client'
-import {
-  Outlet,
-  RouterProvider,
-  createRootRoute,
-  createRoute,
-  createRouter,
-} from '@tanstack/react-router'
-import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
+import { RouterProvider } from '@tanstack/react-router'
 
 import './styles.css'
 import reportWebVitals from './reportWebVitals.ts'
+import { getRouter } from './router.tsx'
 
-import App from './App.tsx'
-
-const rootRoute = createRootRoute({
-  component: () => (
-    <>
-      <Outlet />
-      {import.meta.env.DEV && <TanStackRouterDevtools />}
-    </>
-  ),
-})
-
-const indexRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/',
-  component: App,
-})
-
-const routeTree = rootRoute.addChildren([indexRoute])
-
-const router = createRouter({
-  routeTree,
-  context: {},
-  defaultPreload: 'intent',
-  scrollRestoration: true,
-  defaultStructuralSharing: true,
-  defaultPreloadStaleTime: 0,
-})
-
-declare module '@tanstack/react-router' {
-  interface Register {
-    router: typeof router
-  }
-}
+// Use the router from router.tsx which uses the generated routeTree
+const router = getRouter()
 
 const rootElement = document.getElementById('app')
 if (rootElement && !rootElement.innerHTML) {
