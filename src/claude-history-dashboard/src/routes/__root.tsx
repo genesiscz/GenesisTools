@@ -20,6 +20,7 @@ interface MyRouterContext {
 
 export const Route = createRootRouteWithContext<MyRouterContext>()({
   head: () => ({
+    title: 'Claude History Dashboard',
     meta: [
       {
         charSet: 'utf-8',
@@ -27,9 +28,6 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
       {
         name: 'viewport',
         content: 'width=device-width, initial-scale=1',
-      },
-      {
-        title: 'Claude History Dashboard',
       },
     ],
     links: [

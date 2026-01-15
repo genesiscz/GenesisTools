@@ -269,11 +269,17 @@ export function calculateRelevanceScore(
 		}
 	}
 
-	// General content match (1x weight)
+	// General content match (1x weight) - use string matching to avoid ReDoS
 	const allTextLower = allText.toLowerCase();
 	for (const word of queryWords) {
-		// Count occurrences (capped)
-		const occurrences = Math.min((allTextLower.match(new RegExp(word, "gi")) || []).length, 10);
+		// Count occurrences (capped) using safe string matching
+		const wordLower = word.toLowerCase();
+		let occurrences = 0;
+		let pos = 0;
+		while ((pos = allTextLower.indexOf(wordLower, pos)) !== -1 && occurrences < 10) {
+			occurrences++;
+			pos += wordLower.length;
+		}
 		score += occurrences;
 	}
 
@@ -361,9 +367,17 @@ function matchesFilters(
 		const hasMatchingFile = filePaths.some((p) => {
 			const lowerPath = p.toLowerCase();
 			if (filePattern.includes("*")) {
-				// Simple glob matching
-				const regex = new RegExp(filePattern.replace(/\*/g, ".*"), "i");
-				return regex.test(lowerPath);
+				// Simple glob matching - escape regex metacharacters first, then convert * to .*
+				const regexPattern = filePattern
+					.replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+					.replace(/\*/g, ".*");
+				if (!isSafeRegex(regexPattern)) return false;
+				try {
+					const regex = new RegExp(regexPattern, "i");
+					return regex.test(lowerPath);
+				} catch {
+					return false;
+				}
 			}
 			return lowerPath.includes(filePattern);
 		});
@@ -768,6 +782,8 @@ export async function getAllConversations(filters: SearchFilters = {}): Promise<
 			gitBranch,
 			matchedMessages: messages.filter(m => m.type === "user" || m.type === "assistant"),
 			isSubagent,
+			userMessageCount: userCount,
+			assistantMessageCount: assistantCount,
 		});
 
 		if (filters.limit && results.length >= filters.limit) {
