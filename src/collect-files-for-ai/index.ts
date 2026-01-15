@@ -54,33 +54,6 @@ async function runGitCommand(args: string[], cwd: string): Promise<string> {
     return stdout.trim();
 }
 
-// --- Help Function (kept for backward compatibility) ---
-function showHelpOld() {
-    logger.info(`
-Usage: collect-uncommitted-files.ts <directory> [options]
-
-Arguments:
-  <directory>         Required. Path to the Git repository.
-
-Options:
-  Mode (choose one, default is --all if --commits is not used):
-    -c, --commits NUM   Collect files changed in the last NUM commits.
-    -s, --staged        Collect only staged files.
-    -u, --unstaged      Collect only unstaged files.
-    -a, --all           Collect all uncommitted (staged + unstaged) files.
-
-  Output:
-    -t, --target DIR    Directory to copy files into (default: ./.ai/YYYY-MM-DD-HH.mm).
-    -f, --flat          Copy all files directly to the target directory without preserving the directory structure.
-    -h, --help          Show this message.
-
-Examples:
-  tools collect-files-for-ai ./my-repo -c 5
-  tools collect-files-for-ai ../other-repo --staged --target ./collected_staged
-  tools collect-files-for-ai /path/to/project --all --flat
-`);
-}
-
 // --- Main Function ---
 async function main() {
     const program = new Command()

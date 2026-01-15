@@ -22,19 +22,6 @@ interface TimeGroup {
     files: FileChange[];
 }
 
-function showHelpOld() {
-    log.info(`
-Usage: tools last-changes [options]
-
-Shows uncommitted git changes grouped by modification time to help you
-understand what files were updated and when.
-
-Options:
-  -c, --commits X Show changes from the last X commits instead of uncommitted changes
-  -v, --verbose   Enable verbose logging
-`);
-}
-
 function formatRelativeTime(date: Date): string {
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
