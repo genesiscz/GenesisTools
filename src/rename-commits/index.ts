@@ -1,6 +1,6 @@
 import { Command } from "commander";
-import { input, confirm, select, number } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
+import { input, confirm, number } from "@inquirer/prompts";
+import { isPromptCancelled } from "../utils/prompt-helpers.js";
 import { resolve } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import chalk from "chalk";
@@ -1114,15 +1114,11 @@ async function main() {
 
         logger.info("\n✨ All done! Your commits have been renamed.");
     } catch (error: unknown) {
-        if (error instanceof ExitPromptError) {
+        if (isPromptCancelled(error)) {
             logger.info("\n🚫 Operation cancelled by user.");
             process.exit(0);
         }
         const err = error as Error;
-        if (err.message === "canceled" || err.message?.includes("cancelled")) {
-            logger.info("\n🚫 Operation cancelled by user.");
-            process.exit(0);
-        }
         logger.error(`\n✖ Error: ${err.message}`);
         if (err.stack) {
             logger.debug(err.stack);
