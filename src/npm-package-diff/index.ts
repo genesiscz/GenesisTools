@@ -1286,10 +1286,12 @@ class EnhancedPackageComparison {
             .forEach((result) => {
                 const oldSize = result.oldSize ? filesize(result.oldSize) : "-";
                 const newSize = result.newSize ? filesize(result.newSize) : "-";
-                const sizeDiff =
-                    result.oldSize && result.newSize
-                        ? filesize(result.newSize - result.oldSize)
-                        : "-";
+                let sizeDiff = "-";
+                if (result.oldSize && result.newSize) {
+                    const diff = result.newSize - result.oldSize;
+                    const prefix = diff > 0 ? "+" : "";
+                    sizeDiff = prefix + String(filesize(diff));
+                }
 
                 const status = {
                     added: chalk.green("Added"),
@@ -1298,7 +1300,7 @@ class EnhancedPackageComparison {
                     identical: chalk.gray("Identical"),
                 }[result.status];
 
-                table.push([result.file, status, String(oldSize), String(newSize), String(sizeDiff)]);
+                table.push([result.file, status, String(oldSize), String(newSize), sizeDiff]);
             });
 
         this.write("\n" + table.toString());
