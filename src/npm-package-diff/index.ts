@@ -120,10 +120,43 @@ const program = new Command()
 const options = program.opts();
 const [packageName, version1, version2] = program.args;
 
-// Merge config with CLI args
-const config = { ...loadConfig(options.config), ...options, _: [packageName, version1, version2] };
+const fileConfig = loadConfig(options.config);
 
-// Help message
+function getOptionValue<K extends keyof typeof options>(key: K): (typeof options)[K] {
+    const source = program.getOptionValueSource(key);
+    if (source === "default" && key in fileConfig) {
+        return fileConfig[key as keyof typeof fileConfig] as (typeof options)[K];
+    }
+    return options[key];
+}
+
+const config = {
+    ...options,
+    filter: getOptionValue("filter"),
+    format: getOptionValue("format"),
+    packageManager: getOptionValue("packageManager"),
+    timeout: getOptionValue("timeout"),
+    context: getOptionValue("context"),
+    lineNumbers: getOptionValue("lineNumbers"),
+    exclude: getOptionValue("exclude"),
+    output: getOptionValue("output"),
+    patch: getOptionValue("patch"),
+    verbose: getOptionValue("verbose"),
+    silent: getOptionValue("silent"),
+    keep: getOptionValue("keep"),
+    stats: getOptionValue("stats"),
+    sizes: getOptionValue("sizes"),
+    wordDiff: getOptionValue("wordDiff"),
+    useDelta: getOptionValue("useDelta"),
+    paging: getOptionValue("paging"),
+    deltaTheme: getOptionValue("deltaTheme"),
+    npmrc: getOptionValue("npmrc"),
+    includePatchInJson: false,
+    showIdentical: false,
+    helpOld: options.helpOld,
+    _: [packageName, version1, version2],
+};
+
 if (config.helpOld) {
     const helpText = `
 ${boxen(chalk.bold.cyan("NPM Package Diff"), {
@@ -505,7 +538,7 @@ class EnhancedPackageComparison {
 
     async compareFiles(): Promise<void> {
         // Check delta availability first if requested
-        if (this.options["use-delta"] && !this.isDeltaAvailable()) {
+        if (this.options.useDelta && !this.isDeltaAvailable()) {
             logger.error(
                 chalk.yellow(
                     "\n⚠️  Delta is not installed but --use-delta was specified.\n" +
@@ -746,7 +779,7 @@ class EnhancedPackageComparison {
     }
 
     private outputTerminalDiff(result: DiffResult): void {
-        if (this.options["use-delta"] && this.isDeltaAvailable()) {
+        if (this.options.useDelta && this.isDeltaAvailable()) {
             this.outputWithDelta(result);
             return;
         }
@@ -1284,10 +1317,10 @@ class EnhancedPackageComparison {
         this.results
             .filter((r) => r.status !== "identical")
             .forEach((result) => {
-                const oldSize = result.oldSize ? filesize(result.oldSize) : "-";
-                const newSize = result.newSize ? filesize(result.newSize) : "-";
+                const oldSize = result.oldSize != null ? filesize(result.oldSize) : "-";
+                const newSize = result.newSize != null ? filesize(result.newSize) : "-";
                 let sizeDiff = "-";
-                if (result.oldSize && result.newSize) {
+                if (result.oldSize != null && result.newSize != null) {
                     const diff = result.newSize - result.oldSize;
                     const prefix = diff > 0 ? "+" : "";
                     sizeDiff = prefix + String(filesize(diff));
