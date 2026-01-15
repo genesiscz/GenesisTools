@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, spyOn } from "bun:test";
-import { setupEnquirerMock, setMockResponses } from "./enquirer-mock.js";
+import { setupInquirerMock, setMockResponses } from "./inquirer-mock.js";
 
-// Setup Enquirer mock BEFORE importing command modules
-setupEnquirerMock();
+// Setup @inquirer/prompts mock BEFORE importing command modules
+setupInquirerMock();
 
 // Now import after mocking
 const { syncServers } = await import("../sync.js");
