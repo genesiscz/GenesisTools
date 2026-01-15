@@ -17,11 +17,8 @@
             },
             "source": "./plugins/genesis-tools",
             "category": "development",
-            "commands": ["./plugins/genesis-tools/commands/setup.md"],
-            "skills": [
-                "./plugins/genesis-tools/skills/azure-devops/SKILL.md",
-                "./plugins/genesis-tools/skills/claude-history/SKILL.md"
-            ]
+            "commands": ["./commands/"],
+            "skills": ["./skills/"]
         }
     ]
 }
