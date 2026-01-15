@@ -1,5 +1,5 @@
 ---
-name: azure-devops
+name: genesis-tools:azure-devops
 description: Interact with Azure DevOps work items, queries, and dashboards. Use when user asks to get/fetch/show work items, queries, tasks, bugs from Azure DevOps. Also handles analyzing work items by spawning codebase exploration agents and creating analysis documents. Triggers on phrases like "get workitem", "fetch task", "show query", "download tasks", "analyze workitem", "analyze task", or Azure DevOps URLs.
 ---
 

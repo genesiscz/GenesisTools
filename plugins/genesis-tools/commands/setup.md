@@ -1,9 +1,9 @@
 ---
-name: setup
+name: genesis-tools:setup
 description: Set up GenesisTools to make the "tools" command function globally
 argument-hint: "[optional: setup details]"
 allowed-tools:
-  - Bash
+    - Bash
 ---
 
 # Setup GenesisTools
@@ -20,20 +20,21 @@ GenesisTools is a TypeScript-based CLI toolkit that provides powerful utilities 
 
 ## Available Tools After Setup
 
-- `git-last-commits-diff` - Show diffs of recent commits
-- `collect-files-for-ai` - Gather files for LLM context
-- `files-to-prompt` - Convert files to prompt format
-- `watch` - Monitor file changes
-- `npm-package-diff` - Compare npm package versions
-- And more (run `tools` to see full list)
+-   `git-last-commits-diff` - Show diffs of recent commits
+-   `collect-files-for-ai` - Gather files for LLM context
+-   `files-to-prompt` - Convert files to prompt format
+-   `watch` - Monitor file changes
+-   `npm-package-diff` - Compare npm package versions
+-   And more (run `tools` to see full list)
 
 ## System Requirements
 
 Before proceeding, ensure the user has:
-- **Bun** installed (https://bun.sh)
-- **Node.js 18+**
-- **UNIX-like system** (macOS, Linux, WSL)
-- **Git** (to clone the repo)
+
+-   **Bun** installed (https://bun.sh)
+-   **Node.js 18+**
+-   **UNIX-like system** (macOS, Linux, WSL)
+-   **Git** (to clone the repo)
 
 ## Setup Instructions
 
@@ -41,26 +42,32 @@ Guide the user through these steps:
 
 1. Navigate to the GenesisTools directory
 2. Run the installation script:
-   ```bash
-   ./install.sh
-   ```
+    ```bash
+    ./install.sh
+    ```
 3. The script will:
-   - Install dependencies
-   - Modify their shell configuration
-   - Provide instructions to reload their shell
+    - Install dependencies
+    - Modify their shell configuration
+    - Provide instructions to reload their shell
 4. Reload shell config (usually: `source ~/.zshrc` or `source ~/.bashrc`)
 5. Verify setup: Run `tools` command (should show interactive tool selector)
 
 ## After Setup
 
 Once complete, the user can:
-- Run `tools` to see all available commands
-- Run `tools <tool-name>` to execute a specific tool
-- Run `tools <tool-name> --help` to get help for any tool
+
+-   Run `tools` to see all available commands
+-   Run `tools <tool-name>` to execute a specific tool
+-   Run `tools <tool-name> --help` to get help for any tool
+
+## Install Session Tracking Hook (Optional)
+
+To enable `--exclude-current` in `claude-history` and file tracking for "commit only Claude's changes", merge the hooks from `plugins/genesis-tools/hooks/hooks.json` into `~/.claude/settings.json`.
 
 ## Troubleshooting
 
 If `tools` command is not found:
+
 1. Verify shell config was reloaded: `source ~/.zshrc` or `source ~/.bashrc`
 2. Check install.sh executed without errors
 3. Verify Bun is installed: `bun --version`

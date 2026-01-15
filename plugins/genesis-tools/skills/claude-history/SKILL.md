@@ -1,5 +1,5 @@
 ---
-name: claude-history
+name: genesis-tools:claude-history
 description: Search Claude Code conversation history. Use for finding past conversations by keywords, files modified, tools used, or time range. Triggers on "find conversation", "search history", "where did I", "where did you", "when did we discuss", "find where", "look up our conversation".
 ---
 
