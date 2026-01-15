@@ -241,6 +241,8 @@ export interface SearchResult {
 	isSubagent: boolean;
 	relevanceScore?: number;
 	commitHashes?: string[];
+	userMessageCount?: number;
+	assistantMessageCount?: number;
 }
 
 export interface ConversationMetadata {

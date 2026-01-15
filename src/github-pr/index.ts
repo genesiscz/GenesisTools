@@ -501,30 +501,32 @@ function extractIssue(body: string): string {
 }
 
 function parseThreads(threads: Thread[]): ParsedThread[] {
-  return threads.map((thread, index) => {
-    const firstComment = thread.comments[0];
-    const replies = thread.comments.slice(1).map((c) => ({
-      author: c.author,
-      body: c.body,
-      id: c.id,
-    }));
+  return threads
+    .filter((thread) => thread.comments.length > 0)
+    .map((thread, index) => {
+      const firstComment = thread.comments[0];
+      const replies = thread.comments.slice(1).map((c) => ({
+        author: c.author,
+        body: c.body,
+        id: c.id,
+      }));
 
-    return {
-      threadId: thread.id,
-      threadNumber: index + 1,
-      status: thread.isResolved ? 'resolved' : 'unresolved',
-      severity: detectSeverity(firstComment.body),
-      file: thread.path,
-      line: thread.line,
-      author: firstComment.author,
-      title: extractTitle(firstComment.body),
-      issue: extractIssue(firstComment.body),
-      diffHunk: trimDiffHunk(firstComment.diffHunk, thread.line),
-      suggestedCode: extractSuggestion(firstComment.body),
-      firstCommentId: firstComment.id,
-      replies,
-    };
-  });
+      return {
+        threadId: thread.id,
+        threadNumber: index + 1,
+        status: thread.isResolved ? 'resolved' : 'unresolved',
+        severity: detectSeverity(firstComment.body),
+        file: thread.path,
+        line: thread.line,
+        author: firstComment.author,
+        title: extractTitle(firstComment.body),
+        issue: extractIssue(firstComment.body),
+        diffHunk: trimDiffHunk(firstComment.diffHunk, thread.line),
+        suggestedCode: extractSuggestion(firstComment.body),
+        firstCommentId: firstComment.id,
+        replies,
+      };
+    });
 }
 
 // =============================================================================
@@ -637,13 +639,11 @@ function formatSummary(
   prNumber: number,
   title: string,
   state: string,
-  threads: ParsedThread[]
+  threads: ParsedThread[],
+  fullStats?: ThreadStats
 ): string {
-  const resolved = threads.filter((t) => t.status === 'resolved').length;
-  const unresolved = threads.filter((t) => t.status === 'unresolved').length;
-  const high = threads.filter((t) => t.severity === 'high').length;
-  const medium = threads.filter((t) => t.severity === 'medium').length;
-  const low = threads.filter((t) => t.severity === 'low').length;
+  const stats = fullStats ?? calculateStats(threads);
+  const showing = threads.length;
 
   let output = '\n';
   output += c('+' + '='.repeat(88) + '+', 'cyan') + '\n';
@@ -653,10 +653,11 @@ function formatSummary(
   output += c('+' + '='.repeat(88) + '+', 'cyan') + '\n';
 
   output += '\n';
-  output += c('Summary: ', 'bold') + `${threads.length} threads (`;
-  output += c(`${unresolved} unresolved`, unresolved > 0 ? 'red' : 'green') + ', ';
-  output += c(`${resolved} resolved`, 'green') + ')\n';
-  output += `   HIGH: ${high}  |  MEDIUM: ${medium}  |  LOW: ${low}\n`;
+  const showingText = showing !== stats.total ? ` (showing ${showing})` : '';
+  output += c('Summary: ', 'bold') + `${stats.total} threads${showingText} (`;
+  output += c(`${stats.unresolved} unresolved`, stats.unresolved > 0 ? 'red' : 'green') + ', ';
+  output += c(`${stats.resolved} resolved`, 'green') + ')\n';
+  output += `   HIGH: ${stats.high}  |  MEDIUM: ${stats.medium}  |  LOW: ${stats.low}\n`;
 
   return output;
 }
@@ -707,6 +708,26 @@ function formatMarkdownThread(thread: ParsedThread): string {
   return output;
 }
 
+interface ThreadStats {
+  total: number;
+  resolved: number;
+  unresolved: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+function calculateStats(threads: ParsedThread[]): ThreadStats {
+  return {
+    total: threads.length,
+    resolved: threads.filter((t) => t.status === 'resolved').length,
+    unresolved: threads.filter((t) => t.status === 'unresolved').length,
+    high: threads.filter((t) => t.severity === 'high').length,
+    medium: threads.filter((t) => t.severity === 'medium').length,
+    low: threads.filter((t) => t.severity === 'low').length,
+  };
+}
+
 function formatMarkdownOutput(
   owner: string,
   repo: string,
@@ -714,13 +735,12 @@ function formatMarkdownOutput(
   title: string,
   state: string,
   threads: ParsedThread[],
-  groupByFile: boolean
+  groupByFile: boolean,
+  fullStats?: ThreadStats
 ): string {
-  const resolved = threads.filter((t) => t.status === 'resolved').length;
-  const unresolved = threads.filter((t) => t.status === 'unresolved').length;
-  const high = threads.filter((t) => t.severity === 'high').length;
-  const medium = threads.filter((t) => t.severity === 'medium').length;
-  const low = threads.filter((t) => t.severity === 'low').length;
+  // Use full stats if provided, otherwise calculate from threads
+  const stats = fullStats ?? calculateStats(threads);
+  const showing = threads.length;
 
   let output = `# PR Review: #${prNumber}\n\n`;
   output += `**${title}**\n\n`;
@@ -733,12 +753,12 @@ function formatMarkdownOutput(
   output += `## Summary\n\n`;
   output += `| Metric | Count |\n`;
   output += `|--------|-------|\n`;
-  output += `| Total Threads | ${threads.length} |\n`;
-  output += `| [X] Unresolved | ${unresolved} |\n`;
-  output += `| [OK] Resolved | ${resolved} |\n`;
-  output += `| [HIGH] High Priority | ${high} |\n`;
-  output += `| [MED] Medium Priority | ${medium} |\n`;
-  output += `| [LOW] Low Priority | ${low} |\n\n`;
+  output += `| Total Threads | ${stats.total}${showing !== stats.total ? ` (showing ${showing})` : ''} |\n`;
+  output += `| [X] Unresolved | ${stats.unresolved} |\n`;
+  output += `| [OK] Resolved | ${stats.resolved} |\n`;
+  output += `| [HIGH] High Priority | ${stats.high} |\n`;
+  output += `| [MED] Medium Priority | ${stats.medium} |\n`;
+  output += `| [LOW] Low Priority | ${stats.low} |\n\n`;
 
   if (threads.length === 0) {
     output += `*No review comments found.*\n`;
@@ -882,8 +902,10 @@ Examples:
     return;
   }
 
-  // Fetch PR info
-  console.error(c(`Fetching PR #${input.prNumber} from ${input.owner}/${input.repo}...`, 'dim'));
+  // Fetch PR info (only show status for non-JSON output)
+  if (!jsonOutput) {
+    console.error(c(`Fetching PR #${input.prNumber} from ${input.owner}/${input.repo}...`, 'dim'));
+  }
 
   let prInfo: PRInfo;
   try {
@@ -894,28 +916,30 @@ Examples:
   }
 
   // Parse threads
-  let parsedThreads = parseThreads(prInfo.threads);
+  const allThreads = parseThreads(prInfo.threads);
+  const fullStats = calculateStats(allThreads);
 
   // Filter if requested
+  let parsedThreads = allThreads;
   if (unresolvedOnly) {
-    parsedThreads = parsedThreads.filter((t) => t.status === 'unresolved');
+    parsedThreads = allThreads.filter((t) => t.status === 'unresolved');
   }
 
   // JSON output
   if (jsonOutput) {
-    console.log(
-      JSON.stringify(
-        {
-          repository: `${input.owner}/${input.repo}`,
-          prNumber: input.prNumber,
-          title: prInfo.title,
-          state: prInfo.state,
-          threads: parsedThreads,
-        },
-        null,
-        2
-      )
+    const output = JSON.stringify(
+      {
+        repository: `${input.owner}/${input.repo}`,
+        prNumber: input.prNumber,
+        title: prInfo.title,
+        state: prInfo.state,
+        threads: parsedThreads,
+      },
+      null,
+      2
     );
+    // Write to stdout and wait for flush
+    process.stdout.write(output + '\n');
     return;
   }
 
@@ -928,7 +952,8 @@ Examples:
       prInfo.title,
       prInfo.state,
       parsedThreads,
-      groupByFile
+      groupByFile,
+      fullStats
     );
     const filePath = saveMarkdownFile(mdContent, input.prNumber);
     console.log(filePath);
@@ -936,7 +961,7 @@ Examples:
   }
 
   // Terminal output
-  console.log(formatSummary(input.owner, input.repo, input.prNumber, prInfo.title, prInfo.state, parsedThreads));
+  console.log(formatSummary(input.owner, input.repo, input.prNumber, prInfo.title, prInfo.state, parsedThreads, fullStats));
 
   if (parsedThreads.length === 0) {
     console.log(c('\nNo review comments found.', 'dim'));

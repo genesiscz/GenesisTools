@@ -4,7 +4,7 @@ import { search, select, input } from "@inquirer/prompts";
 import { homedir } from "os";
 import chalk from "chalk";
 import { spawn } from "bun";
-import { resolve } from "path";
+import { resolve, sep } from "path";
 import {
     searchConversations,
     listConversationSummaries,
@@ -228,7 +228,7 @@ program
                 let project = options.project;
                 if (!project && !options.all) {
                     const cwd = process.cwd();
-                    const cwdParts = cwd.split("/");
+                    const cwdParts = cwd.split(sep);
                     // Try to find project name from cwd
                     const projectIndex = cwdParts.findIndex((p) => p === "Projects" || p === "projects");
                     if (projectIndex !== -1 && cwdParts[projectIndex + 1]) {
@@ -294,7 +294,7 @@ program
     .description("Launch the web-based dashboard for browsing conversation history")
     .option("-p, --port <port>", "Port to run the dashboard on", "3000")
     .action(async (options) => {
-        const dashboardDir = resolve(__dirname, "../claude-history-dashboard");
+        const dashboardDir = resolve(import.meta.dir, "../claude-history-dashboard");
         console.log(chalk.cyan("🚀 Starting Claude History Dashboard..."));
         console.log(chalk.dim(`   Directory: ${dashboardDir}`));
         console.log(chalk.dim(`   Port: ${options.port}`));
