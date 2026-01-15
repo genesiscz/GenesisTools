@@ -1,3 +1,9 @@
+---
+name: genesis-tools:github-pr
+description: Fetch PR review comments, select which to fix, implement fixes, and commit
+argument-hint: "<pr-number-or-url> [-u] [--open] [--open-only]"
+---
+
 # GitHub PR Review Fixer
 
 Fetch PR review comments, let user select which to fix, implement fixes, and commit.
