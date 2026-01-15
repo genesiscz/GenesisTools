@@ -1,4 +1,5 @@
 import type { MCPServerMeta, EnabledMcpServers } from "../types.js";
+import { writeFile } from "fs/promises";
 
 /**
  * Unified MCP server configuration interface.
@@ -82,6 +83,17 @@ export abstract class MCPProvider {
      */
     getConfigPath(): string {
         return this.configPath;
+    }
+
+    /**
+     * Write content to config file with automatic backup.
+     * Creates backup AFTER user confirms but BEFORE writing.
+     */
+    protected async writeFileWithBackup(content: string): Promise<void> {
+        // Create backup before writing
+        await this.backupManager.createBackup(this.configPath, this.providerName);
+        // Write the file
+        await writeFile(this.configPath, content, "utf-8");
     }
 
     /**

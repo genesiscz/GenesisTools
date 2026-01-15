@@ -2,7 +2,7 @@ import { MCPProvider } from "./types.js";
 import type { UnifiedMCPServerConfig, MCPServerInfo } from "./types.js";
 import type { CodexGenericConfig, CodexMCPServerConfig } from "./codex.types.js";
 import { existsSync, mkdirSync } from "fs";
-import { readFile, writeFile } from "fs/promises";
+import { readFile } from "fs/promises";
 import path from "path";
 import * as TOML from "@iarna/toml";
 import logger from "@app/logger";
@@ -62,8 +62,8 @@ export class CodexProvider extends MCPProvider {
             return false;
         }
 
-        // Only now write to file
-        await writeFile(this.configPath, newContent, "utf-8");
+        // Only now write to file (with backup)
+        await this.writeFileWithBackup(newContent);
         logger.info(chalk.green(`✓ Configuration written to ${this.configPath}`));
         return true;
     }
