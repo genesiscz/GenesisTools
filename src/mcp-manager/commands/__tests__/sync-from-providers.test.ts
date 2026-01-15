@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, spyOn } from "bun:test";
-import { setupEnquirerMock, setMockResponses } from "./enquirer-mock.js";
+import { setupInquirerMock, setMockResponses } from "./inquirer-mock.js";
 
-// Setup Enquirer mock BEFORE importing command modules
-setupEnquirerMock();
+// Setup @inquirer/prompts mock BEFORE importing command modules
+setupInquirerMock();
 
 // Now import after mocking
 const { syncFromProviders } = await import("../sync-from-providers.js");
@@ -13,11 +13,9 @@ import logger from "@app/logger";
 
 describe("syncFromProviders", () => {
     let mockProvider: MockMCPProvider;
-    let mockProvider2: MockMCPProvider;
 
     beforeEach(() => {
         mockProvider = new MockMCPProvider("claude", "/mock/claude.json");
-        mockProvider2 = new MockMCPProvider("gemini", "/mock/gemini.json");
         
         // Set default mock responses
         setMockResponses({
@@ -70,7 +68,9 @@ describe("syncFromProviders", () => {
             provider: "claude:/path/to/project2",
         };
         mockProvider.listServersResult = [mockServerInfo1, mockServerInfo2];
-        
+        // Provider needs to return projects to trigger per-project enablement
+        mockProvider.getProjectsResult = ["/path/to/project1", "/path/to/project2"];
+
         let capturedConfig: any = null;
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
         spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
@@ -78,7 +78,7 @@ describe("syncFromProviders", () => {
         });
         spyOn(logger, "info");
         spyOn(logger, "debug");
-        
+
         setMockResponses({
             selectedProviders: ["claude"],
         });
