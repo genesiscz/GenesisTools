@@ -36,6 +36,9 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
 
     let selectedProviders: string[];
     if (options.provider) {
+        // NOTE: availableProviders is already pre-filtered by parseProviderArg() in index.ts
+        // before being passed to this function, so we select all providers here since they
+        // are already the subset that was requested via --provider flag.
         selectedProviders = availableProviders.map((p) => p.getName());
     } else {
         try {
