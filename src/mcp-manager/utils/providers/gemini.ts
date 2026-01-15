@@ -1,4 +1,4 @@
-import { MCPProvider } from "./types.js";
+import { MCPProvider, WriteResult } from "./types.js";
 import type { UnifiedMCPServerConfig, MCPServerInfo } from "./types.js";
 import type { GeminiGenericConfig, GeminiMCPServerConfig } from "./gemini.types.js";
 import { existsSync } from "fs";
@@ -36,7 +36,7 @@ export class GeminiProvider extends MCPProvider {
         return JSON.parse(content) as GeminiGenericConfig;
     }
 
-    async writeConfig(config: unknown): Promise<boolean> {
+    async writeConfig(config: unknown): Promise<WriteResult> {
         const newContent = JSON.stringify(config, null, 2);
 
         // Read old content (empty string if file doesn't exist)
@@ -44,7 +44,7 @@ export class GeminiProvider extends MCPProvider {
 
         // Early exit if no changes
         if (oldContent === newContent) {
-            return false;
+            return WriteResult.NoChanges;
         }
 
         // Show diff and ask for confirmation
@@ -52,13 +52,13 @@ export class GeminiProvider extends MCPProvider {
         const confirmed = await this.backupManager.askConfirmation();
 
         if (!confirmed) {
-            return false;
+            return WriteResult.Rejected;
         }
 
         // Only now write to file (with backup)
         await this.writeFileWithBackup(newContent);
         logger.info(chalk.green(`✓ Configuration written to ${this.configPath}`));
-        return true;
+        return WriteResult.Applied;
     }
 
     async listServers(): Promise<MCPServerInfo[]> {
@@ -120,7 +120,7 @@ export class GeminiProvider extends MCPProvider {
         await this.disableServer(serverName);
     }
 
-    async enableServers(serverNames: string[], _projectPath?: string | null): Promise<boolean> {
+    async enableServers(serverNames: string[], _projectPath?: string | null): Promise<WriteResult> {
         const config = await this.readConfig();
 
         if (config.mcp?.excluded) {
@@ -130,7 +130,7 @@ export class GeminiProvider extends MCPProvider {
         return this.writeConfig(config);
     }
 
-    async disableServers(serverNames: string[], _projectPath?: string | null): Promise<boolean> {
+    async disableServers(serverNames: string[], _projectPath?: string | null): Promise<WriteResult> {
         const config = await this.readConfig();
 
         if (!config.mcp) {
@@ -148,7 +148,7 @@ export class GeminiProvider extends MCPProvider {
         return this.writeConfig(config);
     }
 
-    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<boolean> {
+    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<WriteResult> {
         // Strip _meta before processing (unified utility ensures _meta never reaches providers)
         const cleanConfig = stripMeta(config);
         const geminiConfig = await this.readConfig();
@@ -167,7 +167,7 @@ export class GeminiProvider extends MCPProvider {
         return this.writeConfig(geminiConfig);
     }
 
-    async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<boolean> {
+    async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<WriteResult> {
         const config = await this.readConfig();
 
         if (!config.mcpServers) {

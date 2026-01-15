@@ -2,6 +2,7 @@ import { search, input, select } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import logger from "@app/logger";
+import { WriteResult } from "../utils/providers/types.js";
 import type { UnifiedMCPServerConfig, MCPProvider } from "../utils/providers/types.js";
 import { readUnifiedConfig, writeUnifiedConfig, stripMeta } from "../utils/config.utils.js";
 import { parseCommandString, parseEnvString, parseHeaderString } from "../utils/command.utils.js";
@@ -317,9 +318,11 @@ export async function installServer(
         const provider = availableProviders.find((p) => p.getName() === providerName);
         if (!provider) continue;
 
-        const installed = await provider.installServer(finalServerName, configToInstall);
-        if (installed) {
+        const result = await provider.installServer(finalServerName, configToInstall);
+        if (result === WriteResult.Applied) {
             logger.info(`✓ Installed '${finalServerName}' to ${providerName}`);
+        } else if (result === WriteResult.Rejected) {
+            logger.info(`Skipped ${providerName} - user rejected confirmation`);
         }
     }
 }

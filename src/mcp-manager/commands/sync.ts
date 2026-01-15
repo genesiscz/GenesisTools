@@ -1,6 +1,7 @@
 import { checkbox } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
 import logger from "@app/logger";
+import { WriteResult } from "../utils/providers/types.js";
 import type { MCPProvider } from "../utils/providers/types.js";
 import { readUnifiedConfig, stripMeta } from "../utils/config.utils.js";
 
@@ -89,9 +90,11 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
             }
 
             // Sync all servers (with enabled/disabled state from _meta.enabled[providerName])
-            const synced = await provider.syncServers(config.mcpServers);
-            if (synced) {
+            const syncResult = await provider.syncServers(config.mcpServers);
+            if (syncResult === WriteResult.Applied) {
                 logger.info(`✓ Synced to ${providerName}`);
+            } else if (syncResult === WriteResult.Rejected) {
+                logger.info(`Skipped ${providerName} - user rejected confirmation`);
             }
         } catch (error: unknown) {
             if (error instanceof Error) {

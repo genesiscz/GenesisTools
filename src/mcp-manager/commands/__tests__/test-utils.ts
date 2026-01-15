@@ -1,4 +1,4 @@
-import { MCPProvider } from "../../utils/providers/types.js";
+import { MCPProvider, WriteResult } from "../../utils/providers/types.js";
 import type { UnifiedMCPServerConfig, MCPServerInfo } from "../../utils/providers/types.js";
 import type { UnifiedMCPConfig } from "../../utils/providers/types.js";
 
@@ -42,12 +42,12 @@ export class MockMCPProvider extends MCPProvider {
         return this.readConfigResult;
     }
 
-    async writeConfig(config: unknown): Promise<boolean> {
+    async writeConfig(config: unknown): Promise<WriteResult> {
         if (this.errors.has("writeConfig")) {
             throw this.errors.get("writeConfig")!;
         }
         this.writeConfigCalls.push(config);
-        return true;
+        return WriteResult.Applied;
     }
 
     async listServers(): Promise<MCPServerInfo[]> {
@@ -84,20 +84,20 @@ export class MockMCPProvider extends MCPProvider {
         }
     }
 
-    async enableServers(serverNames: string[], projectPath?: string | null): Promise<boolean> {
+    async enableServers(serverNames: string[], projectPath?: string | null): Promise<WriteResult> {
         if (this.errors.has("enableServers")) {
             throw this.errors.get("enableServers")!;
         }
         this.enableServersCalls.push({ serverNames, projectPath });
-        return true;
+        return WriteResult.Applied;
     }
 
-    async disableServers(serverNames: string[], projectPath?: string | null): Promise<boolean> {
+    async disableServers(serverNames: string[], projectPath?: string | null): Promise<WriteResult> {
         if (this.errors.has("disableServers")) {
             throw this.errors.get("disableServers")!;
         }
         this.disableServersCalls.push({ serverNames, projectPath });
-        return true;
+        return WriteResult.Applied;
     }
 
     async getProjects(): Promise<string[]> {
@@ -107,20 +107,20 @@ export class MockMCPProvider extends MCPProvider {
         return this.getProjectsResult;
     }
 
-    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<boolean> {
+    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<WriteResult> {
         if (this.errors.has("installServer")) {
             throw this.errors.get("installServer")!;
         }
         this.installServerCalls.push({ serverName, config });
-        return true;
+        return WriteResult.Applied;
     }
 
-    async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<boolean> {
+    async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<WriteResult> {
         if (this.errors.has("syncServers")) {
             throw this.errors.get("syncServers")!;
         }
         this.syncServersCalls.push({ servers });
-        return true;
+        return WriteResult.Applied;
     }
 
     toUnifiedConfig(_config: unknown): Record<string, UnifiedMCPServerConfig> {
