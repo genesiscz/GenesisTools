@@ -1,5 +1,4 @@
 import chalk from "chalk";
-import minimist from "minimist";
 import path from "path";
 import pino from "pino";
 import PinoPretty from "pino-pretty";
@@ -8,11 +7,11 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Parse command line args for log level
-const args = minimist(process.argv.slice(2), {
-    alias: { v: "verbose", vv: "trace" },
-    default: { verbose: false, trace: false },
-});
+// Parse command line args for log level (simple check without minimist)
+const args = {
+    verbose: process.argv.includes("-v") || process.argv.includes("--verbose"),
+    trace: process.argv.some((arg) => arg === "-vv") || process.argv.includes("--trace"),
+};
 
 type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "silent";
 
@@ -29,8 +28,8 @@ const getLogLevel = (): LogLevel => {
     if (process.env.LOG_TRACE === "1") return "trace";
     if (process.env.LOG_DEBUG === "1") return "debug";
     if (process.env.LOG_SILENT === "1") return "silent";
-    if (args.vv) return "trace";
-    if (args.v) return "debug";
+    if (args.trace) return "trace";
+    if (args.verbose) return "debug";
     return "info";
 };
 

@@ -14,7 +14,8 @@ export type MessageType =
 	| "summary"
 	| "custom-title"
 	| "file-history-snapshot"
-	| "queue-operation";
+	| "queue-operation"
+	| "subagent";
 
 export type SystemSubtype =
 	| "stop_hook_summary"
@@ -23,7 +24,7 @@ export type SystemSubtype =
 	| "local_command"
 	| "compact_boundary";
 
-export type ContentBlockType = "tool_use" | "thinking" | "text";
+export type ContentBlockType = "tool_use" | "tool_result" | "thinking" | "text";
 
 export type UserType = "external" | "internal";
 
@@ -169,9 +170,10 @@ export interface QueueOperation {
 	content: string;
 }
 
-// Subagent messages have additional fields
+// Subagent messages have their own discriminant to avoid breaking the union
 export interface SubagentMessage extends BaseMessage {
-	type: "user" | "assistant";
+	type: "subagent";
+	role: "user" | "assistant";
 	message: UserMessageContent | AssistantMessageContent;
 	agentId?: string;
 	sourceToolAssistantUUID?: string;
