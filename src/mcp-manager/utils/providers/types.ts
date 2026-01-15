@@ -2,6 +2,19 @@ import type { MCPServerMeta, EnabledMcpServers } from "../types.js";
 import { writeFile } from "fs/promises";
 
 /**
+ * Result of a write operation to a provider config.
+ * Distinguishes between:
+ * - Applied: Changes were written to the config
+ * - NoChanges: No changes were needed (already in desired state)
+ * - Rejected: User rejected the confirmation prompt
+ */
+export enum WriteResult {
+    Applied = "applied",
+    NoChanges = "no_changes",
+    Rejected = "rejected",
+}
+
+/**
  * Unified MCP server configuration interface.
  * Represents a server configuration that can be synced across providers.
  */
@@ -108,8 +121,9 @@ export abstract class MCPProvider {
 
     /**
      * Write the configuration file
+     * @returns WriteResult indicating whether changes were applied, no changes needed, or rejected
      */
-    abstract writeConfig(config: unknown): Promise<boolean>;
+    abstract writeConfig(config: unknown): Promise<WriteResult>;
 
     /**
      * Get list of all MCP servers (enabled and disabled)
@@ -144,17 +158,17 @@ export abstract class MCPProvider {
      * Enable multiple MCP servers in a single batch operation
      * @param serverNames - Names of the servers to enable
      * @param projectPath - Optional project path for project-specific enabling
-     * @returns true if changes were applied, false if no changes or rejected
+     * @returns WriteResult indicating whether changes were applied, no changes needed, or rejected
      */
-    abstract enableServers(serverNames: string[], projectPath?: string | null): Promise<boolean>;
+    abstract enableServers(serverNames: string[], projectPath?: string | null): Promise<WriteResult>;
 
     /**
      * Disable multiple MCP servers in a single batch operation
      * @param serverNames - Names of the servers to disable
      * @param projectPath - Optional project path for project-specific disabling
-     * @returns true if changes were applied, false if no changes or rejected
+     * @returns WriteResult indicating whether changes were applied, no changes needed, or rejected
      */
-    abstract disableServers(serverNames: string[], projectPath?: string | null): Promise<boolean>;
+    abstract disableServers(serverNames: string[], projectPath?: string | null): Promise<WriteResult>;
 
     /**
      * Get available projects (if provider supports project-level configuration)
@@ -178,9 +192,9 @@ export abstract class MCPProvider {
 
     /**
      * Install/add an MCP server configuration
-     * @returns true if changes were applied, false if reverted
+     * @returns WriteResult indicating whether changes were applied, no changes needed, or rejected
      */
-    abstract installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<boolean>;
+    abstract installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<WriteResult>;
 
     /**
      * Check if this provider supports a "disabled" state for servers.
@@ -225,9 +239,9 @@ export abstract class MCPProvider {
      * Sync servers from unified config to this provider.
      * Reads _meta.enabled[providerName] to determine enabled state per server.
      * @param servers - Server configurations to sync (with _meta intact)
-     * @returns true if changes were applied, false if no changes or rejected
+     * @returns WriteResult indicating whether changes were applied, no changes needed, or rejected
      */
-    abstract syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<boolean>;
+    abstract syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<WriteResult>;
 
     /**
      * Convert provider-specific config to unified format

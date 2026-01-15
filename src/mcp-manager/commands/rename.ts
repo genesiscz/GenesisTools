@@ -2,6 +2,7 @@ import { search, input, confirm, checkbox } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
 import logger from "@app/logger";
 import chalk from "chalk";
+import { WriteResult } from "../utils/providers/types.js";
 import type { MCPProvider } from "../utils/providers/types.js";
 import { readUnifiedConfig, writeUnifiedConfig } from "../utils/config.utils.js";
 import { DiffUtil } from "@app/utils/diff";
@@ -266,7 +267,12 @@ async function renameServerInProvider(
 
     // Now sync the updated servers to the provider (adds/updates the new name)
     // Provider reads _meta.enabled[providerName] for enabled state
-    await provider.syncServers(serversToSync as Record<string, import("../utils/providers/types.js").UnifiedMCPServerConfig>);
+    const syncResult = await provider.syncServers(serversToSync as Record<string, import("../utils/providers/types.js").UnifiedMCPServerConfig>);
+
+    if (syncResult === WriteResult.Rejected) {
+        logger.info(`Skipped ${provider.getName()} - user rejected confirmation`);
+        return;
+    }
 
     // IMPORTANT: syncServers only adds/updates servers, it doesn't remove servers not in the map
     // We need to explicitly remove the old server name from the provider config after syncing

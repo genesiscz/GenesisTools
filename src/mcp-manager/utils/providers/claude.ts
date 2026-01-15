@@ -1,4 +1,4 @@
-import { MCPProvider } from "./types.js";
+import { MCPProvider, WriteResult } from "./types.js";
 import type { UnifiedMCPServerConfig, MCPServerInfo } from "./types.js";
 import type { ClaudeMCPServerConfig, ClaudeGenericConfig } from "./claude.types.js";
 import { existsSync } from "fs";
@@ -35,7 +35,7 @@ export class ClaudeProvider extends MCPProvider {
         return JSON.parse(content) as ClaudeGenericConfig;
     }
 
-    async writeConfig(config: unknown): Promise<boolean> {
+    async writeConfig(config: unknown): Promise<WriteResult> {
         const newContent = JSON.stringify(config, null, 2);
 
         // Read old content (empty string if file doesn't exist)
@@ -43,7 +43,7 @@ export class ClaudeProvider extends MCPProvider {
 
         // Early exit if no changes
         if (oldContent === newContent) {
-            return false;
+            return WriteResult.NoChanges;
         }
 
         // Show diff and ask for confirmation
@@ -51,13 +51,13 @@ export class ClaudeProvider extends MCPProvider {
         const confirmed = await this.backupManager.askConfirmation();
 
         if (!confirmed) {
-            return false;
+            return WriteResult.Rejected;
         }
 
         // Only now write to file (with backup)
         await this.writeFileWithBackup(newContent);
         logger.info(chalk.green(`✓ Configuration written to ${this.configPath}`));
-        return true;
+        return WriteResult.Applied;
     }
 
     async listServers(): Promise<MCPServerInfo[]> {
@@ -305,7 +305,7 @@ export class ClaudeProvider extends MCPProvider {
         await this.writeConfig(config);
     }
 
-    async enableServers(serverNames: string[], projectPath?: string | null): Promise<boolean> {
+    async enableServers(serverNames: string[], projectPath?: string | null): Promise<WriteResult> {
         const config = await this.readConfig();
 
         for (const serverName of serverNames) {
@@ -338,7 +338,7 @@ export class ClaudeProvider extends MCPProvider {
         return this.writeConfig(config);
     }
 
-    async disableServers(serverNames: string[], projectPath?: string | null): Promise<boolean> {
+    async disableServers(serverNames: string[], projectPath?: string | null): Promise<WriteResult> {
         const config = await this.readConfig();
 
         if (!config.disabledMcpServers) {
@@ -379,7 +379,7 @@ export class ClaudeProvider extends MCPProvider {
         return this.writeConfig(config);
     }
 
-    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<boolean> {
+    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<WriteResult> {
         // Strip _meta before processing (unified utility ensures _meta never reaches providers)
         const cleanConfig = stripMeta(config);
         const claudeConfig = await this.readConfig();
@@ -409,7 +409,7 @@ export class ClaudeProvider extends MCPProvider {
         return this.writeConfig(claudeConfig);
     }
 
-    async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<boolean> {
+    async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<WriteResult> {
         const config = await this.readConfig();
 
         if (!config.mcpServers) {

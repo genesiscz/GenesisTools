@@ -1,4 +1,5 @@
 import logger from "@app/logger";
+import { WriteResult } from "../utils/providers/types.js";
 import type { MCPProvider } from "../utils/providers/types.js";
 import type { MCPProviderName, PerProjectEnabledState } from "../utils/types.js";
 import { readUnifiedConfig, writeUnifiedConfig, stripMeta } from "../utils/config.utils.js";
@@ -206,11 +207,37 @@ export async function toggleServer(
             try {
                 if (projectChoices) {
                     for (const projectChoice of projectChoices) {
-                        const changed = enabled
+                        const result = enabled
                             ? await provider.enableServers(serversToToggle, projectChoice.projectPath)
                             : await provider.disableServers(serversToToggle, projectChoice.projectPath);
 
-                        if (changed) {
+                        if (result === WriteResult.Rejected) {
+                            // User rejected the confirmation - revert _meta changes
+                            for (const serverName of serversToToggle) {
+                                const enabledState = config.mcpServers[serverName]._meta?.enabled?.[providerName as MCPProviderName];
+                                if (projects.length > 0) {
+                                    // Provider supports projects - revert project-specific state
+                                    if (typeof enabledState === "object" && enabledState !== null && !Array.isArray(enabledState)) {
+                                        if (projectChoice.projectPath === null) {
+                                            // Global - revert all projects
+                                            for (const projectPath of projects) {
+                                                (enabledState as PerProjectEnabledState)[projectPath] = !enabled;
+                                            }
+                                        } else {
+                                            // Per-project - revert specific project
+                                            (enabledState as PerProjectEnabledState)[projectChoice.projectPath] = !enabled;
+                                        }
+                                    }
+                                } else {
+                                    // Provider doesn't support projects - revert boolean
+                                    config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = !enabled;
+                                }
+                            }
+                            logger.info(`Skipped ${providerName} - user rejected confirmation`);
+                            continue;
+                        }
+
+                        if (result === WriteResult.Applied) {
                             if (projectChoice.projectPath === null) {
                                 logger.info(
                                     `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
@@ -227,11 +254,20 @@ export async function toggleServer(
                         }
                     }
                 } else {
-                    const changed = enabled
+                    const result = enabled
                         ? await provider.enableServers(serversToToggle)
                         : await provider.disableServers(serversToToggle);
 
-                    if (changed) {
+                    if (result === WriteResult.Rejected) {
+                        // User rejected the confirmation - revert _meta changes
+                        for (const serverName of serversToToggle) {
+                            config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = !enabled;
+                        }
+                        logger.info(`Skipped ${providerName} - user rejected confirmation`);
+                        continue;
+                    }
+
+                    if (result === WriteResult.Applied) {
                         logger.info(
                             `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
                                 serversToToggle.length

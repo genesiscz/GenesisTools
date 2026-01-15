@@ -1,4 +1,4 @@
-import { MCPProvider } from "./types.js";
+import { MCPProvider, WriteResult } from "./types.js";
 import type { UnifiedMCPServerConfig, MCPServerInfo } from "./types.js";
 import type { CursorGenericConfig, CursorMCPServerConfig } from "./cursor.types.js";
 import { existsSync } from "fs";
@@ -39,7 +39,7 @@ export class CursorProvider extends MCPProvider {
         return JSON.parse(content) as CursorGenericConfig;
     }
 
-    async writeConfig(config: unknown): Promise<boolean> {
+    async writeConfig(config: unknown): Promise<WriteResult> {
         const newContent = JSON.stringify(config, null, 2);
 
         // Read old content (empty string if file doesn't exist)
@@ -47,7 +47,7 @@ export class CursorProvider extends MCPProvider {
 
         // Early exit if no changes
         if (oldContent === newContent) {
-            return false;
+            return WriteResult.NoChanges;
         }
 
         // Show diff and ask for confirmation
@@ -55,13 +55,13 @@ export class CursorProvider extends MCPProvider {
         const confirmed = await this.backupManager.askConfirmation();
 
         if (!confirmed) {
-            return false;
+            return WriteResult.Rejected;
         }
 
         // Only now write to file (with backup)
         await this.writeFileWithBackup(newContent);
         logger.info(chalk.green(`✓ Configuration written to ${this.configPath}`));
-        return true;
+        return WriteResult.Applied;
     }
 
     async listServers(): Promise<MCPServerInfo[]> {
@@ -113,7 +113,7 @@ export class CursorProvider extends MCPProvider {
         await this.disableServer(serverName);
     }
 
-    async enableServers(serverNames: string[], _projectPath?: string | null): Promise<boolean> {
+    async enableServers(serverNames: string[], _projectPath?: string | null): Promise<WriteResult> {
         // Cursor doesn't have explicit enable/disable
         // Servers are enabled if they exist in config - this is a no-op
         const config = await this.readConfig();
@@ -121,10 +121,10 @@ export class CursorProvider extends MCPProvider {
         if (missing.length > 0) {
             throw new Error(`Servers do not exist: ${missing.join(", ")}. Use installServer to add them.`);
         }
-        return false;
+        return WriteResult.NoChanges;
     }
 
-    async disableServers(serverNames: string[], _projectPath?: string | null): Promise<boolean> {
+    async disableServers(serverNames: string[], _projectPath?: string | null): Promise<WriteResult> {
         const config = await this.readConfig();
 
         let changed = false;
@@ -138,10 +138,10 @@ export class CursorProvider extends MCPProvider {
         if (changed) {
             return this.writeConfig(config);
         }
-        return false;
+        return WriteResult.NoChanges;
     }
 
-    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<boolean> {
+    async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<WriteResult> {
         // Strip _meta before processing (unified utility ensures _meta never reaches providers)
         const cleanConfig = stripMeta(config);
         const cursorConfig = await this.readConfig();
@@ -155,7 +155,7 @@ export class CursorProvider extends MCPProvider {
         return this.writeConfig(cursorConfig);
     }
 
-    async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<boolean> {
+    async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<WriteResult> {
         const config = await this.readConfig();
 
         if (!config.mcpServers) {
