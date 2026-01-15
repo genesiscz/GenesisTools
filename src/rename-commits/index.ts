@@ -456,6 +456,7 @@ async function promptForNewMessage(
     const newMessageRaw = await input({
         message: `[${index + 1}/${total}] Enter new message for commit ${chalk.cyan(commit.shortHash)}:`,
         default: suggestion,
+        validate: (v) => (v?.trim().length ?? 0) > 0 || "Commit message cannot be empty",
     });
 
     let newMessage = newMessageRaw.trim();
