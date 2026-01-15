@@ -205,7 +205,7 @@ The tool uses a two-step detection process:
 ## Dependencies
 
 -   `@toon-format/toon`: Official TOON format library for encoding/decoding
--   `minimist`: Command-line argument parsing
+-   `commander`: Command-line argument parsing
 
 ## Related Tools
 

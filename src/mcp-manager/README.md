@@ -329,7 +329,7 @@ Ensure your TOML syntax is valid. The tool uses `@iarna/toml` for parsing.
 
 -   `@iarna/toml`: TOML parsing for Codex provider
 -   `diff`: Diff calculation for change visualization
--   `enquirer`: Interactive prompts
+-   `@inquirer/prompts`: Interactive prompts
 -   `chalk`: Colored terminal output
 
 ## Related Tools

@@ -1221,14 +1221,13 @@ export type { GetEventsParams } from "./service";
 ```typescript
 // src/timely/commands/login.ts
 
-import Enquirer from "enquirer";
+import { input, confirm, password } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
 import { TimelyApiClient } from "../api/client";
 import type { TimelyArgs, OAuthApplication } from "../types";
-
-const prompter = new Enquirer();
 
 export async function loginCommand(
     args: TimelyArgs,
@@ -1361,14 +1360,13 @@ export async function logoutCommand(
 ```typescript
 // src/timely/commands/accounts.ts
 
-import Enquirer from "enquirer";
+import { select } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
 import { TimelyService } from "../api/service";
 import type { TimelyArgs, TimelyAccount } from "../types";
-
-const prompter = new Enquirer();
 
 export async function accountsCommand(args: TimelyArgs, storage: Storage, service: TimelyService): Promise<void> {
     // Fetch accounts
@@ -1426,14 +1424,13 @@ export async function accountsCommand(args: TimelyArgs, storage: Storage, servic
 ```typescript
 // src/timely/commands/projects.ts
 
-import Enquirer from "enquirer";
+import { select } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
 import { TimelyService } from "../api/service";
 import type { TimelyArgs, TimelyProject } from "../types";
-
-const prompter = new Enquirer();
 
 export async function projectsCommand(args: TimelyArgs, storage: Storage, service: TimelyService): Promise<void> {
     // Get account ID
@@ -1689,15 +1686,14 @@ export async function statusCommand(
 ```typescript
 // src/timely/commands/cache.ts
 
-import Enquirer from "enquirer";
+import { confirm } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
 import { TimelyApiClient } from "../api/client";
 import { TimelyService } from "../api/service";
 import type { TimelyArgs } from "../types";
-
-const prompter = new Enquirer();
 
 export async function cacheCommand(
     args: TimelyArgs,
@@ -1771,7 +1767,7 @@ Subcommands:
 
 // src/timely/index.ts
 
-import minimist from "minimist";
+import { Command } from "commander";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
@@ -1847,16 +1843,23 @@ ${chalk.cyan("Examples:")}
 `);
 }
 
+// Note: The actual implementation uses commander for argument parsing
+// Example structure:
+// const program = new Command();
+// program
+//     .name('timely')
+//     .option('-v, --verbose', 'Enable verbose output')
+//     .option('-f, --format <format>', 'Output format')
+//     ...
+// program.command('login').action(loginCommand);
+// program.parse();
+
 async function main(): Promise<void> {
-    const args = minimist<TimelyArgs>(process.argv.slice(2), {
-        alias: {
-            h: "help",
-            v: "verbose",
-            f: "format",
-            a: "account",
-            p: "project",
-        },
-        boolean: ["help", "verbose", "select", "clipboard"],
+    // Using commander for argument parsing (simplified for plan doc)
+    const args = {
+        // Commander parsed options would be here
+        verbose: false,
+        format: "table",
         string: ["format", "since", "upto", "day", "month", "output"],
     });
 
