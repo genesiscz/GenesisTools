@@ -185,10 +185,26 @@ export function extractFilePaths(message: ConversationMessage): string[] {
 	return paths;
 }
 
+/**
+ * Check if a regex pattern is safe from ReDoS attacks.
+ * Rejects patterns with nested quantifiers and excessive length.
+ */
+function isSafeRegex(pattern: string): boolean {
+	// Reject excessively long patterns
+	if (pattern.length > 200) return false;
+	// Reject patterns with nested quantifiers (e.g., (a+)+ or (a*)*b*)
+	const nestedQuantifiers = /(\+|\*|\?|\{[\d,]+\})\s*\)?\s*(\+|\*|\?|\{[\d,]+\})/;
+	if (nestedQuantifiers.test(pattern)) return false;
+	return true;
+}
+
 export function matchesQuery(text: string, query: string, exact: boolean, regex: boolean): boolean {
 	if (!query) return true;
 
 	if (regex) {
+		if (!isSafeRegex(query)) {
+			return false; // Reject potentially dangerous patterns
+		}
 		try {
 			const re = new RegExp(query, "i");
 			return re.test(text);
