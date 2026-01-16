@@ -68,7 +68,8 @@ Git diff:
 ${diff}`;
 
         const { object } = await generateObject({
-            model: openRouter("google/gemini-2.0-flash-lite-001"),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            model: openRouter("google/gemini-2.0-flash-lite-001") as any,
             schema: z.object({
                 commits: z
                     .array(
@@ -91,7 +92,8 @@ Git diff:
 ${diff}`;
 
         const { object } = await generateObject({
-            model: openRouter("google/gemini-2.0-flash-lite-001"),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            model: openRouter("google/gemini-2.0-flash-lite-001") as any,
             schema: z.object({
                 messages: z.array(z.string()).length(4).describe("Exactly 4 commit message strings"),
             }),

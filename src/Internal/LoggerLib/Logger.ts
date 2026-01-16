@@ -558,8 +558,9 @@ export class Logger implements ILogger {
                 }
             }
 
-            // Create the method
-            this[methodName as keyof ILogger] = (...data: unknown[]): boolean => {
+            // Create the method (dynamic assignment requires type assertion)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (this as any)[methodName] = (...data: unknown[]): boolean => {
                 return this._log(levelToUse, data);
             };
         });
@@ -567,10 +568,9 @@ export class Logger implements ILogger {
         // Add any other configured levels that aren't standard
         configuredLevels.forEach((levelName) => {
             if (!requiredMethods.includes(levelName)) {
-                // TypeScript will complain here, but we're adding methods dynamically
-                (this as Record<string, (...data: unknown[]) => boolean>)[levelName] = (
-                    ...data: unknown[]
-                ): boolean => {
+                // Dynamic method assignment requires type assertion
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (this as any)[levelName] = (...data: unknown[]): boolean => {
                     return this._log(levelName, data);
                 };
             }

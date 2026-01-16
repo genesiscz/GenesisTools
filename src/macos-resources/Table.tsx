@@ -28,15 +28,15 @@ export type TableProps<T extends ScalarDict> = {
     /**
      * Header component.
      */
-    header: (props: React.PropsWithChildren<{}>) => JSX.Element;
+    header: (props: React.PropsWithChildren<{}>) => React.ReactElement;
     /**
      * Component used to render a cell in the table.
      */
-    cell: (props: CellProps) => JSX.Element;
+    cell: (props: CellProps) => React.ReactElement;
     /**
      * Component used to render the skeleton of the table.
      */
-    skeleton: (props: React.PropsWithChildren<{}>) => JSX.Element;
+    skeleton: (props: React.PropsWithChildren<{}>) => React.ReactElement;
 };
 
 /* Table */
@@ -244,7 +244,7 @@ type RowConfig = {
     /**
      * Component used to render cells.
      */
-    cell: (props: CellProps) => JSX.Element;
+    cell: (props: CellProps) => React.ReactElement;
     /**
      * Tells the padding of each cell.
      */
@@ -253,7 +253,7 @@ type RowConfig = {
      * Component used to render skeleton in the row.
      */
     skeleton: {
-        component: (props: React.PropsWithChildren<{}>) => JSX.Element;
+        component: (props: React.PropsWithChildren<{}>) => React.ReactElement;
         /**
          * Characters used in skeleton.
          *    |             |
@@ -282,7 +282,7 @@ type Column<T> = {
 /**
  * Constructs a Row element from the configuration.
  */
-function row<T extends ScalarDict>(config: RowConfig): (props: RowProps<T>) => JSX.Element {
+function row<T extends ScalarDict>(config: RowConfig): (props: RowProps<T>) => React.ReactElement {
     /* This is a component builder. We return a function. */
 
     const skeleton = config.skeleton;
