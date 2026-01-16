@@ -7,8 +7,8 @@ setupInquirerMock();
 // Now import after mocking
 const { syncFromProviders } = await import("../sync-from-providers.js");
 import { MockMCPProvider, createMockUnifiedConfig, createMockServerConfig } from "./test-utils.js";
-import * as configUtils from "../../utils/config.utils.js";
-import type { MCPServerInfo } from "../../utils/providers/types.js";
+import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
+import type { MCPServerInfo } from "@app/mcp-manager/utils/providers/types.js";
 import logger from "@app/logger";
 
 describe("syncFromProviders", () => {

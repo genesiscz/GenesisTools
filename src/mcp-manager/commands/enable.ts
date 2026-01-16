@@ -1,4 +1,4 @@
-import type { MCPProvider } from "../utils/providers/types.js";
+import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { toggleServer, type ToggleOptions } from "./toggle-server.js";
 
 /**

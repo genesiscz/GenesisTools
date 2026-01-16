@@ -1,7 +1,7 @@
 import { Storage } from "@app/utils/storage";
 import logger from "@app/logger";
-import type { UnifiedMCPConfig } from "../utils/providers/types.js";
-import { getUnifiedConfigPath } from "../utils/config.utils.js";
+import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
+import { getUnifiedConfigPath } from "@app/mcp-manager/utils/config.utils.js";
 
 const storage = new Storage("mcp-manager");
 

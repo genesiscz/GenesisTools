@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import logger from "@app/logger";
-import type { MCPServerInfo, MCPProvider } from "../utils/providers/types.js";
+import type { MCPServerInfo, MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 
 /**
  * List all MCP servers across all providers

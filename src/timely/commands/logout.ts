@@ -2,7 +2,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
-import type { TimelyConfig } from "../types";
+import type { TimelyConfig } from "@app/timely/types";
 
 export function registerLogoutCommand(program: Command, storage: Storage): void {
     program

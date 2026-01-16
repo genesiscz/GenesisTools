@@ -3,10 +3,10 @@ import chalk from "chalk";
 import Table from "cli-table3";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
-import { TimelyService } from "../api/service";
-import { getMonthDateRange, formatDuration, getDatesInMonth } from "../utils/date";
-import { generateReportMarkdown } from "../utils/entry-processor";
-import type { TimelyEvent } from "../types";
+import { TimelyService } from "@app/timely/api/service";
+import { getMonthDateRange, formatDuration, getDatesInMonth } from "@app/timely/utils/date";
+import { generateReportMarkdown } from "@app/timely/utils/entry-processor";
+import type { TimelyEvent } from "@app/timely/types";
 
 export function registerExportMonthCommand(program: Command, storage: Storage, service: TimelyService): void {
     program

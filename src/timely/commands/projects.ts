@@ -4,8 +4,8 @@ import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
-import { TimelyService } from "../api/service";
-import type { TimelyProject, TimelyClient } from "../types";
+import { TimelyService } from "@app/timely/api/service";
+import type { TimelyProject, TimelyClient } from "@app/timely/types";
 
 export function registerProjectsCommand(program: Command, storage: Storage, service: TimelyService): void {
     program

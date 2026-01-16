@@ -3,9 +3,9 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import Table from "cli-table3";
-import logger from "../logger";
-import { UsageDatabase } from "../ask/output/UsageDatabase";
-import { dynamicPricingManager } from "../ask/providers/DynamicPricing";
+import logger from "@app/logger";
+import { UsageDatabase } from "@app/ask/output/UsageDatabase";
+import { dynamicPricingManager } from "@app/ask/providers/DynamicPricing";
 
 interface Options {
     days?: number;

@@ -3,7 +3,7 @@
  * Ported from process_november_entries.ts but made generic and reusable
  */
 
-import type { TimelyEntry } from "../types/api";
+import type { TimelyEntry } from "@app/timely/types/api";
 import { Storage } from "@app/utils/storage";
 import { getDatesInMonth } from "./date";
 import { join } from "node:path";

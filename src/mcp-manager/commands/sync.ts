@@ -1,9 +1,9 @@
 import { checkbox } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
 import logger from "@app/logger";
-import { WriteResult } from "../utils/providers/types.js";
-import type { MCPProvider } from "../utils/providers/types.js";
-import { readUnifiedConfig, stripMeta } from "../utils/config.utils.js";
+import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
+import { readUnifiedConfig, stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 
 export interface SyncOptions {
     provider?: string; // Provider name(s), comma-separated for non-interactive mode

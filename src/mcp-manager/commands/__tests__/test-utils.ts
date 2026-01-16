@@ -1,6 +1,6 @@
-import { MCPProvider, WriteResult } from "../../utils/providers/types.js";
-import type { UnifiedMCPServerConfig, MCPServerInfo } from "../../utils/providers/types.js";
-import type { UnifiedMCPConfig } from "../../utils/providers/types.js";
+import { MCPProvider, WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import type { UnifiedMCPServerConfig, MCPServerInfo } from "@app/mcp-manager/utils/providers/types.js";
+import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 
 /**
  * Mock MCP Provider for testing

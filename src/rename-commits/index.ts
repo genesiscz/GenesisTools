@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { input, confirm, number } from "@inquirer/prompts";
-import { isPromptCancelled } from "../utils/prompt-helpers.js";
+import { isPromptCancelled } from "@app/utils/prompt-helpers.js";
 import { resolve } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import chalk from "chalk";

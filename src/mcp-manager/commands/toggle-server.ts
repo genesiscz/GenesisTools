@@ -1,9 +1,9 @@
 import logger from "@app/logger";
-import { WriteResult } from "../utils/providers/types.js";
-import type { MCPProvider } from "../utils/providers/types.js";
-import type { MCPProviderName, PerProjectEnabledState } from "../utils/types.js";
-import { readUnifiedConfig, writeUnifiedConfig, stripMeta } from "../utils/config.utils.js";
-import { getServerNames, promptForProviders, promptForProjects } from "../utils/command.utils.js";
+import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
+import type { MCPProviderName, PerProjectEnabledState } from "@app/mcp-manager/utils/types.js";
+import { readUnifiedConfig, writeUnifiedConfig, stripMeta } from "@app/mcp-manager/utils/config.utils.js";
+import { getServerNames, promptForProviders, promptForProjects } from "@app/mcp-manager/utils/command.utils.js";
 
 export interface ToggleOptions {
     provider?: string; // Provider name for non-interactive mode

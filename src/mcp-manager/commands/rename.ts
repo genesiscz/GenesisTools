@@ -2,9 +2,9 @@ import { search, input, confirm, checkbox } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
 import logger from "@app/logger";
 import chalk from "chalk";
-import { WriteResult } from "../utils/providers/types.js";
-import type { MCPProvider } from "../utils/providers/types.js";
-import { readUnifiedConfig, writeUnifiedConfig } from "../utils/config.utils.js";
+import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
+import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import { DiffUtil } from "@app/utils/diff";
 
 /**

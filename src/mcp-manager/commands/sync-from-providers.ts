@@ -2,9 +2,9 @@ import { checkbox, select } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import logger from "@app/logger";
-import type { MCPProvider, UnifiedMCPServerConfig } from "../utils/providers/types.js";
-import type { MCPProviderName, PerProjectEnabledState, ProviderEnabledState } from "../utils/types.js";
-import { readUnifiedConfig, writeUnifiedConfig } from "../utils/config.utils.js";
+import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
+import type { MCPProviderName, PerProjectEnabledState, ProviderEnabledState } from "@app/mcp-manager/utils/types.js";
+import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import { DiffUtil } from "@app/utils/diff";
 
 export interface SyncFromOptions {

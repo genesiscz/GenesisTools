@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, spyOn } from "bun:test";
-import { showServerConfig } from "../show.js";
+import { showServerConfig } from "@app/mcp-manager/commands/show.js";
 import { MockMCPProvider, createMockServerConfig } from "./test-utils.js";
 import logger, { consoleLog } from "@app/logger";
 
