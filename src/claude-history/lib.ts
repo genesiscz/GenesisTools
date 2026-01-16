@@ -5,7 +5,7 @@
 
 import { glob } from "glob";
 import { homedir } from "os";
-import { resolve, basename } from "path";
+import { resolve, basename, sep } from "path";
 import { createReadStream } from "fs";
 import { stat } from "fs/promises";
 import { createInterface } from "readline";
@@ -83,7 +83,7 @@ export async function findConversationFiles(filters: SearchFilters): Promise<str
 export function extractProjectName(filePath: string): string {
 	// Extract project name from path like:
 	// /Users/Martin/.claude/projects/-Users-Martin-Tresors-Projects-GenesisTools/...
-	const projectDir = filePath.replace(PROJECTS_DIR + "/", "").split("/")[0];
+	const projectDir = filePath.replace(PROJECTS_DIR + sep, "").split(sep)[0];
 	// Convert -Users-Martin-Tresors-Projects-GenesisTools to GenesisTools
 	const parts = projectDir.split("-");
 	return parts[parts.length - 1] || projectDir;
@@ -799,7 +799,9 @@ export async function getAllConversations(filters: SearchFilters = {}): Promise<
 // =============================================================================
 
 export async function getAvailableProjects(): Promise<string[]> {
+	// Use forward slash in glob pattern (glob normalizes paths)
 	const dirs = await glob(`${PROJECTS_DIR}/*/`, { absolute: true });
+	// extractProjectName handles OS-native separators from absolute paths
 	return [...new Set(dirs.map((d) => extractProjectName(d)))].sort();
 }
 
