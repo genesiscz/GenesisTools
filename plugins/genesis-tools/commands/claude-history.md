@@ -23,6 +23,7 @@ tools claude-history $ARGUMENTS --exclude-session "<session-id>"
 | `--list-summaries` | Quick list of conversation topics |
 | `-c, --context <n>` | Show N messages around matches |
 | `--since <date>` | Filter by date ("yesterday", "7 days ago") |
+| `--file <path>` | Find conversations that modified a specific file |
 | `--all` | Search all projects, not just current |
 
 ## Search Strategy

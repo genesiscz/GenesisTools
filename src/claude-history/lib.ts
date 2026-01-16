@@ -45,14 +45,21 @@ export async function findConversationFiles(filters: SearchFilters): Promise<str
 		patterns.push(`${PROJECTS_DIR}/**/*.jsonl`);
 	}
 
-	if (!filters.excludeAgents && !filters.agentsOnly) {
-		// Include both main and subagent files (default)
-	} else if (filters.agentsOnly) {
-		// Only subagent files
-		patterns.length = 0;
-		patterns.push(`${PROJECTS_DIR}/**/subagents/*.jsonl`);
-		patterns.push(`${PROJECTS_DIR}/**/agent-*.jsonl`);
+	if (filters.agentsOnly) {
+		// Only subagent files - preserve project scope if specified
+		if (filters.project && filters.project !== "all") {
+			// Transform project pattern to agent-specific patterns
+			patterns.length = 0;
+			patterns.push(`${PROJECTS_DIR}/*${filters.project}*/subagents/*.jsonl`);
+			patterns.push(`${PROJECTS_DIR}/*${filters.project}*/agent-*.jsonl`);
+		} else {
+			// Search all projects for agents
+			patterns.length = 0;
+			patterns.push(`${PROJECTS_DIR}/**/subagents/*.jsonl`);
+			patterns.push(`${PROJECTS_DIR}/**/agent-*.jsonl`);
+		}
 	}
+	// else: Include both main and subagent files (default) - patterns already set
 
 	let files: string[] = [];
 	for (const pattern of patterns) {

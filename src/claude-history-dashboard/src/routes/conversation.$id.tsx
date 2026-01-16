@@ -60,7 +60,7 @@ function ConversationPage() {
             )}
             <span className="flex items-center gap-1">
               <Calendar className="w-3.5 h-3.5" />
-              {new Date(conversation.timestamp).toLocaleDateString('en-US', {
+              {new Date(conversation.timestamp).toLocaleString('en-US', {
                 weekday: 'short',
                 month: 'short',
                 day: 'numeric',

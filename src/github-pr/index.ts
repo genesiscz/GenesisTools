@@ -498,38 +498,37 @@ function trimDiffHunk(diffHunk: string | null, targetLine: number | null, contex
   // Track line numbers and collect lines within the context window
   // Include context lines both BEFORE and AFTER the target line
   let currentLine = newStartLine;
-  const relevantLines: { line: string; lineNum: number }[] = [];
+  const relevantLines: { line: string; lineNum: number | null }[] = [];
   const minLine = targetLine - contextLines;
   const maxLine = targetLine + contextLines;
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
 
-    // Removed lines (-) don't increment the new file line counter
+    // Removed lines (-) don't have a new-file line number
     if (line.startsWith('-')) {
-      // Include removed lines if they're in our context window
+      // Include removed lines if adjacent currentLine is in our context window
       if (currentLine >= minLine && currentLine <= maxLine) {
-        relevantLines.push({ line, lineNum: currentLine });
+        relevantLines.push({ line, lineNum: null });
       }
       continue;
     }
 
-    // Context and added lines increment the counter
+    // Context and added lines have new-file line numbers
     if (currentLine >= minLine && currentLine <= maxLine) {
       relevantLines.push({ line, lineNum: currentLine });
     }
 
     // Increment line number for context lines and added lines
-    if (!line.startsWith('-')) {
-      currentLine++;
-    }
+    currentLine++;
   }
 
   if (relevantLines.length === 0) return diffHunk;
 
   // Build new header with the actual line range we're showing
-  const firstLineNum = relevantLines[0].lineNum;
-  const lineCount = relevantLines.length;
+  // Find first non-null lineNum (removed lines have null)
+  const firstLineNum = relevantLines.find((r) => r.lineNum !== null)?.lineNum ?? targetLine;
+  const lineCount = relevantLines.filter((r) => r.lineNum !== null).length || 1;
   const newHeader = `@@ -${firstLineNum},${lineCount} +${firstLineNum},${lineCount} @@`;
 
   return [newHeader, ...relevantLines.map((r) => r.line)].join('\n');
