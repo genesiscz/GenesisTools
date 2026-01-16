@@ -679,9 +679,7 @@ function formatSuggestion(suggestion: string | null, diffHunk: string | null): s
 
   // Show the suggestion as added lines
   for (const line of suggestionLines) {
-    if (line.trim()) {
-      output += c('+' + line, 'green') + '\n';
-    }
+    output += c('+' + line, 'green') + '\n';
   }
 
   output += c('```', 'dim') + '\n';
