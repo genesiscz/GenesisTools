@@ -12,6 +12,17 @@ export const Route = createFileRoute('/stats')({
   },
 })
 
+/**
+ * Render the Statistics dashboard showing usage overview, recent activity, top projects, and top tools.
+ *
+ * Renders a page that uses loader data (stats and projects) to display:
+ * - Four overview statistic cards (conversations, messages, projects, subagent sessions)
+ * - A 14-day activity bar chart
+ * - A ranked list of top projects with relative progress bars
+ * - A list of top tools with usage badges
+ *
+ * @returns The React element for the Statistics page populated with loader-provided `stats` and `projects`.
+ */
 function StatsPage() {
   const { stats, projects } = Route.useLoaderData()
 
@@ -173,6 +184,15 @@ function StatsPage() {
   )
 }
 
+/**
+ * Renders a compact statistic card showing an icon, a formatted numeric value, and a label.
+ *
+ * @param icon - Visual icon displayed on the left side of the card
+ * @param label - Small descriptor text shown beneath the value
+ * @param value - Numeric statistic shown prominently (formatted with locale separators)
+ * @param color - Visual accent for the icon and highlight; `'primary'` or `'secondary'`
+ * @returns A React element representing the statistic card
+ */
 function StatCard({
   icon,
   label,

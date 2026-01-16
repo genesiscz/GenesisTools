@@ -76,6 +76,13 @@ const colors = {
   bgYellow: '\x1b[43m',
 };
 
+/**
+ * Wraps text with the specified terminal color/style codes.
+ *
+ * @param text - The string to style.
+ * @param colorCodes - One or more keys from the `colors` map specifying styles to apply in order.
+ * @returns The input `text` prefixed by the combined ANSI codes for the given `colorCodes` and suffixed with the reset code.
+ */
 function c(text: string, ...colorCodes: (keyof typeof colors)[]): string {
   const codes = colorCodes.map((code) => colors[code]).join('');
   return `${codes}${text}${colors.reset}`;
@@ -83,7 +90,14 @@ function c(text: string, ...colorCodes: (keyof typeof colors)[]): string {
 
 // =============================================================================
 // Token Management
-// =============================================================================
+/**
+ * Obtain a GitHub access token from the environment or the `gh` CLI.
+ *
+ * Tries the `GITHUB_TOKEN` environment variable first, then falls back to `gh auth token`.
+ *
+ * @returns A GitHub access token string.
+ * @throws Error when no token is found; the error message includes instructions for setting or creating a token.
+ */
 
 function getGitHubToken(): string {
   // First try environment variable
@@ -115,7 +129,14 @@ function getGitHubToken(): string {
 
 // =============================================================================
 // Input Parsing
-// =============================================================================
+/**
+ * Detects the GitHub repository owner and repository name from the local git `origin` remote.
+ *
+ * Supports SSH (git@github.com:owner/repo.git) and HTTPS (https://github.com/owner/repo.git) remote URLs.
+ *
+ * @returns An object containing `owner` and `repo` extracted from the `origin` remote URL.
+ * @throws If the `origin` remote cannot be read or its URL cannot be parsed as a GitHub repository.
+ */
 
 function getRepoFromGitRemote(): RepoInfo {
   try {
@@ -142,6 +163,13 @@ function getRepoFromGitRemote(): RepoInfo {
   }
 }
 
+/**
+ * Parse a PR identifier or GitHub PR URL into repository owner, name, and PR number.
+ *
+ * @param input - Either a PR number (e.g., "137") or a full GitHub pull request URL (e.g., "https://github.com/owner/repo/pull/137")
+ * @returns An object containing `owner`, `repo`, and numeric `prNumber`
+ * @throws Error if `input` is neither a positive PR number nor a valid GitHub pull request URL
+ */
 function parseInput(input: string): PRInput {
   // Full URL: https://github.com/owner/repo/pull/123
   const urlMatch = input.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
@@ -239,6 +267,15 @@ const THREAD_COMMENTS_QUERY = `
   }
 `;
 
+/**
+ * Execute a GraphQL request against the GitHub API and return the response `data` payload.
+ *
+ * @param token - A GitHub access token with permissions to read the repository data
+ * @param query - The GraphQL query string to execute
+ * @param variables - The variables object for the GraphQL query
+ * @returns The `data` object from the GraphQL response
+ * @throws An Error when the HTTP response is not ok or when the GraphQL response contains errors
+ */
 async function fetchGitHubGraphQL(
   token: string,
   query: string,
@@ -317,6 +354,13 @@ interface ThreadCommentsResponse {
   } | null;
 }
 
+/**
+ * Fetches all review comments for a thread starting after a given pagination cursor.
+ *
+ * @param threadId - The GraphQL node ID of the review thread to fetch comments for
+ * @param startCursor - The pagination cursor indicating where to begin fetching; comments after this cursor are returned
+ * @returns An array of comment objects for the specified thread, in the order they were fetched via pagination
+ */
 async function fetchAdditionalComments(
   token: string,
   threadId: string,
@@ -353,6 +397,14 @@ async function fetchAdditionalComments(
   return comments;
 }
 
+/**
+ * Fetches complete review thread data for a pull request, including paginated threads and any additional comment pages.
+ *
+ * Retrieves the PR title and state, iterates through paginated review threads to collect their metadata and first-page comments, and then fetches remaining comments for threads that have more pages so each thread's `comments` array contains all comments.
+ *
+ * @returns An object with the PR `title`, `state`, and an array of `threads` where each thread includes its id, resolution status, file/line info, and a complete list of comments.
+ * @throws Error if the specified pull request cannot be found in the given repository.
+ */
 async function fetchPRInfo(token: string, owner: string, repo: string, prNumber: number): Promise<PRInfo> {
   const allThreads: Thread[] = [];
   let cursor: string | null = null;
@@ -425,7 +477,13 @@ async function fetchPRInfo(token: string, owner: string, repo: string, prNumber:
 
 // =============================================================================
 // GitHub API - Mutations
-// =============================================================================
+/**
+ * Posts a reply to a GitHub pull request review thread.
+ *
+ * @param pullRequestReviewThreadId - The GraphQL ID of the review thread to reply to
+ * @param body - The text content of the reply
+ * @returns The `id` of the created reply comment
+ */
 
 async function replyToThread(
   token: string,
@@ -450,6 +508,13 @@ async function replyToThread(
   return data.addPullRequestReviewThreadReply.comment.id;
 }
 
+/**
+ * Mark a GitHub pull request review thread as resolved.
+ *
+ * @param token - A GitHub API access token
+ * @param threadId - The GraphQL ID of the review thread to resolve
+ * @returns `true` if the thread was marked resolved, `false` otherwise
+ */
 async function markThreadResolved(token: string, threadId: string): Promise<boolean> {
   const query = `
     mutation($threadId: ID!) {
@@ -475,9 +540,12 @@ async function markThreadResolved(token: string, threadId: string): Promise<bool
 // =============================================================================
 
 /**
- * Trim a diff hunk to show only context around the target line.
- * GitHub's API returns the entire file diff for new files, but we want
- * to show only ~4 lines of context around the comment line (like GitHub UI).
+ * Produce a focused diff hunk that shows only the specified number of context lines around a target line.
+ *
+ * @param diffHunk - A unified diff hunk (as returned by GitHub) or `null`.
+ * @param targetLine - The 1-based line number in the new file to center the context around, or `null`.
+ * @param contextLines - Number of lines of context to include before and after `targetLine`.
+ * @returns The trimmed diff hunk containing at most `contextLines` before and after `targetLine`, preserving diff markers and a rebuilt hunk header; returns the original `diffHunk` when trimming is not possible, or `null` if `diffHunk` is `null`.
  */
 function trimDiffHunk(diffHunk: string | null, targetLine: number | null, contextLines: number = 4): string | null {
   if (!diffHunk || !targetLine) return diffHunk;
@@ -532,6 +600,12 @@ function trimDiffHunk(diffHunk: string | null, targetLine: number | null, contex
   return [newHeader, ...relevantLines.map((r) => r.line)].join('\n');
 }
 
+/**
+ * Infers a severity level for a review comment from its text.
+ *
+ * @param body - The comment text to analyze for severity indicators
+ * @returns `'high'` if the text contains explicit high-priority markers or keywords (e.g., "critical", "security vulnerability", "bug", or high-priority badges); `'medium'` if it contains suggestion/consideration markers or medium-priority badges; `'low'` otherwise.
+ */
 function detectSeverity(body: string): 'high' | 'medium' | 'low' {
   const lowerBody = body.toLowerCase();
 
@@ -559,6 +633,14 @@ function detectSeverity(body: string): 'high' | 'medium' | 'low' {
   return 'low';
 }
 
+/**
+ * Extracts a short, human-readable title from the first meaningful line of a review comment.
+ *
+ * Strips leading markdown heading markers, bold and inline-code formatting, and ignores image badges; truncates the result to 60 characters (adding "..." when truncated). If no suitable line is found, returns "Review Comment".
+ *
+ * @param body - The full text of the review comment
+ * @returns The extracted title string
+ */
 function extractTitle(body: string): string {
   // Try to extract a title from the first line or markdown heading
   const lines = body.split('\n').filter((l) => l.trim());
@@ -579,6 +661,14 @@ function extractTitle(body: string): string {
   return 'Review Comment';
 }
 
+/**
+ * Extracts a suggested code change from a comment body.
+ *
+ * Detects GitHub-style suggestion blocks or fenced code blocks that appear to propose a fix and returns the contained code.
+ *
+ * @param body - The raw comment text to inspect for a suggestion
+ * @returns The suggested code snippet if present, `null` otherwise
+ */
 function extractSuggestion(body: string): string | null {
   // GitHub suggestion format
   const suggestionMatch = body.match(/```suggestion\r?\n([\s\S]*?)```/);
@@ -595,6 +685,12 @@ function extractSuggestion(body: string): string | null {
   return null;
 }
 
+/**
+ * Remove severity badges (e.g., `![high](...)`, `![medium](...)`, `![low](...)`) from a markdown comment while preserving all other content, including code examples.
+ *
+ * @param body - The original comment body in markdown
+ * @returns The comment body with severity badges removed and surrounding whitespace trimmed
+ */
 function extractIssue(body: string): string {
   // Only remove severity badges like ![high](url) but KEEP code examples
   const issue = body
@@ -604,6 +700,18 @@ function extractIssue(body: string): string {
   return issue;
 }
 
+/**
+ * Convert raw review threads into enriched ParsedThread objects for display.
+ *
+ * Excludes threads with no comments. For each remaining thread, the first comment
+ * is used as the primary issue and subsequent comments are returned as replies;
+ * the result includes resolution status, inferred severity, file/line, extracted
+ * title and issue text, a trimmed diff hunk (if available), any suggested code,
+ * and identifiers used for reply/resolve actions.
+ *
+ * @param threads - Array of review threads to parse
+ * @returns An array of ParsedThread objects containing parsed metadata and content for each thread
+ */
 function parseThreads(threads: Thread[]): ParsedThread[] {
   return threads
     .filter((thread) => thread.comments.length > 0)
@@ -635,7 +743,15 @@ function parseThreads(threads: Thread[]): ParsedThread[] {
 
 // =============================================================================
 // Output Formatting
-// =============================================================================
+/**
+ * Format a unified diff hunk with ANSI colorization for terminal display.
+ *
+ * Lines that start with `+` are colored green, lines that start with `-` are colored red,
+ * hunk headers (lines starting with `@@`) are colored cyan, and all other lines are dimmed.
+ *
+ * @param diffHunk - A unified diff hunk string; may be `null`
+ * @returns The colorized diff hunk as a string, or an empty string if `diffHunk` is `null`
+ */
 
 function formatDiffHunk(diffHunk: string | null): string {
   if (!diffHunk) return '';
@@ -655,6 +771,13 @@ function formatDiffHunk(diffHunk: string | null): string {
     .join('\n');
 }
 
+/**
+ * Formats a code suggestion as a diff-like block for terminal display.
+ *
+ * @param suggestion - A suggested replacement or addition as raw code (may contain multiple lines); if `null` or empty, no output is produced.
+ * @param diffHunk - The original diff hunk for the file context, used to surface removed lines that the suggestion replaces; may be `null`.
+ * @returns A string containing a diff-styled code block with removed lines (if available) and the suggestion shown as added lines; returns an empty string when `suggestion` is `null` or empty.
+ */
 function formatSuggestion(suggestion: string | null, diffHunk: string | null): string {
   if (!suggestion) return '';
 
@@ -686,6 +809,12 @@ function formatSuggestion(suggestion: string | null, diffHunk: string | null): s
   return output;
 }
 
+/**
+ * Format a parsed review thread into a colored, human-readable terminal block.
+ *
+ * @param thread - The parsed review thread to format, including metadata (threadNumber, threadId, status, severity), content (title, issue, diffHunk, suggestedCode, firstCommentId) and replies.
+ * @returns A single-string representation containing a header with thread metadata, the issue text, optional code context and suggested change, and a replies excerpt, styled for terminal display.
+ */
 function formatThread(thread: ParsedThread): string {
   const severityIcon = thread.severity === 'high' ? 'RED' : thread.severity === 'medium' ? 'YEL' : 'GRN';
   const severityText = thread.severity.toUpperCase();
@@ -737,6 +866,12 @@ function formatThread(thread: ParsedThread): string {
   return output;
 }
 
+/**
+ * Builds a colored, human-readable header and thread statistics summary for a pull request.
+ *
+ * @param fullStats - Optional precomputed thread statistics to use instead of deriving them from `threads`
+ * @returns A formatted string containing the colorized PR header and aggregated thread counts for terminal output
+ */
 function formatSummary(
   owner: string,
   repo: string,
@@ -768,7 +903,12 @@ function formatSummary(
 
 // =============================================================================
 // Markdown Output Formatting
-// =============================================================================
+/**
+ * Render a ParsedThread as a Markdown section suitable for inclusion in a PR review report.
+ *
+ * @param thread - The parsed thread to render
+ * @returns A Markdown-formatted string representing the thread, including a properties table, the issue text, an optional collapsible diff code context, an optional suggestion block, and brief reply previews
+ */
 
 function formatMarkdownThread(thread: ParsedThread): string {
   const severityEmoji = thread.severity === 'high' ? '[HIGH]' : thread.severity === 'medium' ? '[MED]' : '[LOW]';
@@ -821,6 +961,12 @@ interface ThreadStats {
   low: number;
 }
 
+/**
+ * Compute aggregate counts of parsed review threads by status and severity.
+ *
+ * @param threads - The array of parsed threads to summarize
+ * @returns An object with counts: `total` (all threads), `resolved`, `unresolved`, and severity buckets `high`, `medium`, and `low`
+ */
 function calculateStats(threads: ParsedThread[]): ThreadStats {
   return {
     total: threads.length,
@@ -832,6 +978,19 @@ function calculateStats(threads: ParsedThread[]): ThreadStats {
   };
 }
 
+/**
+ * Create a Markdown-formatted report of a pull request and its review threads.
+ *
+ * Generates a document with PR metadata, an aggregated summary of thread counts,
+ * and a section listing each thread (optionally grouped by file). If `fullStats`
+ * is supplied it is used for the summary counts; otherwise statistics are
+ * calculated from `threads`.
+ *
+ * @param threads - Parsed review threads to include in the report
+ * @param groupByFile - When true, group thread sections by file path
+ * @param fullStats - Optional precomputed thread statistics to use in the summary
+ * @returns The complete PR review report as a Markdown string
+ */
 function formatMarkdownOutput(
   owner: string,
   repo: string,
@@ -895,6 +1054,13 @@ function formatMarkdownOutput(
   return output;
 }
 
+/**
+ * Saves Markdown content to a timestamped file under .claude/reviews named pr-<prNumber>-<timestamp>.md.
+ *
+ * @param content - Markdown content to write
+ * @param prNumber - Pull request number used in the generated filename
+ * @returns The full path of the saved file
+ */
 function saveMarkdownFile(content: string, prNumber: number): string {
   const now = new Date();
   const datetime = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -910,7 +1076,15 @@ function saveMarkdownFile(content: string, prNumber: number): string {
 
 // =============================================================================
 // Main
-// =============================================================================
+/**
+ * Entry point for the CLI that fetches, formats, and displays GitHub PR review threads and performs thread operations.
+ *
+ * Parses command-line arguments, acquires a GitHub token, and either:
+ * - Replies to or resolves a specified review thread when those options are provided, or
+ * - Fetches review threads for a PR and outputs them as terminal text, JSON, or a saved Markdown file.
+ *
+ * Exits the process with a non-zero status on unrecoverable errors (for example, missing token, invalid input, or failed API operations).
+ */
 
 async function main(): Promise<void> {
   program

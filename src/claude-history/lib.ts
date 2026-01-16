@@ -31,7 +31,12 @@ export const PROJECTS_DIR = resolve(CLAUDE_DIR, "projects");
 
 // =============================================================================
 // File Discovery
-// =============================================================================
+/**
+ * Locate matching conversation JSONL files under the projects directory according to the provided search filters.
+ *
+ * @param filters - Search options that may include a target `project` (exact name or `"all"`), `agentsOnly` to restrict results to subagent/agent files, and `excludeAgents` to omit subagent/agent files; other filter fields are ignored by this function.
+ * @returns An array of absolute file paths to matching `.jsonl` conversation files, ordered by modification time with the most recently modified first.
+ */
 
 export async function findConversationFiles(filters: SearchFilters): Promise<string[]> {
 	const patterns: string[] = [];
@@ -80,6 +85,12 @@ export async function findConversationFiles(filters: SearchFilters): Promise<str
 	return fileStats.map((f) => f.path);
 }
 
+/**
+ * Derives a human-friendly project name from a conversation file path.
+ *
+ * @param filePath - Full path to a conversation file located under PROJECTS_DIR
+ * @returns The extracted project name (the last hyphen-separated segment of the project directory), e.g. `GenesisTools`
+ */
 export function extractProjectName(filePath: string): string {
 	// Extract project name from path like:
 	// /Users/Martin/.claude/projects/-Users-Martin-Tresors-Projects-GenesisTools/...
@@ -91,7 +102,12 @@ export function extractProjectName(filePath: string): string {
 
 // =============================================================================
 // JSONL Parsing
-// =============================================================================
+/**
+ * Reads a JSONL file and parses each non-empty line into a list of ConversationMessage objects.
+ *
+ * @param filePath - Path to the JSONL file to read.
+ * @returns An array of parsed ConversationMessage objects; empty lines and lines that fail JSON parsing are skipped.
+ */
 
 export async function parseJsonlFile(filePath: string): Promise<ConversationMessage[]> {
 	const messages: ConversationMessage[] = [];
@@ -118,7 +134,16 @@ export async function parseJsonlFile(filePath: string): Promise<ConversationMess
 
 // =============================================================================
 // Text Extraction & Matching
-// =============================================================================
+/**
+ * Extracts searchable text content from a conversation message.
+ *
+ * Includes text from user, assistant, summary, custom-title, and queue-operation messages;
+ * when `excludeThinking` is true, assistant "thinking" blocks are omitted.
+ *
+ * @param message - The conversation message to extract text from
+ * @param excludeThinking - If true, omit assistant "thinking" blocks from the result
+ * @returns The message's concatenated textual content
+ */
 
 export function extractTextFromMessage(message: ConversationMessage, excludeThinking: boolean): string {
 	const texts: string[] = [];
@@ -158,6 +183,12 @@ export function extractTextFromMessage(message: ConversationMessage, excludeThin
 	return texts.join(" ");
 }
 
+/**
+ * Extracts tool usage blocks from an assistant message.
+ *
+ * @param message - The conversation message to inspect
+ * @returns An array of `ToolUseBlock` objects present in the assistant message's content, or an empty array if the message is not an assistant message or contains no `tool_use` blocks
+ */
 export function extractToolUses(message: ConversationMessage): ToolUseBlock[] {
 	if (message.type !== "assistant") return [];
 
@@ -167,6 +198,14 @@ export function extractToolUses(message: ConversationMessage): ToolUseBlock[] {
 	return assistantMsg.message.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
 }
 
+/**
+ * Extracts file-related paths referenced in any `tool_use` blocks of a conversation message.
+ *
+ * Scans tool use inputs for common file path fields (`file_path`, `path`, `filePath`) and returns all matching string values.
+ *
+ * @param message - The conversation message to inspect for tool use blocks
+ * @returns An array of file path strings found in the message's tool use blocks (empty if none)
+ */
 export function extractFilePaths(message: ConversationMessage): string[] {
 	const paths: string[] = [];
 	const toolUses = extractToolUses(message);
@@ -187,8 +226,11 @@ export function extractFilePaths(message: ConversationMessage): string[] {
 }
 
 /**
- * Check if a regex pattern is safe from ReDoS attacks.
- * Rejects patterns with nested quantifiers and excessive length.
+ * Determine whether a regex pattern is safe for use by guarding against common ReDoS vectors.
+ *
+ * Patterns longer than 200 characters or containing nested quantifiers (e.g., repeated quantifier sequences) are considered unsafe.
+ *
+ * @returns `true` if the pattern passes the safety checks, `false` otherwise.
  */
 function isSafeRegex(pattern: string): boolean {
 	// Reject excessively long patterns
@@ -199,6 +241,15 @@ function isSafeRegex(pattern: string): boolean {
 	return true;
 }
 
+/**
+ * Determine whether the provided text matches the query according to the selected matching mode.
+ *
+ * @param text - The text to search within.
+ * @param query - The search query; an empty query matches all text.
+ * @param exact - If true, perform a case-insensitive substring match.
+ * @param regex - If true, treat `query` as a case-insensitive regular expression; unsafe patterns are rejected.
+ * @returns `true` if `text` satisfies the query under the selected mode, `false` otherwise.
+ */
 export function matchesQuery(text: string, query: string, exact: boolean, regex: boolean): boolean {
 	if (!query) return true;
 
@@ -225,8 +276,9 @@ export function matchesQuery(text: string, query: string, exact: boolean, regex:
 }
 
 /**
- * Calculate relevance score for a search result
- * Higher score = better match
+ * Compute a relevance score for a conversation against a search query.
+ *
+ * @returns A numeric relevance score where higher values indicate a better match; `0` when `query` is empty.
  */
 export function calculateRelevanceScore(
 	query: string,
@@ -293,7 +345,13 @@ export function calculateRelevanceScore(
 }
 
 /**
- * Extract git commit hashes from Bash tool calls in a conversation
+ * Find unique Git commit hashes referenced in a conversation's Bash/tool outputs.
+ *
+ * Scans user tool results and assistant Bash tool usages for hexadecimal hashes that
+ * represent Git commits.
+ *
+ * @param messages - Array of conversation messages to scan
+ * @returns Unique commit hashes composed of 7 to 40 hexadecimal characters; excludes hashes shorter than 7 characters and sequences made of the same repeated character
  */
 export function extractCommitHashes(messages: ConversationMessage[]): string[] {
 	const hashes = new Set<string>();
@@ -339,6 +397,16 @@ export function extractCommitHashes(messages: ConversationMessage[]): string[] {
 	return [...hashes];
 }
 
+/**
+ * Determines whether a message meets the provided search filters.
+ *
+ * Evaluates active filters (query, tool, file, since, until) against the given message and its searchable text and returns whether the message satisfies all of them.
+ *
+ * @param message - The conversation message to test
+ * @param filters - Search filters to apply; only active (non-empty) fields are considered
+ * @param allText - Concatenated searchable text for the message (e.g., title, summary, and message content)
+ * @returns `true` if the message satisfies all active filters, `false` otherwise.
+ */
 function matchesFilters(
 	message: ConversationMessage,
 	filters: SearchFilters,
@@ -398,7 +466,14 @@ function matchesFilters(
 
 // =============================================================================
 // Search Implementation
-// =============================================================================
+/**
+ * Search conversation JSONL files and return conversations that match the provided filters.
+ *
+ * Supports multiple search modes (summary-only, commit-hash, commit-message, and standard full-text),
+ * optional context around matched messages, relevance scoring, project/date/tool/file filters, and limits/sorting.
+ *
+ * @param filters - SearchFilters specifying query text, project and date constraints, tools/files, search mode flags (e.g., `summaryOnly`, `commitHash`, `commitMessage`), context size, relevance sorting, exclusion of the current session, and result limits.
+ * @returns An array of SearchResult objects for conversations that satisfy the filters. Each result contains conversation metadata (filePath, project, sessionId, timestamps, summary/customTitle, gitBranch, isSubagent), matchedMessages, optional contextMessages, and a relevanceScore when a query was provided.
 
 export async function searchConversations(filters: SearchFilters): Promise<SearchResult[]> {
 	let results: SearchResult[] = [];
@@ -600,7 +675,14 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
 }
 
 /**
- * List conversation summaries (quick overview without full search)
+ * Collects lightweight summaries for conversations matching the provided filters.
+ *
+ * Filters supported (from `SearchFilters`): `excludeCurrentSession` (omits a matching sessionId),
+ * `conversationDate` and `conversationDateUntil` (inclusive date range applied to the conversation's first message),
+ * and `limit` (maximum number of summaries to return). Conversations without a `summary` or `customTitle` are skipped.
+ *
+ * @param filters - Criteria to select which conversation files to include
+ * @returns An array of summary objects each containing `filePath`, `project`, `sessionId`, `timestamp`, `summary`, `customTitle`, `gitBranch`, `matchedMessages` (empty), and `isSubagent`
  */
 export async function listConversationSummaries(filters: SearchFilters): Promise<SearchResult[]> {
 	const results: SearchResult[] = [];
@@ -675,7 +757,23 @@ export async function listConversationSummaries(filters: SearchFilters): Promise
 
 // =============================================================================
 // Metadata Extraction
-// =============================================================================
+/**
+ * Collects aggregated metadata for a conversation file.
+ *
+ * Scans the file's messages to extract project name, session ID, summary, custom title, Git branch, first and last message timestamps, message count, and whether the file represents a subagent.
+ *
+ * @param filePath - Path to the conversation JSONL file
+ * @returns A ConversationMetadata object containing:
+ *  - `filePath`: the input path
+ *  - `project`: inferred project name
+ *  - `sessionId`: session identifier (from messages or filename)
+ *  - `firstTimestamp` / `lastTimestamp`: earliest and latest message timestamps when available
+ *  - `summary`: conversation summary message if present
+ *  - `customTitle`: custom title message if present
+ *  - `gitBranch`: git branch value if present in messages
+ *  - `messageCount`: total number of parsed messages
+ *  - `isSubagent`: true when the file path indicates a subagent conversation
+ */
 
 export async function getConversationMetadata(filePath: string): Promise<ConversationMetadata> {
 	const messages = await parseJsonlFile(filePath);
@@ -729,7 +827,19 @@ export async function getConversationMetadata(filePath: string): Promise<Convers
 
 // =============================================================================
 // Get All Conversations (for listing)
-// =============================================================================
+/**
+ * Collects metadata and basic contents for all conversations that match the provided filters.
+ *
+ * @param filters - Optional filters to restrict which conversations are included (e.g., project, date range, agent inclusion/exclusion, or `limit`).
+ * @returns An array of conversation summaries where each entry contains:
+ * - `filePath` and derived `project`
+ * - `sessionId` (from messages or filename)
+ * - `timestamp` (first message timestamp or current time)
+ * - optional `summary`, `customTitle`, and `gitBranch`
+ * - `matchedMessages` (only user and assistant messages)
+ * - `isSubagent` flag
+ * - `userMessageCount` and `assistantMessageCount`
+ */
 
 export async function getAllConversations(filters: SearchFilters = {}): Promise<SearchResult[]> {
 	const files = await findConversationFiles(filters);
@@ -796,7 +906,11 @@ export async function getAllConversations(filters: SearchFilters = {}): Promise<
 
 // =============================================================================
 // Get Available Projects
-// =============================================================================
+/**
+ * Lists all available project names discovered under the configured projects directory.
+ *
+ * @returns A sorted array of unique, human-friendly project names found in PROJECTS_DIR
+ */
 
 export async function getAvailableProjects(): Promise<string[]> {
 	// Use forward slash in glob pattern (glob normalizes paths)
@@ -807,7 +921,14 @@ export async function getAvailableProjects(): Promise<string[]> {
 
 // =============================================================================
 // Get Conversation by Session ID
-// =============================================================================
+/**
+ * Locate and return the conversation that corresponds to a given session ID.
+ *
+ * Searches conversation files for a matching session by comparing the file basename or any substring of the file path to `sessionId`, and returns the conversation's metadata and all messages when found.
+ *
+ * @param sessionId - Session identifier to match against the conversation file name or path
+ * @returns A SearchResult containing metadata and all messages for the matched conversation, or `null` if no match is found
+ */
 
 export async function getConversationBySessionId(sessionId: string): Promise<SearchResult | null> {
 	// Find all files and look for matching session
@@ -876,6 +997,19 @@ export interface ConversationStats {
 	subagentCount: number;
 }
 
+/**
+ * Aggregates global statistics across all discovered conversation files.
+ *
+ * Collects totals and distributions by scanning each conversation JSONL file: counts conversations and messages, tallies conversations per project, counts tool usages, records per-day message activity, and counts conversations identified as subagents.
+ *
+ * @returns An object containing:
+ * - `totalConversations`: total number of conversation files with at least one message
+ * - `totalMessages`: total number of messages across all conversations
+ * - `projectCounts`: map from project name to number of conversations in that project
+ * - `toolCounts`: map from tool name to number of times that tool was used
+ * - `dailyActivity`: map from ISO date (YYYY-MM-DD) to number of messages on that date
+ * - `subagentCount`: number of conversations identified as subagents
+ */
 export async function getConversationStats(): Promise<ConversationStats> {
 	const files = await findConversationFiles({});
 
@@ -921,7 +1055,17 @@ export async function getConversationStats(): Promise<ConversationStats> {
 
 // =============================================================================
 // Date Parsing Helper
-// =============================================================================
+/**
+ * Parse a human-friendly date string into a Date.
+ *
+ * Supports relative forms like "3 days ago", "2 weeks ago", "5 months ago",
+ * "4 hours ago", and "30 minutes ago"; the named values "yesterday" and
+ * "today" (both normalized to local midnight); and ISO or other formats
+ * accepted by the JavaScript Date constructor as a fallback.
+ *
+ * @param dateStr - The input date string to parse.
+ * @returns A Date representing the parsed time (relative times are computed
+ *          from now; "yesterday" and "today" are set to local 00:00).
 
 export function parseDate(dateStr: string): Date {
 	const now = new Date();

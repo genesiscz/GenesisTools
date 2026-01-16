@@ -45,7 +45,12 @@ export interface SerializableStats {
   subagentCount: number
 }
 
-// Helper to serialize a conversation result
+/**
+ * Convert an internal conversation result into a client-serializable conversation object.
+ *
+ * @param result - The raw conversation result returned by data access functions
+ * @returns A SerializableConversation where `timestamp` is an ISO string and `messageCount` equals the number of matched messages
+ */
 function serializeResult(result: Awaited<ReturnType<typeof getAllConversations>>[0]): SerializableConversation {
   return {
     filePath: result.filePath,
@@ -60,7 +65,16 @@ function serializeResult(result: Awaited<ReturnType<typeof getAllConversations>>
   }
 }
 
-// Helper to extract text from a message
+/**
+ * Extracts textual content from a message object for display or serialization.
+ *
+ * Handles:
+ * - user and assistant messages whose `message.content` is a string or an array of content blocks (concatenates `text` and `thinking` blocks with newline separators),
+ * - summary messages that provide a `summary` field.
+ *
+ * @param msg - The message object; may be a user/assistant message with `message.content`, or a summary message with a `summary` field.
+ * @returns The extracted text content, or an empty string if no text can be extracted.
+ */
 function extractMessageContent(msg: { type: string; message?: { content: unknown } }): string {
   if (msg.type === 'user' || msg.type === 'assistant') {
     const content = (msg as { message?: { content: unknown } }).message?.content
@@ -84,7 +98,12 @@ function extractMessageContent(msg: { type: string; message?: { content: unknown
   return ''
 }
 
-// Helper to extract tool uses from a message
+/**
+ * Extracts tool-use entries from an assistant message's content.
+ *
+ * @param msg - Message object that may contain a `content` array of blocks
+ * @returns An array of tool-use descriptors with `name` and optional `input`; an empty array if the message is not an assistant message or contains no tool-use blocks
+ */
 function extractToolUses(msg: { type: string; message?: { content: unknown } }): Array<{ name: string; input?: object }> {
   if (msg.type !== 'assistant') return []
   const content = (msg as { message?: { content: unknown } }).message?.content

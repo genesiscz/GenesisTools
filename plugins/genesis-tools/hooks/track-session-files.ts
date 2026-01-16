@@ -26,12 +26,20 @@ interface SessionData {
 const STORAGE_DIR = join(homedir(), ".genesis-tools", "claude-code", "sessions");
 const CLEANUP_DAYS = 30;
 
+/**
+ * Ensures the session storage directory exists by creating the directory and any missing parent directories.
+ */
 function ensureDir() {
   if (!existsSync(STORAGE_DIR)) {
     mkdirSync(STORAGE_DIR, { recursive: true });
   }
 }
 
+/**
+ * Deletes session JSON files in the storage directory that were last modified more than CLEANUP_DAYS ago.
+ *
+ * If the storage directory does not exist, the function returns without performing any action.
+ */
 function cleanupOldSessions() {
   if (!existsSync(STORAGE_DIR)) return;
 
@@ -48,6 +56,16 @@ function cleanupOldSessions() {
   }
 }
 
+/**
+ * Record a file path as touched in the given session's persistent session file.
+ *
+ * Creates a session record if one does not exist, appends `filePath` to the session's
+ * tracked files when not already present, updates the session's `last_updated` timestamp,
+ * and writes the session data to disk under the session storage directory.
+ *
+ * @param sessionId - Identifier of the session whose file list will be updated
+ * @param filePath - File path to add to the session's tracked files
+ */
 function trackFile(sessionId: string, filePath: string) {
   ensureDir();
 
@@ -74,6 +92,13 @@ function trackFile(sessionId: string, filePath: string) {
   writeFileSync(sessionFile, JSON.stringify(sessionData, null, 2));
 }
 
+/**
+ * Handle hook input from stdin and process "SessionStart" and "PostToolUse" events.
+ *
+ * On "SessionStart" this writes a JSON payload with session context to stdout and triggers cleanup of old session files.
+ * On "PostToolUse" this records the touched file for the session when a file path is available and the tool write succeeded.
+ * The function terminates the process once processing is complete.
+ */
 async function main() {
   const input: HookInput = JSON.parse(await Bun.stdin.text());
   const { session_id, hook_event_name, tool_input, tool_response } = input;

@@ -36,6 +36,16 @@ const buttonVariants = cva(
   }
 )
 
+/**
+ * Render a styled, variant-aware button element.
+ *
+ * Renders either a native `button` or a Radix `Slot` when `asChild` is true, applying variant and size styling and forwarding remaining props to the rendered element.
+ *
+ * @param variant - Visual style variant to apply (e.g., "default", "destructive", "outline", "secondary", "ghost", "link")
+ * @param size - Size variant to apply (e.g., "default", "sm", "lg", "icon", "icon-sm", "icon-lg")
+ * @param asChild - When true, render a Radix `Slot` instead of a `button` to allow composition with other elements
+ * @returns A React element representing the styled button (a `button` or a Radix `Slot`)
+ */
 function Button({
   className,
   variant = "default",
