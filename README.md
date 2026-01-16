@@ -1771,7 +1771,7 @@ tools git-rebase-multiple --cleanup
 <details>
 <summary><b>📖 Example Scenario</b></summary>
 
-```
+```text
 Before:
   main:     A---B---C---D
                  \

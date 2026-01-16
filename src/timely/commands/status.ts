@@ -13,9 +13,9 @@ export function registerStatusCommand(program: Command, storage: Storage, client
             const config = await storage.getConfig<TimelyConfig>();
 
             if (options.format === "json") {
-                // Mask sensitive data
+                // Mask sensitive data (guard against undefined config)
                 const safeConfig = {
-                    ...config,
+                    ...(config ?? {}),
                     oauth: config?.oauth ? { ...config.oauth, client_secret: "***" } : undefined,
                     tokens: config?.tokens
                         ? { ...config.tokens, access_token: "***", refresh_token: "***" }

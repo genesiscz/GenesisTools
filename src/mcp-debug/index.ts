@@ -96,13 +96,13 @@ async function main() {
         .description("Debug tool for MCP server configurations")
         .option("-v, --verbose", "Enable verbose logging")
         .option("-e, --env", "Execute 'env' command automatically")
-        .option("--help-old", "Show extended help message")
+        .option("-?, --help-full", "Show extended help with examples")
         .argument("[command...]", "Command and arguments to execute")
         .parse();
 
     const options = program.opts();
 
-    if (options.helpOld) {
+    if (options.helpFull) {
         showHelp();
         process.exit(0);
     }

@@ -81,7 +81,7 @@ const program = new Command()
     .option("-v, --verbose", "Enable verbose logging")
     .option("-y, --yes", "Auto-confirm changes without prompting (only after you do the command without --yes and check the diff)")
     .option("-p, --provider <name>", "Provider name(s) for operations (claude, cursor, gemini, codex, or 'all')")
-    .option("--help-old", "Show detailed help message")
+    .option("-?, --help-full", "Show detailed help message")
     .helpCommand(true)
     .hook("preAction", () => {
         // Set global options for all commands (enables --yes to work globally)
@@ -89,8 +89,8 @@ const program = new Command()
         setGlobalOptions({ yes: opts.yes });
     });
 
-// Handle --help-old to show custom help
-program.on("option:help-old", () => {
+// Handle --help-full to show custom help
+program.on("option:help-full", () => {
     showHelp();
     process.exit(0);
 });

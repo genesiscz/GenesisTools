@@ -10,7 +10,7 @@ import type { CLIOptions, PlanStep, RebaseConfig, RebaseSummary, RebaseState } f
 /**
  * Show detailed help message (legacy)
  */
-function showHelpOld(): void {
+function showHelpFull(): void {
 	console.log(`
 ${chalk.bold("git-rebase-multiple")} - Safe branch hierarchy rebasing
 
@@ -18,7 +18,7 @@ ${chalk.bold("USAGE:")}
   tools git-rebase-multiple [options]
 
 ${chalk.bold("OPTIONS:")}
-  --help-old              Show this detailed help message
+  -?, --help-full         Show this detailed help message
   -a, --abort             Abort and restore all branches to original state
   -c, --continue          Continue after resolving conflicts
   -s, --status            Show current state and existing backups
@@ -641,14 +641,14 @@ async function main(): Promise<void> {
 		.option("--parent <branch>", "Parent branch to rebase")
 		.option("--target <branch>", "Target branch to rebase onto")
 		.option("--children <branches>", "Comma-separated child branches")
-		.option("--help-old", "Show detailed help message")
+		.option("-?, --help-full", "Show detailed help message")
 		.parse();
 
-	const options = program.opts<CLIOptions & { helpOld?: boolean }>();
+	const options = program.opts<CLIOptions & { helpFull?: boolean }>();
 
 	try {
-		if (options.helpOld) {
-			showHelpOld();
+		if (options.helpFull) {
+			showHelpFull();
 			process.exit(0);
 		}
 

@@ -737,7 +737,7 @@ ${chalk.bold("ARGUMENTS:")}
   --debug                 Show raw JSON for each event (useful for debugging)
   --include-fork          Automatically include 'fork' events when monitoring 'exec'
   --filter-event <expr>   Filter events using JSON path expression (e.g., '.event.target.executable.path == ".*Cursor.*"')
-  -h, --help-old          Show this help message
+  -?, --help-full         Show this help message
 
 ${chalk.bold("EVENT CATEGORIES:")}
   ${Object.keys(EVENT_CATEGORIES).join(", ")}
@@ -988,13 +988,13 @@ async function main() {
         .option("--debug", "Show raw JSON for each event (useful for debugging)")
         .option("--include-fork", "Automatically include 'fork' events when monitoring 'exec'")
         .option("--filter-event <expr>", "Filter events using JSON path expression")
-        .option("-h, --help-old", "Show this help message")
+        .option("-?, --help-full", "Show this help message")
         .parse();
 
     const options = program.opts();
 
     // Show help if requested
-    if (options.helpOld) {
+    if (options.helpFull) {
         showHelp();
         process.exit(0);
     }

@@ -14,17 +14,38 @@ export function setupInquirerMock(): void {
     mock.module("@inquirer/prompts", () => ({
         checkbox: async (_config: unknown) => {
             const responses = (globalThis as any).__inquirerMockResponses || {};
+            const value = responses.selectedProviders;
+            // Throw if the response is an Error (e.g., ExitPromptError for testing cancellation)
+            if (value instanceof Error) throw value;
             // checkbox returns an array directly (not wrapped in an object)
-            return responses.selectedProviders ?? [];
+            return value ?? [];
         },
         select: async (_config: unknown) => {
             const responses = (globalThis as any).__inquirerMockResponses || {};
+            // Check for error responses first
+            const errorKeys = ["selectedProvider", "choice", "inputType"];
+            for (const key of errorKeys) {
+                if (responses[key] instanceof Error) throw responses[key];
+            }
             // select returns a single value directly
             // Support both 'selectedProvider' and 'choice' keys for different test scenarios
             return responses.selectedProvider ?? responses.choice ?? responses.inputType ?? "";
         },
         input: async (config: { message?: string; default?: string }) => {
             const responses = (globalThis as any).__inquirerMockResponses || {};
+            // Check for error responses first
+            const inputKeys = [
+                "inputServerName",
+                "inputNewName",
+                "inputCommand",
+                "inputEnv",
+                "inputHeaders",
+                "inputVal",
+                "newServerName",
+            ];
+            for (const key of inputKeys) {
+                if (responses[key] instanceof Error) throw responses[key];
+            }
             // input returns a string directly
             // Support multiple input field keys based on what the test expects
             if (responses.inputServerName !== undefined) return responses.inputServerName;
@@ -39,11 +60,19 @@ export function setupInquirerMock(): void {
         },
         confirm: async (_config: unknown) => {
             const responses = (globalThis as any).__inquirerMockResponses || {};
+            const value = responses.confirmed;
+            // Throw if the response is an Error
+            if (value instanceof Error) throw value;
             // confirm returns a boolean directly
-            return responses.confirmed ?? false;
+            return value ?? false;
         },
         search: async (_config: unknown) => {
             const responses = (globalThis as any).__inquirerMockResponses || {};
+            // Check for error responses first
+            const searchKeys = ["selectedOldName", "selectedServerName", "inputServerName"];
+            for (const key of searchKeys) {
+                if (responses[key] instanceof Error) throw responses[key];
+            }
             // search returns a single value directly
             // Support both 'selectedOldName' and 'selectedServerName' keys
             if (responses.selectedOldName !== undefined) return responses.selectedOldName;
@@ -53,8 +82,11 @@ export function setupInquirerMock(): void {
         },
         password: async (_config: unknown) => {
             const responses = (globalThis as any).__inquirerMockResponses || {};
+            const value = responses.password;
+            // Throw if the response is an Error
+            if (value instanceof Error) throw value;
             // password returns a string directly
-            return responses.password ?? "";
+            return value ?? "";
         },
     }));
 

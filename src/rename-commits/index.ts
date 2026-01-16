@@ -17,7 +17,7 @@ const logger = {
 
 interface Options {
     commits?: number;
-    helpOld?: boolean;
+    helpFull?: boolean;
     force?: boolean;
 }
 
@@ -28,7 +28,7 @@ interface CommitInfo {
     newMessage?: string;
 }
 
-function showHelpOld() {
+function showHelpFull() {
     logger.info(`
 Usage: tools rename-commits [--commits N] [--help]
 
@@ -40,7 +40,7 @@ Description:
 Options:
   -c, --commits   Number of recent commits to rename (default: prompts if not provided)
   -f, --force     Skip safety check (not recommended - use only if commits are backed up)
-  --help-old      Show this help message (Commander auto-generates --help)
+  -?, --help-full Show this help message (Commander auto-generates --help)
 
 Examples:
   tools rename-commits --commits 3
@@ -945,13 +945,13 @@ async function main() {
         .description("Interactively rename git commits")
         .option("-c, --commits <n>", "Number of commits to rename", (value: string) => parseInt(value, 10))
         .option("-f, --force", "Force: skip safety check (not recommended - use only if commits are backed up)")
-        .option("--help-old", "Show the old help message")
+        .option("-?, --help-full", "Show detailed help message")
         .parse();
 
     const opts = program.opts<Options>();
 
-    if (opts.helpOld) {
-        showHelpOld();
+    if (opts.helpFull) {
+        showHelpFull();
         process.exit(0);
     }
 
@@ -1035,7 +1035,7 @@ async function main() {
         const numCommits = Number(commitCount);
         if (!Number.isInteger(numCommits) || numCommits < 1) {
             logger.error("✖ Error: Number of commits must be a positive integer.");
-            showHelpOld();
+            showHelpFull();
             process.exit(1);
         }
 

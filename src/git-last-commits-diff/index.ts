@@ -22,7 +22,7 @@ Options:
   --clipboard     Copy diff output directly to the clipboard. This option
                   overrides the interactive prompt. If --output is also given,
                   --output takes precedence.
-  --help-old      Show this message.
+  -?, --help-full Show this message.
 `);
 }
 
@@ -149,19 +149,19 @@ async function getAndSelectCommit(repoDir: string): Promise<string | undefined> 
 async function main() {
     const program = new Command()
         .name("git-last-commits-diff")
-        .argument("<directory>", "Path to the Git repository")
+        .argument("[directory]", "Path to the Git repository")
         .option("-c, --commits <number>", "Number of recent commits to diff")
         .option("-o, --output [file]", "Output file path")
         .option("--clipboard", "Copy diff output to clipboard")
-        .option("--help-old", "Show this help message")
+        .option("-?, --help-full", "Show this help message")
         .parse();
 
     const options = program.opts();
     const [repoDirArg] = program.args;
 
-    if (options.helpOld || !repoDirArg) {
+    if (options.helpFull || !repoDirArg) {
         showHelp();
-        process.exit(options.helpOld ? 0 : 1);
+        process.exit(options.helpFull ? 0 : 1);
     }
 
     if (typeof repoDirArg !== "string") {

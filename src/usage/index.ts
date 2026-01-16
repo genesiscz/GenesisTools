@@ -12,7 +12,7 @@ interface Options {
     provider?: string;
     model?: string;
     format?: "table" | "json" | "summary";
-    helpOld?: boolean;
+    helpFull?: boolean;
 }
 
 function showHelp() {
@@ -26,7 +26,7 @@ Options:
   -p, --provider <name>  Filter by provider name
   -m, --model <name>      Filter by model name
   -f, --format <format>   Output format: table, json, summary (default: table)
-      --help-old          Show this detailed help message
+  -?, --help-full         Show this detailed help message
 
 Examples:
   tools usage                    # Show last 30 days usage
@@ -217,13 +217,13 @@ async function main() {
         .option("-p, --provider <name>", "Filter by provider name")
         .option("-m, --model <name>", "Filter by model name")
         .option("-f, --format <format>", "Output format: table, json, summary", "table")
-        .option("--help-old", "Show detailed help message")
+        .option("-?, --help-full", "Show detailed help message")
         .parse();
 
     const options = program.opts<Options>();
 
     // Handle custom help option
-    if (options.helpOld) {
+    if (options.helpFull) {
         showHelp();
         process.exit(0);
     }

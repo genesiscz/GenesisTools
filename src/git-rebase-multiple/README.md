@@ -46,7 +46,7 @@ tools git-rebase-multiple --restore <branch>
 
 ## Interactive Flow
 
-```
+```text
 $ tools git-rebase-multiple
 
 📋 Git Rebase Multiple - Safe Branch Hierarchy Rebasing
@@ -113,7 +113,7 @@ tools git-rebase-multiple \
 
 ## Example Scenario
 
-```
+```text
 Before:
   main:     A---B---C---D
                  \

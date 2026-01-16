@@ -803,14 +803,14 @@ async function main(): Promise<void> {
             .option("-f, --flat-folder", "Copy files to a flat folder structure with renamed files")
             .option("-0, --null", "Use NUL character as separator when reading from stdin")
             .option("--dry", "Show statistics about what would be processed without actually processing")
-            .option("-h, --help-old", "Show this help message")
+            .option("-?, --help-full", "Show this help message")
             .option("--version", "Show version information")
             .parse();
 
         const options = program.opts();
         const paths = program.args;
 
-        if (options.helpOld) {
+        if (options.helpFull) {
             showHelp();
             process.exit(0);
         }

@@ -9,10 +9,36 @@ const client = new watchman.Client();
 // Parse command line arguments using Commander
 const program = new Command()
     .option("-c, --current", "Use current working directory")
-    .option("--help-old", "Show old help message")
+    .option("-?, --help-full", "Show detailed help message")
     .parse();
 
-const options = program.opts<{ current?: boolean; helpOld?: boolean }>();
+const options = program.opts<{ current?: boolean; helpFull?: boolean }>();
+
+if (options.helpFull) {
+    console.log(`
+Usage: tools watchman [options] [directory]
+
+Watch a directory for file changes using Facebook's Watchman.
+
+Arguments:
+  [directory]        Path to directory to watch (starts with . or /)
+
+Options:
+  -c, --current      Use current working directory
+  -?, --help-full    Show this detailed help message
+
+If no directory is provided, you'll be prompted to select from:
+  - Currently watched directories in Watchman
+  - Current working directory
+
+Examples:
+  tools watchman                    # Interactive directory selection
+  tools watchman .                  # Watch current directory
+  tools watchman /path/to/project   # Watch specific directory
+  tools watchman -c                 # Watch current directory (no prompt)
+`);
+    process.exit(0);
+}
 
 async function getDirOfInterest(): Promise<string> {
     // If -c or --current is passed, use process.cwd()
