@@ -109,7 +109,10 @@ export class CodexProvider extends MCPProvider {
         // Remove the server from config (Codex doesn't have explicit disable)
         if (config.mcp_servers?.[serverName]) {
             delete config.mcp_servers[serverName];
-            await this.writeConfig(config);
+            const result = await this.writeConfig(config);
+            if (result === WriteResult.Rejected) {
+                throw new Error(`Write rejected by user for server ${serverName}`);
+            }
         }
     }
 
