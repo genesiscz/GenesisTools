@@ -69,6 +69,46 @@ interface QueueItem {
   stuck: boolean;
 }
 
+// =============================================================================
+// Tool Argument Interfaces
+// =============================================================================
+
+interface GetBuildStatusArgs {
+  jobPath: string;
+  buildNumber?: string;
+}
+
+interface TriggerBuildArgs {
+  jobPath: string;
+  parameters?: Record<string, unknown>;
+}
+
+interface GetBuildLogArgs {
+  jobPath: string;
+  buildNumber: string;
+}
+
+interface ListJobsArgs {
+  folderPath?: string;
+}
+
+interface GetBuildHistoryArgs {
+  jobPath: string;
+  limit?: number;
+}
+
+interface StopBuildArgs {
+  jobPath: string;
+  buildNumber: string;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface GetQueueArgs {}
+
+interface GetJobConfigArgs {
+  jobPath: string;
+}
+
 /**
  * Jenkins MCP Server class
  * Provides various Jenkins operations through the Model Context Protocol
@@ -253,23 +293,24 @@ class JenkinsServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         // Route to appropriate handler based on tool name
+        const args = request.params.arguments ?? {};
         switch (request.params.name) {
           case 'get_build_status':
-            return await this.getBuildStatus(request.params.arguments);
+            return await this.getBuildStatus(args as unknown as GetBuildStatusArgs);
           case 'trigger_build':
-            return await this.triggerBuild(request.params.arguments);
+            return await this.triggerBuild(args as unknown as TriggerBuildArgs);
           case 'get_build_log':
-            return await this.getBuildLog(request.params.arguments);
+            return await this.getBuildLog(args as unknown as GetBuildLogArgs);
           case 'list_jobs':
-            return await this.listJobs(request.params.arguments);
+            return await this.listJobs(args as unknown as ListJobsArgs);
           case 'get_build_history':
-            return await this.getBuildHistory(request.params.arguments);
+            return await this.getBuildHistory(args as unknown as GetBuildHistoryArgs);
           case 'stop_build':
-            return await this.stopBuild(request.params.arguments);
+            return await this.stopBuild(args as unknown as StopBuildArgs);
           case 'get_queue':
-            return await this.getQueue(request.params.arguments);
+            return await this.getQueue(args as unknown as GetQueueArgs);
           case 'get_job_config':
-            return await this.getJobConfig(request.params.arguments);
+            return await this.getJobConfig(args as unknown as GetJobConfigArgs);
           default:
             throw new McpError(
               ErrorCode.MethodNotFound,
@@ -296,7 +337,7 @@ class JenkinsServer {
    * Get the status of a specific Jenkins build
    * @param args - Contains jobPath and optional buildNumber
    */
-  private async getBuildStatus(args: any) {
+  private async getBuildStatus(args: GetBuildStatusArgs) {
     const buildNumber = args.buildNumber || 'lastBuild';
     const response = await this.axiosInstance.get<BuildStatus>(
       `/${args.jobPath}/${buildNumber}/api/json`
@@ -322,7 +363,7 @@ class JenkinsServer {
    * Trigger a new Jenkins build
    * @param args - Contains jobPath and optional parameters
    */
-  private async triggerBuild(args: any) {
+  private async triggerBuild(args: TriggerBuildArgs) {
     const params = new URLSearchParams();
     // Add build parameters if provided
     if (args.parameters) {
@@ -352,7 +393,7 @@ class JenkinsServer {
    * Get the console output of a specific build
    * @param args - Contains jobPath and buildNumber
    */
-  private async getBuildLog(args: any) {
+  private async getBuildLog(args: GetBuildLogArgs) {
     const response = await this.axiosInstance.get(
       `/${args.jobPath}/${args.buildNumber}/consoleText`
     );
@@ -371,7 +412,7 @@ class JenkinsServer {
    * List all Jenkins jobs in a folder or at root level
    * @param args - Contains optional folderPath
    */
-  private async listJobs(args: any) {
+  private async listJobs(args: ListJobsArgs) {
     const folderPath = args.folderPath || '';
     const apiPath = folderPath ? `/${folderPath}/api/json` : '/api/json';
 
@@ -406,7 +447,7 @@ class JenkinsServer {
    * Get build history for a specific Jenkins job
    * @param args - Contains jobPath and optional limit
    */
-  private async getBuildHistory(args: any) {
+  private async getBuildHistory(args: GetBuildHistoryArgs) {
     const limit = args.limit || 10;
     // Use Jenkins Tree API to efficiently fetch build data
     const treeQuery = `builds[number,result,timestamp,duration,building,url]{0,${limit}}`;
@@ -446,7 +487,7 @@ class JenkinsServer {
    * Stop a running Jenkins build
    * @param args - Contains jobPath and buildNumber
    */
-  private async stopBuild(args: any) {
+  private async stopBuild(args: StopBuildArgs) {
     const buildNumber = args.buildNumber === 'lastBuild' ? 'lastBuild' : args.buildNumber;
 
     await this.axiosInstance.post(
@@ -467,7 +508,7 @@ class JenkinsServer {
    * Get the current Jenkins build queue
    * @param args - Empty object (no parameters required)
    */
-  private async getQueue(args: any) {
+  private async getQueue(_args: GetQueueArgs) {
     const response = await this.axiosInstance.get('/queue/api/json');
     const queueItems: QueueItem[] = response.data.items || [];
 
@@ -499,7 +540,7 @@ class JenkinsServer {
    * Get the configuration of a Jenkins job
    * @param args - Contains jobPath
    */
-  private async getJobConfig(args: any) {
+  private async getJobConfig(args: GetJobConfigArgs) {
     // Get job information in JSON format
     const response = await this.axiosInstance.get(`/${args.jobPath}/api/json`);
     const jobInfo = response.data;

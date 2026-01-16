@@ -104,4 +104,7 @@ async function main() {
   process.exit(0);
 }
 
-main().catch(() => process.exit(0));
+main().catch((err) => {
+  console.error(`[track-session-files hook] Unexpected error:`, err);
+  process.exit(1);
+});

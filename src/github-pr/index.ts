@@ -86,9 +86,12 @@ function c(text: string, ...colorCodes: (keyof typeof colors)[]): string {
 // =============================================================================
 
 function getGitHubToken(): string {
-  // First try environment variable
+  // First try environment variables
   if (process.env.GITHUB_TOKEN) {
     return process.env.GITHUB_TOKEN;
+  }
+  if (process.env.GH_TOKEN) {
+    return process.env.GH_TOKEN;
   }
 
   // Fallback: try to get token from gh CLI
@@ -104,7 +107,7 @@ function getGitHubToken(): string {
   throw new Error(
     'No GitHub token found.\n\n' +
       'Options:\n' +
-      '  1. Set GITHUB_TOKEN environment variable\n' +
+      '  1. Set GITHUB_TOKEN or GH_TOKEN environment variable\n' +
       '  2. Authenticate with gh CLI: gh auth login\n\n' +
       'To create a token manually:\n' +
       '  1. Go to https://github.com/settings/tokens\n' +
