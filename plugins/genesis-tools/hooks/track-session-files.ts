@@ -90,8 +90,16 @@ async function main() {
     process.exit(0);
   }
 
-  // For PostToolUse, track the file
+  // For PostToolUse, track the file (only for configured tools: Edit, Write, MultiEdit)
   if (hook_event_name === "PostToolUse") {
+    const TRACKED_TOOLS = ["Edit", "Write", "MultiEdit"];
+    const toolName = input.tool_name;
+
+    // Only process tools that match hooks.json matcher
+    if (!toolName || !TRACKED_TOOLS.includes(toolName)) {
+      process.exit(0);
+    }
+
     const filePath = tool_input?.file_path || tool_response?.filePath;
     if (!filePath) process.exit(0);
 

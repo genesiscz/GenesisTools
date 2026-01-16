@@ -144,11 +144,11 @@ await new Command()
   .description("Complex CLI application")
   .command("config", "Manage configuration")
     .command("set <key> <value>", "Set a configuration value")
-      .action(({ key, value }) => {
+      .action((options, key, value) => {
         console.log(`Set ${key} = ${value}`);
       })
     .command("get <key>", "Get a configuration value")
-      .action(({ key }) => {
+      .action((options, key) => {
         console.log(`Get ${key}`);
       })
     .command("list", "List all configuration")
