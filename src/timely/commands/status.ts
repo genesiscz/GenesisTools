@@ -1,8 +1,8 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { Storage } from "@app/utils/storage";
-import { TimelyApiClient } from "../api/client";
-import type { TimelyConfig } from "../types";
+import { TimelyApiClient } from "@app/timely/api/client";
+import type { TimelyConfig } from "@app/timely/types";
 
 export function registerStatusCommand(program: Command, storage: Storage, client: TimelyApiClient): void {
     program

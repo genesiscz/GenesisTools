@@ -2,9 +2,9 @@ import { Command } from "commander";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
-import { TimelyService } from "../api/service";
-import { formatDuration } from "../utils/date";
-import type { TimelyEvent } from "../types";
+import { TimelyService } from "@app/timely/api/service";
+import { formatDuration } from "@app/timely/utils/date";
+import type { TimelyEvent } from "@app/timely/types";
 
 export function registerEventsCommand(program: Command, storage: Storage, service: TimelyService): void {
     program

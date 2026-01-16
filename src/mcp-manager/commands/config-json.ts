@@ -1,7 +1,7 @@
 import clipboardy from "clipboardy";
 import logger from "@app/logger";
-import { readUnifiedConfig, stripMetaFromServers } from "../utils/config.utils.js";
-import type { UnifiedMCPServerConfig } from "../utils/providers/types.js";
+import { readUnifiedConfig, stripMetaFromServers } from "@app/mcp-manager/utils/config.utils.js";
+import type { UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 
 export interface ConfigJsonOptions {
     client?: "standard" | "cursor" | "claude";

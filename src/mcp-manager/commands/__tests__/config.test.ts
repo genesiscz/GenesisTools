@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, spyOn } from "bun:test";
-import { openConfig } from "../config.js";
-import * as configUtils from "../../utils/config.utils.js";
+import { openConfig } from "@app/mcp-manager/commands/config.js";
+import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
 import { Storage } from "@app/utils/storage";
 import logger from "@app/logger";
 

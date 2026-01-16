@@ -4,8 +4,8 @@ import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
-import { TimelyApiClient } from "../api/client";
-import type { OAuthApplication } from "../types";
+import { TimelyApiClient } from "@app/timely/api/client";
+import type { OAuthApplication } from "@app/timely/types";
 
 export function registerLoginCommand(program: Command, storage: Storage, client: TimelyApiClient): void {
     program

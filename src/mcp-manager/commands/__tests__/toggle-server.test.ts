@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, spyOn } from "bun:test";
-import { toggleServer } from "../toggle-server.js";
+import { toggleServer } from "@app/mcp-manager/commands/toggle-server.js";
 import { MockMCPProvider, createMockUnifiedConfig } from "./test-utils.js";
-import * as configUtils from "../../utils/config.utils.js";
-import * as commandUtils from "../../utils/command.utils.js";
+import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
+import * as commandUtils from "@app/mcp-manager/utils/command.utils.js";
 import logger from "@app/logger";
 
 describe("toggleServer", () => {

@@ -6,7 +6,7 @@ import { readFile } from "fs/promises";
 import path from "path";
 import logger from "@app/logger";
 import chalk from "chalk";
-import { stripMeta } from "../config.utils.js";
+import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 
 /**
  * Claude Desktop MCP provider.

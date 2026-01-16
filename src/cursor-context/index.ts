@@ -5,7 +5,7 @@ import { checkbox, confirm, input } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import clipboardy from "clipboardy";
-import logger from "../logger";
+import logger from "@app/logger";
 import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 

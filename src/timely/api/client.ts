@@ -3,7 +3,7 @@ import logger from "@app/logger";
 import { input, password } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
-import type { OAuth2Tokens, OAuthApplication } from "../types";
+import type { OAuth2Tokens, OAuthApplication } from "@app/timely/types";
 
 export interface RequestOptions {
     params?: Record<string, string | number | boolean>;

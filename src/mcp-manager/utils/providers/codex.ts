@@ -7,7 +7,7 @@ import path from "path";
 import * as TOML from "@iarna/toml";
 import logger from "@app/logger";
 import chalk from "chalk";
-import { stripMeta } from "../config.utils.js";
+import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 
 /**
  * Codex MCP provider.

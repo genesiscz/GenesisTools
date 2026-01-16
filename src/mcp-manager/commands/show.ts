@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import logger, { consoleLog } from "@app/logger";
-import type { UnifiedMCPServerConfig, MCPProvider } from "../utils/providers/types.js";
+import type { UnifiedMCPServerConfig, MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 
 /**
  * Show the full configuration of an MCP server

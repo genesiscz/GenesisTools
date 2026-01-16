@@ -13,8 +13,8 @@
 import { $ } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync, rmdirSync } from "fs";
 import { join, dirname } from "path";
-import logger from "../logger";
-import { Storage } from "../utils/storage";
+import logger from "@app/logger";
+import { Storage } from "@app/utils/storage";
 
 // Azure DevOps API resource ID (constant for all Azure DevOps organizations)
 const AZURE_DEVOPS_RESOURCE_ID = "499b84ac-1321-427f-aa17-267ca6975798";

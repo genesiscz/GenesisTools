@@ -1,4 +1,4 @@
-import type { MCPServerMeta, EnabledMcpServers } from "../types.js";
+import type { MCPServerMeta, EnabledMcpServers } from "@app/mcp-manager/utils/types.js";
 import { writeFile } from "fs/promises";
 
 /**
@@ -67,7 +67,7 @@ export interface MCPServerInfo {
     provider: string;
 }
 
-import { BackupManager } from "../backup.js";
+import { BackupManager } from "@app/mcp-manager/utils/backup.js";
 
 /**
  * Base abstract class for MCP configuration providers.
