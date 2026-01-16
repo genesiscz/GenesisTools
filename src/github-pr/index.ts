@@ -189,6 +189,10 @@ const REVIEW_THREADS_QUERY = `
               line
               startLine
               comments(first: 50) {
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
                 edges {
                   node {
                     id
@@ -201,6 +205,32 @@ const REVIEW_THREADS_QUERY = `
                   }
                 }
               }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const THREAD_COMMENTS_QUERY = `
+  query($threadId: ID!, $cursor: String!) {
+    node(id: $threadId) {
+      ... on PullRequestReviewThread {
+        comments(first: 50, after: $cursor) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          edges {
+            node {
+              id
+              author {
+                login
+              }
+              body
+              createdAt
+              diffHunk
             }
           }
         }
@@ -238,6 +268,24 @@ async function fetchGitHubGraphQL(
   return json.data;
 }
 
+interface CommentNode {
+  id: string;
+  author: { login: string } | null;
+  body: string;
+  createdAt: string;
+  diffHunk: string | null;
+}
+
+interface CommentsConnection {
+  pageInfo: {
+    hasNextPage: boolean;
+    endCursor: string | null;
+  };
+  edges: Array<{
+    node: CommentNode;
+  }>;
+}
+
 interface GraphQLResponse {
   repository: {
     pullRequest: {
@@ -255,17 +303,7 @@ interface GraphQLResponse {
             path: string;
             line: number | null;
             startLine: number | null;
-            comments: {
-              edges: Array<{
-                node: {
-                  id: string;
-                  author: { login: string } | null;
-                  body: string;
-                  createdAt: string;
-                  diffHunk: string | null;
-                };
-              }>;
-            };
+            comments: CommentsConnection;
           };
         }>;
       };
@@ -273,11 +311,60 @@ interface GraphQLResponse {
   };
 }
 
+interface ThreadCommentsResponse {
+  node: {
+    comments: CommentsConnection;
+  } | null;
+}
+
+async function fetchAdditionalComments(
+  token: string,
+  threadId: string,
+  startCursor: string
+): Promise<Comment[]> {
+  const comments: Comment[] = [];
+  let cursor: string | null = startCursor;
+
+  while (cursor) {
+    const data = (await fetchGitHubGraphQL(token, THREAD_COMMENTS_QUERY, {
+      threadId,
+      cursor,
+    })) as ThreadCommentsResponse;
+
+    if (!data.node?.comments) {
+      break;
+    }
+
+    for (const ce of data.node.comments.edges) {
+      comments.push({
+        id: ce.node.id,
+        author: ce.node.author?.login ?? 'ghost',
+        body: ce.node.body,
+        createdAt: ce.node.createdAt,
+        diffHunk: ce.node.diffHunk,
+      });
+    }
+
+    cursor = data.node.comments.pageInfo.hasNextPage
+      ? data.node.comments.pageInfo.endCursor
+      : null;
+  }
+
+  return comments;
+}
+
 async function fetchPRInfo(token: string, owner: string, repo: string, prNumber: number): Promise<PRInfo> {
   const allThreads: Thread[] = [];
   let cursor: string | null = null;
   let title = '';
   let state = '';
+
+  // Track threads that need additional comment pages
+  const threadsNeedingMoreComments: Array<{
+    threadIndex: number;
+    threadId: string;
+    commentsCursor: string;
+  }> = [];
 
   do {
     const data = (await fetchGitHubGraphQL(token, REVIEW_THREADS_QUERY, {
@@ -297,6 +384,8 @@ async function fetchPRInfo(token: string, owner: string, repo: string, prNumber:
 
     for (const edge of pr.reviewThreads.edges) {
       const node = edge.node;
+      const threadIndex = allThreads.length;
+
       allThreads.push({
         id: node.id,
         isResolved: node.isResolved,
@@ -311,10 +400,25 @@ async function fetchPRInfo(token: string, owner: string, repo: string, prNumber:
           diffHunk: ce.node.diffHunk,
         })),
       });
+
+      // Check if this thread has more comments to fetch
+      if (node.comments.pageInfo.hasNextPage && node.comments.pageInfo.endCursor) {
+        threadsNeedingMoreComments.push({
+          threadIndex,
+          threadId: node.id,
+          commentsCursor: node.comments.pageInfo.endCursor,
+        });
+      }
     }
 
     cursor = pr.reviewThreads.pageInfo.hasNextPage ? pr.reviewThreads.pageInfo.endCursor : null;
   } while (cursor);
+
+  // Fetch additional comments for threads with more than 50 comments
+  for (const { threadIndex, threadId, commentsCursor } of threadsNeedingMoreComments) {
+    const additionalComments = await fetchAdditionalComments(token, threadId, commentsCursor);
+    allThreads[threadIndex].comments.push(...additionalComments);
+  }
 
   return { title, state, threads: allThreads };
 }
@@ -865,6 +969,14 @@ Examples:
     input = parseInput(prInput);
   } catch (error) {
     console.error(c(`Error: ${(error as Error).message}`, 'red'));
+    process.exit(1);
+  }
+
+  // Validate thread-id is provided when respond or resolve operations are requested
+  if ((respondMessage || resolveThreadOpt) && !threadId) {
+    console.error(c('Error: --thread-id is required when using --respond or --resolve-thread', 'red'));
+    console.error(c('Usage: tools github-pr <pr> -r "message" -t <thread-id>', 'dim'));
+    console.error(c('       tools github-pr <pr> --resolve-thread -t <thread-id>', 'dim'));
     process.exit(1);
   }
 
