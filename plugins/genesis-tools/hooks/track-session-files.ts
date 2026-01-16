@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { join } from "path";
 import { homedir } from "os";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync, renameSync } from "fs";
 
 interface HookInput {
   session_id: string;
@@ -48,6 +48,15 @@ function cleanupOldSessions() {
   }
 }
 
+function createFreshSessionData(sessionId: string): SessionData {
+  return {
+    session_id: sessionId,
+    started_at: new Date().toISOString(),
+    last_updated: new Date().toISOString(),
+    files: []
+  };
+}
+
 function trackFile(sessionId: string, filePath: string) {
   ensureDir();
 
@@ -55,14 +64,20 @@ function trackFile(sessionId: string, filePath: string) {
 
   let sessionData: SessionData;
   if (existsSync(sessionFile)) {
-    sessionData = JSON.parse(readFileSync(sessionFile, "utf-8"));
+    try {
+      sessionData = JSON.parse(readFileSync(sessionFile, "utf-8"));
+    } catch (err) {
+      // Corrupted JSON - backup and recreate
+      console.warn(`[track-session-files] Corrupted session file, recreating: ${sessionFile}`);
+      try {
+        renameSync(sessionFile, `${sessionFile}.bak`);
+      } catch {
+        // Ignore backup failure
+      }
+      sessionData = createFreshSessionData(sessionId);
+    }
   } else {
-    sessionData = {
-      session_id: sessionId,
-      started_at: new Date().toISOString(),
-      last_updated: new Date().toISOString(),
-      files: []
-    };
+    sessionData = createFreshSessionData(sessionId);
   }
 
   // Add file if not already tracked
