@@ -943,7 +943,7 @@ async function main() {
     const program = new Command()
         .name("rename-commits")
         .description("Interactively rename git commits")
-        .option("-c, --commits <n>", "Number of commits to rename", parseInt)
+        .option("-c, --commits <n>", "Number of commits to rename", (value: string) => parseInt(value, 10))
         .option("-f, --force", "Force: skip safety check (not recommended - use only if commits are backed up)")
         .option("--help-old", "Show the old help message")
         .parse();
