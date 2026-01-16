@@ -19,6 +19,7 @@ type MessageType =
   | "custom-title"         // User-defined titles
   | "file-history-snapshot" // File backup snapshots
   | "queue-operation"      // Message queue events
+  | "subagent"             // Messages from spawned subagents
 ```
 
 ## Key Fields by Type

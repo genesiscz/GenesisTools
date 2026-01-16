@@ -39,6 +39,11 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
+if [[ "$PORT" -lt 1 || "$PORT" -gt 65535 ]]; then
+    echo -e "${RED}Error: Port must be between 1 and 65535${NC}"
+    exit 1
+fi
+
 # Get PIDs listening on the port
 PIDS=$(lsof -t -i :"$PORT" 2>/dev/null | sort -u)
 
