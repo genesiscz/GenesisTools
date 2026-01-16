@@ -1,6 +1,13 @@
 import { Link, useLocation } from '@tanstack/react-router'
 import { MessageSquare, BarChart3, Terminal } from 'lucide-react'
 
+/**
+ * Renders the application's top header with a home link and primary navigation.
+ *
+ * The header includes a logo link to home and a navigation bar generated from a static list of items. The navigation highlights the item whose `to` path exactly matches the current location pathname.
+ *
+ * @returns The header JSX element containing the logo and navigation; the active nav item is visually highlighted based on the current location.
+ */
 export default function Header() {
   const location = useLocation()
 

@@ -41,6 +41,12 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
   shellComponent: RootDocument,
 })
 
+/**
+ * Renders the root HTML document shell for the application, including head, persistent header, route content, optional development devtools, and client scripts.
+ *
+ * @param children - Route content to render inside the document body.
+ * @returns The full HTML document element for server and client rendering.
+ */
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">

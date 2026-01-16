@@ -13,6 +13,16 @@ export const Route = createFileRoute('/')({
   loader: () => getConversations({ data: { limit: 100 } }),
 })
 
+/**
+ * Render the Claude History dashboard with a searchable list of conversations and visual chrome.
+ *
+ * The component reads conversations from the route loader, maintains an inline search query to
+ * filter conversations by project, summary, custom title, or git branch, and renders a hero
+ * header, a search input with a record count badge, and a scrollable list of conversation cards
+ * linking to per-conversation routes.
+ *
+ * @returns The page's JSX element containing the dashboard UI and filtered conversation list.
+ */
 function IndexPage() {
   const conversations = Route.useLoaderData()
   const [search, setSearch] = useState('')

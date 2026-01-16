@@ -21,7 +21,13 @@ import {
 
 // =============================================================================
 // Output Formatting
-// =============================================================================
+/**
+ * Format a conversation message into a Markdown-friendly string.
+ *
+ * @param msg - Conversation message to format (user or assistant).
+ * @param _excludeThinking - Ignored; retained for API compatibility.
+ * @returns A Markdown string containing a single-line role header with message content truncated to 500 characters. For assistant messages, any tool uses are appended as indented list items showing the tool name and, when available, an inline file path.
+ */
 
 function formatMessageForMarkdown(msg: ConversationMessage, _excludeThinking: boolean): string {
     const lines: string[] = [];
@@ -76,6 +82,13 @@ function formatMessageForMarkdown(msg: ConversationMessage, _excludeThinking: bo
     return lines.join("\n");
 }
 
+/**
+ * Render a list of search results into a Markdown-formatted string for CLI output.
+ *
+ * @param results - Array of search results to include in the output
+ * @param filters - Search filters that influence header text and whether context messages are included or thinking blocks are excluded
+ * @returns A Markdown document summarizing the results: a header with count and query, and per-result sections with title, project, date, session ID, optional summary, commit hashes, file path, and optional context messages
+ */
 function formatResultsAsMarkdown(results: SearchResult[], filters: SearchFilters): string {
     const lines: string[] = [];
 
@@ -127,13 +140,30 @@ function formatResultsAsMarkdown(results: SearchResult[], filters: SearchFilters
     return lines.join("\n");
 }
 
+/**
+ * Convert search results into a pretty-printed JSON string.
+ *
+ * @returns A JSON-formatted string representing `results`, pretty-printed with two-space indentation.
+ */
 function formatResultsAsJson(results: SearchResult[]): string {
     return JSON.stringify(results, null, 2);
 }
 
 // =============================================================================
 // Interactive Mode
-// =============================================================================
+/**
+ * Prompt the user for interactive search options and produce a corresponding SearchFilters object.
+ *
+ * Prompts for project selection, search query, tool filter, a human-friendly "since" date, and context lines, then returns a filters object with a fixed limit of 20.
+ *
+ * @returns A SearchFilters object containing:
+ * - `project` — selected project name, or `undefined` to search all projects.
+ * - `query` — search query string, or `undefined` for no query filter.
+ * - `tool` — tool name to filter by (e.g., "Edit", "Write"), or `undefined` for no tool filter.
+ * - `since` — parsed Date representing the "since" value, or `undefined` if not provided.
+ * - `context` — number of surrounding context messages to include, or `undefined` for summary-only.
+ * - `limit` — result limit (always `20`).
+ */
 
 async function runInteractive(): Promise<SearchFilters> {
     const projects = await getAvailableProjects();

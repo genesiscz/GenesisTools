@@ -10,6 +10,11 @@ export const Route = createFileRoute('/conversation/$id')({
   loader: ({ params }) => getConversation({ data: params.id }),
 })
 
+/**
+ * Render the conversation view with header metadata and a scrollable list of messages, or a fallback not-found card.
+ *
+ * @returns The ConversationPage React element: a detailed conversation view when conversation data is present, otherwise a "Conversation not found" card with a back-to-conversations link.
+ */
 function ConversationPage() {
   const conversation = Route.useLoaderData()
 
@@ -96,6 +101,20 @@ function ConversationPage() {
   )
 }
 
+/**
+ * Render a styled message card for either a user or assistant message.
+ *
+ * Renders an icon and label for the message role, an optional timestamp, the message content (or "(empty)" if missing), and optional tool-use badges.
+ *
+ * @param message - The message to render:
+ *   - type: Message type, e.g., `"user"` or `"assistant"`; determines styling and icon.
+ *   - role: Optional role string (not used for display by this component).
+ *   - content: The message text to display.
+ *   - timestamp: Optional ISO timestamp used to show the message time.
+ *   - toolUses: Optional array of tool usage entries; each entry should have `name` and optional `input`.
+ *
+ * @returns A card element representing the message with role, time, content, and tool badges when present.
+ */
 function MessageCard({
   message,
 }: {
