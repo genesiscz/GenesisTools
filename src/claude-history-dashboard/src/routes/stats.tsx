@@ -101,7 +101,7 @@ function StatsPage() {
                     title={`${date}: ${count} messages`}
                   />
                   <span className="text-[8px] text-[var(--text-muted)] rotate-45 origin-left translate-y-2">
-                    {new Date(date).getDate()}
+                    {new Date(date).getUTCDate()}
                   </span>
                 </div>
               ))}
