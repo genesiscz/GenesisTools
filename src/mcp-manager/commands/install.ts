@@ -225,19 +225,12 @@ export async function installServer(
                 try {
                     const inputEnv = await input({
                         message: 'Enter ENV variables ("KEY=value" format or JSON) or leave empty:',
-                        default: serverConfig?.env
-                            ? Object.entries(serverConfig.env)
-                                  .map(([k, v]) => `${k}=${v}`)
-                                  .join(" ")
-                            : "",
+                        default: serverConfig?.env ? JSON.stringify(serverConfig.env) : "",
                     });
 
                     if (inputEnv.trim()) {
                         env = parseEnvString(inputEnv);
                         logger.info(`Parsed ${Object.keys(env).length} environment variable(s)`);
-                    } else if (inputEnv.trim() === "" && serverConfig?.env) {
-                        // If user cleared it, we should probably clear it too, but parseEnvString returns {} for empty
-                        env = {};
                     }
                 } catch (error) {
                     if (error instanceof ExitPromptError) {

@@ -170,12 +170,12 @@ function parseCommandLineArgs(): ScriptOptions {
         .argument("[output]", "Output file path")
         .option("--limit <n>", "Limit number of releases")
         .option("--oldest", "Start from oldest releases")
-        .option("--help-old", "Show extended help")
+        .option("-?, --help-full", "Show extended help")
         .parse();
 
     const opts = program.opts();
 
-    if (opts.helpOld) {
+    if (opts.helpFull) {
         printHelpAndExit();
     }
 

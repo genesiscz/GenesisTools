@@ -22,7 +22,7 @@ export function parseCLIArguments(): Args {
         .option("-v, --verbose", "Enable verbose logging")
         .option("--silent", "Silent mode")
         .option("--predict-cost", "Show cost prediction before sending")
-        .option("--help-old", "Show detailed help message")
+        .option("-?, --help-full", "Show detailed help message")
         .option("-V, --version", "Show version information")
         .argument("[prompt...]", "Initial prompt")
         .allowUnknownOption(false)
@@ -49,7 +49,7 @@ export function parseCLIArguments(): Args {
         verbose: options.verbose,
         silent: options.silent,
         predictCost: options.predictCost,
-        help: options.helpOld,
+        help: options.helpFull,
         version: options.version,
     };
 

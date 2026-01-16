@@ -27,7 +27,7 @@ export class CliHandler {
             .option("-k, --kill-server", "Kill persistent LSP server(s)")
             .option("--all", "Kill all servers (use with --kill-server)")
             .option("--timeout <seconds>", "Timeout for diagnostics in seconds", "30")
-            .option("--help-old", "Show detailed help message")
+            .option("-?, --help-full", "Show detailed help message")
             .argument("[files...]", "Files to analyze")
             .allowUnknownOption(false)
             .parse();
@@ -35,14 +35,18 @@ export class CliHandler {
         const opts = program.opts();
         const args = program.args;
 
-        // Handle --help-old to show our custom help
-        if (opts.helpOld) {
+        // Handle --help-full to show our custom help
+        if (opts.helpFull) {
             this.showHelp();
             process.exit(0);
         }
 
-        // Convert timeout to number
-        const timeoutValue = opts.timeout ? Number(opts.timeout) : 30;
+        // Convert timeout to number and validate
+        let timeoutValue = opts.timeout ? Number(opts.timeout) : 30;
+        if (!Number.isFinite(timeoutValue) || timeoutValue <= 0) {
+            console.error(`Invalid timeout: ${opts.timeout}. Using default of 30 seconds.`);
+            timeoutValue = 30;
+        }
 
         return {
             _: args,

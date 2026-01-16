@@ -27,7 +27,7 @@ const service = new TimelyService(client, storage);
 // Export dependencies for subcommands
 export { storage, client, service };
 
-function showHelpOld(): void {
+function showHelpFull(): void {
     console.log(`
 ${chalk.bold("Timely CLI")} - Interact with Timely time tracking
 
@@ -45,7 +45,7 @@ ${chalk.cyan("Commands:")}
   cache [list|clear]      Manage cache
 
 ${chalk.cyan("Global Options:")}
-  -h, --help              Show this help message
+  -?, --help-full         Show this help message
   -v, --verbose           Enable verbose output
   -f, --format <format>   Output format: json, table, csv, raw, summary, detailed-summary (default: table)
   -a, --account <id>      Override account ID
@@ -78,11 +78,11 @@ async function main(): Promise<void> {
     const program = new Command()
         .name("timely")
         .description("Timely time tracking CLI")
-        .option("--help-old", "Show old help message")
+        .option("-?, --help-full", "Show detailed help message")
         .helpCommand(true)
         .action((options) => {
-            if (options.helpOld) {
-                showHelpOld();
+            if (options.helpFull) {
+                showHelpFull();
                 process.exit(0);
             }
         });

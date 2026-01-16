@@ -91,12 +91,12 @@ const loadConfig = (configPath?: string): any => {
 
 const program = new Command()
     .name("npm-package-diff")
-    .argument("<package-name>", "Package name")
-    .argument("<version1>", "First version")
-    .argument("<version2>", "Second version")
+    .argument("[package-name]", "Package name")
+    .argument("[version1]", "First version")
+    .argument("[version2]", "Second version")
     .option("-v, --verbose", "Enable verbose logging")
     .option("-f, --filter <pattern>", "Glob pattern to filter files", "**/*.d.ts")
-    .option("-h, --help-old", "Show this help message")
+    .option("-?, --help-full", "Show this help message")
     .option("-o, --output <file>", "Output file path")
     .option("-F, --format <format>", "Output format: terminal, unified, html, json, side-by-side", "terminal")
     .option("-e, --exclude <pattern>", "Glob pattern to exclude files")
@@ -153,11 +153,11 @@ const config = {
     npmrc: getOptionValue("npmrc"),
     includePatchInJson: false,
     showIdentical: false,
-    helpOld: options.helpOld,
+    helpFull: options.helpFull,
     _: [packageName, version1, version2],
 };
 
-if (config.helpOld) {
+if (config.helpFull) {
     const helpText = `
 ${boxen(chalk.bold.cyan("NPM Package Diff"), {
     padding: 1,

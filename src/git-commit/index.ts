@@ -6,26 +6,6 @@ import { z } from "zod";
 import logger from "@app/logger";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
-function showHelp() {
-    console.log(`
-Usage: tools git-commit [options]
-
-Generate commit messages using AI and optionally push.
-
-Options:
-  -s, --stage     Stage all changes before committing
-  -d, --detail    Generate detailed commit messages with body text
-  -v, --verbose   Enable verbose logging
-  -h, --help-old  Show this help message
-
-Examples:
-  tools git-commit                    # Generate commit for staged changes
-  tools git-commit --stage            # Stage all changes first
-  tools git-commit --detail           # Generate commits with detailed descriptions
-  tools git-commit --stage --detail   # Stage changes and generate detailed commits
-`);
-}
-
 async function getGitDiff(): Promise<string> {
     const proc = Bun.spawn({
         cmd: ["git", "diff", "--cached"],
@@ -107,18 +87,13 @@ ${diff}`;
 async function main() {
     const program = new Command()
         .name("git-commit")
+        .description("Generate commit messages using AI and optionally push")
         .option("-s, --stage", "Stage all changes before committing")
         .option("-d, --detail", "Generate detailed commit messages with body text")
         .option("-v, --verbose", "Enable verbose logging")
-        .option("-h, --help-old", "Show this help message")
         .parse();
 
     const options = program.opts();
-
-    if (options.helpOld) {
-        showHelp();
-        process.exit(0);
-    }
 
     try {
         // Stage all changes if requested

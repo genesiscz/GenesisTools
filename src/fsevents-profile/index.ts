@@ -63,7 +63,7 @@ async function main() {
         .option("-t, --top <number>", "How many top directories to display", String(DEFAULT_TOP_N))
         .option("-w, --watchers", "Show processes currently watching fsevents")
         .option("-v, --verbose", "Enable verbose logging")
-        .option("--help-old", "Show extended help message (deprecated)")
+        .option("-?, --help-full", "Show extended help message")
         .parse();
 
     const options: Options = {
@@ -74,7 +74,7 @@ async function main() {
     };
 
     // Show extended help if requested
-    if (program.opts().helpOld) {
+    if (program.opts().helpFull) {
         showHelp();
         process.exit(0);
     }
