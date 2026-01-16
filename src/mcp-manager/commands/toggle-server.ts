@@ -156,9 +156,11 @@ export async function toggleServer(
                 // Update enabled state based on project selection
                 const enabledState = config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName];
 
-                // If provider supports projects, always use project objects to match provider's storage format
-                if (projects.length > 0) {
-                    // Provider supports projects - use project objects
+                // Determine if this is a global enablement (all projects) or per-project
+                const isGlobalEnablement = projectChoices && projectChoices.length === 1 && projectChoices[0].projectPath === null;
+
+                if (projects.length > 0 && !isGlobalEnablement) {
+                    // Provider supports projects and we have specific project selections - use project objects
                     const perProjectState: PerProjectEnabledState =
                         typeof enabledState === "object" && enabledState !== null && !Array.isArray(enabledState)
                             ? { ...(enabledState as PerProjectEnabledState) }
@@ -167,12 +169,7 @@ export async function toggleServer(
                     if (projectChoices && projectChoices.length > 0) {
                         // Set enabled/disabled for each selected project
                         for (const projectChoice of projectChoices) {
-                            if (projectChoice.projectPath === null) {
-                                // Global enablement/disablement - set for all projects
-                                for (const projectPath of projects) {
-                                    perProjectState[projectPath] = enabled;
-                                }
-                            } else {
+                            if (projectChoice.projectPath !== null) {
                                 // Per-project enablement/disablement
                                 perProjectState[projectChoice.projectPath] = enabled;
                             }
@@ -184,6 +181,9 @@ export async function toggleServer(
                         }
                     }
                     config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = perProjectState;
+                } else if (isGlobalEnablement || projects.length === 0) {
+                    // Global enablement (boolean true/false) - applies to all projects
+                    config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = enabled;
                 } else {
                     // Provider doesn't support projects - use boolean
                     if (projectChoices && projectChoices.length > 0) {
