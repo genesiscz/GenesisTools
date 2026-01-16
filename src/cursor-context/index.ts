@@ -35,7 +35,7 @@ Arguments:
 Options:
   -i, --input FILE    Input SpecStory file path
   -o, --output FILE   Output file path (optional, defaults to clipboard only)
-  -h, --help-old      Show this help message
+  -H, --help-old      Show this help message
 
 Examples:
   tools cursor-context
@@ -224,7 +224,7 @@ async function main() {
         .argument("[file]", "Path to the SpecStory file", "logs/story.log")
         .option("-i, --input <file>", "Input SpecStory file path")
         .option("-o, --output <file>", "Output file path")
-        .option("-h, --help-old", "Show this help message")
+        .option("-H, --help-old", "Show this help message")
         .parse();
 
     const options = program.opts();
@@ -363,7 +363,7 @@ Statistics:
                 if (saveToFile) {
                     const outputPath = await input({
                         message: "Enter output file path:",
-                        default: inputPath.replace(/\.(log|md)$/, ".cleaned$1"),
+                        default: inputPath.replace(/\.(log|md)$/, ".cleaned.$1"),
                     });
 
                     const resolvedOutputPath = resolve(outputPath);

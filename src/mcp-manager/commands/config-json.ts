@@ -83,13 +83,17 @@ export async function configJson(options: ConfigJsonOptions = {}): Promise<void>
 
     // Filter to enabled-only if requested
     if (enabledOnly) {
-        const filtered: Record<string, UnifiedMCPServerConfig> = {};
-        for (const [name, serverConfig] of Object.entries(servers)) {
-            if (isServerEnabledForClient(serverConfig, client)) {
-                filtered[name] = serverConfig;
+        if (client === "standard") {
+            logger.warn("--enabled-only requires a provider client (--client cursor|claude). Ignoring filter.");
+        } else {
+            const filtered: Record<string, UnifiedMCPServerConfig> = {};
+            for (const [name, serverConfig] of Object.entries(servers)) {
+                if (isServerEnabledForClient(serverConfig, client)) {
+                    filtered[name] = serverConfig;
+                }
             }
+            servers = filtered;
         }
-        servers = filtered;
     }
 
     // Strip _meta from all server configs

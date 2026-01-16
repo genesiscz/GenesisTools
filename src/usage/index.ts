@@ -26,7 +26,7 @@ Options:
   -p, --provider <name>  Filter by provider name
   -m, --model <name>      Filter by model name
   -f, --format <format>   Output format: table, json, summary (default: table)
-  -h, --help              Show this help message
+      --help-old          Show this detailed help message
 
 Examples:
   tools usage                    # Show last 30 days usage
