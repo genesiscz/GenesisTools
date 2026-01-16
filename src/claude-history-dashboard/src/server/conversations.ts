@@ -73,6 +73,8 @@ function extractMessageContent(msg: { type: string; message?: { content: unknown
         .map((b) => {
           if (b.type === 'text') return b.text || ''
           if (b.type === 'thinking') return b.thinking || ''
+          // Log warning for unhandled content block types to aid debugging
+          console.warn(`[extractMessageContent] Unhandled content block type: ${b.type}`)
           return ''
         })
         .join('\n')

@@ -4,7 +4,7 @@
     "module": "index.ts",
     "type": "module",
     "scripts": {
-        "typecheck": "tsgo --noEmit && tsgo -p src/claude-history-dashboard/tsconfig.json --noEmit",
+        "typecheck:all": "tsgo --noEmit && tsgo -p src/claude-history-dashboard/tsconfig.json --noEmit",
         "tsgo": "tsgo --noEmit",
         "tsc": "tsgo --noEmit"
     },
