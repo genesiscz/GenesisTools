@@ -31,7 +31,7 @@ GenesisTools is a TypeScript-based CLI toolkit that provides powerful utilities 
 
 Before proceeding, ensure the user has:
 
--   **Bun** installed (https://bun.sh)
+-   **[Bun](https://bun.sh)** installed
 -   **Node.js 18+**
 -   **UNIX-like system** (macOS, Linux, WSL)
 -   **Git** (to clone the repo)
