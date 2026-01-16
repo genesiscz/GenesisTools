@@ -1,4 +1,4 @@
-import minimist from "minimist";
+import { Command } from "commander";
 import { resolve, join, dirname, basename } from "node:path";
 import { mkdir } from "node:fs/promises"; // Using fs.promises for async operations - Bun implements this
 import logger from "@app/logger";
@@ -10,20 +10,7 @@ interface Options {
     unstaged?: boolean;
     all?: boolean; // Default if no filter is specified
     target?: string;
-    help?: boolean;
-    flat?: boolean; // Add flat option
-    // Aliases
-    s?: boolean;
-    u?: boolean;
-    a?: boolean;
-    c?: number;
-    t?: string;
-    h?: boolean;
-    f?: boolean; // Alias for flat
-}
-
-interface Args extends Options {
-    _: string[]; // Positional arguments
+    flat?: boolean;
 }
 
 // --- Helper Functions ---
@@ -67,72 +54,42 @@ async function runGitCommand(args: string[], cwd: string): Promise<string> {
     return stdout.trim();
 }
 
-// --- Help Function ---
-function showHelp() {
-    logger.info(`
-Usage: collect-uncommitted-files.ts <directory> [options]
-
-Arguments:
-  <directory>         Required. Path to the Git repository.
-
-Options:
-  Mode (choose one, default is --all if --commits is not used):
-    -c, --commits NUM   Collect files changed in the last NUM commits.
-    -s, --staged        Collect only staged files.
-    -u, --unstaged      Collect only unstaged files.
-    -a, --all           Collect all uncommitted (staged + unstaged) files.
-
-  Output:
-    -t, --target DIR    Directory to copy files into (default: ./.ai/YYYY-MM-DD-HH.mm).
-    -f, --flat          Copy all files directly to the target directory without preserving the directory structure.
-    -h, --help          Show this message.
-
-Examples:
-  tools collect-files-for-ai ./my-repo -c 5
-  tools collect-files-for-ai ../other-repo --staged --target ./collected_staged
-  tools collect-files-for-ai /path/to/project --all --flat
-`);
-}
-
 // --- Main Function ---
 async function main() {
-    const argv = minimist<Args>(process.argv.slice(2), {
-        boolean: ["staged", "unstaged", "all", "help", "flat"],
-        string: ["target"],
-        alias: {
-            c: "commits",
-            s: "staged",
-            u: "unstaged",
-            a: "all",
-            t: "target",
-            h: "help",
-            f: "flat",
-        },
-    });
+    const program = new Command()
+        .name("collect-files-for-ai")
+        .description("Collect files from Git for AI context")
+        .argument("[directory]", "Path to the Git repository", ".")
+        .option(
+            "-c, --commits <number>",
+            "Collect files changed in the last NUM commits",
+            (val) => parseInt(val, 10)
+        )
+        .option("-s, --staged", "Collect only staged files")
+        .option("-u, --unstaged", "Collect only unstaged files")
+        .option("-a, --all", "Collect all uncommitted (staged + unstaged) files")
+        .option(
+            "-t, --target <directory>",
+            "Directory to copy files into (default: ./.ai/YYYY-MM-DD-HH.mm)"
+        )
+        .option(
+            "-f, --flat",
+            "Copy all files directly to the target directory without preserving the directory structure"
+        )
+        .parse();
 
-    // --- Argument Validation ---
-    if (argv.help || argv._.length === 0) {
-        showHelp();
-        process.exit(argv.help ? 0 : 1);
-    }
+    const repoDir = resolve(program.args[0]);
+    const options: Options = program.opts();
 
-    const repoDirArg = argv._[0];
-    if (typeof repoDirArg !== "string") {
-        logger.error("✖ Error: Repository directory path is missing or invalid.");
-        showHelp();
-        process.exit(1);
-    }
-    const repoDir = resolve(repoDirArg);
     logger.debug(`ℹ️ Repository directory: ${repoDir}`);
 
-    const { commits, staged, unstaged, target, flat } = argv;
-    let all = argv.all; // Mutable 'all' flag
+    const { commits, staged, unstaged, target, flat } = options;
+    let all = options.all; // Mutable 'all' flag
 
     const modeFlags = [commits !== undefined, staged, unstaged, all].filter(Boolean).length;
 
     if (modeFlags > 1) {
         logger.error("✖ Error: Options --commits, --staged, --unstaged, --all are mutually exclusive.");
-        showHelp();
         process.exit(1);
     }
 

@@ -1,4 +1,18 @@
-import type { MCPServerMeta, EnabledMcpServers } from "../types.js";
+import type { MCPServerMeta, EnabledMcpServers } from "@app/mcp-manager/utils/types.js";
+import { writeFile } from "fs/promises";
+
+/**
+ * Result of a write operation to a provider config.
+ * Distinguishes between:
+ * - Applied: Changes were written to the config
+ * - NoChanges: No changes were needed (already in desired state)
+ * - Rejected: User rejected the confirmation prompt
+ */
+export enum WriteResult {
+    Applied = "applied",
+    NoChanges = "no_changes",
+    Rejected = "rejected",
+}
 
 /**
  * Unified MCP server configuration interface.
@@ -53,7 +67,7 @@ export interface MCPServerInfo {
     provider: string;
 }
 
-import { BackupManager } from "../backup.js";
+import { BackupManager } from "@app/mcp-manager/utils/backup.js";
 
 /**
  * Base abstract class for MCP configuration providers.
@@ -85,6 +99,17 @@ export abstract class MCPProvider {
     }
 
     /**
+     * Write content to config file with automatic backup.
+     * Creates backup AFTER user confirms but BEFORE writing.
+     */
+    protected async writeFileWithBackup(content: string): Promise<void> {
+        // Create backup before writing
+        await this.backupManager.createBackup(this.configPath, this.providerName);
+        // Write the file
+        await writeFile(this.configPath, content, "utf-8");
+    }
+
+    /**
      * Check if the configuration file exists
      */
     abstract configExists(): Promise<boolean>;
@@ -96,8 +121,9 @@ export abstract class MCPProvider {
 
     /**
      * Write the configuration file
+     * @returns WriteResult indicating whether changes were applied, no changes needed, or rejected
      */
-    abstract writeConfig(config: unknown): Promise<void>;
+    abstract writeConfig(config: unknown): Promise<WriteResult>;
 
     /**
      * Get list of all MCP servers (enabled and disabled)
@@ -129,18 +155,20 @@ export abstract class MCPProvider {
     abstract disableServerForAllProjects(serverName: string): Promise<void>;
 
     /**
-     * Enable multiple MCP servers in a single batch operation (one backup, one diff, one save)
+     * Enable multiple MCP servers in a single batch operation
      * @param serverNames - Names of the servers to enable
      * @param projectPath - Optional project path for project-specific enabling
+     * @returns WriteResult indicating whether changes were applied, no changes needed, or rejected
      */
-    abstract enableServers(serverNames: string[], projectPath?: string | null): Promise<void>;
+    abstract enableServers(serverNames: string[], projectPath?: string | null): Promise<WriteResult>;
 
     /**
-     * Disable multiple MCP servers in a single batch operation (one backup, one diff, one save)
+     * Disable multiple MCP servers in a single batch operation
      * @param serverNames - Names of the servers to disable
      * @param projectPath - Optional project path for project-specific disabling
+     * @returns WriteResult indicating whether changes were applied, no changes needed, or rejected
      */
-    abstract disableServers(serverNames: string[], projectPath?: string | null): Promise<void>;
+    abstract disableServers(serverNames: string[], projectPath?: string | null): Promise<WriteResult>;
 
     /**
      * Get available projects (if provider supports project-level configuration)
@@ -164,8 +192,16 @@ export abstract class MCPProvider {
 
     /**
      * Install/add an MCP server configuration
+     * @returns WriteResult indicating whether changes were applied, no changes needed, or rejected
      */
-    abstract installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<void>;
+    abstract installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<WriteResult>;
+
+    /**
+     * Check if this provider supports a "disabled" state for servers.
+     * - Claude/Gemini: true (have disabledMcpServers/mcp.excluded lists)
+     * - Cursor/Codex: false (presence in config = enabled, no separate disabled state)
+     */
+    abstract supportsDisabledState(): boolean;
 
     /**
      * Check if a server is enabled for this provider based on _meta.enabled state.
@@ -203,8 +239,9 @@ export abstract class MCPProvider {
      * Sync servers from unified config to this provider.
      * Reads _meta.enabled[providerName] to determine enabled state per server.
      * @param servers - Server configurations to sync (with _meta intact)
+     * @returns WriteResult indicating whether changes were applied, no changes needed, or rejected
      */
-    abstract syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<void>;
+    abstract syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<WriteResult>;
 
     /**
      * Convert provider-specific config to unified format

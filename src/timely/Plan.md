@@ -563,8 +563,9 @@ async function cacheCommand(args: TimelyArgs): Promise<void>
 ```typescript
 #!/usr/bin/env bun
 
-import minimist from 'minimist';
-import Enquirer from 'enquirer';
+import { Command } from 'commander';
+import { select, input, confirm } from '@inquirer/prompts';
+import { ExitPromptError } from '@inquirer/core';
 import chalk from 'chalk';
 import logger from '../logger';
 import { Storage } from '../utils/storage/storage';
@@ -621,22 +622,20 @@ Examples:
 `);
 }
 
-async function main(): Promise<void> {
-    const args = minimist<TimelyArgs>(process.argv.slice(2), {
-        alias: {
-            h: 'help',
-            v: 'verbose',
-            f: 'format',
-            a: 'account',
-            p: 'project',
-        },
-        boolean: ['help', 'verbose', 'select'],
-        string: ['format', 'since', 'upto', 'day', 'date'],
-    });
+const program = new Command();
 
-    if (args.help || args._.length === 0) {
-        showHelp();
-        process.exit(0);
+program
+    .name('timely')
+    .description('Timely time tracking CLI')
+    .option('-v, --verbose', 'Enable verbose output')
+    .option('-f, --format <format>', 'Output format: json, table, csv', 'table')
+    .option('-a, --account <id>', 'Override account ID')
+    .option('-p, --project <id>', 'Override project ID');
+
+// Note: Each subcommand is defined separately with program.command()
+// See the individual command files for implementation
+
+program.parse();
     }
 
     const command = args._[0];

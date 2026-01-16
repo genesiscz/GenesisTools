@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
-import Enquirer from "enquirer";
+import { input } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import type { LanguageModel } from "ai";
 import logger from "@app/logger";
@@ -42,8 +43,6 @@ import { showPricing } from "@ask/pricing/index";
 const convManager = conversationManager;
 
 class ASKTool {
-    private prompter = new Enquirer();
-
     async main(): Promise<void> {
         try {
             const argv = parseCLIArguments();
@@ -244,20 +243,18 @@ class ASKTool {
             while (!shouldExit) {
                 try {
                     // Get user input
-                    const { message } = (await this.prompter.prompt({
-                        type: "input",
-                        name: "message",
+                    const message = await input({
                         message: chalk.cyan("You:"),
-                        validate: (input: string) => {
-                            if (input.startsWith("/")) {
+                        validate: (value: string) => {
+                            if (value.startsWith("/")) {
                                 return (
-                                    commandHandler.isValidCommand(input) ||
+                                    commandHandler.isValidCommand(value) ||
                                     "Unknown command. Type /help for available commands."
                                 );
                             }
-                            return input.trim().length > 0 || "Please enter a message or command.";
+                            return value.trim().length > 0 || "Please enter a message or command.";
                         },
-                    })) as { message: string };
+                    });
 
                     // Handle special commands
                     if (message.startsWith("/")) {
@@ -334,14 +331,14 @@ class ASKTool {
 
                     console.log(); // Add spacing
                 } catch (error) {
-                    if (error instanceof Error && error.message === "canceled") {
+                    if (error instanceof ExitPromptError) {
                         logger.info("\nOperation cancelled by user.");
                         continue;
                     }
                     logger.error(`Chat error: ${error}`);
                     console.log(
                         chalk.red(
-                            "=ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ Error occurred. Type /quit to exit or continue chatting."
+                            "=ÃƒÆ'Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ Error occurred. Type /quit to exit or continue chatting."
                         )
                     );
                 }
@@ -361,7 +358,7 @@ class ASKTool {
                 chalk.gray(`Duration: ${formatElapsedTime(Date.now() - new Date(session.startTime).getTime())}`)
             );
         } catch (error) {
-            if (error instanceof Error && error.message === "canceled") {
+            if (error instanceof ExitPromptError) {
                 logger.info("\nChat cancelled by user.");
                 process.exit(0);
             }

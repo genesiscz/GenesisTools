@@ -3,21 +3,21 @@ import { copyFile } from "fs/promises";
 import path from "path";
 import chalk from "chalk";
 import logger, { consoleLog } from "@app/logger";
-import Enquirer from "enquirer";
+import { confirm } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import { DiffUtil } from "@app/utils/diff";
+import { getGlobalOptions } from "./config.utils.js";
 
 /**
  * Backup manager for MCP configuration files
  */
 export class BackupManager {
     private backupDir: string;
-    private prompter: Enquirer;
 
     constructor() {
         const homeDir = process.env.HOME || process.env.USERPROFILE || "~";
         this.backupDir = path.join(homeDir, ".mcp-manager", "backups");
         this.ensureBackupDir();
-        this.prompter = new Enquirer();
     }
 
     private ensureBackupDir(): void {
@@ -48,12 +48,19 @@ export class BackupManager {
      * Show diff between old and new configuration
      */
     async showDiff(oldContent: string, newContent: string, configPath: string): Promise<boolean> {
-        consoleLog.info(chalk.bold(`\nChanges to ${configPath}:\n`));
         // Check if there are actual changes by comparing content
         if (oldContent === newContent) {
             consoleLog.info(chalk.gray("No changes detected."));
             return false;
         }
+
+        // Show prominent warning at TOP so it's visible even in truncated output
+        const globalOpts = getGlobalOptions();
+        if (!globalOpts.yes && !process.stdout.isTTY) {
+            consoleLog.info(chalk.bgYellow.black.bold(" >>> REVIEW CHANGES BELOW - CONFIRMATION REQUIRED AT END <<< "));
+        }
+
+        consoleLog.info(chalk.bold(`\nChanges to ${configPath}:\n`));
 
         // Use DiffUtil to show diff using system diff command
         await DiffUtil.showDiff(oldContent, newContent, "old", "new");
@@ -83,19 +90,32 @@ export class BackupManager {
 
     /**
      * Ask user for confirmation before applying changes
+     * Uses global options for --yes flag
      */
     async askConfirmation(): Promise<boolean> {
+        const globalOpts = getGlobalOptions();
+
+        // If --yes flag is set globally, auto-confirm
+        if (globalOpts.yes) {
+            return true;
+        }
+
+        // Check if we're in non-interactive mode (no TTY)
+        if (!process.stdout.isTTY) {
+            consoleLog.info(chalk.bgRed.white.bold("\n !!! CHANGES NOT APPLIED !!! "));
+            consoleLog.info(chalk.yellow("To auto-confirm, re-run with --yes or -y flag."));
+            return false;
+        }
+
         try {
-            const { confirmed } = (await this.prompter.prompt({
-                type: "confirm",
-                name: "confirmed",
+            const confirmed = await confirm({
                 message: "Are these changes okay?",
-                initial: true,
-            })) as { confirmed: boolean };
+                default: true,
+            });
 
             return confirmed;
-        } catch (error: any) {
-            if (error.message === "canceled") {
+        } catch (error) {
+            if (error instanceof ExitPromptError) {
                 logger.info("\nOperation cancelled by user.");
                 return false;
             }

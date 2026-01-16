@@ -11,3 +11,4 @@ export { installServer } from "./install.js";
 export { showServerConfig } from "./show.js";
 export { backupAllConfigs } from "./backup.js";
 export { renameServer } from "./rename.js";
+export { configJson } from "./config-json.js";

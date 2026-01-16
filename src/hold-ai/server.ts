@@ -1,4 +1,5 @@
-import Enquirer from "enquirer";
+import { editor } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import { WebSocketServer } from "ws";
 import log from "@app/logger";
 
@@ -9,7 +10,6 @@ const messages: Array<{ timestamp: string; message: string }> = [];
 const startServer = () => {
     // Create WebSocket server on port 8080
     const wss = new WebSocketServer({ port: 9091 });
-    const prompter = new Enquirer();
 
     log.info("Hold-AI WebSocket Server started on port 9091");
 
@@ -39,15 +39,12 @@ const startServer = () => {
     // Handle user input
     const promptUser = async () => {
         try {
-            const response: { userInput?: string } = await prompter.prompt({
-                type: "input",
-                multiline: true,
-                name: "userInput",
+            const userInput = await editor({
                 message: "Enter your message (save and exit when done):",
-                initial: "", // Start with empty content
+                default: "",
             });
 
-            const input = response.userInput?.trim() || ""; // Safely get and trim input
+            const input = userInput?.trim() || ""; // Safely get and trim input
 
             if (input.toUpperCase() === "OK") {
                 log.info("Processing 'OK': resetting messages and client connections...");
@@ -99,11 +96,11 @@ const startServer = () => {
             // Continue prompting for the next message
             promptUser();
         } catch (error) {
-            // Enhanced error handling similar to git-last-commits-diff
-            if (error && (String(error).toLowerCase().includes("cancel") || (error as any).message === "canceled")) {
+            // Handle user cancellation
+            if (error instanceof ExitPromptError) {
                 log.info("\nPrompt cancelled by user. Shutting down Hold-AI server gracefully.");
             } else {
-                log.error("\nError during prompt:", error);
+                log.error("\nError during prompt: " + String(error));
             }
             // Clean up server resources before exiting due to prompt error/cancellation
             log.info("Closing all client connections before server shutdown...");

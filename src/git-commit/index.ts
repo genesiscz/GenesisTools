@@ -1,42 +1,10 @@
-import minimist from "minimist";
-import Enquirer from "enquirer";
+import { Command } from "commander";
+import { select, confirm } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import { generateObject } from "ai";
 import { z } from "zod";
 import logger from "@app/logger";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-
-interface Options {
-    help?: boolean;
-    verbose?: boolean;
-    detail?: boolean;
-    stage?: boolean;
-}
-
-interface Args extends Options {
-    _: string[];
-}
-
-const prompter = new Enquirer();
-
-function showHelp() {
-    console.log(`
-Usage: tools git-commit [options]
-
-Generate commit messages using AI and optionally push.
-
-Options:
-  -s, --stage     Stage all changes before committing
-  -d, --detail    Generate detailed commit messages with body text
-  -v, --verbose   Enable verbose logging
-  -h, --help      Show this help message
-
-Examples:
-  tools git-commit                    # Generate commit for staged changes
-  tools git-commit --stage            # Stage all changes first
-  tools git-commit --detail           # Generate commits with detailed descriptions
-  tools git-commit --stage --detail   # Stage changes and generate detailed commits
-`);
-}
 
 async function getGitDiff(): Promise<string> {
     const proc = Bun.spawn({
@@ -80,7 +48,8 @@ Git diff:
 ${diff}`;
 
         const { object } = await generateObject({
-            model: openRouter("google/gemini-2.0-flash-lite-001"),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            model: openRouter("google/gemini-2.0-flash-lite-001") as any,
             schema: z.object({
                 commits: z
                     .array(
@@ -103,7 +72,8 @@ Git diff:
 ${diff}`;
 
         const { object } = await generateObject({
-            model: openRouter("google/gemini-2.0-flash-lite-001"),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            model: openRouter("google/gemini-2.0-flash-lite-001") as any,
             schema: z.object({
                 messages: z.array(z.string()).length(4).describe("Exactly 4 commit message strings"),
             }),
@@ -115,24 +85,19 @@ ${diff}`;
 }
 
 async function main() {
-    const argv = minimist<Args>(process.argv.slice(2), {
-        alias: {
-            v: "verbose",
-            h: "help",
-            d: "detail",
-            s: "stage",
-        },
-        boolean: ["verbose", "help", "detail", "stage"],
-    });
+    const program = new Command()
+        .name("git-commit")
+        .description("Generate commit messages using AI and optionally push")
+        .option("-s, --stage", "Stage all changes before committing")
+        .option("-d, --detail", "Generate detailed commit messages with body text")
+        .option("-v, --verbose", "Enable verbose logging")
+        .parse();
 
-    if (argv.help) {
-        showHelp();
-        process.exit(0);
-    }
+    const options = program.opts();
 
     try {
         // Stage all changes if requested
-        if (argv.stage) {
+        if (options.stage) {
             logger.info("📦 Staging all changes...");
             const addProc = Bun.spawn({
                 cmd: ["git", "add", "."],
@@ -152,43 +117,41 @@ async function main() {
 
         if (!diff.trim()) {
             logger.info("✨ No staged changes to commit!");
-            if (!argv.stage) {
+            if (!options.stage) {
                 logger.info("💡 Tip: Use --stage to stage all changes first");
             }
             process.exit(0);
         }
 
-        if (argv.verbose) {
+        if (options.verbose) {
             logger.info(`Diff preview:\n${diff.substring(0, 500)}...`);
         }
 
         // Generate commit messages
         logger.info("🤖 Generating commit messages with AI...");
-        const messages = await generateCommitMessages(diff, argv.detail || false);
+        const messages = await generateCommitMessages(diff, options.detail || false);
 
         // Prepare choices for the prompt
         const choices = messages.map((msg, index) => {
             if (msg.detail) {
                 // Show both summary and detail in the choice
                 return {
-                    name: index.toString(),
-                    message: `${msg.summary}\n    ${msg.detail.replace(/\n/g, "\n    ")}`,
+                    value: index.toString(),
+                    name: `${msg.summary}\n    ${msg.detail.replace(/\n/g, "\n    ")}`,
                 };
             } else {
                 return {
-                    name: index.toString(),
-                    message: msg.summary,
+                    value: index.toString(),
+                    name: msg.summary,
                 };
             }
         });
 
         // Let user choose a commit message
-        const { chosenIndex } = (await prompter.prompt({
-            type: "select",
-            name: "chosenIndex",
+        const chosenIndex = await select({
             message: "Choose a commit message:",
             choices: choices,
-        })) as { chosenIndex: string };
+        });
 
         const chosenMessage = messages[parseInt(chosenIndex)];
 
@@ -213,12 +176,10 @@ async function main() {
         logger.info("✅ Commit successful!");
 
         // Ask if user wants to push
-        const { shouldPush } = (await prompter.prompt({
-            type: "confirm",
-            name: "shouldPush",
+        const shouldPush = await confirm({
             message: "Do you want to push the changes?",
-            initial: true,
-        })) as { shouldPush: boolean };
+            default: true,
+        });
 
         if (shouldPush) {
             logger.info("🚀 Pushing changes...");
@@ -236,7 +197,7 @@ async function main() {
             logger.info("✅ Push successful!");
         }
     } catch (error: any) {
-        if (error.message === "" || error.message === "canceled") {
+        if (error instanceof ExitPromptError) {
             logger.info("\n🚫 Operation cancelled by user.");
             process.exit(0);
         }

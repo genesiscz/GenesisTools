@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, spyOn } from "bun:test";
-import { toggleServer } from "../toggle-server.js";
+import { toggleServer } from "@app/mcp-manager/commands/toggle-server.js";
 import { MockMCPProvider, createMockUnifiedConfig } from "./test-utils.js";
-import * as configUtils from "../../utils/config.utils.js";
-import * as commandUtils from "../../utils/command.utils.js";
+import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
+import * as commandUtils from "@app/mcp-manager/utils/command.utils.js";
 import logger from "@app/logger";
 
 describe("toggleServer", () => {
@@ -19,7 +19,7 @@ describe("toggleServer", () => {
             const mockConfig = createMockUnifiedConfig();
 
             spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-            spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue();
+            spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
             spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
             spyOn(commandUtils, "promptForProviders").mockResolvedValue(["claude"]);
             spyOn(commandUtils, "promptForProjects").mockResolvedValue(null);
@@ -39,7 +39,7 @@ describe("toggleServer", () => {
             mockProvider.getServerConfigResult = null; // Server not installed
 
             spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-            spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue();
+            spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
             spyOn(configUtils, "stripMeta").mockImplementation((config) => {
                 const { _meta, ...rest } = config;
                 return rest;
@@ -63,8 +63,8 @@ describe("toggleServer", () => {
 
             let capturedConfig: any = null;
             spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-            spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any) => {
-                capturedConfig = config;
+            spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
+                capturedConfig = config; return true;
             });
             spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
             spyOn(commandUtils, "promptForProviders").mockResolvedValue(["claude"]);
@@ -93,8 +93,8 @@ describe("toggleServer", () => {
 
             let capturedConfig: any = null;
             spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-            spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any) => {
-                capturedConfig = config;
+            spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
+                capturedConfig = config; return true;
             });
             spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
             spyOn(commandUtils, "promptForProviders").mockResolvedValue(["claude"]);
@@ -162,7 +162,7 @@ describe("toggleServer", () => {
             mockProvider.errors.set("enableServers", new Error("Enable failed"));
 
             spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-            spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue();
+            spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
             spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
             spyOn(commandUtils, "promptForProviders").mockResolvedValue(["claude"]);
             spyOn(commandUtils, "promptForProjects").mockResolvedValue(null);
@@ -180,7 +180,7 @@ describe("toggleServer", () => {
             const mockConfig = createMockUnifiedConfig();
 
             spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-            spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue();
+            spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
             spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
             spyOn(commandUtils, "promptForProviders").mockResolvedValue(["claude"]);
             spyOn(commandUtils, "promptForProjects").mockResolvedValue(null);
@@ -199,7 +199,7 @@ describe("toggleServer", () => {
             const mockConfig = createMockUnifiedConfig();
 
             spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-            spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue();
+            spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
             spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
             spyOn(commandUtils, "promptForProviders").mockResolvedValue(["claude"]);
             spyOn(commandUtils, "promptForProjects").mockResolvedValue(null);
@@ -219,8 +219,8 @@ describe("toggleServer", () => {
 
             let capturedConfig: any = null;
             spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-            spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any) => {
-                capturedConfig = config;
+            spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
+                capturedConfig = config; return true;
             });
             spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
             spyOn(commandUtils, "promptForProviders").mockResolvedValue(["claude"]);

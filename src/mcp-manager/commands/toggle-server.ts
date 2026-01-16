@@ -1,19 +1,26 @@
 import logger from "@app/logger";
-import type { MCPProvider } from "../utils/providers/types.js";
-import type { MCPProviderName, PerProjectEnabledState } from "../utils/types.js";
-import { readUnifiedConfig, writeUnifiedConfig, stripMeta } from "../utils/config.utils.js";
-import { getServerNames, promptForProviders, promptForProjects } from "../utils/command.utils.js";
+import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
+import type { MCPProviderName, PerProjectEnabledState } from "@app/mcp-manager/utils/types.js";
+import { readUnifiedConfig, writeUnifiedConfig, stripMeta } from "@app/mcp-manager/utils/config.utils.js";
+import { getServerNames, promptForProviders, promptForProjects } from "@app/mcp-manager/utils/command.utils.js";
+
+export interface ToggleOptions {
+    provider?: string; // Provider name for non-interactive mode
+}
 
 /**
  * Toggle MCP server(s) enabled/disabled state in selected provider(s)
  * @param enabled - true to enable, false to disable
  * @param serverNameArg - Optional server name from command line
  * @param providers - List of available providers
+ * @param options - Additional options for non-interactive mode
  */
 export async function toggleServer(
     enabled: boolean,
     serverNameArg: string | undefined,
-    providers: MCPProvider[]
+    providers: MCPProvider[],
+    options: ToggleOptions = {}
 ): Promise<void> {
     const action = enabled ? "enable" : "disable";
     const actionPast = enabled ? "enabled" : "disabled";
@@ -42,15 +49,28 @@ export async function toggleServer(
         }
     }
 
-    // Prompt for providers
-    const selectedProviderNames = await promptForProviders(
-        availableProviders,
-        `Select providers to ${action} server(s) in:`
-    );
+    let selectedProviderNames: string[] | null;
+    if (options.provider) {
+        // Filter to the specified provider
+        const matchedProvider = availableProviders.find(
+            (p) => p.getName().toLowerCase() === options.provider!.toLowerCase()
+        );
+        if (!matchedProvider) {
+            logger.warn(`Provider '${options.provider}' not found or has no config file.`);
+            return;
+        }
+        selectedProviderNames = [matchedProvider.getName()];
+    } else {
+        selectedProviderNames = await promptForProviders(availableProviders, `Select providers to ${action} server(s) in:`);
+    }
+
     if (!selectedProviderNames || selectedProviderNames.length === 0) {
         logger.info("No providers selected.");
         return;
     }
+
+    // Determine if we're in non-interactive mode
+    const isNonInteractive = !!options.provider;
 
     // For each provider, check if it supports projects and prompt for project selection
     for (const providerName of selectedProviderNames) {
@@ -62,15 +82,20 @@ export async function toggleServer(
         let projectChoices: Array<{ projectPath: string | null; displayName: string }> | null = null;
 
         if (projects.length > 0) {
-            // Provider supports projects - prompt for selection
-            projectChoices = await promptForProjects(
-                projects,
-                `Select projects for ${providerName} (or "Global" for all):`
-            );
+            if (isNonInteractive) {
+                // Non-interactive: apply globally to all projects
+                projectChoices = [{ projectPath: null, displayName: "Global (all projects)" }];
+            } else {
+                // Interactive: prompt for selection
+                projectChoices = await promptForProjects(
+                    projects,
+                    `Select projects for ${providerName} (or "Global" for all):`
+                );
 
-            if (!projectChoices || projectChoices.length === 0) {
-                logger.info(`No projects selected for ${providerName}.`);
-                continue;
+                if (!projectChoices || projectChoices.length === 0) {
+                    logger.info(`No projects selected for ${providerName}.`);
+                    continue;
+                }
             }
         }
 
@@ -131,9 +156,11 @@ export async function toggleServer(
                 // Update enabled state based on project selection
                 const enabledState = config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName];
 
-                // If provider supports projects, always use project objects to match provider's storage format
-                if (projects.length > 0) {
-                    // Provider supports projects - use project objects
+                // Determine if this is a global enablement (all projects) or per-project
+                const isGlobalEnablement = projectChoices && projectChoices.length === 1 && projectChoices[0].projectPath === null;
+
+                if (projects.length > 0 && !isGlobalEnablement) {
+                    // Provider supports projects and we have specific project selections - use project objects
                     const perProjectState: PerProjectEnabledState =
                         typeof enabledState === "object" && enabledState !== null && !Array.isArray(enabledState)
                             ? { ...(enabledState as PerProjectEnabledState) }
@@ -142,12 +169,7 @@ export async function toggleServer(
                     if (projectChoices && projectChoices.length > 0) {
                         // Set enabled/disabled for each selected project
                         for (const projectChoice of projectChoices) {
-                            if (projectChoice.projectPath === null) {
-                                // Global enablement/disablement - set for all projects
-                                for (const projectPath of projects) {
-                                    perProjectState[projectPath] = enabled;
-                                }
-                            } else {
+                            if (projectChoice.projectPath !== null) {
                                 // Per-project enablement/disablement
                                 perProjectState[projectChoice.projectPath] = enabled;
                             }
@@ -159,6 +181,9 @@ export async function toggleServer(
                         }
                     }
                     config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = perProjectState;
+                } else if (isGlobalEnablement || projects.length === 0) {
+                    // Global enablement (boolean true/false) - applies to all projects
+                    config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = enabled;
                 } else {
                     // Provider doesn't support projects - use boolean
                     if (projectChoices && projectChoices.length > 0) {
@@ -177,44 +202,75 @@ export async function toggleServer(
             }
         }
 
-        // Batch toggle all servers in this provider (one backup, one diff, one save)
         if (serversToToggle.length > 0) {
+            const metaBackup = new Map<string, boolean | PerProjectEnabledState | undefined>();
+            for (const serverName of serversToToggle) {
+                const currentState = config.mcpServers[serverName]._meta?.enabled?.[providerName as MCPProviderName];
+                if (typeof currentState === "object" && currentState !== null) {
+                    metaBackup.set(serverName, { ...currentState } as PerProjectEnabledState);
+                } else {
+                    metaBackup.set(serverName, currentState);
+                }
+            }
+
+            const restoreBackup = () => {
+                for (const serverName of serversToToggle) {
+                    const backup = metaBackup.get(serverName);
+                    if (backup === undefined) {
+                        delete config.mcpServers[serverName]._meta?.enabled?.[providerName as MCPProviderName];
+                    } else {
+                        config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = backup;
+                    }
+                }
+            };
+
             try {
                 if (projectChoices) {
-                    // Toggle for each project selection
                     for (const projectChoice of projectChoices) {
-                        if (enabled) {
-                            await provider.enableServers(serversToToggle, projectChoice.projectPath);
-                        } else {
-                            await provider.disableServers(serversToToggle, projectChoice.projectPath);
+                        const result = enabled
+                            ? await provider.enableServers(serversToToggle, projectChoice.projectPath)
+                            : await provider.disableServers(serversToToggle, projectChoice.projectPath);
+
+                        if (result === WriteResult.Rejected) {
+                            restoreBackup();
+                            logger.info(`Skipped ${providerName} - user rejected confirmation`);
+                            continue;
                         }
 
-                        if (projectChoice.projectPath === null) {
-                            logger.info(
-                                `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
-                                    serversToToggle.length
-                                } server(s) globally in ${providerName}`
-                            );
-                        } else {
-                            logger.info(
-                                `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
-                                    serversToToggle.length
-                                } server(s) in ${providerName} for project: ${projectChoice.displayName}`
-                            );
+                        if (result === WriteResult.Applied) {
+                            if (projectChoice.projectPath === null) {
+                                logger.info(
+                                    `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
+                                        serversToToggle.length
+                                    } server(s) globally in ${providerName}`
+                                );
+                            } else {
+                                logger.info(
+                                    `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
+                                        serversToToggle.length
+                                    } server(s) in ${providerName} for project: ${projectChoice.displayName}`
+                                );
+                            }
                         }
                     }
                 } else {
-                    // No projects - just toggle globally
-                    if (enabled) {
-                        await provider.enableServers(serversToToggle);
-                    } else {
-                        await provider.disableServers(serversToToggle);
+                    const result = enabled
+                        ? await provider.enableServers(serversToToggle)
+                        : await provider.disableServers(serversToToggle);
+
+                    if (result === WriteResult.Rejected) {
+                        restoreBackup();
+                        logger.info(`Skipped ${providerName} - user rejected confirmation`);
+                        continue;
                     }
-                    logger.info(
-                        `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
-                            serversToToggle.length
-                        } server(s) globally in ${providerName}`
-                    );
+
+                    if (result === WriteResult.Applied) {
+                        logger.info(
+                            `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
+                                serversToToggle.length
+                            } server(s) globally in ${providerName}`
+                        );
+                    }
                 }
             } catch (error: any) {
                 logger.error(`✗ Failed to ${action} servers in ${providerName}: ${error.message}`);

@@ -1,4 +1,5 @@
-import Enquirer from "enquirer";
+import { input, confirm, select, password } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import type { LanguageModel } from "ai";
 import chalk from "chalk";
 import logger from "@app/logger";
@@ -19,7 +20,6 @@ export interface CommandResult {
 }
 
 export class CommandHandler {
-    private prompter = new Enquirer();
 
     async handleCommand(command: string, currentProvider: string, currentModelName: string): Promise<CommandResult> {
         const parts = command.trim().split(/\s+/);
@@ -48,7 +48,7 @@ export class CommandHandler {
                     return {};
             }
         } catch (error) {
-            if (error instanceof Error && error.message === "canceled") {
+            if (error instanceof ExitPromptError) {
                 logger.info("\nCommand cancelled.");
                 return {};
             }
@@ -115,19 +115,17 @@ export class CommandHandler {
 
     private async handleSSTCommand(args: string[]): Promise<CommandResult> {
         if (args.length === 0) {
-            const response = (await this.prompter.prompt({
-                type: "input",
-                name: "file",
+            const file = await input({
                 message: "Enter audio file path:",
-                validate: (input: string) => {
-                    if (!input.trim()) {
+                validate: (value: string) => {
+                    if (!value.trim()) {
                         return "Please enter a file path.";
                     }
                     return true;
                 },
-            })) as { file: string };
+            });
 
-            return { transcriptionFile: response.file };
+            return { transcriptionFile: file };
         }
 
         const filePath = args.join(" ");
@@ -188,16 +186,12 @@ export class CommandHandler {
 
     async confirmAction(message: string): Promise<boolean> {
         try {
-            const response = (await this.prompter.prompt({
-                type: "confirm",
-                name: "confirmed",
+            return await confirm({
                 message,
-                initial: false,
-            })) as { confirmed: boolean };
-
-            return response.confirmed;
+                default: false,
+            });
         } catch (error) {
-            if (error instanceof Error && error.message === "canceled") {
+            if (error instanceof ExitPromptError) {
                 return false;
             }
             throw error;
@@ -206,22 +200,19 @@ export class CommandHandler {
 
     async getInput(prompt: string, secure = false): Promise<string> {
         try {
-            const response = (await this.prompter.prompt({
-                type: secure ? "password" : "input",
-                name: "input",
+            const promptFn = secure ? password : input;
+            return await promptFn({
                 message: prompt,
-                validate: (input: string) => {
-                    if (!input.trim()) {
+                validate: (value: string) => {
+                    if (!value.trim()) {
                         return "This field is required.";
                     }
                     return true;
                 },
-            })) as { input: string };
-
-            return response.input;
+            });
         } catch (error) {
-            if (error instanceof Error && error.message === "canceled") {
-                throw new Error("canceled");
+            if (error instanceof ExitPromptError) {
+                throw new ExitPromptError();
             }
             throw error;
         }
@@ -229,19 +220,15 @@ export class CommandHandler {
 
     async selectFromList(prompt: string, choices: string[]): Promise<string | null> {
         try {
-            const response = (await this.prompter.prompt({
-                type: "select",
-                name: "choice",
+            return await select({
                 message: prompt,
                 choices: choices.map((choice) => ({
                     name: choice,
-                    message: choice,
+                    value: choice,
                 })),
-            })) as { choice: string };
-
-            return response.choice;
+            });
         } catch (error) {
-            if (error instanceof Error && error.message === "canceled") {
+            if (error instanceof ExitPromptError) {
                 return null;
             }
             throw error;

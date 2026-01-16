@@ -7,7 +7,7 @@ import type {
     CreateEventInput,
     TimelyEntryResponse,
     TimelyEntry,
-} from "../types";
+} from "@app/timely/types";
 import { Storage } from "@app/utils/storage";
 import logger from "@app/logger";
 

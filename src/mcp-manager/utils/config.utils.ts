@@ -2,12 +2,26 @@ import { Storage } from "@app/utils/storage";
 import type { UnifiedMCPConfig, UnifiedMCPServerConfig } from "./providers/types.js";
 import type { EnabledMcpServers } from "./types.js";
 import { BackupManager } from "./backup.js";
-import { existsSync } from "fs";
 import logger from "@app/logger";
 import chalk from "chalk";
 
 // Initialize Storage instance for mcp-manager
 const storage = new Storage("mcp-manager");
+
+// Global options that can be set from main entry point
+export interface GlobalOptions {
+    yes?: boolean; // Auto-confirm changes without prompting
+}
+
+let globalOptions: GlobalOptions = {};
+
+export function setGlobalOptions(options: GlobalOptions): void {
+    globalOptions = options;
+}
+
+export function getGlobalOptions(): GlobalOptions {
+    return globalOptions;
+}
 
 /**
  * Get the path to the unified config file
@@ -107,46 +121,39 @@ export async function readUnifiedConfig(): Promise<UnifiedMCPConfig> {
 
 /**
  * Write the unified config to storage
+ * @returns true if changes were written, false if no changes or rejected
  */
-export async function writeUnifiedConfig(config: UnifiedMCPConfig): Promise<void> {
+export async function writeUnifiedConfig(config: UnifiedMCPConfig): Promise<boolean> {
     const configPath = getUnifiedConfigPath();
-    const backupManager = new BackupManager();
 
     // Ensure enabledMcpServers is in sync with _meta.enabled before writing
     config = syncEnabledMcpServers(config);
 
-    // Read old content for backup and diff
-    let oldContent = "";
-    let backupPath = "";
-    const existingConfig = await storage.getConfig<UnifiedMCPConfig>();
-    if (existingConfig) {
-        oldContent = JSON.stringify(existingConfig, null, 2);
-        // Create backup
-        backupPath = await backupManager.createBackup(configPath, "unified");
-        if (backupPath) {
-            logger.info(`Backup created: ${backupPath}`);
-        }
-    }
-
     const newContent = JSON.stringify(config, null, 2);
 
-    // Show diff if there are changes and ask for confirmation
-    if (oldContent) {
-        const hasDiff = await backupManager.showDiff(oldContent, newContent, configPath);
-        if (hasDiff) {
-            const confirmed = await backupManager.askConfirmation();
+    // Read old content
+    const existingConfig = await storage.getConfig<UnifiedMCPConfig>();
+    const oldContent = existingConfig ? JSON.stringify(existingConfig, null, 2) : "";
 
-            if (!confirmed) {
-                // Restore from backup if user rejected changes
-                if (backupPath && existsSync(backupPath)) {
-                    await backupManager.restoreFromBackup(configPath, backupPath);
-                }
-                logger.info(chalk.yellow("Changes reverted."));
-                return;
-            }
-        }
+    // Early exit if no changes
+    if (oldContent === newContent) {
+        return false;
     }
 
+    // Show diff and ask for confirmation
+    const backupManager = new BackupManager();
+    await backupManager.showDiff(oldContent, newContent, configPath);
+    const confirmed = await backupManager.askConfirmation();
+
+    if (!confirmed) {
+        return false;
+    }
+
+    // Create backup before writing
+    await backupManager.createBackup(configPath, "unified");
+
+    // Only now write to file
     await storage.setConfig(config);
     logger.info(chalk.green(`✓ Configuration written to ${configPath}`));
+    return true;
 }

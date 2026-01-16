@@ -1,4 +1,5 @@
-import Enquirer from "enquirer";
+import { select, search } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import type { ProviderV2 } from "@ai-sdk/provider";
 import logger from "@app/logger";
@@ -6,7 +7,6 @@ import type { DetectedProvider, ModelInfo, ProviderChoice } from "@ask/types";
 import { providerManager } from "@ask/providers/ProviderManager";
 
 export class ModelSelector {
-    private prompter = new Enquirer();
 
     async selectModel(): Promise<ProviderChoice | null> {
         try {
@@ -32,7 +32,7 @@ export class ModelSelector {
             const model = await this.selectModelFromProvider(providerChoice);
             return model ? { provider: providerChoice, model } : null;
         } catch (error) {
-            if (error instanceof Error && error.message === "canceled") {
+            if (error instanceof ExitPromptError) {
                 logger.info("\nModel selection cancelled.");
                 return null;
             }
@@ -42,25 +42,19 @@ export class ModelSelector {
 
     async selectProvider(providers: DetectedProvider[]): Promise<DetectedProvider | null> {
         const choices = providers.map((provider) => ({
-            name: provider.name,
-            message: `${chalk.cyan(provider.name)} - ${
+            name: `${chalk.cyan(provider.name)} - ${
                 provider.config.description || `${provider.models.length} models available`
             }`,
             value: provider,
         }));
 
         try {
-            const response = (await this.prompter.prompt({
-                type: "select",
-                name: "provider",
+            return await select({
                 message: "Choose AI provider:",
                 choices: choices,
-            })) as { provider: string };
-
-            const selectedProvider = providers.find((p) => p.name === response.provider);
-            return selectedProvider || null;
+            });
         } catch (error) {
-            if (error instanceof Error && error.message === "canceled") {
+            if (error instanceof ExitPromptError) {
                 return null;
             }
             throw error;
@@ -86,34 +80,27 @@ export class ModelSelector {
         });
 
         const choices = sortedModels.map((model) => ({
-            name: model.id,
-            message: this.formatModelChoice(model),
+            name: this.formatModelChoice(model),
             value: model,
         }));
 
         try {
-            const response = (await this.prompter.prompt({
-                type: "autocomplete",
-                name: "model",
+            return await search({
                 message: `Choose ${chalk.cyan(provider.name)} model:`,
-                choices: choices,
-            })) as { model: string | ModelInfo };
-
-            // Fix: Handle both string and object response from enquirer
-            let modelName: string;
-            let selectedModel: ModelInfo | null = null;
-
-            if (typeof response.model === "string") {
-                modelName = response.model;
-                const choice = choices.find((c) => c.name === modelName);
-                selectedModel = choice ? (choice.value as ModelInfo) : null;
-            } else {
-                selectedModel = response.model as ModelInfo;
-            }
-
-            return selectedModel;
+                source: async (term) => {
+                    if (!term) {
+                        return choices;
+                    }
+                    const lowerTerm = term.toLowerCase();
+                    return choices.filter(
+                        (choice) =>
+                            choice.value.id.toLowerCase().includes(lowerTerm) ||
+                            choice.value.name.toLowerCase().includes(lowerTerm)
+                    );
+                },
+            });
         } catch (error) {
-            if (error instanceof Error && error.message === "canceled") {
+            if (error instanceof ExitPromptError) {
                 return null;
             }
             throw error;
