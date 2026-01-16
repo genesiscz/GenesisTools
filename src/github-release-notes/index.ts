@@ -97,7 +97,7 @@ async function fetchReleaseNotes(options: ScriptOptions): Promise<void> {
                 logger.error(`Error: ${error.message}`);
             }
         } else {
-            logger.error("An unknown error occurred:", error);
+            logger.error(`An unknown error occurred: ${String(error)}`);
         }
         process.exit(1);
     }
