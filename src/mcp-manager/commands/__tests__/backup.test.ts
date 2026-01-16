@@ -3,7 +3,7 @@ import { backupAllConfigs } from "../backup.js";
 import { MockMCPProvider } from "./test-utils.js";
 import * as configUtils from "../../utils/config.utils.js";
 import * as backupUtils from "../../utils/backup.js";
-import { existsSync } from "fs";
+import * as fs from "fs";
 import logger from "@app/logger";
 
 describe("backupAllConfigs", () => {
@@ -18,7 +18,7 @@ describe("backupAllConfigs", () => {
     it("should backup all provider configs", async () => {
         const mockBackupPath = "/mock/backup/claude.json.backup";
         
-        spyOn(existsSync as any, "mock").mockReturnValue(true);
+        spyOn(fs, "existsSync").mockReturnValue(true);
         spyOn(configUtils, "getUnifiedConfigPath").mockReturnValue("/mock/unified.json");
         spyOn(backupUtils.BackupManager.prototype, "createBackup").mockResolvedValue(mockBackupPath);
         spyOn(logger, "info");
@@ -32,7 +32,7 @@ describe("backupAllConfigs", () => {
     it("should skip providers without config files", async () => {
         mockProvider.configExistsResult = false;
         
-        spyOn(existsSync as any, "mock").mockReturnValue(true);
+        spyOn(fs, "existsSync").mockReturnValue(true);
         spyOn(configUtils, "getUnifiedConfigPath").mockReturnValue("/mock/unified.json");
         spyOn(backupUtils.BackupManager.prototype, "createBackup").mockResolvedValue("/mock/backup.json");
         spyOn(logger, "info");
@@ -49,7 +49,7 @@ describe("backupAllConfigs", () => {
         mockProvider.configExistsResult = false;
         mockProvider2.configExistsResult = false;
         
-        spyOn(existsSync as any, "mock").mockReturnValue(false);
+        spyOn(fs, "existsSync").mockReturnValue(false);
         spyOn(configUtils, "getUnifiedConfigPath").mockReturnValue("/mock/unified.json");
         spyOn(logger, "warn");
 
@@ -61,7 +61,7 @@ describe("backupAllConfigs", () => {
     it("should backup unified config if it exists", async () => {
         const mockBackupPath = "/mock/backup/unified.json.backup";
         
-        spyOn(existsSync as any, "mock").mockReturnValue(true);
+        spyOn(fs, "existsSync").mockReturnValue(true);
         spyOn(configUtils, "getUnifiedConfigPath").mockReturnValue("/mock/unified.json");
         spyOn(backupUtils.BackupManager.prototype, "createBackup").mockResolvedValue(mockBackupPath);
         spyOn(logger, "info");
@@ -74,7 +74,7 @@ describe("backupAllConfigs", () => {
     it("should create backup summary", async () => {
         const mockBackupPath = "/mock/backup/claude.json.backup";
         
-        spyOn(existsSync as any, "mock").mockReturnValue(true);
+        spyOn(fs, "existsSync").mockReturnValue(true);
         spyOn(configUtils, "getUnifiedConfigPath").mockReturnValue("/mock/unified.json");
         spyOn(backupUtils.BackupManager.prototype, "createBackup").mockResolvedValue(mockBackupPath);
         spyOn(logger, "info");
