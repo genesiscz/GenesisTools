@@ -11,386 +11,63 @@
  */
 
 import { $ } from "bun";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync, rmdirSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, rmdirSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
+import { input, select, confirm, editor } from "@inquirer/prompts";
+import { ExitPromptError } from "@inquirer/core";
 
-// Azure DevOps API resource ID (constant for all Azure DevOps organizations)
-const AZURE_DEVOPS_RESOURCE_ID = "499b84ac-1321-427f-aa17-267ca6975798";
+// Types
+import type {
+  AzureConfig,
+  OutputFormat,
+  WorkItem,
+  WorkItemFull,
+  WorkItemCache,
+  QueryCache,
+  ChangeInfo,
+  QueryFilters,
+  WorkItemSettings,
+  WorkItemType,
+  JsonPatchOperation,
+  WorkItemTemplate,
+} from "./types";
+
+// Utils
+import {
+  htmlToMarkdown,
+  getRelativeTime,
+  getLocalConfigDir,
+  getTasksDir,
+  requireConfig,
+  findTaskFile,
+  findTaskFileAnywhere,
+  getTaskFilePath,
+  extractQueryId,
+  extractWorkItemIds,
+  extractDashboardId,
+  parseAzureDevOpsUrl,
+  parseRelations,
+  detectChanges,
+  buildFieldSchema,
+  generateTemplateFromQuery,
+  generateTemplateFromWorkItem,
+  saveTemplate,
+  extractUsedValues,
+  mergeFieldsWithUsage,
+} from "./utils";
+
+// API
+import { Api, AZURE_DEVOPS_RESOURCE_ID } from "./api";
 
 // Cache TTL
 const CACHE_TTL = "180 days";
 const WORKITEM_CACHE_TTL_MINUTES = 5;
+const PROJECT_CACHE_TTL = "7 days";
 
 // Storage for global cache
 const storage = new Storage("azure-devops");
-
-// ============= Configuration =============
-
-interface AzureConfig {
-  org: string;
-  project: string;
-  projectId: string;
-  apiResource: string;
-}
-
-/**
- * Search for config file starting from cwd, up to 3 parent levels
- */
-function findConfigPath(): string | null {
-  const configName = ".claude/azure/config.json";
-  let currentDir = process.cwd();
-
-  for (let i = 0; i < 4; i++) { // current + 3 levels up
-    const configPath = join(currentDir, configName);
-    if (existsSync(configPath)) {
-      return configPath;
-    }
-    const parentDir = dirname(currentDir);
-    if (parentDir === currentDir) break; // reached root
-    currentDir = parentDir;
-  }
-  return null;
-}
-
-/**
- * Get the config directory for the current project (in cwd)
- */
-function getLocalConfigDir(): string {
-  return join(process.cwd(), ".claude/azure");
-}
-
-/**
- * Get the tasks directory (always in cwd), optionally with category subdirectory
- */
-function getTasksDir(category?: string): string {
-  const base = join(process.cwd(), ".claude/azure/tasks");
-  return category ? join(base, category) : base;
-}
-
-/**
- * Load config from file or return null if not found
- */
-function loadConfig(): AzureConfig | null {
-  const configPath = findConfigPath();
-  if (!configPath) return null;
-
-  try {
-    return JSON.parse(readFileSync(configPath, "utf-8"));
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Require config or exit with helpful error
- */
-function requireConfig(): AzureConfig {
-  const config = loadConfig();
-  if (!config) {
-    console.error(`
-❌ No Azure DevOps configuration found.
-
-Run --configure with any Azure DevOps URL from your project:
-
-  tools azure-devops --configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
-  tools azure-devops --configure "https://myorg.visualstudio.com/MyProject/_queries/query/..."
-
-This will create .claude/azure/config.json in the current directory.
-`);
-    process.exit(1);
-  }
-  return config;
-}
-
-// ============= Utility Functions =============
-
-function slugify(title: string): string {
-  return title
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Remove diacritics
-    .replace(/[^a-zA-Z0-9]+/g, "-") // Replace non-alphanumeric with dash
-    .replace(/^-+|-+$/g, "") // Trim dashes
-    .slice(0, 50); // Limit length
-}
-
-function getRelativeTime(date: Date): string {
-  const ageMinutes = Math.round((Date.now() - date.getTime()) / 60000);
-  if (ageMinutes < 1) return "just now";
-  if (ageMinutes === 1) return "1 minute ago";
-  if (ageMinutes < 60) return `${ageMinutes} minutes ago`;
-  const ageHours = Math.round(ageMinutes / 60);
-  if (ageHours === 1) return "1 hour ago";
-  if (ageHours < 24) return `${ageHours} hours ago`;
-  const ageDays = Math.round(ageHours / 24);
-  return `${ageDays} day${ageDays === 1 ? "" : "s"} ago`;
-}
-
-/**
- * Find task file in a specific directory (flat, not in task subfolder)
- */
-function findTaskFileFlat(id: number, ext: string, dir: string): string | null {
-  if (!existsSync(dir)) return null;
-  const files = readdirSync(dir);
-  const match = files.find(f => f.startsWith(`${id}-`) && f.endsWith(`.${ext}`));
-  return match ? join(dir, match) : null;
-}
-
-/**
- * Find task file in task subfolder (<dir>/<id>/<id>-...)
- */
-function findTaskFileInFolder(id: number, ext: string, dir: string): string | null {
-  const taskFolderPath = join(dir, String(id));
-  if (!existsSync(taskFolderPath)) return null;
-  const files = readdirSync(taskFolderPath);
-  const match = files.find(f => f.startsWith(`${id}-`) && f.endsWith(`.${ext}`));
-  return match ? join(taskFolderPath, match) : null;
-}
-
-/**
- * Find task file - checks both flat and folder structure
- */
-function findTaskFile(id: number, ext: string, category?: string): string | null {
-  const tasksDir = getTasksDir(category);
-  // Check flat first, then folder
-  return findTaskFileFlat(id, ext, tasksDir) || findTaskFileInFolder(id, ext, tasksDir);
-}
-
-interface FoundTaskFile {
-  path: string;
-  category?: string;
-  inTaskFolder: boolean;
-}
-
-/**
- * Search for task file in any location (root, categories, with/without task folders)
- */
-function findTaskFileAnywhere(id: number, ext: string): FoundTaskFile | null {
-  const baseTasksDir = getTasksDir();
-  if (!existsSync(baseTasksDir)) return null;
-
-  // Check root flat
-  const rootFlat = findTaskFileFlat(id, ext, baseTasksDir);
-  if (rootFlat) return { path: rootFlat, inTaskFolder: false };
-
-  // Check root task folder
-  const rootFolder = findTaskFileInFolder(id, ext, baseTasksDir);
-  if (rootFolder) return { path: rootFolder, inTaskFolder: true };
-
-  // Check category subdirectories
-  const entries = readdirSync(baseTasksDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.isDirectory() && entry.name !== String(id)) {
-      const categoryDir = join(baseTasksDir, entry.name);
-
-      // Check flat in category
-      const catFlat = findTaskFileFlat(id, ext, categoryDir);
-      if (catFlat) return { path: catFlat, category: entry.name, inTaskFolder: false };
-
-      // Check task folder in category
-      const catFolder = findTaskFileInFolder(id, ext, categoryDir);
-      if (catFolder) return { path: catFolder, category: entry.name, inTaskFolder: true };
-    }
-  }
-
-  return null;
-}
-
-function getTaskFilePath(id: number, title: string, ext: string, category?: string, useTaskFolder?: boolean): string {
-  const slug = slugify(title);
-  const base = getTasksDir(category);
-  if (useTaskFolder) {
-    return join(base, String(id), `${id}-${slug}.${ext}`);
-  }
-  return join(base, `${id}-${slug}.${ext}`);
-}
-
-// ============= Types =============
-
-type OutputFormat = "ai" | "md" | "json";
-
-interface WorkItem {
-  id: number;
-  rev: number;
-  title: string;
-  state: string;
-  changed: string;
-  severity?: string;
-  assignee?: string;
-  tags?: string;
-  description?: string;
-  created?: string;
-  createdBy?: string;
-  changedBy?: string;
-  url: string;
-}
-
-interface WorkItemFull extends WorkItem {
-  comments: Comment[];
-  relations?: Relation[];
-}
-
-interface Comment {
-  id: number;
-  author: string;
-  date: string;
-  text: string;
-}
-
-interface Relation {
-  rel: string;
-  url: string;
-  attributes?: {
-    name?: string;
-    comment?: string;
-  };
-}
-
-interface CacheEntry {
-  id: number;
-  changed: string;
-  rev: number;
-  title: string;
-  state: string;
-  severity?: string;
-  assignee?: string;
-  createdAt?: string;
-  createdBy?: string;
-  changedBy?: string;
-  url: string;
-}
-
-interface WorkItemCache {
-  id: number;
-  rev: number;
-  changed: string;
-  title: string;
-  state: string;
-  commentCount: number;
-  fetchedAt: string;
-  category?: string;
-  taskFolder?: boolean; // Whether stored in <id>/ subfolder
-}
-
-interface QueryCache {
-  items: CacheEntry[];
-  fetchedAt: string;
-}
-
-interface ChangeInfo {
-  type: "new" | "updated";
-  id: number;
-  changes: string[];
-  oldData?: CacheEntry;
-  newData: CacheEntry;
-}
-
-// ============= Azure DevOps API Helpers =============
-
-async function getAccessToken(): Promise<string> {
-  const result = await $`az account get-access-token --resource ${AZURE_DEVOPS_RESOURCE_ID} --query accessToken -o tsv`.quiet();
-  return result.text().trim();
-}
-
-async function apiGet<T>(url: string): Promise<T> {
-  const token = await getAccessToken();
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!response.ok) {
-    throw new Error(`API Error: ${response.status} ${response.statusText}`);
-  }
-  return response.json();
-}
-
-function generateWorkItemUrl(config: AzureConfig, id: number): string {
-  return `${config.org}/${encodeURIComponent(config.project)}/_workitems/edit/${id}`;
-}
-
-async function runQuery(config: AzureConfig, queryId: string): Promise<WorkItem[]> {
-  const result = await $`az boards query --id ${queryId} -o json`.quiet();
-  const items = JSON.parse(result.text());
-
-  return items.map((item: Record<string, unknown>) => {
-    const fields = item.fields as Record<string, unknown>;
-    const id = item.id as number;
-    return {
-      id,
-      rev: item.rev as number,
-      title: fields?.["System.Title"] as string,
-      state: fields?.["System.State"] as string,
-      changed: fields?.["System.ChangedDate"] as string,
-      severity: fields?.["Microsoft.VSTS.Common.Severity"] as string | undefined,
-      assignee: (fields?.["System.AssignedTo"] as Record<string, unknown>)?.displayName as string | undefined,
-      tags: fields?.["System.Tags"] as string | undefined,
-      created: fields?.["System.CreatedDate"] as string | undefined,
-      createdBy: (fields?.["System.CreatedBy"] as Record<string, unknown>)?.displayName as string | undefined,
-      changedBy: (fields?.["System.ChangedBy"] as Record<string, unknown>)?.displayName as string | undefined,
-      url: generateWorkItemUrl(config, id),
-    };
-  });
-}
-
-async function getWorkItem(config: AzureConfig, id: number): Promise<WorkItemFull> {
-  const result = await $`az boards work-item show --id ${id} -o json`.quiet();
-  const item = JSON.parse(result.text());
-
-  // Get comments
-  const commentsUrl = `${config.org}/${encodeURIComponent(config.project)}/_apis/wit/workItems/${id}/comments?api-version=7.1-preview.3`;
-  const commentsData = await apiGet<{ comments: Array<{ id: number; createdBy: { displayName: string }; createdDate: string; text: string }> }>(commentsUrl);
-
-  return {
-    id: item.id,
-    rev: item.rev,
-    title: item.fields?.["System.Title"],
-    state: item.fields?.["System.State"],
-    changed: item.fields?.["System.ChangedDate"],
-    severity: item.fields?.["Microsoft.VSTS.Common.Severity"],
-    assignee: item.fields?.["System.AssignedTo"]?.displayName,
-    tags: item.fields?.["System.Tags"],
-    description: item.fields?.["System.Description"],
-    created: item.fields?.["System.CreatedDate"],
-    createdBy: item.fields?.["System.CreatedBy"]?.displayName,
-    changedBy: item.fields?.["System.ChangedBy"]?.displayName,
-    url: generateWorkItemUrl(config, id),
-    comments: (commentsData.comments || []).map(c => ({
-      id: c.id,
-      author: c.createdBy?.displayName,
-      date: c.createdDate,
-      text: c.text,
-    })),
-    relations: item.relations,
-  };
-}
-
-async function getDashboard(config: AzureConfig, dashboardId: string): Promise<{ name: string; queries: Array<{ name: string; queryId: string }> }> {
-  const dashboardsUrl = `${config.org}/${encodeURIComponent(config.project)}/_apis/dashboard/dashboards?api-version=7.1-preview.3`;
-  const dashboardsData = await apiGet<{ value: Array<{ id: string; name: string; groupId?: string }> }>(dashboardsUrl);
-
-  const dashboard = dashboardsData.value.find(d => d.id === dashboardId);
-  if (!dashboard) {
-    throw new Error(`Dashboard ${dashboardId} not found`);
-  }
-
-  const groupPath = dashboard.groupId ? `${config.projectId}/${dashboard.groupId}` : config.projectId;
-  const widgetsUrl = `${config.org}/${groupPath}/_apis/Dashboard/Dashboards/${dashboardId}?api-version=7.1-preview.3`;
-  const widgetsData = await apiGet<{ name: string; widgets: Array<{ name: string; settings: string }> }>(widgetsUrl);
-
-  const queries: Array<{ name: string; queryId: string }> = [];
-  for (const widget of widgetsData.widgets || []) {
-    try {
-      const settings = JSON.parse(widget.settings);
-      const queryId = settings.queryId || settings.query?.queryId;
-      if (queryId) {
-        queries.push({ name: widget.name, queryId });
-      }
-    } catch {
-      // Skip widgets without query settings
-    }
-  }
-
-  return { name: widgetsData.name, queries };
-}
 
 // ============= Cache Management (using Storage utility) =============
 
@@ -402,49 +79,6 @@ async function loadGlobalCache<T>(type: "query" | "workitem" | "dashboard", id: 
 async function saveGlobalCache<T>(type: "query" | "workitem" | "dashboard", id: string, data: T): Promise<void> {
   await storage.ensureDirs();
   await storage.putCacheFile(`${type}-${id}.json`, data, CACHE_TTL);
-}
-
-function detectChanges(oldItems: CacheEntry[], newItems: WorkItem[]): ChangeInfo[] {
-  const changes: ChangeInfo[] = [];
-  const oldMap = new Map(oldItems.map(item => [item.id, item]));
-
-  for (const newItem of newItems) {
-    const oldItem = oldMap.get(newItem.id);
-    const newEntry: CacheEntry = {
-      id: newItem.id,
-      changed: newItem.changed,
-      rev: newItem.rev,
-      title: newItem.title,
-      state: newItem.state,
-      severity: newItem.severity,
-      assignee: newItem.assignee,
-      url: newItem.url,
-    };
-
-    if (!oldItem) {
-      changes.push({ type: "new", id: newItem.id, changes: ["New work item"], newData: newEntry });
-    } else if (newItem.changed > oldItem.changed || newItem.rev > oldItem.rev) {
-      const changeList: string[] = [];
-      if (oldItem.state !== newItem.state) {
-        changeList.push(`State: ${oldItem.state} → ${newItem.state}`);
-      }
-      if (oldItem.assignee !== newItem.assignee) {
-        changeList.push(`Assignee: ${oldItem.assignee || "unassigned"} → ${newItem.assignee || "unassigned"}`);
-      }
-      if (oldItem.severity !== newItem.severity) {
-        changeList.push(`Severity: ${oldItem.severity} → ${newItem.severity}`);
-      }
-      if (oldItem.title !== newItem.title) {
-        changeList.push(`Title changed`);
-      }
-      if (changeList.length === 0) {
-        changeList.push("Updated (comments or other fields)");
-      }
-      changes.push({ type: "updated", id: newItem.id, changes: changeList, oldData: oldItem, newData: newEntry });
-    }
-  }
-
-  return changes;
 }
 
 // ============= Output Formatters =============
@@ -529,8 +163,8 @@ function formatWorkItemAI(item: WorkItemFull, taskPath: string, cacheTime?: Date
   if (item.description) {
     lines.push("");
     lines.push("## Description");
-    const plainDesc = item.description.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-    lines.push(plainDesc.slice(0, 500) + (plainDesc.length > 500 ? "..." : ""));
+    const mdDesc = htmlToMarkdown(item.description);
+    lines.push(mdDesc.slice(0, 500) + (mdDesc.length > 500 ? "..." : ""));
   }
 
   if (item.comments.length > 0) {
@@ -539,8 +173,8 @@ function formatWorkItemAI(item: WorkItemFull, taskPath: string, cacheTime?: Date
     for (const comment of item.comments.slice(-5)) {
       lines.push("");
       lines.push(`**${comment.author}** (${new Date(comment.date).toLocaleDateString()}):`);
-      const plainComment = comment.text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-      lines.push(plainComment.slice(0, 300) + (plainComment.length > 300 ? "..." : ""));
+      const mdComment = htmlToMarkdown(comment.text);
+      lines.push(mdComment.slice(0, 300) + (mdComment.length > 300 ? "..." : ""));
     }
   }
 
@@ -566,38 +200,6 @@ function formatWorkItemAI(item: WorkItemFull, taskPath: string, cacheTime?: Date
   return lines.join("\n");
 }
 
-interface ParsedRelations {
-  parent?: number;
-  children: number[];
-  related: number[];
-  other: string[];
-}
-
-function parseRelations(relations: Relation[]): ParsedRelations {
-  const result: ParsedRelations = { children: [], related: [], other: [] };
-
-  for (const rel of relations) {
-    const idMatch = rel.url.match(/workItems\/(\d+)/i);
-    if (!idMatch) {
-      result.other.push(rel.rel);
-      continue;
-    }
-    const id = parseInt(idMatch[1], 10);
-
-    if (rel.rel === "System.LinkTypes.Hierarchy-Reverse") {
-      result.parent = id;
-    } else if (rel.rel === "System.LinkTypes.Hierarchy-Forward") {
-      result.children.push(id);
-    } else if (rel.rel.includes("Related")) {
-      result.related.push(id);
-    } else {
-      result.related.push(id);
-    }
-  }
-
-  return result;
-}
-
 function generateWorkItemMarkdown(item: WorkItemFull): string {
   const lines: string[] = [];
 
@@ -619,16 +221,7 @@ function generateWorkItemMarkdown(item: WorkItemFull): string {
     lines.push("");
     lines.push("## Description");
     lines.push("");
-    const plainDesc = item.description
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<\/p>/gi, "\n\n")
-      .replace(/<[^>]*>/g, "")
-      .replace(/&nbsp;/g, " ")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&amp;/g, "&")
-      .trim();
-    lines.push(plainDesc);
+    lines.push(htmlToMarkdown(item.description));
   }
 
   if (item.relations && item.relations.length > 0) {
@@ -654,13 +247,7 @@ function generateWorkItemMarkdown(item: WorkItemFull): string {
     for (const comment of item.comments) {
       lines.push(`### ${comment.author} - ${new Date(comment.date).toLocaleString()}`);
       lines.push("");
-      const plainComment = comment.text
-        .replace(/<br\s*\/?>/gi, "\n")
-        .replace(/<\/p>/gi, "\n\n")
-        .replace(/<[^>]*>/g, "")
-        .replace(/&nbsp;/g, " ")
-        .trim();
-      lines.push(plainComment);
+      lines.push(htmlToMarkdown(comment.text));
       lines.push("");
     }
   }
@@ -682,75 +269,7 @@ function formatJSON<T>(data: T): string {
   return JSON.stringify(data, null, 2);
 }
 
-// ============= URL Parsers =============
-
-function extractQueryId(input: string): string {
-  const match = input.match(/query\/([a-f0-9-]+)/i) || input.match(/^([a-f0-9-]+)$/i);
-  if (!match) throw new Error(`Invalid query URL/ID: ${input}`);
-  return match[1];
-}
-
-function extractWorkItemIds(input: string): number[] {
-  const parts = input.split(",").map(s => s.trim()).filter(Boolean);
-  const ids: number[] = [];
-
-  for (const part of parts) {
-    const match = part.match(/workItems?\/(\d+)/i) || part.match(/edit\/(\d+)/i) || part.match(/^(\d+)$/);
-    if (!match) throw new Error(`Invalid work item URL/ID: ${part}`);
-    ids.push(parseInt(match[1], 10));
-  }
-
-  return ids;
-}
-
-function extractDashboardId(input: string): string {
-  const match = input.match(/dashboard\/([a-f0-9-]+)/i) || input.match(/^([a-f0-9-]+)$/i);
-  if (!match) throw new Error(`Invalid dashboard URL/ID: ${input}`);
-  return match[1];
-}
-
-// ============= Configuration Commands =============
-
-interface ParsedUrl {
-  org: string;
-  project: string;
-}
-
-function parseAzureDevOpsUrl(url: string): ParsedUrl {
-  const devAzureMatch = url.match(/https:\/\/dev\.azure\.com\/([^\/]+)\/([^\/]+)/i);
-  if (devAzureMatch) {
-    return {
-      org: `https://dev.azure.com/${devAzureMatch[1]}`,
-      project: decodeURIComponent(devAzureMatch[2]),
-    };
-  }
-
-  const vsMatch = url.match(/https:\/\/([^\.]+)\.visualstudio\.com\/([^\/]+)/i);
-  if (vsMatch) {
-    return {
-      org: `https://dev.azure.com/${vsMatch[1].toUpperCase()}`,
-      project: decodeURIComponent(vsMatch[2]),
-    };
-  }
-
-  throw new Error(`Could not parse Azure DevOps URL: ${url}\n\nSupported formats:\n  https://dev.azure.com/{org}/{project}/...\n  https://{org}.visualstudio.com/{project}/...`);
-}
-
-async function getProjectId(org: string, project: string): Promise<string> {
-  const token = await getAccessToken();
-  const url = `${org}/_apis/projects/${encodeURIComponent(project)}?api-version=7.1`;
-
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to get project info: ${response.status} ${response.statusText}`);
-  }
-
-  const data = await response.json() as { id: string };
-  return data.id;
-}
+// ============= Handlers =============
 
 async function handleConfigure(url: string): Promise<void> {
   console.log("🔧 Configuring Azure DevOps CLI...\n");
@@ -789,7 +308,7 @@ Documentation: https://learn.microsoft.com/en-us/azure/devops/cli/?view=azure-de
 
   console.log("\nFetching project ID from API...");
 
-  const projectId = await getProjectId(org, project);
+  const projectId = await Api.getProjectId(org, project);
   console.log(`  Project ID: ${projectId}`);
 
   const newConfig: AzureConfig = {
@@ -832,15 +351,9 @@ Documentation: https://learn.microsoft.com/en-us/azure/devops/cli/?view=azure-de
 `);
 }
 
-// ============= Main Commands =============
-
-interface QueryFilters {
-  states?: string[];
-  severities?: string[];
-}
-
 async function handleQuery(input: string, format: OutputFormat, forceRefresh: boolean, filters?: QueryFilters, downloadWorkitems?: boolean, category?: string, taskFolders?: boolean): Promise<void> {
   const config = requireConfig();
+  const api = new Api(config);
   const queryId = extractQueryId(input);
 
   // Load old cache
@@ -849,7 +362,7 @@ async function handleQuery(input: string, format: OutputFormat, forceRefresh: bo
   const oldCacheTime = rawCache?.fetchedAt ? new Date(rawCache.fetchedAt) : undefined;
 
   // Run query
-  let items = await runQuery(config, queryId);
+  let items = await api.runQuery(queryId);
 
   // Apply filters
   if (filters?.states && filters.states.length > 0) {
@@ -918,13 +431,9 @@ async function handleQuery(input: string, format: OutputFormat, forceRefresh: bo
   }
 }
 
-interface WorkItemSettings {
-  category?: string;
-  taskFolder: boolean;
-}
-
 async function handleWorkItem(input: string, format: OutputFormat, forceRefresh: boolean, categoryArg?: string, taskFoldersArg?: boolean): Promise<void> {
   const config = requireConfig();
+  const api = new Api(config);
   const ids = extractWorkItemIds(input);
   const results: WorkItemFull[] = [];
   const cacheTimes: Map<number, Date> = new Map();
@@ -975,7 +484,7 @@ async function handleWorkItem(input: string, format: OutputFormat, forceRefresh:
     }
 
     // Fetch fresh data
-    const item = await getWorkItem(config, id);
+    const item = await api.getWorkItem(id);
     results.push(item);
 
     // Generate new slugified paths
@@ -1046,9 +555,10 @@ async function handleWorkItem(input: string, format: OutputFormat, forceRefresh:
 
 async function handleDashboard(input: string, format: OutputFormat): Promise<void> {
   const config = requireConfig();
+  const api = new Api(config);
   const dashboardId = extractDashboardId(input);
 
-  const dashboard = await getDashboard(config, dashboardId);
+  const dashboard = await api.getDashboard(dashboardId);
 
   // Save to global cache
   await saveGlobalCache("dashboard", dashboardId, dashboard);
@@ -1132,6 +642,760 @@ async function handleList(): Promise<void> {
   console.log(lines.join("\n"));
 }
 
+// ============= Interactive Create Mode =============
+
+// Common work item types to show first (others available via "Show all...")
+const COMMON_WORK_ITEM_TYPES = ["Bug", "Task", "User Story", "Feature", "Epic", "Incident"];
+
+/** Wizard state for interactive create */
+interface WizardState {
+  project?: { id: string; name: string };
+  type?: WorkItemType;
+  typeDef?: Awaited<ReturnType<Api["getWorkItemTypeDefinition"]>>;
+  fieldSchema?: Map<string, { name: string; required: boolean; allowedValues?: string[]; helpText?: string; defaultValue?: string }>;
+  title?: string;
+  description?: string;
+  additionalFields?: Map<string, string>;
+  state?: string;
+  tags?: string[];
+  assignee?: string;
+  parentId?: number;
+}
+
+/** Projects cache structure */
+interface ProjectsCache {
+  org: string;
+  projects: Array<{ id: string; name: string }>;
+  fetchedAt: string;
+}
+
+/** Load cached projects list */
+async function loadProjectsCache(org: string): Promise<Array<{ id: string; name: string }> | null> {
+  const cache = await storage.getCacheFile<ProjectsCache>("projects.json", PROJECT_CACHE_TTL);
+  if (cache && cache.org === org) {
+    return cache.projects;
+  }
+  return null;
+}
+
+/** Save projects to cache */
+async function saveProjectsCache(org: string, projects: Array<{ id: string; name: string }>): Promise<void> {
+  const cache: ProjectsCache = {
+    org,
+    projects,
+    fetchedAt: new Date().toISOString(),
+  };
+  await storage.putCacheFile("projects.json", cache, PROJECT_CACHE_TTL);
+}
+
+/**
+ * Run interactive work item creation flow with ESC-based back navigation
+ */
+async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void> {
+  console.log("\n🆕 Create New Work Item\n");
+  console.log(`🏢 Organization: ${config.org}`);
+  console.log(`📁 Default project: ${config.project}\n`);
+  console.log("💡 Press Ctrl+C to cancel, ESC to go back\n");
+
+  const state: WizardState = {};
+  let currentStep = 0;
+  let activeApi = api;
+  let activeConfig = config;
+
+  // Wizard steps as functions that return their value
+  const steps: Array<{
+    name: string;
+    run: () => Promise<boolean>; // Returns true if step completed, false if cancelled/back
+  }> = [
+    // Step 0: Project selection
+    {
+      name: "project",
+      run: async () => {
+        // Load or fetch projects
+        let projects = await loadProjectsCache(config.org);
+        if (!projects) {
+          console.log("📥 Fetching projects...");
+          const fetchedProjects = await Api.getProjects(config.org);
+          await saveProjectsCache(config.org, fetchedProjects);
+          projects = fetchedProjects;
+        }
+
+        // Find configured project and put it first
+        const configuredProject = projects.find(p => p.name === config.project);
+        const otherProjects = projects.filter(p => p.name !== config.project);
+        const sortedProjects = configuredProject
+          ? [configuredProject, ...otherProjects]
+          : projects;
+
+        const choices = sortedProjects.map(p => ({
+          value: p,
+          name: p.name === config.project ? `${p.name} (configured)` : p.name,
+        }));
+
+        const selected = await select({
+          message: "Select project:",
+          choices,
+        });
+
+        state.project = selected;
+
+        // If different project selected, create new API instance
+        if (selected.name !== config.project) {
+          activeConfig = { ...config, project: selected.name, projectId: selected.id };
+          activeApi = new Api(activeConfig);
+          console.log(`\n📁 Switched to project: ${selected.name}\n`);
+        }
+
+        return true;
+      },
+    },
+    // Step 1: Work item type
+    {
+      name: "type",
+      run: async () => {
+        const allTypes = await activeApi.getAvailableWorkItemTypes();
+        const commonTypes = allTypes.filter((t: string) => COMMON_WORK_ITEM_TYPES.includes(t));
+        const otherTypes = allTypes.filter((t: string) => !COMMON_WORK_ITEM_TYPES.includes(t));
+
+        const typeChoices: Array<{ value: string; name: string }> = [
+          ...commonTypes.map((t: string) => ({ value: t, name: t })),
+        ];
+
+        if (otherTypes.length > 0) {
+          typeChoices.push({ value: "__show_all__", name: `Show all types (${otherTypes.length} more)...` });
+        }
+
+        const selectedType = await select({
+          message: "Select work item type:",
+          choices: typeChoices,
+        });
+
+        let type: WorkItemType;
+        if (selectedType === "__show_all__") {
+          const allTypeSelection = await select({
+            message: "Select work item type (all available):",
+            choices: allTypes.sort().map((t: string) => ({ value: t, name: t })),
+          });
+          type = allTypeSelection as WorkItemType;
+        } else {
+          type = selectedType as WorkItemType;
+        }
+
+        state.type = type;
+
+        // Get type definition
+        const typeDef = await activeApi.getWorkItemTypeDefinition(type);
+        state.typeDef = typeDef;
+        state.fieldSchema = buildFieldSchema(typeDef);
+
+        return true;
+      },
+    },
+    // Step 2: Title
+    {
+      name: "title",
+      run: async () => {
+        const title = await input({
+          message: "Title (required):",
+          default: state.title || "",
+          validate: (value) => value.trim().length > 0 || "Title is required",
+        });
+        state.title = title;
+        return true;
+      },
+    },
+    // Step 3: Description
+    {
+      name: "description",
+      run: async () => {
+        const descriptionField = state.fieldSchema?.get("System.Description");
+        const descriptionTemplate = descriptionField?.helpText || "";
+
+        const useDescription = await confirm({
+          message: "Add description?",
+          default: !!state.description,
+        });
+
+        if (useDescription) {
+          state.description = await editor({
+            message: "Description (opens editor):",
+            default: state.description || descriptionTemplate,
+          });
+        } else {
+          state.description = "";
+        }
+        return true;
+      },
+    },
+    // Step 4: Required fields
+    {
+      name: "requiredFields",
+      run: async () => {
+        if (!state.fieldSchema || !state.type) return true;
+
+        const handledFields = new Set(["System.Title", "System.Description", "System.State", "System.Tags", "System.AssignedTo"]);
+        const additionalFields: Map<string, string> = state.additionalFields || new Map();
+
+        const requiredFields: Array<{ refName: string; name: string; allowedValues?: string[]; helpText?: string }> = [];
+        for (const [refName, fieldInfo] of state.fieldSchema) {
+          if (fieldInfo.required && !handledFields.has(refName)) {
+            requiredFields.push({
+              refName,
+              name: fieldInfo.name,
+              allowedValues: fieldInfo.allowedValues,
+              helpText: fieldInfo.helpText,
+            });
+          }
+        }
+
+        if (requiredFields.length > 0) {
+          console.log(`\n📋 Required fields for ${state.type}:\n`);
+          for (const field of requiredFields) {
+            let value: string;
+            const existingValue = additionalFields.get(field.refName);
+
+            if (field.allowedValues && field.allowedValues.length > 0) {
+              value = await select({
+                message: `${field.name} (required):`,
+                choices: field.allowedValues.map((v: string) => ({ value: v, name: v })),
+                default: existingValue,
+              });
+            } else {
+              value = await input({
+                message: `${field.name} (required):`,
+                default: existingValue || "",
+                validate: (v) => v.trim().length > 0 || `${field.name} is required`,
+              });
+            }
+            additionalFields.set(field.refName, value);
+          }
+        }
+
+        state.additionalFields = additionalFields;
+        return true;
+      },
+    },
+    // Step 5: State
+    {
+      name: "state",
+      run: async () => {
+        const stateField = state.fieldSchema?.get("System.State");
+        const stateValue = await select({
+          message: "Initial state:",
+          choices: stateField?.allowedValues?.map((v: string) => ({ value: v, name: v })) || [
+            { value: "New", name: "New" },
+          ],
+          default: state.state || stateField?.defaultValue || "New",
+        });
+        state.state = stateValue;
+        return true;
+      },
+    },
+    // Step 6: Tags
+    {
+      name: "tags",
+      run: async () => {
+        const addTags = await confirm({
+          message: "Add tags?",
+          default: (state.tags?.length || 0) > 0,
+        });
+
+        if (addTags) {
+          const tagInput = await input({
+            message: "Tags (comma-separated):",
+            default: state.tags?.join(", ") || "",
+          });
+          state.tags = tagInput.split(",").map(t => t.trim()).filter(Boolean);
+        } else {
+          state.tags = [];
+        }
+        return true;
+      },
+    },
+    // Step 7: Assignee
+    {
+      name: "assignee",
+      run: async () => {
+        state.assignee = await input({
+          message: "Assignee email (or press Enter to skip):",
+          default: state.assignee || "",
+        });
+        return true;
+      },
+    },
+    // Step 8: Parent
+    {
+      name: "parent",
+      run: async () => {
+        const addParent = await confirm({
+          message: "Link to parent work item?",
+          default: state.parentId !== undefined,
+        });
+
+        if (addParent) {
+          const parentInput = await input({
+            message: "Parent work item ID:",
+            default: state.parentId?.toString() || "",
+            validate: (value) => {
+              if (!value) return true;
+              const num = parseInt(value, 10);
+              return !isNaN(num) && num > 0 || "Enter a valid work item ID";
+            },
+          });
+          if (parentInput) {
+            state.parentId = parseInt(parentInput, 10);
+          }
+        } else {
+          state.parentId = undefined;
+        }
+        return true;
+      },
+    },
+    // Step 9: Confirm and create
+    {
+      name: "confirm",
+      run: async () => {
+        console.log("\n📋 Summary:");
+        console.log(`  Project: ${state.project?.name || activeConfig.project}`);
+        console.log(`  Type: ${state.type}`);
+        console.log(`  Title: ${state.title}`);
+        console.log(`  State: ${state.state}`);
+        if (state.additionalFields) {
+          for (const [refName, value] of state.additionalFields) {
+            const fieldInfo = state.fieldSchema?.get(refName);
+            console.log(`  ${fieldInfo?.name || refName}: ${value}`);
+          }
+        }
+        if (state.tags && state.tags.length > 0) console.log(`  Tags: ${state.tags.join(", ")}`);
+        if (state.assignee) console.log(`  Assignee: ${state.assignee}`);
+        if (state.parentId) console.log(`  Parent: #${state.parentId}`);
+        console.log("");
+
+        const confirmed = await confirm({
+          message: "Create this work item?",
+          default: true,
+        });
+
+        if (!confirmed) {
+          // Go back to allow editing
+          return false;
+        }
+
+        // Build JSON Patch operations
+        const operations: JsonPatchOperation[] = [
+          { op: "add", path: "/fields/System.Title", value: state.title! },
+        ];
+
+        if (state.description) {
+          operations.push({ op: "add", path: "/fields/System.Description", value: state.description });
+        }
+
+        if (state.state && state.state !== "New") {
+          operations.push({ op: "add", path: "/fields/System.State", value: state.state });
+        }
+
+        if (state.additionalFields) {
+          for (const [refName, value] of state.additionalFields) {
+            operations.push({ op: "add", path: `/fields/${refName}`, value });
+          }
+        }
+
+        if (state.tags && state.tags.length > 0) {
+          operations.push({ op: "add", path: "/fields/System.Tags", value: state.tags.join("; ") });
+        }
+
+        if (state.assignee) {
+          operations.push({ op: "add", path: "/fields/System.AssignedTo", value: state.assignee });
+        }
+
+        console.log("\n⏳ Creating work item...");
+        const created = await activeApi.createWorkItem(state.type!, operations);
+
+        if (state.parentId) {
+          console.log(`⏳ Linking to parent #${state.parentId}...`);
+          console.log(`⚠️  Parent linking not yet implemented. Please link manually.`);
+        }
+
+        console.log(`\n✅ Created work item #${created.id}: ${created.title}`);
+        console.log(`   URL: ${created.url}`);
+        return true;
+      },
+    },
+  ];
+
+  // Run wizard with back navigation
+  try {
+    while (currentStep < steps.length) {
+      try {
+        const step = steps[currentStep];
+        const result = await step.run();
+
+        if (result) {
+          currentStep++;
+        } else if (currentStep > 0) {
+          // Go back if not confirmed
+          currentStep--;
+        }
+      } catch (error) {
+        if (error instanceof ExitPromptError) {
+          // User cancelled (Ctrl+C or closed prompt)
+          if (currentStep > 0) {
+            console.log("\n⬅️  Going back...\n");
+            currentStep--;
+          } else {
+            console.log("\n❌ Creation cancelled.");
+            return;
+          }
+        } else {
+          throw error;
+        }
+      }
+    }
+  } catch (error) {
+    if (error instanceof ExitPromptError) {
+      console.log("\n❌ Creation cancelled.");
+      return;
+    }
+    throw error;
+  }
+}
+
+// ============= From-File Creation =============
+
+/**
+ * Convert a WorkItemTemplate to JSON Patch operations for the API
+ */
+function templateToOperations(template: WorkItemTemplate): JsonPatchOperation[] {
+  const operations: JsonPatchOperation[] = [];
+  const fields = template.fields as Record<string, unknown>;
+
+  // Map simple field names to Azure DevOps field reference names
+  const fieldMapping: Record<string, string> = {
+    title: "System.Title",
+    description: "System.Description",
+    severity: "Microsoft.VSTS.Common.Severity",
+    areaPath: "System.AreaPath",
+    iterationPath: "System.IterationPath",
+    assignedTo: "System.AssignedTo",
+    state: "System.State",
+    priority: "Microsoft.VSTS.Common.Priority",
+    activity: "Microsoft.VSTS.Common.Activity",
+    effort: "Microsoft.VSTS.Scheduling.Effort",
+    remainingWork: "Microsoft.VSTS.Scheduling.RemainingWork",
+    originalEstimate: "Microsoft.VSTS.Scheduling.OriginalEstimate",
+    valueArea: "Microsoft.VSTS.Common.ValueArea",
+    risk: "Microsoft.VSTS.Common.Risk",
+    businessValue: "Microsoft.VSTS.Common.BusinessValue",
+  };
+
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined || value === null || value === "") continue;
+
+    // Handle tags array specially
+    if (key === "tags") {
+      const tagValue = Array.isArray(value) ? value.join("; ") : value;
+      if (tagValue) {
+        operations.push({
+          op: "add",
+          path: "/fields/System.Tags",
+          value: tagValue,
+        });
+      }
+      continue;
+    }
+
+    // Map simple field name to reference name
+    let refName = fieldMapping[key];
+
+    if (!refName) {
+      // Check if key already looks like a reference name (contains '.')
+      if (key.includes(".")) {
+        refName = key;
+      } else {
+        // Try to infer reference name for custom fields
+        // Common patterns: "application" -> "Custom.Application"
+        // Check template hints for the original reference name
+        const hint = template._hints?.[key];
+        if (hint?.description?.includes("(") && hint?.description?.includes(")")) {
+          // Extract reference name from description like "Pre-filled from source work item (Custom.Application)"
+          const match = hint.description.match(/\(([^)]+)\)/);
+          if (match && match[1].includes(".")) {
+            refName = match[1];
+          }
+        }
+        // If still no refName, skip unknown fields (don't guess)
+        if (!refName) {
+          continue;
+        }
+      }
+    }
+
+    operations.push({
+      op: "add",
+      path: `/fields/${refName}`,
+      value,
+    });
+  }
+
+  return operations;
+}
+
+/**
+ * Validate a WorkItemTemplate before creation
+ */
+function validateTemplate(template: WorkItemTemplate): void {
+  if (!template.$schema || template.$schema !== "azure-devops-workitem-v1") {
+    throw new Error("Invalid template: missing or incorrect $schema");
+  }
+
+  if (!template.type) {
+    throw new Error("Invalid template: missing work item type");
+  }
+
+  if (!template.fields) {
+    throw new Error("Invalid template: missing fields");
+  }
+
+  const title = (template.fields as Record<string, unknown>).title;
+  if (!title || (typeof title === "string" && !title.trim())) {
+    throw new Error("Invalid template: title is required");
+  }
+}
+
+/**
+ * Create a work item from a template file
+ */
+async function createFromFile(api: Api, filePath: string): Promise<void> {
+  console.log(`\n📄 Loading template from: ${filePath}\n`);
+
+  if (!existsSync(filePath)) {
+    throw new Error(`Template file not found: ${filePath}`);
+  }
+
+  const content = readFileSync(filePath, "utf-8");
+  let template: WorkItemTemplate;
+
+  try {
+    template = JSON.parse(content);
+  } catch {
+    throw new Error(`Invalid JSON in template file: ${filePath}`);
+  }
+
+  // Validate template
+  validateTemplate(template);
+
+  const fields = template.fields as Record<string, unknown>;
+
+  console.log("📋 Template contents:");
+  console.log(`  Type: ${template.type}`);
+  console.log(`  Title: ${fields.title}`);
+  if (fields.severity) console.log(`  Severity: ${fields.severity}`);
+  if (fields.assignedTo) console.log(`  Assignee: ${fields.assignedTo}`);
+  if (fields.tags) {
+    const tags = Array.isArray(fields.tags) ? fields.tags : [fields.tags];
+    if (tags.length > 0) console.log(`  Tags: ${tags.join(", ")}`);
+  }
+  if (template.relations?.parent) console.log(`  Parent: #${template.relations.parent}`);
+  console.log("");
+
+  // Convert template to operations
+  const operations = templateToOperations(template);
+
+  // Create the work item
+  console.log("⏳ Creating work item...");
+  const created = await api.createWorkItem(template.type, operations);
+
+  // Handle parent relation if specified
+  if (template.relations?.parent) {
+    console.log(`⏳ Linking to parent #${template.relations.parent}...`);
+    console.log(`⚠️  Parent linking not yet implemented. Please link manually.`);
+  }
+
+  console.log(`\n✅ Created work item #${created.id}: ${created.title}`);
+  console.log(`   URL: ${created.url}`);
+}
+
+// ============= Helper Functions =============
+
+/** Infer work item type from raw fields */
+function inferWorkItemTypeFromRawFields(item: WorkItemFull): WorkItemType | undefined {
+  const rawType = item.rawFields?.["System.WorkItemType"];
+  if (typeof rawType === "string") {
+    return rawType as WorkItemType;
+  }
+  return undefined;
+}
+
+// ============= Create Handler =============
+
+/**
+ * Handle the --create command with various modes
+ */
+async function handleCreate(options: {
+  interactive?: boolean;
+  fromFile?: string;
+  type?: string;
+  sourceInput?: string;  // Query URL or work item URL
+  title?: string;
+  severity?: string;
+  tags?: string;
+  assignee?: string;
+  parent?: string;
+}): Promise<void> {
+  // Check if any actual mode is specified - show help before requiring config
+  const hasValidMode = options.interactive ||
+    options.fromFile ||
+    options.sourceInput ||
+    (options.type && options.title);
+
+  if (!hasValidMode) {
+    // No valid mode specified - show help without requiring config
+    console.log(`
+Usage: tools azure-devops --create [options]
+
+Modes:
+  -i, --interactive             Interactive mode with prompts
+  --from-file <path>            Create from template file
+  <query-url> --type <type>     Generate template from query
+  <workitem-url>                Generate template from work item
+  --type <type> --title <text>  Quick non-interactive creation
+
+Examples:
+  tools azure-devops --create -i
+  tools azure-devops --create --from-file template.json
+  tools azure-devops --create "https://.../_queries/query/abc" --type Bug
+  tools azure-devops --create "https://.../_workitems/edit/123"
+  tools azure-devops --create --type Task --title "Fix bug"
+`);
+    return;
+  }
+
+  const config = requireConfig();
+  const api = new Api(config);
+
+  // Mode 1: Interactive mode (-i or --interactive)
+  if (options.interactive) {
+    await runInteractiveCreate(api, config);
+    return;
+  }
+
+  // Mode 2: Create from template file (--from-file)
+  if (options.fromFile) {
+    await createFromFile(api, options.fromFile);
+    return;
+  }
+
+  // Mode 3: Generate template from query URL
+  if (options.sourceInput && options.sourceInput.includes("query")) {
+    const queryId = extractQueryId(options.sourceInput);
+    const type = (options.type || "Bug") as WorkItemType;
+
+    console.log(`\n📊 Generating template from query: ${queryId}`);
+    console.log(`   Work item type: ${type}\n`);
+
+    // Run query to get items
+    const items = await api.runQuery(queryId);
+    console.log(`   Found ${items.length} work items to analyze`);
+
+    // Get type definition for field hints
+    const typeDef = await api.getWorkItemTypeDefinition(type);
+    const fieldSchema = buildFieldSchema(typeDef);
+    const hints = mergeFieldsWithUsage(fieldSchema, extractUsedValues(items, config.project, queryId));
+
+    // Generate template
+    const template = generateTemplateFromQuery(items, type, config.project, queryId, hints);
+
+    // Save template
+    const filePath = saveTemplate(template);
+
+    console.log(`\n✅ Template generated: ${filePath}`);
+    console.log(`\n📝 Hints from ${items.length} analyzed items:`);
+
+    // Show field hints
+    if (template._hints) {
+      const hintFields = ["severity", "tags", "assignedTo"];
+      for (const field of hintFields) {
+        const hint = template._hints[field];
+        if (hint?.usedValues?.length) {
+          console.log(`   ${field}: ${hint.usedValues.slice(0, 5).join(", ")}`);
+        }
+      }
+    }
+
+    console.log(`\n💡 Fill the template and run:`);
+    console.log(`   tools azure-devops --create --from-file "${filePath}"`);
+    return;
+  }
+
+  // Mode 4: Generate template from work item URL
+  if (options.sourceInput && options.sourceInput.match(/workitems?|edit\/\d+/i)) {
+    const ids = extractWorkItemIds(options.sourceInput);
+    if (ids.length !== 1) {
+      throw new Error("Please specify exactly one work item URL for template generation");
+    }
+
+    const id = ids[0];
+    console.log(`\n📋 Generating template from work item #${id}\n`);
+
+    // Get the source work item
+    const sourceItem = await api.getWorkItem(id);
+
+    // Determine type and get type definition for allowedValues
+    const type = (options.type as WorkItemType) || inferWorkItemTypeFromRawFields(sourceItem) || "Bug";
+    console.log(`   Type: ${type}`);
+
+    // Fetch type definition to get allowedValues for each field
+    const typeDef = await api.getWorkItemTypeDefinition(type);
+    const fieldSchema = buildFieldSchema(typeDef);
+
+    // Generate template with field schema for allowedValues
+    const template = generateTemplateFromWorkItem(sourceItem, type, fieldSchema);
+
+    // Save template
+    const filePath = saveTemplate(template);
+
+    console.log(`✅ Template generated: ${filePath}`);
+    console.log(`\n📝 Pre-filled from source work item #${id}:`);
+    console.log(`   Type: ${template.type}`);
+    if (template.fields.severity) console.log(`   Severity: ${template.fields.severity}`);
+    if (template.relations?.parent) console.log(`   Parent: #${template.relations.parent}`);
+
+    console.log(`\n💡 Fill the template and run:`);
+    console.log(`   tools azure-devops --create --from-file "${filePath}"`);
+    return;
+  }
+
+  // Mode 5: Quick non-interactive creation (--type + --title required)
+  if (options.type && options.title) {
+    const type = options.type as WorkItemType;
+
+    console.log(`\n🆕 Quick create: ${type}\n`);
+
+    const operations: JsonPatchOperation[] = [
+      { op: "add", path: "/fields/System.Title", value: options.title },
+    ];
+
+    if (options.severity) {
+      operations.push({ op: "add", path: "/fields/Microsoft.VSTS.Common.Severity", value: options.severity });
+    }
+
+    if (options.tags) {
+      operations.push({ op: "add", path: "/fields/System.Tags", value: options.tags.replace(/,/g, "; ") });
+    }
+
+    if (options.assignee) {
+      operations.push({ op: "add", path: "/fields/System.AssignedTo", value: options.assignee });
+    }
+
+    console.log("⏳ Creating work item...");
+    const created = await api.createWorkItem(type, operations);
+
+    console.log(`\n✅ Created work item #${created.id}: ${created.title}`);
+    console.log(`   URL: ${created.url}`);
+    return;
+  }
+}
+
 // ============= CLI =============
 
 function printHelp(): void {
@@ -1144,6 +1408,7 @@ Usage:
   tools azure-devops --workitem <id|url|ids> [options]
   tools azure-devops --dashboard <url|id> [options]
   tools azure-devops --list
+  tools azure-devops --create [options]
 
 Options:
   --format <ai|md|json>       Output format (default: ai)
@@ -1154,6 +1419,15 @@ Options:
   --category <name>           Save to tasks/<category>/ (remembered per work item)
   --task-folders              Save in tasks/<id>/ subfolder (only for new files)
   --help                      Show this help
+
+Create Options:
+  -i, --interactive           Interactive mode with prompts
+  --from-file <path>          Create from template file
+  --type <type>               Work item type (Bug, Task, User Story, etc.)
+  --title <text>              Work item title (for quick creation)
+  --severity <sev>            Severity level
+  --tags <tags>               Tags (comma-separated)
+  --assignee <email>          Assignee email
 
 First-Time Setup:
   1. Install Azure CLI: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli
@@ -1191,6 +1465,23 @@ Examples:
   # Use task folders (each task in its own subfolder, only for new files)
   tools azure-devops --workitem 12345 --task-folders
   tools azure-devops --query abc123 --download-workitems --category react19 --task-folders
+
+Create Examples:
+  # Interactive mode - guided step-by-step creation
+  tools azure-devops --create -i
+
+  # Generate template from query (analyzes patterns in existing items)
+  tools azure-devops --create "https://dev.azure.com/.../query/abc" --type Bug
+
+  # Generate template from existing work item
+  tools azure-devops --create "https://dev.azure.com/.../_workitems/edit/12345"
+
+  # Create from template file
+  tools azure-devops --create --from-file ".claude/azure/tasks/created/template.json"
+
+  # Quick non-interactive creation
+  tools azure-devops --create --type Task --title "Fix login bug"
+  tools azure-devops --create --type Bug --title "Error in checkout" --severity "A - critical"
 
 Storage:
   Config:  .claude/azure/config.json (per-project, searched up to 3 levels)
@@ -1237,6 +1528,61 @@ async function main(): Promise<void> {
   }
 
   try {
+    // Handle --create
+    if (args.includes("--create")) {
+      const createOptions: {
+        interactive?: boolean;
+        fromFile?: string;
+        type?: string;
+        sourceInput?: string;
+        title?: string;
+        severity?: string;
+        tags?: string;
+        assignee?: string;
+        parent?: string;
+      } = {};
+
+      createOptions.interactive = args.includes("-i") || args.includes("--interactive");
+
+      if (args.includes("--from-file")) {
+        createOptions.fromFile = args[args.indexOf("--from-file") + 1];
+      }
+
+      if (args.includes("--type")) {
+        createOptions.type = args[args.indexOf("--type") + 1];
+      }
+
+      if (args.includes("--title")) {
+        createOptions.title = args[args.indexOf("--title") + 1];
+      }
+
+      if (args.includes("--severity")) {
+        createOptions.severity = args[args.indexOf("--severity") + 1];
+      }
+
+      if (args.includes("--tags")) {
+        createOptions.tags = args[args.indexOf("--tags") + 1];
+      }
+
+      if (args.includes("--assignee")) {
+        createOptions.assignee = args[args.indexOf("--assignee") + 1];
+      }
+
+      if (args.includes("--parent")) {
+        createOptions.parent = args[args.indexOf("--parent") + 1];
+      }
+
+      // Check for source input (query or workitem URL that's not a flag value)
+      const createIndex = args.indexOf("--create");
+      const nextArg = args[createIndex + 1];
+      if (nextArg && !nextArg.startsWith("-")) {
+        createOptions.sourceInput = nextArg;
+      }
+
+      await handleCreate(createOptions);
+      return;  // Exit after handling create
+    }
+
     if (args.includes("--configure")) {
       const input = args[args.indexOf("--configure") + 1];
       if (!input) throw new Error("Missing Azure DevOps URL");

@@ -126,3 +126,138 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 | "Download React19 bugs" | `tools azure-devops --query <id> --download-workitems --category react19` |
 | "Analyze task 261575" | Fetch → Explore agent → Write .analysis.md |
 | "Analyze all active bugs" | Fetch query with --download-workitems → Parallel Explore agents → Write .analysis.md files |
+
+## Creating Work Items
+
+The `--create` command supports multiple modes for creating new work items.
+
+### CLI Reference
+
+```bash
+tools azure-devops --create -i                     # Interactive mode
+tools azure-devops --create --from-file <path>     # From template file
+tools azure-devops --create <query-url> --type Bug # Generate template from query
+tools azure-devops --create <workitem-url>         # Generate template from work item
+tools azure-devops --create --type Task --title X  # Quick creation
+```
+
+### Create Options
+
+| Option | Description |
+|--------|-------------|
+| `-i, --interactive` | Interactive mode with step-by-step prompts |
+| `--from-file <path>` | Create from template JSON file |
+| `--type <type>` | Work item type (Bug, Task, User Story, etc.) |
+| `--title <text>` | Work item title (required for quick mode) |
+| `--severity <sev>` | Severity level |
+| `--tags <tags>` | Tags (comma-separated) |
+| `--assignee <email>` | Assignee email |
+
+### Creation Modes
+
+#### 1. Interactive Mode (`-i`)
+
+Best for: Manual creation with full control over all fields.
+
+```bash
+tools azure-devops --create -i
+```
+
+Prompts for: type, title, description (via editor), severity, state, tags, assignee, parent link.
+
+#### 2. Template from Query
+
+Best for: Creating work items that match patterns from existing items.
+
+```bash
+tools azure-devops --create "https://dev.azure.com/.../_queries/query/abc" --type Bug
+```
+
+This:
+1. Analyzes work items from the query
+2. Extracts common patterns (area paths, tags, severities used)
+3. Generates a template with hints from analyzed items
+4. Saves to `.claude/azure/tasks/created/template-<timestamp>.json`
+
+#### 3. Template from Work Item
+
+Best for: Cloning or creating similar work items.
+
+```bash
+tools azure-devops --create "https://dev.azure.com/.../_workitems/edit/12345"
+```
+
+This:
+1. Fetches the source work item
+2. Generates a template pre-filled with matching values
+3. Keeps parent reference if source had one
+4. Saves to `.claude/azure/tasks/created/template-<timestamp>.json`
+
+#### 4. From Template File
+
+Best for: LLM workflows where templates are prepared programmatically.
+
+```bash
+tools azure-devops --create --from-file ".claude/azure/tasks/created/template.json"
+```
+
+Template format:
+```json
+{
+  "$schema": "azure-devops-workitem-v1",
+  "type": "Bug",
+  "fields": {
+    "title": "Error in checkout flow",
+    "description": "<p>Description here</p>",
+    "severity": "A - critical",
+    "tags": ["frontend", "checkout"],
+    "assignedTo": "user@example.com",
+    "areaPath": "Project\\Area",
+    "iterationPath": "Project\\Sprint1"
+  },
+  "relations": {
+    "parent": 12345
+  }
+}
+```
+
+#### 5. Quick Non-Interactive
+
+Best for: Simple work items created from command line.
+
+```bash
+tools azure-devops --create --type Task --title "Fix login bug"
+tools azure-devops --create --type Bug --title "Error" --severity "A - critical" --tags "frontend,urgent"
+```
+
+### LLM Workflow
+
+When user asks to "create a work item" or "file a bug":
+
+1. **Gather information** - Ask for: type, title, description, severity (if bug)
+
+2. **Choose mode based on context**:
+   - Have a template file? Use `--from-file`
+   - Want to match existing patterns? Generate template from query first
+   - Simple request? Use quick mode `--type X --title "Y"`
+   - Complex with many fields? Use interactive mode
+
+3. **Create the work item**:
+   ```bash
+   # Quick creation
+   tools azure-devops --create --type Bug --title "Error in checkout" --severity "B - high"
+
+   # Or from template
+   tools azure-devops --create --from-file template.json
+   ```
+
+4. **Report the result** - Include the work item ID and URL in your response.
+
+### Examples
+
+| User Request | Action |
+|--------------|--------|
+| "Create a bug for the login issue" | `--create --type Bug --title "Login issue" --severity "B - high"` |
+| "File a task to update docs" | `--create --type Task --title "Update documentation"` |
+| "Create a bug like #12345" | `--create <workitem-url>` then `--from-file template.json` |
+| "Help me create a detailed work item" | `--create -i` (interactive) |
