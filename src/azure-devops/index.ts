@@ -1008,13 +1008,21 @@ async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void
           operations.push({ op: "add", path: "/fields/System.AssignedTo", value: state.assignee });
         }
 
+        // Add parent relation if specified
+        if (state.parentId) {
+          operations.push({
+            op: "add",
+            path: "/relations/-",
+            value: {
+              rel: "System.LinkTypes.Hierarchy-Reverse",
+              url: `${activeConfig.org}/_apis/wit/workItems/${state.parentId}`,
+              attributes: { comment: "Created via CLI" },
+            },
+          });
+        }
+
         console.log("\n⏳ Creating work item...");
         const created = await activeApi.createWorkItem(state.type!, operations);
-
-        if (state.parentId) {
-          console.log(`⏳ Linking to parent #${state.parentId}...`);
-          console.log(`⚠️  Parent linking not yet implemented. Please link manually.`);
-        }
 
         console.log(`\n✅ Created work item #${created.id}: ${created.title}`);
         console.log(`   URL: ${created.url}`);
@@ -1165,7 +1173,7 @@ function validateTemplate(template: WorkItemTemplate): void {
 /**
  * Create a work item from a template file
  */
-async function createFromFile(api: Api, filePath: string): Promise<void> {
+async function createFromFile(api: Api, config: AzureConfig, filePath: string): Promise<void> {
   console.log(`\n📄 Loading template from: ${filePath}\n`);
 
   if (!existsSync(filePath)) {
@@ -1201,15 +1209,22 @@ async function createFromFile(api: Api, filePath: string): Promise<void> {
   // Convert template to operations
   const operations = templateToOperations(template);
 
+  // Add parent relation if specified
+  if (template.relations?.parent) {
+    operations.push({
+      op: "add",
+      path: "/relations/-",
+      value: {
+        rel: "System.LinkTypes.Hierarchy-Reverse",
+        url: `${config.org}/_apis/wit/workItems/${template.relations.parent}`,
+        attributes: { comment: "Created via CLI" },
+      },
+    });
+  }
+
   // Create the work item
   console.log("⏳ Creating work item...");
   const created = await api.createWorkItem(template.type, operations);
-
-  // Handle parent relation if specified
-  if (template.relations?.parent) {
-    console.log(`⏳ Linking to parent #${template.relations.parent}...`);
-    console.log(`⚠️  Parent linking not yet implemented. Please link manually.`);
-  }
 
   console.log(`\n✅ Created work item #${created.id}: ${created.title}`);
   console.log(`   URL: ${created.url}`);
@@ -1281,12 +1296,13 @@ Examples:
 
   // Mode 2: Create from template file (--from-file)
   if (options.fromFile) {
-    await createFromFile(api, options.fromFile);
+    await createFromFile(api, config, options.fromFile);
     return;
   }
 
   // Mode 3: Generate template from query URL
-  if (options.sourceInput && options.sourceInput.includes("query")) {
+  // Match /_queries/query/ path or a bare GUID (query ID)
+  if (options.sourceInput && (options.sourceInput.includes("/_queries/") || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(options.sourceInput))) {
     const queryId = extractQueryId(options.sourceInput);
     const type = (options.type || "Bug") as WorkItemType;
 
