@@ -3,10 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev --port 3000",
-    "build": "vite build",
-    "preview": "vite preview",
-    "test": "vitest run",
+    "dev": "bun --bun vite dev --port 3069",
+    "build": "bun --bun vite build",
+    "preview": "bun --bun vite preview",
+    "test": "bun --bun vitest run",
     "format": "biome format",
     "lint": "biome lint",
     "check": "biome check"

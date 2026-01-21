@@ -19,6 +19,12 @@ const buttonVariants = cva(
         ghost:
           "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
         link: "text-primary underline-offset-4 hover:underline",
+        cyber:
+          "glass-card neon-border border-primary/30 bg-transparent text-primary hover:bg-primary/10 hover:border-primary/50 btn-glow",
+        "cyber-secondary":
+          "glass-card border-secondary/30 bg-transparent text-secondary hover:bg-secondary/10 hover:border-secondary/50",
+        "cyber-ghost":
+          "bg-transparent text-primary hover:bg-primary/10 hover:text-primary",
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",
@@ -30,7 +36,7 @@ const buttonVariants = cva(
       },
     },
     defaultVariants: {
-      variant: "default",
+      variant: "cyber",
       size: "default",
     },
   }

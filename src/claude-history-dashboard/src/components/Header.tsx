@@ -1,5 +1,5 @@
 import { Link, useLocation } from '@tanstack/react-router'
-import { MessageSquare, BarChart3, Terminal } from 'lucide-react'
+import { MessageSquare, BarChart3, Terminal, Train } from 'lucide-react'
 
 export default function Header() {
   const location = useLocation()
@@ -7,6 +7,7 @@ export default function Header() {
   const navItems = [
     { to: '/', label: 'SESSIONS', icon: MessageSquare },
     { to: '/stats', label: 'ANALYTICS', icon: BarChart3 },
+    { to: '/regiojet', label: 'REGIOJET', icon: Train },
   ] as const
 
   return (

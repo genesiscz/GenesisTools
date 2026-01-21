@@ -292,7 +292,7 @@ program
 program
     .command("dashboard")
     .description("Launch the web-based dashboard for browsing conversation history")
-    .option("-p, --port <port>", "Port to run the dashboard on", "3000")
+    .option("-p, --port <port>", "Port to run the dashboard on", "3069")
     .action(async (options) => {
         const dashboardDir = resolve(import.meta.dir, "../claude-history-dashboard");
         console.log(chalk.cyan("🚀 Starting Claude History Dashboard..."));

@@ -34,21 +34,21 @@ function StatsPage() {
   const maxDailyMessages = Math.max(...recentDays.map(([, count]) => count), 1)
 
   return (
-    <div className="min-h-screen bg-[var(--bg-primary)]">
+    <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="border-b border-[var(--border-primary)]">
+      <header className="border-b border-border">
         <div className="max-w-7xl mx-auto px-6 py-6">
           <Link
             to="/"
-            className="inline-flex items-center gap-2 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] mb-4"
+            className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-4"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to conversations
           </Link>
-          <h1 className="text-3xl font-black tracking-tight text-[var(--text-primary)]">
+          <h1 className="text-3xl font-black tracking-tight text-foreground">
             Statistics
           </h1>
-          <p className="text-[var(--text-secondary)] mt-1">
+          <p className="text-muted-foreground mt-1">
             Overview of your Claude Code usage
           </p>
         </div>
@@ -84,23 +84,23 @@ function StatsPage() {
         </div>
 
         {/* Activity Chart */}
-        <Card className="bg-[var(--bg-secondary)] border-[var(--border-primary)] mb-8">
+        <Card className="mb-8">
           <CardHeader>
-            <CardTitle className="text-[var(--text-primary)] flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-[var(--neon-primary)]" />
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-primary" />
               Recent Activity (Last 14 Days)
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex items-end gap-1 h-32">
               {recentDays.map(([date, count]) => (
-                <div key={date} className="flex-1 flex flex-col items-center gap-1">
+                <div key={date} className="flex-1 flex flex-col items-center justify-end h-full gap-1">
                   <div
-                    className="w-full bg-[var(--neon-primary)] rounded-t opacity-80 hover:opacity-100 transition-opacity"
+                    className="w-full bg-primary rounded-t opacity-80 hover:opacity-100 transition-opacity"
                     style={{ height: `${(count / maxDailyMessages) * 100}%`, minHeight: count > 0 ? '4px' : '0' }}
                     title={`${date}: ${count} messages`}
                   />
-                  <span className="text-[8px] text-[var(--text-muted)] rotate-45 origin-left translate-y-2">
+                  <span className="text-[8px] text-muted-foreground rotate-45 origin-left translate-y-2">
                     {new Date(date).getUTCDate()}
                   </span>
                 </div>
@@ -111,10 +111,10 @@ function StatsPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Projects */}
-          <Card className="bg-[var(--bg-secondary)] border-[var(--border-primary)]">
+          <Card>
             <CardHeader>
-              <CardTitle className="text-[var(--text-primary)] flex items-center gap-2">
-                <FolderOpen className="w-5 h-5 text-[var(--neon-secondary)]" />
+              <CardTitle className="flex items-center gap-2">
+                <FolderOpen className="w-5 h-5 text-secondary" />
                 Top Projects
               </CardTitle>
             </CardHeader>
@@ -124,14 +124,14 @@ function StatsPage() {
                   <div key={project} className="flex items-center gap-3">
                     <div className="flex-1">
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm text-[var(--text-primary)] truncate">
+                        <span className="text-sm text-foreground truncate">
                           {project}
                         </span>
-                        <span className="text-xs text-[var(--text-muted)]">{count}</span>
+                        <span className="text-xs text-muted-foreground">{count}</span>
                       </div>
-                      <div className="h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-[var(--neon-secondary)] rounded-full"
+                          className="h-full bg-secondary rounded-full"
                           style={{
                             width: `${(count / (sortedProjects[0]?.[1] || 1)) * 100}%`,
                           }}
@@ -145,23 +145,19 @@ function StatsPage() {
           </Card>
 
           {/* Tool Usage */}
-          <Card className="bg-[var(--bg-secondary)] border-[var(--border-primary)]">
+          <Card>
             <CardHeader>
-              <CardTitle className="text-[var(--text-primary)] flex items-center gap-2">
-                <Wrench className="w-5 h-5 text-[var(--neon-primary)]" />
+              <CardTitle className="flex items-center gap-2">
+                <Wrench className="w-5 h-5 text-primary" />
                 Top Tools Used
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex flex-wrap gap-2">
                 {sortedTools.map(([tool, count]) => (
-                  <Badge
-                    key={tool}
-                    variant="outline"
-                    className="border-[var(--border-secondary)] text-[var(--text-secondary)] bg-[var(--bg-tertiary)]"
-                  >
+                  <Badge key={tool}>
                     {tool.replace(/^mcp__\w+__/, '')}
-                    <span className="ml-1.5 text-[var(--neon-primary)]">{count}</span>
+                    <span className="ml-1.5 font-bold">{count}</span>
                   </Badge>
                 ))}
               </div>
@@ -184,23 +180,20 @@ function StatCard({
   value: number
   color: 'primary' | 'secondary'
 }) {
-  const colorClass = color === 'primary' ? 'var(--neon-primary)' : 'var(--neon-secondary)'
+  const isPrimary = color === 'primary'
 
   return (
-    <Card className="bg-[var(--bg-secondary)] border-[var(--border-primary)]">
+    <Card>
       <CardContent className="pt-6">
         <div className="flex items-center gap-3">
-          <div
-            className="p-2 rounded-lg"
-            style={{ backgroundColor: `color-mix(in oklch, ${colorClass} 15%, transparent)` }}
-          >
-            <div style={{ color: colorClass }}>{icon}</div>
+          <div className={`p-2 rounded-lg ${isPrimary ? 'bg-primary/15' : 'bg-secondary/15'}`}>
+            <div className={isPrimary ? 'text-primary' : 'text-secondary'}>{icon}</div>
           </div>
           <div>
-            <p className="text-2xl font-bold text-[var(--text-primary)]">
+            <p className="text-2xl font-bold text-foreground">
               {value.toLocaleString()}
             </p>
-            <p className="text-xs text-[var(--text-muted)]">{label}</p>
+            <p className="text-xs text-muted-foreground">{label}</p>
           </div>
         </div>
       </CardContent>

@@ -2,12 +2,24 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-function Card({ className, ...props }: React.ComponentProps<"div">) {
+type CardVariant = "default" | "cyber"
+
+interface CardProps extends React.ComponentProps<"div"> {
+  variant?: CardVariant
+}
+
+const cardVariants: Record<CardVariant, string> = {
+  default: "bg-card text-card-foreground border shadow-sm",
+  cyber: "glass-card neon-border bg-transparent text-card-foreground",
+}
+
+function Card({ className, variant = "cyber", ...props }: CardProps) {
   return (
     <div
       data-slot="card"
       className={cn(
-        "bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm",
+        "flex flex-col gap-6 rounded-xl py-6",
+        cardVariants[variant],
         className
       )}
       {...props}
@@ -28,11 +40,19 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
+interface CardTitleProps extends React.ComponentProps<"div"> {
+  gradient?: boolean
+}
+
+function CardTitle({ className, gradient = false, ...props }: CardTitleProps) {
   return (
     <div
       data-slot="card-title"
-      className={cn("leading-none font-semibold", className)}
+      className={cn(
+        "leading-none font-semibold",
+        gradient && "gradient-text",
+        className
+      )}
       {...props}
     />
   )
