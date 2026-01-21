@@ -2,7 +2,7 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { mkdirSync, existsSync, writeFileSync } from 'fs';
+import { mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { getOctokit } from '@app/github/lib/octokit';
 import { withRetry } from '@app/github/lib/rate-limit';
@@ -203,7 +203,8 @@ async function fetchLinkedIssue(owner: string, repo: string, number: number): Pr
       state: data.state,
       linkType: 'related',
     };
-  } catch {
+  } catch (error) {
+    logger.debug({ error, owner, repo, number }, 'Failed to fetch linked issue');
     return null;
   }
 }
@@ -552,7 +553,7 @@ export async function issueCommand(
 
     // Generate full markdown content for the file
     const fullContent = formatIssue(outputData, 'md', { noIndex: options.noIndex });
-    writeFileSync(filename, fullContent);
+    await Bun.write(filename, fullContent);
     verbose(options, `Full content saved to: ${filename}`);
 
     // Generate AI summary for console output
@@ -563,7 +564,7 @@ export async function issueCommand(
     const output = formatIssue(outputData, format, { noIndex: options.noIndex });
 
     if (options.output) {
-      writeFileSync(options.output, output);
+      await Bun.write(options.output, output);
       console.log(chalk.green(`✔ Output written to ${options.output}`));
     } else if (options.saveLocally) {
       const localDir = join(process.cwd(), '.claude', 'github');
@@ -572,7 +573,7 @@ export async function issueCommand(
       }
       const filename = `${owner}-${repo}-${number}.${format === 'json' ? 'json' : 'md'}`;
       const filepath = join(localDir, filename);
-      writeFileSync(filepath, output);
+      await Bun.write(filepath, output);
       console.log(chalk.green(`✔ Output saved to ${filepath}`));
     } else {
       console.log(output);

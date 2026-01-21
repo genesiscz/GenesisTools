@@ -154,7 +154,7 @@ function formatPRSummary(data: PRData, options: FormatOptions): string {
     prStats.push(`- **Branch:** ${data.pr.head.ref} → ${data.pr.base.ref}`);
     prStats.push(`- **Changes:** +${data.pr.additions} -${data.pr.deletions} in ${data.pr.changed_files} files`);
     if (data.pr.draft) prStats.push('- **Status:** Draft');
-    if (data.pr.merged) prStats.push(`- **Merged:** ${formatDate(data.pr.merged_at!)} by @${data.pr.merged_by?.login}`);
+    if (data.pr.merged) prStats.push(`- **Merged:** ${formatDate(data.pr.merged_at!)} by @${data.pr.merged_by?.login ?? 'unknown'}`);
     prStats.push('');
 
     // Insert before _Fetched
@@ -347,7 +347,7 @@ function formatPRMarkdown(data: PRData, options: FormatOptions): string {
     }
 
     if (data.pr.merged) {
-      prInfo.push(`**Merged:** ${formatDate(data.pr.merged_at!)} by @${data.pr.merged_by?.login}`);
+      prInfo.push(`**Merged:** ${formatDate(data.pr.merged_at!)} by @${data.pr.merged_by?.login ?? 'unknown'}`);
     }
   }
 

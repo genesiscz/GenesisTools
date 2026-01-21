@@ -162,7 +162,7 @@ async function interactiveMode(): Promise<void> {
       const parsed = parseGitHubUrl(urlInput, defaultRepo);
 
       if (!parsed && !defaultRepo) {
-        console.log(chalk.red('Could not parse input. Please provide a full GitHub URL.'));
+        console.log(chalk.red('Could not parse input. Please provide a full GitHub URL or use --repo owner/repo option.'));
         continue;
       }
 

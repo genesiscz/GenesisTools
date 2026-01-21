@@ -2,7 +2,6 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { writeFileSync } from 'fs';
 import { getOctokit } from '@app/github/lib/octokit';
 import { withRetry } from '@app/github/lib/rate-limit';
 import { parseGitHubUrl, extractCommentId, detectRepoFromGit } from '@app/github/lib/url-parser';
@@ -126,7 +125,9 @@ async function fetchComments(
   const allComments: GitHubComment[] = [];
   let page = 1;
 
-  while (true) {
+  const MAX_COMMENT_PAGES = 100; // Safety limit: 10,000 comments max
+
+  while (page <= MAX_COMMENT_PAGES) {
     const { data } = await withRetry(
       () =>
         octokit.rest.issues.listComments({
@@ -353,6 +354,12 @@ export async function commentsCommand(
     }
   }
 
+  // Validate --first and --last mutual exclusivity
+  if (options.first && options.last) {
+    console.error(chalk.red('Error: Cannot specify both --first and --last. Use one or the other.'));
+    process.exit(1);
+  }
+
   // Apply --first or --last
   if (options.first && options.first < comments.length) {
     comments = comments.slice(0, options.first);
@@ -397,7 +404,7 @@ export async function commentsCommand(
 
   // Handle output
   if (options.output) {
-    writeFileSync(options.output, output);
+    await Bun.write(options.output, output);
     console.log(chalk.green(`✔ Output written to ${options.output}`));
   } else {
     console.log(output);

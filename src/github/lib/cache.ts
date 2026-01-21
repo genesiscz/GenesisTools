@@ -200,7 +200,7 @@ export function getComments(issueId: number, options: {
   const params: (string | number)[] = [issueId];
 
   if (options.since) {
-    sql += ' AND id > ?';
+    sql += ' AND CAST(id AS INTEGER) > CAST(? AS INTEGER)';
     params.push(options.since);
   }
 

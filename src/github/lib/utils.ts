@@ -59,18 +59,38 @@ export function toCommentRecord(comment: CommentData, issueId: number): CommentR
   };
 }
 
+const DEFAULT_REACTIONS = {
+  total_count: 0,
+  '+1': 0,
+  '-1': 0,
+  laugh: 0,
+  hooray: 0,
+  confused: 0,
+  heart: 0,
+  rocket: 0,
+  eyes: 0,
+};
+
 /**
  * Convert cache record to comment data
  */
 export function fromCommentRecord(record: CommentRecord): CommentData {
+  let reactions = { ...DEFAULT_REACTIONS };
+  try {
+    const parsed = JSON.parse(record.reactions_json || '{}');
+    reactions = { ...DEFAULT_REACTIONS, ...parsed };
+  } catch {
+    // Invalid JSON, use empty reactions
+  }
+
   return {
     id: parseInt(record.id, 10),
-    nodeId: record.id,
+    nodeId: `IC_${record.id}`, // Synthetic node ID since we only store REST id
     author: record.author,
     body: record.body,
     createdAt: record.created_at,
     updatedAt: record.updated_at,
-    reactions: JSON.parse(record.reactions_json || '{}'),
+    reactions,
     isBot: record.is_bot === 1,
     htmlUrl: '',
   };
