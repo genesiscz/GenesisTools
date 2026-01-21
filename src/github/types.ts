@@ -1,0 +1,309 @@
+// GitHub Tool Types
+
+export interface GitHubUrl {
+  owner: string;
+  repo: string;
+  type: 'issue' | 'pr' | 'comment';
+  number: number;
+  commentId?: number;
+}
+
+export interface RepoRecord {
+  id: number;
+  owner: string;
+  name: string;
+}
+
+export interface IssueRecord {
+  id: number;
+  repo_id: number;
+  number: number;
+  type: 'issue' | 'pr';
+  title: string;
+  body: string;
+  state: string;
+  author: string;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+  last_fetched: string;
+  last_comment_cursor: string | null;
+}
+
+export interface CommentRecord {
+  id: string;
+  issue_id: number;
+  author: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
+  reaction_count: number;
+  reactions_json: string;
+  is_bot: number;
+}
+
+export interface TimelineEventRecord {
+  id: string;
+  issue_id: number;
+  event_type: string;
+  actor: string;
+  created_at: string;
+  data_json: string;
+}
+
+export interface FetchMetadataRecord {
+  id: number;
+  issue_id: number;
+  last_full_fetch: string | null;
+  last_incremental_fetch: string | null;
+  total_comments: number;
+  last_comment_date: string | null;
+}
+
+// API Response types
+
+export interface GitHubIssue {
+  id: number;
+  node_id: string;
+  number: number;
+  title: string;
+  body: string | null;
+  state: string;
+  user: GitHubUser | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+  labels: GitHubLabel[];
+  assignees: GitHubUser[];
+  milestone: GitHubMilestone | null;
+  comments: number;
+  pull_request?: { url: string };
+  reactions?: GitHubReactions;
+}
+
+export interface GitHubPullRequest extends GitHubIssue {
+  head: { ref: string; sha: string; repo: { full_name: string } | null };
+  base: { ref: string; sha: string; repo: { full_name: string } | null };
+  merged: boolean;
+  merged_at: string | null;
+  merged_by: GitHubUser | null;
+  draft: boolean;
+  mergeable: boolean | null;
+  mergeable_state: string;
+  additions: number;
+  deletions: number;
+  changed_files: number;
+}
+
+export interface GitHubUser {
+  login: string;
+  id: number;
+  type: string;
+}
+
+export interface GitHubLabel {
+  name: string;
+  color: string;
+  description: string | null;
+}
+
+export interface GitHubMilestone {
+  number: number;
+  title: string;
+  state: string;
+}
+
+export interface GitHubComment {
+  id: number;
+  node_id: string;
+  body: string;
+  user: GitHubUser | null;
+  created_at: string;
+  updated_at: string;
+  reactions?: GitHubReactions;
+  html_url: string;
+}
+
+export interface GitHubReviewComment extends GitHubComment {
+  path: string;
+  diff_hunk: string;
+  position: number | null;
+  original_position: number | null;
+  commit_id: string;
+  line: number | null;
+  side: string;
+  in_reply_to_id?: number;
+}
+
+export interface GitHubReactions {
+  total_count: number;
+  '+1': number;
+  '-1': number;
+  laugh: number;
+  hooray: number;
+  confused: number;
+  heart: number;
+  rocket: number;
+  eyes: number;
+}
+
+export interface GitHubTimelineEvent {
+  id: number;
+  node_id: string;
+  event: string;
+  actor: GitHubUser | null;
+  created_at: string;
+  commit_id?: string;
+  commit_url?: string;
+  label?: GitHubLabel;
+  assignee?: GitHubUser;
+  assigner?: GitHubUser;
+  milestone?: GitHubMilestone;
+  rename?: { from: string; to: string };
+  source?: { type: string; issue: { number: number; title: string; state: string } };
+}
+
+// Command options
+
+export interface IssueCommandOptions {
+  repo?: string;
+  comments?: boolean;
+  limit?: number;
+  all?: boolean;
+  first?: number;
+  last?: number;
+  since?: string;
+  after?: string;
+  before?: string;
+  minReactions?: number;
+  author?: string;
+  noBots?: boolean;
+  includeEvents?: boolean;
+  resolveRefs?: boolean;
+  noResolveRefs?: boolean;
+  full?: boolean;
+  refresh?: boolean;
+  saveLocally?: boolean;
+  format?: 'ai' | 'md' | 'json';
+  output?: string;
+  stats?: boolean;
+  noIndex?: boolean;
+  verbose?: boolean;
+}
+
+export interface PRCommandOptions extends IssueCommandOptions {
+  reviewComments?: boolean;
+  diff?: boolean;
+  commits?: boolean;
+  checks?: boolean;
+  verbose?: boolean;
+}
+
+export interface SearchCommandOptions {
+  type?: 'issue' | 'pr' | 'all';
+  repo?: string;
+  state?: 'open' | 'closed' | 'all';
+  sort?: string;
+  limit?: number;
+  format?: 'ai' | 'md' | 'json';
+  output?: string;
+  verbose?: boolean;
+}
+
+// Output data structures
+
+export interface IssueData {
+  owner: string;
+  repo: string;
+  issue: GitHubIssue;
+  comments: CommentData[];
+  events: TimelineEventData[];
+  stats?: CommentStats;
+  linkedIssues?: LinkedIssue[];
+  fetchedAt: string;
+  cacheCursor?: string;
+}
+
+export interface PRData extends IssueData {
+  pr: GitHubPullRequest;
+  reviewComments?: ReviewCommentData[];
+  commits?: CommitData[];
+  checks?: CheckData[];
+  diff?: string;
+}
+
+export interface CommentData {
+  id: number;
+  nodeId: string;
+  author: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  reactions: GitHubReactions;
+  isBot: boolean;
+  htmlUrl: string;
+  replyTo?: number;
+  quotedText?: string;
+}
+
+export interface ReviewCommentData extends CommentData {
+  path: string;
+  diffHunk: string;
+  line: number | null;
+  side: string;
+}
+
+export interface TimelineEventData {
+  id: string;
+  event: string;
+  actor: string;
+  createdAt: string;
+  details: string;
+}
+
+export interface CommitData {
+  sha: string;
+  message: string;
+  author: string;
+  date: string;
+}
+
+export interface CheckData {
+  name: string;
+  status: string;
+  conclusion: string | null;
+}
+
+export interface CommentStats {
+  total: number;
+  shown: number;
+  uniqueAuthors: number;
+  authorBreakdown: { author: string; count: number }[];
+  totalReactions: number;
+  reactionBreakdown: Record<string, number>;
+  botComments: number;
+  dateRange: { start: string; end: string };
+}
+
+export interface LinkedIssue {
+  number: number;
+  title: string;
+  state: string;
+  linkType: 'fixes' | 'closes' | 'related';
+}
+
+// Search results
+
+export interface SearchResult {
+  type: 'issue' | 'pr';
+  number: number;
+  title: string;
+  state: string;
+  author: string;
+  createdAt: string;
+  updatedAt: string;
+  comments: number;
+  reactions: number;
+  repo: string;
+  url: string;
+}
