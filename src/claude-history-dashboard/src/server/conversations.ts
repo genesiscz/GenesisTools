@@ -33,6 +33,7 @@ export interface SerializableConversationDetail extends SerializableConversation
     content: string
     timestamp?: string
     toolUses?: Array<{ name: string; input?: object }>
+    toolResults?: Array<{ toolUseId: string; content: string; isError?: boolean }>
   }>
 }
 
@@ -73,8 +74,7 @@ function extractMessageContent(msg: { type: string; message?: { content: unknown
         .map((b) => {
           if (b.type === 'text') return b.text || ''
           if (b.type === 'thinking') return b.thinking || ''
-          // Log warning for unhandled content block types to aid debugging
-          console.warn(`[extractMessageContent] Unhandled content block type: ${b.type}`)
+          // tool_use and tool_result are handled separately - no warning needed
           return ''
         })
         .join('\n')
@@ -96,6 +96,22 @@ function extractToolUses(msg: { type: string; message?: { content: unknown } }):
       typeof b === 'object' && b !== null && 'type' in b && b.type === 'tool_use'
     )
     .map((b) => ({ name: b.name, input: b.input }))
+}
+
+// Helper to extract tool results from a message
+function extractToolResults(msg: { type: string; message?: { content: unknown } }): Array<{ toolUseId: string; content: string; isError?: boolean }> {
+  if (msg.type !== 'user') return []
+  const content = (msg as { message?: { content: unknown } }).message?.content
+  if (!Array.isArray(content)) return []
+  return content
+    .filter((b): b is { type: 'tool_result'; tool_use_id: string; content: string | unknown[]; is_error?: boolean } =>
+      typeof b === 'object' && b !== null && 'type' in b && b.type === 'tool_result'
+    )
+    .map((b) => ({
+      toolUseId: b.tool_use_id,
+      content: typeof b.content === 'string' ? b.content : JSON.stringify(b.content, null, 2),
+      isError: b.is_error,
+    }))
 }
 
 /**
@@ -127,6 +143,7 @@ export const getConversation = createServerFn({ method: 'GET' })
         content: extractMessageContent(msg as { type: string; message?: { content: unknown } }),
         timestamp: 'timestamp' in msg ? String(msg.timestamp) : undefined,
         toolUses: extractToolUses(msg as { type: string; message?: { content: unknown } }),
+        toolResults: extractToolResults(msg as { type: string; message?: { content: unknown } }),
       })),
     }
     return detail
