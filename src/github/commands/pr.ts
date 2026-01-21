@@ -2,7 +2,7 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { mkdirSync, existsSync, writeFileSync } from 'fs';
+import { mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { getOctokit } from '@app/github/lib/octokit';
 import { withRetry } from '@app/github/lib/rate-limit';
@@ -20,6 +20,29 @@ import type {
   CheckData,
 } from '@app/github/types';
 import logger from '@app/logger';
+
+// Known bots
+const KNOWN_BOTS = [
+  'dependabot',
+  'renovate',
+  'github-actions',
+  'vercel',
+  'netlify',
+  'codecov',
+  'stale',
+  'linear',
+  'mergify',
+  'semantic-release-bot',
+  'greenkeeper',
+  'snyk-bot',
+];
+
+function isBot(username: string, userType?: string): boolean {
+  if (userType === 'Bot') return true;
+  if (username.endsWith('[bot]')) return true;
+  const lowerName = username.toLowerCase();
+  return KNOWN_BOTS.some(bot => lowerName.includes(bot));
+}
 
 /**
  * Fetch PR details
@@ -77,7 +100,7 @@ async function fetchReviewComments(
 }
 
 /**
- * Fetch PR commits
+ * Fetch PR commits with pagination
  */
 async function fetchCommits(
   owner: string,
@@ -85,28 +108,41 @@ async function fetchCommits(
   number: number
 ): Promise<CommitData[]> {
   const octokit = getOctokit();
+  const allCommits: CommitData[] = [];
+  let page = 1;
+  const MAX_COMMIT_PAGES = 25; // Safety limit: 2,500 commits max
 
-  const { data } = await withRetry(
-    () =>
-      octokit.rest.pulls.listCommits({
-        owner,
-        repo,
-        pull_number: number,
-        per_page: 100,
-      }),
-    { label: `GET /repos/${owner}/${repo}/pulls/${number}/commits` }
-  );
+  while (page <= MAX_COMMIT_PAGES) {
+    const { data } = await withRetry(
+      () =>
+        octokit.rest.pulls.listCommits({
+          owner,
+          repo,
+          pull_number: number,
+          per_page: 100,
+          page,
+        }),
+      { label: `GET /repos/${owner}/${repo}/pulls/${number}/commits (page ${page})` }
+    );
 
-  return data.map(commit => ({
-    sha: commit.sha.slice(0, 7),
-    message: commit.commit.message.split('\n')[0],
-    author: commit.author?.login || commit.commit.author?.name || 'unknown',
-    date: commit.commit.author?.date || '',
-  }));
+    allCommits.push(...data.map(commit => ({
+      sha: commit.sha.slice(0, 7),
+      message: commit.commit.message.split('\n')[0],
+      author: commit.author?.login || commit.commit.author?.name || 'unknown',
+      date: commit.commit.author?.date || '',
+    })));
+
+    if (data.length < 100) {
+      break;
+    }
+    page++;
+  }
+
+  return allCommits;
 }
 
 /**
- * Fetch PR checks
+ * Fetch PR checks with pagination
  */
 async function fetchChecks(
   owner: string,
@@ -114,23 +150,36 @@ async function fetchChecks(
   ref: string
 ): Promise<CheckData[]> {
   const octokit = getOctokit();
+  const allChecks: CheckData[] = [];
+  let page = 1;
+  const MAX_CHECK_PAGES = 10; // Safety limit: 1,000 checks max
 
-  const { data } = await withRetry(
-    () =>
-      octokit.rest.checks.listForRef({
-        owner,
-        repo,
-        ref,
-        per_page: 100,
-      }),
-    { label: `GET /repos/${owner}/${repo}/commits/${ref}/check-runs` }
-  );
+  while (page <= MAX_CHECK_PAGES) {
+    const { data } = await withRetry(
+      () =>
+        octokit.rest.checks.listForRef({
+          owner,
+          repo,
+          ref,
+          per_page: 100,
+          page,
+        }),
+      { label: `GET /repos/${owner}/${repo}/commits/${ref}/check-runs (page ${page})` }
+    );
 
-  return data.check_runs.map(check => ({
-    name: check.name,
-    status: check.status,
-    conclusion: check.conclusion,
-  }));
+    allChecks.push(...data.check_runs.map(check => ({
+      name: check.name,
+      status: check.status,
+      conclusion: check.conclusion,
+    })));
+
+    if (data.check_runs.length < 100) {
+      break;
+    }
+    page++;
+  }
+
+  return allChecks;
 }
 
 /**
@@ -177,7 +226,7 @@ function toReviewCommentData(comment: GitHubReviewComment): ReviewCommentData {
       rocket: 0,
       eyes: 0,
     },
-    isBot: false,
+    isBot: isBot(comment.user?.login || '', comment.user?.type),
     htmlUrl: comment.html_url,
     path: comment.path,
     diffHunk: comment.diff_hunk,
@@ -239,9 +288,6 @@ export async function prCommand(
     last_comment_cursor: null,
   });
 
-  // Get issue record for potential comment caching
-  // const issueRecord = getIssue(repoRecord.id, number)!;
-  // Note: Comment fetching could be added here using issueRecord
 
   // Fetch additional PR-specific data
   let reviewComments: ReviewCommentData[] = [];
@@ -292,14 +338,8 @@ export async function prCommand(
     fetchedAt: new Date().toISOString(),
   };
 
-  // If we also want regular comments, delegate to issue command
-  if (options.comments !== false) {
-    // Use issue command to get comments and merge
-    console.log(chalk.dim('\nAlso fetching issue comments...'));
-    // For simplicity, run issue command with JSON output and parse
-    // In a real implementation, we'd refactor to share the fetch logic
-    // For now, we'll just call the issue command separately
-  }
+  // TODO: Integrate regular issue comments if options.comments !== false
+  // Currently only review comments are fetched for PRs
 
   // Format output
   const format = options.format || 'ai';
@@ -308,7 +348,7 @@ export async function prCommand(
 
   // Handle output destination
   if (options.output) {
-    writeFileSync(options.output, output);
+    await Bun.write(options.output, output);
     console.log(chalk.green(`✔ Output written to ${options.output}`));
   } else if (options.saveLocally) {
     const localDir = join(process.cwd(), '.claude', 'github');
@@ -317,7 +357,7 @@ export async function prCommand(
     }
     const filename = `${owner}-${repo}-pr-${number}.${format === 'json' ? 'json' : 'md'}`;
     const filepath = join(localDir, filename);
-    writeFileSync(filepath, output);
+    await Bun.write(filepath, output);
     console.log(chalk.green(`✔ Output saved to ${filepath}`));
   } else {
     console.log(output);

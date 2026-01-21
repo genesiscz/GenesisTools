@@ -2,7 +2,6 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { writeFileSync } from 'fs';
 import { getOctokit } from '@app/github/lib/octokit';
 import { withRetry } from '@app/github/lib/rate-limit';
 import { parseRepo } from '@app/github/lib/url-parser';
@@ -124,7 +123,7 @@ export async function searchCommand(
   const output = formatSearchResults(results, format);
 
   if (options.output) {
-    writeFileSync(options.output, output);
+    await Bun.write(options.output, output);
     console.log(chalk.green(`✔ Output written to ${options.output}`));
   } else {
     console.log(output);
