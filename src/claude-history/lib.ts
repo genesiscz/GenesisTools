@@ -9,6 +9,23 @@ import { resolve, basename, sep } from "path";
 import { createReadStream } from "fs";
 import { stat } from "fs/promises";
 import { createInterface } from "readline";
+import {
+	type DailyStats,
+	type DateRange,
+	getDatabase,
+	getFileIndex,
+	upsertFileIndex,
+	getDailyStats,
+	upsertDailyStats,
+	getDailyStatsInRange,
+	getCachedDates,
+	getCachedTotals,
+	updateCachedTotals,
+	invalidateToday as _invalidateToday,
+	aggregateDailyStats,
+	setCacheMeta,
+	getCacheStats as _getCacheStats,
+} from "./cache";
 import type {
 	ConversationMessage,
 	SearchFilters,
@@ -880,6 +897,7 @@ export interface ConversationStats {
 	projectCounts: Record<string, number>;
 	toolCounts: Record<string, number>;
 	dailyActivity: Record<string, number>;
+	hourlyActivity: Record<string, number>;
 	subagentCount: number;
 }
 
@@ -892,6 +910,7 @@ export async function getConversationStats(): Promise<ConversationStats> {
 		projectCounts: {},
 		toolCounts: {},
 		dailyActivity: {},
+		hourlyActivity: {},
 		subagentCount: 0,
 	};
 
@@ -909,10 +928,12 @@ export async function getConversationStats(): Promise<ConversationStats> {
 		if (isSubagent) stats.subagentCount++;
 
 		for (const msg of messages) {
-			// Track daily activity
+			// Track daily and hourly activity
 			if ("timestamp" in msg && msg.timestamp) {
 				const date = new Date(msg.timestamp as string).toISOString().split("T")[0];
+				const hour = new Date(msg.timestamp as string).getHours().toString();
 				stats.dailyActivity[date] = (stats.dailyActivity[date] || 0) + 1;
+				stats.hourlyActivity[hour] = (stats.hourlyActivity[hour] || 0) + 1;
 			}
 
 			// Track tool usage
@@ -977,3 +998,296 @@ export function parseDate(dateStr: string): Date {
 	// ISO date or other formats
 	return new Date(dateStr);
 }
+
+// =============================================================================
+// Cached Statistics
+// =============================================================================
+
+export interface FileStats {
+	conversations: number;
+	messages: number;
+	subagentSessions: number;
+	toolCounts: Record<string, number>;
+	dailyActivity: Record<string, number>;
+	hourlyActivity: Record<string, number>;
+	firstDate: string | null;
+	lastDate: string | null;
+}
+
+/**
+ * Compute stats for a single JSONL file
+ */
+export async function computeFileStats(filePath: string): Promise<FileStats> {
+	const messages = await parseJsonlFile(filePath);
+	const isSubagent = filePath.includes("/subagents/") || basename(filePath).startsWith("agent-");
+
+	const stats: FileStats = {
+		conversations: 1,
+		messages: messages.length,
+		subagentSessions: isSubagent ? 1 : 0,
+		toolCounts: {},
+		dailyActivity: {},
+		hourlyActivity: {},
+		firstDate: null,
+		lastDate: null,
+	};
+
+	let minDate: string | null = null;
+	let maxDate: string | null = null;
+
+	for (const msg of messages) {
+		// Track daily activity
+		if ("timestamp" in msg && msg.timestamp) {
+			const dateStr = new Date(msg.timestamp as string).toISOString().split("T")[0];
+			const hour = new Date(msg.timestamp as string).getHours().toString();
+
+			stats.dailyActivity[dateStr] = (stats.dailyActivity[dateStr] || 0) + 1;
+			stats.hourlyActivity[hour] = (stats.hourlyActivity[hour] || 0) + 1;
+
+			if (!minDate || dateStr < minDate) minDate = dateStr;
+			if (!maxDate || dateStr > maxDate) maxDate = dateStr;
+		}
+
+		// Track tool usage
+		const toolUses = extractToolUses(msg);
+		for (const tool of toolUses) {
+			stats.toolCounts[tool.name] = (stats.toolCounts[tool.name] || 0) + 1;
+		}
+	}
+
+	stats.firstDate = minDate;
+	stats.lastDate = maxDate;
+
+	return stats;
+}
+
+/**
+ * Process a file and update cache incrementally
+ */
+export async function processFileForCache(filePath: string): Promise<FileStats | null> {
+	try {
+		const fileStat = await stat(filePath);
+		const mtime = Math.floor(fileStat.mtimeMs);
+		const project = extractProjectName(filePath);
+		const isSubagent = filePath.includes("/subagents/") || basename(filePath).startsWith("agent-");
+
+		// Check if file is already indexed and unchanged
+		const existing = getFileIndex(filePath);
+		if (existing && existing.mtime === mtime) {
+			return null; // File unchanged, skip
+		}
+
+		// Compute stats for this file
+		const fileStats = await computeFileStats(filePath);
+
+		// Update file index
+		upsertFileIndex({
+			filePath,
+			mtime,
+			messageCount: fileStats.messages,
+			firstDate: fileStats.firstDate,
+			lastDate: fileStats.lastDate,
+			project,
+			isSubagent,
+			lastIndexed: new Date().toISOString(),
+		});
+
+		// Update daily stats for each date in this file
+		for (const [dateStr, messageCount] of Object.entries(fileStats.dailyActivity)) {
+			const existingDaily = getDailyStats(dateStr);
+			const toolCountsForDate: Record<string, number> = {};
+
+			// Distribute tool counts proportionally (simplified: assign to first date)
+			if (dateStr === fileStats.firstDate) {
+				Object.assign(toolCountsForDate, fileStats.toolCounts);
+			}
+
+			const hourlyForDate: Record<string, number> = {};
+			if (dateStr === fileStats.firstDate) {
+				Object.assign(hourlyForDate, fileStats.hourlyActivity);
+			}
+
+			const newDaily: DailyStats = {
+				date: dateStr,
+				project: "__all__",
+				conversations: (existingDaily?.conversations || 0) + (dateStr === fileStats.firstDate ? 1 : 0),
+				messages: (existingDaily?.messages || 0) + messageCount,
+				subagentSessions: (existingDaily?.subagentSessions || 0) + (dateStr === fileStats.firstDate && isSubagent ? 1 : 0),
+				toolCounts: mergeCounts(existingDaily?.toolCounts || {}, toolCountsForDate),
+				hourlyActivity: mergeCounts(existingDaily?.hourlyActivity || {}, hourlyForDate),
+			};
+
+			upsertDailyStats(newDaily);
+		}
+
+		return fileStats;
+	} catch (error) {
+		console.error(`Error processing file ${filePath}:`, error);
+		return null;
+	}
+}
+
+function mergeCounts(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
+	const result = { ...a };
+	for (const [key, value] of Object.entries(b)) {
+		result[key] = (result[key] || 0) + value;
+	}
+	return result;
+}
+
+/**
+ * Get conversation stats using cache (incremental updates)
+ * @param options.forceRefresh - Force full re-scan (ignores cache)
+ * @param options.dateRange - Optional date range to limit results
+ * @param options.onProgress - Callback for progress updates
+ */
+export async function getConversationStatsWithCache(options: {
+	forceRefresh?: boolean;
+	dateRange?: DateRange;
+	onProgress?: (processed: number, total: number, currentDate?: string) => void;
+} = {}): Promise<ConversationStats> {
+	const { forceRefresh = false, dateRange, onProgress } = options;
+
+	// If forcing refresh, invalidate today's cache
+	if (forceRefresh) {
+		_invalidateToday();
+	}
+
+	// Get all conversation files
+	const files = await findConversationFiles({});
+	const totalFiles = files.length;
+
+	// Get cached dates to know what we already have
+	const cachedDates = new Set(getCachedDates());
+	const today = new Date().toISOString().split("T")[0];
+
+	// Always invalidate today since it might have new data
+	cachedDates.delete(today);
+
+	// Process files that need updating
+	let processed = 0;
+	for (const filePath of files) {
+		const fileStats = await processFileForCache(filePath);
+		processed++;
+
+		if (onProgress && fileStats) {
+			onProgress(processed, totalFiles, fileStats.firstDate || undefined);
+		}
+	}
+
+	// Update last full update timestamp
+	setCacheMeta("last_full_update", new Date().toISOString());
+
+	// Get all daily stats (or filtered by date range)
+	const dailyStats = getDailyStatsInRange(dateRange || {});
+
+	// Aggregate into final stats
+	const aggregated = aggregateDailyStats(dailyStats);
+
+	// Get project counts from file index
+	const db = getDatabase();
+	const projectRows = db
+		.query(
+			`
+    SELECT project, COUNT(*) as count
+    FROM file_index
+    WHERE project IS NOT NULL
+    GROUP BY project
+    ORDER BY count DESC
+  `,
+		)
+		.all() as Array<{ project: string; count: number }>;
+
+	const projectCounts: Record<string, number> = {};
+	for (const row of projectRows) {
+		projectCounts[row.project] = row.count;
+	}
+
+	// Update totals cache
+	updateCachedTotals({
+		totalConversations: aggregated.totalConversations,
+		totalMessages: aggregated.totalMessages,
+		totalSubagents: aggregated.subagentCount,
+		projectCount: Object.keys(projectCounts).length,
+	});
+
+	return {
+		totalConversations: aggregated.totalConversations,
+		totalMessages: aggregated.totalMessages,
+		projectCounts,
+		toolCounts: aggregated.toolCounts,
+		dailyActivity: aggregated.dailyActivity,
+		hourlyActivity: aggregated.hourlyActivity,
+		subagentCount: aggregated.subagentCount,
+	};
+}
+
+/**
+ * Get quick stats from cache (instant, no file scanning)
+ * Returns null if cache is empty
+ */
+export function getQuickStatsFromCache(): {
+	totalConversations: number;
+	totalMessages: number;
+	subagentCount: number;
+	projectCount: number;
+} | null {
+	const totals = getCachedTotals();
+	if (!totals) return null;
+
+	return {
+		totalConversations: totals.totalConversations,
+		totalMessages: totals.totalMessages,
+		subagentCount: totals.totalSubagents,
+		projectCount: totals.projectCount,
+	};
+}
+
+/**
+ * Get stats for a specific date range from cache
+ * Fast if data is already cached, triggers background processing if not
+ */
+export async function getStatsForDateRange(range: DateRange): Promise<ConversationStats> {
+	// First try to get from cache
+	const dailyStats = getDailyStatsInRange(range);
+
+	if (dailyStats.length > 0) {
+		const aggregated = aggregateDailyStats(dailyStats);
+
+		// Get project counts
+		const db = getDatabase();
+		const projectRows = db
+			.query(
+				`
+      SELECT project, COUNT(*) as count
+      FROM file_index
+      WHERE project IS NOT NULL
+      GROUP BY project
+      ORDER BY count DESC
+    `,
+			)
+			.all() as Array<{ project: string; count: number }>;
+
+		const projectCounts: Record<string, number> = {};
+		for (const row of projectRows) {
+			projectCounts[row.project] = row.count;
+		}
+
+		return {
+			totalConversations: aggregated.totalConversations,
+			totalMessages: aggregated.totalMessages,
+			projectCounts,
+			toolCounts: aggregated.toolCounts,
+			dailyActivity: aggregated.dailyActivity,
+			hourlyActivity: aggregated.hourlyActivity,
+			subagentCount: aggregated.subagentCount,
+		};
+	}
+
+	// No cached data, do full computation
+	return getConversationStatsWithCache({ dateRange: range });
+}
+
+// Re-export cache functions for external use
+export { invalidateToday, getCachedTotals, getCacheStats } from "./cache";
+export type { DateRange, DailyStats } from "./cache";
