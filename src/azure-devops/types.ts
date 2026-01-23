@@ -101,6 +101,8 @@ export interface WorkItemCache {
 export interface QueryCache {
   items: CacheEntry[];
   fetchedAt: string;
+  category?: string;      // Query-level category (applied to new work items)
+  taskFolders?: boolean;  // Query-level task folder setting
 }
 
 export interface ChangeInfo {

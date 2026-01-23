@@ -391,7 +391,7 @@ async function handleQuery(input: string, format: OutputFormat, forceRefresh: bo
     },
   }));
 
-  // Save to global cache
+  // Save to global cache (including query-level category/taskFolders if provided)
   const cacheData: QueryCache = {
     items: items.map(item => ({
       id: item.id,
@@ -407,6 +407,9 @@ async function handleQuery(input: string, format: OutputFormat, forceRefresh: bo
       url: item.url,
     })),
     fetchedAt: new Date().toISOString(),
+    // Store query-level settings for work item downloads
+    category: category ?? rawCache?.category,
+    taskFolders: taskFolders ?? rawCache?.taskFolders,
   };
   await saveGlobalCache("query", queryId, cacheData);
 
@@ -425,9 +428,13 @@ async function handleQuery(input: string, format: OutputFormat, forceRefresh: bo
 
   // Download all work items if requested
   if (downloadWorkitems && items.length > 0) {
-    console.log(`\n📥 Downloading ${items.length} work items${category ? ` to category: ${category}` : ""}${taskFolders ? " (with task folders)" : ""}...\n`);
+    // Use cached query settings as defaults if not explicitly provided
+    const effectiveCategory = cacheData.category;
+    const effectiveTaskFolders = cacheData.taskFolders ?? false;
+
+    console.log(`\n📥 Downloading ${items.length} work items${effectiveCategory ? ` to category: ${effectiveCategory}` : ""}${effectiveTaskFolders ? " (with task folders)" : ""}...\n`);
     const ids = items.map(item => item.id).join(",");
-    await handleWorkItem(ids, format, forceRefresh, category, taskFolders);
+    await handleWorkItem(ids, format, forceRefresh, effectiveCategory, effectiveTaskFolders);
   }
 }
 
