@@ -108,9 +108,14 @@ export function extractProjectName(filePath: string): string {
 	// Extract project name from path like:
 	// /Users/Martin/.claude/projects/-Users-Martin-Tresors-Projects-GenesisTools/...
 	const projectDir = filePath.replace(PROJECTS_DIR + sep, "").split(sep)[0];
-	// Convert -Users-Martin-Tresors-Projects-GenesisTools to GenesisTools
-	const parts = projectDir.split("-");
-	return parts[parts.length - 1] || projectDir;
+	// Only treat as encoded path if it starts with dash (like "-Users-Martin-...")
+	// This preserves legitimate dashed project names like "my-cool-project"
+	if (projectDir.startsWith("-")) {
+		// Convert -Users-Martin-Tresors-Projects-GenesisTools to GenesisTools
+		const parts = projectDir.split("-");
+		return parts[parts.length - 1] || projectDir;
+	}
+	return projectDir;
 }
 
 // =============================================================================

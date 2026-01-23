@@ -88,14 +88,14 @@ async function main() {
     // Get monitoring path from argument
     const monitorPath = program.args[0] || DEFAULT_PATH;
 
-    // Validate duration
-    if (options.duration! <= 0) {
+    // Validate duration (check for NaN and non-positive values)
+    if (!Number.isFinite(options.duration) || options.duration! <= 0) {
         logger.error("Duration must be a positive number");
         process.exit(1);
     }
 
-    // Validate top count
-    if (options.top! <= 0) {
+    // Validate top count (check for NaN and non-positive values)
+    if (!Number.isFinite(options.top) || options.top! <= 0) {
         logger.error("Top count must be a positive number");
         process.exit(1);
     }

@@ -96,7 +96,7 @@ async function main() {
         .description("Debug tool for MCP server configurations")
         .option("-v, --verbose", "Enable verbose logging")
         .option("-e, --env", "Execute 'env' command automatically")
-        .option("-?, --help-full", "Show extended help with examples")
+        .option("--help-full", "Show extended help (use --help-full, not -h)")
         .argument("[command...]", "Command and arguments to execute")
         .parse();
 

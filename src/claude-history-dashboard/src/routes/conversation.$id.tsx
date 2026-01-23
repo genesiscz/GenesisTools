@@ -213,7 +213,7 @@ function MessageCard({
           <div className={`${showTextContent ? 'mt-3 pt-3 border-t border-border' : ''} space-y-2`}>
             {message.toolUses.map((tool, i) => {
               const formatted = formatToolSummary(tool)
-              const inputJson = JSON.stringify(tool.input, null, 2)
+              const inputJson = tool.input ? JSON.stringify(tool.input, null, 2) : '{}'
               const isShort = countLines(inputJson) <= 10
 
               return (

@@ -53,6 +53,12 @@ export interface SerializableStats {
 
 // Helper to serialize a conversation result
 function serializeResult(result: Awaited<ReturnType<typeof getAllConversations>>[0]): SerializableConversation {
+  // Use userMessageCount + assistantMessageCount when available (from getAllConversations),
+  // otherwise fall back to matchedMessages.length (from searchConversations)
+  const messageCount = (result.userMessageCount !== undefined && result.assistantMessageCount !== undefined)
+    ? result.userMessageCount + result.assistantMessageCount
+    : result.matchedMessages.length
+
   return {
     filePath: result.filePath,
     project: result.project,
@@ -61,7 +67,7 @@ function serializeResult(result: Awaited<ReturnType<typeof getAllConversations>>
     summary: result.summary,
     customTitle: result.customTitle,
     gitBranch: result.gitBranch,
-    messageCount: result.matchedMessages.length,
+    messageCount,
     isSubagent: result.isSubagent,
   }
 }

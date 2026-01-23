@@ -224,7 +224,7 @@ export async function installServer(
                 // Interactive: ask for env
                 try {
                     const inputEnv = await input({
-                        message: 'Enter ENV variables ("KEY=value" format or JSON) or leave empty:',
+                        message: 'Enter ENV variables (JSON format recommended) or leave empty:',
                         default: serverConfig?.env ? JSON.stringify(serverConfig.env) : "",
                     });
 
@@ -316,6 +316,8 @@ export async function installServer(
             logger.info(`✓ Installed '${finalServerName}' to ${providerName}`);
         } else if (result === WriteResult.Rejected) {
             logger.info(`Skipped ${providerName} - user rejected confirmation`);
+        } else if (result === WriteResult.NoChanges) {
+            logger.info(`Skipped ${providerName} - '${finalServerName}' already up-to-date`);
         }
     }
 }
