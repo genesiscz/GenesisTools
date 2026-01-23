@@ -9,8 +9,12 @@ import {
   searchConversations,
   getConversationBySessionId,
   getConversationStats,
+  getConversationStatsWithCache,
+  getQuickStatsFromCache,
+  getStatsForDateRange,
   getAvailableProjects,
   type SearchFilters,
+  type DateRange,
 } from '@app/claude-history/lib'
 
 // Serializable types for client/server communication
@@ -43,6 +47,7 @@ export interface SerializableStats {
   projectCounts: Record<string, number>
   toolCounts: Record<string, number>
   dailyActivity: Record<string, number>
+  hourlyActivity: Record<string, number>
   subagentCount: number
 }
 
@@ -150,12 +155,76 @@ export const getConversation = createServerFn({ method: 'GET' })
   })
 
 /**
- * Get conversation statistics
+ * Get conversation statistics (legacy - full scan)
  */
 export const getStats = createServerFn({ method: 'GET' }).handler(async () => {
   const stats = await getConversationStats()
   return stats as SerializableStats
 })
+
+/**
+ * Get quick stats from cache (instant, for initial page load)
+ * Returns cached totals without scanning files
+ */
+export const getQuickStats = createServerFn({ method: 'GET' }).handler(async () => {
+  const cached = getQuickStatsFromCache()
+
+  if (cached) {
+    return {
+      totalConversations: cached.totalConversations,
+      totalMessages: cached.totalMessages,
+      subagentCount: cached.subagentCount,
+      projectCount: cached.projectCount,
+      isCached: true,
+    }
+  }
+
+  // No cache, compute synchronously (first load)
+  const stats = await getConversationStats()
+  return {
+    totalConversations: stats.totalConversations,
+    totalMessages: stats.totalMessages,
+    subagentCount: stats.subagentCount,
+    projectCount: Object.keys(stats.projectCounts).length,
+    isCached: false,
+  }
+})
+
+export interface QuickStatsResponse {
+  totalConversations: number
+  totalMessages: number
+  subagentCount: number
+  projectCount: number
+  isCached: boolean
+}
+
+/**
+ * Get full stats with caching (incremental updates)
+ * Optionally filter by date range
+ */
+export const getFullStats = createServerFn({ method: 'GET' })
+  .inputValidator((input: { from?: string; to?: string; forceRefresh?: boolean }) => input)
+  .handler(async ({ data }) => {
+    const dateRange: DateRange | undefined =
+      data.from || data.to ? { from: data.from, to: data.to } : undefined
+
+    const stats = await getConversationStatsWithCache({
+      forceRefresh: data.forceRefresh,
+      dateRange,
+    })
+
+    return stats as SerializableStats
+  })
+
+/**
+ * Get stats for a specific date range from cache
+ */
+export const getStatsInRange = createServerFn({ method: 'GET' })
+  .inputValidator((input: { from: string; to: string }) => input)
+  .handler(async ({ data }) => {
+    const stats = await getStatsForDateRange({ from: data.from, to: data.to })
+    return stats as SerializableStats
+  })
 
 /**
  * Get available projects
