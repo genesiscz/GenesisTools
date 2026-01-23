@@ -1,170 +1,216 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { getStats, getProjects } from '@/server/conversations'
+import { Suspense, useState } from 'react'
+import { createFileRoute, Link, Await, defer } from '@tanstack/react-router'
+import { getQuickStats, getFullStats, getStatsInRange, type QuickStatsResponse, type SerializableStats } from '@/server/conversations'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, MessageSquare, FolderOpen, Wrench, Activity, Bot, TrendingUp } from 'lucide-react'
+import { ArrowLeft, MessageSquare, FolderOpen, Wrench, Activity, Bot, TrendingUp, RefreshCw, Calendar } from 'lucide-react'
+import { ActivityChartSkeleton } from '@/components/stats/ChartSkeleton'
+import { ProjectListSkeleton, ToolBadgesSkeleton } from '@/components/stats/ProjectListSkeleton'
+import { DateRangePicker } from '@/components/ui/date-range-picker'
+import { HourlyHeatmap } from '@/components/stats/HourlyHeatmap'
+import { ToolCategoriesChart } from '@/components/stats/ToolCategoriesChart'
+import { Skeleton } from '@/components/ui/skeleton'
 
 export const Route = createFileRoute('/stats')({
   component: StatsPage,
   loader: async () => {
-    const [stats, projects] = await Promise.all([getStats(), getProjects()])
-    return { stats, projects }
+    // Quick stats load immediately (from cache)
+    const quickStats = await getQuickStats()
+
+    // Full stats deferred (stream in background)
+    return {
+      quickStats,
+      fullStats: defer(getFullStats({ data: { forceRefresh: false } })),
+    }
   },
 })
 
 function StatsPage() {
-  const { stats, projects } = Route.useLoaderData()
+  const { quickStats, fullStats } = Route.useLoaderData()
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [dateRange, setDateRange] = useState<{ from: string; to: string }>({
+    from: '',
+    to: new Date().toISOString().split('T')[0],
+  })
+  const [filteredStats, setFilteredStats] = useState<SerializableStats | null>(null)
+  const [isLoadingRange, setIsLoadingRange] = useState(false)
 
-  // Sort projects by conversation count
-  const sortedProjects = Object.entries(stats.projectCounts)
-    .sort(([, a], [, b]) => b - a)
-    .slice(0, 10)
+  const handleRefresh = () => {
+    setIsRefreshing(true)
+    // Force refresh by reloading with a query param
+    const url = new URL(window.location.href)
+    url.searchParams.set('refresh', Date.now().toString())
+    window.location.href = url.toString()
+  }
 
-  // Sort tools by usage count
-  const sortedTools = Object.entries(stats.toolCounts)
-    .sort(([, a], [, b]) => b - a)
-    .slice(0, 15)
+  const handleDateRangeChange = async (range: { from: string; to: string }) => {
+    setDateRange(range)
 
-  // Get recent activity (last 14 days)
-  const recentDays = Object.entries(stats.dailyActivity)
-    .sort(([a], [b]) => b.localeCompare(a))
-    .slice(0, 14)
-    .reverse()
-
-  const maxDailyMessages = Math.max(...recentDays.map(([, count]) => count), 1)
+    // Only fetch if we have both dates
+    if (range.from && range.to) {
+      setIsLoadingRange(true)
+      try {
+        const stats = await getStatsInRange({ data: range })
+        setFilteredStats(stats)
+      } catch (error) {
+        console.error('Failed to fetch stats for date range:', error)
+      } finally {
+        setIsLoadingRange(false)
+      }
+    } else {
+      setFilteredStats(null)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b border-border">
         <div className="max-w-7xl mx-auto px-6 py-6">
-          <Link
-            to="/"
-            className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-4"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to conversations
-          </Link>
+          <div className="flex items-center justify-between mb-4">
+            <Link
+              to="/"
+              className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back to conversations
+            </Link>
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          </div>
           <h1 className="text-3xl font-black tracking-tight text-foreground">
             Statistics
           </h1>
           <p className="text-muted-foreground mt-1">
             Overview of your Claude Code usage
+            {quickStats.isCached && (
+              <span className="text-xs ml-2 text-cyan-400">(cached)</span>
+            )}
           </p>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-8">
-        {/* Overview Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          <StatCard
-            icon={<MessageSquare className="w-5 h-5" />}
-            label="Total Conversations"
-            value={stats.totalConversations}
-            color="primary"
-          />
-          <StatCard
-            icon={<Activity className="w-5 h-5" />}
-            label="Total Messages"
-            value={stats.totalMessages}
-            color="secondary"
-          />
-          <StatCard
-            icon={<FolderOpen className="w-5 h-5" />}
-            label="Projects"
-            value={projects.length}
-            color="primary"
-          />
-          <StatCard
-            icon={<Bot className="w-5 h-5" />}
-            label="Subagent Sessions"
-            value={stats.subagentCount}
-            color="secondary"
-          />
-        </div>
-
-        {/* Activity Chart */}
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-primary" />
-              Recent Activity (Last 14 Days)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-end gap-1 h-32">
-              {recentDays.map(([date, count]) => (
-                <div key={date} className="flex-1 flex flex-col items-center justify-end h-full gap-1">
-                  <div
-                    className="w-full bg-primary rounded-t opacity-80 hover:opacity-100 transition-opacity"
-                    style={{ height: `${(count / maxDailyMessages) * 100}%`, minHeight: count > 0 ? '4px' : '0' }}
-                    title={`${date}: ${count} messages`}
-                  />
-                  <span className="text-[8px] text-muted-foreground rotate-45 origin-left translate-y-2">
-                    {new Date(date).getUTCDate()}
-                  </span>
-                </div>
-              ))}
+      {/* Date Range Filter */}
+      <div className="max-w-7xl mx-auto px-6 pt-6">
+        <Card className="mb-6">
+          <CardContent className="py-4">
+            <div className="flex items-center gap-4">
+              <Calendar className="w-5 h-5 text-primary" />
+              <span className="text-sm font-medium text-foreground">Filter by date:</span>
+              <DateRangePicker value={dateRange} onChange={handleDateRangeChange} />
+              {isLoadingRange && (
+                <span className="text-xs text-cyan-400 animate-pulse">Loading...</span>
+              )}
             </div>
           </CardContent>
         </Card>
+      </div>
 
+      <main className="max-w-7xl mx-auto px-6 pb-8">
+        {/* Quick Stats Cards - Load immediately */}
+        <QuickStatCards stats={quickStats} />
+
+        {/* Activity Chart - Deferred or filtered */}
+        {filteredStats ? (
+          <ActivityChart stats={filteredStats} />
+        ) : (
+          <Suspense fallback={<ActivityChartSkeleton />}>
+            <Await promise={fullStats}>
+              {(stats) => <ActivityChart stats={stats} />}
+            </Await>
+          </Suspense>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+          {/* Projects - Deferred or filtered */}
+          {filteredStats ? (
+            <TopProjectsCard projectCounts={filteredStats.projectCounts} />
+          ) : (
+            <Suspense fallback={<ProjectListSkeleton />}>
+              <Await promise={fullStats}>
+                {(stats) => <TopProjectsCard projectCounts={stats.projectCounts} />}
+              </Await>
+            </Suspense>
+          )}
+
+          {/* Tool Usage - Deferred or filtered */}
+          {filteredStats ? (
+            <TopToolsCard toolCounts={filteredStats.toolCounts} />
+          ) : (
+            <Suspense fallback={<ToolBadgesSkeleton />}>
+              <Await promise={fullStats}>
+                {(stats) => <TopToolsCard toolCounts={stats.toolCounts} />}
+              </Await>
+            </Suspense>
+          )}
+        </div>
+
+        {/* Extended Analytics */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Projects */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FolderOpen className="w-5 h-5 text-secondary" />
-                Top Projects
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {sortedProjects.map(([project, count]) => (
-                  <div key={project} className="flex items-center gap-3">
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm text-foreground truncate">
-                          {project}
-                        </span>
-                        <span className="text-xs text-muted-foreground">{count}</span>
-                      </div>
-                      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-secondary rounded-full"
-                          style={{
-                            width: `${(count / (sortedProjects[0]?.[1] || 1)) * 100}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+          {/* Hourly Heatmap - Deferred or filtered */}
+          {filteredStats ? (
+            <HourlyHeatmap hourlyActivity={filteredStats.hourlyActivity} />
+          ) : (
+            <Suspense fallback={<HourlyHeatmapSkeleton />}>
+              <Await promise={fullStats}>
+                {(stats) => <HourlyHeatmap hourlyActivity={stats.hourlyActivity} />}
+              </Await>
+            </Suspense>
+          )}
 
-          {/* Tool Usage */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Wrench className="w-5 h-5 text-primary" />
-                Top Tools Used
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap gap-2">
-                {sortedTools.map(([tool, count]) => (
-                  <Badge key={tool}>
-                    {tool.replace(/^mcp__\w+__/, '')}
-                    <span className="ml-1.5 font-bold">{count}</span>
-                  </Badge>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+          {/* Tool Categories - Deferred or filtered */}
+          {filteredStats ? (
+            <ToolCategoriesChart toolCounts={filteredStats.toolCounts} />
+          ) : (
+            <Suspense fallback={<ToolCategoriesSkeleton />}>
+              <Await promise={fullStats}>
+                {(stats) => <ToolCategoriesChart toolCounts={stats.toolCounts} />}
+              </Await>
+            </Suspense>
+          )}
         </div>
       </main>
+    </div>
+  )
+}
+
+// =============================================================================
+// Quick Stat Cards (load immediately from cache)
+// =============================================================================
+
+function QuickStatCards({ stats }: { stats: QuickStatsResponse }) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <StatCard
+        icon={<MessageSquare className="w-5 h-5" />}
+        label="Total Conversations"
+        value={stats.totalConversations}
+        color="primary"
+      />
+      <StatCard
+        icon={<Activity className="w-5 h-5" />}
+        label="Total Messages"
+        value={stats.totalMessages}
+        color="secondary"
+      />
+      <StatCard
+        icon={<FolderOpen className="w-5 h-5" />}
+        label="Projects"
+        value={stats.projectCount}
+        color="primary"
+      />
+      <StatCard
+        icon={<Bot className="w-5 h-5" />}
+        label="Subagent Sessions"
+        value={stats.subagentCount}
+        color="secondary"
+      />
     </div>
   )
 }
@@ -184,9 +230,9 @@ function StatCard({
 
   return (
     <Card>
-      <CardContent className="pt-6">
-        <div className="flex items-center gap-3">
-          <div className={`p-2 rounded-lg ${isPrimary ? 'bg-primary/15' : 'bg-secondary/15'}`}>
+      <CardContent>
+        <div className="flex items-center gap-4">
+          <div className={`p-3 rounded-lg ${isPrimary ? 'bg-primary/15' : 'bg-secondary/15'}`}>
             <div className={isPrimary ? 'text-primary' : 'text-secondary'}>{icon}</div>
           </div>
           <div>
@@ -195,6 +241,192 @@ function StatCard({
             </p>
             <p className="text-xs text-muted-foreground">{label}</p>
           </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// =============================================================================
+// Activity Chart (deferred)
+// =============================================================================
+
+interface FullStats {
+  totalConversations: number
+  totalMessages: number
+  projectCounts: Record<string, number>
+  toolCounts: Record<string, number>
+  dailyActivity: Record<string, number>
+  subagentCount: number
+}
+
+function ActivityChart({ stats }: { stats: FullStats }) {
+  const recentDays = Object.entries(stats.dailyActivity)
+    .sort(([a], [b]) => b.localeCompare(a))
+    .slice(0, 14)
+    .reverse()
+
+  const maxDailyMessages = Math.max(...recentDays.map(([, count]) => count), 1)
+
+  return (
+    <Card className="mb-8">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <TrendingUp className="w-5 h-5 text-primary" />
+          Recent Activity (Last 14 Days)
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-end gap-1 h-32">
+          {recentDays.map(([date, count]) => (
+            <div key={date} className="flex-1 flex flex-col items-center justify-end h-full gap-1">
+              <div
+                className="w-full bg-primary rounded-t opacity-80 hover:opacity-100 transition-opacity"
+                style={{ height: `${(count / maxDailyMessages) * 100}%`, minHeight: count > 0 ? '4px' : '0' }}
+                title={`${date}: ${count} messages`}
+              />
+              <span className="text-[8px] text-muted-foreground rotate-45 origin-left translate-y-2">
+                {new Date(date).getUTCDate()}
+              </span>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// =============================================================================
+// Top Projects Card (deferred)
+// =============================================================================
+
+function TopProjectsCard({ projectCounts }: { projectCounts: Record<string, number> }) {
+  const sortedProjects = Object.entries(projectCounts)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 10)
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <FolderOpen className="w-5 h-5 text-secondary" />
+          Top Projects
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-3">
+          {sortedProjects.map(([project, count]) => (
+            <div key={project} className="flex items-center gap-3">
+              <div className="flex-1">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-foreground truncate">
+                    {project}
+                  </span>
+                  <span className="text-xs text-muted-foreground">{count}</span>
+                </div>
+                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-secondary rounded-full"
+                    style={{
+                      width: `${(count / (sortedProjects[0]?.[1] || 1)) * 100}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// =============================================================================
+// Top Tools Card (deferred)
+// =============================================================================
+
+function TopToolsCard({ toolCounts }: { toolCounts: Record<string, number> }) {
+  const sortedTools = Object.entries(toolCounts)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 15)
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Wrench className="w-5 h-5 text-primary" />
+          Top Tools Used
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-wrap gap-2">
+          {sortedTools.map(([tool, count]) => (
+            <Badge key={tool}>
+              {tool.replace(/^mcp__\w+__/, '')}
+              <span className="ml-1.5 font-bold">{count}</span>
+            </Badge>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// =============================================================================
+// Skeleton Components for Extended Analytics
+// =============================================================================
+
+function HourlyHeatmapSkeleton() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Skeleton className="w-5 h-5 rounded" />
+          <Skeleton className="h-5 w-36" />
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-12 gap-1 mb-4">
+          {Array.from({ length: 24 }).map((_, i) => (
+            <Skeleton
+              key={i}
+              className="aspect-square rounded-sm"
+              style={{ animationDelay: `${i * 50}ms` }}
+            />
+          ))}
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          <Skeleton className="h-3 w-8" />
+          <div className="flex gap-0.5">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="w-3 h-3 rounded-sm" />
+            ))}
+          </div>
+          <Skeleton className="h-3 w-8" />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function ToolCategoriesSkeleton() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Skeleton className="w-5 h-5 rounded" />
+          <Skeleton className="h-5 w-32" />
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Skeleton className="h-8 w-full rounded-lg mb-4" variant="data-stream" />
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Skeleton className="w-3 h-3 rounded-sm" />
+              <Skeleton className="h-3 flex-1" style={{ animationDelay: `${i * 100}ms` }} />
+            </div>
+          ))}
         </div>
       </CardContent>
     </Card>
