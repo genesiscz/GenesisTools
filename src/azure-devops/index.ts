@@ -817,16 +817,18 @@ async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void
       run: async () => {
         const descriptionField = state.fieldSchema?.get("System.Description");
         const descriptionTemplate = descriptionField?.helpText || "";
+        const isRequired = descriptionField?.required || false;
 
         const useDescription = await confirm({
-          message: "Add description?",
-          default: !!state.description,
+          message: isRequired ? "Add description? (required)" : "Add description?",
+          default: isRequired || !!state.description,
         });
 
-        if (useDescription) {
+        if (useDescription || isRequired) {
           state.description = await editor({
-            message: "Description (opens editor):",
+            message: isRequired ? "Description (required, opens editor):" : "Description (opens editor):",
             default: state.description || descriptionTemplate,
+            validate: isRequired ? ((value) => value.trim() ? true : "Description is required") : undefined,
           });
         } else {
           state.description = "";

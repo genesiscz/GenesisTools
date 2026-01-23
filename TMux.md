@@ -15,7 +15,7 @@
 | `tmux a -t name` | Attach to named session |
 | `Ctrl+b d` | **Detach** from session |
 | `Ctrl+b $` | Rename session |
-| `Ctrl+b s` | **Session picker** (fuzzy search) |
+| `Ctrl+b s` | **Session tree** (native list) |
 
 **Project Aliases:**
 ```bash

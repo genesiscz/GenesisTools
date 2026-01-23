@@ -3,6 +3,8 @@ import { Command } from "commander";
 import { search } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
 import logger from "@app/logger";
+import * as path from "path";
+import * as fs from "fs";
 
 const client = new watchman.Client();
 
@@ -21,7 +23,7 @@ Usage: tools watchman [options] [directory]
 Watch a directory for file changes using Facebook's Watchman.
 
 Arguments:
-  [directory]        Path to directory to watch (starts with . or /)
+  [directory]        Path to directory to watch (relative or absolute)
 
 Options:
   -c, --current      Use current working directory
@@ -50,17 +52,22 @@ async function getDirOfInterest(): Promise<string> {
     const args = program.args;
     const arg = args[0];
     if (arg) {
-        if (arg.startsWith(".") || arg.startsWith("/")) {
-            return arg;
+        // Resolve relative paths to absolute
+        const resolved = path.isAbsolute(arg) ? arg : path.resolve(process.cwd(), arg);
+        if (fs.existsSync(resolved)) {
+            return resolved;
         }
-        logger.error(`Invalid directory path provided: ${arg}`);
+        logger.error(`Invalid directory path provided: ${arg} (resolved to ${resolved}, but does not exist)`);
     }
 
     // No valid argument, show interactive selection
     // Get watched directories from watchman
     const watchedDirs: string[] = await new Promise((resolve) => {
         (client as any).command(["watch-list"], (err: unknown, resp: any) => {
-            if (err || !resp || !resp.roots) return resolve([]);
+            if (err || !resp || !resp.roots) {
+                client.end(); // Close client on error
+                return resolve([]);
+            }
             resolve(resp.roots);
         });
     });
@@ -89,9 +96,11 @@ async function getDirOfInterest(): Promise<string> {
         return selected;
     } catch (error) {
         if (error instanceof ExitPromptError) {
+            client.end(); // Close client before exit
             logger.info("Directory selection cancelled by user.");
             process.exit(0);
         }
+        client.end(); // Close client on error
         throw error;
     }
 }

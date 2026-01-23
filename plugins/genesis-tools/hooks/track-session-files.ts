@@ -41,9 +41,13 @@ function cleanupOldSessions() {
   for (const file of files) {
     if (!file.endsWith(".json")) continue;
     const filePath = join(STORAGE_DIR, file);
-    const stats = statSync(filePath);
-    if (stats.mtimeMs < cutoff) {
-      unlinkSync(filePath);
+    try {
+      const stats = statSync(filePath);
+      if (stats.mtimeMs < cutoff) {
+        unlinkSync(filePath);
+      }
+    } catch {
+      // Ignore transient fs errors (file deleted, permissions changed, etc.)
     }
   }
 }
@@ -86,7 +90,10 @@ function trackFile(sessionId: string, filePath: string) {
   }
   sessionData.last_updated = new Date().toISOString();
 
-  writeFileSync(sessionFile, JSON.stringify(sessionData, null, 2));
+  // Atomic write: write to temp file then rename (avoids race conditions)
+  const tempFile = `${sessionFile}.tmp.${Date.now()}`;
+  writeFileSync(tempFile, JSON.stringify(sessionData, null, 2));
+  renameSync(tempFile, sessionFile);
 }
 
 async function main() {

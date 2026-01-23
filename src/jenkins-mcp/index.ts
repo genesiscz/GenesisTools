@@ -138,6 +138,7 @@ class JenkinsServer {
         username: JENKINS_USER,
         password: JENKINS_TOKEN,
       },
+      timeout: 30_000, // 30 seconds timeout to avoid hanging on unresponsive Jenkins
     });
 
     // Set up tool handlers for various Jenkins operations
