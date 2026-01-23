@@ -12,6 +12,7 @@ import { createInterface } from "readline";
 import {
 	type DailyStats,
 	type DateRange,
+	type TokenUsage,
 	getDatabase,
 	getFileIndex,
 	upsertFileIndex,
@@ -904,6 +905,15 @@ export interface ConversationStats {
 	dailyActivity: Record<string, number>;
 	hourlyActivity: Record<string, number>;
 	subagentCount: number;
+	// Token analytics
+	tokenUsage: TokenUsage;
+	dailyTokens: Record<string, TokenUsage>;
+	// Model usage
+	modelCounts: Record<string, number>;
+	// Branch activity
+	branchCounts: Record<string, number>;
+	// Conversation length distribution
+	conversationLengths: number[];
 }
 
 export async function getConversationStats(): Promise<ConversationStats> {
@@ -917,6 +927,16 @@ export async function getConversationStats(): Promise<ConversationStats> {
 		dailyActivity: {},
 		hourlyActivity: {},
 		subagentCount: 0,
+		tokenUsage: {
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheCreateTokens: 0,
+			cacheReadTokens: 0,
+		},
+		dailyTokens: {},
+		modelCounts: {},
+		branchCounts: {},
+		conversationLengths: [],
 	};
 
 	for (const filePath of files) {
@@ -925,6 +945,7 @@ export async function getConversationStats(): Promise<ConversationStats> {
 
 		stats.totalConversations++;
 		stats.totalMessages += messages.length;
+		stats.conversationLengths.push(messages.length);
 
 		const project = extractProjectName(filePath);
 		stats.projectCounts[project] = (stats.projectCounts[project] || 0) + 1;
@@ -945,6 +966,52 @@ export async function getConversationStats(): Promise<ConversationStats> {
 			const toolUses = extractToolUses(msg);
 			for (const tool of toolUses) {
 				stats.toolCounts[tool.name] = (stats.toolCounts[tool.name] || 0) + 1;
+			}
+
+			// Track git branch
+			if ("gitBranch" in msg && msg.gitBranch) {
+				const branch = msg.gitBranch as string;
+				stats.branchCounts[branch] = (stats.branchCounts[branch] || 0) + 1;
+			}
+
+			// Extract token usage and model from assistant messages
+			if (msg.type === "assistant") {
+				const assistantMsg = msg as AssistantMessage;
+				const msgData = assistantMsg.message as {
+					model?: string;
+					usage?: {
+						input_tokens?: number;
+						output_tokens?: number;
+						cache_creation_input_tokens?: number;
+						cache_read_input_tokens?: number;
+					};
+				};
+
+				// Track model usage
+				if (msgData.model) {
+					const modelName = extractModelName(msgData.model);
+					stats.modelCounts[modelName] = (stats.modelCounts[modelName] || 0) + 1;
+				}
+
+				// Track token usage
+				if (msgData.usage) {
+					stats.tokenUsage.inputTokens += msgData.usage.input_tokens || 0;
+					stats.tokenUsage.outputTokens += msgData.usage.output_tokens || 0;
+					stats.tokenUsage.cacheCreateTokens += msgData.usage.cache_creation_input_tokens || 0;
+					stats.tokenUsage.cacheReadTokens += msgData.usage.cache_read_input_tokens || 0;
+
+					// Track daily tokens
+					if ("timestamp" in msg && msg.timestamp) {
+						const date = new Date(msg.timestamp as string).toISOString().split("T")[0];
+						if (!stats.dailyTokens[date]) {
+							stats.dailyTokens[date] = { inputTokens: 0, outputTokens: 0, cacheCreateTokens: 0, cacheReadTokens: 0 };
+						}
+						stats.dailyTokens[date].inputTokens += msgData.usage.input_tokens || 0;
+						stats.dailyTokens[date].outputTokens += msgData.usage.output_tokens || 0;
+						stats.dailyTokens[date].cacheCreateTokens += msgData.usage.cache_creation_input_tokens || 0;
+						stats.dailyTokens[date].cacheReadTokens += msgData.usage.cache_read_input_tokens || 0;
+					}
+				}
 			}
 		}
 	}
@@ -1015,8 +1082,21 @@ export interface FileStats {
 	toolCounts: Record<string, number>;
 	dailyActivity: Record<string, number>;
 	hourlyActivity: Record<string, number>;
+	tokenUsage: TokenUsage;
+	modelCounts: Record<string, number>;
+	branchCounts: Record<string, number>;
 	firstDate: string | null;
 	lastDate: string | null;
+}
+
+/**
+ * Extract model name from full model ID (e.g., "claude-opus-4-5-20251101" -> "opus")
+ */
+function extractModelName(modelId: string): string {
+	if (modelId.includes("opus")) return "opus";
+	if (modelId.includes("sonnet")) return "sonnet";
+	if (modelId.includes("haiku")) return "haiku";
+	return "other";
 }
 
 /**
@@ -1033,6 +1113,14 @@ export async function computeFileStats(filePath: string): Promise<FileStats> {
 		toolCounts: {},
 		dailyActivity: {},
 		hourlyActivity: {},
+		tokenUsage: {
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheCreateTokens: 0,
+			cacheReadTokens: 0,
+		},
+		modelCounts: {},
+		branchCounts: {},
 		firstDate: null,
 		lastDate: null,
 	};
@@ -1058,12 +1146,63 @@ export async function computeFileStats(filePath: string): Promise<FileStats> {
 		for (const tool of toolUses) {
 			stats.toolCounts[tool.name] = (stats.toolCounts[tool.name] || 0) + 1;
 		}
+
+		// Track git branch
+		if ("gitBranch" in msg && msg.gitBranch) {
+			const branch = msg.gitBranch as string;
+			stats.branchCounts[branch] = (stats.branchCounts[branch] || 0) + 1;
+		}
+
+		// Extract token usage and model from assistant messages
+		if (msg.type === "assistant") {
+			const assistantMsg = msg as AssistantMessage;
+			const msgData = assistantMsg.message as {
+				model?: string;
+				usage?: {
+					input_tokens?: number;
+					output_tokens?: number;
+					cache_creation_input_tokens?: number;
+					cache_read_input_tokens?: number;
+				};
+			};
+
+			// Track model usage
+			if (msgData.model) {
+				const modelName = extractModelName(msgData.model);
+				stats.modelCounts[modelName] = (stats.modelCounts[modelName] || 0) + 1;
+			}
+
+			// Track token usage
+			if (msgData.usage) {
+				stats.tokenUsage.inputTokens += msgData.usage.input_tokens || 0;
+				stats.tokenUsage.outputTokens += msgData.usage.output_tokens || 0;
+				stats.tokenUsage.cacheCreateTokens += msgData.usage.cache_creation_input_tokens || 0;
+				stats.tokenUsage.cacheReadTokens += msgData.usage.cache_read_input_tokens || 0;
+			}
+		}
 	}
 
 	stats.firstDate = minDate;
 	stats.lastDate = maxDate;
 
 	return stats;
+}
+
+function mergeCounts(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
+	const result = { ...a };
+	for (const [key, value] of Object.entries(b)) {
+		result[key] = (result[key] || 0) + value;
+	}
+	return result;
+}
+
+function mergeTokenUsage(a: TokenUsage | undefined, b: TokenUsage): TokenUsage {
+	return {
+		inputTokens: (a?.inputTokens || 0) + b.inputTokens,
+		outputTokens: (a?.outputTokens || 0) + b.outputTokens,
+		cacheCreateTokens: (a?.cacheCreateTokens || 0) + b.cacheCreateTokens,
+		cacheReadTokens: (a?.cacheReadTokens || 0) + b.cacheReadTokens,
+	};
 }
 
 /**
@@ -1112,6 +1251,19 @@ export async function processFileForCache(filePath: string): Promise<FileStats |
 				Object.assign(hourlyForDate, fileStats.hourlyActivity);
 			}
 
+			// Token, model, and branch data - assign to first date of file
+			const tokenForDate: TokenUsage = dateStr === fileStats.firstDate
+				? fileStats.tokenUsage
+				: { inputTokens: 0, outputTokens: 0, cacheCreateTokens: 0, cacheReadTokens: 0 };
+
+			const modelCountsForDate: Record<string, number> = dateStr === fileStats.firstDate
+				? fileStats.modelCounts
+				: {};
+
+			const branchCountsForDate: Record<string, number> = dateStr === fileStats.firstDate
+				? fileStats.branchCounts
+				: {};
+
 			const newDaily: DailyStats = {
 				date: dateStr,
 				project: "__all__",
@@ -1120,6 +1272,9 @@ export async function processFileForCache(filePath: string): Promise<FileStats |
 				subagentSessions: (existingDaily?.subagentSessions || 0) + (dateStr === fileStats.firstDate && isSubagent ? 1 : 0),
 				toolCounts: mergeCounts(existingDaily?.toolCounts || {}, toolCountsForDate),
 				hourlyActivity: mergeCounts(existingDaily?.hourlyActivity || {}, hourlyForDate),
+				tokenUsage: mergeTokenUsage(existingDaily?.tokenUsage, tokenForDate),
+				modelCounts: mergeCounts(existingDaily?.modelCounts || {}, modelCountsForDate),
+				branchCounts: mergeCounts(existingDaily?.branchCounts || {}, branchCountsForDate),
 			};
 
 			upsertDailyStats(newDaily);
@@ -1130,14 +1285,6 @@ export async function processFileForCache(filePath: string): Promise<FileStats |
 		console.error(`Error processing file ${filePath}:`, error);
 		return null;
 	}
-}
-
-function mergeCounts(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
-	const result = { ...a };
-	for (const [key, value] of Object.entries(b)) {
-		result[key] = (result[key] || 0) + value;
-	}
-	return result;
 }
 
 /**
@@ -1216,6 +1363,9 @@ export async function getConversationStatsWithCache(options: {
 		projectCount: Object.keys(projectCounts).length,
 	});
 
+	// Get conversation lengths for histogram
+	const conversationLengths = await getConversationLengths();
+
 	return {
 		totalConversations: aggregated.totalConversations,
 		totalMessages: aggregated.totalMessages,
@@ -1224,7 +1374,21 @@ export async function getConversationStatsWithCache(options: {
 		dailyActivity: aggregated.dailyActivity,
 		hourlyActivity: aggregated.hourlyActivity,
 		subagentCount: aggregated.subagentCount,
+		tokenUsage: aggregated.tokenUsage,
+		dailyTokens: aggregated.dailyTokens,
+		modelCounts: aggregated.modelCounts,
+		branchCounts: aggregated.branchCounts,
+		conversationLengths,
 	};
+}
+
+/**
+ * Get conversation lengths for histogram
+ */
+async function getConversationLengths(): Promise<number[]> {
+	const db = getDatabase();
+	const rows = db.query("SELECT message_count FROM file_index WHERE message_count > 0 ORDER BY message_count").all() as Array<{ message_count: number }>;
+	return rows.map(r => r.message_count);
 }
 
 /**
@@ -1278,6 +1442,9 @@ export async function getStatsForDateRange(range: DateRange): Promise<Conversati
 			projectCounts[row.project] = row.count;
 		}
 
+		// Get conversation lengths for histogram
+		const conversationLengths = await getConversationLengths();
+
 		return {
 			totalConversations: aggregated.totalConversations,
 			totalMessages: aggregated.totalMessages,
@@ -1286,6 +1453,11 @@ export async function getStatsForDateRange(range: DateRange): Promise<Conversati
 			dailyActivity: aggregated.dailyActivity,
 			hourlyActivity: aggregated.hourlyActivity,
 			subagentCount: aggregated.subagentCount,
+			tokenUsage: aggregated.tokenUsage,
+			dailyTokens: aggregated.dailyTokens,
+			modelCounts: aggregated.modelCounts,
+			branchCounts: aggregated.branchCounts,
+			conversationLengths,
 		};
 	}
 
@@ -1295,4 +1467,4 @@ export async function getStatsForDateRange(range: DateRange): Promise<Conversati
 
 // Re-export cache functions for external use
 export { invalidateToday, getCachedTotals, getCacheStats } from "./cache";
-export type { DateRange, DailyStats } from "./cache";
+export type { DateRange, DailyStats, TokenUsage } from "./cache";

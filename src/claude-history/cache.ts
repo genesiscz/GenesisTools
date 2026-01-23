@@ -62,6 +62,9 @@ function initSchema(db: Database): void {
       subagent_sessions INTEGER NOT NULL DEFAULT 0,
       tool_counts TEXT, -- JSON object: {"Read": 50, "Bash": 30}
       hourly_activity TEXT, -- JSON object: {"0": 5, "1": 2, ...}
+      token_usage TEXT, -- JSON object: {"inputTokens": 1000, "outputTokens": 500, ...}
+      model_counts TEXT, -- JSON object: {"opus": 50, "sonnet": 30, "haiku": 10}
+      branch_counts TEXT, -- JSON object: {"main": 100, "feat/xyz": 50}
       computed_at TEXT NOT NULL,
       PRIMARY KEY (date, project)
     );
@@ -104,6 +107,13 @@ function initSchema(db: Database): void {
 // Types
 // =============================================================================
 
+export interface TokenUsage {
+	inputTokens: number;
+	outputTokens: number;
+	cacheCreateTokens: number;
+	cacheReadTokens: number;
+}
+
 export interface DailyStats {
 	date: string;
 	project: string;
@@ -112,6 +122,9 @@ export interface DailyStats {
 	subagentSessions: number;
 	toolCounts: Record<string, number>;
 	hourlyActivity: Record<string, number>;
+	tokenUsage: TokenUsage;
+	modelCounts: Record<string, number>; // { "opus": 50, "sonnet": 30, "haiku": 10 }
+	branchCounts: Record<string, number>; // { "main": 100, "feat/xyz": 50 }
 }
 
 export interface FileIndexRecord {
@@ -267,6 +280,13 @@ export function removeFileIndex(filePath: string): void {
 // Daily Stats Operations
 // =============================================================================
 
+const DEFAULT_TOKEN_USAGE: TokenUsage = {
+	inputTokens: 0,
+	outputTokens: 0,
+	cacheCreateTokens: 0,
+	cacheReadTokens: 0,
+};
+
 export function getDailyStats(date: string, project: string = "__all__"): DailyStats | null {
 	const db = getDatabase();
 	const row = db.query("SELECT * FROM daily_stats WHERE date = ? AND project = ?").get(date, project) as {
@@ -277,6 +297,9 @@ export function getDailyStats(date: string, project: string = "__all__"): DailyS
 		subagent_sessions: number;
 		tool_counts: string | null;
 		hourly_activity: string | null;
+		token_usage: string | null;
+		model_counts: string | null;
+		branch_counts: string | null;
 		computed_at: string;
 	} | null;
 
@@ -290,6 +313,9 @@ export function getDailyStats(date: string, project: string = "__all__"): DailyS
 		subagentSessions: row.subagent_sessions,
 		toolCounts: row.tool_counts ? JSON.parse(row.tool_counts) : {},
 		hourlyActivity: row.hourly_activity ? JSON.parse(row.hourly_activity) : {},
+		tokenUsage: row.token_usage ? JSON.parse(row.token_usage) : { ...DEFAULT_TOKEN_USAGE },
+		modelCounts: row.model_counts ? JSON.parse(row.model_counts) : {},
+		branchCounts: row.branch_counts ? JSON.parse(row.branch_counts) : {},
 	};
 }
 
@@ -298,8 +324,8 @@ export function upsertDailyStats(stats: DailyStats): void {
 	const now = new Date().toISOString();
 
 	db.query(`
-    INSERT OR REPLACE INTO daily_stats (date, project, conversations, messages, subagent_sessions, tool_counts, hourly_activity, computed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO daily_stats (date, project, conversations, messages, subagent_sessions, tool_counts, hourly_activity, token_usage, model_counts, branch_counts, computed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
 		stats.date,
 		stats.project,
@@ -308,6 +334,9 @@ export function upsertDailyStats(stats: DailyStats): void {
 		stats.subagentSessions,
 		JSON.stringify(stats.toolCounts),
 		JSON.stringify(stats.hourlyActivity),
+		JSON.stringify(stats.tokenUsage),
+		JSON.stringify(stats.modelCounts),
+		JSON.stringify(stats.branchCounts),
 		now,
 	);
 }
@@ -337,6 +366,9 @@ export function getDailyStatsInRange(range: DateRange): DailyStats[] {
 		subagent_sessions: number;
 		tool_counts: string | null;
 		hourly_activity: string | null;
+		token_usage: string | null;
+		model_counts: string | null;
+		branch_counts: string | null;
 		computed_at: string;
 	}>;
 
@@ -348,6 +380,9 @@ export function getDailyStatsInRange(range: DateRange): DailyStats[] {
 		subagentSessions: row.subagent_sessions,
 		toolCounts: row.tool_counts ? JSON.parse(row.tool_counts) : {},
 		hourlyActivity: row.hourly_activity ? JSON.parse(row.hourly_activity) : {},
+		tokenUsage: row.token_usage ? JSON.parse(row.token_usage) : { ...DEFAULT_TOKEN_USAGE },
+		modelCounts: row.model_counts ? JSON.parse(row.model_counts) : {},
+		branchCounts: row.branch_counts ? JSON.parse(row.branch_counts) : {},
 	}));
 }
 
@@ -391,6 +426,11 @@ export interface AggregatedStats {
 	toolCounts: Record<string, number>;
 	dailyActivity: Record<string, number>;
 	hourlyActivity: Record<string, number>;
+	tokenUsage: TokenUsage;
+	modelCounts: Record<string, number>;
+	branchCounts: Record<string, number>;
+	// For cumulative charts
+	dailyTokens: Record<string, TokenUsage>;
 }
 
 export function aggregateDailyStats(dailyStats: DailyStats[]): AggregatedStats {
@@ -402,6 +442,10 @@ export function aggregateDailyStats(dailyStats: DailyStats[]): AggregatedStats {
 		toolCounts: {},
 		dailyActivity: {},
 		hourlyActivity: {},
+		tokenUsage: { ...DEFAULT_TOKEN_USAGE },
+		modelCounts: {},
+		branchCounts: {},
+		dailyTokens: {},
 	};
 
 	for (const day of dailyStats) {
@@ -418,6 +462,25 @@ export function aggregateDailyStats(dailyStats: DailyStats[]): AggregatedStats {
 		// Merge hourly activity
 		for (const [hour, count] of Object.entries(day.hourlyActivity)) {
 			result.hourlyActivity[hour] = (result.hourlyActivity[hour] || 0) + count;
+		}
+
+		// Merge token usage
+		if (day.tokenUsage) {
+			result.tokenUsage.inputTokens += day.tokenUsage.inputTokens || 0;
+			result.tokenUsage.outputTokens += day.tokenUsage.outputTokens || 0;
+			result.tokenUsage.cacheCreateTokens += day.tokenUsage.cacheCreateTokens || 0;
+			result.tokenUsage.cacheReadTokens += day.tokenUsage.cacheReadTokens || 0;
+			result.dailyTokens[day.date] = { ...day.tokenUsage };
+		}
+
+		// Merge model counts
+		for (const [model, count] of Object.entries(day.modelCounts || {})) {
+			result.modelCounts[model] = (result.modelCounts[model] || 0) + count;
+		}
+
+		// Merge branch counts
+		for (const [branch, count] of Object.entries(day.branchCounts || {})) {
+			result.branchCounts[branch] = (result.branchCounts[branch] || 0) + count;
 		}
 	}
 
