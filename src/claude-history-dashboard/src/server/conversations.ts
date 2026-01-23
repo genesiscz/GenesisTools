@@ -41,6 +41,13 @@ export interface SerializableConversationDetail extends SerializableConversation
   }>
 }
 
+export interface TokenUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheCreateTokens: number
+  cacheReadTokens: number
+}
+
 export interface SerializableStats {
   totalConversations: number
   totalMessages: number
@@ -49,6 +56,15 @@ export interface SerializableStats {
   dailyActivity: Record<string, number>
   hourlyActivity: Record<string, number>
   subagentCount: number
+  // Token analytics
+  tokenUsage: TokenUsage
+  dailyTokens: Record<string, TokenUsage>
+  // Model usage
+  modelCounts: Record<string, number>
+  // Branch activity
+  branchCounts: Record<string, number>
+  // Conversation length distribution
+  conversationLengths: number[]
 }
 
 // Helper to serialize a conversation result
