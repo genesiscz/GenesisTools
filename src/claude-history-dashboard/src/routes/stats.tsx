@@ -34,9 +34,11 @@ export const Route = createFileRoute('/stats')({
 function StatsPage() {
   const { quickStats, fullStats } = Route.useLoaderData()
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [dateRange, setDateRange] = useState<{ from: string; to: string }>({
-    from: '',
-    to: new Date().toISOString().split('T')[0],
+  const [dateRange, setDateRange] = useState<{ from: string; to: string }>(() => {
+    // Use local date to avoid timezone issues
+    const today = new Date()
+    const localToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    return { from: '', to: localToday }
   })
   const [filteredStats, setFilteredStats] = useState<SerializableStats | null>(null)
   const [isLoadingRange, setIsLoadingRange] = useState(false)
@@ -59,7 +61,10 @@ function StatsPage() {
         const stats = await getStatsInRange({ data: range })
         setFilteredStats(stats)
       } catch (error) {
-        console.error('Failed to fetch stats for date range:', error)
+        // Log error but don't crash - filtered stats just won't be available
+        if (import.meta.env.DEV) {
+          console.error('Failed to fetch stats for date range:', error)
+        }
       } finally {
         setIsLoadingRange(false)
       }
@@ -681,6 +686,9 @@ function BranchActivitySkeleton() {
   )
 }
 
+// Deterministic heights to avoid SSR hydration mismatch
+const CONVERSATION_LENGTH_HEIGHTS = [45, 72, 38, 65, 52, 80]
+
 function ConversationLengthSkeleton() {
   return (
     <Card>
@@ -700,7 +708,7 @@ function ConversationLengthSkeleton() {
             <Skeleton
               key={i}
               className="flex-1 rounded-t"
-              style={{ height: `${20 + Math.random() * 60}%`, animationDelay: `${i * 75}ms` }}
+              style={{ height: `${CONVERSATION_LENGTH_HEIGHTS[i]}%`, animationDelay: `${i * 75}ms` }}
             />
           ))}
         </div>
