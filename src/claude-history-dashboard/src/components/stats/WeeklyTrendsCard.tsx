@@ -31,12 +31,25 @@ function formatNumber(n: number): string {
   return n.toString()
 }
 
+// Format date to YYYY-MM-DD using local timezone
+function formatDateLocal(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function calculateWeeklyStats(dailyActivity: Record<string, number>, dailyTokens?: Record<string, TokenUsage>) {
   const today = new Date()
   const thisWeekStart = new Date(today)
   thisWeekStart.setDate(today.getDate() - 6)
   const lastWeekStart = new Date(today)
   lastWeekStart.setDate(today.getDate() - 13)
+
+  // Use string comparisons with YYYY-MM-DD format to avoid timezone issues
+  const todayStr = formatDateLocal(today)
+  const thisWeekStartStr = formatDateLocal(thisWeekStart)
+  const lastWeekStartStr = formatDateLocal(lastWeekStart)
 
   let thisWeekMessages = 0
   let lastWeekMessages = 0
@@ -46,17 +59,17 @@ function calculateWeeklyStats(dailyActivity: Record<string, number>, dailyTokens
   let lastWeekDays = 0
 
   for (const [dateStr, count] of Object.entries(dailyActivity)) {
-    const date = new Date(dateStr)
     const dayTokens = dailyTokens?.[dateStr]
     const totalDayTokens = dayTokens
       ? dayTokens.inputTokens + dayTokens.outputTokens + dayTokens.cacheCreateTokens + dayTokens.cacheReadTokens
       : 0
 
-    if (date >= thisWeekStart && date <= today) {
+    // Use string comparisons to avoid timezone off-by-one errors
+    if (dateStr >= thisWeekStartStr && dateStr <= todayStr) {
       thisWeekMessages += count
       thisWeekTokens += totalDayTokens
       thisWeekDays++
-    } else if (date >= lastWeekStart && date < thisWeekStart) {
+    } else if (dateStr >= lastWeekStartStr && dateStr < thisWeekStartStr) {
       lastWeekMessages += count
       lastWeekTokens += totalDayTokens
       lastWeekDays++

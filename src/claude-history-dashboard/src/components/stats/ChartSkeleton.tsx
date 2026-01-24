@@ -2,6 +2,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TrendingUp } from "lucide-react"
 
+// Deterministic heights to avoid SSR hydration mismatch
+const CHART_SKELETON_HEIGHTS = Array.from({ length: 14 }, (_, i) => 20 + ((i * 37) % 60))
+
 export function ActivityChartSkeleton() {
   return (
     <Card className="mb-8">
@@ -22,7 +25,7 @@ export function ActivityChartSkeleton() {
                 variant="data-stream"
                 className="w-full rounded-t"
                 style={{
-                  height: `${20 + Math.random() * 60}%`,
+                  height: `${CHART_SKELETON_HEIGHTS[i]}%`,
                   animationDelay: `${i * 100}ms`,
                 }}
               />

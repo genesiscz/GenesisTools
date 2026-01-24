@@ -54,10 +54,20 @@ async function getDirOfInterest(): Promise<string> {
     if (arg) {
         // Resolve relative paths to absolute
         const resolved = path.isAbsolute(arg) ? arg : path.resolve(process.cwd(), arg);
-        if (fs.existsSync(resolved)) {
-            return resolved;
+        try {
+            const stats = fs.statSync(resolved);
+            if (stats.isDirectory()) {
+                return resolved;
+            }
+            logger.error(`Path exists but is not a directory: ${arg} (resolved to ${resolved})`);
+        } catch (err) {
+            const errCode = (err as NodeJS.ErrnoException).code;
+            if (errCode === "ENOENT") {
+                logger.error(`Directory does not exist: ${arg} (resolved to ${resolved})`);
+            } else {
+                throw err;
+            }
         }
-        logger.error(`Invalid directory path provided: ${arg} (resolved to ${resolved}, but does not exist)`);
     }
 
     // No valid argument, show interactive selection

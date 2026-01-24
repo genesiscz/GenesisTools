@@ -118,7 +118,7 @@ Ctrl+b z           # zoom when needed
 
 ### Jump Between Projects
 ```bash
-Ctrl+b s           # session picker
+Ctrl+b s           # session tree (native list)
 # or use aliases:
 tcolfe             # switch to col-fe
 treservine         # switch to Reservine

@@ -287,6 +287,19 @@ const DEFAULT_TOKEN_USAGE: TokenUsage = {
 	cacheReadTokens: 0,
 };
 
+/**
+ * Safely parse JSON with a fallback value if parsing fails
+ */
+function safeJsonParse<T>(input: string | null | undefined, fallback: T): T {
+	if (input === null || input === undefined) return fallback;
+	try {
+		return JSON.parse(input) as T;
+	} catch {
+		logger.warn(`Failed to parse JSON from cache, using fallback. Input: ${input.slice(0, 100)}...`);
+		return fallback;
+	}
+}
+
 export function getDailyStats(date: string, project: string = "__all__"): DailyStats | null {
 	const db = getDatabase();
 	const row = db.query("SELECT * FROM daily_stats WHERE date = ? AND project = ?").get(date, project) as {
@@ -311,11 +324,11 @@ export function getDailyStats(date: string, project: string = "__all__"): DailyS
 		conversations: row.conversations,
 		messages: row.messages,
 		subagentSessions: row.subagent_sessions,
-		toolCounts: row.tool_counts ? JSON.parse(row.tool_counts) : {},
-		hourlyActivity: row.hourly_activity ? JSON.parse(row.hourly_activity) : {},
-		tokenUsage: row.token_usage ? JSON.parse(row.token_usage) : { ...DEFAULT_TOKEN_USAGE },
-		modelCounts: row.model_counts ? JSON.parse(row.model_counts) : {},
-		branchCounts: row.branch_counts ? JSON.parse(row.branch_counts) : {},
+		toolCounts: safeJsonParse(row.tool_counts, {}),
+		hourlyActivity: safeJsonParse(row.hourly_activity, {}),
+		tokenUsage: safeJsonParse(row.token_usage, { ...DEFAULT_TOKEN_USAGE }),
+		modelCounts: safeJsonParse(row.model_counts, {}),
+		branchCounts: safeJsonParse(row.branch_counts, {}),
 	};
 }
 
@@ -378,11 +391,11 @@ export function getDailyStatsInRange(range: DateRange): DailyStats[] {
 		conversations: row.conversations,
 		messages: row.messages,
 		subagentSessions: row.subagent_sessions,
-		toolCounts: row.tool_counts ? JSON.parse(row.tool_counts) : {},
-		hourlyActivity: row.hourly_activity ? JSON.parse(row.hourly_activity) : {},
-		tokenUsage: row.token_usage ? JSON.parse(row.token_usage) : { ...DEFAULT_TOKEN_USAGE },
-		modelCounts: row.model_counts ? JSON.parse(row.model_counts) : {},
-		branchCounts: row.branch_counts ? JSON.parse(row.branch_counts) : {},
+		toolCounts: safeJsonParse(row.tool_counts, {}),
+		hourlyActivity: safeJsonParse(row.hourly_activity, {}),
+		tokenUsage: safeJsonParse(row.token_usage, { ...DEFAULT_TOKEN_USAGE }),
+		modelCounts: safeJsonParse(row.model_counts, {}),
+		branchCounts: safeJsonParse(row.branch_counts, {}),
 	}));
 }
 
@@ -500,6 +513,14 @@ export function invalidateToday(): void {
 export function invalidateDate(date: string): void {
 	deleteDailyStats(date);
 	logger.debug(`Invalidated cache for date: ${date}`);
+}
+
+export function invalidateDateRange(fromDate: string | null, toDate: string | null): void {
+	if (!fromDate || !toDate) return;
+
+	const db = getDatabase();
+	db.query("DELETE FROM daily_stats WHERE date >= ? AND date <= ?").run(fromDate, toDate);
+	logger.debug(`Invalidated cache for date range: ${fromDate} to ${toDate}`);
 }
 
 export function clearAllCache(): void {
