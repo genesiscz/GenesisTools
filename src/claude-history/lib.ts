@@ -23,6 +23,7 @@ import {
 	getCachedTotals,
 	updateCachedTotals,
 	invalidateToday as _invalidateToday,
+	invalidateDateRange,
 	aggregateDailyStats,
 	setCacheMeta,
 	getCacheStats as _getCacheStats,
@@ -1215,10 +1216,17 @@ export async function processFileForCache(filePath: string): Promise<FileStats |
 		const project = extractProjectName(filePath);
 		const isSubagent = filePath.includes("/subagents/") || basename(filePath).startsWith("agent-");
 
-		// Check if file is already indexed and unchanged
+		// Check if file is already indexed
 		const existing = getFileIndex(filePath);
+
+		// File unchanged, skip processing
 		if (existing && existing.mtime === mtime) {
-			return null; // File unchanged, skip
+			return null;
+		}
+
+		// File was modified (mtime changed) - invalidate old date range before re-processing
+		if (existing && existing.mtime !== mtime) {
+			invalidateDateRange(existing.firstDate, existing.lastDate);
 		}
 
 		// Compute stats for this file
@@ -1423,19 +1431,22 @@ export async function getStatsForDateRange(range: DateRange): Promise<Conversati
 	if (dailyStats.length > 0) {
 		const aggregated = aggregateDailyStats(dailyStats);
 
-		// Get project counts
+		// Get project counts filtered by date range (files whose date range overlaps with the query range)
 		const db = getDatabase();
+		const fromDate = range.from || "1970-01-01";
+		const toDate = range.to || "9999-12-31";
 		const projectRows = db
 			.query(
 				`
       SELECT project, COUNT(*) as count
       FROM file_index
       WHERE project IS NOT NULL
+        AND NOT (last_date < ? OR first_date > ?)
       GROUP BY project
       ORDER BY count DESC
     `,
 			)
-			.all() as Array<{ project: string; count: number }>;
+			.all(fromDate, toDate) as Array<{ project: string; count: number }>;
 
 		const projectCounts: Record<string, number> = {};
 		for (const row of projectRows) {

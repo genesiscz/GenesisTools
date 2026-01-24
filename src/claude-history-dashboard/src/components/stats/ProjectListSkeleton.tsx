@@ -2,6 +2,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { FolderOpen, Wrench } from "lucide-react"
 
+// Deterministic widths to avoid SSR hydration mismatch
+const PROJECT_SKELETON_WIDTHS = ['75%', '85%', '65%', '90%', '70%']
+const TOOL_BADGE_WIDTHS = [72, 84, 68, 96, 76, 88, 64, 92, 80, 70, 86, 74]
+
 export function ProjectListSkeleton() {
   return (
     <Card>
@@ -20,7 +24,7 @@ export function ProjectListSkeleton() {
                   <Skeleton
                     className="h-4"
                     style={{
-                      width: `${60 + Math.random() * 30}%`,
+                      width: PROJECT_SKELETON_WIDTHS[i],
                       animationDelay: `${i * 150}ms`,
                     }}
                   />
@@ -61,7 +65,7 @@ export function ToolBadgesSkeleton() {
               key={i}
               className="h-6 rounded-full"
               style={{
-                width: `${60 + Math.random() * 40}px`,
+                width: `${TOOL_BADGE_WIDTHS[i]}px`,
                 animationDelay: `${i * 50}ms`,
               }}
             />

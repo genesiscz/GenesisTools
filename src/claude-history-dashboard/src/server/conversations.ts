@@ -221,12 +221,40 @@ export interface QuickStatsResponse {
 }
 
 /**
+ * Validate a date range input
+ */
+function validateDateRange(from?: string, to?: string): { valid: boolean; error?: string } {
+  if (from) {
+    const fromDate = new Date(from)
+    if (isNaN(fromDate.getTime())) {
+      return { valid: false, error: `Invalid 'from' date: ${from}` }
+    }
+  }
+  if (to) {
+    const toDate = new Date(to)
+    if (isNaN(toDate.getTime())) {
+      return { valid: false, error: `Invalid 'to' date: ${to}` }
+    }
+  }
+  if (from && to && from > to) {
+    return { valid: false, error: `'from' date must be before 'to' date` }
+  }
+  return { valid: true }
+}
+
+/**
  * Get full stats with caching (incremental updates)
  * Optionally filter by date range
  */
 export const getFullStats = createServerFn({ method: 'GET' })
   .inputValidator((input: { from?: string; to?: string; forceRefresh?: boolean }) => input)
   .handler(async ({ data }) => {
+    // Validate date range if provided
+    const validation = validateDateRange(data.from, data.to)
+    if (!validation.valid) {
+      throw new Error(validation.error)
+    }
+
     const dateRange: DateRange | undefined =
       data.from || data.to ? { from: data.from, to: data.to } : undefined
 
@@ -244,6 +272,12 @@ export const getFullStats = createServerFn({ method: 'GET' })
 export const getStatsInRange = createServerFn({ method: 'GET' })
   .inputValidator((input: { from: string; to: string }) => input)
   .handler(async ({ data }) => {
+    // Validate date range
+    const validation = validateDateRange(data.from, data.to)
+    if (!validation.valid) {
+      throw new Error(validation.error)
+    }
+
     const stats = await getStatsForDateRange({ from: data.from, to: data.to })
     return stats as SerializableStats
   })
