@@ -6,9 +6,16 @@
     "scripts": {
         "typecheck:all": "tsgo --noEmit && tsgo -p src/claude-history-dashboard/tsconfig.json --noEmit",
         "tsgo": "tsgo --noEmit",
-        "tsc": "tsgo --noEmit"
+        "tsc": "tsgo --noEmit",
+        "lint": "biome check .",
+        "lint:fix": "biome check --write .",
+        "lint:dashboard": "cd src/claude-history-dashboard && biome check .",
+        "lint:dashboard:fix": "cd src/claude-history-dashboard && biome check --write .",
+        "format": "biome format --write .",
+        "check": "biome check ."
     },
     "devDependencies": {
+        "@biomejs/biome": "^2.3.12",
         "@types/babel__core": "^7.20.5",
         "@types/better-sqlite3": "^7.6.13",
         "@types/bun": "latest",
