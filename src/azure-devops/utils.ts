@@ -254,7 +254,7 @@ export function parseAzureDevOpsUrl(url: string): ParsedUrl {
   const vsMatch = url.match(/https:\/\/([^\.]+)\.visualstudio\.com\/([^\/]+)/i);
   if (vsMatch) {
     return {
-      org: `https://dev.azure.com/${vsMatch[1].toUpperCase()}`,
+      org: `https://dev.azure.com/${vsMatch[1]}`,
       project: decodeURIComponent(vsMatch[2]),
     };
   }

@@ -35,7 +35,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 | Route | Description |
 |-------|-------------|
 | `/` | Main conversation list with search |
-| `/conversation/:id` | Full conversation view |
+| `/conversation/$id` | Full conversation view |
 | `/stats` | Usage statistics and analytics |
 
 ## Scripts

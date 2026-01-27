@@ -4,7 +4,7 @@ Fetch PR review comments, let user select which to fix, implement fixes, and com
 
 ## Usage
 
-```
+```bash
 /github-pr <pr-number-or-url>              # All threads
 /github-pr <pr-number-or-url> -u           # Only unresolved threads
 /github-pr <pr-number-or-url> --open       # Cat + open in Cursor
@@ -66,7 +66,7 @@ Present a summary to the user:
 Use AskUserQuestion tool to let user select which review threads to address:
 
 **Question Format:**
-```
+```text
 Which review threads should I fix?
 
 Options:
@@ -130,7 +130,7 @@ Display final summary:
 
 ## Example Flow
 
-```
+```text
 User: /github-pr 137 -u
 
 1. Run: tools github-pr 137 -g --md -u

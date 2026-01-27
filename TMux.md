@@ -15,7 +15,7 @@
 | `tmux a -t name` | Attach to named session |
 | `Ctrl+b d` | **Detach** from session |
 | `Ctrl+b $` | Rename session |
-| `Ctrl+b s` | **Session picker** (fuzzy search) |
+| `Ctrl+b s` | **Session tree** (native list) |
 
 **Project Aliases:**
 ```bash
@@ -118,7 +118,7 @@ Ctrl+b z           # zoom when needed
 
 ### Jump Between Projects
 ```bash
-Ctrl+b s           # session picker
+Ctrl+b s           # session tree (native list)
 # or use aliases:
 tcolfe             # switch to col-fe
 treservine         # switch to Reservine

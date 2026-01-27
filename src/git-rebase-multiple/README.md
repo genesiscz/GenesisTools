@@ -146,7 +146,7 @@ Or abort everything: `tools git-rebase-multiple --abort`
 
 ## Architecture
 
-```
+```text
 src/git-rebase-multiple/
 ├── index.ts      # Main CLI orchestration
 ├── types.ts      # TypeScript interfaces

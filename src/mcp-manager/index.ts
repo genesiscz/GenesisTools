@@ -246,7 +246,7 @@ program.action(async () => {
 
         switch (action) {
             case "config":
-                await openConfig({ path: opts.path });
+                await openConfig();
                 break;
             case "sync":
                 await syncServers(providers);

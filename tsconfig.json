@@ -28,7 +28,9 @@
         // Path aliases
         "paths": {
             "@app/*": ["./src/*"],
-            "@ask/*": ["./src/ask/*"]
+            "@ask/*": ["./src/ask/*"],
+            "@genesis-tools/utils": ["./packages/utils/src/index.ts"],
+            "@genesis-tools/utils/*": ["./packages/utils/src/*"]
         }
     },
     "include": ["src/**/*", "./test-*.ts"]

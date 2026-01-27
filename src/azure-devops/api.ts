@@ -47,8 +47,16 @@ export class Api {
    * Get an access token for Azure DevOps API using Azure CLI
    */
   private async getAccessToken(): Promise<string> {
-    const result = await $`az account get-access-token --resource ${AZURE_DEVOPS_RESOURCE_ID} --query accessToken -o tsv`.quiet();
-    return result.text().trim();
+    try {
+      const result = await $`az account get-access-token --resource ${AZURE_DEVOPS_RESOURCE_ID} --query accessToken -o tsv`.quiet();
+      const token = result.text().trim();
+      if (!token) {
+        throw new Error("Empty token received. Ensure you're logged in with 'az login'");
+      }
+      return token;
+    } catch (error) {
+      throw new Error(`Failed to get Azure access token for ${AZURE_DEVOPS_RESOURCE_ID}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**
@@ -96,15 +104,28 @@ export class Api {
    * Run a saved query and return the work items
    */
   async runQuery(queryId: string): Promise<WorkItem[]> {
-    const result = await $`az boards query --id ${queryId} -o json`.quiet();
-    const items = JSON.parse(result.text());
+    let items: unknown[];
+    try {
+      const result = await $`az boards query --id ${queryId} -o json`.quiet();
+      const text = result.text();
+      if (!text.trim()) {
+        throw new Error("Empty response from az boards query");
+      }
+      items = JSON.parse(text);
+      if (!Array.isArray(items)) {
+        throw new Error("Expected array from az boards query");
+      }
+    } catch (error) {
+      throw new Error(`Failed to run query ${queryId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
-    return items.map((item: Record<string, unknown>) => {
-      const fields = item.fields as Record<string, unknown>;
-      const id = item.id as number;
+    return items.map((item) => {
+      const record = item as Record<string, unknown>;
+      const fields = record.fields as Record<string, unknown>;
+      const id = record.id as number;
       return {
         id,
-        rev: item.rev as number,
+        rev: record.rev as number,
         title: fields?.["System.Title"] as string,
         state: fields?.["System.State"] as string,
         changed: fields?.["System.ChangedDate"] as string,
