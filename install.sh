@@ -1,5 +1,37 @@
 #!/bin/bash
 
+# Check if bun is installed
+if ! command -v bun &> /dev/null; then
+    echo "❌ Bun is not installed."
+    echo ""
+    echo "This project requires Bun because it uses Bun runtime-only tools."
+    echo ""
+    echo "To install Bun, run:"
+    echo ""
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
+        echo "  powershell -c \"irm bun.sh/install.ps1|iex\""
+    else
+        echo "  curl -fsSL https://bun.sh/install | bash"
+    fi
+    echo ""
+    exit 1
+fi
+
+echo "✅ Bun is installed"
+
+# Check if node_modules exists, if not install dependencies
+if [ ! -d "node_modules" ]; then
+    echo "📦 Installing dependencies..."
+    bun install
+    if [ $? -ne 0 ]; then
+        echo "❌ Failed to install dependencies"
+        exit 1
+    fi
+    echo "✅ Dependencies installed"
+else
+    echo "✅ Dependencies already installed"
+fi
+
 # Get the current directory of the script
 CURRENT_DIR="$(pwd)"
 TOOLS_LINE="export GENESIS_TOOLS_PATH=\"$CURRENT_DIR\""
