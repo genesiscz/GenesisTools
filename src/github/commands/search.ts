@@ -52,11 +52,14 @@ async function searchGitHub(
     }
   }
 
-  // Add type filter
+  // Add type filter - REQUIRED by GitHub API
   if (options.type === 'issue') {
     searchQuery += ' is:issue';
   } else if (options.type === 'pr') {
     searchQuery += ' is:pr';
+  } else {
+    // Default: search both issues and PRs (API requires at least one)
+    searchQuery += ' is:issue is:pr';
   }
 
   // Add state filter
@@ -151,7 +154,21 @@ export function createSearchCommand(): Command {
         await searchCommand(query, opts);
       } catch (error) {
         logger.error({ error }, 'Search command failed');
-        console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+
+        // Provide helpful tips on common errors
+        const errorMessage = error instanceof Error ? error.message : String(error);
+
+        if (errorMessage.includes('is:issue') || errorMessage.includes('is:pull-request')) {
+          console.error(chalk.yellow('\n📝 GitHub Search Syntax Tips:'));
+          console.error(chalk.dim('  • For issues: tools github search "query" --type issue'));
+          console.error(chalk.dim('  • For PRs: tools github search "query" --type pr'));
+          console.error(chalk.dim('  • For code: tools github code "query" --repo owner/repo'));
+          console.error(chalk.dim('  • Add repo filter: --repo owner/repo'));
+          console.error(chalk.dim('  • Filter by state: --state open|closed'));
+          console.error('');
+        }
+
+        console.error(chalk.red(`Error: ${errorMessage}`));
         process.exit(1);
       }
     });

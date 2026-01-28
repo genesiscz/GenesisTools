@@ -8,6 +8,7 @@ import { createIssueCommand, issueCommand } from '@app/github/commands/issue';
 import { createPRCommand, prCommand } from '@app/github/commands/pr';
 import { createCommentsCommand, commentsCommand } from '@app/github/commands/comments';
 import { createSearchCommand, searchCommand } from '@app/github/commands/search';
+import { createCodeSearchCommand } from '@app/github/commands/code-search';
 import { checkAuth, getRateLimit } from '@app/github/lib/octokit';
 import { parseGitHubUrl, detectRepoFromGit } from '@app/github/lib/url-parser';
 import { getCacheStats, closeDatabase } from '@app/github/lib/cache';
@@ -25,6 +26,7 @@ program.addCommand(createIssueCommand());
 program.addCommand(createPRCommand());
 program.addCommand(createCommentsCommand());
 program.addCommand(createSearchCommand());
+program.addCommand(createCodeSearchCommand());
 
 // Status command
 program

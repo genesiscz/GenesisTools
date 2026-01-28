@@ -88,6 +88,42 @@ tools github search "refactor" --type pr --repo owner/repo
 tools github search "bug" --sort reactions --limit 50
 ```
 
+### Search Code (Files)
+```bash
+# Search for code containing text
+tools github code "useState" --repo facebook/react
+
+# Filter by path
+tools github code "async function" --repo expo/expo --path "packages/**/*.ts"
+
+# Filter by language
+tools github code "interface Props" --repo vercel/next.js --language typescript
+```
+
+### Search Syntax Tips
+
+**For Issues/PRs** (`tools github search`):
+- Searches both issues and PRs by default
+- Use `--type issue` or `--type pr` to filter
+- Use `--repo owner/repo` to limit to a repository
+- Use `--state open|closed` to filter by state
+- Use `--sort reactions|comments|created|updated` to sort results
+
+**For Code** (`tools github code`):
+- **Recommended: specify `--repo`** for best results (API limitation)
+- Use `--path "src/**/*.ts"` for path patterns
+- Use `--language typescript` for language filtering
+- Only searches default branch
+- Files must be < 384 KB
+
+**Query Examples:**
+| Goal | Command |
+|------|---------|
+| Find open bugs in repo | `tools github search "bug" --repo owner/repo --type issue --state open` |
+| Find PRs mentioning feature | `tools github search "dark mode" --repo owner/repo --type pr` |
+| Find code using a function | `tools github code "useMemo" --repo facebook/react --language typescript` |
+| Find config files | `tools github code "version" --repo owner/repo --path "*.json"` |
+
 ### PR-Specific Features
 ```bash
 # Include code review comments
