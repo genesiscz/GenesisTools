@@ -14,8 +14,14 @@ import { Command } from "commander";
 import * as babel from "@babel/core";
 import chalk from "chalk";
 import clipboardy from "clipboardy";
-import { resolve } from "path";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
 import logger from "@app/logger";
+
+// Resolve babel-plugin-react-compiler from GenesisTools installation
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const genesisToolsRoot = resolve(__dirname, "../..");
 
 interface CompilerOptions {
 	target: "17" | "18" | "19";
@@ -89,13 +95,16 @@ async function compileCode(
 	filename: string,
 	compilerOptions: CompilerOptions
 ): Promise<string> {
+	// Resolve plugin from GenesisTools node_modules for consistent behavior
+	const reactCompilerPlugin = resolve(genesisToolsRoot, "node_modules/babel-plugin-react-compiler");
+
 	const result = await babel.transformAsync(code, {
 		filename,
 		presets: [
 			["@babel/preset-typescript", { isTSX: true, allExtensions: true }],
 		],
 		plugins: [
-			["babel-plugin-react-compiler", compilerOptions],
+			[reactCompilerPlugin, compilerOptions],
 		],
 		parserOpts: {
 			plugins: ["jsx", "typescript"],
@@ -172,7 +181,17 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
 			output.push(chalk.dim(`// Cache slots used: ${cacheSlots}`));
 		}
 	} catch (error) {
-		output.push(chalk.red(`Compilation error: ${error instanceof Error ? error.message : String(error)}`));
+		const errorMessage = error instanceof Error ? error.message : String(error);
+
+		if (errorMessage.includes("Cannot find package")) {
+			output.push(chalk.red("Dependency Error: babel-plugin-react-compiler not found."));
+			output.push("");
+			output.push(chalk.yellow("This tool requires GenesisTools to be fully installed."));
+			output.push(chalk.dim("Run: /genesis-tools:setup to install the full toolkit."));
+		} else {
+			output.push(chalk.red(`Compilation error: ${errorMessage}`));
+		}
+
 		if (options.verbose && error instanceof Error) {
 			output.push(chalk.dim(error.stack || ""));
 		}

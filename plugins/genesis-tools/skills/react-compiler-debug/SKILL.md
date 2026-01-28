@@ -7,6 +7,21 @@ description: Debug and inspect React Compiler (babel-plugin-react-compiler) outp
 
 Inspect what `babel-plugin-react-compiler` generates from React components.
 
+## Prerequisites
+
+This tool requires GenesisTools to be **fully installed** (not just the plugin).
+
+If you see `Cannot find package 'babel-plugin-react-compiler'`:
+
+```bash
+# Check if tools command exists
+which tools
+
+# If not found, use /genesis-tools:setup to install the full toolkit
+```
+
+**The `tools` command must be in your PATH** for this to work. The plugin alone doesn't include the babel dependencies.
+
 ## Quick Start
 
 ```bash
