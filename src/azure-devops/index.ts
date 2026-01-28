@@ -26,6 +26,7 @@ import type {
   WorkItemFull,
   WorkItemCache,
   QueryCache,
+  QueriesCache,
   ChangeInfo,
   QueryFilters,
   WorkItemSettings,
@@ -45,6 +46,8 @@ import {
   findTaskFileAnywhere,
   getTaskFilePath,
   extractQueryId,
+  isQueryIdOrUrl,
+  findQueryByName,
   extractWorkItemIds,
   extractDashboardId,
   parseAzureDevOpsUrl,
@@ -68,6 +71,7 @@ import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "./
 const CACHE_TTL = "180 days";
 const WORKITEM_CACHE_TTL_MINUTES = 5;
 const PROJECT_CACHE_TTL = "7 days";
+const QUERIES_CACHE_TTL = "1 day";
 
 // Storage for global cache
 const storage = new Storage("azure-devops");
@@ -336,10 +340,66 @@ async function handleConfigure(url: string): Promise<void> {
 `);
 }
 
+/**
+ * Resolve query input to a query ID
+ * Supports: URL, GUID, or query name (with fuzzy matching)
+ */
+async function resolveQueryId(input: string, api: Api, config: AzureConfig): Promise<string> {
+  // If it looks like a GUID or URL, use extractQueryId
+  if (isQueryIdOrUrl(input)) {
+    return extractQueryId(input);
+  }
+
+  // Otherwise, treat as a query name - need to search
+  console.log(`🔍 Searching for query: "${input}"`);
+
+  // Load queries cache
+  await storage.ensureDirs();
+  let queriesCache = await storage.getCacheFile<QueriesCache>("queries-list.json", QUERIES_CACHE_TTL);
+
+  // Refresh cache if needed
+  if (!queriesCache || queriesCache.project !== config.project) {
+    console.log("📥 Fetching queries list from Azure DevOps...");
+    const queries = await api.getAllQueries();
+    queriesCache = {
+      project: config.project,
+      queries,
+      fetchedAt: new Date().toISOString(),
+    };
+    await storage.putCacheFile("queries-list.json", queriesCache, QUERIES_CACHE_TTL);
+    console.log(`✅ Cached ${queries.length} queries`);
+  }
+
+  // Find the best match
+  const result = findQueryByName(input, queriesCache.queries);
+
+  if (!result) {
+    throw new Error(`No query found matching "${input}". Use --query with a GUID or URL instead.`);
+  }
+
+  // If exact match (score = 1.0), use it directly
+  if (result.score >= 0.95) {
+    console.log(`✅ Found query: "${result.query.name}" (${result.query.path})`);
+    return result.query.id;
+  }
+
+  // If good match but not exact, show what we found
+  console.log(`✅ Best match: "${result.query.name}" (${result.query.path}) [${Math.round(result.score * 100)}% match]`);
+
+  if (result.alternatives.length > 0) {
+    console.log(`   Other matches:`);
+    for (const alt of result.alternatives) {
+      console.log(`   - "${alt.name}" (${alt.path})`);
+    }
+  }
+
+  return result.query.id;
+}
+
 async function handleQuery(input: string, format: OutputFormat, forceRefresh: boolean, filters?: QueryFilters, downloadWorkitems?: boolean, category?: string, taskFolders?: boolean): Promise<void> {
   const config = requireConfig();
   const api = new Api(config);
-  const queryId = extractQueryId(input);
+  const queryId = await resolveQueryId(input, api, config);
 
   // Load old cache
   const rawCache = forceRefresh ? null : await loadGlobalCache<QueryCache>("query", queryId);

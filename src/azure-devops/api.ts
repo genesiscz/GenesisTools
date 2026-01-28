@@ -15,6 +15,7 @@ import type {
   WorkItemType,
   WorkItemTypeDefinition,
   JsonPatchOperation,
+  QueryInfo,
 } from "./types";
 
 // Azure DevOps API resource ID (constant for all Azure DevOps organizations)
@@ -26,6 +27,18 @@ export const AZURE_DEVOPS_RESOURCE_ID = "499b84ac-1321-427f-aa17-267ca6975798";
 export interface Dashboard {
   name: string;
   queries: Array<{ name: string; queryId: string }>;
+}
+
+/**
+ * Query node from Azure DevOps Queries API
+ */
+interface QueryNode {
+  id: string;
+  name: string;
+  path: string;
+  isFolder: boolean;
+  hasChildren?: boolean;
+  children?: QueryNode[];
 }
 
 /**
@@ -282,6 +295,66 @@ export class Api {
     return result.value
       .filter(t => !t.isDisabled)
       .map(t => t.name as WorkItemType);
+  }
+
+  /**
+   * Get all queries from the project (flat list)
+   * Recursively fetches queries from all folders
+   */
+  async getAllQueries(): Promise<QueryInfo[]> {
+    const queries: QueryInfo[] = [];
+
+    // Azure DevOps Queries API - get root level queries
+    const rootUrl = `${this.config.org}/${encodeURIComponent(this.config.project)}/_apis/wit/queries?$depth=2&api-version=7.1`;
+    const rootData = await this.get<{ value: QueryNode[] }>(rootUrl);
+
+    // Recursively process query tree
+    const processNode = async (node: QueryNode, parentPath: string): Promise<void> => {
+      const path = parentPath ? `${parentPath}/${node.name}` : node.name;
+
+      if (node.isFolder) {
+        queries.push({
+          id: node.id,
+          name: node.name,
+          path,
+          isFolder: true,
+        });
+
+        // If folder has children, process them
+        if (node.children) {
+          for (const child of node.children) {
+            await processNode(child, path);
+          }
+        } else if (node.hasChildren) {
+          // Need to fetch children
+          const childUrl = `${this.config.org}/${encodeURIComponent(this.config.project)}/_apis/wit/queries/${node.id}?$depth=2&api-version=7.1`;
+          try {
+            const childData = await this.get<QueryNode>(childUrl);
+            if (childData.children) {
+              for (const child of childData.children) {
+                await processNode(child, path);
+              }
+            }
+          } catch {
+            // Skip folders we can't access
+          }
+        }
+      } else {
+        // It's a query
+        queries.push({
+          id: node.id,
+          name: node.name,
+          path,
+          isFolder: false,
+        });
+      }
+    };
+
+    for (const node of rootData.value || []) {
+      await processNode(node, "");
+    }
+
+    return queries;
   }
 
   /**

@@ -11,7 +11,7 @@ Fetch, manage, and analyze Azure DevOps work items using `tools azure-devops`.
 
 ```bash
 tools azure-devops --workitem <id|ids>           # Fetch work item(s)
-tools azure-devops --query <id|url>              # Fetch query results
+tools azure-devops --query <id|url|name>         # Fetch query results (supports name matching)
 tools azure-devops --query <id> --download-workitems  # Download all to files
 tools azure-devops --dashboard <id|url>          # Get dashboard queries
 tools azure-devops --list                        # List cached items
@@ -48,11 +48,30 @@ tools azure-devops --workitem 261575 --force
 
 ### Fetch Query
 
+The `--query` option supports three input formats:
+
+1. **Query ID (GUID)**: `d6e14134-9d22-4cbb-b897-b1514f888667`
+2. **Full URL**: `https://dev.azure.com/org/project/_queries/query/abc123`
+3. **Query Name**: `"Otevřené bugy"` (fuzzy matching supported)
+
 ```bash
+# By ID
 tools azure-devops --query d6e14134-9d22-4cbb-b897-b1514f888667
+
+# By name (uses fuzzy matching to find the query)
+tools azure-devops --query "Open Bugs"
+tools azure-devops --query "Otevřené bugy"
+
+# With filters
 tools azure-devops --query <id> --state Active,Development
-tools azure-devops --query <id> --download-workitems --category react19
+tools azure-devops --query "Active Tasks" --download-workitems --category react19
 ```
+
+**Query Name Matching:**
+- Exact matches are used immediately
+- Fuzzy matching finds the closest query name if no exact match
+- Shows alternatives if multiple similar queries exist
+- Query list is cached for 1 day for fast lookups
 
 ### Analyze Work Items
 
@@ -123,7 +142,9 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 |--------------|--------|
 | "Get workitem 261575" | `tools azure-devops --workitem 261575` |
 | "Show query results for X" | `tools azure-devops --query X` |
-| "Download React19 bugs" | `tools azure-devops --query <id> --download-workitems --category react19` |
+| "Show Open Bugs query" | `tools azure-devops --query "Open Bugs"` |
+| "Fetch Otevřené bugy" | `tools azure-devops --query "Otevřené bugy"` |
+| "Download React19 bugs" | `tools azure-devops --query "React19 Bugs" --download-workitems --category react19` |
 | "Analyze task 261575" | Fetch → Explore agent → Write .analysis.md |
 | "Analyze all active bugs" | Fetch query with --download-workitems → Parallel Explore agents → Write .analysis.md files |
 

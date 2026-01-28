@@ -249,3 +249,18 @@ export interface TypeDefinitionCache {
   types: Record<string, WorkItemTypeDefinition>;
   fetchedAt: string;
 }
+
+/** Query information from Azure DevOps */
+export interface QueryInfo {
+  id: string;
+  name: string;
+  path: string;  // Full folder path like "Shared Queries/Bugs/Open"
+  isFolder: boolean;
+}
+
+/** Cache for all queries in a project */
+export interface QueriesCache {
+  project: string;
+  queries: QueryInfo[];
+  fetchedAt: string;
+}

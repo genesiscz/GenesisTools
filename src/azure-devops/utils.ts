@@ -28,6 +28,7 @@ import type {
   UsedValuesCache,
   WorkItemTemplate,
   WorkItemType,
+  QueryInfo,
 } from "./types";
 
 // ============= HTML to Markdown =============
@@ -217,10 +218,130 @@ export function getTaskFilePath(id: number, title: string, ext: string, category
 
 // ============= URL Parsers =============
 
+/**
+ * Check if input looks like a GUID or URL (not a query name)
+ */
+export function isQueryIdOrUrl(input: string): boolean {
+  // GUID pattern
+  if (/^[a-f0-9-]{36}$/i.test(input)) return true;
+  // URL pattern
+  if (input.includes("query/")) return true;
+  // Bare GUID without dashes
+  if (/^[a-f0-9]{32}$/i.test(input)) return true;
+  return false;
+}
+
 export function extractQueryId(input: string): string {
   const match = input.match(/query\/([a-f0-9-]+)/i) || input.match(/^([a-f0-9-]+)$/i);
   if (!match) throw new Error(`Invalid query URL/ID: ${input}`);
   return match[1];
+}
+
+// ============= Fuzzy String Matching =============
+
+/**
+ * Calculate Levenshtein distance between two strings
+ * Used for fuzzy matching query names
+ */
+export function levenshteinDistance(a: string, b: string): number {
+  const aLower = a.toLowerCase();
+  const bLower = b.toLowerCase();
+
+  if (aLower === bLower) return 0;
+  if (aLower.length === 0) return bLower.length;
+  if (bLower.length === 0) return aLower.length;
+
+  const matrix: number[][] = [];
+
+  // Initialize matrix
+  for (let i = 0; i <= bLower.length; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= aLower.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  // Fill matrix
+  for (let i = 1; i <= bLower.length; i++) {
+    for (let j = 1; j <= aLower.length; j++) {
+      const cost = bLower[i - 1] === aLower[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,      // deletion
+        matrix[i][j - 1] + 1,      // insertion
+        matrix[i - 1][j - 1] + cost // substitution
+      );
+    }
+  }
+
+  return matrix[bLower.length][aLower.length];
+}
+
+/**
+ * Calculate similarity score (0-1, higher is better)
+ */
+export function similarityScore(a: string, b: string): number {
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return 1;
+  return 1 - levenshteinDistance(a, b) / maxLen;
+}
+
+/**
+ * Find the best matching query by name from a list of queries
+ * Returns the query if a good match is found, null otherwise
+ */
+export function findQueryByName(
+  searchName: string,
+  queries: QueryInfo[]
+): { query: QueryInfo; score: number; alternatives: QueryInfo[] } | null {
+  // Filter to non-folder queries only
+  const actualQueries = queries.filter(q => !q.isFolder);
+
+  if (actualQueries.length === 0) return null;
+
+  // Calculate scores for all queries
+  const scored = actualQueries.map(q => {
+    // Check exact match first (case-insensitive)
+    if (q.name.toLowerCase() === searchName.toLowerCase()) {
+      return { query: q, score: 1.0 };
+    }
+
+    // Check if search term is contained in query name
+    const containsScore = q.name.toLowerCase().includes(searchName.toLowerCase())
+      ? 0.8 + (searchName.length / q.name.length) * 0.15
+      : 0;
+
+    // Calculate Levenshtein similarity
+    const levScore = similarityScore(searchName, q.name);
+
+    // Also check against full path
+    const pathScore = similarityScore(searchName, q.path) * 0.8;
+
+    // Take the best score
+    const finalScore = Math.max(containsScore, levScore, pathScore);
+
+    return { query: q, score: finalScore };
+  });
+
+  // Sort by score descending
+  scored.sort((a, b) => b.score - a.score);
+
+  // Get top match
+  const best = scored[0];
+
+  // If best score is too low, no good match
+  if (best.score < 0.3) return null;
+
+  // Get alternatives (other high-scoring matches)
+  const alternatives = scored
+    .slice(1, 4)
+    .filter(s => s.score >= 0.3)
+    .map(s => s.query);
+
+  return {
+    query: best.query,
+    score: best.score,
+    alternatives,
+  };
 }
 
 export function extractWorkItemIds(input: string): number[] {
