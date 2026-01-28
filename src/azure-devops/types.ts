@@ -24,6 +24,14 @@ export type OutputFormat = "ai" | "md" | "json";
 
 // ============= Work Item Types =============
 
+/** Raw response from Azure DevOps CLI `az boards work-item show` */
+export interface AzWorkItemRaw {
+  id: number;
+  rev: number;
+  fields?: Record<string, unknown>;
+  relations?: Relation[];
+}
+
 export interface WorkItem {
   id: number;
   rev: number;

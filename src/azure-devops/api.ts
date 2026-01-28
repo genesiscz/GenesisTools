@@ -8,6 +8,7 @@
 import { $ } from "bun";
 import type {
   AzureConfig,
+  AzWorkItemRaw,
   WorkItem,
   WorkItemFull,
   Comment,
@@ -55,7 +56,9 @@ export class Api {
       }
       return token;
     } catch (error) {
-      throw new Error(`Failed to get Azure access token for ${AZURE_DEVOPS_RESOURCE_ID}: ${error instanceof Error ? error.message : String(error)}`);
+      const stderr = (error as { stderr?: { toString(): string } })?.stderr?.toString?.()?.trim();
+      const message = stderr || (error instanceof Error ? error.message : String(error));
+      throw new Error(`Failed to get Azure access token:\n${message}`);
     }
   }
 
@@ -116,7 +119,9 @@ export class Api {
         throw new Error("Expected array from az boards query");
       }
     } catch (error) {
-      throw new Error(`Failed to run query ${queryId}: ${error instanceof Error ? error.message : String(error)}`);
+      const stderr = (error as { stderr?: { toString(): string } })?.stderr?.toString?.()?.trim();
+      const message = stderr || (error instanceof Error ? error.message : String(error));
+      throw new Error(`Failed to run query ${queryId}:\n${message}`);
     }
 
     return items.map((item) => {
@@ -144,26 +149,36 @@ export class Api {
    * Get full details of a work item including comments and relations
    */
   async getWorkItem(id: number): Promise<WorkItemFull> {
-    const result = await $`az boards work-item show --id ${id} -o json`.quiet();
-    const item = JSON.parse(result.text());
+    let item: AzWorkItemRaw;
+
+    try {
+      const result = await $`az boards work-item show --id ${id} -o json`.quiet();
+      item = JSON.parse(result.text()) as AzWorkItemRaw;
+    } catch (error) {
+      const stderr = (error as { stderr?: { toString(): string } })?.stderr?.toString?.()?.trim();
+      const message = stderr || (error instanceof Error ? error.message : String(error));
+      throw new Error(`Failed to get work item ${id}:\n${message}`);
+    }
 
     // Get comments
     const commentsUrl = `${this.config.org}/${encodeURIComponent(this.config.project)}/_apis/wit/workItems/${id}/comments?api-version=7.1-preview.3`;
     const commentsData = await this.get<{ comments: Array<{ id: number; createdBy: { displayName: string }; createdDate: string; text: string }> }>(commentsUrl);
 
+    const fields = item.fields;
+
     return {
       id: item.id,
       rev: item.rev,
-      title: item.fields?.["System.Title"],
-      state: item.fields?.["System.State"],
-      changed: item.fields?.["System.ChangedDate"],
-      severity: item.fields?.["Microsoft.VSTS.Common.Severity"],
-      assignee: item.fields?.["System.AssignedTo"]?.displayName,
-      tags: item.fields?.["System.Tags"],
-      description: item.fields?.["System.Description"],
-      created: item.fields?.["System.CreatedDate"],
-      createdBy: item.fields?.["System.CreatedBy"]?.displayName,
-      changedBy: item.fields?.["System.ChangedBy"]?.displayName,
+      title: fields?.["System.Title"] as string,
+      state: fields?.["System.State"] as string,
+      changed: fields?.["System.ChangedDate"] as string,
+      severity: fields?.["Microsoft.VSTS.Common.Severity"] as string | undefined,
+      assignee: (fields?.["System.AssignedTo"] as { displayName?: string } | undefined)?.displayName,
+      tags: fields?.["System.Tags"] as string | undefined,
+      description: fields?.["System.Description"] as string | undefined,
+      created: fields?.["System.CreatedDate"] as string | undefined,
+      createdBy: (fields?.["System.CreatedBy"] as { displayName?: string } | undefined)?.displayName,
+      changedBy: (fields?.["System.ChangedBy"] as { displayName?: string } | undefined)?.displayName,
       url: this.generateWorkItemUrl(id),
       comments: (commentsData.comments || []).map((c): Comment => ({
         id: c.id,
@@ -172,7 +187,7 @@ export class Api {
         text: c.text,
       })),
       relations: item.relations,
-      rawFields: item.fields as Record<string, unknown>,
+      rawFields: fields,
     };
   }
 

@@ -61,6 +61,9 @@ import {
 // API
 import { Api, AZURE_DEVOPS_RESOURCE_ID } from "./api";
 
+// CLI Utils
+import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "./cli.utils";
+
 // Cache TTL
 const CACHE_TTL = "180 days";
 const WORKITEM_CACHE_TTL_MINUTES = 5;
@@ -278,25 +281,7 @@ async function handleConfigure(url: string): Promise<void> {
   try {
     await $`az account show`.quiet();
   } catch {
-    console.log(`
-🔐 Azure CLI Authentication Required
-
-You need to log in to Azure CLI first. Run:
-
-  az login --allow-no-subscriptions --use-device-code
-
-This will:
-1. Display a code and URL
-2. Open the URL in your browser
-3. Enter the code to authenticate
-
-Prerequisites:
-  1. Install Azure CLI: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli
-  2. Install Azure DevOps extension: az extension add --name azure-devops
-
-Documentation: https://learn.microsoft.com/en-us/azure/devops/cli/?view=azure-devops
-`);
-    process.exit(1);
+    exitWithAuthGuide();
   }
 
   console.log(`Parsing URL: ${url}\n`);
@@ -1631,7 +1616,22 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   } catch (error) {
-    logger.error(`Error: ${error instanceof Error ? error.message : error}`);
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (isSslError(message)) {
+      exitWithSslGuide(error);
+    }
+
+    if (isAuthError(message)) {
+      exitWithAuthGuide(error);
+    }
+
+    logger.error(`Error: ${message}`);
+
+    if (error instanceof Error && error.stack) {
+      logger.debug(error.stack);
+    }
+
     process.exit(1);
   }
 }
