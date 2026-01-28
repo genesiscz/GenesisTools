@@ -70,8 +70,8 @@ import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "./
 // Cache TTL
 const CACHE_TTL = "180 days";
 const WORKITEM_CACHE_TTL_MINUTES = 5;
-const PROJECT_CACHE_TTL = "7 days";
-const QUERIES_CACHE_TTL = "1 day";
+const PROJECT_CACHE_TTL = "30 days";
+const QUERIES_CACHE_TTL = "30 days";
 
 // Storage for global cache
 const storage = new Storage("azure-devops");
