@@ -39,7 +39,7 @@ interface ProgramOptions {
 	clipboard?: boolean;
 	target?: "17" | "18" | "19";
 	mode?: "infer" | "all" | "annotation" | "syntax";
-	onlyCompiled?: boolean;
+	withOriginal?: boolean;
 }
 
 const program = new Command();
@@ -54,7 +54,7 @@ program
 	.option("--clipboard", "Copy output to clipboard")
 	.option("-t, --target <version>", "React version target (17, 18, 19)", "19")
 	.option("-m, --mode <mode>", "Compilation mode (infer, all, annotation, syntax)", "infer")
-	.option("--only-compiled", "Only show compiled output, not original")
+	.option("--with-original", "Include original code before compiled output")
 	.action(async (fileArg: string | undefined, options: ProgramOptions) => {
 		try {
 			await main(fileArg, options);
@@ -158,7 +158,7 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
 	// Build output
 	const output: string[] = [];
 
-	if (!options.onlyCompiled) {
+	if (options.withOriginal && !options.code) {
 		output.push(chalk.bold.blue("// ====== ORIGINAL ======"));
 		output.push(code);
 		output.push("");

@@ -36,7 +36,12 @@ tools react-compiler-debug -v <file.tsx>
 
 # Output to clipboard
 tools react-compiler-debug <file.tsx> --clipboard
+
+# Show original + compiled (for file input only)
+tools react-compiler-debug <file.tsx> --with-original
 ```
+
+> **Tip for skill usage:** When compiling a file and you haven't already read its content, use `--with-original` to see both the original and compiled versions. This flag is ignored for `--code` input.
 
 ## When to Use
 
