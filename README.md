@@ -558,33 +558,69 @@ tools hold-ai/client
 
 ### 12. 🌐 MCP Web Reader
 
-> Fetches web content as raw HTML, Jina Reader Markdown, or locally extracted Markdown. Works as both CLI and MCP server.
+> Fetches web content and converts HTML to Markdown using pluggable engines. Supports AI-powered conversion with ReaderLM-v2. Works as both CLI and MCP server.
 
 <details>
 <summary><b>🎯 Quick Examples</b></summary>
 
 ```bash
-# CLI modes
-tools mcp-web-reader --mode raw --url https://example.com
-tools mcp-web-reader --mode markdown --depth advanced --url https://example.com
-tools mcp-web-reader --mode jina --url https://example.com
+# Basic usage (defaults to markdown with turndown engine)
+tools mcp-web-reader "https://example.com"
+
+# Choose conversion engine
+tools mcp-web-reader "https://example.com" --engine turndown   # Default, GFM support
+tools mcp-web-reader "https://example.com" --engine mdream     # Fast, LLM-optimized
+tools mcp-web-reader "https://example.com" --engine readerlm   # AI-powered (requires model)
+
+# Other modes
+tools mcp-web-reader "https://example.com" --mode raw          # Raw HTML
+tools mcp-web-reader "https://example.com" --mode jina         # Jina Reader API
 
 # Token limiting and compaction
-tools mcp-web-reader --mode markdown --url https://example.com --tokens 2048 --save-tokens
+tools mcp-web-reader "https://example.com" --tokens 2048 --save-tokens
 ```
+
+</details>
+
+<details>
+<summary><b>🤖 ReaderLM Model</b></summary>
+
+The `readerlm` engine uses [ReaderLM-v2](https://huggingface.co/jinaai/ReaderLM-v2), a local AI model (~1GB) for highest quality HTML-to-Markdown conversion.
+
+```bash
+# Check model status
+tools mcp-web-reader --model-info
+
+# Download model (one-time)
+tools mcp-web-reader --download-model
+
+# Download and convert in one command
+tools mcp-web-reader "https://example.com" --engine readerlm --download-model
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ Engines Comparison</b></summary>
+
+| Engine | Speed | Quality | Requirements |
+|--------|-------|---------|--------------|
+| `turndown` | Fast | Good | None (default) |
+| `mdream` | Fastest | Good | None |
+| `readerlm` | Slower | Best | ~1GB model download |
 
 </details>
 
 <details>
 <summary><b>⚙️ MCP Tools</b></summary>
 
-Exposed tools with parameters: `url`, `depth` (basic|advanced), `save_tokens` (0|1), `tokens` (max tokens)
+Exposed tools with parameters: `url`, `engine`, `depth` (basic|advanced), `save_tokens` (0|1), `tokens`
 
--   `FetchWebRaw`
--   `FetchWebMarkdown`
--   `FetchJina`
+-   `FetchWebRaw` - Raw HTML
+-   `FetchWebMarkdown` - Markdown with engine selection
+-   `FetchJina` - Jina Reader API
 
-Each returns `{ content: [{ type: "text", text }], meta: { tokens } }`.
+Each returns `{ content: [{ type: "text", text }], meta: { tokens, engine } }`.
 
 </details>
 
