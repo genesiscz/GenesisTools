@@ -63,9 +63,10 @@ Most tools follow these common patterns:
 
 **Interactive User Experience**:
 
--   Use `@inquirer/prompts` for interactive prompts when arguments are missing
--   Common prompt types: `select`, `search`, `input`, `confirm`, `checkbox`
--   Handle user cancellation gracefully (catch `ExitPromptError` from `@inquirer/core`)
+-   Two prompt libraries available: `@inquirer/prompts` (legacy) and `@clack/prompts` (preferred for new tools)
+-   See "Choosing a Prompt Library" below for when to use each
+-   Common prompt types: `select`, `input`, `confirm`, `checkbox`/`multiselect`
+-   Handle user cancellation gracefully
 -   Provide sensible defaults and suggestions in prompts
 
 **Output Handling**:
@@ -191,6 +192,115 @@ async function processInput(inputPath: string): Promise<string> {
 program.parse();
 ```
 
+### Choosing a Prompt Library
+
+We support two prompt libraries. Choose based on your needs:
+
+| Use Case | Library | Why |
+|----------|---------|-----|
+| **New tools** (preferred) | `@clack/prompts` | Beautiful UI, built-in spinners, structured logging |
+| Multi-step wizards | `@clack/prompts` | `p.intro()`, `p.outro()`, `p.spinner()` for flow |
+| Need `editor` prompt | `@inquirer/prompts` | No clack equivalent for multiline editor |
+| Modifying existing tool | Keep current library | Don't mix libraries in same file |
+
+**Full guide:** See `.claude/docs/prompts-and-colors.md` for comprehensive documentation.
+
+### Alternative Template: @clack/prompts (Preferred for New Tools)
+
+```typescript
+import { Command } from "commander";
+import * as p from "@clack/prompts";
+import pc from "picocolors";
+import clipboardy from "clipboardy";
+import logger from "../logger";
+
+interface Options {
+    input?: string;
+    output?: string;
+    verbose?: boolean;
+}
+
+const program = new Command();
+
+program
+    .name("your-tool-name")
+    .description("Description of what your tool does")
+    .argument("[input]", "Input file or directory")
+    .option("-i, --input <path>", "Input file or directory")
+    .option("-o, --output <path>", "Output destination")
+    .option("-v, --verbose", "Enable verbose logging")
+    .action(async (inputArg, options: Options) => {
+        await main(inputArg, options);
+    });
+
+async function main(inputArg: string | undefined, options: Options) {
+    p.intro(pc.bgCyan(pc.black(" your-tool-name ")));
+
+    // Get input - from args or interactive prompt
+    let inputPath = options.input || inputArg;
+
+    if (!inputPath) {
+        const result = await p.text({
+            message: "Enter input path:",
+            placeholder: "/path/to/file",
+        });
+
+        if (p.isCancel(result)) {
+            p.cancel("Operation cancelled");
+            process.exit(0);
+        }
+        inputPath = result;
+    }
+
+    // Spinner for async work
+    const spinner = p.spinner();
+    spinner.start("Processing...");
+    const result = await processInput(inputPath);
+    spinner.stop("Processing complete");
+
+    // Handle output
+    if (options.output) {
+        await Bun.write(options.output, result);
+        p.log.success(`Output written to ${options.output}`);
+    } else {
+        const outputChoice = await p.select({
+            message: "Where to output?",
+            options: [
+                { value: "clipboard", label: "Clipboard" },
+                { value: "stdout", label: "Console" },
+                { value: "file", label: "File" },
+            ],
+        });
+
+        if (p.isCancel(outputChoice)) {
+            p.cancel("Operation cancelled");
+            process.exit(0);
+        }
+
+        switch (outputChoice) {
+            case "clipboard":
+                await clipboardy.write(result);
+                p.log.success("Copied to clipboard!");
+                break;
+            case "stdout":
+                console.log(result);
+                break;
+            case "file":
+                // Prompt for filename...
+                break;
+        }
+    }
+
+    p.outro(pc.green("Done!"));
+}
+
+async function processInput(inputPath: string): Promise<string> {
+    return `Processed: ${inputPath}`;
+}
+
+program.parse();
+```
+
 ### 3. Common Patterns to Follow
 
 **Using Bun.spawn for External Commands**:
@@ -245,7 +355,18 @@ watcher.on("change", (path) => {
 });
 ```
 
-**Progress Indicators**:
+**Progress Indicators** (with @clack/prompts - preferred):
+
+```typescript
+import * as p from "@clack/prompts";
+
+const spinner = p.spinner();
+spinner.start("Processing...");
+// Do work
+spinner.stop("Done!"); // or spinner.stop(pc.red("Failed!"));
+```
+
+**Progress Indicators** (with ora - legacy):
 
 ```typescript
 import ora from "ora";

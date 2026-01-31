@@ -288,10 +288,12 @@ export function similarityScore(a: string, b: string): number {
 /**
  * Find the best matching query by name from a list of queries
  * Returns the query if a good match is found, null otherwise
+ * @param recentQueryIds - Optional set of query IDs that have been recently used (get 0.15 score boost)
  */
 export function findQueryByName(
   searchName: string,
-  queries: QueryInfo[]
+  queries: QueryInfo[],
+  recentQueryIds?: Set<string>
 ): { query: QueryInfo; score: number; alternatives: QueryInfo[] } | null {
   // Filter to non-folder queries only
   const actualQueries = queries.filter(q => !q.isFolder);
@@ -317,7 +319,12 @@ export function findQueryByName(
     const pathScore = similarityScore(searchName, q.path) * 0.8;
 
     // Take the best score
-    const finalScore = Math.max(containsScore, levScore, pathScore);
+    let finalScore = Math.max(containsScore, levScore, pathScore);
+
+    // Boost score for recently-used queries (add 0.15 to favor them)
+    if (recentQueryIds?.has(q.id)) {
+      finalScore = Math.min(1.0, finalScore + 0.15);
+    }
 
     return { query: q, score: finalScore };
   });

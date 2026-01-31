@@ -101,6 +101,21 @@ function initSchema(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_file_index_mtime ON file_index(mtime);
     CREATE INDEX IF NOT EXISTS idx_file_index_project ON file_index(project);
   `);
+
+	// Migrations: Add columns that may be missing from older schemas
+	const migrations = [
+		"ALTER TABLE daily_stats ADD COLUMN token_usage TEXT",
+		"ALTER TABLE daily_stats ADD COLUMN model_counts TEXT",
+		"ALTER TABLE daily_stats ADD COLUMN branch_counts TEXT",
+	];
+
+	for (const migration of migrations) {
+		try {
+			db.exec(migration);
+		} catch {
+			// Column already exists - ignore error
+		}
+	}
 }
 
 // =============================================================================

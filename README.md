@@ -57,6 +57,7 @@ cd GenesisTools
 |-----------|------|-------------|
 | **Command** | `setup` | Interactive setup guide for installing GenesisTools globally |
 | **Skill** | `azure-devops` | Automatically helps with Azure DevOps work items and queries |
+| **Skill** | `react-compiler-debug` | Debug and inspect React Compiler output for memoization issues |
 
 To use the plugin in Claude Code:
 - Commands are invoked with `/genesis-tools:setup`
@@ -128,6 +129,7 @@ tools
 | **[MCP TSC](#15--mcp-tsc)**                          | 🔍 TypeScript diagnostics (CLI & MCP)         |
 | **[MCP Manager](#17--mcp-manager)**                  | ⚙️ Cross-platform MCP configuration manager   |
 | **[Azure DevOps](#20--azure-devops)**                | 🔷 Fetch and manage Azure DevOps work items   |
+| **[React Compiler Debug](#22--react-compiler-debug)** | ⚛️ Inspect React Compiler output              |
 
 ### 📊 Monitoring & Watching
 
@@ -556,33 +558,69 @@ tools hold-ai/client
 
 ### 12. 🌐 MCP Web Reader
 
-> Fetches web content as raw HTML, Jina Reader Markdown, or locally extracted Markdown. Works as both CLI and MCP server.
+> Fetches web content and converts HTML to Markdown using pluggable engines. Supports AI-powered conversion with ReaderLM-v2. Works as both CLI and MCP server.
 
 <details>
 <summary><b>🎯 Quick Examples</b></summary>
 
 ```bash
-# CLI modes
-tools mcp-web-reader --mode raw --url https://example.com
-tools mcp-web-reader --mode markdown --depth advanced --url https://example.com
-tools mcp-web-reader --mode jina --url https://example.com
+# Basic usage (defaults to markdown with turndown engine)
+tools mcp-web-reader "https://example.com"
+
+# Choose conversion engine
+tools mcp-web-reader "https://example.com" --engine turndown   # Default, GFM support
+tools mcp-web-reader "https://example.com" --engine mdream     # Fast, LLM-optimized
+tools mcp-web-reader "https://example.com" --engine readerlm   # AI-powered (requires model)
+
+# Other modes
+tools mcp-web-reader "https://example.com" --mode raw          # Raw HTML
+tools mcp-web-reader "https://example.com" --mode jina         # Jina Reader API
 
 # Token limiting and compaction
-tools mcp-web-reader --mode markdown --url https://example.com --tokens 2048 --save-tokens
+tools mcp-web-reader "https://example.com" --tokens 2048 --save-tokens
 ```
+
+</details>
+
+<details>
+<summary><b>🤖 ReaderLM Model</b></summary>
+
+The `readerlm` engine uses [ReaderLM-v2](https://huggingface.co/jinaai/ReaderLM-v2), a local AI model (~1GB) for highest quality HTML-to-Markdown conversion.
+
+```bash
+# Check model status
+tools mcp-web-reader --model-info
+
+# Download model (one-time)
+tools mcp-web-reader --download-model
+
+# Download and convert in one command
+tools mcp-web-reader "https://example.com" --engine readerlm --download-model
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ Engines Comparison</b></summary>
+
+| Engine | Speed | Quality | Requirements |
+|--------|-------|---------|--------------|
+| `turndown` | Fast | Good | None (default) |
+| `mdream` | Fastest | Good | None |
+| `readerlm` | Slower | Best | ~1GB model download |
 
 </details>
 
 <details>
 <summary><b>⚙️ MCP Tools</b></summary>
 
-Exposed tools with parameters: `url`, `depth` (basic|advanced), `save_tokens` (0|1), `tokens` (max tokens)
+Exposed tools with parameters: `url`, `engine`, `depth` (basic|advanced), `save_tokens` (0|1), `tokens`
 
--   `FetchWebRaw`
--   `FetchWebMarkdown`
--   `FetchJina`
+-   `FetchWebRaw` - Raw HTML
+-   `FetchWebMarkdown` - Markdown with engine selection
+-   `FetchJina` - Jina Reader API
 
-Each returns `{ content: [{ type: "text", text }], meta: { tokens } }`.
+Each returns `{ content: [{ type: "text", text }], meta: { tokens, engine } }`.
 
 </details>
 
@@ -1790,6 +1828,114 @@ After rebasing feature onto main (with children):
                                \
   child-2:                      I'
 ```
+
+</details>
+
+---
+
+### 22. ⚛️ React Compiler Debug
+
+> Inspect what `babel-plugin-react-compiler` generates from React components. Debug memoization issues and understand compiler optimizations.
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+-   🔍 **Compile and inspect**: See exactly what React Compiler generates
+-   🎯 **Multiple input modes**: File, inline code, or stdin
+-   📊 **Summary output**: Shows if component was memoized and cache slot count
+-   📋 **Clipboard support**: Copy output directly to clipboard
+-   ⚙️ **Configurable**: Target React 17/18/19, different compilation modes
+
+</details>
+
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
+
+```bash
+# Compile a file and see output
+tools react-compiler-debug src/components/MyComponent.tsx
+
+# Compile inline code
+tools react-compiler-debug --code "const Foo = ({ x }) => <div>{x}</div>"
+
+# Show original + compiled (for file input)
+tools react-compiler-debug src/components/MyComponent.tsx --with-original
+
+# Verbose mode (shows compiler events)
+tools react-compiler-debug -v src/components/MyComponent.tsx
+
+# Output to clipboard
+tools react-compiler-debug src/components/MyComponent.tsx --clipboard
+
+# Target specific React version
+tools react-compiler-debug --target 18 src/components/MyComponent.tsx
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ Options</b></summary>
+
+| Option | Alias | Description | Default |
+|--------|-------|-------------|---------|
+| `--code` | `-c` | Compile inline code snippet | - |
+| `--stdin` | `-s` | Read code from stdin | - |
+| `--with-original` | | Include original code before compiled (file/stdin only) | `false` |
+| `--verbose` | `-v` | Show compiler events | `false` |
+| `--clipboard` | | Copy output to clipboard | `false` |
+| `--target` | `-t` | React version target (17, 18, 19) | `19` |
+| `--mode` | `-m` | Compilation mode (infer, all, annotation, syntax) | `infer` |
+
+</details>
+
+<details>
+<summary><b>📋 Reading the Output</b></summary>
+
+The compiled output uses React Compiler primitives:
+
+-   `useMemoCache(n)` / `_c(n)` - Creates a cache with n slots
+-   `$[0]`, `$[1]`, etc. - Cache slot access
+-   `Symbol.for("react.memo_cache_sentinel")` - Cache invalidation marker
+
+**Example Input:**
+```tsx
+const Greeting = ({ name }) => <h1>Hello, {name}!</h1>;
+```
+
+**Example Output:**
+```tsx
+function Greeting(t0) {
+  const $ = _c(2);
+  const { name } = t0;
+  let t1;
+  if ($[0] !== name) {
+    t1 = <h1>Hello, {name}!</h1>;
+    $[0] = name;
+    $[1] = t1;
+  } else {
+    t1 = $[1];
+  }
+  return t1;
+}
+```
+
+The compiler memoizes the JSX based on `name` prop changes.
+
+</details>
+
+<details>
+<summary><b>🤖 Claude AI Skill</b></summary>
+
+This tool includes a Claude AI skill that enables AI assistants to automatically debug React Compiler issues.
+
+**Triggers on:**
+- "react compiler", "compiler output", "see compiled"
+- "memoization debug", "why isn't this memoized"
+- Debugging component optimization issues
+
+**Skill behavior:**
+- Uses `--with-original` when it doesn't already have the source file content
+- Analyzes compiler output to explain memoization decisions
 
 </details>
 

@@ -245,6 +245,28 @@ export const git = {
 	},
 
 	/**
+	 * Check if git repository is locked (.git/index.lock exists)
+	 * This usually means another git process is running
+	 */
+	async isGitLocked(): Promise<boolean> {
+		const repoRoot = await this.getRepoRoot();
+		const lockFile = Bun.file(`${repoRoot}/.git/index.lock`);
+		return await lockFile.exists();
+	},
+
+	/**
+	 * Diagnose why a rebase failed by checking repository state
+	 * Call this AFTER a rebase command returns non-zero exit code
+	 */
+	async diagnoseRebaseFailure(): Promise<"conflict" | "lock" | "dirty" | "unknown"> {
+		// Check in order of likelihood
+		if (await this.isGitLocked()) return "lock";
+		if (await this.isRebaseInProgress()) return "conflict";
+		if (await this.hasUncommittedChanges()) return "dirty";
+		return "unknown";
+	},
+
+	/**
 	 * Update a reference
 	 */
 	async updateRef(ref: string, sha: string): Promise<void> {
@@ -304,6 +326,62 @@ export const git = {
 		if (!result.success) {
 			throw new Error(`Failed to reset to ${sha}: ${result.stderr}`);
 		}
+	},
+
+	/**
+	 * Stash current working tree changes
+	 */
+	async stash(message?: string): Promise<void> {
+		const args = ["stash", "push"];
+		if (message) args.push("-m", message);
+		const result = await exec(args);
+		if (!result.success) {
+			throw new Error(`Failed to stash: ${result.stderr}`);
+		}
+	},
+
+	/**
+	 * Get the remote tracking branch for a local branch
+	 * Returns null if no tracking branch configured
+	 */
+	async getTrackingBranch(branch: string): Promise<string | null> {
+		const result = await exec(["rev-parse", "--abbrev-ref", `${branch}@{upstream}`]);
+		return result.success ? result.stdout : null;
+	},
+
+	/**
+	 * Get divergence info between local and remote
+	 */
+	async getDivergence(
+		local: string,
+		remote: string
+	): Promise<{
+		localOnly: number;
+		remoteOnly: number;
+		localCommits: string[];
+		remoteCommits: string[];
+	}> {
+		const localOnly = await this.countCommits(remote, local);
+		const remoteOnly = await this.countCommits(local, remote);
+
+		const localCommits =
+			localOnly > 0
+				? (await exec(["log", "--oneline", `${remote}..${local}`, "-5"])).stdout.split("\n").filter(Boolean)
+				: [];
+		const remoteCommits =
+			remoteOnly > 0
+				? (await exec(["log", "--oneline", `${local}..${remote}`, "-5"])).stdout.split("\n").filter(Boolean)
+				: [];
+
+		return { localOnly, remoteOnly, localCommits, remoteCommits };
+	},
+
+	/**
+	 * Get list of commits between two refs
+	 */
+	async getCommitsBetween(from: string, to: string, limit = 10): Promise<string[]> {
+		const result = await exec(["log", "--oneline", `${from}..${to}`, `-${limit}`]);
+		return result.success ? result.stdout.split("\n").filter(Boolean) : [];
 	},
 
 	/**
