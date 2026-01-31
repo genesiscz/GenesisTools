@@ -137,6 +137,8 @@ export interface ParsedUrl {
 export interface QueryFilters {
   states?: string[];
   severities?: string[];
+  changesFrom?: Date;  // Only show changes after this date
+  changesTo?: Date;    // Only show changes before this date
 }
 
 export interface WorkItemSettings {

@@ -13,7 +13,7 @@
 import { $ } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, rmdirSync, readdirSync } from "fs";
 import { join, dirname } from "path";
-import logger from "@app/logger";
+import logger, { consoleLog } from "@app/logger";
 import { Storage } from "@app/utils/storage";
 import { input, select, confirm, editor } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
@@ -75,6 +75,12 @@ const QUERIES_CACHE_TTL = "30 days";
 
 // Storage for global cache
 const storage = new Storage("azure-devops");
+
+// Silent mode for JSON output - suppresses progress messages
+let silentMode = false;
+const log = (msg: string) => {
+  if (!silentMode) consoleLog.info(msg);
+};
 
 // ============= Cache Management (using Storage utility) =============
 
@@ -351,7 +357,7 @@ async function resolveQueryId(input: string, api: Api, config: AzureConfig): Pro
   }
 
   // Otherwise, treat as a query name - need to search
-  console.log(`🔍 Searching for query: "${input}"`);
+  log(`🔍 Searching for query: "${input}"`);
 
   // Load queries cache
   await storage.ensureDirs();
@@ -359,7 +365,7 @@ async function resolveQueryId(input: string, api: Api, config: AzureConfig): Pro
 
   // Refresh cache if needed
   if (!queriesCache || queriesCache.project !== config.project) {
-    console.log("📥 Fetching queries list from Azure DevOps...");
+    log("📥 Fetching queries list from Azure DevOps...");
     const queries = await api.getAllQueries();
     queriesCache = {
       project: config.project,
@@ -367,11 +373,19 @@ async function resolveQueryId(input: string, api: Api, config: AzureConfig): Pro
       fetchedAt: new Date().toISOString(),
     };
     await storage.putCacheFile("queries-list.json", queriesCache, QUERIES_CACHE_TTL);
-    console.log(`✅ Cached ${queries.length} queries`);
+    log(`✅ Cached ${queries.length} queries`);
   }
 
+  // Get IDs of recently-used queries from cache files for boosted fuzzy matching
+  const cacheFiles = await storage.listCacheFiles(false);
+  const recentQueryIds = new Set<string>(
+    cacheFiles
+      .filter(f => f.startsWith("query-") && f.endsWith(".json"))
+      .map(f => f.replace(/^query-/, "").replace(/\.json$/, ""))
+  );
+
   // Find the best match
-  const result = findQueryByName(input, queriesCache.queries);
+  const result = findQueryByName(input, queriesCache.queries, recentQueryIds);
 
   if (!result) {
     throw new Error(`No query found matching "${input}". Use --query with a GUID or URL instead.`);
@@ -379,17 +393,17 @@ async function resolveQueryId(input: string, api: Api, config: AzureConfig): Pro
 
   // If exact match (score = 1.0), use it directly
   if (result.score >= 0.95) {
-    console.log(`✅ Found query: "${result.query.name}" (${result.query.path})`);
+    log(`✅ Found query: "${result.query.name}" (${result.query.path})`);
     return result.query.id;
   }
 
   // If good match but not exact, show what we found
-  console.log(`✅ Best match: "${result.query.name}" (${result.query.path}) [${Math.round(result.score * 100)}% match]`);
+  log(`✅ Best match: "${result.query.name}" (${result.query.path}) [${Math.round(result.score * 100)}% match]`);
 
   if (result.alternatives.length > 0) {
-    console.log(`   Other matches:`);
+    log(`   Other matches:`);
     for (const alt of result.alternatives) {
-      console.log(`   - "${alt.name}" (${alt.path})`);
+      log(`   - "${alt.name}" (${alt.path})`);
     }
   }
 
@@ -397,6 +411,8 @@ async function resolveQueryId(input: string, api: Api, config: AzureConfig): Pro
 }
 
 async function handleQuery(input: string, format: OutputFormat, forceRefresh: boolean, filters?: QueryFilters, downloadWorkitems?: boolean, category?: string, taskFolders?: boolean): Promise<void> {
+  silentMode = format === "json"; // Suppress progress messages for JSON output
+
   const config = requireConfig();
   const api = new Api(config);
   const queryId = await resolveQueryId(input, api, config);
@@ -420,7 +436,7 @@ async function handleQuery(input: string, format: OutputFormat, forceRefresh: bo
   }
 
   // Detect changes
-  const changes = oldCache ? detectChanges(oldCache, items) : items.map(item => ({
+  let changes = oldCache ? detectChanges(oldCache, items) : items.map(item => ({
     type: "new" as const,
     id: item.id,
     changes: ["Initial load"],
@@ -435,6 +451,16 @@ async function handleQuery(input: string, format: OutputFormat, forceRefresh: bo
       url: item.url,
     },
   }));
+
+  // Filter changes by date range if specified
+  if (filters?.changesFrom || filters?.changesTo) {
+    changes = changes.filter(change => {
+      const changeDate = new Date(change.newData.changed);
+      if (filters.changesFrom && changeDate < filters.changesFrom) return false;
+      if (filters.changesTo && changeDate > filters.changesTo) return false;
+      return true;
+    });
+  }
 
   // Save to global cache (including query-level category/taskFolders if provided)
   const cacheData: QueryCache = {
@@ -477,7 +503,7 @@ async function handleQuery(input: string, format: OutputFormat, forceRefresh: bo
     const effectiveCategory = cacheData.category;
     const effectiveTaskFolders = cacheData.taskFolders ?? false;
 
-    console.log(`\n📥 Downloading ${items.length} work items${effectiveCategory ? ` to category: ${effectiveCategory}` : ""}${effectiveTaskFolders ? " (with task folders)" : ""}...\n`);
+    log(`\n📥 Downloading ${items.length} work items${effectiveCategory ? ` to category: ${effectiveCategory}` : ""}${effectiveTaskFolders ? " (with task folders)" : ""}...\n`);
     const ids = items.map(item => item.id).join(",");
     await handleWorkItem(ids, format, forceRefresh, effectiveCategory, effectiveTaskFolders);
   }
@@ -1485,6 +1511,8 @@ Options:
   --force, --refresh          Force refresh, ignore cache
   --state <states>            Filter by state (comma-separated)
   --severity <sev>            Filter by severity (comma-separated)
+  --changes-from <date>       Show changes from this date (ISO format)
+  --changes-to <date>         Show changes up to this date (ISO format)
   --download-workitems        With --query: download all work items to tasks/
   --category <name>           Save to tasks/<category>/ (remembered per work item)
   --task-folders              Save in tasks/<id>/ subfolder (only for new files)
@@ -1523,6 +1551,10 @@ Examples:
   # Filter by state/severity
   tools azure-devops --query abc123 --state Active,Development
   tools azure-devops --query abc123 --severity A,B
+
+  # Filter changes by date range
+  tools azure-devops --query abc123 --changes-from 2026-01-24
+  tools azure-devops --query abc123 --changes-from 2026-01-20 --changes-to 2026-01-25
 
   # Download all work items from a query to tasks/
   tools azure-devops --query abc123 --download-workitems
@@ -1594,6 +1626,20 @@ async function main(): Promise<void> {
     const sevVal = args[args.indexOf("--severity") + 1];
     if (sevVal) {
       filters.severities = sevVal.split(",").map(s => s.trim()).filter(Boolean);
+    }
+  }
+  if (args.includes("--changes-from")) {
+    const fromVal = args[args.indexOf("--changes-from") + 1];
+    if (fromVal) {
+      const d = new Date(fromVal);
+      if (!isNaN(d.getTime())) filters.changesFrom = d;
+    }
+  }
+  if (args.includes("--changes-to")) {
+    const toVal = args[args.indexOf("--changes-to") + 1];
+    if (toVal) {
+      const d = new Date(toVal);
+      if (!isNaN(d.getTime())) filters.changesTo = d;
     }
   }
 
