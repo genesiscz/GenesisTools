@@ -240,9 +240,135 @@ it("should handle errors", async () => {
 
 See `src/mcp-manager/commands/__tests__/sync.test.ts` for a complete working example.
 
+## Testing @clack/prompts
+
+For tools using `@clack/prompts` (our preferred library for new tools), the mocking pattern is different.
+
+### Key Differences from @inquirer/prompts
+
+| Aspect | @inquirer/prompts | @clack/prompts |
+|--------|-------------------|----------------|
+| Cancel detection | `ExitPromptError` exception | `p.isCancel(result)` returns `true` |
+| Cancel value | Throws error | Returns `symbol` |
+| Spinner | External (ora) | Built-in `p.spinner()` |
+| Logging | External (console/logger) | Built-in `p.log.*` |
+
+### Mocking Pattern for @clack/prompts
+
+```typescript
+import { describe, it, expect, beforeEach, mock } from "bun:test";
+
+// Store mock responses
+let mockResponses: Record<string, unknown> = {};
+
+function setMockResponses(responses: Record<string, unknown>) {
+    mockResponses = { ...mockResponses, ...responses };
+}
+
+// Mock before imports
+mock.module("@clack/prompts", () => ({
+    intro: () => {},
+    outro: () => {},
+    cancel: () => {},
+    spinner: () => ({
+        start: () => {},
+        stop: () => {},
+        message: () => {},
+    }),
+    isCancel: (value: unknown) => value === Symbol.for("cancel"),
+    select: async () => mockResponses.select,
+    confirm: async () => mockResponses.confirm,
+    text: async () => mockResponses.text,
+    password: async () => mockResponses.password,
+    multiselect: async () => mockResponses.multiselect,
+    log: {
+        info: () => {},
+        error: () => {},
+        warn: () => {},
+        success: () => {},
+        message: () => {},
+        step: () => {},
+    },
+    note: () => {},
+}));
+
+// Dynamic import AFTER mock setup
+const { myCommand } = await import("../my-command.js");
+
+describe("myCommand", () => {
+    beforeEach(() => {
+        // Reset mock responses
+        mockResponses = {};
+    });
+
+    it("should handle normal flow", async () => {
+        setMockResponses({
+            select: "option1",
+            confirm: true,
+        });
+
+        await myCommand();
+        // assertions...
+    });
+
+    it("should handle user cancellation", async () => {
+        // Return cancel symbol to simulate Ctrl+C / Escape
+        setMockResponses({
+            select: Symbol.for("cancel"),
+        });
+
+        // The command should exit gracefully
+        // (test process.exit or early return)
+    });
+});
+```
+
+### Testing Cancel Behavior
+
+Unlike `@inquirer/prompts` where you throw `ExitPromptError`, with `@clack/prompts` you return a cancel symbol:
+
+```typescript
+it("should handle cancel at select prompt", async () => {
+    setMockResponses({
+        select: Symbol.for("cancel"),
+    });
+
+    // Your command should check p.isCancel() and handle gracefully
+    const exitSpy = spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("process.exit called");
+    });
+
+    await expect(myCommand()).rejects.toThrow("process.exit called");
+    expect(exitSpy).toHaveBeenCalledWith(0);
+});
+```
+
+### Spinner Testing
+
+```typescript
+it("should show spinner during async work", async () => {
+    const spinnerCalls: string[] = [];
+
+    mock.module("@clack/prompts", () => ({
+        // ... other mocks
+        spinner: () => ({
+            start: (msg: string) => spinnerCalls.push(`start:${msg}`),
+            stop: (msg: string) => spinnerCalls.push(`stop:${msg}`),
+        }),
+    }));
+
+    await myCommand();
+
+    expect(spinnerCalls).toContain("start:Loading...");
+    expect(spinnerCalls).toContain("stop:Done!");
+});
+```
+
 ## Additional Resources
 
 - [Bun Test Documentation](https://bun.sh/docs/test)
 - [Bun Mocks Documentation](https://bun.sh/docs/test/mocks)
 - [@inquirer/prompts Documentation](https://www.npmjs.com/package/@inquirer/prompts)
+- [@clack/prompts Documentation](https://www.npmjs.com/package/@clack/prompts)
+- [Prompts & Colors Guide](./prompts-and-colors.md)
 - Test files in `src/mcp-manager/commands/__tests__/`
