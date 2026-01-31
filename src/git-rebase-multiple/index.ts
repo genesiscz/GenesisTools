@@ -100,14 +100,39 @@ async function showStatus(): Promise<void> {
 async function abort(): Promise<void> {
 	console.log(chalk.bold("\n🛑 Aborting git-rebase-multiple operation...\n"));
 
-	// Abort any in-progress rebase
+	// 1. Abort any in-progress rebase FIRST
 	const rebaseInProgress = await git.isRebaseInProgress();
 	if (rebaseInProgress) {
 		console.log("  Aborting in-progress rebase...");
 		await git.rebaseAbort();
 	}
 
-	// Load state to know what to restore
+	// 2. Handle uncommitted changes (may be left by failed rebase)
+	const hasChanges = await git.hasUncommittedChanges();
+	if (hasChanges) {
+		console.log(chalk.yellow("\n⚠️  Uncommitted changes detected in working tree."));
+		console.log(chalk.dim("   These may be from the failed rebase operation.\n"));
+
+		const action = await prompts.selectAbortAction();
+
+		if (action === "cancel") {
+			console.log(chalk.yellow("\nAbort cancelled. Working tree unchanged."));
+			return;
+		}
+
+		if (action === "stash") {
+			console.log(chalk.dim("   Stashing changes..."));
+			await git.stash("git-rebase-multiple: auto-stash during abort");
+			console.log(chalk.green("   ✓ Changes stashed (restore with 'git stash pop')"));
+		} else {
+			// discard
+			console.log(chalk.dim("   Discarding changes..."));
+			await git.resetHard("HEAD");
+			console.log(chalk.yellow("   ✓ Changes discarded"));
+		}
+	}
+
+	// 3. Load state to know what to restore
 	const state = await stateManager.load();
 
 	if (state) {
@@ -162,7 +187,7 @@ async function abort(): Promise<void> {
 		}
 	}
 
-	// Clean up fork point tags
+	// 4. Clean up fork point tags
 	console.log("\n🧹 Cleaning up fork point tags...");
 	await forkPointManager.cleanup();
 
@@ -332,11 +357,29 @@ async function executeParentRebase(state: RebaseState): Promise<boolean> {
 	const result = await git.rebase(state.targetBranch);
 
 	if (!result.success) {
-		console.log(chalk.yellow("\n⚠️  Conflicts detected!"));
-		console.log(chalk.dim("   1. Resolve conflicts in your editor"));
-		console.log(chalk.dim("   2. Run: git add . && git rebase --continue"));
-		console.log(chalk.dim("   3. Then run: tools git-rebase-multiple --continue"));
-		console.log(chalk.dim("\n   Or abort: tools git-rebase-multiple --abort"));
+		const errorType = await git.diagnoseRebaseFailure();
+
+		switch (errorType) {
+			case "lock":
+				console.log(chalk.red("\n✗ Git is locked (.git/index.lock exists)."));
+				console.log(chalk.dim("   Another git process may be running."));
+				console.log(chalk.dim("   Remove the lock file if no git process is active."));
+				break;
+			case "conflict":
+				console.log(chalk.yellow("\n⚠️  Merge conflicts detected!"));
+				console.log(chalk.dim("   1. Resolve conflicts in your editor"));
+				console.log(chalk.dim("   2. Run: git add . && git rebase --continue"));
+				console.log(chalk.dim("   3. Then run: tools git-rebase-multiple --continue"));
+				console.log(chalk.dim("\n   Or abort: tools git-rebase-multiple --abort"));
+				break;
+			case "dirty":
+				console.log(chalk.red("\n✗ Rebase failed - working tree is dirty."));
+				console.log(chalk.dim("   Commit or stash your changes first."));
+				break;
+			default:
+				console.log(chalk.red("\n✗ Rebase failed with unknown error."));
+				console.log(chalk.dim("   Check the git output above for details."));
+		}
 
 		await stateManager.updatePhase("PARENT_REBASE");
 		return false;
@@ -372,11 +415,29 @@ async function executeChildRebases(state: RebaseState): Promise<boolean> {
 		const result = await git.rebaseOnto(state.parentBranch, `fork/${child}`);
 
 		if (!result.success) {
-			console.log(chalk.yellow("\n⚠️  Conflicts detected!"));
-			console.log(chalk.dim("   1. Resolve conflicts in your editor"));
-			console.log(chalk.dim("   2. Run: git add . && git rebase --continue"));
-			console.log(chalk.dim("   3. Then run: tools git-rebase-multiple --continue"));
-			console.log(chalk.dim("\n   Or abort: tools git-rebase-multiple --abort"));
+			const errorType = await git.diagnoseRebaseFailure();
+
+			switch (errorType) {
+				case "lock":
+					console.log(chalk.red("\n✗ Git is locked (.git/index.lock exists)."));
+					console.log(chalk.dim("   Another git process may be running."));
+					console.log(chalk.dim("   Remove the lock file if no git process is active."));
+					break;
+				case "conflict":
+					console.log(chalk.yellow("\n⚠️  Merge conflicts detected!"));
+					console.log(chalk.dim("   1. Resolve conflicts in your editor"));
+					console.log(chalk.dim("   2. Run: git add . && git rebase --continue"));
+					console.log(chalk.dim("   3. Then run: tools git-rebase-multiple --continue"));
+					console.log(chalk.dim("\n   Or abort: tools git-rebase-multiple --abort"));
+					break;
+				case "dirty":
+					console.log(chalk.red("\n✗ Rebase failed - working tree is dirty."));
+					console.log(chalk.dim("   Commit or stash your changes first."));
+					break;
+				default:
+					console.log(chalk.red("\n✗ Rebase failed with unknown error."));
+					console.log(chalk.dim("   Check the git output above for details."));
+			}
 			return false;
 		}
 
@@ -475,6 +536,17 @@ async function runInteractive(dryRun = false): Promise<void> {
 		process.exit(1);
 	}
 
+	// Check for git lock file
+	const isLocked = await git.isGitLocked();
+	if (isLocked) {
+		const repoRoot = await git.getRepoRoot();
+		console.log(chalk.red("✗ Git repository is locked (.git/index.lock exists)."));
+		console.log(chalk.dim("   This usually means another git process is running."));
+		console.log(chalk.dim("   If you're sure no git process is running, delete the lock:"));
+		console.log(chalk.dim(`   rm "${repoRoot}/.git/index.lock"`));
+		process.exit(1);
+	}
+
 	// Check for existing state
 	const existingState = await stateManager.load();
 	if (existingState) {
@@ -494,6 +566,43 @@ async function runInteractive(dryRun = false): Promise<void> {
 	const potentialChildren = await git.findPotentialChildren(parentBranch);
 	const childBranches = await prompts.selectChildBranches(parentBranch, potentialChildren);
 
+	// Check for divergence from remote tracking branch
+	const tracking = await git.getTrackingBranch(parentBranch);
+	if (tracking) {
+		try {
+			const divergence = await git.getDivergence(parentBranch, tracking);
+
+			if (divergence.localOnly > 0 || divergence.remoteOnly > 0) {
+				console.log(chalk.yellow(`\n⚠️  ${parentBranch} diverges from ${tracking}:`));
+
+				if (divergence.localOnly > 0) {
+					console.log(chalk.dim(`\n   ${divergence.localOnly} unpushed local commit(s):`));
+					for (const commit of divergence.localCommits) {
+						console.log(chalk.dim(`     ${commit}`));
+					}
+					console.log(chalk.dim(`   (After rebase, you'll need 'git push --force')`));
+				}
+
+				if (divergence.remoteOnly > 0) {
+					console.log(chalk.red(`\n   ⚠️ ${divergence.remoteOnly} remote commit(s) NOT in local:`));
+					for (const commit of divergence.remoteCommits) {
+						console.log(chalk.red(`     ${commit}`));
+					}
+					console.log(chalk.red(`   (These commits may be LOST if you proceed!)`));
+				}
+
+				const proceed = await prompts.confirmDivergence();
+				if (!proceed) {
+					console.log(chalk.yellow("\nOperation cancelled."));
+					console.log(chalk.dim("   Consider running 'git pull' to sync with remote first."));
+					process.exit(0);
+				}
+			}
+		} catch {
+			// Tracking branch might not exist on remote, continue
+		}
+	}
+
 	const config: RebaseConfig = {
 		parentBranch,
 		targetBranch,
@@ -502,6 +611,42 @@ async function runInteractive(dryRun = false): Promise<void> {
 
 	// Generate and show plan
 	const steps = generatePlanSteps(config);
+
+	// Show commits that will be rebased
+	console.log(chalk.bold("\n📌 Commits to be rebased:\n"));
+
+	// Parent branch commits
+	const mergeBase = await git.mergeBase(targetBranch, parentBranch);
+	const parentCommits = await git.getCommitsBetween(mergeBase, parentBranch);
+
+	console.log(`   ${chalk.cyan(parentBranch)} → ${chalk.cyan(targetBranch)}`);
+	if (parentCommits.length > 0) {
+		console.log(chalk.dim(`   ${parentCommits.length} commit(s) will be replayed:`));
+		for (const commit of parentCommits.slice(0, 7)) {
+			console.log(chalk.dim(`     ${commit}`));
+		}
+		if (parentCommits.length > 7) {
+			console.log(chalk.dim(`     ... and ${parentCommits.length - 7} more`));
+		}
+	} else {
+		console.log(chalk.dim(`   Already up to date (no commits to rebase)`));
+	}
+
+	// Child branches
+	for (const child of childBranches) {
+		const forkPoint = await git.mergeBase(parentBranch, child);
+		const childCommits = await git.getCommitsBetween(forkPoint, child);
+
+		console.log(`\n   ${chalk.cyan(child)} → new ${chalk.cyan(parentBranch)}`);
+		console.log(chalk.dim(`   ${childCommits.length} commit(s) will be replayed:`));
+		for (const commit of childCommits.slice(0, 5)) {
+			console.log(chalk.dim(`     ${commit}`));
+		}
+		if (childCommits.length > 5) {
+			console.log(chalk.dim(`     ... and ${childCommits.length - 5} more`));
+		}
+	}
+
 	const confirmed = await prompts.confirmPlan(config, steps);
 
 	if (!confirmed) {

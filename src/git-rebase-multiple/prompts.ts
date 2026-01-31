@@ -118,6 +118,48 @@ export const prompts = {
 	},
 
 	/**
+	 * When aborting with uncommitted changes, ask how to handle them
+	 */
+	async selectAbortAction(): Promise<"stash" | "discard" | "cancel"> {
+		return select({
+			message: "Uncommitted changes detected. How do you want to proceed?",
+			choices: [
+				{
+					value: "stash" as const,
+					name: "Stash changes (recover later with 'git stash pop')",
+				},
+				{
+					value: "discard" as const,
+					name: "Discard changes (cannot be recovered)",
+				},
+				{
+					value: "cancel" as const,
+					name: "Cancel abort (keep current state)",
+				},
+			],
+		});
+	},
+
+	/**
+	 * Confirm proceeding when local branch diverges from remote
+	 */
+	async confirmDivergence(): Promise<boolean> {
+		return select({
+			message: "Your branch diverges from remote. Continue with rebase?",
+			choices: [
+				{
+					value: true,
+					name: "Yes, continue (will require 'git push --force' later)",
+				},
+				{
+					value: false,
+					name: "No, cancel (consider 'git pull' first)",
+				},
+			],
+		});
+	},
+
+	/**
 	 * Select cleanup options
 	 */
 	async selectCleanupOption(): Promise<"keep" | "delete-all" | "delete-tags-only"> {
