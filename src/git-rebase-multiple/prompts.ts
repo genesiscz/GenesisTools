@@ -192,4 +192,33 @@ export const prompts = {
 			default: true,
 		});
 	},
+
+	/**
+	 * Ask what to do about target branch divergence
+	 */
+	async selectTargetDivergenceAction(): Promise<"pull" | "reset" | "skip" | "cancel"> {
+		const answer = await select<"pull" | "reset" | "skip" | "cancel">({
+			message: "Target branch diverges from remote. What would you like to do?",
+			choices: [
+				{
+					value: "pull",
+					name: "Pull from remote (git pull - merge remote changes)",
+				},
+				{
+					value: "reset",
+					name: "Reset to remote (git reset --hard - discard local changes)",
+				},
+				{
+					value: "skip",
+					name: "Skip sync (proceed with local version)",
+				},
+				{
+					value: "cancel",
+					name: "Cancel operation",
+				},
+			],
+		});
+
+		return answer;
+	},
 };
