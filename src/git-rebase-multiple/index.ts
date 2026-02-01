@@ -603,6 +603,56 @@ async function runInteractive(dryRun = false): Promise<void> {
 		}
 	}
 
+	// Check for divergence of TARGET branch from remote
+	const targetTracking = await git.getTrackingBranch(targetBranch);
+	if (targetTracking) {
+		try {
+			const targetDivergence = await git.getDivergence(targetBranch, targetTracking);
+
+			if (targetDivergence.localOnly > 0 || targetDivergence.remoteOnly > 0) {
+				console.log(chalk.yellow(`\n⚠️  Target branch ${targetBranch} diverges from ${targetTracking}:`));
+
+				if (targetDivergence.localOnly > 0) {
+					console.log(chalk.yellow(`\n   ${targetDivergence.localOnly} local commit(s) NOT in remote:`));
+					for (const commit of targetDivergence.localCommits) {
+						console.log(chalk.yellow(`     ${commit}`));
+					}
+				}
+
+				if (targetDivergence.remoteOnly > 0) {
+					console.log(chalk.cyan(`\n   ${targetDivergence.remoteOnly} remote commit(s) NOT in local:`));
+					for (const commit of targetDivergence.remoteCommits) {
+						console.log(chalk.cyan(`     ${commit}`));
+					}
+				}
+
+				const action = await prompts.selectTargetDivergenceAction();
+
+				switch (action) {
+					case "pull":
+						console.log(chalk.dim(`\n   Pulling ${targetBranch} from ${targetTracking}...`));
+						await git.pull(targetBranch);
+						console.log(chalk.green(`   ✓ ${targetBranch} updated from remote`));
+						break;
+					case "reset":
+						console.log(chalk.dim(`\n   Resetting ${targetBranch} to ${targetTracking}...`));
+						await git.resetHard(targetTracking);
+						console.log(chalk.green(`   ✓ ${targetBranch} reset to match remote`));
+						break;
+					case "skip":
+						console.log(chalk.dim("\n   Proceeding without syncing..."));
+						break;
+					case "cancel":
+						console.log(chalk.yellow("\nOperation cancelled."));
+						console.log(chalk.dim(`   Sync ${targetBranch} manually before rebasing.`));
+						process.exit(0);
+				}
+			}
+		} catch {
+			// Tracking branch might not exist on remote, continue
+		}
+	}
+
 	const config: RebaseConfig = {
 		parentBranch,
 		targetBranch,
