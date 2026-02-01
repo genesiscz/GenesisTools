@@ -367,10 +367,14 @@ async function executeParentRebase(state: RebaseState): Promise<boolean> {
 				break;
 			case "conflict":
 				console.log(chalk.yellow("\n⚠️  Merge conflicts detected!"));
-				console.log(chalk.dim("   1. Resolve conflicts in your editor"));
-				console.log(chalk.dim("   2. Run: git add . && git rebase --continue"));
-				console.log(chalk.dim("   3. Then run: tools git-rebase-multiple --continue"));
-				console.log(chalk.dim("\n   Or abort: tools git-rebase-multiple --abort"));
+				console.log(chalk.dim("\n   To resolve:"));
+				console.log(chalk.dim("   1. Fix all conflicts in your editor"));
+				console.log(chalk.dim("   2. Stage resolved files: git add <file>"));
+				console.log(chalk.dim("   3. Continue: git rebase --continue"));
+				console.log(chalk.dim("   4. Repeat steps 1-3 until rebase completes"));
+				console.log(chalk.dim("   5. Once git rebase is FULLY DONE, run:"));
+				console.log(chalk.cyan("      tools git-rebase-multiple --continue"));
+				console.log(chalk.dim("\n   Or abort everything: tools git-rebase-multiple --abort"));
 				break;
 			case "dirty":
 				console.log(chalk.red("\n✗ Rebase failed - working tree is dirty."));
@@ -425,10 +429,14 @@ async function executeChildRebases(state: RebaseState): Promise<boolean> {
 					break;
 				case "conflict":
 					console.log(chalk.yellow("\n⚠️  Merge conflicts detected!"));
-					console.log(chalk.dim("   1. Resolve conflicts in your editor"));
-					console.log(chalk.dim("   2. Run: git add . && git rebase --continue"));
-					console.log(chalk.dim("   3. Then run: tools git-rebase-multiple --continue"));
-					console.log(chalk.dim("\n   Or abort: tools git-rebase-multiple --abort"));
+					console.log(chalk.dim("\n   To resolve:"));
+					console.log(chalk.dim("   1. Fix all conflicts in your editor"));
+					console.log(chalk.dim("   2. Stage resolved files: git add <file>"));
+					console.log(chalk.dim("   3. Continue: git rebase --continue"));
+					console.log(chalk.dim("   4. Repeat steps 1-3 until rebase completes"));
+					console.log(chalk.dim("   5. Once git rebase is FULLY DONE, run:"));
+					console.log(chalk.cyan("      tools git-rebase-multiple --continue"));
+					console.log(chalk.dim("\n   Or abort everything: tools git-rebase-multiple --abort"));
 					break;
 				case "dirty":
 					console.log(chalk.red("\n✗ Rebase failed - working tree is dirty."));
