@@ -259,10 +259,29 @@ export const git = {
 	 * Call this AFTER a rebase command returns non-zero exit code
 	 */
 	async diagnoseRebaseFailure(): Promise<"conflict" | "lock" | "dirty" | "unknown"> {
-		// Check in order of likelihood
+		// Check in order of priority
 		if (await this.isGitLocked()) return "lock";
-		if (await this.isRebaseInProgress()) return "conflict";
-		if (await this.hasUncommittedChanges()) return "dirty";
+
+		// Check for rebase in progress BEFORE checking for dirty tree
+		// When conflicts occur, both conditions are true, but "conflict" is more specific
+		const rebaseInProgress = await this.isRebaseInProgress();
+		const hasChanges = await this.hasUncommittedChanges();
+
+		if (rebaseInProgress && hasChanges) {
+			// Both conditions true = conflicts during rebase
+			return "conflict";
+		}
+
+		if (rebaseInProgress) {
+			// Rebase in progress but no changes = shouldn't happen, but treat as conflict
+			return "conflict";
+		}
+
+		if (hasChanges) {
+			// Changes but no rebase = user has uncommitted changes
+			return "dirty";
+		}
+
 		return "unknown";
 	},
 
