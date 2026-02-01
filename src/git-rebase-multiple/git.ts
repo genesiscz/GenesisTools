@@ -341,6 +341,19 @@ export const git = {
 	},
 
 	/**
+	 * Pull from remote tracking branch
+	 */
+	async pull(branch: string): Promise<void> {
+		// Checkout the branch first
+		await this.checkout(branch);
+
+		const result = await execInteractive(["pull"]);
+		if (!result.success) {
+			throw new Error(`Failed to pull ${branch}: ${result.stderr}`);
+		}
+	},
+
+	/**
 	 * Get the remote tracking branch for a local branch
 	 * Returns null if no tracking branch configured
 	 */
