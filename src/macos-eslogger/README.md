@@ -59,7 +59,7 @@ ARGUMENTS:
   --debug                 Show raw JSON for each event (useful for debugging)
   --include-fork          Automatically include 'fork' events when monitoring 'exec'
   --filter-event <expr>   Filter events using JSON path expression
-  -h, --help              Show this help message
+  -?, --help-full         Show this help message
 ```
 
 ### Event Categories

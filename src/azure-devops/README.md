@@ -57,6 +57,26 @@ tools azure-devops --list
 
 # Force refresh (bypass cache)
 tools azure-devops --workitem 12345 --force
+
+# Filter changes by date range
+tools azure-devops --query <id> --changes-from 2026-01-24
+tools azure-devops --query <id> --changes-from 2026-01-20 --changes-to 2026-01-25
+
+# Create work items (interactive mode)
+tools azure-devops --create -i
+
+# Create from template file
+tools azure-devops --create --from-file template.json
+
+# Generate template from query (analyzes patterns)
+tools azure-devops --create "https://dev.azure.com/.../query/abc" --type Bug
+
+# Generate template from existing work item
+tools azure-devops --create "https://dev.azure.com/.../_workitems/edit/12345"
+
+# Quick non-interactive creation
+tools azure-devops --create --type Task --title "Fix login bug"
+tools azure-devops --create --type Bug --title "Error in checkout" --severity "A - critical"
 ```
 
 ### Commands
@@ -66,21 +86,36 @@ tools azure-devops --workitem 12345 --force
 | `--configure`  | Configure Azure DevOps connection for project  |
 | `--query`      | Fetch query results with change detection      |
 | `--workitem`   | Fetch work item(s) with full details           |
-| `--dashboard`  | Extract queries from a dashboard                |
+| `--dashboard`  | Extract queries from a dashboard               |
 | `--list`       | List all cached work items                     |
+| `--create`     | Create new work items (interactive or from template) |
 
 ### Options
 
+| Option                        | Description                                           | Default |
+| ----------------------------- | ----------------------------------------------------- | ------- |
+| `--format <ai\|md\|json>`     | Output format                                         | `ai`    |
+| `--force`, `--refresh`, `--no-cache` | Force refresh, ignore cache                    | -       |
+| `--state <states>`            | Filter by state (comma-separated)                     | -       |
+| `--severity <sev>`            | Filter by severity (comma-separated)                  | -       |
+| `--changes-from <date>`       | Show changes from this date (ISO format)              | -       |
+| `--changes-to <date>`         | Show changes up to this date (ISO format)             | -       |
+| `--download-workitems`        | With `--query`: download all work items to tasks/     | -       |
+| `--category <name>`           | Save to tasks/<category>/ (remembered per work item)  | -       |
+| `--task-folders`              | Save in tasks/<id>/ subfolder (only for new files)    | -       |
+| `--help`                      | Show help message                                     | -       |
+
+### Create Options
+
 | Option                  | Description                                           | Default |
 | ----------------------- | ----------------------------------------------------- | ------- |
-| `--format <ai\|md\|json>` | Output format                                        | `ai`    |
-| `--force`, `--refresh`  | Force refresh, ignore cache                          | -       |
-| `--state <states>`      | Filter by state (comma-separated)                    | -       |
-| `--severity <sev>`      | Filter by severity (comma-separated)                | -       |
-| `--download-workitems`  | With `--query`: download all work items to tasks/    | -       |
-| `--category <name>`     | Save to tasks/<category>/ (remembered per work item)  | -       |
-| `--task-folders`        | Save in tasks/<id>/ subfolder (only for new files)   | -       |
-| `--help`                | Show help message                                     | -       |
+| `-i`, `--interactive`   | Interactive mode with step-by-step prompts            | -       |
+| `--from-file <path>`    | Create from template JSON file                        | -       |
+| `--type <type>`         | Work item type (Bug, Task, User Story, etc.)          | -       |
+| `--title <text>`        | Work item title (for quick non-interactive creation)  | -       |
+| `--tags <tags>`         | Tags (comma-separated)                                | -       |
+| `--assignee <email>`    | Assignee email                                        | -       |
+| `--parent <id>`         | Parent work item ID                                   | -       |
 
 ## First-Time Setup
 
@@ -286,6 +321,65 @@ tools azure-devops --query <id> --download-workitems --category react19 --task-f
 ```
 
 **Important**: Task folders only apply to **new files**. If a work item already exists somewhere (flat or in folder), it stays in its current location. This prevents accidental reorganization of existing files.
+
+### Work Item Creation
+
+The `--create` command supports multiple modes for creating new work items:
+
+#### Interactive Mode
+
+Step-by-step guided creation with project selection, field prompts, and back navigation (ESC to go back):
+
+```bash
+tools azure-devops --create -i
+```
+
+Features:
+- Project selection (cached for 30 days)
+- Work item type selection with common types shown first
+- Required field validation based on work item type
+- Tags, assignee, and parent linking support
+- Summary review before creation
+
+#### Template-Based Creation
+
+Generate a template from existing data, fill it in, then create:
+
+```bash
+# Generate template from a query (analyzes patterns in similar items)
+tools azure-devops --create "https://dev.azure.com/.../query/abc" --type Bug
+
+# Generate template from an existing work item (pre-fills fields)
+tools azure-devops --create "https://dev.azure.com/.../_workitems/edit/12345"
+
+# Fill the template, then create
+tools azure-devops --create --from-file ".claude/azure/tasks/created/template.json"
+```
+
+Template files use the schema `azure-devops-workitem-v1` and include field hints with allowed values.
+
+#### Quick Non-Interactive Creation
+
+Create a work item directly from command line:
+
+```bash
+tools azure-devops --create --type Task --title "Fix login bug"
+tools azure-devops --create --type Bug --title "Error in checkout" --severity "A - critical" --tags "frontend,urgent"
+```
+
+### Change Filtering
+
+Filter query changes by date range to focus on recent activity:
+
+```bash
+# Show changes from a specific date
+tools azure-devops --query <id> --changes-from 2026-01-24
+
+# Show changes within a date range
+tools azure-devops --query <id> --changes-from 2026-01-20 --changes-to 2026-01-25
+```
+
+Dates should be in ISO format (YYYY-MM-DD).
 
 ## Workflow Examples
 

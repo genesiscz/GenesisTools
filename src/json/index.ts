@@ -2,6 +2,10 @@ import { Command } from "commander";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { encode, decode } from "@toon-format/toon";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
 
 type Format = "json" | "jsonl" | "toon" | "unknown";
 

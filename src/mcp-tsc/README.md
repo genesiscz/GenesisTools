@@ -4,14 +4,14 @@ TypeScript diagnostics checker that can run as both a CLI tool and an MCP server
 
 ## Features
 
-- ✅ **CLI Mode**: Check TypeScript files from the command line
-- ✅ **MCP Server Mode**: Run as a persistent MCP server for AI assistants
-- ✅ **Dual Checking Methods**: Use TypeScript Compiler API or LSP
-- ✅ **Glob Pattern Support**: Check multiple files using patterns
-- ✅ **Persistent LSP**: In MCP mode, LSP stays running for faster checks
-- ✅ **Type Introspection**: Get hover information for types, functions, and variables
-- ✅ **Smart Position Handling**: Find symbols by text search or use auto/exact positioning
-- ✅ **Clean Architecture**: Reusable `LspWorker` class for LSP management
+- **CLI Mode**: Check TypeScript files from the command line
+- **MCP Server Mode**: Run as a persistent MCP server for AI assistants
+- **Dual Checking Methods**: LSP (default) or TypeScript Compiler API (`--use-tsc`)
+- **Glob Pattern Support**: Check multiple files using patterns
+- **Persistent LSP**: LSP server stays running across invocations for faster checks
+- **Type Introspection**: Get hover information for types, functions, and variables
+- **Smart Position Handling**: Find symbols by text search or use auto/exact positioning
+- **Server Management**: Kill persistent servers with `--kill-server`
 
 ## CLI Usage
 
@@ -36,33 +36,59 @@ tools mcp-tsc src/app.ts 'tests/**/*.test.ts'
 
 ### Options
 
+**Commands:**
 ```bash
---lsp            # Use typescript-language-server instead of compiler API
---warnings       # Show warnings in addition to errors
---mcp            # Run as MCP server (see MCP Mode below)
---hover          # Get hover information for a specific location
---line <num>     # Line number for hover (required with --hover)
---char <num>     # Character position for hover (optional)
---text <string>  # Text to search for on the line (optional)
+-d, --diagnostics       # Check TypeScript files for errors (default command)
+--hover                 # Get hover information for a specific location
+--mcp                   # Run as MCP server (see MCP Mode below)
+-k, --kill-server       # Kill persistent LSP server(s)
+```
+
+**General Options:**
+```bash
+--use-tsc               # Use TypeScript Compiler API instead of LSP (default is LSP)
+-w, --warnings          # Show warnings in addition to errors
+-r, --root <path>       # Override working directory (default: current directory)
+--timeout <seconds>     # Timeout for diagnostics in seconds (default: 30)
+```
+
+**Hover Options:**
+```bash
+-l, --line <num>        # Line number (required with --hover)
+-c, --char <num>        # Character position (optional)
+-t, --text <string>     # Text to search for on the line (optional)
+--raw                   # Show full JSON with raw LSP data
+```
+
+**Kill Server Options:**
+```bash
+--all                   # Kill all servers (use with --kill-server)
 ```
 
 ### Examples with Options
 
 ```bash
-# Use LSP for checking (faster for incremental checks)
-tools mcp-tsc --lsp src/app.ts
+# Basic diagnostics (uses LSP by default)
+tools mcp-tsc src/app.ts
+
+# Use TypeScript Compiler API instead of LSP
+tools mcp-tsc --use-tsc src/app.ts
 
 # Show warnings too
 tools mcp-tsc --warnings src/app.ts
 
 # Combine options
-tools mcp-tsc --lsp --warnings 'src/**/*.ts'
+tools mcp-tsc --warnings 'src/**/*.ts'
 
 # Get hover information (type introspection)
 tools mcp-tsc --hover --line 19 --text greetUser src/app.ts
 tools mcp-tsc --hover --line 13 src/app.ts  # auto-position
 tools mcp-tsc --hover --line 9 --char 15 src/app.ts  # exact position
 tools mcp-tsc --hover --line 10 --raw src/app.ts  # include raw LSP data
+
+# Kill persistent LSP servers
+tools mcp-tsc --kill-server              # kill server for current dir
+tools mcp-tsc --kill-server --all        # kill all servers
 ```
 
 ## MCP Server Mode
@@ -241,15 +267,17 @@ Both CLI and MCP modes use the same file resolution logic:
 
 ### Checking Methods
 
-**Compiler API** (default):
+**LSP** (default):
+- Uses typescript-language-server
+- Faster for incremental checks
+- Persistent server reused across runs
+- Matches IDE behavior exactly
+
+**Compiler API** (with `--use-tsc`):
 - Uses TypeScript's programmatic API
 - Creates full program for proper type checking
 - More accurate for complex projects
-
-**LSP** (with `--lsp`):
-- Uses typescript-language-server
-- Faster for incremental checks
-- Matches IDE behavior exactly
+- No persistent server
 
 ## Performance
 

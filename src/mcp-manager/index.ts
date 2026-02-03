@@ -8,6 +8,11 @@ import { CodexProvider } from "./utils/providers/codex.js";
 import { CursorProvider } from "./utils/providers/cursor.js";
 import type { MCPProvider } from "./utils/providers/types.js";
 import { showHelp } from "./utils/command.utils.js";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
+
 import {
     openConfig,
     syncServers,
