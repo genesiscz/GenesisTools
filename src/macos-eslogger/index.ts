@@ -4,6 +4,10 @@ import { select, checkbox } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import logger, { consoleLog } from "@app/logger";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
 
 // ============================================================================
 // TypeScript Types based on ESLogger Swift types

@@ -6,6 +6,10 @@ import { git } from "./git";
 import { prompts } from "./prompts";
 import { stateManager } from "./state";
 import type { CLIOptions, PlanStep, RebaseConfig, RebaseSummary, RebaseState } from "./types";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
 
 /**
  * Show detailed help message (legacy)

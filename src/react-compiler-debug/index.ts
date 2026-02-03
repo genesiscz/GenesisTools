@@ -13,6 +13,10 @@
 import { Command } from "commander";
 import * as babel from "@babel/core";
 import chalk from "chalk";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
 import clipboardy from "clipboardy";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";

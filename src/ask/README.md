@@ -41,6 +41,9 @@ tools ask --model gpt-4o --provider openai "Explain quantum computing"
 # Use OpenRouter models
 tools ask --model anthropic/claude-3.5-sonnet-20240620 "Hello"
 
+# Show cost prediction before sending
+tools ask --predict-cost --model gpt-4o "Explain quantum computing"
+
 # Verbose/debug mode
 tools ask -v --model gpt-4o "Debug message"
 ```
@@ -74,24 +77,35 @@ tools ask --format json "What is 2+2?"
 tools ask --format markdown "Explain quantum computing"
 ```
 
-Note: Both `--output` and `--format` can be used for chat output. `--output` takes precedence if both are provided. `--format` is also used for pricing output format (`table` or `json`).
+Note: Both `--output` and `--format` can be used for chat output. `--output` takes precedence if both are provided. For the `models` subcommand, `--format` accepts `table` (default) or `json`.
 
-### Pricing Information
+### Models & Pricing Information
 
-View pricing for all available providers and models:
+View pricing and detailed information for all available providers and models:
 
 ```bash
 # Show all providers and models with pricing
-tools ask price
+tools ask models
 
-# Show pricing for a specific provider
-tools ask price --provider openai
+# Show models for a specific provider
+tools ask models --provider openai
 
-# Output pricing as JSON
-tools ask price --format json
+# Output as JSON
+tools ask models --format json
+
+# Sort by pricing (default: price_input)
+tools ask models --sort price_output
+tools ask models --sort name
+
+# Filter by capabilities
+tools ask models --filter-capabilities="vision|functions"
+tools ask models --filter-capabilities="reasoning"
+
+# Combine options
+tools ask models --provider openai --sort output --filter-capabilities="chat|vision"
 
 # Alternative command name
-tools ask pricing
+tools ask model
 ```
 
 The pricing command displays:
@@ -147,23 +161,26 @@ The tool automatically detects which provider to use based on the model name:
 
 ```
 Commands:
-  price, pricing          Display pricing information for all providers and models
+  models, model           Display pricing and detailed information for all providers and models
 
 Options:
   -s, --sst <file>        Transcribe audio file
   -m, --model <model>     Specify model (e.g., gpt-4-turbo)
   -p, --provider <prov>   Specify provider (e.g., openai)
-  -f, --format <format>   Output format for pricing (table/json, default: table)
+  -f, --format <format>   Output format (text/json/markdown/clipboard/file) or models format (table/json)
   -o, --output <format>   Output format (text/json/markdown/clipboard/file)
+  --sort <order>          Sort models by: price_input/input/price_output/output/name (default: price_input)
+  --filter-capabilities   Filter models by capabilities (pipe-separated: "chat|vision|functions|reasoning")
   -i, --interactive       Start interactive chat mode (default: true)
   -t, --temperature <n>   Set temperature (0.0-2.0)
-  -k, --maxTokens <n>     Set maximum tokens
-  --systemPrompt <text>   Set system prompt
+  -k, --max-tokens <n>    Set maximum tokens
+  --system-prompt <text>  Set system prompt
+  --predict-cost          Show cost prediction before sending message
   --streaming             Enable streaming responses (default: true)
   --no-streaming          Disable streaming responses
-  -v, --verbose            Enable verbose logging
+  -v, --verbose           Enable verbose logging
   --silent                Silent mode
-  -h, --help              Show this help message
+  -?, --help-full         Show detailed help message
   -V, --version           Show version information
 ```
 

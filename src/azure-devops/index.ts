@@ -17,6 +17,10 @@ import logger, { consoleLog } from "@app/logger";
 import { Storage } from "@app/utils/storage";
 import { input, select, confirm, editor } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
 
 // Types
 import type {
@@ -503,13 +507,26 @@ async function handleQuery(input: string, format: OutputFormat, forceRefresh: bo
     const effectiveCategory = cacheData.category;
     const effectiveTaskFolders = cacheData.taskFolders ?? false;
 
+    // Build metadata map from fresh query results for smart cache comparison
+    const queryMetadata = new Map<number, QueryItemMetadata>(
+      items.map(item => [item.id, { id: item.id, changed: item.changed, rev: item.rev }])
+    );
+
     log(`\n📥 Downloading ${items.length} work items${effectiveCategory ? ` to category: ${effectiveCategory}` : ""}${effectiveTaskFolders ? " (with task folders)" : ""}...\n`);
     const ids = items.map(item => item.id).join(",");
-    await handleWorkItem(ids, format, forceRefresh, effectiveCategory, effectiveTaskFolders);
+    // Pass queryMetadata for smart comparison (ignores forceRefresh when metadata available)
+    await handleWorkItem(ids, format, false, effectiveCategory, effectiveTaskFolders, queryMetadata);
   }
 }
 
-async function handleWorkItem(input: string, format: OutputFormat, forceRefresh: boolean, categoryArg?: string, taskFoldersArg?: boolean): Promise<void> {
+/** Metadata from fresh query results for smart cache comparison */
+interface QueryItemMetadata {
+  id: number;
+  changed: string;
+  rev: number;
+}
+
+async function handleWorkItem(input: string, format: OutputFormat, forceRefresh: boolean, categoryArg?: string, taskFoldersArg?: boolean, queryMetadata?: Map<number, QueryItemMetadata>): Promise<void> {
   const config = requireConfig();
   const api = new Api(config);
   const ids = extractWorkItemIds(input);
@@ -550,7 +567,20 @@ async function handleWorkItem(input: string, format: OutputFormat, forceRefresh:
 
     const existingJsonPath = existingFile?.path || null;
 
-    if (!forceRefresh && cache && existingJsonPath && existsSync(existingJsonPath)) {
+    // Smart cache check: when we have fresh query metadata, compare changed/rev instead of TTL
+    if (queryMetadata && cache && existingJsonPath && existsSync(existingJsonPath)) {
+      const freshMeta = queryMetadata.get(id);
+      if (freshMeta && freshMeta.changed === cache.changed && freshMeta.rev === cache.rev) {
+        // Workitem hasn't changed since last download - use cached data
+        const cachedItem = JSON.parse(readFileSync(existingJsonPath, "utf-8")) as WorkItemFull;
+        results.push(cachedItem);
+        cacheTimes.set(id, new Date(cache.fetchedAt));
+        continue;
+      }
+    }
+
+    // TTL-based check for direct --workitem calls (no queryMetadata)
+    if (!forceRefresh && !queryMetadata && cache && existingJsonPath && existsSync(existingJsonPath)) {
       const cacheDate = new Date(cache.fetchedAt);
       const ageMinutes = (Date.now() - cacheDate.getTime()) / 60000;
       if (ageMinutes < WORKITEM_CACHE_TTL_MINUTES) {
