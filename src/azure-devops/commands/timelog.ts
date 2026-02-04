@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { $ } from "bun";
 import { readFileSync, writeFileSync } from "fs";
 import { loadConfig, findConfigPath, requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import { TimeLogApi, formatMinutes } from "@app/azure-devops/timelog-api";
+import { TimeLogApi, formatMinutes, convertToMinutes, getTodayDate } from "@app/azure-devops/timelog-api";
 import { loadTimeTypesCache, saveTimeTypesCache } from "@app/azure-devops/cache";
 import logger from "@app/logger";
 import type { AzureConfigWithTimeLog, TimeType } from "@app/azure-devops/types";
@@ -37,6 +37,32 @@ Hours/Minutes:
 `);
 }
 
+function showAddHelp(): void {
+  console.log(`
+Usage: tools azure-devops timelog add [options]
+
+Required (unless -i):
+  -w, --workitem <id>     Work item ID to log time against
+  -h, --hours <number>    Hours to log (e.g., 2)
+  -t, --type <name>       Time type (see 'timelog types' for list)
+
+Optional:
+  -m, --minutes <number>  Additional minutes (requires --hours to be set)
+  -d, --date <YYYY-MM-DD> Date of the entry (default: today)
+  -c, --comment <text>    Description of work performed
+  -i, --interactive       Interactive mode with prompts
+
+Note: If using only minutes, specify --hours 0 --minutes <n> to confirm intent.
+
+Examples:
+  tools azure-devops timelog add -w 268935 -h 2 -t "Development"
+  tools azure-devops timelog add -w 268935 -h 1 -m 30 -t "Code Review" -c "PR review"
+  tools azure-devops timelog add -w 268935 -h 0 -m 30 -t "Test" -d 2026-02-03
+  tools azure-devops timelog add -i
+  tools azure-devops timelog add -w 268935 -i
+`);
+}
+
 export function registerTimelogCommand(program: Command): void {
   const timelog = program
     .command("timelog")
@@ -62,10 +88,105 @@ export function registerTimelogCommand(program: Command): void {
     .option("-c, --comment <text>", "Comment/description")
     .option("-i, --interactive", "Interactive mode with prompts")
     .option("-?, --help-full", "Show detailed help")
-    .action(async (options) => {
-      // TODO: Implement after refactor is complete
-      console.log("TimeLog add - to be implemented");
-      console.log("Options:", options);
+    .action(async (options: {
+      workitem?: string;
+      hours?: string;
+      minutes?: string;
+      type?: string;
+      date?: string;
+      comment?: string;
+      interactive?: boolean;
+      helpFull?: boolean;
+    }) => {
+      if (options.helpFull) {
+        showAddHelp();
+        return;
+      }
+
+      const config = requireTimeLogConfig();
+      const user = requireTimeLogUser(config);
+
+      // Interactive mode - placeholder for now
+      if (options.interactive) {
+        console.log("Interactive mode - to be implemented in Task 8-10");
+        return;
+      }
+
+      // Validate required fields
+      if (!options.workitem || !options.hours || !options.type) {
+        console.error(`
+❌ Missing required options for non-interactive mode.
+
+Required: --workitem, --hours, --type
+
+Examples:
+  tools azure-devops timelog add -w 268935 -h 2 -t "Development"
+  tools azure-devops timelog add -w 268935 -h 1 -m 30 -t "Code Review" -c "PR review"
+
+Or use interactive mode:
+  tools azure-devops timelog add -i
+  tools azure-devops timelog add -w 268935 -i
+`);
+        process.exit(1);
+      }
+
+      const workItemId = parseInt(options.workitem, 10);
+      if (isNaN(workItemId)) {
+        console.error("❌ Invalid work item ID");
+        process.exit(1);
+      }
+
+      // Convert hours/minutes
+      let totalMinutes: number;
+      try {
+        totalMinutes = convertToMinutes(
+          options.hours ? parseFloat(options.hours) : undefined,
+          options.minutes ? parseInt(options.minutes, 10) : undefined
+        );
+      } catch (e) {
+        console.error(`❌ ${(e as Error).message}`);
+        process.exit(1);
+      }
+
+      const api = new TimeLogApi(
+        config.orgId!,
+        config.projectId,
+        config.timelog!.functionsKey,
+        user
+      );
+
+      // Validate time type exists
+      const validType = await api.validateTimeType(options.type);
+      if (!validType) {
+        const types = await api.getTimeTypes();
+        console.error(`
+❌ Unknown time type: "${options.type}"
+
+Available types:
+${types.map(t => `  - ${t.description}`).join("\n")}
+`);
+        process.exit(1);
+      }
+
+      const date = options.date || getTodayDate();
+      const comment = options.comment || "";
+
+      // Create the entry
+      const ids = await api.createTimeLogEntry(
+        workItemId,
+        totalMinutes,
+        validType.description,  // Use exact casing from API
+        date,
+        comment
+      );
+
+      console.log(`✔ Time logged successfully!`);
+      console.log(`  Work Item: #${workItemId}`);
+      console.log(`  Time: ${formatMinutes(totalMinutes)}`);
+      console.log(`  Type: ${validType.description}`);
+      console.log(`  Date: ${date}`);
+      if (comment) console.log(`  Comment: ${comment}`);
+      console.log(`  Entry ID: ${ids[0]}`);
     });
 
   timelog
