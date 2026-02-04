@@ -559,6 +559,96 @@ The skill automatically triggers when users mention:
 - **Query Handling**: Automatically fetches and processes query results
 - **Task Organization**: Handles category and folder organization automatically
 
+## TimeLog Commands
+
+The TimeLog feature integrates with the third-party TimeLog extension for Azure DevOps.
+
+### Prerequisites
+
+1. TimeLog extension must be installed in your Azure DevOps organization
+2. Run auto-configuration to fetch TimeLog settings:
+
+```bash
+tools azure-devops timelog configure
+```
+
+This automatically fetches the API key from Azure DevOps Extension Data API and saves it to `.claude/azure/config.json`.
+
+Then add your user info to the config:
+
+```json
+{
+  "timelog": {
+    "functionsKey": "<auto-fetched>",
+    "defaultUser": {
+      "userId": "<your-azure-ad-object-id>",
+      "userName": "<Your Display Name>",
+      "userEmail": "<your-email@example.com>"
+    }
+  }
+}
+```
+
+### Commands
+
+```bash
+# Auto-configure TimeLog API key
+tools azure-devops timelog configure
+
+# List available time types
+tools azure-devops timelog types
+tools azure-devops timelog types --format json
+
+# List time logs for a work item
+tools azure-devops timelog list -w 268935
+tools azure-devops timelog list -w 268935 --format md
+
+# Add time log entry (quick)
+tools azure-devops timelog add -w 268935 -h 2 -t "Development"
+tools azure-devops timelog add -w 268935 -h 1 -m 30 -t "Code Review" -c "PR review"
+tools azure-devops timelog add -w 268935 -h 0 -m 30 -t "Test"
+
+# Add time log entry (interactive)
+tools azure-devops timelog add -i
+tools azure-devops timelog add -w 268935 -i
+
+# Bulk import from JSON file
+tools azure-devops timelog import entries.json
+tools azure-devops timelog import entries.json --dry-run
+```
+
+### Import File Format
+
+```json
+{
+  "entries": [
+    {
+      "workItemId": 268935,
+      "hours": 2,
+      "timeType": "Development",
+      "date": "2026-02-04",
+      "comment": "Implemented feature X"
+    },
+    {
+      "workItemId": 268936,
+      "hours": 1,
+      "minutes": 30,
+      "timeType": "Code Review",
+      "date": "2026-02-04",
+      "comment": "PR #123 review"
+    }
+  ]
+}
+```
+
+### Hours vs Minutes
+
+The TimeLog API uses minutes internally:
+- `--hours 2` → 120 minutes
+- `--hours 1 --minutes 30` → 90 minutes
+- `--minutes 30` → ERROR (ambiguous)
+- `--hours 0 --minutes 30` → 30 minutes (explicit)
+
 ## Related Tools
 
 - `mcp-manager`: Manage MCP server configurations
