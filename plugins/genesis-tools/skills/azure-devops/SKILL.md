@@ -15,7 +15,7 @@ tools azure-devops query <id|url|name>           # Fetch query results (supports
 tools azure-devops query <id> --download-workitems  # Download all to files
 tools azure-devops dashboard <id|url>            # Get dashboard queries
 tools azure-devops list                          # List cached items
-tools azure-devops create                        # Create work item
+tools azure-devops workitem-create                        # Create work item
 tools azure-devops timelog add|list|types        # Time logging (placeholder)
 ```
 
@@ -157,11 +157,11 @@ The `--create` command supports multiple modes for creating new work items.
 ### CLI Reference
 
 ```bash
-tools azure-devops create -i                     # Interactive mode
-tools azure-devops create --from-file <path>     # From template file
-tools azure-devops create <query-url> --type Bug # Generate template from query
-tools azure-devops create <workitem-url>         # Generate template from work item
-tools azure-devops create --type Task --title X  # Quick creation
+tools azure-devops workitem-create -i                     # Interactive mode
+tools azure-devops workitem-create --from-file <path>     # From template file
+tools azure-devops workitem-create <query-url> --type Bug # Generate template from query
+tools azure-devops workitem-create <workitem-url>         # Generate template from work item
+tools azure-devops workitem-create --type Task --title X  # Quick creation
 ```
 
 ### Create Options
@@ -183,7 +183,7 @@ tools azure-devops create --type Task --title X  # Quick creation
 Best for: Manual creation with full control over all fields.
 
 ```bash
-tools azure-devops create -i
+tools azure-devops workitem-create -i
 ```
 
 Prompts for: type, title, description (via editor), severity, state, tags, assignee, parent link.
@@ -193,7 +193,7 @@ Prompts for: type, title, description (via editor), severity, state, tags, assig
 Best for: Creating work items that match patterns from existing items.
 
 ```bash
-tools azure-devops create "https://dev.azure.com/.../_queries/query/abc" --type Bug
+tools azure-devops workitem-create "https://dev.azure.com/.../_queries/query/abc" --type Bug
 ```
 
 This:
@@ -207,7 +207,7 @@ This:
 Best for: Cloning or creating similar work items.
 
 ```bash
-tools azure-devops create "https://dev.azure.com/.../_workitems/edit/12345"
+tools azure-devops workitem-create "https://dev.azure.com/.../_workitems/edit/12345"
 ```
 
 This:
@@ -221,7 +221,7 @@ This:
 Best for: LLM workflows where templates are prepared programmatically.
 
 ```bash
-tools azure-devops create --from-file ".claude/azure/tasks/created/template.json"
+tools azure-devops workitem-create --from-file ".claude/azure/tasks/created/template.json"
 ```
 
 Template format:
@@ -249,8 +249,8 @@ Template format:
 Best for: Simple work items created from command line.
 
 ```bash
-tools azure-devops create --type Task --title "Fix login bug"
-tools azure-devops create --type Bug --title "Error" --severity "A - critical" --tags "frontend,urgent"
+tools azure-devops workitem-create --type Task --title "Fix login bug"
+tools azure-devops workitem-create --type Bug --title "Error" --severity "A - critical" --tags "frontend,urgent"
 ```
 
 ### LLM Workflow
@@ -268,10 +268,10 @@ When user asks to "create a work item" or "file a bug":
 3. **Create the work item**:
    ```bash
    # Quick creation
-   tools azure-devops create --type Bug --title "Error in checkout" --severity "B - high"
+   tools azure-devops workitem-create --type Bug --title "Error in checkout" --severity "B - high"
 
    # Or from template
-   tools azure-devops create --from-file template.json
+   tools azure-devops workitem-create --from-file template.json
    ```
 
 4. **Report the result** - Include the work item ID and URL in your response.
