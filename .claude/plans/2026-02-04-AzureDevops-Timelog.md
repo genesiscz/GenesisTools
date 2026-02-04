@@ -41,10 +41,22 @@ https://boznet-timelogapi.azurewebsites.net/api/{orgId}
 ### Authentication Headers
 
 ```http
-x-functions-key: <YOUR_FUNCTIONS_KEY>
+x-functions-key: <auto-fetched from Extension Data API>
 x-timelog-usermakingchange: <URL-encoded username>
 Content-Type: application/json
 ```
+
+### Auto-Discovery of API Key
+
+The `x-functions-key` can be automatically fetched from Azure DevOps Extension Data API:
+
+```bash
+az rest --method GET \
+  --resource "499b84ac-1321-427f-aa17-267ca6975798" \
+  --uri "https://extmgmt.dev.azure.com/{org}/_apis/ExtensionManagement/InstalledExtensions/TimeLog/time-logging/Data/Scopes/Default/Current/Collections/%24settings/Documents?api-version=7.1-preview"
+```
+
+Response contains `ApiKeyTextBox` with the functions key. No manual HAR capture needed!
 
 ### Data Structures (Verified from HAR)
 
@@ -69,8 +81,8 @@ interface TimeLogEntry {
   minutes: number;             // 120 (NOT hours!)
   date: string;                // "2026-02-04" (YYYY-MM-DD)
   userId: string;              // "57c2e420-edce-6083-8a6a-a58deb1c6769"
-  userName: string;            // "Foltýn Martin (QK)"
-  userEmail: string;           // "martin.foltyn@cez.cz"
+  userName: string;            // "John Doe"
+  userEmail: string;           // "user@example.com"
 }
 ```
 
@@ -88,7 +100,7 @@ interface CreateTimeLogRequest {
     userName: string;
     userEmail: string;
   }>;
-  userMakingChange: string;    // "Foltýn Martin (QK)"
+  userMakingChange: string;    // "John Doe"
 }
 ```
 
@@ -191,16 +203,18 @@ tools azure-devops timelog add --help
 
 ```json
 {
-  "organization": "cez-azuredevops",
-  "project": "MŮJ ČEZ",
+  "organization": "MyOrg",
+  "project": "MyProject",
   "projectId": "de25c7dd-75d8-467a-bac0-f15fac9b560d",
   "orgId": "5200da26-3a3b-44fe-996c-7b6d90d88a94",
   "timelog": {
-    "functionsKey": "<YOUR_FUNCTIONS_KEY>",
-    "userMakingChange": "Foltýn Martin (QK)"
+    "functionsKey": "<auto-fetched via Extension Data API>",
+    "userMakingChange": "John Doe"
   }
 }
 ```
+
+**Auto-configuration:** Run `tools azure-devops timelog configure` to automatically fetch the API key from the TimeLog extension settings.
 
 ---
 
@@ -236,8 +250,8 @@ For POST, must include full user array:
 ```json
 "users": [{
   "userId": "57c2e420-edce-6083-8a6a-a58deb1c6769",
-  "userName": "Foltýn Martin (QK)",
-  "userEmail": "martin.foltyn@cez.cz"
+  "userName": "John Doe",
+  "userEmail": "user@example.com"
 }]
 ```
 Get current user via: `az ad signed-in-user show` or ADO identity API.
