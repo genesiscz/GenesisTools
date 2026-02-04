@@ -51,8 +51,8 @@ export interface TimeLogEntry {
   minutes: number;             // 120 (NOT hours!)
   date: string;                // "2026-02-04" (YYYY-MM-DD)
   userId: string;              // "57c2e420-edce-6083-8a6a-a58deb1c6769"
-  userName: string;            // "Foltýn Martin (QK)"
-  userEmail: string;           // "martin.foltyn@cez.cz"
+  userName: string;            // "John Doe"
+  userEmail: string;           // "user@example.com"
 }
 
 /** User info for TimeLog API */
@@ -71,7 +71,7 @@ export interface CreateTimeLogRequest {
   workItemId: number;          // 268935
   projectId: string;           // "de25c7dd-75d8-467a-bac0-f15fac9b560d"
   users: TimeLogUser[];
-  userMakingChange: string;    // "Foltýn Martin (QK)"
+  userMakingChange: string;    // "John Doe"
 }
 
 /** Response from POST /timelogs/ */
@@ -516,15 +516,17 @@ Re-run configure to update your config:
     console.error(`
 ❌ TimeLog configuration not found.
 
-Add TimeLog settings to .claude/azure/config.json:
+Run the auto-configure command to fetch TimeLog settings:
+
+  tools azure-devops timelog configure
+
+This will automatically fetch the API key from Azure DevOps Extension Data API.
+
+Alternatively, add manually to .claude/azure/config.json:
 
 {
-  "org": "...",
-  "project": "...",
-  "projectId": "...",
-  "orgId": "...",
   "timelog": {
-    "functionsKey": "<your-functions-key>",
+    "functionsKey": "<fetched-automatically>",
     "defaultUser": {
       "userId": "<your-user-id>",
       "userName": "<Your Name>",
@@ -532,12 +534,6 @@ Add TimeLog settings to .claude/azure/config.json:
     }
   }
 }
-
-To get these values:
-1. Open Chrome DevTools Network tab
-2. Use TimeLog in Azure DevOps web UI
-3. Find requests to boznet-timelogapi.azurewebsites.net
-4. Copy x-functions-key header and user info from request body
 `);
     process.exit(1);
   }
@@ -586,6 +582,106 @@ feat(azure-devops): Add TimeLog config helpers
 Add utility functions:
 - requireTimeLogConfig() - load config with TimeLog validation
 - requireTimeLogUser() - get user info with helpful error
+EOF
+)"
+```
+
+---
+
+## Task 4.5: Implement timelog configure Subcommand
+
+**Files:**
+- Modify: `src/azure-devops/commands/timelog.ts`
+
+**Step 1: Add configure subcommand**
+
+Add this subcommand to `commands/timelog.ts`:
+
+```typescript
+import { $ } from "bun";
+
+timelog
+  .command("configure")
+  .description("Auto-fetch TimeLog API settings from Azure DevOps")
+  .action(async () => {
+    const config = loadConfig() as AzureConfigWithTimeLog | null;
+    if (!config?.org) {
+      console.error("❌ Run 'tools azure-devops configure <url>' first");
+      process.exit(1);
+    }
+
+    // Extract org name from URL (e.g., "MyOrg" from "https://dev.azure.com/MyOrg")
+    const orgMatch = config.org.match(/dev\.azure\.com\/([^/]+)/);
+    const orgName = orgMatch?.[1];
+    if (!orgName) {
+      console.error("❌ Could not extract organization name from config.org");
+      process.exit(1);
+    }
+
+    console.log("Fetching TimeLog extension settings...");
+
+    try {
+      const result = await $`az rest --method GET --resource "499b84ac-1321-427f-aa17-267ca6975798" --uri "https://extmgmt.dev.azure.com/${orgName}/_apis/ExtensionManagement/InstalledExtensions/TimeLog/time-logging/Data/Scopes/Default/Current/Collections/%24settings/Documents?api-version=7.1-preview"`.quiet();
+
+      const data = JSON.parse(result.text());
+      const configDoc = data.find((d: { id: string }) => d.id === "Config");
+
+      if (!configDoc?.value) {
+        console.error("❌ TimeLog extension not configured in Azure DevOps");
+        process.exit(1);
+      }
+
+      const settings = JSON.parse(configDoc.value);
+      const apiKey = settings.find((s: { id: string }) => s.id === "ApiKeyTextBox")?.value;
+
+      if (!apiKey) {
+        console.error("❌ API key not found in TimeLog settings");
+        process.exit(1);
+      }
+
+      // Update config with TimeLog settings
+      const configPath = findConfigPath();
+      if (!configPath) {
+        console.error("❌ Config file not found");
+        process.exit(1);
+      }
+
+      const existingConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+      existingConfig.timelog = existingConfig.timelog || {};
+      existingConfig.timelog.functionsKey = apiKey;
+
+      writeFileSync(configPath, JSON.stringify(existingConfig, null, 2));
+      console.log("✔ TimeLog API key saved to config");
+      console.log("\nNext: Add your user info to config.json:");
+      console.log('  "timelog": {');
+      console.log('    "functionsKey": "...",');
+      console.log('    "defaultUser": {');
+      console.log('      "userId": "<your-azure-ad-object-id>",');
+      console.log('      "userName": "<Your Name>",');
+      console.log('      "userEmail": "<your-email>"');
+      console.log('    }');
+      console.log('  }');
+    } catch (error) {
+      console.error("❌ Failed to fetch TimeLog settings:", (error as Error).message);
+      process.exit(1);
+    }
+  });
+```
+
+**Step 2: Test the command**
+
+Run: `tools azure-devops timelog configure`
+Expected: API key fetched and saved to config
+
+**Step 3: Commit**
+
+```bash
+git add src/azure-devops/commands/timelog.ts
+git commit -m "$(cat <<'EOF'
+feat(azure-devops): Add timelog configure command
+
+Auto-fetch TimeLog API key from Azure DevOps Extension Data API.
+No more manual HAR capture needed!
 EOF
 )"
 ```
@@ -1593,17 +1689,20 @@ The TimeLog feature integrates with the third-party TimeLog extension for Azure 
 ### Prerequisites
 
 1. TimeLog extension must be installed in your Azure DevOps organization
-2. Add TimeLog configuration to `.claude/azure/config.json`:
+2. Run auto-configuration to fetch TimeLog settings:
+
+```bash
+tools azure-devops timelog configure
+```
+
+This automatically fetches the API key from Azure DevOps Extension Data API and saves it to `.claude/azure/config.json`.
+
+The config will look like:
 
 ```json
 {
-  "org": "https://dev.azure.com/MyOrg",
-  "project": "MyProject",
-  "projectId": "...",
-  "orgId": "...",
-  "apiResource": "499b84ac-1321-427f-aa17-267ca6975798",
   "timelog": {
-    "functionsKey": "<your-functions-key>",
+    "functionsKey": "<auto-fetched>",
     "defaultUser": {
       "userId": "<your-azure-ad-object-id>",
       "userName": "<Your Display Name>",
@@ -1612,12 +1711,6 @@ The TimeLog feature integrates with the third-party TimeLog extension for Azure 
   }
 }
 ```
-
-To get these values:
-1. Open Chrome DevTools Network tab
-2. Use TimeLog in Azure DevOps web UI
-3. Find requests to `boznet-timelogapi.azurewebsites.net`
-4. Copy `x-functions-key` header and user info from request body
 
 ### Commands
 
