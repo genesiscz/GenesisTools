@@ -1,6 +1,6 @@
 ---
 name: genesis-tools:azure-devops
-description: Interact with Azure DevOps work items, queries, and dashboards. Use when user asks to get/fetch/show work items, queries, tasks, bugs from Azure DevOps. Also handles analyzing work items by spawning codebase exploration agents and creating analysis documents. Triggers on phrases like "get workitem", "fetch task", "show query", "download tasks", "analyze workitem", "analyze task", or Azure DevOps URLs.
+description: Interact with Azure DevOps work items, queries, dashboards, and time logging. Use when user asks to get/fetch/show work items, queries, tasks, bugs from Azure DevOps. Also handles analyzing work items and time logging. Triggers on phrases like "get workitem", "fetch task", "show query", "download tasks", "analyze workitem", "analyze task", "log time", "timelog", "time entry", or Azure DevOps URLs.
 ---
 
 # Azure DevOps Work Item Tool
@@ -15,8 +15,12 @@ tools azure-devops query <id|url|name>           # Fetch query results (supports
 tools azure-devops query <id> --download-workitems  # Download all to files
 tools azure-devops dashboard <id|url>            # Get dashboard queries
 tools azure-devops list                          # List cached items
-tools azure-devops workitem-create                        # Create work item
-tools azure-devops timelog add|list|types        # Time logging (placeholder)
+tools azure-devops workitem-create               # Create work item
+tools azure-devops timelog configure             # Auto-fetch TimeLog API key
+tools azure-devops timelog types                 # List available time types
+tools azure-devops timelog list -w <id>          # List time logs for work item
+tools azure-devops timelog add -w <id> -h <hrs>  # Log time entry
+tools azure-devops timelog import <file>         # Bulk import time logs
 ```
 
 ### Options
@@ -284,3 +288,60 @@ When user asks to "create a work item" or "file a bug":
 | "File a task to update docs" | `--create --type Task --title "Update documentation"` |
 | "Create a bug like #12345" | `--create <workitem-url>` then `--from-file template.json` |
 | "Help me create a detailed work item" | `--create -i` (interactive) |
+
+## TimeLog Operations
+
+Time logging for Azure DevOps work items using the third-party TimeLog extension.
+
+### Setup
+
+```bash
+# Auto-fetch API key from Azure DevOps
+tools azure-devops timelog configure
+```
+
+Then add your user info to `.claude/azure/config.json`.
+
+### List Time Types
+
+```bash
+tools azure-devops timelog types              # AI-friendly list
+tools azure-devops timelog types --format json  # JSON output
+```
+
+### List Time Logs
+
+```bash
+tools azure-devops timelog list -w <workItemId>
+tools azure-devops timelog list -w 268935 --format md
+```
+
+### Add Time Log Entry
+
+```bash
+# Quick mode (all options on CLI)
+tools azure-devops timelog add -w <id> -h <hours> -t <type>
+tools azure-devops timelog add -w 268935 -h 2 -t "Development"
+tools azure-devops timelog add -w 268935 -h 1 -m 30 -t "Code Review" -c "PR review"
+
+# Interactive mode
+tools azure-devops timelog add -i
+tools azure-devops timelog add -w 268935 -i
+```
+
+### Import Time Logs
+
+```bash
+tools azure-devops timelog import entries.json
+tools azure-devops timelog import entries.json --dry-run
+```
+
+### TimeLog Examples
+
+| User Request | Action |
+|--------------|--------|
+| "Log 2 hours on task 268935" | `tools azure-devops timelog add -w 268935 -h 2 -t "Development"` |
+| "What time types are available?" | `tools azure-devops timelog types` |
+| "Show time logged on 268935" | `tools azure-devops timelog list -w 268935` |
+| "Help me log time" | `tools azure-devops timelog add -i` |
+| "Import time entries from file" | `tools azure-devops timelog import entries.json` |
