@@ -273,3 +273,95 @@ export interface QueriesCache {
   queries: QueryInfo[];
   fetchedAt: string;
 }
+
+// ============= TimeLog Types (Third-Party Extension) =============
+
+/** TimeLog API base URL */
+export const TIMELOG_API_BASE = "https://boznet-timelogapi.azurewebsites.net/api";
+
+/** Time type definition from TimeLog API */
+export interface TimeType {
+  timeTypeId: string;          // "3626529b-6efd-4c02-9800-861f9c0f9206"
+  description: string;         // "Development", "Code Review", etc.
+  projectId: string | null;    // null = org-wide
+  isDefaultForProject: boolean;
+  disabled: boolean;
+}
+
+/** Time log entry from GET response */
+export interface TimeLogEntry {
+  timeLogId: string;           // "9a016275-6d8f-4e6f-9f8f-052f34e5b177"
+  comment: string;             // "analýza, fixing"
+  week: string;                // "2026-W06" (ISO week)
+  timeTypeDescription: string; // "Development"
+  minutes: number;             // 120 (NOT hours!)
+  date: string;                // "2026-02-04" (YYYY-MM-DD)
+  userId: string;              // "57c2e420-edce-6083-8a6a-a58deb1c6769"
+  userName: string;            // "Foltýn Martin (QK)"
+  userEmail: string;           // "martin.foltyn@cez.cz"
+}
+
+/** User info for TimeLog API */
+export interface TimeLogUser {
+  userId: string;
+  userName: string;
+  userEmail: string;
+}
+
+/** Request body for creating a time log entry */
+export interface CreateTimeLogRequest {
+  minutes: number;             // 120 = 2 hours
+  timeTypeDescription: string; // "Development" (display name, not UUID!)
+  comment: string;             // "analýza, fixing"
+  date: string;                // "2026-02-04"
+  workItemId: number;          // 268935
+  projectId: string;           // "de25c7dd-75d8-467a-bac0-f15fac9b560d"
+  users: TimeLogUser[];
+  userMakingChange: string;    // "Foltýn Martin (QK)"
+}
+
+/** Response from POST /timelogs/ */
+export interface CreateTimeLogResponse {
+  logsCreated: string[];       // ["9a016275-6d8f-4e6f-9f8f-052f34e5b177"]
+}
+
+/** TimeLog configuration stored in config.json */
+export interface TimeLogConfig {
+  functionsKey: string;        // API key for Azure Functions
+  defaultUser?: TimeLogUser;   // Cached user info
+}
+
+/** Extended config with TimeLog settings */
+export interface AzureConfigWithTimeLog extends AzureConfig {
+  orgId?: string;              // Organization ID (GUID)
+  timelog?: TimeLogConfig;
+}
+
+/** Options for timelog add command */
+export interface TimeLogAddOptions {
+  workitem?: string;
+  hours?: string;
+  minutes?: string;
+  type?: string;
+  date?: string;
+  comment?: string;
+  interactive?: boolean;
+}
+
+/** Options for timelog list command */
+export interface TimeLogListOptions {
+  workitem: string;
+  format?: "ai" | "md" | "json";
+}
+
+/** JSON import file format */
+export interface TimeLogImportFile {
+  entries: Array<{
+    workItemId: number;
+    hours?: number;
+    minutes?: number;
+    timeType: string;
+    date: string;
+    comment?: string;
+  }>;
+}
