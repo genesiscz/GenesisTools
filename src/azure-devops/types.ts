@@ -297,8 +297,8 @@ export interface TimeLogEntry {
   minutes: number;             // 120 (NOT hours!)
   date: string;                // "2026-02-04" (YYYY-MM-DD)
   userId: string;              // "57c2e420-edce-6083-8a6a-a58deb1c6769"
-  userName: string;            // "Foltýn Martin (QK)"
-  userEmail: string;           // "martin.foltyn@cez.cz"
+  userName: string;            // "John Doe"
+  userEmail: string;           // "user@example.com"
 }
 
 /** User info for TimeLog API */
@@ -317,7 +317,7 @@ export interface CreateTimeLogRequest {
   workItemId: number;          // 268935
   projectId: string;           // "de25c7dd-75d8-467a-bac0-f15fac9b560d"
   users: TimeLogUser[];
-  userMakingChange: string;    // "Foltýn Martin (QK)"
+  userMakingChange: string;    // "John Doe"
 }
 
 /** Response from POST /timelogs/ */
