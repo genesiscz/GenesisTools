@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { $ } from "bun";
 import { readFileSync, writeFileSync } from "fs";
 import { loadConfig, findConfigPath, requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import { TimeLogApi } from "@app/azure-devops/timelog-api";
+import { TimeLogApi, formatMinutes } from "@app/azure-devops/timelog-api";
 import { loadTimeTypesCache, saveTimeTypesCache } from "@app/azure-devops/cache";
 import logger from "@app/logger";
 import type { AzureConfigWithTimeLog, TimeType } from "@app/azure-devops/types";
@@ -72,9 +72,70 @@ export function registerTimelogCommand(program: Command): void {
     .command("list")
     .description("List time logs for a work item")
     .requiredOption("-w, --workitem <id>", "Work item ID")
-    .action(async (options) => {
-      console.log("TimeLog list - to be implemented");
-      console.log("Work item:", options.workitem);
+    .option("--format <format>", "Output format: ai|md|json", "ai")
+    .action(async (options: { workitem: string; format?: string }) => {
+      const config = requireTimeLogConfig();
+      const user = requireTimeLogUser(config);
+      const workItemId = parseInt(options.workitem, 10);
+
+      if (isNaN(workItemId)) {
+        console.error("❌ Invalid work item ID");
+        process.exit(1);
+      }
+
+      const api = new TimeLogApi(
+        config.orgId!,
+        config.projectId,
+        config.timelog!.functionsKey,
+        user
+      );
+
+      const entries = await api.getWorkItemTimeLogs(workItemId);
+
+      if (options.format === "json") {
+        console.log(JSON.stringify(entries, null, 2));
+        return;
+      }
+
+      if (entries.length === 0) {
+        console.log(`No time logs found for work item #${workItemId}`);
+        return;
+      }
+
+      // Sort by date descending
+      entries.sort((a, b) => b.date.localeCompare(a.date));
+
+      // Calculate totals
+      const totalMinutes = entries.reduce((sum, e) => sum + e.minutes, 0);
+      const byType: Record<string, number> = {};
+      for (const entry of entries) {
+        byType[entry.timeTypeDescription] = (byType[entry.timeTypeDescription] || 0) + entry.minutes;
+      }
+
+      if (options.format === "md") {
+        console.log(`## Time Logs for #${workItemId}\n`);
+        console.log(`| Date | Type | Time | User | Comment |`);
+        console.log(`|------|------|------|------|---------|`);
+        for (const e of entries) {
+          console.log(`| ${e.date} | ${e.timeTypeDescription} | ${formatMinutes(e.minutes)} | ${e.userName} | ${e.comment || "-"} |`);
+        }
+        console.log(`\n**Total: ${formatMinutes(totalMinutes)}**`);
+      } else {
+        // AI format
+        console.log(`Time Logs for Work Item #${workItemId}`);
+        console.log("=".repeat(40));
+        for (const e of entries) {
+          console.log(`\n${e.date} - ${formatMinutes(e.minutes)} (${e.timeTypeDescription})`);
+          console.log(`  User: ${e.userName}`);
+          if (e.comment) console.log(`  Comment: ${e.comment}`);
+        }
+        console.log(`\n${"=".repeat(40)}`);
+        console.log(`Total: ${formatMinutes(totalMinutes)}`);
+        console.log("\nBy Type:");
+        for (const [type, mins] of Object.entries(byType)) {
+          console.log(`  ${type}: ${formatMinutes(mins)}`);
+        }
+      }
     });
 
   timelog
