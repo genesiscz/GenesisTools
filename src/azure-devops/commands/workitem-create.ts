@@ -670,7 +670,7 @@ async function handleCreate(options: {
   if (!hasValidMode) {
     // No valid mode specified - show help without requiring config
     console.log(`
-Usage: tools azure-devops create [options]
+Usage: tools azure-devops workitem-create [options]
 
 Modes:
   -i, --interactive             Interactive mode with prompts
@@ -680,11 +680,11 @@ Modes:
   --type <type> --title <text>  Quick non-interactive creation
 
 Examples:
-  tools azure-devops create -i
-  tools azure-devops create --from-file template.json
-  tools azure-devops create "https://.../_queries/query/abc" --type Bug
-  tools azure-devops create "https://.../_workitems/edit/123"
-  tools azure-devops create --type Task --title "Fix bug"
+  tools azure-devops workitem-create -i
+  tools azure-devops workitem-create --from-file template.json
+  tools azure-devops workitem-create "https://.../_queries/query/abc" --type Bug
+  tools azure-devops workitem-create "https://.../_workitems/edit/123"
+  tools azure-devops workitem-create --type Task --title "Fix bug"
 `);
     return;
   }
@@ -746,7 +746,7 @@ Examples:
     }
 
     console.log(`\n💡 Fill the template and run:`);
-    console.log(`   tools azure-devops create --from-file "${filePath}"`);
+    console.log(`   tools azure-devops workitem-create --from-file "${filePath}"`);
     return;
   }
 
@@ -784,7 +784,7 @@ Examples:
     if (template.relations?.parent) console.log(`   Parent: #${template.relations.parent}`);
 
     console.log(`\n💡 Fill the template and run:`);
-    console.log(`   tools azure-devops create --from-file "${filePath}"`);
+    console.log(`   tools azure-devops workitem-create --from-file "${filePath}"`);
     return;
   }
 
@@ -826,7 +826,8 @@ Examples:
  */
 export function registerWorkitemCreateCommand(program: Command): void {
   program
-    .command("create")
+    .command("workitem-create")
+    .alias("create")
     .description("Create a new work item")
     .option("-i, --interactive", "Interactive mode with prompts")
     .option("--from-file <path>", "Create from template file")
