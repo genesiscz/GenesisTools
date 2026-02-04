@@ -8,7 +8,7 @@
  *   tools azure-devops workitem <url|id> [options]
  *   tools azure-devops dashboard <url|id> [options]
  *   tools azure-devops list
- *   tools azure-devops create [options]
+ *   tools azure-devops workitem-create [options]
  *   tools azure-devops timelog <subcommand> [options]
  */
 
@@ -68,7 +68,7 @@ Commands:
   workitem <input>       Fetch work item(s) by ID or URL
   dashboard <input>      Fetch dashboard and list its queries
   list                   List cached work items
-  create                 Create a new work item (interactive or from template)
+  workitem-create        Create a new work item (interactive or from template)
   timelog                Manage time log entries (add, list, types, import)
 
 Query Options:
@@ -88,7 +88,7 @@ Workitem Options:
   --category <name>      Save to tasks/<category>/
   --task-folders         Save in tasks/<id>/ subfolder
 
-Create Options:
+Workitem-Create Options:
   -i, --interactive      Interactive mode with prompts
   --from-file <path>     Create from template file
   --type <type>          Work item type (Bug, Task, User Story, etc.)
@@ -137,13 +137,13 @@ Examples:
   tools azure-devops workitem 12345 --category hotfixes
 
   # Interactive work item creation
-  tools azure-devops create -i
+  tools azure-devops workitem-create -i
 
   # Generate template from query
-  tools azure-devops create "https://dev.azure.com/.../query/abc" --type Bug
+  tools azure-devops workitem-create "https://dev.azure.com/.../query/abc" --type Bug
 
   # Quick non-interactive creation
-  tools azure-devops create --type Task --title "Fix login bug"
+  tools azure-devops workitem-create --type Task --title "Fix login bug"
 
   # Time logging
   tools azure-devops timelog add --workitem 268935 --hours 2 --type "Development"
