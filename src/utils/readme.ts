@@ -1,6 +1,7 @@
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
+import { renderMarkdownToCli } from "./markdown/index.js";
 
 /**
  * Handle --readme flag for CLI tools.
@@ -21,7 +22,8 @@ export function handleReadmeFlag(importMetaUrl: string): void {
 
     if (existsSync(readmePath)) {
         const content = readFileSync(readmePath, "utf-8");
-        console.log(content);
+        const rendered = renderMarkdownToCli(content);
+        console.log(rendered);
         process.exit(0);
     } else {
         console.log("No README.md found for this tool.");
