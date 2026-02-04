@@ -1,0 +1,13 @@
+diff --git a/src/utils.js b/src/utils.js
+index d21e251aac520e6698ac8857e9bc7dea9b7d0428..778c282c827051cc0b07c0797d320b970291cadb 100644
+--- a/src/utils.js
++++ b/src/utils.js
+@@ -1,4 +1,7 @@
+-const stringWidth = require('string-width');
++let stringWidth = require('string-width');
++if (typeof stringWidth !== 'function' && stringWidth.default) {
++  stringWidth = stringWidth.default;
++}
+ 
+ function codeRegex(capture) {
+   return capture ? /\u001b\[((?:\d*;){0,5}\d*)m/g : /\u001b\[(?:\d*;){0,5}\d*m/g;

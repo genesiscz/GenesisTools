@@ -1,7 +1,7 @@
 {
     "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
     "name": "genesis-tools",
-    "version": "1.0.0",
+    "version": "1.0.5",
     "description": "Plugins for GenesisTools CLI development and management",
     "owner": {
         "name": "genesiscz",
@@ -11,7 +11,7 @@
         {
             "name": "genesis-tools",
             "description": "Skills and utilities for working with GenesisTools CLI toolkit. Provides guidance for discovering, executing, and troubleshooting genesis tools with integrated workflow support.",
-            "version": "1.0.0",
+            "version": "1.0.5",
             "author": {
                 "name": "GenesisTools"
             },

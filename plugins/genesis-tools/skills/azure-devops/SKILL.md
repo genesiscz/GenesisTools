@@ -1,6 +1,6 @@
 ---
 name: genesis-tools:azure-devops
-description: Interact with Azure DevOps work items, queries, and dashboards. Use when user asks to get/fetch/show work items, queries, tasks, bugs from Azure DevOps. Also handles analyzing work items by spawning codebase exploration agents and creating analysis documents. Triggers on phrases like "get workitem", "fetch task", "show query", "download tasks", "analyze workitem", "analyze task", or Azure DevOps URLs.
+description: Interact with Azure DevOps work items, queries, dashboards, and time logging. Use when user asks to get/fetch/show work items, queries, tasks, bugs from Azure DevOps. Also handles analyzing work items and time logging. Triggers on phrases like "get workitem", "fetch task", "show query", "download tasks", "analyze workitem", "analyze task", "log time", "timelog", "time entry", or Azure DevOps URLs.
 ---
 
 # Azure DevOps Work Item Tool
@@ -10,11 +10,17 @@ Fetch, manage, and analyze Azure DevOps work items using `tools azure-devops`.
 ## CLI Reference
 
 ```bash
-tools azure-devops --workitem <id|ids>           # Fetch work item(s)
-tools azure-devops --query <id|url|name>         # Fetch query results (supports name matching)
-tools azure-devops --query <id> --download-workitems  # Download all to files
-tools azure-devops --dashboard <id|url>          # Get dashboard queries
-tools azure-devops --list                        # List cached items
+tools azure-devops workitem <id|ids>             # Fetch work item(s)
+tools azure-devops query <id|url|name>           # Fetch query results (supports name matching)
+tools azure-devops query <id> --download-workitems  # Download all to files
+tools azure-devops dashboard <id|url>            # Get dashboard queries
+tools azure-devops list                          # List cached items
+tools azure-devops workitem-create               # Create work item
+tools azure-devops timelog configure             # Auto-fetch TimeLog API key
+tools azure-devops timelog types                 # List available time types
+tools azure-devops timelog list -w <id>          # List time logs for work item
+tools azure-devops timelog add -w <id> -h <hrs>  # Log time entry
+tools azure-devops timelog import <file>         # Bulk import time logs
 ```
 
 ### Options
@@ -40,10 +46,10 @@ tools azure-devops --list                        # List cached items
 ### Fetch Work Items
 
 ```bash
-tools azure-devops --workitem 261575
-tools azure-devops --workitem 261575,261576,261577
-tools azure-devops --workitem 261575 --category react19
-tools azure-devops --workitem 261575 --force
+tools azure-devops workitem 261575
+tools azure-devops workitem 261575,261576,261577
+tools azure-devops workitem 261575 --category react19
+tools azure-devops workitem 261575 --force
 ```
 
 ### Fetch Query
@@ -56,15 +62,15 @@ The `--query` option supports three input formats:
 
 ```bash
 # By ID
-tools azure-devops --query d6e14134-9d22-4cbb-b897-b1514f888667
+tools azure-devops query d6e14134-9d22-4cbb-b897-b1514f888667
 
 # By name (uses fuzzy matching to find the query)
-tools azure-devops --query "Open Bugs"
-tools azure-devops --query "Otevřené bugy"
+tools azure-devops query "Open Bugs"
+tools azure-devops query "Otevřené bugy"
 
 # With filters
-tools azure-devops --query <id> --state Active,Development
-tools azure-devops --query "Active Tasks" --download-workitems --category react19
+tools azure-devops query <id> --state Active,Development
+tools azure-devops query "Active Tasks" --download-workitems --category react19
 ```
 
 **Query Name Matching:**
@@ -79,7 +85,7 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 
 1. Fetch work item(s):
    ```bash
-   tools azure-devops --workitem <ids> --category <cat> --task-folders
+   tools azure-devops workitem <ids> --category <cat> --task-folders
    ```
 
 2. Read the generated `.md` file for each work item
@@ -140,11 +146,11 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 
 | User Request | Action |
 |--------------|--------|
-| "Get workitem 261575" | `tools azure-devops --workitem 261575` |
-| "Show query results for X" | `tools azure-devops --query X` |
-| "Show Open Bugs query" | `tools azure-devops --query "Open Bugs"` |
-| "Fetch Otevřené bugy" | `tools azure-devops --query "Otevřené bugy"` |
-| "Download React19 bugs" | `tools azure-devops --query "React19 Bugs" --download-workitems --category react19` |
+| "Get workitem 261575" | `tools azure-devops workitem 261575` |
+| "Show query results for X" | `tools azure-devops query X` |
+| "Show Open Bugs query" | `tools azure-devops query "Open Bugs"` |
+| "Fetch Otevřené bugy" | `tools azure-devops query "Otevřené bugy"` |
+| "Download React19 bugs" | `tools azure-devops query "React19 Bugs" --download-workitems --category react19` |
 | "Analyze task 261575" | Fetch → Explore agent → Write .analysis.md |
 | "Analyze all active bugs" | Fetch query with --download-workitems → Parallel Explore agents → Write .analysis.md files |
 
@@ -155,11 +161,11 @@ The `--create` command supports multiple modes for creating new work items.
 ### CLI Reference
 
 ```bash
-tools azure-devops --create -i                     # Interactive mode
-tools azure-devops --create --from-file <path>     # From template file
-tools azure-devops --create <query-url> --type Bug # Generate template from query
-tools azure-devops --create <workitem-url>         # Generate template from work item
-tools azure-devops --create --type Task --title X  # Quick creation
+tools azure-devops workitem-create -i                     # Interactive mode
+tools azure-devops workitem-create --from-file <path>     # From template file
+tools azure-devops workitem-create <query-url> --type Bug # Generate template from query
+tools azure-devops workitem-create <workitem-url>         # Generate template from work item
+tools azure-devops workitem-create --type Task --title X  # Quick creation
 ```
 
 ### Create Options
@@ -181,7 +187,7 @@ tools azure-devops --create --type Task --title X  # Quick creation
 Best for: Manual creation with full control over all fields.
 
 ```bash
-tools azure-devops --create -i
+tools azure-devops workitem-create -i
 ```
 
 Prompts for: type, title, description (via editor), severity, state, tags, assignee, parent link.
@@ -191,7 +197,7 @@ Prompts for: type, title, description (via editor), severity, state, tags, assig
 Best for: Creating work items that match patterns from existing items.
 
 ```bash
-tools azure-devops --create "https://dev.azure.com/.../_queries/query/abc" --type Bug
+tools azure-devops workitem-create "https://dev.azure.com/.../_queries/query/abc" --type Bug
 ```
 
 This:
@@ -205,7 +211,7 @@ This:
 Best for: Cloning or creating similar work items.
 
 ```bash
-tools azure-devops --create "https://dev.azure.com/.../_workitems/edit/12345"
+tools azure-devops workitem-create "https://dev.azure.com/.../_workitems/edit/12345"
 ```
 
 This:
@@ -219,7 +225,7 @@ This:
 Best for: LLM workflows where templates are prepared programmatically.
 
 ```bash
-tools azure-devops --create --from-file ".claude/azure/tasks/created/template.json"
+tools azure-devops workitem-create --from-file ".claude/azure/tasks/created/template.json"
 ```
 
 Template format:
@@ -247,8 +253,8 @@ Template format:
 Best for: Simple work items created from command line.
 
 ```bash
-tools azure-devops --create --type Task --title "Fix login bug"
-tools azure-devops --create --type Bug --title "Error" --severity "A - critical" --tags "frontend,urgent"
+tools azure-devops workitem-create --type Task --title "Fix login bug"
+tools azure-devops workitem-create --type Bug --title "Error" --severity "A - critical" --tags "frontend,urgent"
 ```
 
 ### LLM Workflow
@@ -266,10 +272,10 @@ When user asks to "create a work item" or "file a bug":
 3. **Create the work item**:
    ```bash
    # Quick creation
-   tools azure-devops --create --type Bug --title "Error in checkout" --severity "B - high"
+   tools azure-devops workitem-create --type Bug --title "Error in checkout" --severity "B - high"
 
    # Or from template
-   tools azure-devops --create --from-file template.json
+   tools azure-devops workitem-create --from-file template.json
    ```
 
 4. **Report the result** - Include the work item ID and URL in your response.
@@ -282,3 +288,188 @@ When user asks to "create a work item" or "file a bug":
 | "File a task to update docs" | `--create --type Task --title "Update documentation"` |
 | "Create a bug like #12345" | `--create <workitem-url>` then `--from-file template.json` |
 | "Help me create a detailed work item" | `--create -i` (interactive) |
+
+## History Commands
+
+Track work item history: who changed what, when, and how long items spent in each state.
+
+### CLI Reference
+
+```bash
+tools azure-devops history show <id>                    # Summary view (assignment/state periods, time-in-state)
+tools azure-devops history show <id> -f timeline        # Chronological events
+tools azure-devops history show <id> -f json            # JSON output
+tools azure-devops history show <id> --force            # Force refresh from API
+tools azure-devops history show <id> --assigned-to "X"  # Filter by assignee
+tools azure-devops history show <id> --state Active     # Filter by state
+
+tools azure-devops history search --assigned-to-me --wiql          # Currently assigned to me (WIQL @Me)
+tools azure-devops history search --assigned-to "Martin" --wiql    # Ever assigned to user (server-side)
+tools azure-devops history search --assigned-to "Martin" --wiql --current  # Currently assigned
+tools azure-devops history search --assigned-to "Martin"           # Local cached history search
+tools azure-devops history search --assigned-to "Martin" --min-time 2h     # Min time filter
+tools azure-devops history search --state Active --since 2024-12-01 --wiql # State + date range (--since/--until aliases for --from/--to)
+
+tools azure-devops history sync                   # Bulk sync history for cached work items (per-item mode)
+tools azure-devops history sync --force           # Force re-sync all
+tools azure-devops history sync --dry-run         # Show what would be synced
+tools azure-devops history sync --batch           # Use batch reporting API instead
+```
+
+### NL Query Translation
+
+| User says | Command |
+|-----------|---------|
+| "tasks assigned to me" | `history search --assigned-to-me --wiql` |
+| "tasks ever assigned to Martin" | `history search --assigned-to "Martin" --wiql` |
+| "how long was #123 in Active" | `history show 123 --state Active` |
+| "time Martin spent on #456" | `history show 456 --assigned-to Martin` |
+| "all work in last 2 months" | `history search --assigned-to "Martin" --from 2024-12-01 --wiql` |
+
+### Features
+
+- **@me support**: `--assigned-to @me` or `--assigned-to-me` uses WIQL `@Me` macro (auto-enables WIQL)
+- **--current flag**: Uses `=` instead of `EVER` for current assignment
+- **Fuzzy user matching**: "Martin" matches "Martin Foltyn (QK)", diacritics normalized
+- **Cache stats**: Local search shows data date range and last sync time
+- **Per-item sync** (default): Targeted API calls per work item, faster for <200 items
+- **Batch sync** (`--batch`): Uses reporting API, better for 500+ items
+
+## TimeLog Operations
+
+Time logging for Azure DevOps work items using the third-party TimeLog extension.
+
+### Setup
+
+```bash
+# Auto-fetch API key from Azure DevOps
+tools azure-devops timelog configure
+```
+
+Then add your user info to `.claude/azure/config.json`.
+
+### List Time Types
+
+```bash
+tools azure-devops timelog types              # AI-friendly list
+tools azure-devops timelog types --format json  # JSON output
+```
+
+### List Time Logs
+
+```bash
+tools azure-devops timelog list -w <workItemId>
+tools azure-devops timelog list -w 268935 --format md
+```
+
+### Add Time Log Entry
+
+```bash
+# Quick mode (all options on CLI)
+tools azure-devops timelog add -w <id> -h <hours> -t <type>
+tools azure-devops timelog add -w 268935 -h 2 -t "Development"
+tools azure-devops timelog add -w 268935 -h 1 -m 30 -t "Code Review" -c "PR review"
+
+# Interactive mode
+tools azure-devops timelog add -i
+tools azure-devops timelog add -w 268935 -i
+```
+
+### Import Time Logs
+
+```bash
+tools azure-devops timelog import entries.json
+tools azure-devops timelog import entries.json --dry-run
+```
+
+### TimeLog Examples
+
+| User Request | Action |
+|--------------|--------|
+| "Log 2 hours on task 268935" | `tools azure-devops timelog add -w 268935 -h 2 -t "Development"` |
+| "What time types are available?" | `tools azure-devops timelog types` |
+| "Show time logged on 268935" | `tools azure-devops timelog list -w 268935` |
+| "Help me log time" | `tools azure-devops timelog add -i` |
+| "Import time entries from file" | `tools azure-devops timelog import entries.json` |
+
+### Natural Language Time Logging
+
+When user asks to log time in natural language, parse their request and construct the CLI command:
+
+**1. Parse Duration Formats:**
+- "1 hour", "1h", "1hr" → `-h 1`
+- "30 minutes", "30min", "30m" → `-h 0 -m 30`
+- "1.5 hours", "1h30m", "90 minutes" → `-h 1 -m 30`
+- "2 hours 15 minutes" → `-h 2 -m 15`
+
+**2. Extract Work Item IDs:**
+- From explicit mention: "on task 268935", "workitem #268935", "WI 268935"
+- From git branch: `feature/268935-fix-login` → work item 268935
+- From recent commits: `feat(#268935): fix login bug` → work item 268935
+
+To extract from git context:
+```bash
+# Get current branch
+git branch --show-current
+
+# Get recent commit messages (look for #NNNNNN patterns)
+git log --oneline -5
+```
+
+**3. Infer Time Type from Context:**
+
+| Context Clues | Time Type |
+|---------------|-----------|
+| "reviewing PR", "code review", "review" | Code Review |
+| "implementing", "coding", "development", "fixing" | Development |
+| "testing", "writing tests", "QA" | Test |
+| "documentation", "docs", "readme" | Dokumentace |
+| "meeting", "standup", "planning", "retro" | Ceremonie |
+| "analysis", "analyzing", "design" | IT Analýza |
+| "configuring", "setup", "deployment" | Konfigurace |
+
+Default to "Development" if no context clues.
+
+**4. Use Git Commit Messages as Notes:**
+
+When user says "use commit message" or doesn't provide a note:
+```bash
+# Get last commit message
+git log -1 --pretty=%B
+```
+
+Use the commit subject line as the time log comment.
+
+### Natural Language Examples
+
+| User Request | Parsed Command |
+|--------------|----------------|
+| "log 1h on 268935 for Development" | `timelog add -w 268935 -h 1 -t "Development"` |
+| "spent 30min reviewing PR on task 789" | `timelog add -w 789 -h 0 -m 30 -t "Code Review"` |
+| "log 2 hours, use last commit message" | Get work item from branch/commit, use commit msg as comment |
+| "log my work on the current task" | Extract ID from branch, infer type from commits |
+| "log 1.5h implementing the fix" | `timelog add -w <from-branch> -h 1 -m 30 -t "Development"` |
+
+### Workflow: Log Time from Git Context
+
+When user says "log time for my work" without explicit details:
+
+1. **Get work item ID**:
+   ```bash
+   git branch --show-current  # e.g., feature/268935-fix-login
+   ```
+   Extract number: 268935
+
+2. **Get commit messages for note**:
+   ```bash
+   git log -1 --pretty=%B
+   ```
+
+3. **Infer time type** from commit message keywords
+
+4. **Ask user for duration** if not specified (use AskUserQuestion)
+
+5. **Execute**:
+   ```bash
+   tools azure-devops timelog add -w 268935 -h <hours> -t "<inferred-type>" -c "<commit-message>"
+   ```
