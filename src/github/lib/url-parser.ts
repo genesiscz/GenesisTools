@@ -1,6 +1,6 @@
 // GitHub URL parsing utilities
 
-import type { GitHubUrl } from '../types';
+import type { GitHubUrl, GitHubFileUrl } from '../types';
 
 /**
  * Parse a GitHub URL into its components
@@ -172,4 +172,86 @@ export async function detectRepoFromGit(): Promise<string | null> {
   }
 
   return null;
+}
+
+/**
+ * Parse a GitHub file URL into its components
+ *
+ * Supported formats:
+ * - https://github.com/owner/repo/blob/ref/path/to/file
+ * - https://github.com/owner/repo/blame/ref/path/to/file
+ * - https://raw.githubusercontent.com/owner/repo/ref/path/to/file
+ * - https://raw.githubusercontent.com/owner/repo/refs/heads/branch/path
+ * - https://raw.githubusercontent.com/owner/repo/refs/tags/tag/path
+ * - All above with optional #L10 or #L10-L20 line references
+ */
+export function parseGitHubFileUrl(input: string): GitHubFileUrl | null {
+  // Extract line numbers if present (e.g., #L10 or #L10-L20)
+  let lineStart: number | undefined;
+  let lineEnd: number | undefined;
+  const lineMatch = input.match(/#L(\d+)(?:-L(\d+))?$/);
+  if (lineMatch) {
+    lineStart = parseInt(lineMatch[1], 10);
+    lineEnd = lineMatch[2] ? parseInt(lineMatch[2], 10) : undefined;
+    input = input.replace(/#L\d+(?:-L\d+)?$/, '');
+  }
+
+  // Pattern 1: github.com blob/blame URLs
+  // https://github.com/owner/repo/blob/ref/path/to/file
+  // https://github.com/owner/repo/blame/ref/path/to/file
+  const githubMatch = input.match(
+    /github\.com\/([^/]+)\/([^/]+)\/(?:blob|blame)\/([^/]+)\/(.+)/
+  );
+  if (githubMatch) {
+    return {
+      owner: githubMatch[1],
+      repo: githubMatch[2],
+      ref: githubMatch[3],
+      path: githubMatch[4],
+      lineStart,
+      lineEnd,
+    };
+  }
+
+  // Pattern 2: raw.githubusercontent.com with refs/heads or refs/tags
+  // https://raw.githubusercontent.com/owner/repo/refs/heads/branch/path
+  // https://raw.githubusercontent.com/owner/repo/refs/tags/tag/path
+  const rawRefsMatch = input.match(
+    /raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/refs\/(heads|tags)\/([^/]+)\/(.+)/
+  );
+  if (rawRefsMatch) {
+    return {
+      owner: rawRefsMatch[1],
+      repo: rawRefsMatch[2],
+      ref: rawRefsMatch[4], // branch or tag name
+      path: rawRefsMatch[5],
+      lineStart,
+      lineEnd,
+    };
+  }
+
+  // Pattern 3: raw.githubusercontent.com simple format
+  // https://raw.githubusercontent.com/owner/repo/ref/path/to/file
+  const rawSimpleMatch = input.match(
+    /raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/(.+)/
+  );
+  if (rawSimpleMatch) {
+    return {
+      owner: rawSimpleMatch[1],
+      repo: rawSimpleMatch[2],
+      ref: rawSimpleMatch[3],
+      path: rawSimpleMatch[4],
+      lineStart,
+      lineEnd,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Build raw.githubusercontent.com URL from components
+ */
+export function buildRawGitHubUrl(owner: string, repo: string, ref: string, path: string): string {
+  return `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${path}`;
 }
