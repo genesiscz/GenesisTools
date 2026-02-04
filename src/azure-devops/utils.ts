@@ -16,6 +16,7 @@ import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 import type {
   AzureConfig,
+  AzureConfigWithTimeLog,
   FoundTaskFile,
   ParsedUrl,
   Relation,
@@ -29,6 +30,7 @@ import type {
   WorkItemTemplate,
   WorkItemType,
   QueryInfo,
+  TimeLogUser,
 } from "@app/azure-devops/types";
 
 // ============= HTML to Markdown =============
@@ -139,6 +141,74 @@ This will create .claude/azure/config.json in the current directory.
     process.exit(1);
   }
   return config;
+}
+
+/**
+ * Load config with TimeLog settings or exit with helpful error
+ */
+export function requireTimeLogConfig(): AzureConfigWithTimeLog {
+  const config = loadConfig() as AzureConfigWithTimeLog | null;
+  if (!config) {
+    console.error(`
+❌ No Azure DevOps configuration found.
+
+Run configure with any Azure DevOps URL from your project:
+
+  tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
+`);
+    process.exit(1);
+  }
+
+  if (!config.orgId) {
+    console.error(`
+❌ Organization ID not found in config.
+
+Re-run configure to update your config:
+
+  tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems" --force
+`);
+    process.exit(1);
+  }
+
+  if (!config.timelog?.functionsKey) {
+    console.error(`
+❌ TimeLog configuration not found.
+
+Run the auto-configure command to fetch TimeLog settings:
+
+  tools azure-devops timelog configure
+
+This will automatically fetch the API key from Azure DevOps Extension Data API.
+`);
+    process.exit(1);
+  }
+
+  return config;
+}
+
+/**
+ * Get current user for TimeLog or exit with helpful error
+ */
+export function requireTimeLogUser(config: AzureConfigWithTimeLog): TimeLogUser {
+  const user = config.timelog?.defaultUser;
+  if (!user) {
+    console.error(`
+❌ TimeLog user not configured.
+
+Add defaultUser to .claude/azure/config.json timelog section:
+
+"timelog": {
+  "functionsKey": "...",
+  "defaultUser": {
+    "userId": "<your-azure-ad-object-id>",
+    "userName": "<Your Display Name>",
+    "userEmail": "<your-email@example.com>"
+  }
+}
+`);
+    process.exit(1);
+  }
+  return user;
 }
 
 // ============= Task File Utilities =============
