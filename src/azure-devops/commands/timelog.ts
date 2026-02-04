@@ -4,8 +4,27 @@ import { readFileSync, writeFileSync } from "fs";
 import { loadConfig, findConfigPath, requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { TimeLogApi, formatMinutes, convertToMinutes, getTodayDate } from "@app/azure-devops/timelog-api";
 import { loadTimeTypesCache, saveTimeTypesCache } from "@app/azure-devops/cache";
+import { runInteractiveAddClack } from "@app/azure-devops/timelog-prompts-clack";
+import { runInteractiveAddInquirer } from "@app/azure-devops/timelog-prompts-inquirer";
 import logger from "@app/logger";
-import type { AzureConfigWithTimeLog, TimeType } from "@app/azure-devops/types";
+import type { AzureConfigWithTimeLog, TimeType, TimeLogUser } from "@app/azure-devops/types";
+
+// Toggle between prompt implementations
+// 1 = @clack/prompts (preferred)
+// 0 = @inquirer/prompts (fallback)
+const USE_CLACK = 1;
+
+async function runInteractiveAdd(
+  config: AzureConfigWithTimeLog,
+  user: TimeLogUser,
+  prefilledWorkItem?: string
+): Promise<void> {
+  if (USE_CLACK) {
+    await runInteractiveAddClack(config, user, prefilledWorkItem);
+  } else {
+    await runInteractiveAddInquirer(config, user, prefilledWorkItem);
+  }
+}
 
 function showHelpFull(): void {
   console.log(`
@@ -106,9 +125,9 @@ export function registerTimelogCommand(program: Command): void {
       const config = requireTimeLogConfig();
       const user = requireTimeLogUser(config);
 
-      // Interactive mode - placeholder for now
+      // Interactive mode
       if (options.interactive) {
-        console.log("Interactive mode - to be implemented in Task 8-10");
+        await runInteractiveAdd(config, user, options.workitem);
         return;
       }
 
