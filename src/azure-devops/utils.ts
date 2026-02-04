@@ -29,7 +29,7 @@ import type {
   WorkItemTemplate,
   WorkItemType,
   QueryInfo,
-} from "./types";
+} from "@app/azure-devops/types";
 
 // ============= HTML to Markdown =============
 

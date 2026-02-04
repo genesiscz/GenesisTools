@@ -80,6 +80,13 @@ export interface ParsedRelations {
 
 // ============= Cache Types =============
 
+/** Metadata from fresh query results for smart cache comparison */
+export interface QueryItemMetadata {
+  id: number;
+  changed: string;
+  rev: number;
+}
+
 export interface CacheEntry {
   id: number;
   changed: string;
