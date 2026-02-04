@@ -10,11 +10,13 @@ Fetch, manage, and analyze Azure DevOps work items using `tools azure-devops`.
 ## CLI Reference
 
 ```bash
-tools azure-devops --workitem <id|ids>           # Fetch work item(s)
-tools azure-devops --query <id|url|name>         # Fetch query results (supports name matching)
-tools azure-devops --query <id> --download-workitems  # Download all to files
-tools azure-devops --dashboard <id|url>          # Get dashboard queries
-tools azure-devops --list                        # List cached items
+tools azure-devops workitem <id|ids>             # Fetch work item(s)
+tools azure-devops query <id|url|name>           # Fetch query results (supports name matching)
+tools azure-devops query <id> --download-workitems  # Download all to files
+tools azure-devops dashboard <id|url>            # Get dashboard queries
+tools azure-devops list                          # List cached items
+tools azure-devops create                        # Create work item
+tools azure-devops timelog add|list|types        # Time logging (placeholder)
 ```
 
 ### Options
@@ -40,10 +42,10 @@ tools azure-devops --list                        # List cached items
 ### Fetch Work Items
 
 ```bash
-tools azure-devops --workitem 261575
-tools azure-devops --workitem 261575,261576,261577
-tools azure-devops --workitem 261575 --category react19
-tools azure-devops --workitem 261575 --force
+tools azure-devops workitem 261575
+tools azure-devops workitem 261575,261576,261577
+tools azure-devops workitem 261575 --category react19
+tools azure-devops workitem 261575 --force
 ```
 
 ### Fetch Query
@@ -56,15 +58,15 @@ The `--query` option supports three input formats:
 
 ```bash
 # By ID
-tools azure-devops --query d6e14134-9d22-4cbb-b897-b1514f888667
+tools azure-devops query d6e14134-9d22-4cbb-b897-b1514f888667
 
 # By name (uses fuzzy matching to find the query)
-tools azure-devops --query "Open Bugs"
-tools azure-devops --query "Otevřené bugy"
+tools azure-devops query "Open Bugs"
+tools azure-devops query "Otevřené bugy"
 
 # With filters
-tools azure-devops --query <id> --state Active,Development
-tools azure-devops --query "Active Tasks" --download-workitems --category react19
+tools azure-devops query <id> --state Active,Development
+tools azure-devops query "Active Tasks" --download-workitems --category react19
 ```
 
 **Query Name Matching:**
@@ -79,7 +81,7 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 
 1. Fetch work item(s):
    ```bash
-   tools azure-devops --workitem <ids> --category <cat> --task-folders
+   tools azure-devops workitem <ids> --category <cat> --task-folders
    ```
 
 2. Read the generated `.md` file for each work item
@@ -140,11 +142,11 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 
 | User Request | Action |
 |--------------|--------|
-| "Get workitem 261575" | `tools azure-devops --workitem 261575` |
-| "Show query results for X" | `tools azure-devops --query X` |
-| "Show Open Bugs query" | `tools azure-devops --query "Open Bugs"` |
-| "Fetch Otevřené bugy" | `tools azure-devops --query "Otevřené bugy"` |
-| "Download React19 bugs" | `tools azure-devops --query "React19 Bugs" --download-workitems --category react19` |
+| "Get workitem 261575" | `tools azure-devops workitem 261575` |
+| "Show query results for X" | `tools azure-devops query X` |
+| "Show Open Bugs query" | `tools azure-devops query "Open Bugs"` |
+| "Fetch Otevřené bugy" | `tools azure-devops query "Otevřené bugy"` |
+| "Download React19 bugs" | `tools azure-devops query "React19 Bugs" --download-workitems --category react19` |
 | "Analyze task 261575" | Fetch → Explore agent → Write .analysis.md |
 | "Analyze all active bugs" | Fetch query with --download-workitems → Parallel Explore agents → Write .analysis.md files |
 
@@ -155,11 +157,11 @@ The `--create` command supports multiple modes for creating new work items.
 ### CLI Reference
 
 ```bash
-tools azure-devops --create -i                     # Interactive mode
-tools azure-devops --create --from-file <path>     # From template file
-tools azure-devops --create <query-url> --type Bug # Generate template from query
-tools azure-devops --create <workitem-url>         # Generate template from work item
-tools azure-devops --create --type Task --title X  # Quick creation
+tools azure-devops create -i                     # Interactive mode
+tools azure-devops create --from-file <path>     # From template file
+tools azure-devops create <query-url> --type Bug # Generate template from query
+tools azure-devops create <workitem-url>         # Generate template from work item
+tools azure-devops create --type Task --title X  # Quick creation
 ```
 
 ### Create Options
@@ -181,7 +183,7 @@ tools azure-devops --create --type Task --title X  # Quick creation
 Best for: Manual creation with full control over all fields.
 
 ```bash
-tools azure-devops --create -i
+tools azure-devops create -i
 ```
 
 Prompts for: type, title, description (via editor), severity, state, tags, assignee, parent link.
@@ -191,7 +193,7 @@ Prompts for: type, title, description (via editor), severity, state, tags, assig
 Best for: Creating work items that match patterns from existing items.
 
 ```bash
-tools azure-devops --create "https://dev.azure.com/.../_queries/query/abc" --type Bug
+tools azure-devops create "https://dev.azure.com/.../_queries/query/abc" --type Bug
 ```
 
 This:
@@ -205,7 +207,7 @@ This:
 Best for: Cloning or creating similar work items.
 
 ```bash
-tools azure-devops --create "https://dev.azure.com/.../_workitems/edit/12345"
+tools azure-devops create "https://dev.azure.com/.../_workitems/edit/12345"
 ```
 
 This:
@@ -219,7 +221,7 @@ This:
 Best for: LLM workflows where templates are prepared programmatically.
 
 ```bash
-tools azure-devops --create --from-file ".claude/azure/tasks/created/template.json"
+tools azure-devops create --from-file ".claude/azure/tasks/created/template.json"
 ```
 
 Template format:
@@ -247,8 +249,8 @@ Template format:
 Best for: Simple work items created from command line.
 
 ```bash
-tools azure-devops --create --type Task --title "Fix login bug"
-tools azure-devops --create --type Bug --title "Error" --severity "A - critical" --tags "frontend,urgent"
+tools azure-devops create --type Task --title "Fix login bug"
+tools azure-devops create --type Bug --title "Error" --severity "A - critical" --tags "frontend,urgent"
 ```
 
 ### LLM Workflow
@@ -266,10 +268,10 @@ When user asks to "create a work item" or "file a bug":
 3. **Create the work item**:
    ```bash
    # Quick creation
-   tools azure-devops --create --type Bug --title "Error in checkout" --severity "B - high"
+   tools azure-devops create --type Bug --title "Error in checkout" --severity "B - high"
 
    # Or from template
-   tools azure-devops --create --from-file template.json
+   tools azure-devops create --from-file template.json
    ```
 
 4. **Report the result** - Include the work item ID and URL in your response.
