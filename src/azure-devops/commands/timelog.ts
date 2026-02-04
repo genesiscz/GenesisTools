@@ -1,13 +1,13 @@
 import { Command } from "commander";
 import { $ } from "bun";
-import { readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { loadConfig, findConfigPath, requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { TimeLogApi, formatMinutes, convertToMinutes, getTodayDate } from "@app/azure-devops/timelog-api";
 import { loadTimeTypesCache, saveTimeTypesCache } from "@app/azure-devops/cache";
 import { runInteractiveAddClack } from "@app/azure-devops/timelog-prompts-clack";
 import { runInteractiveAddInquirer } from "@app/azure-devops/timelog-prompts-inquirer";
 import logger from "@app/logger";
-import type { AzureConfigWithTimeLog, TimeType, TimeLogUser } from "@app/azure-devops/types";
+import type { AzureConfigWithTimeLog, TimeType, TimeLogUser, TimeLogImportFile } from "@app/azure-devops/types";
 
 // Toggle between prompt implementations
 // 1 = @clack/prompts (preferred)
@@ -328,9 +328,147 @@ ${types.map(t => `  - ${t.description}`).join("\n")}
     .command("import")
     .description("Import time logs from JSON file")
     .argument("<file>", "JSON file path")
-    .action(async (file) => {
-      console.log("TimeLog import - to be implemented");
-      console.log("File:", file);
+    .option("--dry-run", "Validate without creating entries")
+    .action(async (file: string, options: { dryRun?: boolean }) => {
+      const config = requireTimeLogConfig();
+      const user = requireTimeLogUser(config);
+
+      if (!existsSync(file)) {
+        console.error(`❌ File not found: ${file}`);
+        process.exit(1);
+      }
+
+      let data: TimeLogImportFile;
+      try {
+        const content = readFileSync(file, "utf-8");
+        data = JSON.parse(content);
+      } catch (e) {
+        console.error(`❌ Invalid JSON: ${(e as Error).message}`);
+        process.exit(1);
+      }
+
+      if (!data.entries || !Array.isArray(data.entries)) {
+        console.error(`❌ Invalid format: expected { entries: [...] }`);
+        process.exit(1);
+      }
+
+      const api = new TimeLogApi(
+        config.orgId!,
+        config.projectId,
+        config.timelog!.functionsKey,
+        user
+      );
+
+      // Validate time types
+      const types = await api.getTimeTypes();
+      const typeNames = new Set(types.map(t => t.description.toLowerCase()));
+
+      const errors: string[] = [];
+      const validEntries: Array<{
+        workItemId: number;
+        minutes: number;
+        timeType: string;
+        date: string;
+        comment: string;
+      }> = [];
+
+      for (let i = 0; i < data.entries.length; i++) {
+        const entry = data.entries[i];
+        const idx = i + 1;
+
+        // Validate work item ID
+        if (!entry.workItemId || isNaN(entry.workItemId)) {
+          errors.push(`Entry ${idx}: Missing or invalid workItemId`);
+          continue;
+        }
+
+        // Validate time
+        let minutes: number;
+        try {
+          minutes = convertToMinutes(entry.hours, entry.minutes);
+        } catch (e) {
+          errors.push(`Entry ${idx}: ${(e as Error).message}`);
+          continue;
+        }
+
+        // Validate time type
+        if (!entry.timeType) {
+          errors.push(`Entry ${idx}: Missing timeType`);
+          continue;
+        }
+        if (!typeNames.has(entry.timeType.toLowerCase())) {
+          errors.push(`Entry ${idx}: Unknown time type "${entry.timeType}"`);
+          continue;
+        }
+
+        // Validate date
+        if (!entry.date || !/^\d{4}-\d{2}-\d{2}$/.test(entry.date)) {
+          errors.push(`Entry ${idx}: Invalid date format (use YYYY-MM-DD)`);
+          continue;
+        }
+
+        // Find exact type name (case-sensitive from API)
+        const exactType = types.find(
+          t => t.description.toLowerCase() === entry.timeType.toLowerCase()
+        );
+
+        validEntries.push({
+          workItemId: entry.workItemId,
+          minutes,
+          timeType: exactType!.description,
+          date: entry.date,
+          comment: entry.comment || "",
+        });
+      }
+
+      // Report validation errors
+      if (errors.length > 0) {
+        console.error("❌ Validation errors:");
+        for (const err of errors) {
+          console.error(`  - ${err}`);
+        }
+        if (validEntries.length === 0) {
+          process.exit(1);
+        }
+        console.log(`\n${validEntries.length} entries are valid.\n`);
+      }
+
+      if (options.dryRun) {
+        console.log("✔ Dry run complete. Valid entries:");
+        for (const e of validEntries) {
+          console.log(`  #${e.workItemId}: ${formatMinutes(e.minutes)} ${e.timeType} on ${e.date}`);
+        }
+        return;
+      }
+
+      // Create entries
+      console.log(`Creating ${validEntries.length} time log entries...`);
+      let created = 0;
+      const failed: string[] = [];
+
+      for (const entry of validEntries) {
+        try {
+          await api.createTimeLogEntry(
+            entry.workItemId,
+            entry.minutes,
+            entry.timeType,
+            entry.date,
+            entry.comment
+          );
+          created++;
+          console.log(`  ✔ #${entry.workItemId}: ${formatMinutes(entry.minutes)}`);
+        } catch (e) {
+          failed.push(`#${entry.workItemId}: ${(e as Error).message}`);
+        }
+      }
+
+      console.log(`\n✔ Created ${created}/${validEntries.length} entries`);
+      if (failed.length > 0) {
+        console.error("\nFailed:");
+        for (const f of failed) {
+          console.error(`  - ${f}`);
+        }
+      }
     });
 
   timelog
