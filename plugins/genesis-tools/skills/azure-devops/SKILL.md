@@ -345,3 +345,85 @@ tools azure-devops timelog import entries.json --dry-run
 | "Show time logged on 268935" | `tools azure-devops timelog list -w 268935` |
 | "Help me log time" | `tools azure-devops timelog add -i` |
 | "Import time entries from file" | `tools azure-devops timelog import entries.json` |
+
+### Natural Language Time Logging
+
+When user asks to log time in natural language, parse their request and construct the CLI command:
+
+**1. Parse Duration Formats:**
+- "1 hour", "1h", "1hr" → `-h 1`
+- "30 minutes", "30min", "30m" → `-h 0 -m 30`
+- "1.5 hours", "1h30m", "90 minutes" → `-h 1 -m 30`
+- "2 hours 15 minutes" → `-h 2 -m 15`
+
+**2. Extract Work Item IDs:**
+- From explicit mention: "on task 268935", "workitem #268935", "WI 268935"
+- From git branch: `feature/268935-fix-login` → work item 268935
+- From recent commits: `feat(#268935): fix login bug` → work item 268935
+
+To extract from git context:
+```bash
+# Get current branch
+git branch --show-current
+
+# Get recent commit messages (look for #NNNNNN patterns)
+git log --oneline -5
+```
+
+**3. Infer Time Type from Context:**
+
+| Context Clues | Time Type |
+|---------------|-----------|
+| "reviewing PR", "code review", "review" | Code Review |
+| "implementing", "coding", "development", "fixing" | Development |
+| "testing", "writing tests", "QA" | Test |
+| "documentation", "docs", "readme" | Dokumentace |
+| "meeting", "standup", "planning", "retro" | Ceremonie |
+| "analysis", "analyzing", "design" | IT Analýza |
+| "configuring", "setup", "deployment" | Konfigurace |
+
+Default to "Development" if no context clues.
+
+**4. Use Git Commit Messages as Notes:**
+
+When user says "use commit message" or doesn't provide a note:
+```bash
+# Get last commit message
+git log -1 --pretty=%B
+```
+
+Use the commit subject line as the time log comment.
+
+### Natural Language Examples
+
+| User Request | Parsed Command |
+|--------------|----------------|
+| "log 1h on 268935 for Development" | `timelog add -w 268935 -h 1 -t "Development"` |
+| "spent 30min reviewing PR on task 789" | `timelog add -w 789 -h 0 -m 30 -t "Code Review"` |
+| "log 2 hours, use last commit message" | Get work item from branch/commit, use commit msg as comment |
+| "log my work on the current task" | Extract ID from branch, infer type from commits |
+| "log 1.5h implementing the fix" | `timelog add -w <from-branch> -h 1 -m 30 -t "Development"` |
+
+### Workflow: Log Time from Git Context
+
+When user says "log time for my work" without explicit details:
+
+1. **Get work item ID**:
+   ```bash
+   git branch --show-current  # e.g., feature/268935-fix-login
+   ```
+   Extract number: 268935
+
+2. **Get commit messages for note**:
+   ```bash
+   git log -1 --pretty=%B
+   ```
+
+3. **Infer time type** from commit message keywords
+
+4. **Ask user for duration** if not specified (use AskUserQuestion)
+
+5. **Execute**:
+   ```bash
+   tools azure-devops timelog add -w 268935 -h <hours> -t "<inferred-type>" -c "<commit-message>"
+   ```
