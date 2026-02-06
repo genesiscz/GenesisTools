@@ -114,6 +114,7 @@ tools
 | **[GitHub Release Notes](#3--github-release-notes)**   | 📋 Generate beautiful release notes             |
 | **[Last Changes](#13--last-changes)**                  | 📅 Show uncommitted changes grouped by time     |
 | **[Git Rename Commits](#18--git-rename-commits)**      | 🔄 Interactively rename commit messages         |
+| **[Git Rebranch](#23--git-rebranch)**                  | ✂️ Split a messy branch into clean branches      |
 | **[Git Rebase Multiple](#21--git-rebase-multiple)**    | 🌳 Safe branch hierarchy rebasing with rollback |
 
 ### 🤖 AI & Analysis
@@ -1951,8 +1952,52 @@ This tool includes a Claude AI skill that enables AI assistants to automatically
 
 ---
 
+### 23. ✂️ Git Rebranch
+
+> Split a messy branch with mixed commits into multiple clean, focused branches via cherry-pick.
+
+<details>
+<summary><b>✨ Features</b></summary>
+
+-   🔍 Auto-detects fork point and base branch
+-   🏷️ Smart grouping by conventional commit scope/ticket
+-   🔎 Searchable multiselect for commit refinement
+-   🌳 Creates branches from fork point via cherry-pick
+-   📋 Dry run mode for previewing without changes
+
+</details>
+
+<details>
+<summary><b>🎯 Quick Examples</b></summary>
+
+```bash
+# Interactive mode
+tools git-rebranch
+
+# Preview without creating branches
+tools git-rebranch --dry-run
+
+# Show git commands
+tools git-rebranch --verbose
+```
+
+</details>
+
+<details>
+<summary><b>⚙️ Options</b></summary>
+
+| Option        | Alias | Description                                   |
+| ------------- | ----- | --------------------------------------------- |
+| `--dry-run`   |       | Show execution plan without creating branches |
+| `--verbose`   | `-v`  | Show git commands being executed              |
+| `--help-full` | `-?`  | Show detailed help message                    |
+
+</details>
+
+---
+
 <div align="center">
-  
+
   ### 🌟 Built with ❤️ by developers, for developers
   
   <p>
