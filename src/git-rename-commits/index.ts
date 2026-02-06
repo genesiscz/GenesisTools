@@ -34,7 +34,7 @@ interface CommitInfo {
 
 function showHelpFull() {
     logger.info(`
-Usage: tools rename-commits [--commits N] [--help]
+Usage: tools git-rename-commits [--commits N] [--help]
 
 Description:
   Interactively rename commit messages for the last N commits.
@@ -47,8 +47,8 @@ Options:
   -?, --help-full Show this help message (Commander auto-generates --help)
 
 Examples:
-  tools rename-commits --commits 3
-  tools rename-commits -c 5
+  tools git-rename-commits --commits 3
+  tools git-rename-commits -c 5
 `);
 }
 
@@ -945,7 +945,7 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
 
 async function main() {
     const program = new Command()
-        .name("rename-commits")
+        .name("git-rename-commits")
         .description("Interactively rename git commits")
         .option("-c, --commits <n>", "Number of commits to rename", (value: string) => parseInt(value, 10))
         .option("-f, --force", "Force: skip safety check (not recommended - use only if commits are backed up)")
@@ -980,7 +980,7 @@ async function main() {
                 logger.error("   Please push your commits first as a backup:");
                 logger.error(`   ${chalk.cyan(`git push origin ${currentBranch}`)}`);
                 logger.error("\n   If you're sure you want to proceed anyway, use:");
-                logger.error(`   ${chalk.cyan(`tools rename-commits --force`)}`);
+                logger.error(`   ${chalk.cyan(`tools git-rename-commits --force`)}`);
                 process.exit(1);
             }
         } else {
