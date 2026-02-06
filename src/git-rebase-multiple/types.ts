@@ -82,24 +82,9 @@ export interface CLIOptions {
 	children?: string;
 }
 
-/**
- * Result of a git command execution
- */
-export interface GitCommandResult {
-	success: boolean;
-	stdout: string;
-	stderr: string;
-	exitCode: number;
-}
-
-/**
- * Branch info from git
- */
-export interface BranchInfo {
-	name: string;
-	sha: string;
-	isCurrent: boolean;
-}
+// Shared types re-exported for backward compatibility
+export type { ExecResult as GitCommandResult } from "@app/utils/cli";
+export type { BranchInfo } from "@app/utils/git";
 
 /**
  * Execution plan step
