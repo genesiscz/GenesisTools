@@ -38,9 +38,6 @@ tools mcp-manager enable github
 # Disable a server in a provider
 tools mcp-manager disable github
 
-# Disable server for all projects (Claude-specific)
-tools mcp-manager disable-all github
-
 # Install a server from unified config to a provider
 tools mcp-manager install github
 
@@ -50,27 +47,37 @@ tools mcp-manager show github
 
 ### Commands
 
-| Command               | Description                                       |
-| --------------------- | ------------------------------------------------- |
-| `config`              | Open/create unified configuration file            |
-| `sync`                | Sync MCP servers from unified config to providers |
-| `sync-from-providers` | Sync servers FROM providers TO unified config     |
-| `list`                | List all MCP servers across all providers         |
-| `enable`              | Enable an MCP server in a provider                |
-| `disable`             | Disable an MCP server in a provider               |
-| `disable-all`         | Disable an MCP server for all projects (Claude)   |
-| `install`             | Install/add an MCP server to a provider           |
-| `show`                | Show full configuration of an MCP server          |
+| Command               | Description                                              |
+| --------------------- | -------------------------------------------------------- |
+| `config`              | Open/create unified configuration file                   |
+| `config --path`       | Print config file path without opening editor            |
+| `sync`                | Sync MCP servers from unified config to providers        |
+| `sync-from-providers` | Sync servers FROM providers TO unified config            |
+| `list`                | List all MCP servers across all providers                |
+| `enable`              | Enable an MCP server in a provider                       |
+| `disable`             | Disable an MCP server in a provider                      |
+| `install`             | Install/add an MCP server to a provider                  |
+| `show`                | Show full configuration of an MCP server                 |
+| `backup-all`          | Backup all configs for all providers                     |
+| `rename`              | Rename an MCP server key across unified config/providers |
+| `config-json`         | Output servers as JSON in standard client format         |
 
-### Options
+### Global Options
+
+```bash
+-p, --provider <name>    Provider name(s) (claude, cursor, gemini, codex, or 'all')
+-v, --verbose            Enable verbose logging
+-y, --yes                Auto-confirm changes without prompting
+-?, --help-full          Show detailed help message
+-h, --help               Show help message
+```
+
+### Install Command Options
 
 ```bash
 -t, --type <type>        Transport type (stdio, sse, http) for install
 -H, --headers <str>      Headers for http/sse (colon separator: "Key: value")
 -e, --env <str>          Env vars for stdio (equals separator: "KEY=value")
--p, --provider <name>    Provider name (claude, cursor, gemini, codex)
--v, --verbose            Enable verbose logging
--h, --help               Show help message
 ```
 
 ### Header and Env Format

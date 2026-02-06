@@ -7,6 +7,10 @@ import os from "os";
 import { glob } from "glob";
 import { consoleLog as logger } from "@app/logger";
 import chalk from "chalk";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
 
 const program = new Command()
     .name("watch")

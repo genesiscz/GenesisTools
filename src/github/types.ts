@@ -51,6 +51,18 @@ export interface TimelineEventRecord {
   data_json: string;
 }
 
+/**
+ * Parsed GitHub file URL
+ */
+export interface GitHubFileUrl {
+  owner: string;
+  repo: string;
+  path: string;
+  ref: string;
+  lineStart?: number;
+  lineEnd?: number;
+}
+
 export interface FetchMetadataRecord {
   id: number;
   issue_id: number;

@@ -6,6 +6,10 @@ import { minimatch } from "minimatch";
 import logger from "@app/logger";
 import type { FileSink } from "bun";
 import { estimateTokens, formatTokens } from "@ask/utils/helpers";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
 
 interface IgnoredFile {
     path: string;

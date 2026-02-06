@@ -7,6 +7,10 @@ import { KillServerCommand } from "@app/mcp-tsc/cli/commands/KillServerCommand.j
 import { McpCommand } from "@app/mcp-tsc/cli/commands/McpCommand.js";
 import { getPersistentServer } from "@app/mcp-tsc/utils/ServerManager.js";
 import logger from "@app/logger";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
 
 // Track if we've already set up diagnostic handlers
 let diagnosticHandlersSetup = false;

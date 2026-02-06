@@ -2,6 +2,10 @@ import { Command } from "commander";
 import { readdirSync, lstatSync } from "fs";
 import { resolve, join } from "path";
 import chalk from "chalk";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
 
 const log = {
     info: (msg: string) => console.log(msg),

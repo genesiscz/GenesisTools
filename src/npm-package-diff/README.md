@@ -60,7 +60,7 @@ tools npm-package-diff @types/node 18.0.0 20.0.0 --format html -o report.html
 | `--line-numbers` | - | Show line numbers | `true` |
 | `--word-diff` | - | Show word-level differences | `false` |
 | `--side-by-side` | - | Side-by-side view | `false` |
-| `--context` | - | Context lines in diff | `3` |
+| `--context` | - | Context lines in diff | `10` |
 | `--config` | `-c` | Path to config file | `.npmpackagediffrc` |
 | `--use-delta` | - | Use delta for output | `false` |
 | `--delta-theme` | - | Delta theme (light/dark) | `auto` |
@@ -141,7 +141,7 @@ Create a `.npmpackagediffrc` file in your project:
   "format": "terminal",
   "lineNumbers": true,
   "wordDiff": false,
-  "context": 3,
+  "context": 10,
   "stats": true,
   "sizes": true,
   "timeout": 180000,

@@ -28,10 +28,10 @@ Options:
 
 -   `--duration, -d`: Monitoring duration in seconds (default: 15)
 -   `--top, -t`: Number of top directories to display (default: 10)
--   `--path`: Path to monitor (default: "/")
+-   `[path]`: Path to monitor as positional argument (default: "/")
 -   `--watchers, -w`: Show processes currently watching fsevents (requires root)
 -   `--verbose, -v`: Enable verbose logging to see events as they occur
--   `--help, -h`: Show help message
+-   `-?, --help-full`: Show extended help message
 
 ## How It Works
 

@@ -4,6 +4,10 @@ import { ExitPromptError } from "@inquirer/core";
 import { resolve, isAbsolute, join as pathJoin } from "node:path";
 import logger from "@app/logger";
 import clipboardy from "clipboardy";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
 
 function showHelp() {
     logger.info(`

@@ -2,6 +2,10 @@ import { editor } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
 import { WebSocketServer } from "ws";
 import log from "@app/logger";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
 
 // Store messages
 const messages: Array<{ timestamp: string; message: string }> = [];

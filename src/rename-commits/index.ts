@@ -4,6 +4,10 @@ import { isPromptCancelled } from "@app/utils/prompt-helpers.js";
 import { resolve } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import chalk from "chalk";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
 
 // Simple logger that doesn't interfere with prompts
 const logger = {

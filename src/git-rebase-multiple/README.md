@@ -94,13 +94,16 @@ Found 2 branches that may depend on feature-parent:
 
 | Option | Alias | Description |
 |--------|-------|-------------|
-| `--help` | `-h` | Show help message |
+| `--help-full` | `-?` | Show detailed help message |
 | `--abort` | `-a` | Abort and restore all branches |
 | `--continue` | `-c` | Continue after resolving conflicts |
 | `--status` | `-s` | Show current state and backups |
 | `--cleanup` | | Remove all backup refs and fork tags |
-| `--restore <branch>` | `-r` | Restore single branch from backup |
+| `--restore [branch]` | `-r` | Restore single branch from backup |
 | `--dry-run` | | Show execution plan without running |
+| `--parent <branch>` | | Parent branch to rebase (non-interactive) |
+| `--target <branch>` | | Target branch to rebase onto (non-interactive) |
+| `--children <branches>` | | Comma-separated child branches (non-interactive) |
 
 ## Non-Interactive Mode
 

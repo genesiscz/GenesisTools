@@ -5,6 +5,7 @@ import { ExitPromptError } from "@inquirer/core";
 import chalk from "chalk";
 import type { LanguageModel } from "ai";
 import logger from "@app/logger";
+import { handleReadmeFlag } from "@app/utils/readme";
 import { getLanguageModel } from "@ask/types";
 import { ChatEngine } from "@ask/chat/ChatEngine";
 import { commandHandler } from "@ask/chat/CommandHandler";
@@ -17,6 +18,10 @@ import { outputManager } from "@ask/output/OutputManager";
 import { costTracker } from "@ask/output/CostTracker";
 import { costPredictor } from "@ask/output/CostPredictor";
 import { webSearchTool } from "@ask/utils/websearch";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
+
 import {
     parseCLIArguments,
     showHelp,

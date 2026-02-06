@@ -9,6 +9,7 @@ import { createPRCommand, prCommand } from '@app/github/commands/pr';
 import { createCommentsCommand, commentsCommand } from '@app/github/commands/comments';
 import { createSearchCommand, searchCommand } from '@app/github/commands/search';
 import { createCodeSearchCommand } from '@app/github/commands/code-search';
+import { createGetCommand, getCommand } from '@app/github/commands/get';
 import { checkAuth, getRateLimit } from '@app/github/lib/octokit';
 import { parseGitHubUrl, detectRepoFromGit } from '@app/github/lib/url-parser';
 import { getCacheStats, closeDatabase } from '@app/github/lib/cache';
@@ -27,6 +28,7 @@ program.addCommand(createPRCommand());
 program.addCommand(createCommentsCommand());
 program.addCommand(createSearchCommand());
 program.addCommand(createCodeSearchCommand());
+program.addCommand(createGetCommand());
 
 // Status command
 program
@@ -87,6 +89,7 @@ async function interactiveMode(): Promise<void> {
           { value: 'pr', name: '🔀 Fetch Pull Request' },
           { value: 'comments', name: '💬 Fetch Comments' },
           { value: 'search', name: '🔍 Search Issues/PRs' },
+          { value: 'get', name: '📄 Get File Content' },
           { value: 'status', name: 'ℹ️  Show Status' },
           { value: 'exit', name: '👋 Exit' },
         ],
@@ -146,6 +149,25 @@ async function interactiveMode(): Promise<void> {
           format: 'ai',
         });
 
+        continue;
+      }
+
+      if (action === 'get') {
+        const fileUrl = await input({
+          message: 'Enter GitHub file URL:',
+        });
+
+        if (!fileUrl.trim()) {
+          console.log(chalk.yellow('No URL provided.'));
+          continue;
+        }
+
+        const toClipboard = await confirm({
+          message: 'Copy to clipboard?',
+          default: false,
+        });
+
+        await getCommand(fileUrl, { clipboard: toClipboard });
         continue;
       }
 

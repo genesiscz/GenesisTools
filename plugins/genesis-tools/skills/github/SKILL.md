@@ -26,6 +26,9 @@ Search, fetch, and analyze GitHub issues, PRs, and comments with caching.
 | Search issues | `tools github search "error" --repo owner/repo --state open` |
 | Get PR with review comments | `tools github pr <url> --review-comments` |
 | Check auth status | `tools github status` |
+| Get file content | `tools github get <file-url>` |
+| Get specific lines | `tools github get <file-url> --lines 10-50` |
+| Get file to clipboard | `tools github get <file-url> -c` |
 
 ## URL Parsing
 
@@ -37,6 +40,47 @@ The tool automatically parses these URL formats:
 - `#123` or `123` (when in a git repo)
 
 When user provides a URL with `#issuecomment-XXX`, use `--since XXX` to fetch from that point.
+
+## Get File Content
+
+Fetch raw file content from any GitHub file URL.
+
+### Supported URL Formats
+- `https://github.com/owner/repo/blob/branch/path/to/file`
+- `https://github.com/owner/repo/blob/tag/path/to/file`
+- `https://github.com/owner/repo/blob/commit/path/to/file`
+- `https://github.com/owner/repo/blame/ref/path/to/file`
+- `https://raw.githubusercontent.com/owner/repo/ref/path/to/file`
+- `https://raw.githubusercontent.com/owner/repo/refs/heads/branch/path`
+- `https://raw.githubusercontent.com/owner/repo/refs/tags/tag/path`
+- All above with `#L10` or `#L10-L20` line references
+
+### Examples
+```bash
+# Get file from blob URL
+tools github get https://github.com/facebook/react/blob/main/package.json
+
+# Get specific lines from a file
+tools github get https://github.com/owner/repo/blob/main/src/index.ts --lines 10-50
+
+# Get file from blame URL
+tools github get https://github.com/owner/repo/blame/v1.0.0/README.md
+
+# Get file from raw URL
+tools github get https://raw.githubusercontent.com/owner/repo/main/data.json
+
+# Override the ref to get a different version
+tools github get https://github.com/owner/repo/blob/main/file.ts --ref v2.0.0
+
+# Copy to clipboard instead of stdout
+tools github get https://github.com/owner/repo/blob/main/file.ts -c
+
+# URL with line references (quotes needed for shell)
+tools github get "https://github.com/owner/repo/blob/main/file.ts#L10-L20"
+
+# Faster fetch via raw URL (skips API, less metadata)
+tools github get https://github.com/owner/repo/blob/main/file.ts --raw
+```
 
 ## Common Use Cases
 
@@ -223,6 +267,19 @@ Options:
   --sort <field>            Sort: created|updated|comments|reactions
   -L, --limit <n>           Max results (default: 30)
   -f, --format <format>     Output format
+```
+
+### Get Command
+```
+tools github get <url> [options]
+
+Options:
+  -r, --ref <ref>         Override branch/tag/commit ref
+  -l, --lines <range>     Line range (e.g., 10 or 10-20)
+  -o, --output <file>     Write to file
+  -c, --clipboard         Copy to clipboard
+  --raw                   Fetch via raw.githubusercontent.com (faster)
+  -v, --verbose           Enable verbose logging
 ```
 
 ## Interactive Mode

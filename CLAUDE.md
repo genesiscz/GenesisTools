@@ -13,12 +13,16 @@ tools
 # Run a specific tool
 tools <tool-name> [args]
 
+# View a tool's README documentation
+tools <tool-name> --readme
+
 # Examples:
 tools git-last-commits-diff . --commits 3 --clipboard
 tools collect-files-for-ai ./my-repo -c 5
 tools files-to-prompt src/ --cxml > prompt.xml
 tools watch "src/**/*.ts" -v
 tools npm-package-diff react 18.0.0 18.2.0
+tools ask --readme  # View ask tool documentation
 ```
 
 ### Installation & Setup

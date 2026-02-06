@@ -5,6 +5,10 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import logger from "@app/logger";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
 
 async function getGitDiff(): Promise<string> {
     const proc = Bun.spawn({

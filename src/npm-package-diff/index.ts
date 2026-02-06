@@ -14,6 +14,10 @@ import boxen from "boxen";
 import { createRequire } from "module";
 import { execSync } from "child_process";
 import { resolvePathWithTilde } from "@app/utils";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
 
 const require = createRequire(import.meta.url);
 

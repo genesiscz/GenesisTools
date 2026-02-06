@@ -64,10 +64,11 @@ tools rename-commits
 
 ## ⚙️ Options
 
-| Option          | Alias | Description                        |
-| --------------- | ----- | ---------------------------------- |
-| `--commits, -c` |       | Number of recent commits to rename |
-| `--help, -h`    |       | Show help message                  |
+| Option          | Alias | Description                                                      |
+| --------------- | ----- | ---------------------------------------------------------------- |
+| `--commits, -c` |       | Number of recent commits to rename                               |
+| `--force, -f`   |       | Skip safety check (not recommended - use only if commits backed) |
+| `--help-full`   | `-?`  | Show detailed help message                                       |
 
 ---
 

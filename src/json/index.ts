@@ -2,6 +2,10 @@ import { Command } from "commander";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { encode, decode } from "@toon-format/toon";
+import { handleReadmeFlag } from "@app/utils/readme";
+
+// Handle --readme flag early (before Commander parses)
+handleReadmeFlag(import.meta.url);
 
 type Format = "json" | "jsonl" | "toon" | "unknown";
 
@@ -126,6 +130,7 @@ async function main(): Promise<void> {
         .option("-t, --to-toon", "Force conversion to TOON format")
         .option("-j, --to-json", "Force conversion to JSON format")
         .option("-v, --verbose", "Enable verbose logging (shows format detection, size comparison, etc.)")
+        .option("--validate", "Error on invalid JSON/TOON input (default: passthrough)")
         .parse();
 
     const options = program.opts();
@@ -134,6 +139,7 @@ async function main(): Promise<void> {
     const forceToToon = options.toToon || false;
     const forceToJson = options.toJson || false;
     const verbose = options.verbose || false;
+    const validate = options.validate || false;
 
     // Validate flags
     if (forceToToon && forceToJson) {
@@ -155,10 +161,15 @@ async function main(): Promise<void> {
         const detectedFormat = detectFormat(input);
 
         if (detectedFormat === "unknown") {
-            console.error(
-                "Error: Input is neither valid JSON, JSONL, nor TOON format. Please check your input and try again."
-            );
-            process.exit(1);
+            if (validate) {
+                console.error(
+                    "Error: Input is neither valid JSON, JSONL, nor TOON format. Please check your input and try again."
+                );
+                process.exit(1);
+            }
+            // Passthrough: output original input unchanged
+            console.log(input);
+            return;
         }
 
         // Normalize JSONL to JSON array for processing
