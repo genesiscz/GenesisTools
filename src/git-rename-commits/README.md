@@ -1,4 +1,4 @@
-# 🔄 Rename Commits
+# 🔄 Git Rename Commits
 
 > Interactively rename commit messages for the last N commits with a beautiful confirmation screen before rewriting history.
 
@@ -20,10 +20,10 @@ A powerful tool that helps you clean up your git commit history by renaming comm
 
 ```bash
 # Rename last 3 commits
-tools rename-commits --commits 3
+tools git-rename-commits --commits 3
 
 # Or interactively (will prompt for number)
-tools rename-commits
+tools git-rename-commits
 ```
 
 ---
@@ -34,10 +34,10 @@ tools rename-commits
 
 ```bash
 # Rename last 5 commits
-tools rename-commits -c 5
+tools git-rename-commits -c 5
 
 # Interactive mode (prompts for number of commits)
-tools rename-commits
+tools git-rename-commits
 ```
 
 ### Workflow
@@ -97,13 +97,13 @@ This tool uses `git rebase -i` to rewrite commit history. This means:
 
 ```bash
 # Rename last 3 commits
-tools rename-commits -c 3
+tools git-rename-commits -c 3
 
 # Interactive mode - will ask how many commits
-tools rename-commits
+tools git-rename-commits
 
 # Show help
-tools rename-commits --help
+tools git-rename-commits --help
 ```
 
 ---

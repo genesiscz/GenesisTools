@@ -113,7 +113,7 @@ tools
 | **[Git Last Commits Diff](#1--git-last-commits-diff)** | 📝 View diffs between recent commits            |
 | **[GitHub Release Notes](#3--github-release-notes)**   | 📋 Generate beautiful release notes             |
 | **[Last Changes](#13--last-changes)**                  | 📅 Show uncommitted changes grouped by time     |
-| **[Rename Commits](#18--rename-commits)**              | 🔄 Interactively rename commit messages         |
+| **[Git Rename Commits](#18--git-rename-commits)**      | 🔄 Interactively rename commit messages         |
 | **[Git Rebase Multiple](#21--git-rebase-multiple)**    | 🌳 Safe branch hierarchy rebasing with rollback |
 
 ### 🤖 AI & Analysis
@@ -1149,7 +1149,7 @@ Backups are stored in `~/.mcp-manager/backups/` with timestamps.
 
 ---
 
-### 18. 🔄 Rename Commits
+### 18. 🔄 Git Rename Commits
 
 > Interactively rename commit messages for the last N commits with a beautiful confirmation screen before rewriting history.
 
@@ -1169,13 +1169,13 @@ Backups are stored in `~/.mcp-manager/backups/` with timestamps.
 
 ```bash
 # Rename last 3 commits
-tools rename-commits --commits 3
+tools git-rename-commits --commits 3
 
 # Interactive mode (prompts for number)
-tools rename-commits
+tools git-rename-commits
 
 # Show help
-tools rename-commits --help
+tools git-rename-commits --help
 ```
 
 </details>
