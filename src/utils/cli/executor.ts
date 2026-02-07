@@ -33,6 +33,71 @@ export function enhanceHelp(cmd: Command): void {
   }
 }
 
+/**
+ * Build a CLI command string from a base command and options.
+ * Converts camelCase keys to --kebab-case flags.
+ * Skips undefined/false values. Boolean true = flag only. String = flag + quoted value.
+ */
+export function buildCommand(
+  base: string,
+  args: Record<string, string | boolean | undefined>
+): string {
+  const parts = [base];
+  for (const [key, value] of Object.entries(args)) {
+    if (value === undefined || value === false) continue;
+    const flag = `--${key.replace(/([A-Z])/g, (_, c) => `-${c.toLowerCase()}`)}`;
+    if (value === true) {
+      parts.push(flag);
+    } else {
+      // Quote values that contain spaces
+      parts.push(flag, value.includes(" ") ? `"${value}"` : value);
+    }
+  }
+  return parts.join(" ");
+}
+
+/**
+ * Build a modified version of the current CLI command by adding/removing flags.
+ * Uses process.argv to reconstruct the original command.
+ *
+ * @param toolName - The tool prefix (e.g., "tools azure-devops")
+ * @param modifications - Flags to add or remove
+ * @returns The modified command string with proper quoting
+ */
+export function suggestCommand(
+  toolName: string,
+  modifications: { add?: string[]; remove?: string[] } = {}
+): string {
+  // process.argv = [bun, script, ...args]
+  let args = process.argv.slice(2);
+
+  // Remove specified flags (and their values if they have one)
+  if (modifications.remove?.length) {
+    const removeSet = new Set(modifications.remove);
+    const filtered: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      if (removeSet.has(args[i])) {
+        // Skip the flag — also skip its value if next arg doesn't start with --
+        if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
+          i++;
+        }
+        continue;
+      }
+      filtered.push(args[i]);
+    }
+    args = filtered;
+  }
+
+  // Add new flags
+  if (modifications.add?.length) {
+    args.push(...modifications.add);
+  }
+
+  // Quote args that contain spaces
+  const quoted = args.map(a => (a.includes(" ") ? `"${a}"` : a));
+  return `${toolName} ${quoted.join(" ")}`;
+}
+
 export interface ExecResult {
 	success: boolean;
 	stdout: string;

@@ -306,6 +306,9 @@ export async function installServer(
 
     const configToInstall = stripMeta(serverConfig);
 
+    // Track successful installs to update _meta.enabled
+    const successfulProviders: string[] = [];
+
     // Install to each selected provider
     for (const providerName of selectedProviderNames) {
         const provider = availableProviders.find((p) => p.getName() === providerName);
@@ -313,11 +316,32 @@ export async function installServer(
 
         const result = await provider.installServer(finalServerName, configToInstall);
         if (result === WriteResult.Applied) {
+            successfulProviders.push(providerName);
             logger.info(`✓ Installed '${finalServerName}' to ${providerName}`);
         } else if (result === WriteResult.Rejected) {
             logger.info(`Skipped ${providerName} - user rejected confirmation`);
         } else if (result === WriteResult.NoChanges) {
+            // Still count as enabled if already up-to-date
+            successfulProviders.push(providerName);
             logger.info(`Skipped ${providerName} - '${finalServerName}' already up-to-date`);
+        }
+    }
+
+    // Update _meta.enabled in unified config to track enabled state per provider
+    if (successfulProviders.length > 0) {
+        // Re-read config to get fresh state after provider writes
+        const updatedConfig = await readUnifiedConfig();
+        if (updatedConfig.mcpServers[finalServerName]) {
+            if (!updatedConfig.mcpServers[finalServerName]._meta) {
+                updatedConfig.mcpServers[finalServerName]._meta = { enabled: {} };
+            }
+            if (!updatedConfig.mcpServers[finalServerName]._meta!.enabled) {
+                updatedConfig.mcpServers[finalServerName]._meta!.enabled = {};
+            }
+            for (const providerName of successfulProviders) {
+                (updatedConfig.mcpServers[finalServerName]._meta!.enabled as Record<string, boolean>)[providerName] = true;
+            }
+            await writeUnifiedConfig(updatedConfig);
         }
     }
 }

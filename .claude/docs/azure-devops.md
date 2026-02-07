@@ -68,11 +68,14 @@ tools azure-devops --list
 ## Storage Structure
 
 ```
-~/.genesis-tools/azure-devops/     # Global cache (180 days TTL)
+~/.genesis-tools/azure-devops/     # Global cache
 ├── cache/
-│   ├── query-{id}.json           # Query cache for change detection
-│   ├── workitem-{id}.json        # Work item cache (5-min TTL)
-│   └── dashboard-{id}.json       # Dashboard cache
+│   ├── query-{id}.json           # Query cache for change detection (180 days)
+│   ├── workitem-{id}.json        # Work item cache (180 days, 5-min freshness)
+│   ├── dashboard-{id}.json       # Dashboard cache (180 days)
+│   ├── history-{id}.json         # Work item history (7 days)
+│   ├── team-members-{projId}.json # Team members (30 days)
+│   └── timetypes-{projId}.json   # Time types (7 days)
 
 {your-project}/                    # Per-project (in cwd)
 └── .claude/azure/
@@ -143,6 +146,108 @@ tools azure-devops --query <id> --download-workitems --category react19 --task-f
 ```
 
 **Important:** Task folders only apply to **new files**. If a work item already exists somewhere (flat or in folder), it stays in its current location. This prevents accidental reorganization of existing files.
+
+## History Commands
+
+Track work item history: who changed what, when, and how long items spent in each state.
+
+### View Single Item History
+
+```bash
+# Summary view (assignment periods, state periods, time-in-state)
+tools azure-devops history show <id>
+
+# Timeline view (chronological events)
+tools azure-devops history show <id> -f timeline
+
+# JSON output
+tools azure-devops history show <id> -f json
+
+# Force refresh from API
+tools azure-devops history show <id> --force
+
+# Filter by assignee and/or state
+tools azure-devops history show <id> --assigned-to "Martin"
+tools azure-devops history show <id> --state Active,Development
+tools azure-devops history show <id> --assigned-to "Martin" --from 2024-12-01
+```
+
+### Search Across Items (WIQL - Server-Side)
+
+Uses the WIQL `EVER` operator for server-side queries (no local history needed):
+
+```bash
+# Items ever assigned to a user (fuzzy matching)
+tools azure-devops history search --assigned-to "Martin" --wiql
+
+# Items ever in a state
+tools azure-devops history search --state "Active" --wiql
+
+# Combined: ever assigned + date range
+tools azure-devops history search --assigned-to "Foltyn" --from 2024-12-01 --wiql
+```
+
+### Search Across Items (Local - Cached History)
+
+Searches through locally cached history files:
+
+```bash
+# Items ever assigned to user (from cached history)
+tools azure-devops history search --assigned-to "Martin"
+
+# With minimum time filter
+tools azure-devops history search --assigned-to "Martin" --min-time 2h
+
+# Filter by state and date range
+tools azure-devops history search --state Active --from 2024-12-01
+```
+
+### Bulk Sync History
+
+```bash
+# Sync history for all cached work items (batch mode - efficient)
+tools azure-devops history sync
+
+# Force re-sync all
+tools azure-devops history sync --force
+
+# Dry run - see what would be synced
+tools azure-devops history sync --dry-run
+
+# Per-item mode (more precise deltas, slower)
+tools azure-devops history sync --per-item
+
+# Only revisions since a date
+tools azure-devops history sync --since 2024-12-01
+```
+
+### Auto-History with Query Download
+
+When using `--download-workitems`, history is automatically fetched too:
+
+```bash
+# Downloads work items AND their history
+tools azure-devops query <id> --download-workitems
+
+# Skip auto-history download
+tools azure-devops query <id> --download-workitems --without-history
+```
+
+### Fuzzy User Matching
+
+The history commands support fuzzy user matching with diacritics normalization:
+- `"Martin"` matches `"Martin Foltyn"`, `"Martin Foltyn (QK)"`
+- `"Foltyn"` (no diacritics) matches `"Foltyn"` (with diacritics)
+- Names are matched in any order: `"Foltyn Martin"` matches `"Martin Foltyn"`
+
+### NL Query Translation Guide
+
+| User says | Command |
+|-----------|---------|
+| "tasks ever assigned to Martin" | `history search --assigned-to "Martin" --wiql` |
+| "how long was #123 in Active" | `history show 123 --state Active` |
+| "time Martin spent on #456" | `history show 456 --assigned-to Martin` |
+| "all work in last 2 months" | `history search --assigned-to "Martin" --from 2024-12-01 --wiql` |
 
 ## SSL Issues (Proxy/Corporate Environments)
 

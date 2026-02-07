@@ -289,6 +289,52 @@ When user asks to "create a work item" or "file a bug":
 | "Create a bug like #12345" | `--create <workitem-url>` then `--from-file template.json` |
 | "Help me create a detailed work item" | `--create -i` (interactive) |
 
+## History Commands
+
+Track work item history: who changed what, when, and how long items spent in each state.
+
+### CLI Reference
+
+```bash
+tools azure-devops history show <id>                    # Summary view (assignment/state periods, time-in-state)
+tools azure-devops history show <id> -f timeline        # Chronological events
+tools azure-devops history show <id> -f json            # JSON output
+tools azure-devops history show <id> --force            # Force refresh from API
+tools azure-devops history show <id> --assigned-to "X"  # Filter by assignee
+tools azure-devops history show <id> --state Active     # Filter by state
+
+tools azure-devops history search --assigned-to-me --wiql          # Currently assigned to me (WIQL @Me)
+tools azure-devops history search --assigned-to "Martin" --wiql    # Ever assigned to user (server-side)
+tools azure-devops history search --assigned-to "Martin" --wiql --current  # Currently assigned
+tools azure-devops history search --assigned-to "Martin"           # Local cached history search
+tools azure-devops history search --assigned-to "Martin" --min-time 2h     # Min time filter
+tools azure-devops history search --state Active --from 2024-12-01 --wiql  # State + date range
+
+tools azure-devops history sync                   # Bulk sync history for cached work items (per-item mode)
+tools azure-devops history sync --force           # Force re-sync all
+tools azure-devops history sync --dry-run         # Show what would be synced
+tools azure-devops history sync --batch           # Use batch reporting API instead
+```
+
+### NL Query Translation
+
+| User says | Command |
+|-----------|---------|
+| "tasks assigned to me" | `history search --assigned-to-me --wiql` |
+| "tasks ever assigned to Martin" | `history search --assigned-to "Martin" --wiql` |
+| "how long was #123 in Active" | `history show 123 --state Active` |
+| "time Martin spent on #456" | `history show 456 --assigned-to Martin` |
+| "all work in last 2 months" | `history search --assigned-to "Martin" --from 2024-12-01 --wiql` |
+
+### Features
+
+- **@me support**: `--assigned-to @me` or `--assigned-to-me` uses WIQL `@Me` macro (auto-enables WIQL)
+- **--current flag**: Uses `=` instead of `EVER` for current assignment
+- **Fuzzy user matching**: "Martin" matches "Martin Foltyn (QK)", diacritics normalized
+- **Cache stats**: Local search shows data date range and last sync time
+- **Per-item sync** (default): Targeted API calls per work item, faster for <200 items
+- **Batch sync** (`--batch`): Uses reporting API, better for 500+ items
+
 ## TimeLog Operations
 
 Time logging for Azure DevOps work items using the third-party TimeLog extension.

@@ -130,8 +130,6 @@ function executeTool(scriptId, scriptArgs) {
         }
     }
 
-    logger.debug(`▶️ Running: bun run ${targetScript} ${scriptArgs.join(" ")}`);
-
     // Execute bun run using spawnSync
     const result = spawnSync("bun", ["run", targetScript, ...scriptArgs], {
         stdio: "inherit",
