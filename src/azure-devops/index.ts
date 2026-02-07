@@ -28,6 +28,7 @@ import { registerWorkitemCreateCommand } from "@app/azure-devops/commands/workit
 import { registerWorkitemCacheCommand } from "@app/azure-devops/commands/workitem-cache";
 import { registerDashboardCommand } from "@app/azure-devops/commands/dashboard";
 import { registerTimelogCommand } from "@app/azure-devops/commands/timelog";
+import { registerHistoryCommand } from "@app/azure-devops/commands/history";
 
 // Wire up cross-command dependencies
 // Query command needs to call workitem handler for --download-workitems
@@ -36,15 +37,16 @@ setWorkItemHandler(handleWorkItem);
 const program = new Command();
 
 program
-  .name("azure-devops")
-  .description("Azure DevOps Work Item CLI Tool")
-  .version("1.0.0")
-  .option("-v, --verbose", "Enable verbose debug logging")
-  .option("-?, --help-full", "Show detailed help with examples")
-  .on("option:help-full", () => {
-    showHelpFull();
-    process.exit(0);
-  });
+    .name("azure-devops")
+    .description("Azure DevOps Work Item CLI Tool")
+    .version("1.0.0")
+    .showHelpAfterError(true)
+    .option("-v, --verbose", "Enable verbose debug logging")
+    .option("-?, --help-full", "Show detailed help with examples")
+    .on("option:help-full", () => {
+        showHelpFull();
+        process.exit(0);
+    });
 
 // Register all commands
 registerConfigureCommand(program);
@@ -54,9 +56,10 @@ registerWorkitemCreateCommand(program);
 registerWorkitemCacheCommand(program);
 registerDashboardCommand(program);
 registerTimelogCommand(program);
+registerHistoryCommand(program);
 
 function showHelpFull(): void {
-  console.log(`
+    console.log(`
 Azure DevOps Work Item Tool
 
 Usage:
@@ -70,6 +73,7 @@ Commands:
   list                   List cached work items
   workitem-create        Create a new work item (interactive or from template)
   timelog                Manage time log entries (add, list, types, import)
+  history                Work item history commands (show, search, sync)
 
 Query Options:
   --format <ai|md|json>  Output format (default: ai)
@@ -150,6 +154,12 @@ Examples:
   tools azure-devops timelog list --workitem 268935
   tools azure-devops timelog types
 
+History Commands:
+  tools azure-devops history show <id>          Show history for a work item
+  tools azure-devops history search --wiql      Search via WIQL EVER query (server-side)
+  tools azure-devops history search             Search local cached history
+  tools azure-devops history sync               Bulk sync history for cached items
+
 Storage:
   Config:  .claude/azure/config.json (per-project, searched up to 3 levels)
   Cache:   ~/.genesis-tools/azure-devops/cache/ (global, 180 days)
@@ -160,30 +170,30 @@ Documentation: https://learn.microsoft.com/en-us/azure/devops/cli/?view=azure-de
 }
 
 async function main(): Promise<void> {
-  try {
-    await program.parseAsync(process.argv);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    try {
+        await program.parseAsync(process.argv);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
 
-    if (isSslError(message)) {
-      exitWithSslGuide(error);
+        if (isSslError(message)) {
+            exitWithSslGuide(error);
+        }
+
+        if (isAuthError(message)) {
+            exitWithAuthGuide(error);
+        }
+
+        logger.error(`Error: ${message}`);
+
+        if (error instanceof Error && error.stack) {
+            logger.debug(error.stack);
+        }
+
+        process.exit(1);
     }
-
-    if (isAuthError(message)) {
-      exitWithAuthGuide(error);
-    }
-
-    logger.error(`Error: ${message}`);
-
-    if (error instanceof Error && error.stack) {
-      logger.debug(error.stack);
-    }
-
-    process.exit(1);
-  }
 }
 
 main().catch((err) => {
-  logger.error(`Unexpected error: ${err}`);
-  process.exit(1);
+    logger.error(`Unexpected error: ${err}`);
+    process.exit(1);
 });

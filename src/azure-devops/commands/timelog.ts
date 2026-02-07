@@ -15,19 +15,19 @@ import type { AzureConfigWithTimeLog, TimeType, TimeLogUser, TimeLogImportFile }
 const USE_CLACK = 1;
 
 async function runInteractiveAdd(
-  config: AzureConfigWithTimeLog,
-  user: TimeLogUser,
-  prefilledWorkItem?: string
+    config: AzureConfigWithTimeLog,
+    user: TimeLogUser,
+    prefilledWorkItem?: string
 ): Promise<void> {
-  if (USE_CLACK) {
-    await runInteractiveAddClack(config, user, prefilledWorkItem);
-  } else {
-    await runInteractiveAddInquirer(config, user, prefilledWorkItem);
-  }
+    if (USE_CLACK) {
+        await runInteractiveAddClack(config, user, prefilledWorkItem);
+    } else {
+        await runInteractiveAddInquirer(config, user, prefilledWorkItem);
+    }
 }
 
 function showHelpFull(): void {
-  console.log(`
+    console.log(`
 Usage: tools azure-devops timelog <command> [options]
 
 Commands:
@@ -57,7 +57,7 @@ Hours/Minutes:
 }
 
 function showAddHelp(): void {
-  console.log(`
+    console.log(`
 Usage: tools azure-devops timelog add [options]
 
 Required (unless -i):
@@ -83,57 +83,58 @@ Examples:
 }
 
 export function registerTimelogCommand(program: Command): void {
-  const timelog = program
-    .command("timelog")
-    .description("Manage time log entries")
-    .option("-?, --help-full", "Show detailed help")
-    .action((options) => {
-      if (options.helpFull) {
-        showHelpFull();
-        process.exit(0);
-      }
-      // Show subcommands help if no subcommand given
-      timelog.help();
-    });
+    const timelog = program
+        .command("timelog")
+        .description("Manage time log entries")
+        .option("-?, --help-full", "Show detailed help")
+        .action((options) => {
+            if (options.helpFull) {
+                showHelpFull();
+                process.exit(0);
+            }
+            // Show subcommands help if no subcommand given
+            timelog.help();
+        });
 
-  timelog
-    .command("add")
-    .description("Add a time log entry")
-    .option("-w, --workitem <id>", "Work item ID")
-    .option("-h, --hours <hours>", "Hours to log")
-    .option("-m, --minutes <minutes>", "Additional minutes (requires --hours)")
-    .option("-t, --type <type>", 'Time type (e.g., "Development")')
-    .option("-d, --date <date>", "Date (YYYY-MM-DD, default: today)")
-    .option("-c, --comment <text>", "Comment/description")
-    .option("-i, --interactive", "Interactive mode with prompts")
-    .option("-?, --help-full", "Show detailed help")
-    .action(async (options: {
-      workitem?: string;
-      hours?: string;
-      minutes?: string;
-      type?: string;
-      date?: string;
-      comment?: string;
-      interactive?: boolean;
-      helpFull?: boolean;
-    }) => {
-      if (options.helpFull) {
-        showAddHelp();
-        return;
-      }
+    timelog
+        .command("add")
+        .description("Add a time log entry")
+        .option("-w, --workitem <id>", "Work item ID")
+        .option("-h, --hours <hours>", "Hours to log")
+        .option("-m, --minutes <minutes>", "Additional minutes (requires --hours)")
+        .option("-t, --type <type>", 'Time type (e.g., "Development")')
+        .option("-d, --date <date>", "Date (YYYY-MM-DD, default: today)")
+        .option("-c, --comment <text>", "Comment/description")
+        .option("-i, --interactive", "Interactive mode with prompts")
+        .option("-?, --help-full", "Show detailed help")
+        .action(
+            async (options: {
+                workitem?: string;
+                hours?: string;
+                minutes?: string;
+                type?: string;
+                date?: string;
+                comment?: string;
+                interactive?: boolean;
+                helpFull?: boolean;
+            }) => {
+                if (options.helpFull) {
+                    showAddHelp();
+                    return;
+                }
 
-      const config = requireTimeLogConfig();
-      const user = requireTimeLogUser(config);
+                const config = requireTimeLogConfig();
+                const user = requireTimeLogUser(config);
 
-      // Interactive mode
-      if (options.interactive) {
-        await runInteractiveAdd(config, user, options.workitem);
-        return;
-      }
+                // Interactive mode
+                if (options.interactive) {
+                    await runInteractiveAdd(config, user, options.workitem);
+                    return;
+                }
 
-      // Validate required fields
-      if (!options.workitem || !options.hours || !options.type) {
-        console.error(`
+                // Validate required fields
+                if (!options.workitem || !options.hours || !options.type) {
+                    console.error(`
 ❌ Missing required options for non-interactive mode.
 
 Required: --workitem, --hours, --type
@@ -146,396 +147,378 @@ Or use interactive mode:
   tools azure-devops timelog add -i
   tools azure-devops timelog add -w 268935 -i
 `);
-        process.exit(1);
-      }
+                    process.exit(1);
+                }
 
-      const workItemId = parseInt(options.workitem, 10);
-      if (isNaN(workItemId)) {
-        console.error("❌ Invalid work item ID");
-        process.exit(1);
-      }
+                const workItemId = parseInt(options.workitem, 10);
+                if (isNaN(workItemId)) {
+                    console.error("❌ Invalid work item ID");
+                    process.exit(1);
+                }
 
-      // Convert hours/minutes
-      let totalMinutes: number;
-      try {
-        totalMinutes = convertToMinutes(
-          options.hours ? parseFloat(options.hours) : undefined,
-          options.minutes ? parseInt(options.minutes, 10) : undefined
-        );
-      } catch (e) {
-        console.error(`❌ ${(e as Error).message}`);
-        process.exit(1);
-      }
+                // Convert hours/minutes
+                let totalMinutes: number;
+                try {
+                    totalMinutes = convertToMinutes(
+                        options.hours ? parseFloat(options.hours) : undefined,
+                        options.minutes ? parseInt(options.minutes, 10) : undefined
+                    );
+                } catch (e) {
+                    console.error(`❌ ${(e as Error).message}`);
+                    process.exit(1);
+                }
 
-      const api = new TimeLogApi(
-        config.orgId!,
-        config.projectId,
-        config.timelog!.functionsKey,
-        user
-      );
+                const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
 
-      // Validate time type exists
-      const validType = await api.validateTimeType(options.type);
-      if (!validType) {
-        const types = await api.getTimeTypes();
-        console.error(`
+                // Validate time type exists
+                const validType = await api.validateTimeType(options.type);
+                if (!validType) {
+                    const types = await api.getTimeTypes();
+                    console.error(`
 ❌ Unknown time type: "${options.type}"
 
 Available types:
-${types.map(t => `  - ${t.description}`).join("\n")}
+${types.map((t) => `  - ${t.description}`).join("\n")}
 `);
-        process.exit(1);
-      }
+                    process.exit(1);
+                }
 
-      const date = options.date || getTodayDate();
-      const comment = options.comment || "";
+                const date = options.date || getTodayDate();
+                const comment = options.comment || "";
 
-      // Create the entry
-      const ids = await api.createTimeLogEntry(
-        workItemId,
-        totalMinutes,
-        validType.description,  // Use exact casing from API
-        date,
-        comment
-      );
+                // Create the entry
+                const ids = await api.createTimeLogEntry(
+                    workItemId,
+                    totalMinutes,
+                    validType.description, // Use exact casing from API
+                    date,
+                    comment
+                );
 
-      console.log(`✔ Time logged successfully!`);
-      console.log(`  Work Item: #${workItemId}`);
-      console.log(`  Time: ${formatMinutes(totalMinutes)}`);
-      console.log(`  Type: ${validType.description}`);
-      console.log(`  Date: ${date}`);
-      if (comment) console.log(`  Comment: ${comment}`);
-      console.log(`  Entry ID: ${ids[0]}`);
-    });
-
-  timelog
-    .command("list")
-    .description("List time logs for a work item")
-    .requiredOption("-w, --workitem <id>", "Work item ID")
-    .option("--format <format>", "Output format: ai|md|json", "ai")
-    .action(async (options: { workitem: string; format?: string }) => {
-      const config = requireTimeLogConfig();
-      const user = requireTimeLogUser(config);
-      const workItemId = parseInt(options.workitem, 10);
-
-      if (isNaN(workItemId)) {
-        console.error("❌ Invalid work item ID");
-        process.exit(1);
-      }
-
-      const api = new TimeLogApi(
-        config.orgId!,
-        config.projectId,
-        config.timelog!.functionsKey,
-        user
-      );
-
-      const entries = await api.getWorkItemTimeLogs(workItemId);
-
-      if (options.format === "json") {
-        console.log(JSON.stringify(entries, null, 2));
-        return;
-      }
-
-      if (entries.length === 0) {
-        console.log(`No time logs found for work item #${workItemId}`);
-        return;
-      }
-
-      // Sort by date descending
-      entries.sort((a, b) => b.date.localeCompare(a.date));
-
-      // Calculate totals
-      const totalMinutes = entries.reduce((sum, e) => sum + e.minutes, 0);
-      const byType: Record<string, number> = {};
-      for (const entry of entries) {
-        byType[entry.timeTypeDescription] = (byType[entry.timeTypeDescription] || 0) + entry.minutes;
-      }
-
-      if (options.format === "md") {
-        console.log(`## Time Logs for #${workItemId}\n`);
-        console.log(`| Date | Type | Time | User | Comment |`);
-        console.log(`|------|------|------|------|---------|`);
-        for (const e of entries) {
-          console.log(`| ${e.date} | ${e.timeTypeDescription} | ${formatMinutes(e.minutes)} | ${e.userName} | ${e.comment || "-"} |`);
-        }
-        console.log(`\n**Total: ${formatMinutes(totalMinutes)}**`);
-      } else {
-        // AI format
-        console.log(`Time Logs for Work Item #${workItemId}`);
-        console.log("=".repeat(40));
-        for (const e of entries) {
-          console.log(`\n${e.date} - ${formatMinutes(e.minutes)} (${e.timeTypeDescription})`);
-          console.log(`  User: ${e.userName}`);
-          if (e.comment) console.log(`  Comment: ${e.comment}`);
-        }
-        console.log(`\n${"=".repeat(40)}`);
-        console.log(`Total: ${formatMinutes(totalMinutes)}`);
-        console.log("\nBy Type:");
-        for (const [type, mins] of Object.entries(byType)) {
-          console.log(`  ${type}: ${formatMinutes(mins)}`);
-        }
-      }
-    });
-
-  timelog
-    .command("types")
-    .description("List available time types")
-    .option("--force", "Bypass cache")
-    .option("--format <format>", "Output format: ai|json", "ai")
-    .action(async (options: { force?: boolean; format?: string }) => {
-      const config = requireTimeLogConfig();
-      const user = requireTimeLogUser(config);
-
-      // Check cache first
-      let types: TimeType[] | null = null;
-      if (!options.force) {
-        types = await loadTimeTypesCache(config.projectId);
-        if (types) {
-          logger.debug("[timelog] Using cached time types");
-        }
-      }
-
-      // Fetch from API if needed
-      if (!types) {
-        const api = new TimeLogApi(
-          config.orgId!,
-          config.projectId,
-          config.timelog!.functionsKey,
-          user
-        );
-        types = await api.getTimeTypes();
-        await saveTimeTypesCache(config.projectId, types);
-      }
-
-      // Output
-      if (options.format === "json") {
-        console.log(JSON.stringify(types, null, 2));
-        return;
-      }
-
-      // AI-friendly format
-      console.log("Available Time Types:");
-      console.log("=====================");
-      for (const type of types) {
-        const defaultMark = type.isDefaultForProject ? " (default)" : "";
-        console.log(`  - ${type.description}${defaultMark}`);
-      }
-      console.log(`\nTotal: ${types.length} time types`);
-    });
-
-  timelog
-    .command("import")
-    .description("Import time logs from JSON file")
-    .argument("<file>", "JSON file path")
-    .option("--dry-run", "Validate without creating entries")
-    .action(async (file: string, options: { dryRun?: boolean }) => {
-      const config = requireTimeLogConfig();
-      const user = requireTimeLogUser(config);
-
-      if (!existsSync(file)) {
-        console.error(`❌ File not found: ${file}`);
-        process.exit(1);
-      }
-
-      let data: TimeLogImportFile;
-      try {
-        const content = readFileSync(file, "utf-8");
-        data = JSON.parse(content);
-      } catch (e) {
-        console.error(`❌ Invalid JSON: ${(e as Error).message}`);
-        process.exit(1);
-      }
-
-      if (!data.entries || !Array.isArray(data.entries)) {
-        console.error(`❌ Invalid format: expected { entries: [...] }`);
-        process.exit(1);
-      }
-
-      const api = new TimeLogApi(
-        config.orgId!,
-        config.projectId,
-        config.timelog!.functionsKey,
-        user
-      );
-
-      // Validate time types
-      const types = await api.getTimeTypes();
-      const typeNames = new Set(types.map(t => t.description.toLowerCase()));
-
-      const errors: string[] = [];
-      const validEntries: Array<{
-        workItemId: number;
-        minutes: number;
-        timeType: string;
-        date: string;
-        comment: string;
-      }> = [];
-
-      for (let i = 0; i < data.entries.length; i++) {
-        const entry = data.entries[i];
-        const idx = i + 1;
-
-        // Validate work item ID
-        if (!entry.workItemId || isNaN(entry.workItemId)) {
-          errors.push(`Entry ${idx}: Missing or invalid workItemId`);
-          continue;
-        }
-
-        // Validate time
-        let minutes: number;
-        try {
-          minutes = convertToMinutes(entry.hours, entry.minutes);
-        } catch (e) {
-          errors.push(`Entry ${idx}: ${(e as Error).message}`);
-          continue;
-        }
-
-        // Validate time type
-        if (!entry.timeType) {
-          errors.push(`Entry ${idx}: Missing timeType`);
-          continue;
-        }
-        if (!typeNames.has(entry.timeType.toLowerCase())) {
-          errors.push(`Entry ${idx}: Unknown time type "${entry.timeType}"`);
-          continue;
-        }
-
-        // Validate date
-        if (!entry.date || !/^\d{4}-\d{2}-\d{2}$/.test(entry.date)) {
-          errors.push(`Entry ${idx}: Invalid date format (use YYYY-MM-DD)`);
-          continue;
-        }
-
-        // Find exact type name (case-sensitive from API)
-        const exactType = types.find(
-          t => t.description.toLowerCase() === entry.timeType.toLowerCase()
+                console.log(`✔ Time logged successfully!`);
+                console.log(`  Work Item: #${workItemId}`);
+                console.log(`  Time: ${formatMinutes(totalMinutes)}`);
+                console.log(`  Type: ${validType.description}`);
+                console.log(`  Date: ${date}`);
+                if (comment) console.log(`  Comment: ${comment}`);
+                console.log(`  Entry ID: ${ids[0]}`);
+            }
         );
 
-        validEntries.push({
-          workItemId: entry.workItemId,
-          minutes,
-          timeType: exactType!.description,
-          date: entry.date,
-          comment: entry.comment || "",
+    timelog
+        .command("list")
+        .description("List time logs for a work item")
+        .requiredOption("-w, --workitem <id>", "Work item ID")
+        .option("--format <format>", "Output format: ai|md|json", "ai")
+        .action(async (options: { workitem: string; format?: string }) => {
+            const config = requireTimeLogConfig();
+            const user = requireTimeLogUser(config);
+            const workItemId = parseInt(options.workitem, 10);
+
+            if (isNaN(workItemId)) {
+                console.error("❌ Invalid work item ID");
+                process.exit(1);
+            }
+
+            const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+
+            const entries = await api.getWorkItemTimeLogs(workItemId);
+
+            if (options.format === "json") {
+                console.log(JSON.stringify(entries, null, 2));
+                return;
+            }
+
+            if (entries.length === 0) {
+                console.log(`No time logs found for work item #${workItemId}`);
+                return;
+            }
+
+            // Sort by date descending
+            entries.sort((a, b) => b.date.localeCompare(a.date));
+
+            // Calculate totals
+            const totalMinutes = entries.reduce((sum, e) => sum + e.minutes, 0);
+            const byType: Record<string, number> = {};
+            for (const entry of entries) {
+                byType[entry.timeTypeDescription] = (byType[entry.timeTypeDescription] || 0) + entry.minutes;
+            }
+
+            if (options.format === "md") {
+                console.log(`## Time Logs for #${workItemId}\n`);
+                console.log(`| Date | Type | Time | User | Comment |`);
+                console.log(`|------|------|------|------|---------|`);
+                for (const e of entries) {
+                    console.log(
+                        `| ${e.date} | ${e.timeTypeDescription} | ${formatMinutes(e.minutes)} | ${e.userName} | ${e.comment || "-"} |`
+                    );
+                }
+                console.log(`\n**Total: ${formatMinutes(totalMinutes)}**`);
+            } else {
+                // AI format
+                console.log(`Time Logs for Work Item #${workItemId}`);
+                console.log("=".repeat(40));
+                for (const e of entries) {
+                    console.log(`\n${e.date} - ${formatMinutes(e.minutes)} (${e.timeTypeDescription})`);
+                    console.log(`  User: ${e.userName}`);
+                    if (e.comment) console.log(`  Comment: ${e.comment}`);
+                }
+                console.log(`\n${"=".repeat(40)}`);
+                console.log(`Total: ${formatMinutes(totalMinutes)}`);
+                console.log("\nBy Type:");
+                for (const [type, mins] of Object.entries(byType)) {
+                    console.log(`  ${type}: ${formatMinutes(mins)}`);
+                }
+            }
         });
-      }
 
-      // Report validation errors
-      if (errors.length > 0) {
-        console.error("❌ Validation errors:");
-        for (const err of errors) {
-          console.error(`  - ${err}`);
-        }
-        if (validEntries.length === 0) {
-          process.exit(1);
-        }
-        console.log(`\n${validEntries.length} entries are valid.\n`);
-      }
+    timelog
+        .command("types")
+        .description("List available time types")
+        .option("--force", "Bypass cache")
+        .option("--format <format>", "Output format: ai|json", "ai")
+        .action(async (options: { force?: boolean; format?: string }) => {
+            const config = requireTimeLogConfig();
+            const user = requireTimeLogUser(config);
 
-      if (options.dryRun) {
-        console.log("✔ Dry run complete. Valid entries:");
-        for (const e of validEntries) {
-          console.log(`  #${e.workItemId}: ${formatMinutes(e.minutes)} ${e.timeType} on ${e.date}`);
-        }
-        return;
-      }
+            // Check cache first
+            let types: TimeType[] | null = null;
+            if (!options.force) {
+                types = await loadTimeTypesCache(config.projectId);
+                if (types) {
+                    logger.debug("[timelog] Using cached time types");
+                }
+            }
 
-      // Create entries
-      console.log(`Creating ${validEntries.length} time log entries...`);
-      let created = 0;
-      const failed: string[] = [];
+            // Fetch from API if needed
+            if (!types) {
+                const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+                types = await api.getTimeTypes();
+                await saveTimeTypesCache(config.projectId, types);
+            }
 
-      for (const entry of validEntries) {
-        try {
-          await api.createTimeLogEntry(
-            entry.workItemId,
-            entry.minutes,
-            entry.timeType,
-            entry.date,
-            entry.comment
-          );
-          created++;
-          console.log(`  ✔ #${entry.workItemId}: ${formatMinutes(entry.minutes)}`);
-        } catch (e) {
-          failed.push(`#${entry.workItemId}: ${(e as Error).message}`);
-        }
-      }
+            // Output
+            if (options.format === "json") {
+                console.log(JSON.stringify(types, null, 2));
+                return;
+            }
 
-      console.log(`\n✔ Created ${created}/${validEntries.length} entries`);
-      if (failed.length > 0) {
-        console.error("\nFailed:");
-        for (const f of failed) {
-          console.error(`  - ${f}`);
-        }
-      }
-    });
+            // AI-friendly format
+            console.log("Available Time Types:");
+            console.log("=====================");
+            for (const type of types) {
+                const defaultMark = type.isDefaultForProject ? " (default)" : "";
+                console.log(`  - ${type.description}${defaultMark}`);
+            }
+            console.log(`\nTotal: ${types.length} time types`);
+        });
 
-  timelog
-    .command("configure")
-    .description("Auto-fetch TimeLog API settings from Azure DevOps")
-    .action(async () => {
-      const config = loadConfig() as AzureConfigWithTimeLog | null;
-      if (!config?.org) {
-        console.error("❌ Run 'tools azure-devops configure <url>' first");
-        process.exit(1);
-      }
+    timelog
+        .command("import")
+        .description("Import time logs from JSON file")
+        .argument("<file>", "JSON file path")
+        .option("--dry-run", "Validate without creating entries")
+        .action(async (file: string, options: { dryRun?: boolean }) => {
+            const config = requireTimeLogConfig();
+            const user = requireTimeLogUser(config);
 
-      // Extract org name from URL (e.g., "MyOrg" from "https://dev.azure.com/MyOrg")
-      const orgMatch = config.org.match(/dev\.azure\.com\/([^/]+)/);
-      const orgName = orgMatch?.[1];
-      if (!orgName) {
-        console.error("❌ Could not extract organization name from config.org");
-        process.exit(1);
-      }
+            if (!existsSync(file)) {
+                console.error(`❌ File not found: ${file}`);
+                process.exit(1);
+            }
 
-      console.log("Fetching TimeLog extension settings...");
+            let data: TimeLogImportFile;
+            try {
+                const content = readFileSync(file, "utf-8");
+                data = JSON.parse(content);
+            } catch (e) {
+                console.error(`❌ Invalid JSON: ${(e as Error).message}`);
+                process.exit(1);
+            }
 
-      try {
-        const result = await $`az rest --method GET --resource "499b84ac-1321-427f-aa17-267ca6975798" --uri "https://extmgmt.dev.azure.com/${orgName}/_apis/ExtensionManagement/InstalledExtensions/TimeLog/time-logging/Data/Scopes/Default/Current/Collections/%24settings/Documents?api-version=7.1-preview"`.quiet();
+            if (!data.entries || !Array.isArray(data.entries)) {
+                console.error(`❌ Invalid format: expected { entries: [...] }`);
+                process.exit(1);
+            }
 
-        const data = JSON.parse(result.text());
-        const configDoc = data.find((d: { id: string }) => d.id === "Config");
+            const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
 
-        if (!configDoc?.value) {
-          console.error("❌ TimeLog extension not configured in Azure DevOps");
-          process.exit(1);
-        }
+            // Validate time types
+            const types = await api.getTimeTypes();
+            const typeNames = new Set(types.map((t) => t.description.toLowerCase()));
 
-        const settings = JSON.parse(configDoc.value);
-        const apiKey = settings.find((s: { id: string }) => s.id === "ApiKeyTextBox")?.value;
+            const errors: string[] = [];
+            const validEntries: Array<{
+                workItemId: number;
+                minutes: number;
+                timeType: string;
+                date: string;
+                comment: string;
+            }> = [];
 
-        if (!apiKey) {
-          console.error("❌ API key not found in TimeLog settings");
-          process.exit(1);
-        }
+            for (let i = 0; i < data.entries.length; i++) {
+                const entry = data.entries[i];
+                const idx = i + 1;
 
-        // Update config with TimeLog settings
-        const configPath = findConfigPath();
-        if (!configPath) {
-          console.error("❌ Config file not found");
-          process.exit(1);
-        }
+                // Validate work item ID
+                if (!entry.workItemId || isNaN(entry.workItemId)) {
+                    errors.push(`Entry ${idx}: Missing or invalid workItemId`);
+                    continue;
+                }
 
-        const existingConfig = JSON.parse(readFileSync(configPath, "utf-8"));
-        existingConfig.timelog = existingConfig.timelog || {};
-        existingConfig.timelog.functionsKey = apiKey;
+                // Validate time
+                let minutes: number;
+                try {
+                    minutes = convertToMinutes(entry.hours, entry.minutes);
+                } catch (e) {
+                    errors.push(`Entry ${idx}: ${(e as Error).message}`);
+                    continue;
+                }
 
-        writeFileSync(configPath, JSON.stringify(existingConfig, null, 2));
-        console.log("✔ TimeLog API key saved to config");
-        console.log("\nNext: Add your user info to config.json:");
-        console.log('  "timelog": {');
-        console.log('    "functionsKey": "...",');
-        console.log('    "defaultUser": {');
-        console.log('      "userId": "<your-azure-ad-object-id>",');
-        console.log('      "userName": "<Your Name>",');
-        console.log('      "userEmail": "<your-email>"');
-        console.log('    }');
-        console.log('  }');
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error("❌ Failed to fetch TimeLog settings:", message);
-        process.exit(1);
-      }
-    });
+                // Validate time type
+                if (!entry.timeType) {
+                    errors.push(`Entry ${idx}: Missing timeType`);
+                    continue;
+                }
+                if (!typeNames.has(entry.timeType.toLowerCase())) {
+                    errors.push(`Entry ${idx}: Unknown time type "${entry.timeType}"`);
+                    continue;
+                }
+
+                // Validate date
+                if (!entry.date || !/^\d{4}-\d{2}-\d{2}$/.test(entry.date)) {
+                    errors.push(`Entry ${idx}: Invalid date format (use YYYY-MM-DD)`);
+                    continue;
+                }
+
+                // Find exact type name (case-sensitive from API)
+                const exactType = types.find((t) => t.description.toLowerCase() === entry.timeType.toLowerCase());
+
+                validEntries.push({
+                    workItemId: entry.workItemId,
+                    minutes,
+                    timeType: exactType!.description,
+                    date: entry.date,
+                    comment: entry.comment || "",
+                });
+            }
+
+            // Report validation errors
+            if (errors.length > 0) {
+                console.error("❌ Validation errors:");
+                for (const err of errors) {
+                    console.error(`  - ${err}`);
+                }
+                if (validEntries.length === 0) {
+                    process.exit(1);
+                }
+                console.log(`\n${validEntries.length} entries are valid.\n`);
+            }
+
+            if (options.dryRun) {
+                console.log("✔ Dry run complete. Valid entries:");
+                for (const e of validEntries) {
+                    console.log(`  #${e.workItemId}: ${formatMinutes(e.minutes)} ${e.timeType} on ${e.date}`);
+                }
+                return;
+            }
+
+            // Create entries
+            console.log(`Creating ${validEntries.length} time log entries...`);
+            let created = 0;
+            const failed: string[] = [];
+
+            for (const entry of validEntries) {
+                try {
+                    await api.createTimeLogEntry(
+                        entry.workItemId,
+                        entry.minutes,
+                        entry.timeType,
+                        entry.date,
+                        entry.comment
+                    );
+                    created++;
+                    console.log(`  ✔ #${entry.workItemId}: ${formatMinutes(entry.minutes)}`);
+                } catch (e) {
+                    failed.push(`#${entry.workItemId}: ${(e as Error).message}`);
+                }
+            }
+
+            console.log(`\n✔ Created ${created}/${validEntries.length} entries`);
+            if (failed.length > 0) {
+                console.error("\nFailed:");
+                for (const f of failed) {
+                    console.error(`  - ${f}`);
+                }
+            }
+        });
+
+    timelog
+        .command("configure")
+        .description("Auto-fetch TimeLog API settings from Azure DevOps")
+        .action(async () => {
+            const config = loadConfig() as AzureConfigWithTimeLog | null;
+            if (!config?.org) {
+                console.error("❌ Run 'tools azure-devops configure <url>' first");
+                process.exit(1);
+            }
+
+            // Extract org name from URL (e.g., "MyOrg" from "https://dev.azure.com/MyOrg")
+            const orgMatch = config.org.match(/dev\.azure\.com\/([^/]+)/);
+            const orgName = orgMatch?.[1];
+            if (!orgName) {
+                console.error("❌ Could not extract organization name from config.org");
+                process.exit(1);
+            }
+
+            console.log("Fetching TimeLog extension settings...");
+
+            try {
+                const result =
+                    await $`az rest --method GET --resource "499b84ac-1321-427f-aa17-267ca6975798" --uri "https://extmgmt.dev.azure.com/${orgName}/_apis/ExtensionManagement/InstalledExtensions/TimeLog/time-logging/Data/Scopes/Default/Current/Collections/%24settings/Documents?api-version=7.1-preview"`.quiet();
+
+                const data = JSON.parse(result.text());
+                const configDoc = data.find((d: { id: string }) => d.id === "Config");
+
+                if (!configDoc?.value) {
+                    console.error("❌ TimeLog extension not configured in Azure DevOps");
+                    process.exit(1);
+                }
+
+                const settings = JSON.parse(configDoc.value);
+                const apiKey = settings.find((s: { id: string }) => s.id === "ApiKeyTextBox")?.value;
+
+                if (!apiKey) {
+                    console.error("❌ API key not found in TimeLog settings");
+                    process.exit(1);
+                }
+
+                // Update config with TimeLog settings
+                const configPath = findConfigPath();
+                if (!configPath) {
+                    console.error("❌ Config file not found");
+                    process.exit(1);
+                }
+
+                const existingConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+                existingConfig.timelog = existingConfig.timelog || {};
+                existingConfig.timelog.functionsKey = apiKey;
+
+                writeFileSync(configPath, JSON.stringify(existingConfig, null, 2));
+                console.log("✔ TimeLog API key saved to config");
+                console.log("\nNext: Add your user info to config.json:");
+                console.log('  "timelog": {');
+                console.log('    "functionsKey": "...",');
+                console.log('    "defaultUser": {');
+                console.log('      "userId": "<your-azure-ad-object-id>",');
+                console.log('      "userName": "<Your Name>",');
+                console.log('      "userEmail": "<your-email>"');
+                console.log("    }");
+                console.log("  }");
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                console.error("❌ Failed to fetch TimeLog settings:", message);
+                process.exit(1);
+            }
+        });
 }

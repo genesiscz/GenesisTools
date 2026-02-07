@@ -48,65 +48,65 @@ Documentation: https://learn.microsoft.com/en-us/azure/devops/cli/?view=azure-de
  * Check if an error message indicates an SSL/proxy certificate issue
  */
 export function isSslError(message: string): boolean {
-  return (
-    message.includes("CERTIFICATE_VERIFY_FAILED") ||
-    message.includes("SSLError") ||
-    message.includes("SSLCertVerificationError") ||
-    message.includes("self-signed certificate") ||
-    message.includes("certificate verify failed")
-  );
+    return (
+        message.includes("CERTIFICATE_VERIFY_FAILED") ||
+        message.includes("SSLError") ||
+        message.includes("SSLCertVerificationError") ||
+        message.includes("self-signed certificate") ||
+        message.includes("certificate verify failed")
+    );
 }
 
 /**
  * Check if an error message indicates an authentication issue
  */
 export function isAuthError(message: string): boolean {
-  return (
-    message.includes("login command") ||
-    message.includes("setup credentials") ||
-    message.includes("az login") ||
-    message.includes("az devops login")
-  );
+    return (
+        message.includes("login command") ||
+        message.includes("setup credentials") ||
+        message.includes("az login") ||
+        message.includes("az devops login")
+    );
 }
 
 /**
  * Print SSL/proxy certificate guide and exit
  */
 export function exitWithSslGuide(error?: unknown): never {
-  console.log(SSL_PROXY_GUIDE);
+    console.log(SSL_PROXY_GUIDE);
 
-  if (error instanceof Error && error.stack && process.env.DEBUG) {
-    console.error("\nStacktrace:\n");
-    console.error(error.stack);
-  }
+    if (error instanceof Error && error.stack && process.env.DEBUG) {
+        console.error("\nStacktrace:\n");
+        console.error(error.stack);
+    }
 
-  process.exit(1);
+    process.exit(1);
 }
 
 /**
  * Print authentication guide and exit
  */
 export function exitWithAuthGuide(error?: unknown): never {
-  console.log(AUTH_GUIDE);
+    console.log(AUTH_GUIDE);
 
-  if (error instanceof Error && error.stack && process.env.DEBUG) {
-    console.error("\nStacktrace:\n");
-    console.error(error.stack);
-  }
+    if (error instanceof Error && error.stack && process.env.DEBUG) {
+        console.error("\nStacktrace:\n");
+        console.error(error.stack);
+    }
 
-  process.exit(1);
+    process.exit(1);
 }
 
 /**
  * Handle error - shows auth guide if it's an auth error, otherwise logs the error
  */
 export function handleCliError(error: unknown): never {
-  const message = error instanceof Error ? error.message : String(error);
+    const message = error instanceof Error ? error.message : String(error);
 
-  if (isAuthError(message)) {
-    exitWithAuthGuide();
-  }
+    if (isAuthError(message)) {
+        exitWithAuthGuide();
+    }
 
-  console.error(`ERROR: ${message}`);
-  process.exit(1);
+    console.error(`ERROR: ${message}`);
+    process.exit(1);
 }
