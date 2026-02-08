@@ -308,7 +308,7 @@ tools azure-devops history search --assigned-to "Martin" --wiql    # Ever assign
 tools azure-devops history search --assigned-to "Martin" --wiql --current  # Currently assigned
 tools azure-devops history search --assigned-to "Martin"           # Local cached history search
 tools azure-devops history search --assigned-to "Martin" --min-time 2h     # Min time filter
-tools azure-devops history search --state Active --from 2024-12-01 --wiql  # State + date range
+tools azure-devops history search --state Active --since 2024-12-01 --wiql # State + date range (--since/--until aliases for --from/--to)
 
 tools azure-devops history sync                   # Bulk sync history for cached work items (per-item mode)
 tools azure-devops history sync --force           # Force re-sync all

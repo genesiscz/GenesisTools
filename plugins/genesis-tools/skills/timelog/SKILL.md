@@ -164,7 +164,9 @@ tools azure-devops timelog add -w <id> -h <hours> -t "<type>" -c "<comment>"
 | Events + entries + unlinked (default) | `tools timely events --day YYYY-MM-DD --format json --without-details` |
 | Events full raw JSON | `tools timely events --day YYYY-MM-DD --format json` |
 | Events without memories | `tools timely events --day YYYY-MM-DD --format json --without-entries` |
+| Events (force fresh fetch) | `tools timely events --day YYYY-MM-DD --force` |
 | Memories only | `tools timely memories --day YYYY-MM-DD --format json` |
+| Memories (force fresh fetch) | `tools timely memories --day YYYY-MM-DD --force` |
 | Existing timelogs | `tools azure-devops timelog list --day YYYY-MM-DD --format json` |
 | Timelogs by user/range | `tools azure-devops timelog list --since YYYY-MM-DD --upto YYYY-MM-DD --user "Name"` |
 | Add timelog | `tools azure-devops timelog add -w <id> -h <hours> -t "<type>" -c "<comment>"` |
