@@ -8,6 +8,7 @@ import { CodexProvider } from "./utils/providers/codex.js";
 import { CursorProvider } from "./utils/providers/cursor.js";
 import type { MCPProvider } from "./utils/providers/types.js";
 import { showHelp } from "./utils/command.utils.js";
+import { enhanceHelp } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 
 // Handle --readme flag early (before Commander parses)
@@ -293,6 +294,8 @@ program.action(async () => {
         throw error;
     }
 });
+
+enhanceHelp(program);
 
 // Main function
 async function main() {

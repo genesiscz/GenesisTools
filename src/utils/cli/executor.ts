@@ -1,4 +1,37 @@
 import pc from "picocolors";
+import type { Command } from "commander";
+
+/**
+ * Enhance a Commander program with better help UX:
+ * - Shows help after errors (e.g. too many arguments)
+ * - Expands subcommand options in the parent's help output
+ * - Recurses into nested subcommands
+ *
+ * Call once on the root program after all commands are registered.
+ */
+export function enhanceHelp(cmd: Command): void {
+  cmd.showHelpAfterError(true);
+
+  const subs = cmd.commands as Command[];
+  if (subs.length > 0) {
+    cmd.addHelpText("after", () => {
+      const lines: string[] = [pc.dim("\nSubcommand Options:")];
+      for (const sub of cmd.commands as Command[]) {
+        const opts = sub.options.filter((o) => o.long !== "--help");
+        if (opts.length === 0) continue;
+        lines.push(`\n  ${pc.bold(sub.name())}:`);
+        for (const opt of opts) {
+          lines.push(`    ${pc.dim(opt.flags.padEnd(30))} ${opt.description}`);
+        }
+      }
+      return lines.join("\n");
+    });
+  }
+
+  for (const sub of subs) {
+    enhanceHelp(sub);
+  }
+}
 
 export interface ExecResult {
 	success: boolean;
