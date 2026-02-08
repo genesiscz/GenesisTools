@@ -47,7 +47,8 @@
     },
     "files": {
         "includes": [
-            "**/*.{ts,tsx,js,jsx}"
+            "**/*.{ts,tsx,js,jsx}",
+            "*.{json,mjs,cjs}"
         ],
         "ignore": [
             "src/claude-history-dashboard/**"
