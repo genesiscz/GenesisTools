@@ -6,6 +6,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
+import { enhanceHelp } from "@app/utils/cli";
 import { TimelyApiClient } from "./api/client";
 import { TimelyService } from "./api/service";
 
@@ -18,6 +19,7 @@ import { registerProjectsCommand } from "./commands/projects";
 import { registerEventsCommand } from "./commands/events";
 import { registerExportMonthCommand } from "./commands/export-month";
 import { registerCacheCommand } from "./commands/cache";
+import { registerMemoriesCommand } from "./commands/memories";
 
 // Initialize shared dependencies
 const storage = new Storage("timely");
@@ -41,6 +43,7 @@ ${chalk.cyan("Commands:")}
   accounts                List all accounts (--select to choose default)
   projects                List all projects (--select to choose default)
   events                  List time entries
+  memories                List auto-tracked activities (suggested entries)
   export-month <YYYY-MM>  Export all entries for a month
   cache [list|clear]      Manage cache
 
@@ -52,7 +55,7 @@ ${chalk.cyan("Global Options:")}
   -p, --project <id>      Override project ID
   --silent, --quiet        Suppress console output (only show file path)
 
-${chalk.cyan("Date Options (for events command):")}
+${chalk.cyan("Date Options (for events/memories commands):")}
   --since <YYYY-MM-DD>    Start date
   --upto <YYYY-MM-DD>     End date
   --day <YYYY-MM-DD>      Single day
@@ -85,6 +88,9 @@ async function main(): Promise<void> {
                 showHelpFull();
                 process.exit(0);
             }
+            // Show help when no subcommand given
+            showHelpFull();
+            process.exit(0);
         });
 
     // Register all subcommands
@@ -96,6 +102,8 @@ async function main(): Promise<void> {
     registerEventsCommand(program, storage, service);
     registerExportMonthCommand(program, storage, service);
     registerCacheCommand(program, storage);
+    registerMemoriesCommand(program, storage, service);
+    enhanceHelp(program);
 
     // Parse and execute
     await program.parseAsync(process.argv);

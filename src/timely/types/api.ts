@@ -243,6 +243,7 @@ export interface TimelySubEntry {
     from: string; // ISO datetime
     to: string; // ISO datetime
     note: string;
+    duration: Duration;
 }
 
 export interface TimelyExtraAttribute {
@@ -270,6 +271,7 @@ export interface TimelyEntry {
     icon_url: string;
     icon_fallback_url: string;
     url: string;
+    entry_ids?: number[]; // Present on suggested_entries (memories) — IDs of sub-entries
 }
 
 // TimelyEntryResponse is now just an array of TimelyEntry
@@ -286,4 +288,24 @@ export interface PaginatedResponse<T> {
     per_page: number;
     total_pages: number;
     total_count: number;
+}
+
+// ============================================
+// Slim Types for Token-Efficient Output
+// ============================================
+
+/** Slim event for token-efficient JSON output */
+export interface TimelyEventSlim {
+    id: number;
+    day: string;
+    project: { id: number; name: string };
+    duration: string;    // "HH:MM" e.g. "04:51"
+    note: string;
+    from: string | null; // "10:00" or null
+    to: string | null;   // "14:51" or null
+    entry_ids: number[];
+    billed: boolean;
+    billable: boolean;
+    cost: number;        // amount as number
+    entries?: TimelyEntry[]; // only with --with-entries
 }
