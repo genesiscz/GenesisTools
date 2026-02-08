@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, statSync, unlinkSync, readdirSync } from "node:f
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import logger from "@app/logger";
+import { withFileLock } from "./file-lock";
 
 /**
  * TTL string format: "<number> <unit>" or "<number><unit>"
@@ -361,6 +362,57 @@ export class Storage {
 
         walkDir(this.cacheDir);
         return files;
+    }
+
+    // ============================================
+    // Atomic Operations
+    // ============================================
+
+    /**
+     * Atomically read-modify-write a JSON cache file.
+     *
+     * Acquires a file lock, reads the current value (or null if absent),
+     * calls updater to produce the new value, writes it, and releases the lock.
+     *
+     * @param relativePath - Relative path within cache directory
+     * @param updater - Function that receives the current data (or null) and returns the new data
+     * @returns The new data returned by updater
+     */
+    async atomicUpdate<T>(relativePath: string, updater: (current: T | null) => T): Promise<T> {
+        await this.ensureDirs();
+        const filePath = this.getCacheFilePath(relativePath);
+        const lockPath = `${filePath}.lock`;
+
+        return withFileLock(lockPath, async () => {
+            // Read current value
+            let current: T | null = null;
+
+            try {
+                if (existsSync(filePath)) {
+                    const content = await Bun.file(filePath).text();
+                    current = JSON.parse(content) as T;
+                }
+            } catch (error) {
+                logger.debug(`atomicUpdate: Could not read existing file at ${filePath}: ${error}`);
+                current = null;
+            }
+
+            // Apply updater
+            const updated = updater(current);
+
+            // Ensure parent directory exists
+            const dir = dirname(filePath);
+
+            if (!existsSync(dir)) {
+                mkdirSync(dir, { recursive: true });
+            }
+
+            // Write new value
+            await Bun.write(filePath, JSON.stringify(updated, null, 2));
+            logger.debug(`Atomic update complete: ${filePath}`);
+
+            return updated;
+        });
     }
 
     /**

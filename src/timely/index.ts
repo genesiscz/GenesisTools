@@ -56,15 +56,15 @@ ${chalk.cyan("Global Options:")}
   --silent, --quiet        Suppress console output (only show file path)
 
 ${chalk.cyan("Date Options (for events/memories commands):")}
-  --since <YYYY-MM-DD>    Start date
-  --upto <YYYY-MM-DD>     End date
+  --from <YYYY-MM-DD>     Start date
+  --to <YYYY-MM-DD>       End date
   --day <YYYY-MM-DD>      Single day
 
 ${chalk.cyan("Examples:")}
   tools timely login
   tools timely accounts --select
   tools timely projects
-  tools timely events --since 2025-11-01 --upto 2025-11-30
+  tools timely events --from 2025-11-01 --to 2025-11-30
   tools timely export-month 2025-11
   tools timely export-month 2025-11 --format csv > time.csv
   tools timely export-month 2025-11 --format raw  # Detailed table with all info

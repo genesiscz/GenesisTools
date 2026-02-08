@@ -57,7 +57,7 @@ export function normalizeUserName(name: string): string {
 /**
  * Fuzzy match a user name against a query string.
  * Supports exact match (after normalization), contains match,
- * and word-by-word match (handles reversed name order like "Foltyn Martin" matching "Martin Foltyn").
+ * and word-by-word match (handles reversed name order like "Doe John" matching "John Doe").
  */
 export function userMatches(userName: string, query: string): boolean {
     const normalizedName = normalizeUserName(userName);

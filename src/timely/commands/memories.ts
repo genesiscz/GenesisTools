@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
@@ -12,8 +12,10 @@ export function registerMemoriesCommand(program: Command, storage: Storage, serv
         .description("List auto-tracked activities (suggested entries)")
         .option("-f, --format <format>", "Output format: json, table", "table")
         .option("-a, --account <id>", "Override account ID")
-        .option("--since <date>", "Start date (YYYY-MM-DD)")
-        .option("--upto <date>", "End date (YYYY-MM-DD)")
+        .option("--from <date>", "Start date (YYYY-MM-DD)")
+        .option("--to <date>", "End date (YYYY-MM-DD)")
+        .addOption(new Option("--since <date>").hideHelp())
+        .addOption(new Option("--upto <date>").hideHelp())
         .option("--day <date>", "Single day (YYYY-MM-DD)")
         .option("--force", "Bypass memory cache, fetch fresh from API")
         .action(async (options) => {
@@ -24,6 +26,8 @@ export function registerMemoriesCommand(program: Command, storage: Storage, serv
 interface MemoriesOptions {
     format?: string;
     account?: string;
+    from?: string;
+    to?: string;
     since?: string;
     upto?: string;
     day?: string;
@@ -45,13 +49,17 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
         process.exit(1);
     }
 
+    // Resolve --from/--to (primary) with --since/--upto (hidden aliases)
+    const from = options.from || options.since;
+    const to = options.to || options.upto;
+
     // Determine dates
     const dates: string[] = [];
     if (options.day) {
         dates.push(options.day);
-    } else if (options.since || options.upto) {
-        const since = options.since || options.upto!;
-        const upto = options.upto || options.since!;
+    } else if (from || to) {
+        const since = from || to!;
+        const upto = to || from!;
         const start = new Date(since);
         const end = new Date(upto);
         const current = new Date(start);
@@ -60,7 +68,7 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
             current.setDate(current.getDate() + 1);
         }
     } else {
-        logger.error("Please provide at least one date filter: --since, --upto, or --day");
+        logger.error("Please provide at least one date filter: --from, --to, or --day");
         logger.info("Example: tools timely memories --day 2026-01-30");
         process.exit(1);
     }

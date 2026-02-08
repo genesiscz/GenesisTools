@@ -16,11 +16,15 @@ tools azure-devops query <id> --download-workitems  # Download all to files
 tools azure-devops dashboard <id|url>            # Get dashboard queries
 tools azure-devops list                          # List cached items
 tools azure-devops workitem-create               # Create work item
-tools azure-devops timelog configure             # Auto-fetch TimeLog API key
+tools azure-devops timelog configure             # Interactive: setup API key, user, allowed types
 tools azure-devops timelog types                 # List available time types
 tools azure-devops timelog list -w <id>          # List time logs for work item
-tools azure-devops timelog add -w <id> -h <hrs>  # Log time entry
-tools azure-devops timelog import <file>         # Bulk import time logs
+tools azure-devops timelog add -w <id> -h <hrs>  # Log time entry (with precheck)
+tools azure-devops timelog prepare-import add    # Stage entries for review before import
+tools azure-devops timelog prepare-import list   # Review staged entries
+tools azure-devops timelog prepare-import remove # Remove staged entry
+tools azure-devops timelog prepare-import clear  # Clear all staged entries
+tools azure-devops timelog import <file>         # Bulk import time logs (with precheck)
 ```
 
 ### Options
@@ -330,7 +334,7 @@ tools azure-devops history sync --batch           # Use batch reporting API inst
 
 - **@me support**: `--assigned-to @me` or `--assigned-to-me` uses WIQL `@Me` macro (auto-enables WIQL)
 - **--current flag**: Uses `=` instead of `EVER` for current assignment
-- **Fuzzy user matching**: "Martin" matches "Martin Foltyn (QK)", diacritics normalized
+- **Fuzzy user matching**: "Martin" matches "Martin Novak (QK)", diacritics normalized
 - **Cache stats**: Local search shows data date range and last sync time
 - **Per-item sync** (default): Targeted API calls per work item, faster for <200 items
 - **Batch sync** (`--batch`): Uses reporting API, better for 500+ items
@@ -342,11 +346,24 @@ Time logging for Azure DevOps work items using the third-party TimeLog extension
 ### Setup
 
 ```bash
-# Auto-fetch API key from Azure DevOps
+# Interactive configuration (recommended)
 tools azure-devops timelog configure
 ```
 
-Then add your user info to `.claude/azure/config.json`.
+This launches an interactive prompt (using clack) that configures:
+- `functionsKey`: TimeLog API key (auto-fetched from Azure DevOps)
+- `defaultUser`: Your user email/name for time logging
+- `allowedWorkItemTypes`: Work item types that can be logged to (e.g., "Bug,Task")
+- `allowedStatesPerType`: Required states per type (e.g., "Task:In Progress")
+
+The configuration is saved to `.claude/azure/config.json`.
+
+**Note for LLM agents**: Since `configure` uses interactive clack prompts, you cannot drive it directly. Use `AskUserQuestion` to suggest the user run it themselves, or use non-interactive flags:
+
+```bash
+# Non-interactive mode (for scripting)
+tools azure-devops timelog configure --allowed-work-item-types "Bug,Task" --allowed-states-for-type "Task:In Progress"
+```
 
 ### List Time Types
 
@@ -375,12 +392,77 @@ tools azure-devops timelog add -i
 tools azure-devops timelog add -w 268935 -i
 ```
 
+Before creating the entry, the command runs a workitem type precheck (see Workitem Type Validation below).
+
+### Prepare Entries for Import (Recommended for Batch Operations)
+
+The `prepare-import` workflow allows you to stage, review, and validate entries before committing them to Azure DevOps.
+
+```bash
+# Stage entries for review
+tools azure-devops timelog prepare-import add --from 2026-02-01 --to 2026-02-08 --entry '{
+  "workItemId": 268935,
+  "date": "2026-02-04",
+  "hours": 2,
+  "timeType": "Development",
+  "comment": "Implemented feature X"
+}'
+
+# Add another entry (same date range)
+tools azure-devops timelog prepare-import add --from 2026-02-01 --to 2026-02-08 --entry '{
+  "workItemId": 262042,
+  "date": "2026-02-04",
+  "hours": 0.5,
+  "timeType": "Ceremonie",
+  "comment": "Daily standup"
+}'
+
+# Review all staged entries
+tools azure-devops timelog prepare-import list --name 2026-02-01.2026-02-08 --format table
+
+# Remove a specific entry if needed
+tools azure-devops timelog prepare-import remove --name 2026-02-01.2026-02-08 --id <uuid>
+
+# Clear all entries for this date range
+tools azure-devops timelog prepare-import clear --name 2026-02-01.2026-02-08
+```
+
+The name is auto-generated from `--from` and `--to` as `<from>.<to>` (e.g., `2026-02-01.2026-02-08`). Each entry is validated with Zod schema and runs workitem type precheck before being added.
+
 ### Import Time Logs
 
 ```bash
+# Import from prepare-import staging file
+tools azure-devops timelog import .genesis-tools/azure-devops/cache/prepare-import/2026-02-01.2026-02-08.json
+
+# Or import from custom JSON file
 tools azure-devops timelog import entries.json
+
+# Dry run to validate without creating entries
 tools azure-devops timelog import entries.json --dry-run
 ```
+
+The import command runs workitem type precheck for each entry before creating it. After import, the command shows a precheck summary with counts of passed/redirected/failed entries. The cache is automatically evicted after successful imports.
+
+### Workitem Type Validation
+
+Before creating time log entries, the tool validates that the workitem type is configured as allowed in `allowedWorkItemTypes`. This precheck behavior helps prevent errors:
+
+**Automatic Redirect for User Stories:**
+- If a workitem is a User Story (not typically allowed for time logging), the tool looks for child Tasks/Bugs
+- Exactly 1 child of allowed type: Auto-redirect with warning
+- 0 children of allowed type: Error
+- Multiple children: Error with list for user to choose from
+
+**Configuration:**
+- Run `tools azure-devops timelog configure` to set `allowedWorkItemTypes`
+- Common configuration: `"Bug,Task"` (excludes User Stories, Features, etc.)
+- Can also configure `allowedStatesPerType` for additional validation
+
+**Where Precheck Applies:**
+- `timelog add` - Before creating single entry
+- `timelog import` - Before importing each entry
+- `prepare-import add` - When staging entry for review
 
 ### TimeLog Examples
 
@@ -390,7 +472,10 @@ tools azure-devops timelog import entries.json --dry-run
 | "What time types are available?" | `tools azure-devops timelog types` |
 | "Show time logged on 268935" | `tools azure-devops timelog list -w 268935` |
 | "Help me log time" | `tools azure-devops timelog add -i` |
+| "Stage entries for review" | `tools azure-devops timelog prepare-import add --from ... --to ... --entry '{...}'` |
+| "Review staged entries" | `tools azure-devops timelog prepare-import list --name 2026-02-01.2026-02-08` |
 | "Import time entries from file" | `tools azure-devops timelog import entries.json` |
+| "Import with validation only" | `tools azure-devops timelog import entries.json --dry-run` |
 
 ### Natural Language Time Logging
 
@@ -473,3 +558,20 @@ When user says "log time for my work" without explicit details:
    ```bash
    tools azure-devops timelog add -w 268935 -h <hours> -t "<inferred-type>" -c "<commit-message>"
    ```
+
+## Integration with `tools git`
+
+For gathering commit data to correlate with time entries, use the `tools git commits` command:
+
+```bash
+# Get commits for a date range with automatic workitem ID extraction
+tools git commits --from 2026-02-01 --to 2026-02-08 --stat --format json 2>/dev/null | tools json
+```
+
+This command:
+- Extracts workitem IDs from commit messages and branch names via configured patterns
+- Returns commit metadata (hash, message, author, date)
+- Includes stats (files changed, insertions, deletions)
+- Filters by configured authors (see `tools git configure-authors`)
+
+The extracted workitem IDs can be used to match commits to Azure DevOps work items for time logging purposes.

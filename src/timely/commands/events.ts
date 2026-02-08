@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import chalk from "chalk";
 import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
@@ -15,8 +15,10 @@ export function registerEventsCommand(program: Command, storage: Storage, servic
         .description("List time entries (with linked memories by default)")
         .option("-f, --format <format>", "Output format: json, table, csv", "table")
         .option("-a, --account <id>", "Override account ID")
-        .option("--since <date>", "Start date (YYYY-MM-DD)")
-        .option("--upto <date>", "End date (YYYY-MM-DD)")
+        .option("--from <date>", "Start date (YYYY-MM-DD)")
+        .option("--to <date>", "End date (YYYY-MM-DD)")
+        .addOption(new Option("--since <date>").hideHelp())
+        .addOption(new Option("--upto <date>").hideHelp())
         .option("--day <date>", "Single day (YYYY-MM-DD)")
         .option("--without-details", "Omit full raw event objects in JSON format")
         .option("--without-entries", "Skip fetching linked memories and unlinked analysis")
@@ -30,6 +32,8 @@ export function registerEventsCommand(program: Command, storage: Storage, servic
 interface EventsOptions {
     format?: string;
     account?: string;
+    from?: string;
+    to?: string;
     since?: string;
     upto?: string;
     day?: string;
@@ -92,14 +96,17 @@ async function eventsAction(storage: Storage, service: TimelyService, options: E
         process.exit(1);
     }
 
+    const from = options.from || options.since;
+    const to = options.to || options.upto;
+
     const params: { since?: string; upto?: string; day?: string } = {};
-    if (options.since) params.since = options.since;
-    if (options.upto) params.upto = options.upto;
+    if (from) params.since = from;
+    if (to) params.upto = to;
     if (options.day) params.day = options.day;
 
-    if (!params.since && !params.upto && !params.day) {
-        logger.error("Please provide at least one date filter: --since, --upto, or --day");
-        logger.info("Example: tools timely events --since 2025-11-01 --upto 2025-11-30");
+    if (!from && !to && !options.day) {
+        logger.error("Please provide at least one date filter: --from, --to, or --day");
+        logger.info("Example: tools timely events --from 2025-11-01 --to 2025-11-30");
         process.exit(1);
     }
 

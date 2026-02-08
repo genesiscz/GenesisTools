@@ -415,10 +415,18 @@ export interface CreateTimeLogResponse {
     logsCreated: string[]; // ["9a016275-6d8f-4e6f-9f8f-052f34e5b177"]
 }
 
+/** Allowed work item type configuration for time logging precheck */
+export interface AllowedTypeConfig {
+    allowedWorkItemTypes: string[];
+    allowedStatesPerType?: Record<string, string[]>;
+}
+
 /** TimeLog configuration stored in config.json */
 export interface TimeLogConfig {
     functionsKey: string; // API key for Azure Functions
     defaultUser?: TimeLogUser; // Cached user info
+    allowedWorkItemTypes?: string[]; // e.g., ["Bug", "Task"]
+    allowedStatesPerType?: Record<string, string[]>; // e.g., { "Task": ["In Progress"], "Bug": ["New","Development","Blocked"] }
 }
 
 /** Extended config with TimeLog settings */

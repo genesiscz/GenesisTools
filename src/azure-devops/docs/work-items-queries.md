@@ -249,7 +249,7 @@ WHERE [System.CreatedBy] = 'user@example.com'
 -- Items changed by multiple users
 SELECT [System.Id], [System.Title]
 FROM workitems
-WHERE [System.ChangedBy] IN ('user1@cez.cz', 'user2@cez.cz')
+WHERE [System.ChangedBy] IN ('user1@example.com', 'user2@example.com')
 ```
 
 ### Text Search
@@ -327,7 +327,7 @@ WHERE EVER [System.State] = 'Closed'
 -- Items EVER assigned to someone
 SELECT [System.Id], [System.Title]
 FROM workitems
-WHERE EVER [System.AssignedTo] = 'user@cez.cz'
+WHERE EVER [System.AssignedTo] = 'user@example.com'
   AND [System.ChangedDate] >= @Today - 30
 ```
 
