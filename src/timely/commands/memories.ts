@@ -15,6 +15,7 @@ export function registerMemoriesCommand(program: Command, storage: Storage, serv
         .option("--since <date>", "Start date (YYYY-MM-DD)")
         .option("--upto <date>", "End date (YYYY-MM-DD)")
         .option("--day <date>", "Single day (YYYY-MM-DD)")
+        .option("--force", "Bypass memory cache, fetch fresh from API")
         .action(async (options) => {
             await memoriesAction(storage, service, options);
         });
@@ -26,6 +27,7 @@ interface MemoriesOptions {
     since?: string;
     upto?: string;
     day?: string;
+    force?: boolean;
 }
 
 async function memoriesAction(storage: Storage, _service: TimelyService, options: MemoriesOptions): Promise<void> {
@@ -70,6 +72,7 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
         accessToken: tokens.access_token,
         dates,
         storage,
+        force: options.force,
     });
     const allEntries = result.entries;
 

@@ -10,6 +10,7 @@ export interface FetchMemoriesOptions {
     dates: string[];
     storage: Storage;
     verbose?: boolean;
+    force?: boolean;
 }
 
 export interface FetchMemoriesResult {
@@ -27,7 +28,7 @@ export interface FetchMemoriesResult {
  * Past dates are cached for 30 days.
  */
 export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Promise<FetchMemoriesResult> {
-    const { accountId, accessToken, dates, storage, verbose } = options;
+    const { accountId, accessToken, dates, storage, verbose, force } = options;
     const today = new Date().toISOString().slice(0, 10);
     const sortedDates = [...dates].sort();
 
@@ -46,10 +47,11 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
         try {
             let memories: TimelyEntry[];
 
-            if (isToday) {
+            if (isToday || force) {
                 memories = await fetchFromApi(accountId, accessToken, date);
+                if (!isToday) await storage.putCacheFile(cacheKey, memories, CACHE_TTL);
                 stats.fetched++;
-                if (verbose) logger.info(`[memories] ${progress} ${date}: ${memories.length} memories (fresh, today)`);
+                if (verbose) logger.info(`[memories] ${progress} ${date}: ${memories.length} memories (${isToday ? "fresh, today" : "force refresh"})`);
             } else {
                 const cached = await storage.getCacheFile<TimelyEntry[]>(cacheKey, CACHE_TTL);
                 if (cached) {

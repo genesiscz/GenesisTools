@@ -20,6 +20,7 @@ export function registerEventsCommand(program: Command, storage: Storage, servic
         .option("--day <date>", "Single day (YYYY-MM-DD)")
         .option("--without-details", "Omit full raw event objects in JSON format")
         .option("--without-entries", "Skip fetching linked memories and unlinked analysis")
+        .option("--force", "Bypass memory cache, fetch fresh from API")
         .option("-v, --verbose", "Show debug info (entry fetching, cache hits)")
         .action(async (options) => {
             await eventsAction(storage, service, options);
@@ -34,6 +35,7 @@ interface EventsOptions {
     day?: string;
     withoutDetails?: boolean;
     withoutEntries?: boolean;
+    force?: boolean;
     verbose?: boolean;
 }
 
@@ -128,6 +130,7 @@ async function eventsAction(storage: Storage, service: TimelyService, options: E
             dates,
             storage,
             verbose,
+            force: options.force,
         });
 
         const subEntryToMemory = buildSubEntryMap(result.entries);

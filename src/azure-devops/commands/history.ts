@@ -16,7 +16,7 @@ import { loadHistoryCache, saveHistoryCache, formatJSON } from "@app/azure-devop
 import { buildWorkItemHistory, calculateTimeInState, userMatches } from "@app/azure-devops/history";
 import type { WorkItemHistory, AssignmentPeriod, StatePeriod } from "@app/azure-devops/types";
 
-import { handleHistorySearch } from "./history-search";
+import { handleHistorySearch, type SearchOptions } from "./history-search";
 import { handleHistorySync } from "./history-sync";
 
 // ============= Types =============
@@ -339,8 +339,12 @@ export function registerHistoryCommand(program: Command): void {
         .option("--assigned-to <name>", "Filter by assignee name (fuzzy match)")
         .option("--state <states>", "Filter by state (comma-separated)")
         .option("--from <date>", "Filter from date (ISO format)")
+        .option("--since <date>", "Alias for --from")
         .option("--to <date>", "Filter to date (ISO format)")
-        .action(async (idStr: string, options: ShowOptions) => {
+        .option("--until <date>", "Alias for --to")
+        .action(async (idStr: string, options: ShowOptions & { since?: string; until?: string }) => {
+            if (options.since && !options.from) options.from = options.since;
+            if (options.until && !options.to) options.to = options.until;
             await handleHistoryShow(idStr, options);
         });
 
@@ -351,12 +355,18 @@ export function registerHistoryCommand(program: Command): void {
         .option("--assigned-to-me", "Shortcut for --assigned-to @me")
         .option("--state <states>", "Items ever in state(s) (comma-separated)")
         .option("--from <date>", "From date (ISO format)")
+        .option("--since <date>", "Alias for --from")
         .option("--to <date>", "To date (ISO format)")
+        .option("--until <date>", "Alias for --to")
         .option("--min-time <duration>", "Min time in state/assigned (e.g. 2h, 30m)")
         .option("--wiql", "Use WIQL EVER query (server-side, no local history needed)")
         .option("--current", "Search current assignment (= instead of EVER)")
         .option("-o, --output <format>", "Output format (table, json)", "table")
-        .action(handleHistorySearch);
+        .action((options: SearchOptions & { since?: string; until?: string }) => {
+            if (options.since && !options.from) options.from = options.since;
+            if (options.until && !options.to) options.to = options.until;
+            return handleHistorySearch(options);
+        });
 
     history
         .command("sync")
