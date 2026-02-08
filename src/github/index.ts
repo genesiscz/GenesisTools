@@ -13,6 +13,7 @@ import { createGetCommand, getCommand } from '@app/github/commands/get';
 import { checkAuth, getRateLimit } from '@app/github/lib/octokit';
 import { parseGitHubUrl, detectRepoFromGit } from '@app/github/lib/url-parser';
 import { getCacheStats, closeDatabase } from '@app/github/lib/cache';
+import { enhanceHelp } from '@app/utils/cli';
 import logger from '@app/logger';
 
 const program = new Command();
@@ -67,6 +68,8 @@ program
     console.log(`  Comments: ${stats.comments}`);
     console.log(`  Events: ${stats.events}`);
   });
+
+enhanceHelp(program);
 
 // Interactive mode (no subcommand)
 async function interactiveMode(): Promise<void> {
