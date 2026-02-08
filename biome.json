@@ -48,10 +48,8 @@
     "files": {
         "includes": [
             "**/*.{ts,tsx,js,jsx}",
-            "*.{json,mjs,cjs}"
-        ],
-        "ignore": [
-            "src/claude-history-dashboard/**"
+            "*.{json,mjs,cjs}",
+            "!src/claude-history-dashboard/**"
         ]
     }
 }
