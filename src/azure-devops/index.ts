@@ -16,6 +16,7 @@ import { Command } from "commander";
 import logger from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "@app/azure-devops/cli.utils";
+import { enhanceHelp } from "@app/utils/cli";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -40,7 +41,6 @@ program
     .name("azure-devops")
     .description("Azure DevOps Work Item CLI Tool")
     .version("1.0.0")
-    .showHelpAfterError(true)
     .option("-v, --verbose", "Enable verbose debug logging")
     .option("-?, --help-full", "Show detailed help with examples")
     .on("option:help-full", () => {
@@ -57,6 +57,7 @@ registerWorkitemCacheCommand(program);
 registerDashboardCommand(program);
 registerTimelogCommand(program);
 registerHistoryCommand(program);
+enhanceHelp(program);
 
 function showHelpFull(): void {
     console.log(`
