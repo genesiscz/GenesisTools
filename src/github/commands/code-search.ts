@@ -2,9 +2,9 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { getOctokit } from '@app/github/lib/octokit';
-import { withRetry } from '@app/github/lib/rate-limit';
-import { verbose, setGlobalVerbose } from '@app/github/lib/utils';
+import { getOctokit } from '@app/utils/github/octokit';
+import { withRetry } from '@app/utils/github/rate-limit';
+import { verbose, setGlobalVerbose } from '@app/utils/github/utils';
 import logger from '@app/logger';
 
 interface CodeSearchOptions {

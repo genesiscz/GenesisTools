@@ -4,9 +4,9 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
-import { getOctokit } from '@app/github/lib/octokit';
-import { withRetry } from '@app/github/lib/rate-limit';
-import { parseGitHubUrl, extractCommentId, parseDate, detectRepoFromGit } from '@app/github/lib/url-parser';
+import { getOctokit } from '@app/utils/github/octokit';
+import { withRetry } from '@app/utils/github/rate-limit';
+import { parseGitHubUrl, extractCommentId, parseDate, detectRepoFromGit } from '@app/utils/github/url-parser';
 import {
   getDatabase,
   getOrCreateRepo,
@@ -22,7 +22,7 @@ import {
 } from '@app/github/lib/cache';
 import { processQuotes, findReplyTarget, detectCrossReferences } from '@app/github/lib/quotes';
 import { formatIssue, calculateStats } from '@app/github/lib/output';
-import { verbose, toCommentRecord, fromCommentRecord, setGlobalVerbose } from '@app/github/lib/utils';
+import { verbose, toCommentRecord, fromCommentRecord, setGlobalVerbose, sumReactions, sumPositiveReactions, sumNegativeReactions } from '@app/utils/github/utils';
 import type {
   IssueCommandOptions,
   GitHubIssue,
@@ -314,6 +314,23 @@ export async function issueCommand(
     setGlobalVerbose(true);
   }
 
+  // Support comma-separated inputs: "123,456,789" or "#123,#456"
+  const inputs = input.split(',').map(s => s.trim()).filter(Boolean);
+  if (inputs.length > 1) {
+    for (let i = 0; i < inputs.length; i++) {
+      if (i > 0) console.log(chalk.dim('\n---\n'));
+      await issueSingleCommand(inputs[i], options);
+    }
+    return;
+  }
+
+  await issueSingleCommand(input, options);
+}
+
+async function issueSingleCommand(
+  input: string,
+  options: IssueCommandOptions
+): Promise<void> {
   // Initialize database
   getDatabase();
 
@@ -324,8 +341,8 @@ export async function issueCommand(
   const parsed = parseGitHubUrl(input, defaultRepo);
 
   if (!parsed) {
-    console.error(chalk.red('Invalid input. Please provide a GitHub issue URL or number.'));
-    process.exit(1);
+    console.error(chalk.red(`Invalid input: "${input}". Please provide a GitHub issue URL or number.`));
+    return;
   }
 
   const { owner, repo, number } = parsed;
@@ -386,6 +403,26 @@ export async function issueCommand(
   // Get issue ID from cache
   const issueRecord = getIssue(repoRecord.id, number)!;
 
+  // Check issue body reaction thresholds
+  if (issue.reactions) {
+    const totalR = sumReactions(issue.reactions);
+    const positiveR = sumPositiveReactions(issue.reactions);
+    const negativeR = sumNegativeReactions(issue.reactions);
+
+    if (options.minReactions !== undefined && totalR < options.minReactions) {
+      console.log(chalk.yellow(`Issue #${number} has ${totalR} reactions (threshold: ${options.minReactions}). Skipping.`));
+      return;
+    }
+    if (options.minReactionsPositive !== undefined && positiveR < options.minReactionsPositive) {
+      console.log(chalk.yellow(`Issue #${number} has ${positiveR} positive reactions (threshold: ${options.minReactionsPositive}). Skipping.`));
+      return;
+    }
+    if (options.minReactionsNegative !== undefined && negativeR < options.minReactionsNegative) {
+      console.log(chalk.yellow(`Issue #${number} has ${negativeR} negative reactions (threshold: ${options.minReactionsNegative}). Skipping.`));
+      return;
+    }
+  }
+
   // Fetch comments
   let comments: CommentData[] = [];
   const wantsComments = options.comments !== false;
@@ -440,7 +477,7 @@ export async function issueCommand(
       if (options.last) {
         cachedRecords = getLastNComments(issueRecord.id, options.last, {
           excludeBots: options.noBots,
-          minReactions: options.minReactions,
+          minReactions: options.minCommentReactions,
           author: options.author,
         });
       } else {
@@ -449,7 +486,7 @@ export async function issueCommand(
           since: sinceId ? String(sinceId) : undefined,
           after: afterDate?.toISOString(),
           before: beforeDate?.toISOString(),
-          minReactions: options.minReactions,
+          minReactions: options.minCommentReactions,
           author: options.author,
           excludeBots: options.noBots,
         });
@@ -463,8 +500,14 @@ export async function issueCommand(
       comments = comments.filter(c => !c.isBot);
     }
 
-    if (options.minReactions !== undefined) {
-      comments = comments.filter(c => c.reactions.total_count >= options.minReactions!);
+    if (options.minCommentReactions !== undefined) {
+      comments = comments.filter(c => sumReactions(c.reactions) >= options.minCommentReactions!);
+    }
+    if (options.minCommentReactionsPositive !== undefined) {
+      comments = comments.filter(c => sumPositiveReactions(c.reactions) >= options.minCommentReactionsPositive!);
+    }
+    if (options.minCommentReactionsNegative !== undefined) {
+      comments = comments.filter(c => sumNegativeReactions(c.reactions) >= options.minCommentReactionsNegative!);
     }
 
     if (options.author) {
@@ -591,7 +634,7 @@ export async function issueCommand(
 export function createIssueCommand(): Command {
   const cmd = new Command('issue')
     .description('Fetch GitHub issue details and comments')
-    .argument('<input>', 'Issue number or URL')
+    .argument('<input>', 'Issue number, URL, or comma-separated numbers (e.g. 123,456,789)')
     .option('-r, --repo <owner/repo>', 'Repository (auto-detected from URL or git)')
     .option('-c, --comments', 'Include comments (default: true)', true)
     .option('--no-comments', 'Exclude comments')
@@ -602,7 +645,12 @@ export function createIssueCommand(): Command {
     .option('--since <id|url>', 'Comments after this ID/URL')
     .option('--after <date>', 'Comments after date')
     .option('--before <date>', 'Comments before date')
-    .option('--min-reactions <n>', 'Min reaction count filter', parseInt)
+    .option('--min-reactions <n>', 'Min total reactions on issue/PR body', parseInt)
+    .option('--min-reactions-positive <n>', 'Min positive reactions on issue/PR body', parseInt)
+    .option('--min-reactions-negative <n>', 'Min negative reactions on issue/PR body', parseInt)
+    .option('--min-comment-reactions <n>', 'Min total reactions on comments', parseInt)
+    .option('--min-comment-reactions-positive <n>', 'Min positive reactions on comments', parseInt)
+    .option('--min-comment-reactions-negative <n>', 'Min negative reactions on comments', parseInt)
     .option('--author <user>', 'Filter by author')
     .option('--no-bots', 'Exclude bot comments')
     .option('--include-events', 'Include timeline events')

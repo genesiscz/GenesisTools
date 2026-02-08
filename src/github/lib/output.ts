@@ -8,6 +8,7 @@ import type {
   SearchResult,
   GitHubReactions,
 } from '@app/github/types';
+import { sumReactions } from '@app/utils/github/utils';
 
 type OutputFormat = 'ai' | 'md' | 'json';
 
@@ -87,6 +88,12 @@ function formatIssueSummary(data: IssueData, options: FormatOptions): string {
   // Quick metadata
   lines.push(`**Repo:** ${data.owner}/${data.repo} | **State:** ${data.issue.state} | **Author:** @${data.issue.user?.login || 'unknown'}`);
   lines.push(`**Created:** ${formatDate(data.issue.created_at)} | **Updated:** ${formatDate(data.issue.updated_at)}`);
+  if (data.issue.reactions) {
+    const reactionStr = formatReactions(data.issue.reactions);
+    if (reactionStr) {
+      lines.push(`**Reactions:** ${reactionStr}`);
+    }
+  }
   lines.push('');
 
   // Index (always included in AI format)
@@ -185,6 +192,12 @@ function formatIssueMarkdown(data: IssueData, options: FormatOptions): string {
   lines.push(`**Repository:** ${data.owner}/${data.repo}`);
   lines.push(`**State:** ${data.issue.state} | **Author:** @${data.issue.user?.login || 'unknown'}`);
   lines.push(`**Created:** ${formatDate(data.issue.created_at)} | **Updated:** ${formatDate(data.issue.updated_at)}`);
+  if (data.issue.reactions) {
+    const reactionStr = formatReactions(data.issue.reactions);
+    if (reactionStr) {
+      lines.push(`**Reactions:** ${reactionStr}`);
+    }
+  }
 
   if (data.issue.labels.length > 0) {
     lines.push(`**Labels:** ${data.issue.labels.map(l => l.name).join(', ')}`);
@@ -412,17 +425,18 @@ function formatSearchMarkdown(results: SearchResult[]): string {
   lines.push('');
 
   if (hasSource) {
-    lines.push('| # | Type | Title | State | Author | Repo | Src |');
-    lines.push('|---|------|-------|-------|--------|------|-----|');
+    lines.push('| # | Type | Title | State | Author | Reactions | Repo | Src |');
+    lines.push('|---|------|-------|-------|--------|-----------|------|-----|');
   } else {
-    lines.push('| # | Type | Title | State | Author | Repo |');
-    lines.push('|---|------|-------|-------|--------|------|');
+    lines.push('| # | Type | Title | State | Author | Reactions | Repo |');
+    lines.push('|---|------|-------|-------|--------|-----------|------|');
   }
 
   for (const result of results) {
     const typeIcon = result.type === 'pr' ? '🔀' : '📋';
     const stateIcon = result.state === 'open' ? '🟢' : '🔴';
-    const baseRow = `| [#${result.number}](${result.url}) | ${typeIcon} | ${truncate(result.title, 50)} | ${stateIcon} ${result.state} | @${result.author} | ${result.repo} |`;
+    const reactionsCol = result.reactions > 0 ? String(result.reactions) : '-';
+    const baseRow = `| [#${result.number}](${result.url}) | ${typeIcon} | ${result.title} | ${stateIcon} ${result.state} | @${result.author} | ${reactionsCol} | ${result.repo} |`;
 
     if (hasSource) {
       const sourceTag = result.source === 'both' ? 'A+L'
@@ -544,7 +558,7 @@ function formatDateShort(dateStr: string): string {
 }
 
 function formatReactions(reactions: GitHubReactions): string {
-  if (!reactions || reactions.total_count === 0) {
+  if (!reactions || sumReactions(reactions) === 0) {
     return '';
   }
 
@@ -571,9 +585,7 @@ function formatReactions(reactions: GitHubReactions): string {
 }
 
 function truncate(text: string, maxLength: number): string {
-  if (text.length <= maxLength) {
-    return text;
-  }
+  if (text.length <= maxLength) return text;
   return text.slice(0, maxLength - 3) + '...';
 }
 
@@ -601,7 +613,7 @@ export function calculateStats(comments: CommentData[], totalInCache: number = 0
 
     // Reaction counts
     if (comment.reactions) {
-      totalReactions += comment.reactions.total_count;
+      totalReactions += sumReactions(comment.reactions);
       for (const [key, value] of Object.entries(comment.reactions)) {
         if (key !== 'total_count' && typeof value === 'number') {
           reactionCounts[key] = (reactionCounts[key] || 0) + value;

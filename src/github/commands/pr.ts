@@ -4,12 +4,12 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
-import { getOctokit } from '@app/github/lib/octokit';
-import { withRetry } from '@app/github/lib/rate-limit';
-import { parseGitHubUrl, detectRepoFromGit } from '@app/github/lib/url-parser';
+import { getOctokit } from '@app/utils/github/octokit';
+import { withRetry } from '@app/utils/github/rate-limit';
+import { parseGitHubUrl, detectRepoFromGit } from '@app/utils/github/url-parser';
 import { getDatabase, getOrCreateRepo, upsertIssue } from '@app/github/lib/cache';
 import { formatPR } from '@app/github/lib/output';
-import { verbose, setGlobalVerbose } from '@app/github/lib/utils';
+import { verbose, setGlobalVerbose } from '@app/utils/github/utils';
 import type {
   PRCommandOptions,
   GitHubPullRequest,
@@ -384,7 +384,12 @@ export function createPRCommand(): Command {
     .option('--since <id|url>', 'Comments after this ID/URL')
     .option('--after <date>', 'Comments after date')
     .option('--before <date>', 'Comments before date')
-    .option('--min-reactions <n>', 'Min reaction count filter', parseInt)
+    .option('--min-reactions <n>', 'Min total reactions on PR body', parseInt)
+    .option('--min-reactions-positive <n>', 'Min positive reactions on PR body', parseInt)
+    .option('--min-reactions-negative <n>', 'Min negative reactions on PR body', parseInt)
+    .option('--min-comment-reactions <n>', 'Min total reactions on comments', parseInt)
+    .option('--min-comment-reactions-positive <n>', 'Min positive reactions on comments', parseInt)
+    .option('--min-comment-reactions-negative <n>', 'Min negative reactions on comments', parseInt)
     .option('--author <user>', 'Filter by author')
     .option('--no-bots', 'Exclude bot comments')
     .option('--include-events', 'Include timeline events')

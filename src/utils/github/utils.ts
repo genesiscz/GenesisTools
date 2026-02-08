@@ -1,7 +1,7 @@
 // Shared utility functions for GitHub commands
 
 import chalk from 'chalk';
-import type { CommentData, CommentRecord } from '@app/github/types';
+import type { CommentData, CommentRecord, GitHubReactions } from '@app/github/types';
 
 /**
  * Global verbose state for HTTP request logging
@@ -43,6 +43,31 @@ export function verbose<T extends VerboseOptions>(options: T, message: string): 
 }
 
 /**
+ * Sum ALL reactions generically (iterates all numeric keys, skips total_count).
+ * Future-proof: if GitHub adds new reaction types, they're included automatically.
+ */
+export function sumReactions(reactions: GitHubReactions): number {
+  let sum = 0;
+  for (const [key, value] of Object.entries(reactions)) {
+    if (key !== 'total_count' && typeof value === 'number') {
+      sum += value;
+    }
+  }
+  return sum;
+}
+
+const POSITIVE_REACTIONS: (keyof GitHubReactions)[] = ['+1', 'laugh', 'hooray', 'heart', 'rocket', 'eyes'];
+const NEGATIVE_REACTIONS: (keyof GitHubReactions)[] = ['-1', 'confused'];
+
+export function sumPositiveReactions(reactions: GitHubReactions): number {
+  return POSITIVE_REACTIONS.reduce((sum, key) => sum + ((reactions[key] as number) || 0), 0);
+}
+
+export function sumNegativeReactions(reactions: GitHubReactions): number {
+  return NEGATIVE_REACTIONS.reduce((sum, key) => sum + ((reactions[key] as number) || 0), 0);
+}
+
+/**
  * Convert comment data to cache record
  */
 export function toCommentRecord(comment: CommentData, issueId: number): CommentRecord {
@@ -53,7 +78,7 @@ export function toCommentRecord(comment: CommentData, issueId: number): CommentR
     body: comment.body,
     created_at: comment.createdAt,
     updated_at: comment.updatedAt,
-    reaction_count: comment.reactions.total_count,
+    reaction_count: sumReactions(comment.reactions),
     reactions_json: JSON.stringify(comment.reactions),
     is_bot: comment.isBot ? 1 : 0,
   };

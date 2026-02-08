@@ -10,8 +10,8 @@ import { createCommentsCommand, commentsCommand } from '@app/github/commands/com
 import { createSearchCommand, searchCommand } from '@app/github/commands/search';
 import { createCodeSearchCommand } from '@app/github/commands/code-search';
 import { createGetCommand, getCommand } from '@app/github/commands/get';
-import { checkAuth, getRateLimit } from '@app/github/lib/octokit';
-import { parseGitHubUrl, detectRepoFromGit } from '@app/github/lib/url-parser';
+import { checkAuth, getRateLimit } from '@app/utils/github/octokit';
+import { parseGitHubUrl, detectRepoFromGit } from '@app/utils/github/url-parser';
 import { getCacheStats, closeDatabase } from '@app/github/lib/cache';
 import { enhanceHelp } from '@app/utils/cli';
 import logger from '@app/logger';

@@ -2,11 +2,12 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { getOctokit } from '@app/github/lib/octokit';
-import { withRetry } from '@app/github/lib/rate-limit';
-import { parseRepo } from '@app/github/lib/url-parser';
+import { getOctokit } from '@app/utils/github/octokit';
+import { withRetry } from '@app/utils/github/rate-limit';
+import { parseRepo } from '@app/utils/github/url-parser';
 import { formatSearchResults } from '@app/github/lib/output';
-import { verbose, setGlobalVerbose } from '@app/github/lib/utils';
+import { verbose, setGlobalVerbose } from '@app/utils/github/utils';
+import { batchFetchCommentReactions } from '@app/utils/github/graphql';
 import type { SearchCommandOptions, SearchResult } from '@app/github/types';
 import logger from '@app/logger';
 
@@ -49,6 +50,10 @@ function buildBaseQuery(query: string, options: SearchCommandOptions): string {
     searchQuery += ' is:open';
   } else if (options.state === 'closed') {
     searchQuery += ' is:closed';
+  }
+
+  if (options.minReactions !== undefined) {
+    searchQuery += ` reactions:>=${options.minReactions}`;
   }
 
   return searchQuery;
@@ -235,9 +240,63 @@ export async function searchCommand(
 
   verbose(options, `Found ${results.length} results`);
 
+  // Client-side safety filter for issue-level reactions
+  if (options.minReactions !== undefined) {
+    results = results.filter(r => r.reactions >= options.minReactions!);
+  }
+
+  // GraphQL-based comment reaction filter
+  let preFilterResults: SearchResult[] | undefined;
+  if (options.minCommentReactions !== undefined && results.length > 0) {
+    // Estimate cost using actual comment counts from search results (capped at 100 since GraphQL fetches first:100)
+    const totalComments = results.reduce((sum, r) => sum + Math.min(r.comments, 100), 0);
+    const estimatedCost = results.length * 2 + totalComments; // 2 per issue (node + connection) + 1 per comment node
+    const issueList = results.map(r => `#${r.number} (${r.comments} comments)`).join(', ');
+
+    console.log('');
+    console.log(chalk.yellow(`⚠ GraphQL comment scan: ${results.length} issues, ${totalComments} comments (~${estimatedCost} of 5,000/hr points)`));
+    console.log(chalk.dim(`  ${issueList}`));
+    console.log(chalk.dim(`  Tip: To check specific issues instead:`));
+    console.log(chalk.cyan(`    tools github issue <number>,<number> --repo ${results[0]?.repo || 'owner/repo'} --min-comment-reactions ${options.minCommentReactions}`));
+    console.log('');
+
+    preFilterResults = [...results];
+
+    // Group results by repo
+    const byRepo = new Map<string, SearchResult[]>();
+    for (const r of results) {
+      const existing = byRepo.get(r.repo) || [];
+      existing.push(r);
+      byRepo.set(r.repo, existing);
+    }
+
+    // Batch-fetch comment reactions per repo
+    const keep = new Set<string>();
+    for (const [repoFullName, repoResults] of byRepo) {
+      const [repoOwner, repoName] = repoFullName.split('/');
+      const numbers = repoResults.map(r => r.number);
+      const reactions = await batchFetchCommentReactions(repoOwner, repoName, numbers);
+
+      for (const [num, info] of reactions) {
+        if (info.maxCommentReactions >= options.minCommentReactions!) {
+          keep.add(`${repoFullName}#${num}`);
+        }
+      }
+    }
+
+    results = results.filter(r => keep.has(`${r.repo}#${r.number}`));
+    console.log(chalk.dim(`Filtered to ${results.length} of ${preFilterResults.length} results with comment reactions >= ${options.minCommentReactions}`));
+  }
+
   if (results.length === 0) {
-    console.log(chalk.yellow('No results found.'));
-    return;
+    // If comment-reaction filter eliminated everything, still show the original search results
+    if (preFilterResults && preFilterResults.length > 0) {
+      console.log(chalk.yellow(`\nNo issues matched --min-comment-reactions ${options.minCommentReactions}. Showing all ${preFilterResults.length} search results:\n`));
+      results = preFilterResults;
+    } else {
+      console.log(chalk.yellow('No results found.'));
+      return;
+    }
   }
 
   // Format output
@@ -274,6 +333,8 @@ export function createSearchCommand(): Command {
     .option('-f, --format <format>', 'Output format: ai|md|json', 'ai')
     .option('--advanced', 'Use only advanced search backend')
     .option('--legacy', 'Use only legacy search backend')
+    .option('--min-reactions <n>', 'Min reaction count on issue/PR', parseInt)
+    .option('--min-comment-reactions <n>', 'Min reactions on any comment (uses GraphQL, slower)', parseInt)
     .option('-o, --output <file>', 'Output path')
     .option('-v, --verbose', 'Enable verbose logging')
     .action(async (query, opts) => {

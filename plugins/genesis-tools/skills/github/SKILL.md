@@ -21,8 +21,11 @@ Search, fetch, and analyze GitHub issues, PRs, and comments with caching.
 | Get issue with comments | `tools github issue <url>` |
 | Get last 5 comments | `tools github issue <url> --last 5` |
 | Comments since specific one | `tools github comments <url>#issuecomment-123 --since 123` |
-| High-reaction comments | `tools github issue <url> --min-reactions 10` |
+| Filter issue by body reactions | `tools github issue <url> --min-reactions 10` |
+| Filter comments by reactions | `tools github issue <url> --min-comment-reactions 5` |
+| Filter by positive reactions | `tools github issue <url> --min-reactions-positive 3` |
 | Exclude bots | `tools github issue <url> --no-bots` |
+| Search with min reactions | `tools github search "bug" --repo owner/repo --min-reactions 10` |
 | Search issues | `tools github search "error" --repo owner/repo --state open` |
 | Get PR with review comments | `tools github pr <url> --review-comments` |
 | Check auth status | `tools github status` |
@@ -101,8 +104,14 @@ tools github issue <url> --last 10
 # Exclude bot comments
 tools github issue <url> --no-bots
 
-# Only high-value comments
-tools github issue <url> --min-reactions 5
+# Only comments with 5+ total reactions
+tools github issue <url> --min-comment-reactions 5
+
+# Only comments with positive reactions
+tools github issue <url> --min-comment-reactions-positive 3
+
+# Issue must have 10+ body reactions (skips if below threshold)
+tools github issue <url> --min-reactions 10
 
 # Comments by specific author
 tools github issue <url> --author username
@@ -130,6 +139,16 @@ tools github search "refactor" --type pr --repo owner/repo
 
 # Sort by reactions
 tools github search "bug" --sort reactions --limit 50
+
+# Search with minimum reaction count on issue/PR
+tools github search "feature request" --repo owner/repo --min-reactions 5
+
+# Search with minimum comment reactions (uses GraphQL, slower)
+tools github search "bug" --repo owner/repo --min-comment-reactions 3
+
+# Use only advanced or legacy search backend
+tools github search "error" --repo owner/repo --advanced
+tools github search "error" --repo owner/repo --legacy
 ```
 
 ### Search Code (Files)
@@ -188,8 +207,8 @@ tools github pr <url> --checks
 - **Default storage:** `~/.genesis-tools/github/cache.db`
 - **With `--save-locally`:** `<cwd>/.claude/github/`
 - SQLite cache enables fast subsequent queries
-- Incremental fetching saves API calls
-- `--refresh` updates cache with new data
+- Auto-incremental: refreshes comments if cache > 5 min old
+- `--refresh` forces incremental update regardless of age
 - `--full` forces complete refetch
 
 ### Refresh Patterns
@@ -226,29 +245,36 @@ tools github issue <url> --full
 tools github issue <input> [options]
 
 Options:
-  -r, --repo <owner/repo>   Repository (auto-detected)
-  -c, --comments            Include comments (default: true)
-  -L, --limit <n>           Limit comments (default: 30)
-  --all                     Fetch all comments
-  --last <n>                Last N comments only
-  --since <id|url>          Comments after this ID/URL
-  --after <date>            Comments after date
-  --before <date>           Comments before date
-  --min-reactions <n>       Min reaction count
-  --author <user>           Filter by author
-  --no-bots                 Exclude bots
-  --include-events          Include timeline events
-  --resolve-refs            Fetch linked issues
-  --full                    Force full refetch
-  --refresh                 Update cache
-  --save-locally            Save to .claude/github/
-  -f, --format <format>     Output: ai|md|json
-  -o, --output <file>       Custom output path
-  --stats                   Show comment statistics
+  -r, --repo <owner/repo>                Repository (auto-detected)
+  -c, --comments                         Include comments (default: true)
+  -L, --limit <n>                        Limit comments (default: 30)
+  --all                                  Fetch all comments
+  --first <n>                            First N comments only
+  --last <n>                             Last N comments only
+  --since <id|url>                       Comments after this ID/URL
+  --after <date>                         Comments after date
+  --before <date>                        Comments before date
+  --min-reactions <n>                    Min total reactions on issue/PR body
+  --min-reactions-positive <n>           Min positive reactions on issue/PR body
+  --min-reactions-negative <n>           Min negative reactions on issue/PR body
+  --min-comment-reactions <n>            Min total reactions on comments
+  --min-comment-reactions-positive <n>   Min positive reactions on comments
+  --min-comment-reactions-negative <n>   Min negative reactions on comments
+  --author <user>                        Filter by author
+  --no-bots                              Exclude bots
+  --include-events                       Include timeline events
+  --no-resolve-refs                      Skip resolving linked issues (auto by default)
+  --full                                 Force full refetch
+  --refresh                              Update cache
+  --save-locally                         Save to .claude/github/
+  -f, --format <format>                  Output: ai|md|json
+  -o, --output <file>                    Custom output path
+  --stats                                Show comment statistics
+  -v, --verbose                          Enable verbose logging
 ```
 
 ### PR Command
-Same as issue, plus:
+Same as issue (including all reaction filters), plus:
 ```
   --review-comments         Include review thread comments
   --diff                    Include PR diff
@@ -261,12 +287,18 @@ Same as issue, plus:
 tools github search <query> [options]
 
 Options:
-  --type <type>             Filter: issue|pr|all
-  -r, --repo <owner/repo>   Limit to repository
-  --state <state>           Filter: open|closed|all
-  --sort <field>            Sort: created|updated|comments|reactions
-  -L, --limit <n>           Max results (default: 30)
-  -f, --format <format>     Output format
+  --type <type>                Filter: issue|pr|all
+  -r, --repo <owner/repo>     Limit to repository
+  --state <state>              Filter: open|closed|all
+  --sort <field>               Sort: created|updated|comments|reactions
+  -L, --limit <n>              Max results (default: 30)
+  --min-reactions <n>          Min reaction count on issue/PR
+  --min-comment-reactions <n>  Min reactions on any comment (GraphQL, slower)
+  --advanced                   Use only advanced search backend
+  --legacy                     Use only legacy search backend
+  -f, --format <format>        Output format
+  -o, --output <file>          Output path
+  -v, --verbose                Enable verbose logging
 ```
 
 ### Get Command

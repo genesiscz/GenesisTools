@@ -2,12 +2,14 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { getOctokit } from '@app/github/lib/octokit';
-import { withRetry } from '@app/github/lib/rate-limit';
-import { parseGitHubUrl, extractCommentId, detectRepoFromGit } from '@app/github/lib/url-parser';
+import { mkdirSync, existsSync } from 'fs';
+import { join } from 'path';
+import { getOctokit } from '@app/utils/github/octokit';
+import { withRetry } from '@app/utils/github/rate-limit';
+import { parseGitHubUrl, extractCommentId, detectRepoFromGit } from '@app/utils/github/url-parser';
 import { processQuotes, findReplyTarget } from '@app/github/lib/quotes';
 import { formatIssue, calculateStats } from '@app/github/lib/output';
-import { verbose, toCommentRecord, fromCommentRecord, setGlobalVerbose } from '@app/github/lib/utils';
+import { verbose, toCommentRecord, fromCommentRecord, setGlobalVerbose, sumReactions, sumPositiveReactions, sumNegativeReactions } from '@app/utils/github/utils';
 import {
   getDatabase,
   getOrCreateRepo,
@@ -33,6 +35,8 @@ interface CommentsCommandOptions {
   first?: number;
   last?: number;
   minReactions?: number;
+  minReactionsPositive?: number;
+  minReactionsNegative?: number;
   author?: string;
   noBots?: boolean;
   format?: 'ai' | 'md' | 'json';
@@ -59,6 +63,12 @@ const KNOWN_BOTS = [
   'greenkeeper',
   'snyk-bot',
 ];
+
+function formatCacheDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  return d.toISOString().replace('T', ' ').slice(0, 16);
+}
 
 function isBot(username: string, userType?: string): boolean {
   if (userType === 'Bot') return true;
@@ -228,12 +238,17 @@ export async function commentsCommand(
 
   // Determine fetch strategy:
   // - full: force complete refetch
-  // - refresh: incremental update (fetch new comments since last fetch)
-  // - no flag + has cache: use cache only
-  // - no flag + no cache: full fetch
+  // - refresh / cache > 5 min old: incremental update
+  // - fresh cache (< 5 min): use cache only
+  // - no cache: full fetch
   const hasCache = !!metadata?.last_full_fetch;
   const shouldFullFetch = options.full || !hasCache;
-  const shouldIncrementalFetch = options.refresh && hasCache && metadata?.last_comment_date;
+  const cacheAgeMs = metadata?.last_incremental_fetch
+    ? Date.now() - new Date(metadata.last_incremental_fetch).getTime()
+    : Infinity;
+  const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  const shouldIncrementalFetch = !shouldFullFetch && hasCache && metadata?.last_comment_date
+    && (options.refresh || cacheAgeMs > CACHE_TTL_MS);
 
   let comments: CommentData[] = [];
   let fetchedNew = 0;
@@ -315,8 +330,11 @@ export async function commentsCommand(
     comments = cachedRecords.map(fromCommentRecord);
     verbose(options, `Retrieved ${comments.length} total comments from cache`);
   } else {
-    // Use cache only (no fetch)
-    verbose(options, 'Using cached comments (no fetch)');
+    // Use cache only (fresh enough)
+    const lastFull = metadata?.last_full_fetch ? formatCacheDate(metadata.last_full_fetch) : 'never';
+    const lastIncr = metadata?.last_incremental_fetch ? formatCacheDate(metadata.last_incremental_fetch) : 'never';
+    const ageMin = Math.round(cacheAgeMs / 60000);
+    console.log(chalk.dim(`Using cached comments (${ageMin}m old, last full: ${lastFull}, last update: ${lastIncr})`));
 
     let cachedRecords: CommentRecord[];
     if (options.last) {
@@ -346,7 +364,13 @@ export async function commentsCommand(
     }
 
     if (options.minReactions !== undefined) {
-      comments = comments.filter(c => c.reactions.total_count >= options.minReactions!);
+      comments = comments.filter(c => sumReactions(c.reactions) >= options.minReactions!);
+    }
+    if (options.minReactionsPositive !== undefined) {
+      comments = comments.filter(c => sumPositiveReactions(c.reactions) >= options.minReactionsPositive!);
+    }
+    if (options.minReactionsNegative !== undefined) {
+      comments = comments.filter(c => sumNegativeReactions(c.reactions) >= options.minReactionsNegative!);
     }
 
     if (options.author) {
@@ -400,25 +424,44 @@ export async function commentsCommand(
   // Format output
   const format = options.format || 'ai';
   verbose(options, `Output format: ${format}`);
-  const output = formatIssue(outputData, format, { noIndex: options.noIndex });
 
-  // Handle output
-  if (options.output) {
-    await Bun.write(options.output, output);
-    console.log(chalk.green(`✔ Output written to ${options.output}`));
+  if (format === 'ai' && !options.output) {
+    // Auto-save full MD content so AI index line numbers reference an actual file
+    const localDir = join(process.cwd(), '.claude', 'github');
+    if (!existsSync(localDir)) {
+      mkdirSync(localDir, { recursive: true });
+    }
+    const filename = join(localDir, `${owner}-${repo}-${number}-comments.md`);
+    const fullContent = formatIssue(outputData, 'md', { noIndex: options.noIndex });
+    await Bun.write(filename, fullContent);
+    verbose(options, `Full content saved to: ${filename}`);
+
+    const summary = formatIssue(outputData, 'ai', { noIndex: options.noIndex, filePath: filename });
+    console.log(summary);
   } else {
-    console.log(output);
+    const output = formatIssue(outputData, format, { noIndex: options.noIndex });
+    if (options.output) {
+      await Bun.write(options.output, output);
+      console.log(chalk.green(`✔ Output written to ${options.output}`));
+    } else {
+      console.log(output);
+    }
   }
   verbose(options, `Completed: ${comments.length} comments`);
 
   // Build status message
   let cacheStatus: string;
   if (shouldFullFetch) {
-    cacheStatus = '(full fetch)';
+    cacheStatus = `(full fetch, ${fetchedNew} comments)`;
   } else if (shouldIncrementalFetch) {
-    cacheStatus = fetchedNew > 0 ? `(+${fetchedNew} new)` : '(up to date)';
+    const updatedMeta = getFetchMetadata(issueRecord.id);
+    const lastUpdate = updatedMeta?.last_incremental_fetch ? formatCacheDate(updatedMeta.last_incremental_fetch) : 'now';
+    cacheStatus = fetchedNew > 0
+      ? `(+${fetchedNew} new, updated ${lastUpdate})`
+      : `(up to date, last update: ${lastUpdate})`;
   } else {
-    cacheStatus = '(cached)';
+    const ageMin = Math.round(cacheAgeMs / 60000);
+    cacheStatus = `(cached, ${ageMin}m old)`;
   }
   console.log(chalk.dim(`\nFetched: ${comments.length} comments ${cacheStatus}${sinceId ? ` (since comment ${sinceId})` : ''}`));
 }
@@ -434,7 +477,9 @@ export function createCommentsCommand(): Command {
     .option('--since <id|url>', 'Start from specific comment')
     .option('--first <n>', 'First N comments', parseInt)
     .option('--last <n>', 'Last N comments', parseInt)
-    .option('--min-reactions <n>', 'Filter by reactions', parseInt)
+    .option('--min-reactions <n>', 'Min total reactions', parseInt)
+    .option('--min-reactions-positive <n>', 'Min positive reactions', parseInt)
+    .option('--min-reactions-negative <n>', 'Min negative reactions', parseInt)
     .option('--author <user>', 'Filter by author')
     .option('--no-bots', 'Exclude bots')
     .option('--full', 'Force full refetch (ignore cache)')

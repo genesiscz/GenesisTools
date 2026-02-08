@@ -188,6 +188,11 @@ export interface IssueCommandOptions {
   after?: string;
   before?: string;
   minReactions?: number;
+  minReactionsPositive?: number;
+  minReactionsNegative?: number;
+  minCommentReactions?: number;
+  minCommentReactionsPositive?: number;
+  minCommentReactionsNegative?: number;
   author?: string;
   noBots?: boolean;
   includeEvents?: boolean;
@@ -222,6 +227,8 @@ export interface SearchCommandOptions {
   verbose?: boolean;
   advanced?: boolean;
   legacy?: boolean;
+  minReactions?: number;
+  minCommentReactions?: number;
 }
 
 // Output data structures
