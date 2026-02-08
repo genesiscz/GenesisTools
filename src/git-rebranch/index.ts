@@ -363,7 +363,7 @@ async function nameGroups(git: GitInstance, groups: CommitGroup[], sourceBranch:
 				defaultValue: suggestion,
 				validate: (value: string | undefined) => {
 					if (!value?.trim()) return "Branch name cannot be empty.";
-					if (/[~^: \\]/.test(value)) return "Invalid characters in branch name.";
+if (/[~^: \\?*\\[]/.test(value) || value.includes('..') || value.startsWith('/') || value.endsWith('/')) return "Branch name contains invalid characters or sequences.";
 					return undefined;
 				},
 			}),
