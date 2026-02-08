@@ -406,18 +406,33 @@ function formatPRMarkdown(data: PRData, options: FormatOptions): string {
 
 function formatSearchMarkdown(results: SearchResult[]): string {
   const lines: string[] = [];
+  const hasSource = results.some(r => r.source);
 
   lines.push(`# Search Results (${results.length})`);
   lines.push('');
-  lines.push('| # | Type | Title | State | Author | Repo |');
-  lines.push('|---|------|-------|-------|--------|------|');
+
+  if (hasSource) {
+    lines.push('| # | Type | Title | State | Author | Repo | Src |');
+    lines.push('|---|------|-------|-------|--------|------|-----|');
+  } else {
+    lines.push('| # | Type | Title | State | Author | Repo |');
+    lines.push('|---|------|-------|-------|--------|------|');
+  }
 
   for (const result of results) {
     const typeIcon = result.type === 'pr' ? '🔀' : '📋';
     const stateIcon = result.state === 'open' ? '🟢' : '🔴';
-    lines.push(
-      `| [#${result.number}](${result.url}) | ${typeIcon} | ${truncate(result.title, 50)} | ${stateIcon} ${result.state} | @${result.author} | ${result.repo} |`
-    );
+    const baseRow = `| [#${result.number}](${result.url}) | ${typeIcon} | ${truncate(result.title, 50)} | ${stateIcon} ${result.state} | @${result.author} | ${result.repo} |`;
+
+    if (hasSource) {
+      const sourceTag = result.source === 'both' ? 'A+L'
+        : result.source === 'advanced' ? 'A'
+        : result.source === 'legacy' ? 'L'
+        : '';
+      lines.push(`${baseRow} ${sourceTag} |`);
+    } else {
+      lines.push(baseRow);
+    }
   }
 
   lines.push('');

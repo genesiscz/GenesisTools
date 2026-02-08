@@ -220,6 +220,8 @@ export interface SearchCommandOptions {
   format?: 'ai' | 'md' | 'json';
   output?: string;
   verbose?: boolean;
+  advanced?: boolean;
+  legacy?: boolean;
 }
 
 // Output data structures
@@ -318,4 +320,5 @@ export interface SearchResult {
   reactions: number;
   repo: string;
   url: string;
+  source?: 'advanced' | 'legacy' | 'both';
 }

@@ -56,6 +56,9 @@ async function searchCode(
       octokit.rest.search.code({
         q: searchQuery,
         per_page: options.limit || 30,
+        headers: {
+          accept: 'application/vnd.github.text-match+json',
+        },
       }),
     { label: `GET /search/code?q=${encodeURIComponent(searchQuery.slice(0, 50))}...` }
   );
