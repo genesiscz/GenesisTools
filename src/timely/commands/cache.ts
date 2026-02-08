@@ -61,14 +61,4 @@ export function registerCacheCommand(program: Command, storage: Storage): void {
             }
         });
 
-    // Default action when no subcommand is provided
-    cacheCmd.action(() => {
-        console.log(`
-Usage: tools timely cache <subcommand>
-
-Subcommands:
-  list    List all cached files
-  clear   Clear the cache
-`);
-    });
 }

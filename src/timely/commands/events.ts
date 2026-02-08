@@ -4,7 +4,8 @@ import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
 import { TimelyService } from "@app/timely/api/service";
 import { formatDuration } from "@app/timely/utils/date";
-import type { TimelyEvent } from "@app/timely/types";
+import { fetchMemoriesForDates, buildSubEntryMap } from "@app/timely/utils/memories";
+import type { TimelyEvent, TimelyEventSlim, TimelyEntry, OAuth2Tokens } from "@app/timely/types";
 
 export function registerEventsCommand(program: Command, storage: Storage, service: TimelyService): void {
     program
@@ -15,6 +16,9 @@ export function registerEventsCommand(program: Command, storage: Storage, servic
         .option("--since <date>", "Start date (YYYY-MM-DD)")
         .option("--upto <date>", "End date (YYYY-MM-DD)")
         .option("--day <date>", "Single day (YYYY-MM-DD)")
+        .option("--without-details", "Omit full raw event objects in JSON format")
+        .option("--without-entries", "Skip fetching linked memories for each event")
+        .option("-v, --verbose", "Show debug info (entry fetching, cache hits)")
         .action(async (options) => {
             await eventsAction(storage, service, options);
         });
@@ -26,6 +30,27 @@ interface EventsOptions {
     since?: string;
     upto?: string;
     day?: string;
+    withoutDetails?: boolean;
+    withoutEntries?: boolean;
+    verbose?: boolean;
+}
+
+function slimEvent(event: TimelyEvent): TimelyEventSlim {
+    const d = event.duration;
+    const durationStr = `${String(d.hours).padStart(2, "0")}:${String(d.minutes).padStart(2, "0")}`;
+    return {
+        id: event.id,
+        day: event.day,
+        project: { id: event.project?.id ?? 0, name: event.project?.name ?? "No Project" },
+        duration: durationStr,
+        note: event.note,
+        from: event.from || null,
+        to: event.to || null,
+        entry_ids: event.entry_ids ?? [],
+        billed: event.billed,
+        billable: event.billable,
+        cost: event.cost?.amount ?? 0,
+    };
 }
 
 async function eventsAction(storage: Storage, service: TimelyService, options: EventsOptions): Promise<void> {
@@ -58,9 +83,84 @@ async function eventsAction(storage: Storage, service: TimelyService, options: E
         return;
     }
 
+    // Fetch linked memories if requested
+    if (!options.withoutEntries) {
+        const tokens = await storage.getConfigValue<OAuth2Tokens>("tokens");
+        if (!tokens?.access_token) {
+            logger.error("Not authenticated. Run 'tools timely login' first.");
+            process.exit(1);
+        }
+
+        const dates = [...new Set(events.map((e) => e.day))];
+        const verbose = options.verbose;
+
+        const result = await fetchMemoriesForDates({
+            accountId,
+            accessToken: tokens.access_token,
+            dates,
+            storage,
+            verbose,
+        });
+
+        const subEntryToMemory = buildSubEntryMap(result.entries);
+        if (verbose) logger.info(chalk.dim(`[entries] Built map: ${subEntryToMemory.size} sub-entry IDs`));
+
+        // Match event entry_ids to memories (deduplicated)
+        let matchedCount = 0;
+        let unmatchedCount = 0;
+        for (const event of events) {
+            if (event.entry_ids && event.entry_ids.length > 0) {
+                const seen = new Set<string>();
+                const matched: TimelyEntry[] = [];
+                for (const entryId of event.entry_ids) {
+                    const memory = subEntryToMemory.get(entryId);
+                    if (memory) {
+                        const key = `${memory.title}|${memory.note || ""}`;
+                        if (!seen.has(key)) {
+                            seen.add(key);
+                            matched.push(memory);
+                        }
+                    }
+                }
+                (event as TimelyEvent & { entries?: TimelyEntry[] }).entries = matched;
+                if (matched.length > 0) matchedCount++;
+                else unmatchedCount++;
+            }
+        }
+
+        if (verbose) logger.info(chalk.dim(`[entries] Matched: ${matchedCount} events, unmatched: ${unmatchedCount}`));
+    }
+
     // Output based on format
     if (options.format === "json") {
-        console.log(JSON.stringify(events, null, 2));
+        if (!options.withoutDetails) {
+            console.log(JSON.stringify(events, null, 2));
+        } else {
+            const slim = events.map((e) => {
+                const s = slimEvent(e);
+                const entries = (e as TimelyEvent & { entries?: TimelyEntry[] }).entries;
+                if (!options.withoutEntries && entries) {
+                    s.entries = entries.map((ent) => {
+                        const slim: Record<string, unknown> = {
+                            title: ent.title,
+                            note: ent.note || "",
+                            duration: { formatted: ent.duration.formatted },
+                        };
+                        // Sub-entries: API returns "entries" on suggested_entries, type uses "sub_entries"
+                        const subs = ent.sub_entries || (ent as unknown as Record<string, unknown>).entries as typeof ent.sub_entries;
+                        if (subs && subs.length > 0) {
+                            slim.sub_entries = subs.map((sub) => ({
+                                note: sub.note || "",
+                                duration: { formatted: sub.duration.formatted },
+                            }));
+                        }
+                        return slim;
+                    }) as unknown as TimelyEntry[];
+                }
+                return s;
+            });
+            console.log(JSON.stringify(slim, null, 2));
+        }
         return;
     }
 
@@ -106,10 +206,42 @@ async function eventsAction(storage: Storage, service: TimelyService, options: E
 
         console.log(chalk.bold(`${day} (${formatDuration(dayTotal)})`));
 
-        for (const event of dayEvents) {
-            const project = event.project?.name || "No Project";
-            const note = event.note.substring(0, 50) + (event.note.length > 50 ? "..." : "");
-            console.log(`  ${event.duration.formatted.padStart(8)} | ${project.padEnd(20)} | ${note}`);
+        // Calculate dynamic project column width
+        const maxProjectLen = Math.min(
+            20,
+            Math.max(7, ...dayEvents.map((e) => (e.project?.name || "No Project").length))
+        );
+
+        if (!options.withoutEntries) {
+            for (const event of dayEvents) {
+                const project = (event.project?.name || "No Project").padEnd(maxProjectLen);
+                const note = event.note ? ` ${chalk.dim(event.note)}` : "";
+                const fromTo = event.from && event.to ? chalk.dim(` ${event.from}-${event.to}`) : "";
+                console.log(`  ${chalk.bold(event.duration.formatted.padStart(5))} ${chalk.yellow(project)}${note}${fromTo}`);
+
+                const entries = (event as TimelyEvent & { entries?: TimelyEntry[] }).entries;
+                if (entries && entries.length > 0) {
+                    for (const ent of entries) {
+                        console.log(`  ${" ".repeat(5)} ${chalk.cyan(ent.title.padEnd(maxProjectLen))} ${chalk.dim(ent.duration.formatted)}`);
+                        // Sub-entries: API uses "entries", type uses "sub_entries"
+                        const subs = ent.sub_entries || (ent as unknown as Record<string, unknown>).entries as typeof ent.sub_entries;
+                        if (subs && subs.length > 0) {
+                            for (const sub of subs) {
+                                if (sub.note) {
+                                    const shortNote = sub.note.length > 60 ? sub.note.substring(0, 58) + ".." : sub.note;
+                                    console.log(`  ${" ".repeat(5)} ${" ".repeat(maxProjectLen)} ${chalk.dim(`${sub.duration.formatted} ${shortNote}`)}`);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            for (const event of dayEvents) {
+                const project = (event.project?.name || "No Project").padEnd(maxProjectLen);
+                const note = event.note || "";
+                console.log(`  ${event.duration.formatted.padStart(5)} ${project} ${note}`);
+            }
         }
         console.log();
     }
