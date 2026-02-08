@@ -12,6 +12,8 @@ import type {
     TimeLogUser,
     CreateTimeLogRequest,
     CreateTimeLogResponse,
+    TimeLogQueryParams,
+    TimeLogQueryEntry,
 } from "@app/azure-devops/types";
 
 export class TimeLogApi {
@@ -141,8 +143,24 @@ export class TimeLogApi {
      */
     async deleteTimeLogEntry(timeLogId: string): Promise<void> {
         logger.debug(`[timelog-api] Deleting time log: ${timeLogId}`);
-        await this.request<void>("DELETE", `/timelogs/${timeLogId}`);
+        await this.request<void>("DELETE", `/timelog/${timeLogId}`);
         logger.debug("[timelog-api] Time log deleted");
+    }
+
+    /**
+     * Query time logs across work items with filters
+     * Uses the /timelog/query endpoint
+     */
+    async queryTimeLogs(params: TimeLogQueryParams): Promise<TimeLogQueryEntry[]> {
+        const queryStr = new URLSearchParams();
+        if (params.FromDate) queryStr.set("FromDate", params.FromDate);
+        if (params.ToDate) queryStr.set("ToDate", params.ToDate);
+        if (params.projectId) queryStr.set("projectId", params.projectId);
+        if (params.workitemId) queryStr.set("workitemId", String(params.workitemId));
+        if (params.userId) queryStr.set("userId", params.userId);
+
+        logger.debug(`[timelog-api] Querying time logs with params: ${queryStr.toString()}`);
+        return this.request<TimeLogQueryEntry[]>("GET", `/timelog/query?${queryStr.toString()}`);
     }
 
     /**

@@ -100,12 +100,12 @@ async function wiqlSearch(options: SearchOptions, api: Api, config: AzureConfig)
     const wiql =
         assignedToValue && !options.state
             ? useCurrent
-                ? buildCombinedQuery({
+                ? {
                       currentAssignedTo: assignedToValue,
                       from: options.from,
                       to: options.to,
                       isMacro: isMeMacro,
-                  })
+                  }
                 : buildEverAssignedQuery(assignedToValue, options.from, options.to, isMeMacro)
             : buildCombinedQuery({
                   assignedTo: useCurrent ? undefined : assignedToValue,
@@ -203,7 +203,10 @@ function printWorkItemsTable(items: WorkItem[]): void {
     console.log("-".repeat(header.length));
 
     for (const item of items) {
-        const line = `${pad(String(item.id), 8)} ${pad(item.state, 14)} ${pad(item.assignee ?? "-", 24)} ${pad(item.title, 50)}`;
+        const line = `${pad(String(item.id), 8)} ${pad(item.state, 14)} ${pad(item.assignee ?? "-", 24)} ${pad(
+            item.title,
+            50
+        )}`;
         console.log(line);
     }
 
@@ -383,7 +386,10 @@ function printLocalResultsTable(results: LocalSearchResult[]): void {
     console.log("-".repeat(header.length));
 
     for (const r of results) {
-        const line = `${pad(String(r.workItemId), 8)} ${pad(formatDuration(r.totalMinutes), 10)} ${pad(r.currentState, 14)} ${pad(r.assignee, 24)} ${pad(r.title, 44)}`;
+        const line = `${pad(String(r.workItemId), 8)} ${pad(formatDuration(r.totalMinutes), 10)} ${pad(
+            r.currentState,
+            14
+        )} ${pad(r.assignee, 24)} ${pad(r.title, 44)}`;
         console.log(line);
     }
 

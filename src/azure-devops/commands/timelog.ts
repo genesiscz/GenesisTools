@@ -6,6 +6,9 @@ import { TimeLogApi, formatMinutes, convertToMinutes, getTodayDate } from "@app/
 import { loadTimeTypesCache, saveTimeTypesCache } from "@app/azure-devops/cache";
 import { runInteractiveAddClack } from "@app/azure-devops/timelog-prompts-clack";
 import { runInteractiveAddInquirer } from "@app/azure-devops/timelog-prompts-inquirer";
+import pc from "picocolors";
+import * as p from "@clack/prompts";
+import Table from "cli-table3";
 import logger from "@app/logger";
 import type { AzureConfigWithTimeLog, TimeType, TimeLogUser, TimeLogImportFile } from "@app/azure-devops/types";
 
@@ -13,6 +16,10 @@ import type { AzureConfigWithTimeLog, TimeType, TimeLogUser, TimeLogImportFile }
 // 1 = @clack/prompts (preferred)
 // 0 = @inquirer/prompts (fallback)
 const USE_CLACK = 1;
+
+function collectUsers(value: string, previous: string[]): string[] {
+    return previous.concat([value]);
+}
 
 async function runInteractiveAdd(
     config: AzureConfigWithTimeLog,
@@ -32,7 +39,8 @@ Usage: tools azure-devops timelog <command> [options]
 
 Commands:
   add      Add a time log entry to a work item
-  list     List time logs for a work item
+  list     List time logs (per work item or date range query)
+  delete   Delete a time log entry by ID
   types    List available time types
   import   Import time logs from JSON file
 
@@ -41,6 +49,11 @@ Examples:
   tools azure-devops timelog add --workitem 268935 --hours 1 --minutes 30 --type "Code Review" --comment "PR review"
   tools azure-devops timelog add --workitem 268935 --interactive
   tools azure-devops timelog list --workitem 268935
+  tools azure-devops timelog list --day 2026-01-30
+  tools azure-devops timelog list --since 2026-01-01 --upto 2026-01-31 --user "Martin"
+  tools azure-devops timelog list --day 2026-01-30 --format table
+  tools azure-devops timelog delete <timeLogId>
+  tools azure-devops timelog delete --workitem 268935   (interactive picker)
   tools azure-devops timelog types
   tools azure-devops timelog import entries.json
 
@@ -207,70 +220,177 @@ ${types.map((t) => `  - ${t.description}`).join("\n")}
 
     timelog
         .command("list")
-        .description("List time logs for a work item")
-        .requiredOption("-w, --workitem <id>", "Work item ID")
-        .option("--format <format>", "Output format: ai|md|json", "ai")
-        .action(async (options: { workitem: string; format?: string }) => {
-            const config = requireTimeLogConfig();
-            const user = requireTimeLogUser(config);
-            const workItemId = parseInt(options.workitem, 10);
+        .description("List time logs (per work item or cross-WI query)")
+        .option("-w, --workitem <id>", "Work item ID (optional with date filters)")
+        .option("--since <date>", "Start date (YYYY-MM-DD)")
+        .option("--upto <date>", "End date (YYYY-MM-DD)")
+        .option("--day <date>", "Single day (YYYY-MM-DD)")
+        .option("--user <name>", "Filter by user name (can repeat)", collectUsers, [])
+        .option("--format <format>", "Output format: ai|md|json|table", "ai")
+        .action(
+            async (options: {
+                workitem?: string;
+                since?: string;
+                upto?: string;
+                day?: string;
+                user?: string[];
+                format?: string;
+            }) => {
+                const config = requireTimeLogConfig();
+                const user = requireTimeLogUser(config);
+                const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
 
-            if (isNaN(workItemId)) {
-                console.error("❌ Invalid work item ID");
-                process.exit(1);
-            }
+                let entries: Array<{
+                    timeLogId: string;
+                    comment: string | null;
+                    timeTypeDescription: string;
+                    minutes: number;
+                    date: string;
+                    userName: string;
+                    userEmail?: string | null;
+                    workItemId?: number;
+                    week?: string;
+                }>;
 
-            const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+                const hasDateFilter = !!(options.since || options.upto || options.day);
+                const hasWorkItem = !!options.workitem;
 
-            const entries = await api.getWorkItemTimeLogs(workItemId);
+                if (hasWorkItem && !hasDateFilter) {
+                    // Backward compat: single work item query
+                    const workItemId = parseInt(options.workitem!, 10);
+                    if (isNaN(workItemId)) {
+                        console.error("❌ Invalid work item ID");
+                        process.exit(1);
+                    }
+                    const raw = await api.getWorkItemTimeLogs(workItemId);
+                    entries = raw.map((e) => ({ ...e, comment: e.comment || null, workItemId }));
+                } else if (hasDateFilter || !hasWorkItem) {
+                    // Cross-WI query
+                    if (!hasDateFilter && !hasWorkItem) {
+                        console.error("❌ Provide --workitem, --day, --since/--upto, or a combination");
+                        process.exit(1);
+                    }
+                    const fromDate = options.day || options.since;
+                    const toDate = options.day || options.upto;
+                    if (!fromDate) {
+                        console.error("❌ --since or --day is required for date queries");
+                        process.exit(1);
+                    }
 
-            if (options.format === "json") {
-                console.log(JSON.stringify(entries, null, 2));
-                return;
-            }
+                    const raw = await api.queryTimeLogs({
+                        FromDate: fromDate,
+                        ToDate: toDate || fromDate,
+                        projectId: config.projectId,
+                        workitemId: hasWorkItem ? parseInt(options.workitem!, 10) : undefined,
+                    });
+                    entries = raw;
+                } else {
+                    entries = [];
+                }
 
-            if (entries.length === 0) {
-                console.log(`No time logs found for work item #${workItemId}`);
-                return;
-            }
-
-            // Sort by date descending
-            entries.sort((a, b) => b.date.localeCompare(a.date));
-
-            // Calculate totals
-            const totalMinutes = entries.reduce((sum, e) => sum + e.minutes, 0);
-            const byType: Record<string, number> = {};
-            for (const entry of entries) {
-                byType[entry.timeTypeDescription] = (byType[entry.timeTypeDescription] || 0) + entry.minutes;
-            }
-
-            if (options.format === "md") {
-                console.log(`## Time Logs for #${workItemId}\n`);
-                console.log(`| Date | Type | Time | User | Comment |`);
-                console.log(`|------|------|------|------|---------|`);
-                for (const e of entries) {
-                    console.log(
-                        `| ${e.date} | ${e.timeTypeDescription} | ${formatMinutes(e.minutes)} | ${e.userName} | ${e.comment || "-"} |`
+                // Post-filter by user name
+                if (options.user && options.user.length > 0) {
+                    const userFilters = options.user.map((u) => u.toLowerCase());
+                    entries = entries.filter((e) =>
+                        userFilters.some((uf) => e.userName.toLowerCase().includes(uf))
                     );
                 }
-                console.log(`\n**Total: ${formatMinutes(totalMinutes)}**`);
-            } else {
-                // AI format
-                console.log(`Time Logs for Work Item #${workItemId}`);
-                console.log("=".repeat(40));
+
+                // Normalize date format (query returns "2026-01-30T00:00:00", per-WI returns "2026-01-30")
                 for (const e of entries) {
-                    console.log(`\n${e.date} - ${formatMinutes(e.minutes)} (${e.timeTypeDescription})`);
-                    console.log(`  User: ${e.userName}`);
-                    if (e.comment) console.log(`  Comment: ${e.comment}`);
+                    if (e.date.includes("T")) {
+                        e.date = e.date.split("T")[0];
+                    }
                 }
-                console.log(`\n${"=".repeat(40)}`);
-                console.log(`Total: ${formatMinutes(totalMinutes)}`);
-                console.log("\nBy Type:");
-                for (const [type, mins] of Object.entries(byType)) {
-                    console.log(`  ${type}: ${formatMinutes(mins)}`);
+
+                // JSON output
+                if (options.format === "json") {
+                    console.log(JSON.stringify(entries, null, 2));
+                    return;
+                }
+
+                if (entries.length === 0) {
+                    console.log("No time logs found.");
+                    return;
+                }
+
+                // Sort by date descending
+                entries.sort((a, b) => b.date.localeCompare(a.date));
+
+                // Calculate totals
+                const totalMinutes = entries.reduce((sum, e) => sum + e.minutes, 0);
+                const byType: Record<string, number> = {};
+                for (const entry of entries) {
+                    byType[entry.timeTypeDescription] = (byType[entry.timeTypeDescription] || 0) + entry.minutes;
+                }
+
+                if (options.format === "table") {
+                    // Table output using cli-table3
+                    const table = new Table({
+                        head: ["ID", "Date", "WI", "Type", "Time", "User", "Comment"],
+                        colWidths: [10, 12, 8, 16, 8, 22, 26],
+                        wordWrap: true,
+                        style: { head: ["cyan"] },
+                    });
+
+                    for (const e of entries) {
+                        table.push([
+                            e.timeLogId.substring(0, 8),
+                            e.date,
+                            e.workItemId ? `#${e.workItemId}` : "-",
+                            e.timeTypeDescription,
+                            formatMinutes(e.minutes),
+                            e.userName,
+                            (e.comment || "-").substring(0, 24),
+                        ]);
+                    }
+
+                    console.log(table.toString());
+                    console.log(`\n${pc.bold(`Total: ${formatMinutes(totalMinutes)}`)} (${entries.length} entries)`);
+                    console.log("\nBy Type:");
+                    for (const [type, mins] of Object.entries(byType)) {
+                        console.log(`  ${type}: ${formatMinutes(mins)}`);
+                    }
+                    return;
+                }
+
+                if (options.format === "md") {
+                    const title = hasWorkItem && !hasDateFilter
+                        ? `## Time Logs for #${options.workitem}\n`
+                        : `## Time Logs\n`;
+                    console.log(title);
+                    console.log(`| ID | Date | WI | Type | Time | User | Comment |`);
+                    console.log(`|----|------|-----|------|------|------|---------|`);
+                    for (const e of entries) {
+                        const wi = e.workItemId ? `#${e.workItemId}` : "-";
+                        console.log(
+                            `| ${e.timeLogId.substring(0, 8)} | ${e.date} | ${wi} | ${e.timeTypeDescription} | ${formatMinutes(e.minutes)} | ${e.userName} | ${e.comment || "-"} |`
+                        );
+                    }
+                    console.log(`\n**Total: ${formatMinutes(totalMinutes)}**`);
+                } else {
+                    // AI format
+                    const title = hasWorkItem && !hasDateFilter
+                        ? `Time Logs for Work Item #${options.workitem}`
+                        : "Time Logs";
+                    console.log(title);
+                    console.log("=".repeat(40));
+                    for (const e of entries) {
+                        const wi = e.workItemId ? ` [#${e.workItemId}]` : "";
+                        console.log(`\n${e.date} - ${formatMinutes(e.minutes)} (${e.timeTypeDescription})${wi}`);
+                        console.log(`  ID: ${e.timeLogId}`);
+                        console.log(`  User: ${e.userName}`);
+                        if (e.comment) console.log(`  Comment: ${e.comment}`);
+                    }
+                    console.log(`\n${"=".repeat(40)}`);
+                    console.log(`Total: ${formatMinutes(totalMinutes)}`);
+                    console.log("\nBy Type:");
+                    for (const [type, mins] of Object.entries(byType)) {
+                        console.log(`  ${type}: ${formatMinutes(mins)}`);
+                    }
                 }
             }
-        });
+        );
 
     timelog
         .command("types")
@@ -430,7 +550,7 @@ ${types.map((t) => `  - ${t.description}`).join("\n")}
 
             for (const entry of validEntries) {
                 try {
-                    await api.createTimeLogEntry(
+                    const ids = await api.createTimeLogEntry(
                         entry.workItemId,
                         entry.minutes,
                         entry.timeType,
@@ -438,7 +558,15 @@ ${types.map((t) => `  - ${t.description}`).join("\n")}
                         entry.comment
                     );
                     created++;
-                    console.log(`  ✔ #${entry.workItemId}: ${formatMinutes(entry.minutes)}`);
+                    const parts = [
+                        `#${entry.workItemId}`,
+                        formatMinutes(entry.minutes),
+                        entry.timeType,
+                        entry.date,
+                    ];
+                    if (entry.comment) parts.push(entry.comment);
+                    parts.push(`[${ids[0].substring(0, 8)}]`);
+                    console.log(`  ✔ ${parts.join(" | ")}`);
                 } catch (e) {
                     failed.push(`#${entry.workItemId}: ${(e as Error).message}`);
                 }
@@ -452,6 +580,72 @@ ${types.map((t) => `  - ${t.description}`).join("\n")}
                 }
             }
         });
+
+    timelog
+        .command("delete")
+        .description("Delete a time log entry")
+        .argument("[timeLogId]", "Time log entry ID (or use --workitem for interactive)")
+        .option("-w, --workitem <id>", "Work item ID (interactive picker)")
+        .action(
+            async (timeLogIdArg: string | undefined, options: { workitem?: string }) => {
+                const config = requireTimeLogConfig();
+                const user = requireTimeLogUser(config);
+                const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+
+                let timeLogId = timeLogIdArg;
+
+                if (!timeLogId) {
+                    // Interactive mode: pick from work item's entries
+                    if (!options.workitem) {
+                        console.error("❌ Provide a timeLogId or --workitem for interactive selection");
+                        console.error("\nExamples:");
+                        console.error("  tools azure-devops timelog delete <timeLogId>");
+                        console.error("  tools azure-devops timelog delete --workitem 268935");
+                        process.exit(1);
+                    }
+
+                    const workItemId = parseInt(options.workitem, 10);
+                    if (isNaN(workItemId)) {
+                        console.error("❌ Invalid work item ID");
+                        process.exit(1);
+                    }
+
+                    const entries = await api.getWorkItemTimeLogs(workItemId);
+                    if (entries.length === 0) {
+                        console.log(`No time logs found for #${workItemId}`);
+                        return;
+                    }
+
+                    const selected = await p.select({
+                        message: `Select entry to delete from #${workItemId}:`,
+                        options: entries.map((e) => ({
+                            value: e.timeLogId,
+                            label: `${e.date} | ${formatMinutes(e.minutes)} | ${e.timeTypeDescription} | ${e.userName}${e.comment ? ` | ${e.comment}` : ""}`,
+                        })),
+                    });
+
+                    if (p.isCancel(selected)) {
+                        p.cancel("Cancelled");
+                        return;
+                    }
+
+                    timeLogId = selected as string;
+                }
+
+                // Confirm deletion
+                const confirm = await p.confirm({
+                    message: `Delete time log entry ${timeLogId.substring(0, 8)}...?`,
+                });
+
+                if (p.isCancel(confirm) || !confirm) {
+                    p.cancel("Cancelled");
+                    return;
+                }
+
+                await api.deleteTimeLogEntry(timeLogId);
+                console.log(`✔ Deleted time log entry ${timeLogId.substring(0, 8)}...`);
+            }
+        );
 
     timelog
         .command("configure")

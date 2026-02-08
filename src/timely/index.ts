@@ -42,7 +42,7 @@ ${chalk.cyan("Commands:")}
   status                  Show current configuration and auth status
   accounts                List all accounts (--select to choose default)
   projects                List all projects (--select to choose default)
-  events                  List time entries
+  events                  List time entries (with memories + unlinked by default)
   memories                List auto-tracked activities (suggested entries)
   export-month <YYYY-MM>  Export all entries for a month
   cache [list|clear]      Manage cache
