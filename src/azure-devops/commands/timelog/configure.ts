@@ -28,13 +28,19 @@ const COMMON_STATES = [
     "Done",
 ] as const;
 
+// Well-known terminal states (deprioritized by default)
+const WELL_KNOWN_TERMINAL_STATES = ["Closed", "Done", "Resolved", "Removed"];
+
 interface ConfigureOptions {
     allowedWorkItemTypes?: string;
     allowedStatesForType?: string[];
+    deprioritizedStates?: string;
 }
 
 function hasExplicitFlags(options: ConfigureOptions): boolean {
-    return options.allowedWorkItemTypes !== undefined || (options.allowedStatesForType !== undefined && options.allowedStatesForType.length > 0);
+    return options.allowedWorkItemTypes !== undefined
+        || (options.allowedStatesForType !== undefined && options.allowedStatesForType.length > 0)
+        || options.deprioritizedStates !== undefined;
 }
 
 function loadExistingConfig(): { config: AzureConfigWithTimeLog; configPath: string } {
@@ -117,10 +123,16 @@ function formatCurrentConfig(timelog: TimeLogConfig | undefined): string {
     if (timelog.allowedStatesPerType && Object.keys(timelog.allowedStatesPerType).length > 0) {
         lines.push("  allowedStatesPerType:");
         for (const [type, states] of Object.entries(timelog.allowedStatesPerType)) {
-            lines.push(`    ${pc.bold(type)}: ${pc.cyan(states.join(", "))}`);
+            lines.push(`    ${pc.bold(type)}: ${pc.cyan((states as string[]).join(", "))}`);
         }
     } else {
         lines.push(`  allowedStatesPerType: ${pc.dim("not configured (all states allowed)")}`);
+    }
+
+    if (timelog.deprioritizedStates?.length) {
+        lines.push(`  deprioritizedStates: ${pc.yellow(timelog.deprioritizedStates.join(", "))} ${pc.dim("(fallback only)")}`);
+    } else {
+        lines.push(`  deprioritizedStates: ${pc.dim("using defaults (Closed, Done, Resolved, Removed)")}`);
     }
 
     return lines.join("\n");
@@ -326,7 +338,49 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
         delete config.timelog.allowedStatesPerType;
     }
 
-    // Step 5: Summary and confirm
+    // Step 5: Deprioritized states (fallback states like Closed/Done/Resolved)
+    const allSelectedStates = new Set<string>();
+    if (config.timelog.allowedStatesPerType) {
+        for (const states of Object.values(config.timelog.allowedStatesPerType)) {
+            for (const s of states as string[]) allSelectedStates.add(s);
+        }
+    }
+
+    const terminalCandidates = allSelectedStates.size > 0
+        ? [...allSelectedStates].filter((s) => WELL_KNOWN_TERMINAL_STATES.includes(s))
+        : [...WELL_KNOWN_TERMINAL_STATES];
+
+    if (terminalCandidates.length > 0) {
+        const currentDeprioritized = config.timelog.deprioritizedStates || [];
+
+        const selectedDeprioritized = await p.multiselect({
+            message: `Which states are fallback-only? ${pc.dim("(active states of default user are preferred)")}`,
+            options: terminalCandidates.map((state) => ({
+                value: state,
+                label: state,
+                hint: currentDeprioritized.includes(state) ? "currently deprioritized" : undefined,
+            })),
+            initialValues: currentDeprioritized.length > 0
+                ? currentDeprioritized.filter((s) => terminalCandidates.includes(s))
+                : terminalCandidates,
+            required: false,
+        });
+
+        if (p.isCancel(selectedDeprioritized)) {
+            p.cancel("Operation cancelled.");
+            process.exit(0);
+        }
+
+        const deprioritizedArray = selectedDeprioritized as string[];
+
+        if (deprioritizedArray.length > 0) {
+            config.timelog.deprioritizedStates = deprioritizedArray;
+        } else {
+            delete config.timelog.deprioritizedStates;
+        }
+    }
+
+    // Step 6: Summary and confirm
     p.note(
         formatCurrentConfig(config.timelog),
         "New Configuration"
@@ -411,6 +465,21 @@ function handleNonInteractive(options: ConfigureOptions): void {
         }
     }
 
+    if (options.deprioritizedStates !== undefined) {
+        const states = options.deprioritizedStates
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+
+        if (states.length === 0) {
+            delete fullConfig.timelog.deprioritizedStates;
+            console.log("Cleared deprioritizedStates (using defaults: Closed, Done, Resolved, Removed)");
+        } else {
+            fullConfig.timelog.deprioritizedStates = states;
+            console.log(`Set deprioritizedStates: ${states.join(", ")}`);
+        }
+    }
+
     saveConfig(configPath, fullConfig);
     console.log("\nConfiguration saved.");
 }
@@ -425,6 +494,7 @@ export function registerConfigureSubcommand(parent: Command): void {
         .description("Configure TimeLog settings (interactive by default)")
         .option("--allowed-work-item-types <types>", "Comma-separated list of allowed work item types (e.g., \"Bug,Task\")")
         .option("--allowed-states-for-type <mapping>", "Type:State1,State2 mapping (repeatable)", collectOption, [])
+        .option("--deprioritized-states <states>", "Comma-separated fallback states (e.g., \"Closed,Done,Resolved\")")
         .action(async (options: ConfigureOptions) => {
             if (hasExplicitFlags(options)) {
                 handleNonInteractive(options);

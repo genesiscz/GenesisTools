@@ -153,6 +153,8 @@ ${types.map((t) => `  - ${t.description}`).join("\n")}
                     ? {
                           allowedWorkItemTypes: config.timelog!.allowedWorkItemTypes,
                           allowedStatesPerType: config.timelog!.allowedStatesPerType,
+                          deprioritizedStates: config.timelog!.deprioritizedStates,
+                          defaultUserName: config.timelog!.defaultUser?.userName,
                       }
                     : undefined;
 

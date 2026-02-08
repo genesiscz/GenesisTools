@@ -17,6 +17,7 @@ export interface ChildInfo {
     title: string;
     state: string;
     assignee: string;
+    changedDate: string;
 }
 
 export interface PrecheckResult {
@@ -76,14 +77,50 @@ async function fetchWorkItem(id: number, org: string): Promise<AzWorkItemRaw> {
 /**
  * Extract typed fields from a raw work item response.
  */
-function extractFields(item: AzWorkItemRaw): { type: string; title: string; state: string; assignee: string } {
+function extractFields(item: AzWorkItemRaw): { type: string; title: string; state: string; assignee: string; changedDate: string } {
     const fields = item.fields ?? {};
     return {
         type: (fields["System.WorkItemType"] as string) ?? "Unknown",
         title: (fields["System.Title"] as string) ?? "",
         state: (fields["System.State"] as string) ?? "",
         assignee: (fields["System.AssignedTo"] as { displayName?: string } | undefined)?.displayName ?? "",
+        changedDate: (fields["System.ChangedDate"] as string) ?? "",
     };
+}
+
+const DEFAULT_DEPRIORITIZED_STATES = ["Closed", "Done", "Resolved", "Removed"];
+
+/**
+ * Select the best child from multiple candidates using 3-tier prioritization:
+ *   Tier 1: Active state + assigned to default user
+ *   Tier 2: Active state + assigned to anyone
+ *   Tier 3: Deprioritized state (Closed/Done/Resolved) — most recently changed first
+ */
+function selectBestChildren(
+    children: ChildInfo[],
+    deprioritizedStates: string[],
+    defaultUserName?: string,
+): ChildInfo[] {
+    const isDeprioritized = (state: string) =>
+        deprioritizedStates.some((ds) => ds.toLowerCase() === state.toLowerCase());
+
+    const isDefaultUser = (assignee: string) => {
+        if (!defaultUserName || !assignee) return false;
+        const normAssignee = assignee.toLowerCase();
+        const normDefault = defaultUserName.toLowerCase();
+        return normAssignee.includes(normDefault) || normDefault.includes(normAssignee);
+    };
+
+    // Tier 1: Active state + default user
+    const tier1 = children.filter((c) => !isDeprioritized(c.state) && isDefaultUser(c.assignee));
+    if (tier1.length > 0) return tier1;
+
+    // Tier 2: Active state + anyone
+    const tier2 = children.filter((c) => !isDeprioritized(c.state));
+    if (tier2.length > 0) return tier2;
+
+    // Tier 3: Deprioritized states — sort by most recently changed
+    return [...children].sort((a, b) => b.changedDate.localeCompare(a.changedDate));
 }
 
 // ============= Main Precheck =============
@@ -96,9 +133,13 @@ function extractFields(item: AzWorkItemRaw): { type: string; title: string; stat
  * 2. Fetch the work item by ID.
  * 3. If its type is in allowedWorkItemTypes, return ok.
  * 4. If not, find children of allowed types (optionally filtered by allowed states).
- *    - Exactly 1 match: redirect to that child.
  *    - 0 matches: error with message.
- *    - >1 matches: error with children list for user to choose.
+ *    - 1+ matches: prioritize using 3-tier system:
+ *        Tier 1: Active state + assigned to default user
+ *        Tier 2: Active state + assigned to anyone
+ *        Tier 3: Deprioritized state (Closed/Done/Resolved) — most recently changed
+ *    - If best tier has exactly 1: redirect to it.
+ *    - If best tier has >1: error with children list for user to choose.
  */
 export async function precheckWorkItem(
     workItemId: number,
@@ -168,24 +209,11 @@ export async function precheckWorkItem(
                 title: childFields.title,
                 state: childFields.state,
                 assignee: childFields.assignee,
+                changedDate: childFields.changedDate,
             });
         } catch (error) {
             logger.debug(`[precheck] Failed to fetch child #${childId}: ${error}`);
         }
-    }
-
-    if (children.length === 1) {
-        const child = children[0];
-        return {
-            status: "redirect",
-            originalId: workItemId,
-            originalType: type,
-            originalTitle: title,
-            redirectId: child.id,
-            redirectType: child.type,
-            redirectTitle: child.title,
-            message: `Work item #${workItemId} is a ${type}. Redirecting to child ${child.type} #${child.id} "${child.title}".`,
-        };
     }
 
     if (children.length === 0) {
@@ -198,13 +226,31 @@ export async function precheckWorkItem(
         };
     }
 
+    // Prioritize children: default user's active > anyone's active > closed/done (most recent)
+    const deprioritized = config.deprioritizedStates ?? DEFAULT_DEPRIORITIZED_STATES;
+    const best = selectBestChildren(children, deprioritized, config.defaultUserName);
+
+    if (best.length === 1) {
+        const child = best[0];
+        return {
+            status: "redirect",
+            originalId: workItemId,
+            originalType: type,
+            originalTitle: title,
+            redirectId: child.id,
+            redirectType: child.type,
+            redirectTitle: child.title,
+            message: `Work item #${workItemId} is a ${type}. Redirecting to child ${child.type} #${child.id} "${child.title}" (${child.state}, ${child.assignee || "unassigned"}).`,
+        };
+    }
+
     return {
         status: "error",
         originalId: workItemId,
         originalType: type,
         originalTitle: title,
-        children,
-        message: `Work item #${workItemId} is a ${type} with ${children.length} children of allowed types. Specify one directly.`,
-        suggestCommands: children.map((c) => `tools azure-devops timelog add --workitem ${c.id}`),
+        children: best,
+        message: `Work item #${workItemId} is a ${type} with ${best.length} children of allowed types. Specify one directly.`,
+        suggestCommands: best.map((c) => `tools azure-devops timelog add --workitem ${c.id}`),
     };
 }

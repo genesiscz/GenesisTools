@@ -419,6 +419,8 @@ export interface CreateTimeLogResponse {
 export interface AllowedTypeConfig {
     allowedWorkItemTypes: string[];
     allowedStatesPerType?: Record<string, string[]>;
+    deprioritizedStates?: string[];
+    defaultUserName?: string;
 }
 
 /** TimeLog configuration stored in config.json */
@@ -427,6 +429,7 @@ export interface TimeLogConfig {
     defaultUser?: TimeLogUser; // Cached user info
     allowedWorkItemTypes?: string[]; // e.g., ["Bug", "Task"]
     allowedStatesPerType?: Record<string, string[]>; // e.g., { "Task": ["In Progress"], "Bug": ["New","Development","Blocked"] }
+    deprioritizedStates?: string[]; // e.g., ["Closed", "Done", "Resolved"] — used as fallback in precheck
 }
 
 /** Extended config with TimeLog settings */
