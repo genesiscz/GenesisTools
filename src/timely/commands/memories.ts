@@ -119,7 +119,7 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
         console.log(chalk.bold(`${day} (${fmtDurHm(dayTotal)})`));
 
         for (const [app, data] of sortedApps) {
-            console.log(`  (${fmtDurHm(data.totalSeconds)}) ${chalk.yellow(app)}`);
+            console.log(`  ${padDur(fmtDurHm(data.totalSeconds))} ${chalk.yellow(app)}`);
 
             // Show sub-entries for each memory in this app group
             for (const entry of data.entries) {
@@ -130,11 +130,11 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
                 if (subs.length > 0) {
                     for (const sub of subs) {
                         if (sub.note) {
-                            console.log(`\t${chalk.dim(`(${fmtDurHm(sub.duration.total_seconds)})`)} ${chalk.blue(sub.note)}`);
+                            console.log(`    ${chalk.dim(padDur(fmtDurHm(sub.duration.total_seconds)))} ${chalk.blue(sub.note)}`);
                         }
                     }
                 } else if (entry.note) {
-                    console.log(`\t${chalk.dim(`(${fmtDurHm(entry.duration.total_seconds)})`)} ${chalk.blue(entry.note)}`);
+                    console.log(`    ${chalk.dim(padDur(fmtDurHm(entry.duration.total_seconds)))} ${chalk.blue(entry.note)}`);
                 }
             }
         }
@@ -176,4 +176,9 @@ function fmtDurHm(totalSeconds: number): string {
     const m = Math.floor((totalSeconds % 3600) / 60);
     if (h > 0) return `${h}h ${m}m`;
     return `${m}m`;
+}
+
+/** Right-pad duration string to fixed width for column alignment */
+function padDur(dur: string): string {
+    return dur.padEnd(7);
 }
