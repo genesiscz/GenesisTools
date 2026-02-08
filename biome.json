@@ -47,11 +47,10 @@
     },
     "files": {
         "includes": [
-            "src/**/*.ts",
-            "src/**/*.tsx",
-            "src/**/*.js",
-            "src/**/*.jsx",
-            "!src/claude-history-dashboard"
+            "**/*.{ts,tsx,js,jsx}"
+        ],
+        "ignore": [
+            "src/claude-history-dashboard/**"
         ]
     }
 }
