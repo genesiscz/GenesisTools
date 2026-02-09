@@ -94,9 +94,16 @@ export function registerListSubcommand(parent: Command): void {
                 // Post-filter by user name (@me resolves to configured defaultUser)
                 if (options.user && options.user.length > 0) {
                     const defaultUserName = config.timelog?.defaultUser?.userName;
-                    const resolvedUsers = options.user.map((u) =>
-                        u === "@me" && defaultUserName ? defaultUserName : u
-                    );
+                    const resolvedUsers = options.user.map((u) => {
+                        if (u === "@me") {
+                            if (!defaultUserName) {
+                                console.error('Cannot resolve "@me": no defaultUser configured in timelog config. Pass an explicit --user name or set timelog.defaultUser.userName in config.');
+                                process.exit(1);
+                            }
+                            return defaultUserName;
+                        }
+                        return u;
+                    });
                     const userFilters = resolvedUsers.map((u) => u.toLowerCase());
                     entries = entries.filter((e) => userFilters.some((uf) => e.userName.toLowerCase().includes(uf)));
                 }

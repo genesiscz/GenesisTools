@@ -381,7 +381,7 @@ tools azure-devops timelog list --from 2026-02-01 --to 2026-02-08 --format json
 tools azure-devops timelog list --from 2026-02-01 --to 2026-02-08 --user @me --format json
 ```
 
-The `--user @me` resolves to the configured default user name. Use `--from`/`--to` for date ranges (`--since`/`--upto` also accepted as aliases).
+The `--user @me` resolves to the configured default username. Use `--from`/`--to` for date ranges (`--since`/`--upto` also accepted as aliases).
 
 ### Add Time Log Entry
 

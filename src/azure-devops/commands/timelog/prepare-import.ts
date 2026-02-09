@@ -152,7 +152,9 @@ async function handleAdd(options: { from?: string; to?: string; name?: string; e
     }
 
     const workitemTitle =
-        precheck.status === "redirect" ? (precheck.redirectTitle ?? precheck.originalTitle) : precheck.originalTitle;
+        precheck.status === "redirect"
+            ? (precheck.redirectTitle ?? `${precheck.originalTitle} (redirected → #${precheck.redirectId})`)
+            : precheck.originalTitle;
 
     // Build stored entry
     const storedEntry: StoredEntry = {
