@@ -21,7 +21,9 @@ export function countTokens(text: string): number {
         const { encode } = require("gpt-3-encoder");
         return encode(text).length;
     } catch {
-        return Math.ceil(text.split(/\s+/).length * 1.3);
+        const trimmed = text.trim();
+        if (!trimmed) return 0;
+        return Math.ceil(trimmed.split(/\s+/).length * 1.3);
     }
 }
 
@@ -36,7 +38,7 @@ export function limitToTokens(
 ): { text: string; tokens: number; truncated: boolean } {
     const tokens = countTokens(text);
 
-    if (!maxTokens || tokens <= maxTokens) {
+    if (maxTokens == null || tokens <= maxTokens) {
         return { text, tokens, truncated: false };
     }
 

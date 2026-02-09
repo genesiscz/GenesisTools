@@ -3,7 +3,7 @@
  * Provides path resolution and JSONL transcript parsing.
  */
 
-import { createReadStream } from "fs";
+import { createReadStream, existsSync } from "fs";
 import { homedir } from "os";
 import { resolve } from "path";
 import { createInterface } from "readline";
@@ -25,6 +25,8 @@ export function getClaudeProjectsDir(): string {
 export async function parseJsonlTranscript<T = Record<string, unknown>>(
     filePath: string,
 ): Promise<T[]> {
+    if (!existsSync(filePath)) return [];
+
     const messages: T[] = [];
 
     const fileStream = createReadStream(filePath);

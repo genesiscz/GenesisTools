@@ -31,7 +31,7 @@ export function getDatesInMonth(month: string): string[] {
     const current = new Date(start);
     while (current <= end) {
         dates.push(current.toISOString().split("T")[0]);
-        current.setDate(current.getDate() + 1);
+        current.setUTCDate(current.getUTCDate() + 1);
     }
 
     return dates;

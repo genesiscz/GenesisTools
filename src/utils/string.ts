@@ -44,6 +44,7 @@ export function removeDiacritics(str: string): string {
  */
 export function truncateText(text: string, maxLength: number = 100): string {
     if (text.length <= maxLength) return text;
+    if (maxLength <= 3) return text.substring(0, maxLength);
     return text.substring(0, maxLength - 3) + "...";
 }
 
@@ -53,7 +54,7 @@ export function truncateText(text: string, maxLength: number = 100): string {
 export function sanitizeOutput(text: string, removeANSI: boolean = false): string {
     let sanitized = text;
     if (removeANSI) {
-        sanitized = sanitized.replace(/\x1b\[[0-9;]*m/g, "");
+        sanitized = stripAnsi(sanitized);
     }
     sanitized = sanitized.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
     return sanitized;

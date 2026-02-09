@@ -57,8 +57,9 @@ export function formatDuration(
 
         case "hm-smart": {
             if (totalMinutes < 1) return "< 1m";
-            const hours = Math.floor(totalMinutes / 60);
-            const mins = Math.round(totalMinutes % 60);
+            let hours = Math.floor(totalMinutes / 60);
+            let mins = Math.round(totalMinutes % 60);
+            if (mins === 60) { hours++; mins = 0; }
             if (hours === 0) return `${mins}m`;
             if (mins === 0) return `${hours}h`;
             return `${hours}h ${mins}m`;
@@ -71,6 +72,11 @@ export function formatDuration(
             if (hours > 0) return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
             if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
             return `${seconds}s`;
+        }
+
+        default: {
+            const _exhaustive: never = style;
+            return `${ms}ms`;
         }
     }
 }

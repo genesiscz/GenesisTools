@@ -79,13 +79,13 @@ export function retry<T>(
  * Create a debounced version of a function that delays invocation
  * until after `wait` milliseconds have elapsed since the last call.
  */
-export function debounce<T extends (...args: unknown[]) => void>(
+export function debounce<T extends (...args: any[]) => void>(
     func: T,
     wait: number,
 ): (...args: Parameters<T>) => void {
-    let timeout: ReturnType<typeof setTimeout>;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     return (...args: Parameters<T>) => {
-        clearTimeout(timeout);
+        if (timeout !== undefined) clearTimeout(timeout);
         timeout = setTimeout(() => func(...args), wait);
     };
 }
@@ -96,11 +96,11 @@ export function debounce<T extends (...args: unknown[]) => void>(
  * Create a throttled version of a function that only invokes
  * once per `limit` milliseconds.
  */
-export function throttle<T extends (...args: unknown[]) => void>(
+export function throttle<T extends (...args: any[]) => void>(
     func: T,
     limit: number,
 ): (...args: Parameters<T>) => void {
-    let inThrottle: boolean;
+    let inThrottle = false;
     return (...args: Parameters<T>) => {
         if (!inThrottle) {
             func(...args);
@@ -121,10 +121,13 @@ export function withTimeout<T>(
     timeoutMs: number,
     timeoutError?: Error,
 ): Promise<T> {
+    let timer: ReturnType<typeof setTimeout>;
     const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => {
+        timer = setTimeout(() => {
             reject(timeoutError || new Error(`Operation timed out after ${timeoutMs}ms`));
         }, timeoutMs);
     });
-    return Promise.race([promise, timeoutPromise]);
+    return Promise.race([promise, timeoutPromise]).finally(() => {
+        clearTimeout(timer);
+    });
 }

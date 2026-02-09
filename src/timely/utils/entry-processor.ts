@@ -221,7 +221,7 @@ function groupEntries(entries: ProcessedEntry[], detailMode: boolean = false): G
  * Format duration from minutes to "Xh Ym" format
  */
 function formatDuration(minutes: number): string {
-    return _formatDuration(minutes, "min", "hm-smart");
+    return _formatDuration(minutes, "min", "hm-always");
 }
 
 /**
