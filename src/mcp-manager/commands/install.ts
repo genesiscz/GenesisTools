@@ -93,7 +93,7 @@ export async function installServer(
 
         // Validate options.type if provided
         if (options.type) {
-            if (!validTypes.includes(options.type as typeof validTypes[number])) {
+            if (!validTypes.includes(options.type as (typeof validTypes)[number])) {
                 logger.error(`Invalid transport type '${options.type}'. Must be one of: ${validTypes.join(", ")}`);
                 process.exit(1);
             }
@@ -224,7 +224,7 @@ export async function installServer(
                 // Interactive: ask for env
                 try {
                     const inputEnv = await input({
-                        message: 'Enter ENV variables (JSON format recommended) or leave empty:',
+                        message: "Enter ENV variables (JSON format recommended) or leave empty:",
                         default: serverConfig?.env ? JSON.stringify(serverConfig.env) : "",
                     });
 
@@ -339,7 +339,8 @@ export async function installServer(
                 updatedConfig.mcpServers[finalServerName]._meta!.enabled = {};
             }
             for (const providerName of successfulProviders) {
-                (updatedConfig.mcpServers[finalServerName]._meta!.enabled as Record<string, boolean>)[providerName] = true;
+                (updatedConfig.mcpServers[finalServerName]._meta!.enabled as Record<string, boolean>)[providerName] =
+                    true;
             }
             await writeUnifiedConfig(updatedConfig);
         }

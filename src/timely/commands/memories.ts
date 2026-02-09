@@ -135,17 +135,22 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
             // Show sub-entries for each memory in this app group
             for (const entry of data.entries) {
                 // API uses "entries" on suggested_entries, TS type uses "sub_entries"
-                const subs = entry.sub_entries
-                    || (entry as unknown as Record<string, unknown>).entries as typeof entry.sub_entries
-                    || [];
+                const subs =
+                    entry.sub_entries ||
+                    ((entry as unknown as Record<string, unknown>).entries as typeof entry.sub_entries) ||
+                    [];
                 if (subs.length > 0) {
                     for (const sub of subs) {
                         if (sub.note) {
-                            console.log(`    ${chalk.dim(padDur(fmtDurHm(sub.duration.total_seconds)))} ${chalk.blue(sub.note)}`);
+                            console.log(
+                                `    ${chalk.dim(padDur(fmtDurHm(sub.duration.total_seconds)))} ${chalk.blue(sub.note)}`
+                            );
                         }
                     }
                 } else if (entry.note) {
-                    console.log(`    ${chalk.dim(padDur(fmtDurHm(entry.duration.total_seconds)))} ${chalk.blue(entry.note)}`);
+                    console.log(
+                        `    ${chalk.dim(padDur(fmtDurHm(entry.duration.total_seconds)))} ${chalk.blue(entry.note)}`
+                    );
                 }
             }
         }

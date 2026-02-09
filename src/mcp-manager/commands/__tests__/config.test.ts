@@ -19,54 +19,59 @@ describe("openConfig", () => {
         spyOn(logger, "info");
 
         // Mock Bun.spawn
-        const mockSpawn = spyOn(Bun, "spawn").mockImplementation(() => ({
-            exited: Promise.resolve({ exitCode: 0 }),
-        } as any));
+        const mockSpawn = spyOn(Bun, "spawn").mockImplementation(
+            () =>
+                ({
+                    exited: Promise.resolve({ exitCode: 0 }),
+                }) as any
+        );
 
         await openConfig();
 
         expect(Storage.prototype.setConfig).toHaveBeenCalledWith({
             mcpServers: {},
         });
-        expect(logger.info).toHaveBeenCalledWith(
-            expect.stringContaining("Created default config")
-        );
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("Created default config"));
     });
 
     it("should open existing config in editor", async () => {
         const mockConfigPath = "/mock/config.json";
-        const mockConfig = { mcpServers: { "test": {} } };
-        
+        const mockConfig = { mcpServers: { test: {} } };
+
         spyOn(Storage.prototype, "ensureDirs").mockResolvedValue(undefined);
         spyOn(Storage.prototype, "getConfig").mockResolvedValue(mockConfig);
         spyOn(configUtils, "getUnifiedConfigPath").mockReturnValue(mockConfigPath);
         spyOn(logger, "info");
-        
-        const mockSpawn = spyOn(Bun, "spawn").mockImplementation(() => ({
-            exited: Promise.resolve({ exitCode: 0 }),
-        } as any));
+
+        const mockSpawn = spyOn(Bun, "spawn").mockImplementation(
+            () =>
+                ({
+                    exited: Promise.resolve({ exitCode: 0 }),
+                }) as any
+        );
 
         await openConfig();
 
         expect(mockSpawn).toHaveBeenCalled();
-        expect(logger.info).toHaveBeenCalledWith(
-            expect.stringContaining("Config file:")
-        );
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("Config file:"));
     });
 
     it("should use EDITOR environment variable", async () => {
         const originalEditor = process.env.EDITOR;
         process.env.EDITOR = "vim";
-        
+
         const mockConfigPath = "/mock/config.json";
         spyOn(Storage.prototype, "ensureDirs").mockResolvedValue(undefined);
         spyOn(Storage.prototype, "getConfig").mockResolvedValue({ mcpServers: {} });
         spyOn(configUtils, "getUnifiedConfigPath").mockReturnValue(mockConfigPath);
         spyOn(logger, "info");
-        
-        const mockSpawn = spyOn(Bun, "spawn").mockImplementation(() => ({
-            exited: Promise.resolve({ exitCode: 0 }),
-        } as any));
+
+        const mockSpawn = spyOn(Bun, "spawn").mockImplementation(
+            () =>
+                ({
+                    exited: Promise.resolve({ exitCode: 0 }),
+                }) as any
+        );
 
         await openConfig();
 
@@ -86,16 +91,19 @@ describe("openConfig", () => {
     it("should handle editor command with arguments", async () => {
         const originalEditor = process.env.EDITOR;
         process.env.EDITOR = "code --wait";
-        
+
         const mockConfigPath = "/mock/config.json";
         spyOn(Storage.prototype, "ensureDirs").mockResolvedValue(undefined);
         spyOn(Storage.prototype, "getConfig").mockResolvedValue({ mcpServers: {} });
         spyOn(configUtils, "getUnifiedConfigPath").mockReturnValue(mockConfigPath);
         spyOn(logger, "info");
-        
-        const mockSpawn = spyOn(Bun, "spawn").mockImplementation(() => ({
-            exited: Promise.resolve({ exitCode: 0 }),
-        } as any));
+
+        const mockSpawn = spyOn(Bun, "spawn").mockImplementation(
+            () =>
+                ({
+                    exited: Promise.resolve({ exitCode: 0 }),
+                }) as any
+        );
 
         await openConfig();
 
@@ -112,7 +120,3 @@ describe("openConfig", () => {
         }
     });
 });
-
-
-
-

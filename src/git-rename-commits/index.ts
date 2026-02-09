@@ -1032,7 +1032,8 @@ async function main() {
                 min: 1,
                 max: maxCommits,
                 default: 1,
-                validate: (v) => (v !== undefined && v >= 1 && v <= maxCommits) || `Enter a number between 1 and ${maxCommits}`,
+                validate: (v) =>
+                    (v !== undefined && v >= 1 && v <= maxCommits) || `Enter a number between 1 and ${maxCommits}`,
             });
         }
 

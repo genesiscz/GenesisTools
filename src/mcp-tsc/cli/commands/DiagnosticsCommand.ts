@@ -4,7 +4,10 @@ import { resolveFiles, filterByTsconfig } from "@app/mcp-tsc/utils/FileResolver.
 import { getPersistentServer } from "@app/mcp-tsc/utils/ServerManager.js";
 
 export class DiagnosticsCommand {
-    constructor(private tsServer: TSServer, private cwd: string) {}
+    constructor(
+        private tsServer: TSServer,
+        private cwd: string
+    ) {}
 
     async execute(argv: CliArgs): Promise<void> {
         const files = argv._;

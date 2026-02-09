@@ -51,7 +51,10 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
                 memories = await fetchFromApi(accountId, accessToken, date);
                 if (!isToday) await storage.putCacheFile(cacheKey, memories, CACHE_TTL);
                 stats.fetched++;
-                if (verbose) logger.info(`[memories] ${progress} ${date}: ${memories.length} memories (${isToday ? "fresh, today" : "force refresh"})`);
+                if (verbose)
+                    logger.info(
+                        `[memories] ${progress} ${date}: ${memories.length} memories (${isToday ? "fresh, today" : "force refresh"})`
+                    );
             } else {
                 const cached = await storage.getCacheFile<TimelyEntry[]>(cacheKey, CACHE_TTL);
                 if (cached) {
@@ -76,7 +79,9 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
     }
 
     if (verbose) {
-        logger.info(`[memories] Done: ${entries.length} total, ${stats.fetched} fetched, ${stats.cached} cached, ${stats.failed} failed`);
+        logger.info(
+            `[memories] Done: ${entries.length} total, ${stats.fetched} fetched, ${stats.cached} cached, ${stats.failed} failed`
+        );
     }
 
     return { entries, byDate, stats };

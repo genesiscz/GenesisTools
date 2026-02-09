@@ -99,7 +99,9 @@ async function runCli(opts: CliOptions): Promise<void> {
 
             if (out) {
                 await Bun.write(out, limited.text);
-                log.ok(`Wrote extracted MD to ${out} (engine: ${engineName}, time: ${Math.round(result.metrics.conversionTimeMs)}ms)`);
+                log.ok(
+                    `Wrote extracted MD to ${out} (engine: ${engineName}, time: ${Math.round(result.metrics.conversionTimeMs)}ms)`
+                );
             } else {
                 process.stdout.write(limited.text + "\n");
             }
@@ -291,7 +293,9 @@ async function main(): Promise<void> {
                     lastUpdate = now;
                     process.stdout.clearLine?.(0);
                     process.stdout.cursorTo?.(0);
-                    process.stdout.write(`  Progress: ${pct.toFixed(1)}% (${(downloaded / 1e6).toFixed(0)}MB / ${(total / 1e6).toFixed(0)}MB)`);
+                    process.stdout.write(
+                        `  Progress: ${pct.toFixed(1)}% (${(downloaded / 1e6).toFixed(0)}MB / ${(total / 1e6).toFixed(0)}MB)`
+                    );
                 },
             });
             console.log("");

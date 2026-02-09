@@ -83,7 +83,7 @@ export function wordSimilarity(a: string, b: string): number {
 export function fuzzyMatchBest(
     source: MatchSource,
     candidates: MatchCandidate[],
-    threshold = 0.15,
+    threshold = 0.15
 ): FuzzyMatchResult | null {
     let best: FuzzyMatchResult | null = null;
     for (const c of candidates) {

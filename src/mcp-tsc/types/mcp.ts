@@ -34,15 +34,3 @@ export interface GetTsHoverResponse {
     hover: string;
     raw?: unknown;
 }
-
-
-
-
-
-
-
-
-
-
-
-

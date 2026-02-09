@@ -20,15 +20,3 @@ export class DummyClass {
         return this.value;
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-

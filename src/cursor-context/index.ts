@@ -395,7 +395,3 @@ main().catch((err) => {
     logger.error(`\n✖ Unexpected error: ${err}`);
     process.exit(1);
 });
-
-
-
-

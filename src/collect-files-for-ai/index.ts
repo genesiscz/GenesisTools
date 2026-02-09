@@ -64,18 +64,11 @@ async function main() {
         .name("collect-files-for-ai")
         .description("Collect files from Git for AI context")
         .argument("[directory]", "Path to the Git repository", ".")
-        .option(
-            "-c, --commits <number>",
-            "Collect files changed in the last NUM commits",
-            (val) => parseInt(val, 10)
-        )
+        .option("-c, --commits <number>", "Collect files changed in the last NUM commits", (val) => parseInt(val, 10))
         .option("-s, --staged", "Collect only staged files")
         .option("-u, --unstaged", "Collect only unstaged files")
         .option("-a, --all", "Collect all uncommitted (staged + unstaged) files")
-        .option(
-            "-t, --target <directory>",
-            "Directory to copy files into (default: ./.ai/YYYY-MM-DD-HH.mm)"
-        )
+        .option("-t, --target <directory>", "Directory to copy files into (default: ./.ai/YYYY-MM-DD-HH.mm)")
         .option(
             "-f, --flat",
             "Copy all files directly to the target directory without preserving the directory structure"

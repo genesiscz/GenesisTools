@@ -7,25 +7,25 @@ import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "path";
 
 const config = defineConfig({
-    plugins: [
-        devtools(),
-        // this is the plugin that enables path aliases
-        viteTsConfigPaths({
-            projects: ["./tsconfig.json"],
-        }),
-        tailwindcss(),
-        tanstackStart(),
-        viteReact({
-            babel: {
-                plugins: ["babel-plugin-react-compiler"],
-            },
-        }),
-    ],
-    resolve: {
-        alias: {
-            "@app": resolve(__dirname, ".."),
-        },
-    },
+	plugins: [
+		devtools(),
+		// this is the plugin that enables path aliases
+		viteTsConfigPaths({
+			projects: ["./tsconfig.json"],
+		}),
+		tailwindcss(),
+		tanstackStart(),
+		viteReact({
+			babel: {
+				plugins: ["babel-plugin-react-compiler"],
+			},
+		}),
+	],
+	resolve: {
+		alias: {
+			"@app": resolve(__dirname, ".."),
+		},
+	},
 });
 
 export default config;

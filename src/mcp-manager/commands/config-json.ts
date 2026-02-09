@@ -16,10 +16,7 @@ type ClientType = "standard" | "cursor" | "claude";
 /**
  * Check if a server is enabled for a specific client based on _meta.enabled
  */
-function isServerEnabledForClient(
-    serverConfig: UnifiedMCPServerConfig,
-    client: ClientType
-): boolean {
+function isServerEnabledForClient(serverConfig: UnifiedMCPServerConfig, client: ClientType): boolean {
     const enabledState = serverConfig._meta?.enabled;
     if (!enabledState) {
         return false;
@@ -41,10 +38,7 @@ function isServerEnabledForClient(
 /**
  * Get list of disabled servers for a specific client
  */
-function getDisabledServers(
-    servers: Record<string, UnifiedMCPServerConfig>,
-    client: ClientType
-): string[] {
+function getDisabledServers(servers: Record<string, UnifiedMCPServerConfig>, client: ClientType): string[] {
     const disabled: string[] = [];
     for (const [name, config] of Object.entries(servers)) {
         if (!isServerEnabledForClient(config, client)) {
@@ -60,7 +54,10 @@ function getDisabledServers(
 export async function configJson(options: ConfigJsonOptions = {}): Promise<void> {
     const client: ClientType = options.client || "standard";
     const enabledOnly = options.enabledOnly || false;
-    const serverFilter = options.servers?.split(",").map((s) => s.trim()).filter(Boolean);
+    const serverFilter = options.servers
+        ?.split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
     const bare = options.bare || false;
     const copyToClipboard = options.clipboard || false;
 

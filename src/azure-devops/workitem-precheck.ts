@@ -77,7 +77,13 @@ async function fetchWorkItem(id: number, org: string): Promise<AzWorkItemRaw> {
 /**
  * Extract typed fields from a raw work item response.
  */
-function extractFields(item: AzWorkItemRaw): { type: string; title: string; state: string; assignee: string; changedDate: string } {
+function extractFields(item: AzWorkItemRaw): {
+    type: string;
+    title: string;
+    state: string;
+    assignee: string;
+    changedDate: string;
+} {
     const fields = item.fields ?? {};
     return {
         type: (fields["System.WorkItemType"] as string) ?? "Unknown",
@@ -99,7 +105,7 @@ const DEFAULT_DEPRIORITIZED_STATES = ["Closed", "Done", "Resolved", "Removed"];
 function selectBestChildren(
     children: ChildInfo[],
     deprioritizedStates: string[],
-    defaultUserName?: string,
+    defaultUserName?: string
 ): ChildInfo[] {
     const isDeprioritized = (state: string) =>
         deprioritizedStates.some((ds) => ds.toLowerCase() === state.toLowerCase());

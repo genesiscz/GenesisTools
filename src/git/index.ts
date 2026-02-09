@@ -22,15 +22,15 @@ const storage = new Storage("git");
 const program = new Command();
 
 program
-	.name("git")
-	.description("Git analysis tool — commits, authors, and workitem pattern management")
-	.version("1.0.0")
-	.option("-v, --verbose", "Enable verbose debug logging")
-	.option("-?, --help-full", "Show detailed help with examples")
-	.on("option:help-full", () => {
-		showHelpFull();
-		process.exit(0);
-	});
+    .name("git")
+    .description("Git analysis tool — commits, authors, and workitem pattern management")
+    .version("1.0.0")
+    .option("-v, --verbose", "Enable verbose debug logging")
+    .option("-?, --help-full", "Show detailed help with examples")
+    .on("option:help-full", () => {
+        showHelpFull();
+        process.exit(0);
+    });
 
 // Register all commands
 registerCommitsCommand(program, storage);
@@ -39,7 +39,7 @@ registerConfigureWorkitemPatternsCommand(program, storage);
 enhanceHelp(program);
 
 function showHelpFull(): void {
-	console.log(`
+    console.log(`
 Git Analysis Tool
 
 Usage:
@@ -101,21 +101,21 @@ Storage:
 }
 
 async function main(): Promise<void> {
-	try {
-		await program.parseAsync(process.argv);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		logger.error(`Error: ${message}`);
+    try {
+        await program.parseAsync(process.argv);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`Error: ${message}`);
 
-		if (error instanceof Error && error.stack) {
-			logger.debug(error.stack);
-		}
+        if (error instanceof Error && error.stack) {
+            logger.debug(error.stack);
+        }
 
-		process.exit(1);
-	}
+        process.exit(1);
+    }
 }
 
 main().catch((err) => {
-	logger.error(`Unexpected error: ${err}`);
-	process.exit(1);
+    logger.error(`Unexpected error: ${err}`);
+    process.exit(1);
 });

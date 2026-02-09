@@ -102,9 +102,7 @@ async function getDirOfInterest(): Promise<string> {
             message: "Select a directory to watch:",
             source: async (term) => {
                 if (!term) return allChoices;
-                return allChoices.filter((c) =>
-                    c.value.toLowerCase().includes(term.toLowerCase())
-                );
+                return allChoices.filter((c) => c.value.toLowerCase().includes(term.toLowerCase()));
             },
         });
         return selected;

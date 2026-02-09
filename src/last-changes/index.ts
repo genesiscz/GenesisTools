@@ -334,7 +334,9 @@ async function getCommittedFiles(numCommits: number, verbose: boolean): Promise<
 async function main() {
     const program = new Command()
         .name("last-changes")
-        .description("Shows uncommitted git changes grouped by modification time to help you understand what files were updated and when.")
+        .description(
+            "Shows uncommitted git changes grouped by modification time to help you understand what files were updated and when."
+        )
         .option("-c, --commits <n>", "Show changes from the last N commits instead of uncommitted changes")
         .option("-v, --verbose", "Enable verbose logging")
         .parse();
@@ -391,10 +393,9 @@ async function main() {
             for (const { file, status, mtime } of group.files) {
                 const statusColor = getStatusColor(status);
                 const statusText = statusColor(status);
-                const description =
-                    isCommitMode
-                        ? getCommitStatusDescription(status.trim())
-                        : getStatusDescription(status);
+                const description = isCommitMode
+                    ? getCommitStatusDescription(status.trim())
+                    : getStatusDescription(status);
                 const relativeTime = formatRelativeTime(mtime);
                 const absoluteTime = formatAbsoluteTime(mtime);
 

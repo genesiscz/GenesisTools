@@ -133,7 +133,9 @@ export function registerImportSubcommand(parent: Command): void {
 
             if (!allowedTypeConfig) {
                 logger.debug("[import] allowedWorkItemTypes not configured, skipping precheck");
-                console.log(pc.yellow("Note: allowedWorkItemTypes not configured — skipping work item type precheck.\n"));
+                console.log(
+                    pc.yellow("Note: allowedWorkItemTypes not configured — skipping work item type precheck.\n")
+                );
                 precheckPassed = validEntries;
             } else {
                 console.log("Pre-checking work item types...");
@@ -169,7 +171,9 @@ export function registerImportSubcommand(parent: Command): void {
                 console.log("\nPre-check results:");
 
                 if (precheckPassed.length - precheckRedirected.length > 0) {
-                    console.log(pc.green(`  \u2714 ${precheckPassed.length - precheckRedirected.length} entries passed`));
+                    console.log(
+                        pc.green(`  \u2714 ${precheckPassed.length - precheckRedirected.length} entries passed`)
+                    );
                 }
 
                 if (precheckRedirected.length > 0) {
@@ -223,12 +227,7 @@ export function registerImportSubcommand(parent: Command): void {
                     );
                     created++;
                     createdWorkItemIds.push(entry.workItemId);
-                    const parts = [
-                        `#${entry.workItemId}`,
-                        formatMinutes(entry.minutes),
-                        entry.timeType,
-                        entry.date,
-                    ];
+                    const parts = [`#${entry.workItemId}`, formatMinutes(entry.minutes), entry.timeType, entry.date];
 
                     if (entry.comment) {
                         parts.push(entry.comment);

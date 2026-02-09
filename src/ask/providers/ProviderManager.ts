@@ -348,9 +348,9 @@ export class ProviderManager {
      */
     private convertOpenRouterPricing(pricing: OpenRouterPricing): PricingInfo {
         const promptPricePerToken =
-            typeof pricing.prompt === "string" ? parseFloat(pricing.prompt) : pricing.prompt ?? 0;
+            typeof pricing.prompt === "string" ? parseFloat(pricing.prompt) : (pricing.prompt ?? 0);
         const completionPricePerToken =
-            typeof pricing.completion === "string" ? parseFloat(pricing.completion) : pricing.completion ?? 0;
+            typeof pricing.completion === "string" ? parseFloat(pricing.completion) : (pricing.completion ?? 0);
 
         // Handle both cache_read and input_cache_read field names
         const cachePricePerToken =
@@ -359,10 +359,10 @@ export class ProviderManager {
                     ? parseFloat(pricing.cache_read)
                     : pricing.cache_read
                 : pricing.input_cache_read !== undefined
-                ? typeof pricing.input_cache_read === "string"
-                    ? parseFloat(pricing.input_cache_read)
-                    : pricing.input_cache_read
-                : undefined;
+                  ? typeof pricing.input_cache_read === "string"
+                      ? parseFloat(pricing.input_cache_read)
+                      : pricing.input_cache_read
+                  : undefined;
 
         return {
             inputPer1M: promptPricePerToken * 1_000_000, // Convert per-token to per-million

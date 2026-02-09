@@ -20,7 +20,6 @@ export interface CommandResult {
 }
 
 export class CommandHandler {
-
     async handleCommand(command: string, currentProvider: string, currentModelName: string): Promise<CommandResult> {
         const parts = command.trim().split(/\s+/);
         const cmd = parts[0].toLowerCase();

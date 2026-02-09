@@ -61,10 +61,7 @@ function createFencePlugin(md: MarkdownIt): void {
 
         // For shell/config languages, disable line numbers via data attribute on <code>
         if (NO_LINE_NUMBER_LANGS.has(info)) {
-            const escaped = code
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;");
+            const escaped = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
             const langClass = info ? `class="language-${info}" ` : "";
             return `<pre><code ${langClass}data-cli-numbers-enabled="false">${escaped}</code></pre>\n`;
         }
@@ -94,10 +91,7 @@ interface TableData {
     rows: string[][];
 }
 
-function parseTableTokens(
-    tokens: Token[],
-    startIdx: number
-): { data: TableData; endIdx: number } {
+function parseTableTokens(tokens: Token[], startIdx: number): { data: TableData; endIdx: number } {
     const data: TableData = { headers: [], alignments: [], rows: [] };
     let idx = startIdx;
 

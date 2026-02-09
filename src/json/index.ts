@@ -75,7 +75,6 @@ function parseJSONL(input: string): any[] | null {
     return objects.length > 0 ? objects : null;
 }
 
-
 function detectFormat(input: string): Format {
     // Try JSON first
     try {
@@ -125,7 +124,9 @@ function calculateSavings(original: number, compressed: number): { percentage: n
 async function main(): Promise<void> {
     const program = new Command()
         .name("json")
-        .description("JSON/TOON converter - Convert data between JSON and TOON (Token-Oriented Object Notation) formats")
+        .description(
+            "JSON/TOON converter - Convert data between JSON and TOON (Token-Oriented Object Notation) formats"
+        )
         .argument("[file]", "Input file path (optional if reading from stdin)")
         .option("-t, --to-toon", "Force conversion to TOON format")
         .option("-j, --to-json", "Force conversion to JSON format")

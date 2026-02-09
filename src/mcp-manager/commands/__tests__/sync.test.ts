@@ -17,7 +17,7 @@ describe("syncServers", () => {
     beforeEach(() => {
         mockProvider = new MockMCPProvider("claude", "/mock/claude.json");
         mockProviders = [mockProvider];
-        
+
         // Reset mock responses
         setMockResponses({ selectedProviders: ["claude"] });
     });
@@ -25,7 +25,7 @@ describe("syncServers", () => {
     it("should sync servers to selected providers", async () => {
         const mockConfig = createMockUnifiedConfig();
         setMockResponses({ selectedProviders: ["claude"] });
-        
+
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
         spyOn(configUtils, "stripMeta").mockImplementation((config) => {
             const { _meta, ...rest } = config;
@@ -46,7 +46,7 @@ describe("syncServers", () => {
         const mockConfig = createMockUnifiedConfig();
         mockProvider.getServerConfigResult = null;
         setMockResponses({ selectedProviders: ["claude"] });
-        
+
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
         spyOn(configUtils, "stripMeta").mockImplementation((config) => {
             const { _meta, ...rest } = config;
@@ -65,7 +65,7 @@ describe("syncServers", () => {
     it("should skip providers that don't have config files", async () => {
         const mockConfig = createMockUnifiedConfig();
         mockProvider.configExistsResult = false;
-        
+
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
         spyOn(logger, "warn");
 
@@ -77,7 +77,7 @@ describe("syncServers", () => {
 
     it("should return early if no servers in config", async () => {
         const emptyConfig = { mcpServers: {} };
-        
+
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(emptyConfig);
         spyOn(logger, "warn");
 
@@ -92,7 +92,7 @@ describe("syncServers", () => {
         const mockConfig = createMockUnifiedConfig();
         mockProvider.errors.set("syncServers", new Error("Sync failed"));
         setMockResponses({ selectedProviders: ["claude"] });
-        
+
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
         spyOn(configUtils, "stripMeta").mockImplementation((config) => {
             const { _meta, ...rest } = config;
@@ -103,9 +103,7 @@ describe("syncServers", () => {
 
         await syncServers(mockProviders);
 
-        expect(logger.error).toHaveBeenCalledWith(
-            expect.stringContaining("Failed to sync to claude")
-        );
+        expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("Failed to sync to claude"));
     });
 
     it("should handle multiple providers", async () => {
@@ -113,7 +111,7 @@ describe("syncServers", () => {
         const mockProvider2 = new MockMCPProvider("gemini", "/mock/gemini.json");
         const allProviders = [mockProvider, mockProvider2];
         setMockResponses({ selectedProviders: ["claude", "gemini"] });
-        
+
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
         spyOn(configUtils, "stripMeta").mockImplementation((config) => {
             const { _meta, ...rest } = config;

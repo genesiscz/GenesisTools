@@ -188,7 +188,8 @@ export async function multilineText(options: MultilineOptions): Promise<string |
                     if (i + 2 < data.length && data[i + 1] === 91) {
                         const code = data[i + 2];
                         // Arrow keys
-                        if (code === 65) { // Up
+                        if (code === 65) {
+                            // Up
                             // Move to same column on previous line
                             const { line, col } = getCursorLineCol();
                             if (line > 0) {
@@ -203,7 +204,8 @@ export async function multilineText(options: MultilineOptions): Promise<string |
                             i += 2;
                             continue;
                         }
-                        if (code === 66) { // Down
+                        if (code === 66) {
+                            // Down
                             const { line, col } = getCursorLineCol();
                             const lines = getLines();
                             if (line < lines.length - 1) {
@@ -217,14 +219,16 @@ export async function multilineText(options: MultilineOptions): Promise<string |
                             i += 2;
                             continue;
                         }
-                        if (code === 67) { // Right
+                        if (code === 67) {
+                            // Right
                             if (cursorPos < buffer.length) {
                                 cursorPos++;
                             }
                             i += 2;
                             continue;
                         }
-                        if (code === 68) { // Left
+                        if (code === 68) {
+                            // Left
                             if (cursorPos > 0) {
                                 cursorPos--;
                             }
@@ -276,7 +280,13 @@ export async function multilineText(options: MultilineOptions): Promise<string |
                 }
 
                 // Delete key (ESC [ 3 ~)
-                if (byte === 27 && i + 3 < data.length && data[i + 1] === 91 && data[i + 2] === 51 && data[i + 3] === 126) {
+                if (
+                    byte === 27 &&
+                    i + 3 < data.length &&
+                    data[i + 1] === 91 &&
+                    data[i + 2] === 51 &&
+                    data[i + 3] === 126
+                ) {
                     if (cursorPos < buffer.length) {
                         buffer = buffer.slice(0, cursorPos) + buffer.slice(cursorPos + 1);
                     }

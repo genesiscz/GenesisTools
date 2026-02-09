@@ -42,4 +42,3 @@ export interface MCPServerMeta {
  * This is a duplicate of the _meta.enabled information for easier access.
  */
 export type EnabledMcpServers = Record<string, Partial<EnabledState>>;
-

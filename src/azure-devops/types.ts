@@ -469,22 +469,22 @@ export interface TimeLogImportFile {
 
 /** Query parameters for /timelog/query endpoint */
 export interface TimeLogQueryParams {
-    FromDate?: string;   // YYYY-MM-DD
-    ToDate?: string;     // YYYY-MM-DD
-    projectId?: string;  // GUID
+    FromDate?: string; // YYYY-MM-DD
+    ToDate?: string; // YYYY-MM-DD
+    projectId?: string; // GUID
     workitemId?: number;
-    userId?: string;     // Azure AD object ID (GUID)
+    userId?: string; // Azure AD object ID (GUID)
 }
 
 /** Response from /timelog/query endpoint (richer than TimeLogEntry) */
 export interface TimeLogQueryEntry {
     timeLogId: string;
     comment: string | null;
-    week: string;              // "2026-W05" (ISO week)
+    week: string; // "2026-W05" (ISO week)
     timeTypeId: string;
     timeTypeDescription: string;
     minutes: number;
-    date: string;              // "2026-01-30T00:00:00"
+    date: string; // "2026-01-30T00:00:00"
     userId: string;
     userName: string;
     userEmail: string | null;

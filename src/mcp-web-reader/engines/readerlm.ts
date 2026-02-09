@@ -1,9 +1,4 @@
-import {
-    convertToMarkdown,
-    checkLLMModel,
-    downloadLLMModel,
-    type LLMModelStatus,
-} from "@nanocollective/get-md";
+import { convertToMarkdown, checkLLMModel, downloadLLMModel, type LLMModelStatus } from "@nanocollective/get-md";
 import { MarkdownEngine } from "./base.js";
 import type { ConversionOptions, ConversionResult, EngineName } from "./types.js";
 
@@ -51,8 +46,8 @@ export class ReaderLMEngine extends MarkdownEngine {
         if (!status.available) {
             throw new Error(
                 `ReaderLM-v2 model not installed (~1GB).\n` +
-                `Model: https://huggingface.co/jinaai/ReaderLM-v2\n` +
-                `Add --download-model to your command to download and convert.`
+                    `Model: https://huggingface.co/jinaai/ReaderLM-v2\n` +
+                    `Add --download-model to your command to download and convert.`
             );
         }
 
@@ -93,10 +88,7 @@ export class ReaderLMEngine extends MarkdownEngine {
         };
     }
 
-    private buildHeader(
-        meta: { title?: string; author?: string; publishedTime?: string },
-        url: string
-    ): string {
+    private buildHeader(meta: { title?: string; author?: string; publishedTime?: string }, url: string): string {
         const lines = ["---"];
         if (meta.title) lines.push(`title: ${meta.title}`);
         lines.push(`url: ${url}`);

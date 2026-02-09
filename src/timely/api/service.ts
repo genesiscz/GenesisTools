@@ -26,7 +26,10 @@ export interface GetEventsParams {
  * Wraps TimelyApiClient with convenient methods for accounts, projects, events, etc.
  */
 export class TimelyService {
-    constructor(private client: TimelyApiClient, private storage: Storage) {}
+    constructor(
+        private client: TimelyApiClient,
+        private storage: Storage
+    ) {}
 
     // ============================================
     // Accounts

@@ -16,7 +16,7 @@ describe("showServerConfig", () => {
         const mockConfig = createMockServerConfig("test-server");
         mockProvider.getServerConfigResult = mockConfig;
         mockProvider2.getServerConfigResult = mockConfig;
-        
+
         spyOn(consoleLog, "info");
         spyOn(logger, "warn");
 
@@ -30,21 +30,19 @@ describe("showServerConfig", () => {
     it("should warn if server not found in any provider", async () => {
         mockProvider.getServerConfigResult = null;
         mockProvider2.getServerConfigResult = null;
-        
+
         spyOn(logger, "warn");
 
         await showServerConfig("non-existent", [mockProvider, mockProvider2]);
 
-        expect(logger.warn).toHaveBeenCalledWith(
-            "Server 'non-existent' not found in any provider."
-        );
+        expect(logger.warn).toHaveBeenCalledWith("Server 'non-existent' not found in any provider.");
     });
 
     it("should skip providers without config files", async () => {
         const mockConfig = createMockServerConfig("test-server");
         mockProvider.configExistsResult = false;
         mockProvider2.getServerConfigResult = mockConfig;
-        
+
         spyOn(consoleLog, "info");
 
         await showServerConfig("test-server", [mockProvider, mockProvider2]);
@@ -55,7 +53,7 @@ describe("showServerConfig", () => {
     it("should display config as JSON", async () => {
         const mockConfig = createMockServerConfig("test-server");
         mockProvider.getServerConfigResult = mockConfig;
-        
+
         spyOn(consoleLog, "info");
 
         await showServerConfig("test-server", [mockProvider]);
@@ -66,7 +64,3 @@ describe("showServerConfig", () => {
         expect(jsonCall).toBeDefined();
     });
 });
-
-
-
-

@@ -833,8 +833,8 @@ async function main(): Promise<void> {
             Array.isArray(options.extension)
                 ? options.extension
                 : typeof options.extension === "string"
-                ? [options.extension]
-                : []
+                  ? [options.extension]
+                  : []
         ).map((ext) => ext.toLowerCase().replace(/^\./, "")); // Normalize extensions
         const includeHidden = !!options.includeHidden;
         const ignoreFilesOnly = !!options.ignoreFilesOnly;
@@ -842,8 +842,8 @@ async function main(): Promise<void> {
         const ignorePatterns = Array.isArray(options.ignore)
             ? options.ignore
             : typeof options.ignore === "string"
-            ? [options.ignore]
-            : [];
+              ? [options.ignore]
+              : [];
         const outputFile = options.output;
         const claudeXml = !!options.cxml;
         const markdown = !!options.markdown;

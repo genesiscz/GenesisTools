@@ -7,7 +7,6 @@ import type { DetectedProvider, ModelInfo, ProviderChoice } from "@ask/types";
 import { providerManager } from "@ask/providers/ProviderManager";
 
 export class ModelSelector {
-
     async selectModel(): Promise<ProviderChoice | null> {
         try {
             const providers = await providerManager.detectProviders();

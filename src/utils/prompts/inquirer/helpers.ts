@@ -13,10 +13,7 @@ export function isUserCancellation(error: unknown): error is ExitPromptError {
 /**
  * Wrap an async function to handle ExitPromptError gracefully
  */
-export async function withCancellationHandling<T>(
-    fn: () => Promise<T>,
-    onCancel?: () => void,
-): Promise<T | undefined> {
+export async function withCancellationHandling<T>(fn: () => Promise<T>, onCancel?: () => void): Promise<T | undefined> {
     try {
         return await fn();
     } catch (error) {
@@ -31,10 +28,7 @@ export async function withCancellationHandling<T>(
 /**
  * Run a prompt and exit gracefully on cancellation
  */
-export async function runPrompt<T>(
-    promptFn: () => Promise<T>,
-    exitMessage = "Operation cancelled",
-): Promise<T> {
+export async function runPrompt<T>(promptFn: () => Promise<T>, exitMessage = "Operation cancelled"): Promise<T> {
     try {
         return await promptFn();
     } catch (error) {

@@ -60,5 +60,4 @@ export function registerCacheCommand(program: Command, storage: Storage): void {
                 throw error;
             }
         });
-
 }

@@ -42,9 +42,7 @@ export const cancelSymbol = Symbol("cancel");
  * Interactive search multiselect prompt.
  * Allows users to filter a long list by typing and select multiple items.
  */
-export async function searchMultiselect<T>(
-    options: SearchMultiselectOptions<T>,
-): Promise<T[] | symbol> {
+export async function searchMultiselect<T>(options: SearchMultiselectOptions<T>): Promise<T[] | symbol> {
     const { message, items, maxVisible = 8, initialSelected = [] } = options;
 
     return new Promise((resolve) => {
@@ -68,10 +66,7 @@ export async function searchMultiselect<T>(
         const filter = (item: SearchItem<T>, q: string): boolean => {
             if (!q) return true;
             const lowerQ = q.toLowerCase();
-            return (
-                item.label.toLowerCase().includes(lowerQ) ||
-                String(item.value).toLowerCase().includes(lowerQ)
-            );
+            return item.label.toLowerCase().includes(lowerQ) || String(item.value).toLowerCase().includes(lowerQ);
         };
 
         const getFiltered = (): SearchItem<T>[] => {
@@ -96,12 +91,7 @@ export async function searchMultiselect<T>(
             const filtered = getFiltered();
 
             // Header
-            const icon =
-                state === "active"
-                    ? S_STEP_ACTIVE
-                    : state === "cancel"
-                      ? S_STEP_CANCEL
-                      : S_STEP_SUBMIT;
+            const icon = state === "active" ? S_STEP_ACTIVE : state === "cancel" ? S_STEP_CANCEL : S_STEP_SUBMIT;
             lines.push(`${icon}  ${pc.bold(message)}`);
 
             if (state === "active") {
@@ -116,7 +106,7 @@ export async function searchMultiselect<T>(
                 // Items
                 const visibleStart = Math.max(
                     0,
-                    Math.min(cursor - Math.floor(maxVisible / 2), filtered.length - maxVisible),
+                    Math.min(cursor - Math.floor(maxVisible / 2), filtered.length - maxVisible)
                 );
                 const visibleEnd = Math.min(filtered.length, visibleStart + maxVisible);
                 const visibleItems = filtered.slice(visibleStart, visibleEnd);
@@ -154,9 +144,7 @@ export async function searchMultiselect<T>(
                 if (selected.size === 0) {
                     lines.push(`${S_BAR}  ${pc.dim("Selected: (none)")}`);
                 } else {
-                    const selectedLabels = items
-                        .filter((item) => selected.has(item.value))
-                        .map((item) => item.label);
+                    const selectedLabels = items.filter((item) => selected.has(item.value)).map((item) => item.label);
                     const summary =
                         selectedLabels.length <= 3
                             ? selectedLabels.join(", ")
@@ -167,9 +155,7 @@ export async function searchMultiselect<T>(
                 lines.push(`${pc.dim("└")}`);
             } else if (state === "submit") {
                 // Final state - show what was selected
-                const selectedLabels = items
-                    .filter((item) => selected.has(item.value))
-                    .map((item) => item.label);
+                const selectedLabels = items.filter((item) => selected.has(item.value)).map((item) => item.label);
                 lines.push(`${S_BAR}  ${pc.dim(selectedLabels.join(", "))}`);
             } else if (state === "cancel") {
                 lines.push(`${S_BAR}  ${pc.strikethrough(pc.dim("Cancelled"))}`);

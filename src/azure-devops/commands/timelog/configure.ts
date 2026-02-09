@@ -7,26 +7,10 @@ import { loadConfig, findConfigPath } from "@app/azure-devops/utils";
 import type { AzureConfigWithTimeLog, TimeLogConfig } from "@app/azure-devops/types";
 
 // Common work item types in Azure DevOps
-const COMMON_WORK_ITEM_TYPES = [
-    "Bug",
-    "Task",
-    "User Story",
-    "Incident",
-    "Feature",
-    "Epic",
-] as const;
+const COMMON_WORK_ITEM_TYPES = ["Bug", "Task", "User Story", "Incident", "Feature", "Epic"] as const;
 
 // Common work item states in Azure DevOps
-const COMMON_STATES = [
-    "New",
-    "Active",
-    "In Progress",
-    "Development",
-    "Blocked",
-    "Resolved",
-    "Closed",
-    "Done",
-] as const;
+const COMMON_STATES = ["New", "Active", "In Progress", "Development", "Blocked", "Resolved", "Closed", "Done"] as const;
 
 // Well-known terminal states (deprioritized by default)
 const WELL_KNOWN_TERMINAL_STATES = ["Closed", "Done", "Resolved", "Removed"];
@@ -38,9 +22,11 @@ interface ConfigureOptions {
 }
 
 function hasExplicitFlags(options: ConfigureOptions): boolean {
-    return options.allowedWorkItemTypes !== undefined
-        || (options.allowedStatesForType !== undefined && options.allowedStatesForType.length > 0)
-        || options.deprioritizedStates !== undefined;
+    return (
+        options.allowedWorkItemTypes !== undefined ||
+        (options.allowedStatesForType !== undefined && options.allowedStatesForType.length > 0) ||
+        options.deprioritizedStates !== undefined
+    );
 }
 
 function loadExistingConfig(): { config: AzureConfigWithTimeLog; configPath: string } {
@@ -130,7 +116,9 @@ function formatCurrentConfig(timelog: TimeLogConfig | undefined): string {
     }
 
     if (timelog.deprioritizedStates?.length) {
-        lines.push(`  deprioritizedStates: ${pc.yellow(timelog.deprioritizedStates.join(", "))} ${pc.dim("(fallback only)")}`);
+        lines.push(
+            `  deprioritizedStates: ${pc.yellow(timelog.deprioritizedStates.join(", "))} ${pc.dim("(fallback only)")}`
+        );
     } else {
         lines.push(`  deprioritizedStates: ${pc.dim("using defaults (Closed, Done, Resolved, Removed)")}`);
     }
@@ -141,14 +129,11 @@ function formatCurrentConfig(timelog: TimeLogConfig | undefined): string {
 async function handleInteractive(config: AzureConfigWithTimeLog, configPath: string): Promise<void> {
     p.intro(pc.bold("TimeLog Configuration"));
 
-    p.note(
-        formatCurrentConfig(config.timelog),
-        "Current Configuration"
-    );
+    p.note(formatCurrentConfig(config.timelog), "Current Configuration");
 
     p.log.info(pc.dim("For non-interactive use, run: tools azure-devops timelog configure --help"));
 
-    config.timelog = config.timelog || {} as TimeLogConfig;
+    config.timelog = config.timelog || ({} as TimeLogConfig);
 
     // Step 1: Fetch functionsKey if missing
     if (!config.timelog.functionsKey) {
@@ -267,9 +252,10 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
             label: type,
             hint: currentTypes.includes(type) ? "currently selected" : undefined,
         })),
-        initialValues: currentTypes.length > 0
-            ? currentTypes.filter((t) => (COMMON_WORK_ITEM_TYPES as readonly string[]).includes(t))
-            : [],
+        initialValues:
+            currentTypes.length > 0
+                ? currentTypes.filter((t) => (COMMON_WORK_ITEM_TYPES as readonly string[]).includes(t))
+                : [],
         required: false,
     });
 
@@ -346,9 +332,10 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
         }
     }
 
-    const terminalCandidates = allSelectedStates.size > 0
-        ? [...allSelectedStates].filter((s) => WELL_KNOWN_TERMINAL_STATES.includes(s))
-        : [...WELL_KNOWN_TERMINAL_STATES];
+    const terminalCandidates =
+        allSelectedStates.size > 0
+            ? [...allSelectedStates].filter((s) => WELL_KNOWN_TERMINAL_STATES.includes(s))
+            : [...WELL_KNOWN_TERMINAL_STATES];
 
     if (terminalCandidates.length > 0) {
         const currentDeprioritized = config.timelog.deprioritizedStates || [];
@@ -360,9 +347,10 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
                 label: state,
                 hint: currentDeprioritized.includes(state) ? "currently deprioritized" : undefined,
             })),
-            initialValues: currentDeprioritized.length > 0
-                ? currentDeprioritized.filter((s) => terminalCandidates.includes(s))
-                : terminalCandidates,
+            initialValues:
+                currentDeprioritized.length > 0
+                    ? currentDeprioritized.filter((s) => terminalCandidates.includes(s))
+                    : terminalCandidates,
             required: false,
         });
 
@@ -381,10 +369,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
     }
 
     // Step 6: Summary and confirm
-    p.note(
-        formatCurrentConfig(config.timelog),
-        "New Configuration"
-    );
+    p.note(formatCurrentConfig(config.timelog), "New Configuration");
 
     const shouldSave = await p.confirm({
         message: "Save this configuration?",
@@ -492,9 +477,12 @@ export function registerConfigureSubcommand(parent: Command): void {
     parent
         .command("configure")
         .description("Configure TimeLog settings (interactive by default)")
-        .option("--allowed-work-item-types <types>", "Comma-separated list of allowed work item types (e.g., \"Bug,Task\")")
+        .option(
+            "--allowed-work-item-types <types>",
+            'Comma-separated list of allowed work item types (e.g., "Bug,Task")'
+        )
         .option("--allowed-states-for-type <mapping>", "Type:State1,State2 mapping (repeatable)", collectOption, [])
-        .option("--deprioritized-states <states>", "Comma-separated fallback states (e.g., \"Closed,Done,Resolved\")")
+        .option("--deprioritized-states <states>", 'Comma-separated fallback states (e.g., "Closed,Done,Resolved")')
         .action(async (options: ConfigureOptions) => {
             if (hasExplicitFlags(options)) {
                 handleNonInteractive(options);

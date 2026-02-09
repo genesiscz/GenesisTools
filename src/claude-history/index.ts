@@ -81,7 +81,9 @@ function formatResultsAsMarkdown(results: SearchResult[], filters: SearchFilters
 
     const queryDesc = filters.query ? `"${filters.query}"` : "all";
     const modeDesc = filters.summaryOnly ? " (summary-only)" : filters.sortByRelevance ? " (by relevance)" : "";
-    lines.push(`## Found ${results.length} conversation${results.length !== 1 ? "s" : ""} matching ${queryDesc}${modeDesc}\n`);
+    lines.push(
+        `## Found ${results.length} conversation${results.length !== 1 ? "s" : ""} matching ${queryDesc}${modeDesc}\n`
+    );
 
     for (let i = 0; i < results.length; i++) {
         const result = results[i];
@@ -89,11 +91,12 @@ function formatResultsAsMarkdown(results: SearchResult[], filters: SearchFilters
         const date = result.timestamp.toISOString().split("T")[0];
 
         // Show relevance score if sorting by relevance
-        const relevanceStr = filters.sortByRelevance && result.relevanceScore !== undefined
-            ? ` [score: ${result.relevanceScore}]`
-            : "";
+        const relevanceStr =
+            filters.sortByRelevance && result.relevanceScore !== undefined ? ` [score: ${result.relevanceScore}]` : "";
 
-        lines.push(`### ${i + 1}. ${title} (${result.project})${result.isSubagent ? " [Subagent]" : ""}${relevanceStr}`);
+        lines.push(
+            `### ${i + 1}. ${title} (${result.project})${result.isSubagent ? " [Subagent]" : ""}${relevanceStr}`
+        );
         lines.push(`**Date:** ${date}${result.gitBranch ? ` | **Branch:** ${result.gitBranch}` : ""}`);
         lines.push(`**Session ID:** \`${result.sessionId}\``);
 
@@ -103,7 +106,12 @@ function formatResultsAsMarkdown(results: SearchResult[], filters: SearchFilters
 
         // Show commit hashes if found
         if (result.commitHashes && result.commitHashes.length > 0) {
-            lines.push(`**Commits:** ${result.commitHashes.slice(0, 5).map(h => `\`${h.substring(0, 7)}\``).join(", ")}${result.commitHashes.length > 5 ? "..." : ""}`);
+            lines.push(
+                `**Commits:** ${result.commitHashes
+                    .slice(0, 5)
+                    .map((h) => `\`${h.substring(0, 7)}\``)
+                    .join(", ")}${result.commitHashes.length > 5 ? "..." : ""}`
+            );
         }
 
         lines.push(`**File:** \`${result.filePath.replace(homedir(), "~")}\``);
@@ -238,7 +246,8 @@ program
                 }
 
                 // Get session ID to exclude (explicit or from env)
-                const currentSessionId = options.excludeSession || (options.excludeCurrent ? process.env.CLAUDE_CODE_SESSION_ID : undefined);
+                const currentSessionId =
+                    options.excludeSession || (options.excludeCurrent ? process.env.CLAUDE_CODE_SESSION_ID : undefined);
 
                 filters = {
                     query,
