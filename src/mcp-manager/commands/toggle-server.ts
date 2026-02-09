@@ -142,7 +142,11 @@ export async function toggleServer(
                     if (!existingServerConfig) {
                         // Server not installed globally - install it first
                         logger.info(`Installing '${serverName}' globally in ${providerName}...`);
-                        await provider.installServer(serverName, configToSync);
+                        const installResult = await provider.installServer(serverName, configToSync);
+                        if (installResult === WriteResult.Rejected) {
+                            logger.warn(`Skipped '${serverName}' — user rejected installation in ${providerName}`);
+                            continue;
+                        }
                     }
                 }
 
@@ -255,6 +259,10 @@ export async function toggleServer(
                                     } server(s) in ${providerName} for project: ${projectChoice.displayName}`
                                 );
                             }
+                        } else if (result === WriteResult.NoChanges) {
+                            logger.info(
+                                `→ ${serversToToggle.length} server(s) already ${actionPast} in ${providerName} — no changes needed`
+                            );
                         }
                     }
                 } else {
@@ -273,6 +281,10 @@ export async function toggleServer(
                             `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
                                 serversToToggle.length
                             } server(s) globally in ${providerName}`
+                        );
+                    } else if (result === WriteResult.NoChanges) {
+                        logger.info(
+                            `→ ${serversToToggle.length} server(s) already ${actionPast} in ${providerName} — no changes needed`
                         );
                     }
                 }

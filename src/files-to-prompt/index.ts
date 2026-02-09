@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import logger from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { formatBytes as _formatBytes } from "@app/utils/format";
 import { estimateTokens, formatTokens } from "@ask/utils/helpers";
 import type { FileSink } from "bun";
 import { Command } from "commander";
@@ -548,17 +549,9 @@ function showVersion(): void {
     logger.info(`files-to-prompt v${VERSION}`);
 }
 
+// Alias shared utility for backward compat (sub-KB output: "0 B" instead of "0.0 B")
 function formatFileSize(bytes: number): string {
-    const units = ["B", "KB", "MB", "GB"];
-    let size = bytes;
-    let unitIndex = 0;
-
-    while (size >= 1024 && unitIndex < units.length - 1) {
-        size /= 1024;
-        unitIndex++;
-    }
-
-    return `${size.toFixed(1)} ${units[unitIndex]}`;
+    return _formatBytes(bytes);
 }
 
 function toRelativePath(path: string, basePath?: string): string {

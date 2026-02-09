@@ -12,7 +12,7 @@ Analyze Timely events, auto-tracked memories, and git commits to propose Azure D
 1. Timely configured: `tools timely login && tools timely accounts --select`
 2. Azure DevOps configured: `tools azure-devops --configure <url>`
 3. TimeLog configured: `tools azure-devops timelog configure`
-4. Git authors configured: `tools git configure-authors` (for using `tools git commits`)
+4. Git authors configured: `tools git configure authors` (for using `tools git commits`)
 
 ## Data Model
 
@@ -93,12 +93,12 @@ Use `suggested_event` to associate unlinked memories with the best-matching even
 
 ```bash
 # Get commits for the specific date range with automatic workitem ID extraction
-tools git commits --from YYYY-MM-DD --to YYYY-MM-DD --stat --format json 2>/dev/null | tools json
+tools git commits --from YYYY-MM-DD --to YYYY-MM-DD --format json 2>/dev/null | tools json
 ```
 
 This command automatically extracts workitem IDs from commit messages and branch names via configured patterns (default: `col-(\d+)`, `#(\d{5,6})`, `COL-(\d+)-` on branches).
 
-The output includes commit metadata (hash, message, author, date), stats (files changed, insertions, deletions), and extracted workitem IDs.
+The output includes commit metadata (hash, message, author, date), stats (files changed, insertions, deletions), and extracted workitem IDs. Stats are always included.
 
 Each Timely **event** represents a chunk of logged time. Match each to a work item:
 
@@ -189,11 +189,12 @@ tools azure-devops timelog add -w <id> -h <hours> -t "<type>" -c "<comment>"
 | Memories only | `tools timely memories --day YYYY-MM-DD --format json` |
 | Memories (force fresh fetch) | `tools timely memories --day YYYY-MM-DD --force` |
 | Memories for date range | `tools timely memories --from YYYY-MM-DD --to YYYY-MM-DD --format json` |
-| Git commits with workitem IDs | `tools git commits --from YYYY-MM-DD --to YYYY-MM-DD --stat --format json` |
-| Configure git authors | `tools git configure-authors` (interactive) |
-| Configure workitem patterns | `tools git configure-workitem-patterns` (interactive) |
+| Git commits with workitem IDs | `tools git commits --from YYYY-MM-DD --to YYYY-MM-DD --format json` |
+| Configure git authors | `tools git configure authors` (interactive) |
+| Configure workitem patterns | `tools git configure patterns` (interactive) |
 | Existing timelogs | `tools azure-devops timelog list --day YYYY-MM-DD --format json` |
-| Timelogs by user/range | `tools azure-devops timelog list --from YYYY-MM-DD --to YYYY-MM-DD --user "Name"` |
+| Timelogs by date range | `tools azure-devops timelog list --from YYYY-MM-DD --to YYYY-MM-DD --format json` |
+| Timelogs filtered to me | `tools azure-devops timelog list --from YYYY-MM-DD --to YYYY-MM-DD --user @me --format json` |
 | Add timelog | `tools azure-devops timelog add -w <id> -h <hours> -t "<type>" -c "<comment>"` |
 | Stage entry for review | `tools azure-devops timelog prepare-import add --from YYYY-MM-DD --to YYYY-MM-DD --entry '{...}'` |
 | Review staged entries | `tools azure-devops timelog prepare-import list --name YYYY-MM-DD.YYYY-MM-DD` |
@@ -230,10 +231,10 @@ When estimating time from commits (useful for days without Timely events or for 
 
 ```bash
 # Get commits with stats using tools git
-tools git commits --from YYYY-MM-DD --to YYYY-MM-DD --stat --format json 2>/dev/null | tools json
+tools git commits --from YYYY-MM-DD --to YYYY-MM-DD --format json 2>/dev/null | tools json
 ```
 
-The command uses configured authors (from `tools git configure-authors`) and automatically filters by author date in the specified range. Authors can be added with `--author "Name"` or `--with-author "Name"` flags if needed.
+The command uses configured authors (from `tools git configure authors`) and automatically filters by author date in the specified range. Authors can be added with `--author "Name"` or `--with-author "Name"` flags if needed.
 
 Line count estimation heuristics:
 - < 20 lines changed: 0.5h minimum
@@ -349,7 +350,7 @@ Key principles:
 When syncing multiple days at once:
 
 1. **Gather Timely events for the range** (use `--from`/`--to` or per-day `--day`)
-2. **Gather git commits for the range** with stats: `tools git commits --from YYYY-MM-DD --to YYYY-MM-DD --stat --format json`
+2. **Gather git commits for the range** with stats: `tools git commits --from YYYY-MM-DD --to YYYY-MM-DD --format json`
 3. **Check existing timelogs** for the range to avoid duplicates
 4. **Create a report .md file** in `.claude/timelog/` with full breakdown (commits, Timely data, Teams meetings)
 5. **Stage entries using prepare-import** (preferred):

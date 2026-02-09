@@ -30,47 +30,17 @@ import type {
 } from "@app/azure-devops/types";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import TurndownService from "turndown";
-import { gfm } from "turndown-plugin-gfm";
+import { formatRelativeTime } from "@app/utils/format";
+import { htmlToMarkdown } from "@app/utils/markdown/html-to-md";
+import { slugify } from "@app/utils/string";
+import { levenshteinDistance, similarityScore } from "@app/utils/fuzzy-match";
 
-// ============= HTML to Markdown =============
-
-const turndown = new TurndownService({
-    headingStyle: "atx",
-    codeBlockStyle: "fenced",
-    bulletListMarker: "-",
-});
-turndown.use(gfm);
-
-/**
- * Convert HTML content to clean Markdown
- */
-export function htmlToMarkdown(html: string): string {
-    if (!html) return "";
-    return turndown.turndown(html).trim();
-}
-
-// ============= String Utilities =============
-
-export function slugify(title: string): string {
-    return title
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "") // Remove diacritics
-        .replace(/[^a-zA-Z0-9]+/g, "-") // Replace non-alphanumeric with dash
-        .replace(/^-+|-+$/g, "") // Trim dashes
-        .slice(0, 50); // Limit length
-}
+// Re-export shared utilities for backward compatibility
+export { htmlToMarkdown, slugify };
+export { levenshteinDistance, similarityScore };
 
 export function getRelativeTime(date: Date): string {
-    const ageMinutes = Math.round((Date.now() - date.getTime()) / 60000);
-    if (ageMinutes < 1) return "just now";
-    if (ageMinutes === 1) return "1 minute ago";
-    if (ageMinutes < 60) return `${ageMinutes} minutes ago`;
-    const ageHours = Math.round(ageMinutes / 60);
-    if (ageHours === 1) return "1 hour ago";
-    if (ageHours < 24) return `${ageHours} hours ago`;
-    const ageDays = Math.round(ageHours / 24);
-    return `${ageDays} day${ageDays === 1 ? "" : "s"} ago`;
+    return formatRelativeTime(date, { rounding: "round" });
 }
 
 // ============= Configuration Functions =============
@@ -316,52 +286,6 @@ export function extractQueryId(input: string): string {
 }
 
 // ============= Fuzzy String Matching =============
-
-/**
- * Calculate Levenshtein distance between two strings
- * Used for fuzzy matching query names
- */
-export function levenshteinDistance(a: string, b: string): number {
-    const aLower = a.toLowerCase();
-    const bLower = b.toLowerCase();
-
-    if (aLower === bLower) return 0;
-    if (aLower.length === 0) return bLower.length;
-    if (bLower.length === 0) return aLower.length;
-
-    const matrix: number[][] = [];
-
-    // Initialize matrix
-    for (let i = 0; i <= bLower.length; i++) {
-        matrix[i] = [i];
-    }
-    for (let j = 0; j <= aLower.length; j++) {
-        matrix[0][j] = j;
-    }
-
-    // Fill matrix
-    for (let i = 1; i <= bLower.length; i++) {
-        for (let j = 1; j <= aLower.length; j++) {
-            const cost = bLower[i - 1] === aLower[j - 1] ? 0 : 1;
-            matrix[i][j] = Math.min(
-                matrix[i - 1][j] + 1, // deletion
-                matrix[i][j - 1] + 1, // insertion
-                matrix[i - 1][j - 1] + cost // substitution
-            );
-        }
-    }
-
-    return matrix[bLower.length][aLower.length];
-}
-
-/**
- * Calculate similarity score (0-1, higher is better)
- */
-export function similarityScore(a: string, b: string): number {
-    const maxLen = Math.max(a.length, b.length);
-    if (maxLen === 0) return 1;
-    return 1 - levenshteinDistance(a, b) / maxLen;
-}
 
 /**
  * Find the best matching query by name from a list of queries

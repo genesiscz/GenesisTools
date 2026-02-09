@@ -1,4 +1,5 @@
 import { handleReadmeFlag } from "@app/utils/readme";
+import { formatRelativeTime as _formatRelativeTime } from "@app/utils/format";
 import chalk from "chalk";
 import { Command } from "commander";
 import { lstatSync, readdirSync } from "fs";
@@ -27,22 +28,14 @@ interface TimeGroup {
 }
 
 function formatRelativeTime(date: Date): string {
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMinutes = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMinutes < 1) return "just now";
-    if (diffMinutes < 60) return `${diffMinutes} minute${diffMinutes !== 1 ? "s" : ""} ago`;
-    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? "s" : ""} ago`;
-    if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? "s" : ""} ago`;
-
-    return date.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
+    return _formatRelativeTime(date, {
+        maxDays: 7,
+        fallbackFormat: (d) => d.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+        }),
     });
 }
 

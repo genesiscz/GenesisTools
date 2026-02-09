@@ -23,9 +23,4 @@ export function getServerInfoPath(cwd: string): string {
     return path.join(SERVERS_DIR, `server-${hash}.json`);
 }
 
-/**
- * Wrap a value in an array if it isn't already an array
- */
-export function wrapArray<T>(value: T | T[]): T[] {
-    return Array.isArray(value) ? value : [value];
-}
+export { wrapArray } from "../../utils/array";

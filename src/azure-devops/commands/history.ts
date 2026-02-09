@@ -5,6 +5,7 @@
  * The `show` handler is implemented inline; search and sync are imported.
  */
 
+import { formatDuration as _formatDuration } from "@app/utils/format";
 import { Api } from "@app/azure-devops/api";
 import { formatJSON, loadHistoryCache, saveHistoryCache } from "@app/azure-devops/cache";
 import { buildWorkItemHistory, calculateTimeInState, userMatches } from "@app/azure-devops/history";
@@ -40,12 +41,7 @@ interface FilteredHistory {
  * Format a duration in minutes to a human-readable string like "2h 30m".
  */
 export function formatDuration(minutes: number): string {
-    if (minutes < 1) return "< 1m";
-    const hours = Math.floor(minutes / 60);
-    const mins = Math.round(minutes % 60);
-    if (hours === 0) return `${mins}m`;
-    if (mins === 0) return `${hours}h`;
-    return `${hours}h ${mins}m`;
+    return _formatDuration(minutes, "min", "hm-smart");
 }
 
 /**
