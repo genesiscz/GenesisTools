@@ -377,7 +377,11 @@ tools azure-devops timelog types --format json  # JSON output
 ```bash
 tools azure-devops timelog list -w <workItemId>
 tools azure-devops timelog list -w 268935 --format md
+tools azure-devops timelog list --from 2026-02-01 --to 2026-02-08 --format json
+tools azure-devops timelog list --from 2026-02-01 --to 2026-02-08 --user @me --format json
 ```
+
+The `--user @me` resolves to the configured default user name. Use `--from`/`--to` for date ranges (`--since`/`--upto` also accepted as aliases).
 
 ### Add Time Log Entry
 
@@ -565,13 +569,13 @@ For gathering commit data to correlate with time entries, use the `tools git com
 
 ```bash
 # Get commits for a date range with automatic workitem ID extraction
-tools git commits --from 2026-02-01 --to 2026-02-08 --stat --format json 2>/dev/null | tools json
+tools git commits --from 2026-02-01 --to 2026-02-08 --format json 2>/dev/null | tools json
 ```
 
 This command:
 - Extracts workitem IDs from commit messages and branch names via configured patterns
 - Returns commit metadata (hash, message, author, date)
 - Includes stats (files changed, insertions, deletions)
-- Filters by configured authors (see `tools git configure-authors`)
+- Filters by configured authors (see `tools git configure authors`)
 
 The extracted workitem IDs can be used to match commits to Azure DevOps work items for time logging purposes.

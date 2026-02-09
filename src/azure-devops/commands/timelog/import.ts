@@ -128,7 +128,15 @@ export function registerImportSubcommand(parent: Command): void {
                 : undefined;
 
             let precheckPassed: typeof validEntries = [];
-            const precheckRedirected: Array<{ original: number; redirected: number; type: string }> = [];
+            const workitemTitles = new Map<number, string>();
+            const precheckRedirected: Array<{
+                original: number;
+                originalTitle: string;
+                originalType: string;
+                redirected: number;
+                redirectedTitle: string;
+                redirectedType: string;
+            }> = [];
             const precheckFailed: string[] = [];
 
             if (!allowedTypeConfig) {
@@ -159,8 +167,11 @@ export function registerImportSubcommand(parent: Command): void {
                         precheckPassed.push(redirectedEntry);
                         precheckRedirected.push({
                             original: entry.workItemId,
+                            originalTitle: result.originalTitle,
+                            originalType: result.originalType,
                             redirected: result.redirectId!,
-                            type: `${result.originalType} -> ${result.redirectType}`,
+                            redirectedTitle: result.redirectTitle!,
+                            redirectedType: result.redirectType!,
                         });
                     } else {
                         precheckFailed.push(`#${entry.workItemId}: ${result.message}`);
@@ -180,7 +191,11 @@ export function registerImportSubcommand(parent: Command): void {
                     console.log(pc.yellow(`  \u26A0 ${precheckRedirected.length} entries redirected`));
 
                     for (const r of precheckRedirected) {
-                        console.log(pc.dim(`    #${r.original} -> #${r.redirected} (${r.type})`));
+                        console.log(
+                            pc.dim(
+                                `    #${r.original} ${r.originalTitle} (${r.originalType}) -> #${r.redirected} ${r.redirectedTitle} (${r.redirectedType})`
+                            )
+                        );
                     }
                 }
 
@@ -189,6 +204,15 @@ export function registerImportSubcommand(parent: Command): void {
 
                     for (const f of precheckFailed) {
                         console.log(pc.dim(`    ${f}`));
+                    }
+                }
+
+                // Build workitem title lookup from precheck results
+                for (const [id, result] of precheckResults) {
+                    workitemTitles.set(id, result.originalTitle);
+
+                    if (result.redirectId && result.redirectTitle) {
+                        workitemTitles.set(result.redirectId, result.redirectTitle);
                     }
                 }
 
@@ -204,7 +228,9 @@ export function registerImportSubcommand(parent: Command): void {
                 console.log("\u2714 Dry run complete. Valid entries:");
 
                 for (const e of precheckPassed) {
-                    console.log(`  #${e.workItemId}: ${formatMinutes(e.minutes)} ${e.timeType} on ${e.date}`);
+                    const title = workitemTitles.get(e.workItemId);
+                    const titlePart = title ? ` ${title}` : "";
+                    console.log(`  #${e.workItemId}${titlePart}: ${formatMinutes(e.minutes)} ${e.timeType} on ${e.date}`);
                 }
 
                 return;
@@ -227,7 +253,9 @@ export function registerImportSubcommand(parent: Command): void {
                     );
                     created++;
                     createdWorkItemIds.push(entry.workItemId);
-                    const parts = [`#${entry.workItemId}`, formatMinutes(entry.minutes), entry.timeType, entry.date];
+                    const title = workitemTitles.get(entry.workItemId);
+                    const wiLabel = title ? `#${entry.workItemId} ${title}` : `#${entry.workItemId}`;
+                    const parts = [wiLabel, formatMinutes(entry.minutes), entry.timeType, entry.date];
 
                     if (entry.comment) {
                         parts.push(entry.comment);

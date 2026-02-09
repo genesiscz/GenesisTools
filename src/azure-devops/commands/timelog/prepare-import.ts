@@ -26,6 +26,7 @@ type TimelogEntryInput = z.infer<typeof TimelogEntrySchema>;
 interface StoredEntry {
     _id: string;
     _status: "pending";
+    _workitemTitle?: string;
     workItemId: number;
     date: string;
     hours?: number;
@@ -68,7 +69,8 @@ function computeTotalMinutes(entry: StoredEntry): number {
 
 function printEntry(entry: StoredEntry): void {
     const totalMin = computeTotalMinutes(entry);
-    const parts = [`#${entry.workItemId}`, formatMinutes(totalMin), entry.timeType, entry.date];
+    const wiLabel = entry._workitemTitle ? `#${entry.workItemId} ${entry._workitemTitle}` : `#${entry.workItemId}`;
+    const parts = [wiLabel, formatMinutes(totalMin), entry.timeType, entry.date];
 
     if (entry.comment) {
         parts.push(entry.comment);
@@ -149,10 +151,14 @@ async function handleAdd(options: { from?: string; to?: string; name?: string; e
         effectiveWorkItemId = precheck.redirectId!;
     }
 
+    const workitemTitle =
+        precheck.status === "redirect" ? (precheck.redirectTitle ?? precheck.originalTitle) : precheck.originalTitle;
+
     // Build stored entry
     const storedEntry: StoredEntry = {
         _id: crypto.randomUUID(),
         _status: "pending",
+        _workitemTitle: workitemTitle,
         workItemId: effectiveWorkItemId,
         date: validated.date,
         hours: validated.hours,
@@ -247,10 +253,20 @@ async function handleList(options: { name: string; format?: string }): Promise<v
 
     console.log("\nTotals per work item:");
 
+    const workitemNames = new Map<number, string>();
+
+    for (const entry of data.entries) {
+        if (entry._workitemTitle) {
+            workitemNames.set(entry.workItemId, entry._workitemTitle);
+        }
+    }
+
     const sortedItems = [...workitemTotals.entries()].sort(([a], [b]) => a - b);
 
     for (const [id, mins] of sortedItems) {
-        console.log(`  #${id}: ${formatMinutes(mins)}`);
+        const name = workitemNames.get(id);
+        const label = name ? `#${id} ${name}` : `#${id}`;
+        console.log(`  ${label}: ${formatMinutes(mins)}`);
     }
 
     const grandTotal = [...dailyTotals.values()].reduce((sum, m) => sum + m, 0);

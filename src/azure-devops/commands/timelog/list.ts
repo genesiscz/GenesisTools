@@ -13,14 +13,18 @@ export function registerListSubcommand(parent: Command): void {
         .command("list")
         .description("List time logs (per work item or cross-WI query)")
         .option("-w, --workitem <id>", "Work item ID (optional with date filters)")
-        .option("--since <date>", "Start date (YYYY-MM-DD)")
-        .option("--upto <date>", "End date (YYYY-MM-DD)")
+        .option("--from <date>", "Start date (YYYY-MM-DD)")
+        .option("--to <date>", "End date (YYYY-MM-DD)")
+        .option("--since <date>")
+        .option("--upto <date>")
         .option("--day <date>", "Single day (YYYY-MM-DD)")
-        .option("--user <name>", "Filter by user name (can repeat)", collectUsers, [])
+        .option("--user <name>", "Filter by user name (can repeat, use @me for self)", collectUsers, [])
         .option("--format <format>", "Output format: ai|md|json|table", "ai")
         .action(
             async (options: {
                 workitem?: string;
+                from?: string;
+                to?: string;
                 since?: string;
                 upto?: string;
                 day?: string;
@@ -30,6 +34,10 @@ export function registerListSubcommand(parent: Command): void {
                 const config = requireTimeLogConfig();
                 const user = requireTimeLogUser(config);
                 const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+
+                // Resolve --from/--to with --since/--upto as hidden aliases
+                const resolvedFrom = options.day || options.from || options.since;
+                const resolvedTo = options.day || options.to || options.upto;
 
                 let entries: Array<{
                     timeLogId: string;
@@ -43,7 +51,7 @@ export function registerListSubcommand(parent: Command): void {
                     week?: string;
                 }>;
 
-                const hasDateFilter = !!(options.since || options.upto || options.day);
+                const hasDateFilter = !!(resolvedFrom || resolvedTo);
                 const hasWorkItem = !!options.workitem;
 
                 if (hasWorkItem && !hasDateFilter) {
@@ -60,12 +68,12 @@ export function registerListSubcommand(parent: Command): void {
                 } else if (hasDateFilter || !hasWorkItem) {
                     // Cross-WI query
                     if (!hasDateFilter && !hasWorkItem) {
-                        console.error("Provide --workitem, --day, --since/--upto, or a combination");
+                        console.error("Provide --workitem, --day, --from/--to, or a combination");
                         process.exit(1);
                     }
 
-                    const fromDate = options.day || options.since;
-                    const toDate = options.day || options.upto;
+                    const fromDate = resolvedFrom;
+                    const toDate = resolvedTo;
 
                     if (!fromDate) {
                         console.error("--since or --day is required for date queries");
@@ -83,9 +91,13 @@ export function registerListSubcommand(parent: Command): void {
                     entries = [];
                 }
 
-                // Post-filter by user name
+                // Post-filter by user name (@me resolves to configured defaultUser)
                 if (options.user && options.user.length > 0) {
-                    const userFilters = options.user.map((u) => u.toLowerCase());
+                    const defaultUserName = config.timelog?.defaultUser?.userName;
+                    const resolvedUsers = options.user.map((u) =>
+                        u === "@me" && defaultUserName ? defaultUserName : u
+                    );
+                    const userFilters = resolvedUsers.map((u) => u.toLowerCase());
                     entries = entries.filter((e) => userFilters.some((uf) => e.userName.toLowerCase().includes(uf)));
                 }
 
