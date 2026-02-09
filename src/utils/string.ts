@@ -1,0 +1,60 @@
+/**
+ * Shared string utilities for CLI tools.
+ * Consolidates slugify, stripAnsi, escapeShellArg, removeDiacritics,
+ * truncateText, and sanitizeOutput from across the codebase.
+ */
+
+/**
+ * Create a URL-safe slug from a title string.
+ * Normalizes diacritics, replaces non-alphanumeric with dashes, trims, and limits to 50 chars.
+ */
+export function slugify(title: string): string {
+    return title
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 50);
+}
+
+/**
+ * Strip ANSI escape sequences from a string.
+ */
+export function stripAnsi(input: string): string {
+    return input.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "");
+}
+
+/**
+ * Escape a string for safe use as a shell argument (single-quoted).
+ */
+export function escapeShellArg(arg: string): string {
+    return `'${arg.replace(/'/g, "'\"'\"'")}'`;
+}
+
+/**
+ * Remove diacritical marks from a string using Unicode NFD normalization.
+ * Handles all Unicode combining marks, not just specific languages.
+ */
+export function removeDiacritics(str: string): string {
+    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
+ * Truncate text to a maximum length, appending "..." if truncated.
+ */
+export function truncateText(text: string, maxLength: number = 100): string {
+    if (text.length <= maxLength) return text;
+    return text.substring(0, maxLength - 3) + "...";
+}
+
+/**
+ * Remove control characters from text. Optionally strip ANSI escape codes.
+ */
+export function sanitizeOutput(text: string, removeANSI: boolean = false): string {
+    let sanitized = text;
+    if (removeANSI) {
+        sanitized = sanitized.replace(/\x1b\[[0-9;]*m/g, "");
+    }
+    sanitized = sanitized.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+    return sanitized;
+}

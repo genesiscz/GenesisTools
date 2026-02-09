@@ -37,34 +37,5 @@ export const styled = {
     bold: (msg: string) => pc.bold(msg),
 };
 
-/**
- * Format a list of items, truncating if too long
- */
-export function formatList(items: string[], maxShow = 5): string {
-    if (items.length <= maxShow) {
-        return items.join(", ");
-    }
-    const shown = items.slice(0, maxShow);
-    const remaining = items.length - maxShow;
-    return `${shown.join(", ")} +${remaining} more`;
-}
-
-/**
- * Format bytes to human-readable size
- */
-export function formatBytes(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-/**
- * Format duration in milliseconds to human-readable string
- */
-export function formatDuration(ms: number): string {
-    if (ms < 1000) return `${ms}ms`;
-    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-    if (ms < 3600000) return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
-    return `${Math.floor(ms / 3600000)}h ${Math.floor((ms % 3600000) / 60000)}m`;
-}
+// Re-export shared format utilities for backward compatibility
+export { formatBytes, formatDuration, formatList } from "../format";

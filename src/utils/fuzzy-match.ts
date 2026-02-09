@@ -1,7 +1,56 @@
 /**
  * Fuzzy matching utilities for correlating time entries across systems.
- * Used by timely events to match unlinked memories to events.
+ * Includes Levenshtein distance, similarity scoring, Jaccard word overlap,
+ * and time-range fuzzy matching for timely events.
  */
+
+// ============= Levenshtein Distance =============
+
+/**
+ * Compute the Levenshtein (edit) distance between two strings (case-insensitive).
+ */
+export function levenshteinDistance(a: string, b: string): number {
+    const aLower = a.toLowerCase();
+    const bLower = b.toLowerCase();
+
+    if (aLower === bLower) return 0;
+    if (aLower.length === 0) return bLower.length;
+    if (bLower.length === 0) return aLower.length;
+
+    const matrix: number[][] = [];
+
+    for (let i = 0; i <= bLower.length; i++) {
+        matrix[i] = [i];
+    }
+    for (let j = 0; j <= aLower.length; j++) {
+        matrix[0][j] = j;
+    }
+
+    for (let i = 1; i <= bLower.length; i++) {
+        for (let j = 1; j <= aLower.length; j++) {
+            const cost = bLower[i - 1] === aLower[j - 1] ? 0 : 1;
+            matrix[i][j] = Math.min(
+                matrix[i - 1][j] + 1,
+                matrix[i][j - 1] + 1,
+                matrix[i - 1][j - 1] + cost,
+            );
+        }
+    }
+
+    return matrix[bLower.length][aLower.length];
+}
+
+/**
+ * Calculate a 0–1 similarity score based on Levenshtein distance.
+ * Higher is more similar.
+ */
+export function similarityScore(a: string, b: string): number {
+    const maxLen = Math.max(a.length, b.length);
+    if (maxLen === 0) return 1;
+    return 1 - levenshteinDistance(a, b) / maxLen;
+}
+
+// ============= Time-Range Fuzzy Matching =============
 
 export interface FuzzyMatchResult {
     targetId: number;
