@@ -1,24 +1,25 @@
-import { Command } from "commander";
-import { z } from "zod";
-import { Storage } from "@app/utils/storage";
-import { formatMinutes, convertToMinutes } from "@app/azure-devops/timelog-api";
+import { convertToMinutes, formatMinutes } from "@app/azure-devops/timelog-api";
+import type { AllowedTypeConfig } from "@app/azure-devops/types";
 import { requireTimeLogConfig } from "@app/azure-devops/utils";
 import { precheckWorkItem } from "@app/azure-devops/workitem-precheck";
-import type { AllowedTypeConfig } from "@app/azure-devops/types";
+import { Storage } from "@app/utils/storage";
+import type { Command } from "commander";
+import { z } from "zod";
 
 // ============= Schema & Types =============
 
-const TimelogEntrySchema = z.object({
-    workItemId: z.number().int().positive(),
-    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    hours: z.number().min(0).optional(),
-    minutes: z.number().int().min(0).optional(),
-    timeType: z.string().min(1),
-    comment: z.string().optional().default(""),
-}).refine(
-    (d) => d.hours !== undefined || d.minutes !== undefined,
-    { message: "Either hours or minutes must be provided" }
-);
+const TimelogEntrySchema = z
+    .object({
+        workItemId: z.number().int().positive(),
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        hours: z.number().min(0).optional(),
+        minutes: z.number().int().min(0).optional(),
+        timeType: z.string().min(1),
+        comment: z.string().optional().default(""),
+    })
+    .refine((d) => d.hours !== undefined || d.minutes !== undefined, {
+        message: "Either hours or minutes must be provided",
+    });
 
 type TimelogEntryInput = z.infer<typeof TimelogEntrySchema>;
 
@@ -67,12 +68,7 @@ function computeTotalMinutes(entry: StoredEntry): number {
 
 function printEntry(entry: StoredEntry): void {
     const totalMin = computeTotalMinutes(entry);
-    const parts = [
-        `#${entry.workItemId}`,
-        formatMinutes(totalMin),
-        entry.timeType,
-        entry.date,
-    ];
+    const parts = [`#${entry.workItemId}`, formatMinutes(totalMin), entry.timeType, entry.date];
 
     if (entry.comment) {
         parts.push(entry.comment);
@@ -84,12 +80,7 @@ function printEntry(entry: StoredEntry): void {
 
 // ============= Subcommand Actions =============
 
-async function handleAdd(options: {
-    from?: string;
-    to?: string;
-    name?: string;
-    entry: string;
-}): Promise<void> {
+async function handleAdd(options: { from?: string; to?: string; name?: string; entry: string }): Promise<void> {
     const fileName = resolveFileName(options);
 
     // Parse and validate entry JSON
@@ -126,15 +117,14 @@ async function handleAdd(options: {
 
     // Precheck work item
     const config = requireTimeLogConfig();
-    const allowedTypeConfig: AllowedTypeConfig | undefined =
-        config.timelog?.allowedWorkItemTypes?.length
-            ? {
-                  allowedWorkItemTypes: config.timelog.allowedWorkItemTypes,
-                  allowedStatesPerType: config.timelog.allowedStatesPerType,
-                  deprioritizedStates: config.timelog.deprioritizedStates,
-                  defaultUserName: config.timelog.defaultUser?.userName,
-              }
-            : undefined;
+    const allowedTypeConfig: AllowedTypeConfig | undefined = config.timelog?.allowedWorkItemTypes?.length
+        ? {
+              allowedWorkItemTypes: config.timelog.allowedWorkItemTypes,
+              allowedStatesPerType: config.timelog.allowedStatesPerType,
+              deprioritizedStates: config.timelog.deprioritizedStates,
+              defaultUserName: config.timelog.defaultUser?.userName,
+          }
+        : undefined;
 
     const precheck = await precheckWorkItem(validated.workItemId, config.org, allowedTypeConfig);
 
@@ -188,10 +178,7 @@ async function handleAdd(options: {
     printEntry(storedEntry);
 }
 
-async function handleRemove(options: {
-    name: string;
-    id: string;
-}): Promise<void> {
+async function handleRemove(options: { name: string; id: string }): Promise<void> {
     const key = cacheKey(options.name);
 
     const updated = await storage.atomicUpdate<PrepareImportFile>(key, (current) => {
@@ -211,10 +198,7 @@ async function handleRemove(options: {
     console.log(`Entry ${options.id} removed. ${updated.entries.length} entries remaining.`);
 }
 
-async function handleList(options: {
-    name: string;
-    format?: string;
-}): Promise<void> {
+async function handleList(options: { name: string; format?: string }): Promise<void> {
     const key = cacheKey(options.name);
     const data = await storage.getCacheFile<PrepareImportFile>(key, "30 days");
 

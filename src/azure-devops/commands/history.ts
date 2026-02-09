@@ -5,16 +5,15 @@
  * The `show` handler is implemented inline; search and sync are imported.
  */
 
-import { Command } from "commander";
-import * as p from "@clack/prompts";
-import pc from "picocolors";
-
-import logger from "@app/logger";
 import { Api } from "@app/azure-devops/api";
-import { requireConfig } from "@app/azure-devops/utils";
-import { loadHistoryCache, saveHistoryCache, formatJSON } from "@app/azure-devops/cache";
+import { formatJSON, loadHistoryCache, saveHistoryCache } from "@app/azure-devops/cache";
 import { buildWorkItemHistory, calculateTimeInState, userMatches } from "@app/azure-devops/history";
-import type { WorkItemHistory, AssignmentPeriod, StatePeriod } from "@app/azure-devops/types";
+import type { AssignmentPeriod, StatePeriod, WorkItemHistory } from "@app/azure-devops/types";
+import { requireConfig } from "@app/azure-devops/utils";
+import logger from "@app/logger";
+import * as p from "@clack/prompts";
+import type { Command } from "commander";
+import pc from "picocolors";
 
 import { handleHistorySearch, type SearchOptions } from "./history-search";
 import { handleHistorySync } from "./history-sync";

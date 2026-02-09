@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, spyOn } from "bun:test";
-import { listServers } from "@app/mcp-manager/commands/list.js";
-import { MockMCPProvider } from "./test-utils.js";
-import type { MCPServerInfo } from "@app/mcp-manager/utils/providers/types.js";
+import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import logger from "@app/logger";
+import { listServers } from "@app/mcp-manager/commands/list.js";
+import type { MCPServerInfo } from "@app/mcp-manager/utils/providers/types.js";
+import { MockMCPProvider } from "./test-utils.js";
 
 describe("listServers", () => {
     let mockProvider: MockMCPProvider;
@@ -23,7 +23,7 @@ describe("listServers", () => {
             },
         ];
         mockProvider.listServersResult = mockServers;
-        
+
         spyOn(logger, "info");
 
         await listServers([mockProvider]);
@@ -51,7 +51,7 @@ describe("listServers", () => {
         ];
         mockProvider.listServersResult = mockServers1;
         mockProvider2.listServersResult = mockServers2;
-        
+
         spyOn(logger, "info");
 
         await listServers([mockProvider, mockProvider2]);
@@ -75,7 +75,7 @@ describe("listServers", () => {
             },
         ];
         mockProvider.listServersResult = mockServers;
-        
+
         spyOn(logger, "info");
 
         await listServers([mockProvider]);
@@ -86,7 +86,7 @@ describe("listServers", () => {
 
     it("should return early if no servers found", async () => {
         mockProvider.listServersResult = [];
-        
+
         spyOn(logger, "info");
 
         await listServers([mockProvider]);
@@ -96,7 +96,7 @@ describe("listServers", () => {
 
     it("should skip providers without config files", async () => {
         mockProvider.configExistsResult = false;
-        
+
         spyOn(logger, "info");
 
         await listServers([mockProvider]);
@@ -106,15 +106,13 @@ describe("listServers", () => {
 
     it("should handle errors when reading provider configs", async () => {
         mockProvider.errors.set("listServers", new Error("Read failed"));
-        
+
         spyOn(logger, "warn");
         spyOn(logger, "info");
 
         await listServers([mockProvider]);
 
-        expect(logger.warn).toHaveBeenCalledWith(
-            expect.stringContaining("Failed to read claude config")
-        );
+        expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("Failed to read claude config"));
     });
 
     it("should display status correctly for all enabled", async () => {
@@ -134,7 +132,7 @@ describe("listServers", () => {
         ];
         mockProvider.listServersResult = [mockServers[0]];
         mockProvider2.listServersResult = [mockServers[1]];
-        
+
         spyOn(logger, "info");
 
         await listServers([mockProvider, mockProvider2]);
@@ -142,7 +140,3 @@ describe("listServers", () => {
         expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("enabled"));
     });
 });
-
-
-
-

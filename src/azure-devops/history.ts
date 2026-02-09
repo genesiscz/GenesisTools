@@ -6,12 +6,12 @@
  */
 
 import type {
-    WorkItemUpdate,
-    WorkItemHistory,
     AssignmentPeriod,
-    StatePeriod,
     IdentityRef,
     ReportingRevision,
+    StatePeriod,
+    WorkItemHistory,
+    WorkItemUpdate,
 } from "@app/azure-devops/types";
 
 // Czech, French, and German diacritics mapping

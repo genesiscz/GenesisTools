@@ -1,14 +1,15 @@
-import { describe, it, expect, beforeEach, spyOn } from "bun:test";
-import { setupInquirerMock, setMockResponses } from "./inquirer-mock.js";
+import { beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { setMockResponses, setupInquirerMock } from "./inquirer-mock.js";
 
 // Setup @inquirer/prompts mock BEFORE importing command modules
 setupInquirerMock();
 
 // Now import after mocking
 const { renameServer } = await import("../rename.js");
-import { MockMCPProvider, createMockUnifiedConfig } from "./test-utils.js";
-import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
+
 import logger from "@app/logger";
+import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
+import { createMockUnifiedConfig, MockMCPProvider } from "./test-utils.js";
 
 describe("renameServer", () => {
     let mockProvider: MockMCPProvider;
@@ -82,9 +83,7 @@ describe("renameServer", () => {
 
         await renameServer("non-existent", "new-name", mockProviders);
 
-        expect(logger.error).toHaveBeenCalledWith(
-            "Server 'non-existent' not found in unified config."
-        );
+        expect(logger.error).toHaveBeenCalledWith("Server 'non-existent' not found in unified config.");
     });
 
     it("should return early if old and new names are the same", async () => {
@@ -95,9 +94,7 @@ describe("renameServer", () => {
 
         await renameServer("test-server", "test-server", mockProviders);
 
-        expect(logger.warn).toHaveBeenCalledWith(
-            "Old name and new name are the same. No changes needed."
-        );
+        expect(logger.warn).toHaveBeenCalledWith("Old name and new name are the same. No changes needed.");
     });
 
     it("should handle provider conflicts", async () => {
@@ -125,9 +122,9 @@ describe("renameServer", () => {
         await renameServer("test-server", "existing-server", mockProviders);
 
         // Should detect conflict in unified config (since existing-server already exists there)
-        const warnCalls = warnSpy.mock.calls.map(call => call[0]);
-        const hasConflictWarning = warnCalls.some(msg =>
-            typeof msg === "string" && (msg.includes("Conflict") || msg.includes("conflict"))
+        const warnCalls = warnSpy.mock.calls.map((call) => call[0]);
+        const hasConflictWarning = warnCalls.some(
+            (msg) => typeof msg === "string" && (msg.includes("Conflict") || msg.includes("conflict"))
         );
         expect(hasConflictWarning).toBe(true);
     });

@@ -5,25 +5,25 @@
  * interactions, including authentication, querying, and data retrieval.
  */
 
-import { $ } from "bun";
-import logger from "@app/logger";
+import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/cache";
 import type {
     AzureConfig,
     AzWorkItemRaw,
-    WorkItem,
-    WorkItemFull,
     Comment,
-    WorkItemType,
-    WorkItemTypeDefinition,
+    IdentityRef,
     JsonPatchOperation,
     QueryInfo,
-    WorkItemUpdate,
-    WiqlResponse,
     ReportingRevision,
     ReportingRevisionsResponse,
-    IdentityRef,
+    WiqlResponse,
+    WorkItem,
+    WorkItemFull,
+    WorkItemType,
+    WorkItemTypeDefinition,
+    WorkItemUpdate,
 } from "@app/azure-devops/types";
-import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/cache";
+import logger from "@app/logger";
+import { $ } from "bun";
 
 // Azure DevOps API resource ID (constant for all Azure DevOps organizations)
 export const AZURE_DEVOPS_RESOURCE_ID = "499b84ac-1321-427f-aa17-267ca6975798";

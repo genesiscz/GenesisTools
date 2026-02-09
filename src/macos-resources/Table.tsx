@@ -64,7 +64,7 @@ export default class Table<T extends ScalarDict> extends React.Component<
      * Gets all keyes used in data by traversing through the data.
      */
     getDataKeys(): (keyof T)[] {
-        let keys = new Set<keyof T>();
+        const keys = new Set<keyof T>();
 
         // Collect all the keys.
         for (const data of this.props.data) {
@@ -324,8 +324,8 @@ function row<T extends ScalarDict>(config: RowConfig): (props: RowProps<T>) => R
                         return (
                             /* prettier-ignore */
                             <config.cell key={key} column={colI}>
-                {`${skeleton.line.repeat(ml)}${String(value)}${skeleton.line.repeat(mr)}`}
-              </config.cell>
+                                {`${skeleton.line.repeat(ml)}${String(value)}${skeleton.line.repeat(mr)}`}
+                            </config.cell>
                         );
                     }
                 })
@@ -368,12 +368,15 @@ export function Skeleton(props: React.PropsWithChildren<{}>) {
  */
 function intersperse<T, I>(intersperser: (index: number) => I, elements: T[]): (T | I)[] {
     // Intersparse by reducing from left.
-    let interspersed: (T | I)[] = elements.reduce((acc, element, index) => {
-        // Only add element if it's the first one.
-        if (acc.length === 0) return [element];
-        // Add the intersparser as well otherwise.
-        return [...acc, intersperser(index), element];
-    }, [] as (T | I)[]);
+    const interspersed: (T | I)[] = elements.reduce(
+        (acc, element, index) => {
+            // Only add element if it's the first one.
+            if (acc.length === 0) return [element];
+            // Add the intersparser as well otherwise.
+            return [...acc, intersperser(index), element];
+        },
+        [] as (T | I)[]
+    );
 
     return interspersed;
 }

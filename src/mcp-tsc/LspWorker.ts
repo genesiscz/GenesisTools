@@ -1,8 +1,8 @@
-import { ChildProcess, spawn } from "child_process";
+import logger from "@app/logger";
+import { type ChildProcess, spawn } from "child_process";
 import { readFileSync, statSync } from "fs";
 import path from "path";
 import { JSONRPCEndpoint, LspClient } from "ts-lsp-client";
-import logger from "@app/logger";
 
 // ============================================================================
 // Types
@@ -273,9 +273,12 @@ export class LspWorker {
             this.client = new LspClient(this.endpoint);
 
             // Handle diagnostics notifications
-            this.endpoint.on("textDocument/publishDiagnostics", (params: { uri: string; diagnostics: LspDiagnostic[] }) => {
-                this.handleDiagnosticsNotification(params);
-            });
+            this.endpoint.on(
+                "textDocument/publishDiagnostics",
+                (params: { uri: string; diagnostics: LspDiagnostic[] }) => {
+                    this.handleDiagnosticsNotification(params);
+                }
+            );
 
             // Handle stderr for debugging
             this.lspProcess.stderr?.on("data", (data) => {
@@ -483,10 +486,7 @@ export class LspWorker {
         const maxWait = options.maxWaitMs ?? this.DEFAULT_DIAGNOSTICS_TIMEOUT_MS;
 
         // Enqueue with normal priority
-        return this.requestQueue.enqueue(
-            () => this.getDiagnosticsWithRetry(targetFiles, options, maxWait),
-            10
-        );
+        return this.requestQueue.enqueue(() => this.getDiagnosticsWithRetry(targetFiles, options, maxWait), 10);
     }
 
     private async getDiagnosticsWithRetry(
@@ -501,19 +501,15 @@ export class LspWorker {
             const isRetryable = error instanceof LspError && error.isRetryable;
             const shouldRetry = isRetryable && attempt < this.MAX_RETRIES;
 
-            this.log(
-                `getDiagnostics failed (attempt ${attempt}/${this.MAX_RETRIES}): ${error}`,
-                "error",
-                {
-                    error: error instanceof Error ? error.message : String(error),
-                    isRetryable,
-                    willRetry: shouldRetry,
-                }
-            );
+            this.log(`getDiagnostics failed (attempt ${attempt}/${this.MAX_RETRIES}): ${error}`, "error", {
+                error: error instanceof Error ? error.message : String(error),
+                isRetryable,
+                willRetry: shouldRetry,
+            });
 
             if (shouldRetry) {
                 // Exponential backoff
-                const delay = this.RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+                const delay = this.RETRY_DELAY_MS * 2 ** (attempt - 1);
                 this.log(`Retrying in ${delay}ms...`);
                 await new Promise((r) => setTimeout(r, delay));
 
@@ -605,7 +601,11 @@ export class LspWorker {
                     const uri = `file://${file}`;
                     const state = this.getFileState(uri);
                     const receivedAt = state?.diagnosticsReceivedAt;
-                    return receivedAt !== null && receivedAt !== undefined && Date.now() - receivedAt >= this.DIAGNOSTICS_STABILITY_MS;
+                    return (
+                        receivedAt !== null &&
+                        receivedAt !== undefined &&
+                        Date.now() - receivedAt >= this.DIAGNOSTICS_STABILITY_MS
+                    );
                 });
 
                 if (allStable) {
@@ -646,9 +646,9 @@ export class LspWorker {
                 maxWaitMs,
                 "getDiagnostics"
             );
-            // @ts-ignore - Add extra info for error handling
+            // @ts-expect-error - Add extra info for error handling
             error.missingFiles = missingFiles;
-            // @ts-ignore
+            // @ts-expect-error
             error.isTimeout = true;
             throw error;
         }
@@ -706,10 +706,7 @@ export class LspWorker {
         const timeoutMs = options.timeoutMs ?? this.DEFAULT_HOVER_TIMEOUT_MS;
 
         // Enqueue with high priority (hover should be fast)
-        return this.requestQueue.enqueue(
-            () => this.getHoverWithRetry(file, position, timeoutMs),
-            5
-        );
+        return this.requestQueue.enqueue(() => this.getHoverWithRetry(file, position, timeoutMs), 5);
     }
 
     private async getHoverWithRetry(
@@ -724,20 +721,16 @@ export class LspWorker {
             const isRetryable = error instanceof LspError && error.isRetryable;
             const shouldRetry = isRetryable && attempt < this.MAX_RETRIES;
 
-            this.log(
-                `getHover failed (attempt ${attempt}/${this.MAX_RETRIES}): ${error}`,
-                "error",
-                {
-                    error: error instanceof Error ? error.message : String(error),
-                    isRetryable,
-                    willRetry: shouldRetry,
-                    file: path.basename(file),
-                    position,
-                }
-            );
+            this.log(`getHover failed (attempt ${attempt}/${this.MAX_RETRIES}): ${error}`, "error", {
+                error: error instanceof Error ? error.message : String(error),
+                isRetryable,
+                willRetry: shouldRetry,
+                file: path.basename(file),
+                position,
+            });
 
             if (shouldRetry) {
-                const delay = this.RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+                const delay = this.RETRY_DELAY_MS * 2 ** (attempt - 1);
                 this.log(`Retrying hover in ${delay}ms...`);
                 await new Promise((r) => setTimeout(r, delay));
 
@@ -832,9 +825,7 @@ export class LspWorker {
         if (typeof response.contents === "string") {
             contents = response.contents;
         } else if (Array.isArray(response.contents)) {
-            contents = response.contents
-                .map((item) => (typeof item === "string" ? item : item.value || ""))
-                .join("\n");
+            contents = response.contents.map((item) => (typeof item === "string" ? item : item.value || "")).join("\n");
         } else if (response.contents && typeof response.contents === "object" && "value" in response.contents) {
             contents = response.contents.value;
         }

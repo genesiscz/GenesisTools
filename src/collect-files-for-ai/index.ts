@@ -1,8 +1,8 @@
-import { Command } from "commander";
-import { resolve, join, dirname, basename } from "node:path";
 import { mkdir } from "node:fs/promises"; // Using fs.promises for async operations - Bun implements this
+import { basename, dirname, join, resolve } from "node:path";
 import logger from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -64,18 +64,11 @@ async function main() {
         .name("collect-files-for-ai")
         .description("Collect files from Git for AI context")
         .argument("[directory]", "Path to the Git repository", ".")
-        .option(
-            "-c, --commits <number>",
-            "Collect files changed in the last NUM commits",
-            (val) => parseInt(val, 10)
-        )
+        .option("-c, --commits <number>", "Collect files changed in the last NUM commits", (val) => parseInt(val, 10))
         .option("-s, --staged", "Collect only staged files")
         .option("-u, --unstaged", "Collect only unstaged files")
         .option("-a, --all", "Collect all uncommitted (staged + unstaged) files")
-        .option(
-            "-t, --target <directory>",
-            "Directory to copy files into (default: ./.ai/YYYY-MM-DD-HH.mm)"
-        )
+        .option("-t, --target <directory>", "Directory to copy files into (default: ./.ai/YYYY-MM-DD-HH.mm)")
         .option(
             "-f, --flat",
             "Copy all files directly to the target directory without preserving the directory structure"

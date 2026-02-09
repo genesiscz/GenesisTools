@@ -5,11 +5,11 @@
  * with their state and fetch time.
  */
 
-import { Command } from "commander";
-import logger from "@app/logger";
-import { findTaskFile, getRelativeTime } from "@app/azure-devops/utils";
+import { CACHE_TTL, storage } from "@app/azure-devops/cache";
 import type { WorkItemCache } from "@app/azure-devops/types";
-import { storage, CACHE_TTL } from "@app/azure-devops/cache";
+import { findTaskFile, getRelativeTime } from "@app/azure-devops/utils";
+import logger from "@app/logger";
+import type { Command } from "commander";
 
 /**
  * Handle the list command - display cached work items

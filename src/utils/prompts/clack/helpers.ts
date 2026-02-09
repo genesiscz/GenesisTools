@@ -22,10 +22,7 @@ export function handleCancel(message = "Operation cancelled"): never {
 /**
  * Wrapper for prompts that handles cancellation automatically
  */
-export async function withCancel<T>(
-    promptResult: Promise<T | symbol>,
-    cancelMessage?: string,
-): Promise<T> {
+export async function withCancel<T>(promptResult: Promise<T | symbol>, cancelMessage?: string): Promise<T> {
     const result = await promptResult;
     if (p.isCancel(result)) {
         handleCancel(cancelMessage);
@@ -37,7 +34,7 @@ export async function withCancel<T>(
  * Enhanced multiselect with hint for keyboard usage
  */
 export async function multiselect<T extends p.Option<unknown>>(
-    opts: Omit<p.MultiSelectOptions<T>, "message"> & { message: string },
+    opts: Omit<p.MultiSelectOptions<T>, "message"> & { message: string }
 ): Promise<T["value"][] | symbol> {
     return p.multiselect({
         ...opts,

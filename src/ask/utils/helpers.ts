@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import chalk from "chalk";
 import type { LanguageModelUsage } from "ai";
+import chalk from "chalk";
 
 export function generateSessionId(): string {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").split("Z")[0];
@@ -209,7 +209,7 @@ export function retry<T>(operation: () => Promise<T>, maxAttempts: number = 3, d
                 if (attempt >= maxAttempts) {
                     reject(error);
                 } else {
-                    setTimeout(tryOperation, delay * Math.pow(2, attempt - 1)); // Exponential backoff
+                    setTimeout(tryOperation, delay * 2 ** (attempt - 1)); // Exponential backoff
                 }
             }
         };

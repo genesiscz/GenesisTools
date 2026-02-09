@@ -1,11 +1,11 @@
-import { Command } from "commander";
-import { select, confirm } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import { generateObject } from "ai";
-import { z } from "zod";
 import logger from "@app/logger";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { ExitPromptError } from "@inquirer/core";
+import { confirm, select } from "@inquirer/prompts";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { generateObject } from "ai";
+import { Command } from "commander";
+import { z } from "zod";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);

@@ -1,10 +1,10 @@
-import { experimental_transcribe as transcribe } from "ai";
-import type { TranscriptionModel } from "ai";
 import { statSync } from "node:fs";
 import type { ProviderV2 } from "@ai-sdk/provider";
-import chalk from "chalk";
 import logger from "@app/logger";
 import { modelSelector } from "@ask/providers/ModelSelector";
+import type { TranscriptionModel } from "ai";
+import { experimental_transcribe as transcribe } from "ai";
+import chalk from "chalk";
 
 // Helper to get transcription model from ProviderV2
 function getTranscriptionModel(provider: ProviderV2, modelId: string): TranscriptionModel {
@@ -142,7 +142,6 @@ export class TranscriptionManager {
                     };
                 } catch (error) {
                     logger.warn(`Fallback provider ${provider} failed: ${error}`);
-                    continue;
                 }
             }
         }

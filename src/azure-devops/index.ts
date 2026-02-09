@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 /**
  * Azure DevOps Work Item CLI Tool
  *
@@ -12,23 +13,23 @@
  *   tools azure-devops timelog <subcommand> [options]
  */
 
-import { Command } from "commander";
+import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "@app/azure-devops/cli.utils";
 import logger from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
-import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "@app/azure-devops/cli.utils";
+import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
 // Import command registration functions
 import { registerConfigureCommand } from "@app/azure-devops/commands/configure";
-import { registerQueryCommand, setWorkItemHandler } from "@app/azure-devops/commands/query";
-import { registerWorkitemCommand, handleWorkItem } from "@app/azure-devops/commands/workitem";
-import { registerWorkitemCreateCommand } from "@app/azure-devops/commands/workitem-create";
-import { registerWorkitemCacheCommand } from "@app/azure-devops/commands/workitem-cache";
 import { registerDashboardCommand } from "@app/azure-devops/commands/dashboard";
-import { registerTimelogCommand } from "@app/azure-devops/commands/timelog";
 import { registerHistoryCommand } from "@app/azure-devops/commands/history";
+import { registerQueryCommand, setWorkItemHandler } from "@app/azure-devops/commands/query";
+import { registerTimelogCommand } from "@app/azure-devops/commands/timelog";
+import { handleWorkItem, registerWorkitemCommand } from "@app/azure-devops/commands/workitem";
+import { registerWorkitemCacheCommand } from "@app/azure-devops/commands/workitem-cache";
+import { registerWorkitemCreateCommand } from "@app/azure-devops/commands/workitem-create";
 
 // Wire up cross-command dependencies
 // Query command needs to call workitem handler for --download-workitems

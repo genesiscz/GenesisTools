@@ -12,8 +12,8 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import path from "path";
 import { writeFileSync } from "fs";
+import path from "path";
 
 // Configuration
 const CONFIG = {
@@ -71,10 +71,7 @@ class StressTest {
             args: [path.join(this.cwd, "src/mcp-tsc/index.ts"), "--mcp", "--root", this.cwd],
         });
 
-        this.client = new Client(
-            { name: "stress-test", version: "1.0.0" },
-            { capabilities: {} }
-        );
+        this.client = new Client({ name: "stress-test", version: "1.0.0" }, { capabilities: {} });
 
         await this.client.connect(transport);
         console.error("Connected to MCP server");
@@ -103,7 +100,9 @@ class StressTest {
                 name: testName,
                 success: !result.isError,
                 duration: Date.now() - start,
-                error: result.isError ? String((result as { content?: { text?: string }[] }).content?.[0]?.text) : undefined,
+                error: result.isError
+                    ? String((result as { content?: { text?: string }[] }).content?.[0]?.text)
+                    : undefined,
             };
         } catch (error) {
             return {
@@ -129,7 +128,9 @@ class StressTest {
                 name: testName,
                 success: !result.isError,
                 duration: Date.now() - start,
-                error: result.isError ? String((result as { content?: { text?: string }[] }).content?.[0]?.text) : undefined,
+                error: result.isError
+                    ? String((result as { content?: { text?: string }[] }).content?.[0]?.text)
+                    : undefined,
             };
         } catch (error) {
             return {
@@ -153,7 +154,9 @@ class StressTest {
             const absolutePath = path.resolve(this.cwd, file);
             const result = await this.callDiagnostics([absolutePath]);
             this.results.push(result);
-            console.error(`  [${i + 1}/${CONFIG.sequentialDiagnostics}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`);
+            console.error(
+                `  [${i + 1}/${CONFIG.sequentialDiagnostics}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`
+            );
             if (!result.success) console.error(`    Error: ${result.error}`);
         }
     }
@@ -167,7 +170,9 @@ class StressTest {
             const line = 10 + i * 10; // Different lines
             const result = await this.callHover(absolutePath, line);
             this.results.push(result);
-            console.error(`  [${i + 1}/${CONFIG.sequentialHover}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`);
+            console.error(
+                `  [${i + 1}/${CONFIG.sequentialHover}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`
+            );
             if (!result.success) console.error(`    Error: ${result.error}`);
         }
     }
@@ -222,7 +227,9 @@ class StressTest {
                 // Diagnostics
                 promises.push(
                     this.callDiagnostics([absolutePath]).then((result) => {
-                        console.error(`  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`);
+                        console.error(
+                            `  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`
+                        );
                         return result;
                     })
                 );
@@ -231,7 +238,9 @@ class StressTest {
                 const line = 5 + (i % 8) * 2;
                 promises.push(
                     this.callHover(absolutePath, line).then((result) => {
-                        console.error(`  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`);
+                        console.error(
+                            `  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`
+                        );
                         return result;
                     })
                 );
@@ -355,9 +364,7 @@ export function testFunction(input: TestInterface): string {
         const passed = this.results.filter((r) => r.success).length;
         const failed = total - passed;
         const avgDuration = this.results.reduce((sum, r) => sum + r.duration, 0) / total;
-        const errors = this.results
-            .filter((r) => !r.success && r.error)
-            .map((r) => `${r.name}: ${r.error}`);
+        const errors = this.results.filter((r) => !r.success && r.error).map((r) => `${r.name}: ${r.error}`);
 
         return { total, passed, failed, avgDuration, errors };
     }
@@ -427,12 +434,3 @@ const test = new StressTest();
 test.run().then((exitCode) => {
     process.exit(exitCode);
 });
-
-
-
-
-
-
-
-
-

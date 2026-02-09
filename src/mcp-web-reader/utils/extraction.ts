@@ -62,11 +62,7 @@ function calculateQuality(extracted: string, original: string): number {
 }
 
 function extractPublishedTime(doc: Document): string | undefined {
-    const selectors = [
-        'meta[property="article:published_time"]',
-        'meta[name="publication_date"]',
-        "time[datetime]",
-    ];
+    const selectors = ['meta[property="article:published_time"]', 'meta[name="publication_date"]', "time[datetime]"];
     for (const sel of selectors) {
         const el = doc.querySelector(sel);
         if (el) {

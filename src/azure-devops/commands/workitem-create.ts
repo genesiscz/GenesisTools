@@ -9,32 +9,31 @@
  * - Quick non-interactive creation
  */
 
-import { Command } from "commander";
-import { existsSync, readFileSync } from "fs";
-
-import logger from "@app/logger";
-import { input, select, confirm, editor } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
 import { Api } from "@app/azure-devops/api";
+import { CACHE_TTL, storage } from "@app/azure-devops/cache";
+import type {
+    AzureConfig,
+    JsonPatchOperation,
+    WorkItemFull,
+    WorkItemTemplate,
+    WorkItemType,
+} from "@app/azure-devops/types";
 import {
-    requireConfig,
     buildFieldSchema,
     extractQueryId,
+    extractUsedValues,
     extractWorkItemIds,
     generateTemplateFromQuery,
     generateTemplateFromWorkItem,
-    saveTemplate,
-    extractUsedValues,
     mergeFieldsWithUsage,
+    requireConfig,
+    saveTemplate,
 } from "@app/azure-devops/utils";
-import type {
-    AzureConfig,
-    WorkItemType,
-    JsonPatchOperation,
-    WorkItemTemplate,
-    WorkItemFull,
-} from "@app/azure-devops/types";
-import { storage, CACHE_TTL } from "@app/azure-devops/cache";
+import logger from "@app/logger";
+import { ExitPromptError } from "@inquirer/core";
+import { confirm, editor, input, select } from "@inquirer/prompts";
+import type { Command } from "commander";
+import { existsSync, readFileSync } from "fs";
 
 // Common work item types to show first (others available via "Show all...")
 const COMMON_WORK_ITEM_TYPES = ["Bug", "Task", "User Story", "Feature", "Epic", "Incident"];

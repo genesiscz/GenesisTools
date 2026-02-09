@@ -299,13 +299,13 @@ export interface TimelyEventSlim {
     id: number;
     day: string;
     project: { id: number; name: string };
-    duration: string;    // "HH:MM" e.g. "04:51"
+    duration: string; // "HH:MM" e.g. "04:51"
     note: string;
     from: string | null; // "10:00" or null
-    to: string | null;   // "14:51" or null
+    to: string | null; // "14:51" or null
     entry_ids: number[];
     billed: boolean;
     billable: boolean;
-    cost: number;        // amount as number
+    cost: number; // amount as number
     entries?: TimelyEntry[]; // only with --with-entries
 }

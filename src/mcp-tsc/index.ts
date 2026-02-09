@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
+import logger from "@app/logger";
 import { CliHandler } from "@app/mcp-tsc/cli/CliHandler.js";
 import { DiagnosticsCommand } from "@app/mcp-tsc/cli/commands/DiagnosticsCommand.js";
 import { HoverCommand } from "@app/mcp-tsc/cli/commands/HoverCommand.js";
 import { KillServerCommand } from "@app/mcp-tsc/cli/commands/KillServerCommand.js";
 import { McpCommand } from "@app/mcp-tsc/cli/commands/McpCommand.js";
 import { getPersistentServer } from "@app/mcp-tsc/utils/ServerManager.js";
-import logger from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 
 // Handle --readme flag early (before Commander parses)
@@ -86,7 +86,7 @@ function setupDiagnosticHandlers(): void {
 
     // Track if process is being killed externally
     const originalKill = process.kill.bind(process);
-    (process as any).kill = function (pid?: number | NodeJS.Signals, signal?: NodeJS.Signals): boolean {
+    (process as any).kill = (pid?: number | NodeJS.Signals, signal?: NodeJS.Signals): boolean => {
         logger.warn({ component: "mcp-tsc", pid: process.pid, targetPid: pid, signal }, "process.kill() called");
         if (pid !== undefined && signal !== undefined) {
             return originalKill(pid as any, signal as any);

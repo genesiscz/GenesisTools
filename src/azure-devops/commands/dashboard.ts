@@ -4,12 +4,12 @@
  * Fetches a dashboard and lists its queries.
  */
 
-import { Command } from "commander";
-import logger from "@app/logger";
 import { Api } from "@app/azure-devops/api";
-import { requireConfig, extractDashboardId } from "@app/azure-devops/utils";
+import { formatJSON, saveGlobalCache } from "@app/azure-devops/cache";
 import type { OutputFormat } from "@app/azure-devops/types";
-import { saveGlobalCache, formatJSON } from "@app/azure-devops/cache";
+import { extractDashboardId, requireConfig } from "@app/azure-devops/utils";
+import logger from "@app/logger";
+import type { Command } from "commander";
 
 /**
  * Handle dashboard command - fetch dashboard and list queries

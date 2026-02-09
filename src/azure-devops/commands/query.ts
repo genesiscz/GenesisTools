@@ -4,36 +4,36 @@
  * Runs Azure DevOps queries and displays results with change detection.
  */
 
-import { Command } from "commander";
-import logger, { consoleLog } from "@app/logger";
 import { Api } from "@app/azure-devops/api";
 import {
-    requireConfig,
-    extractQueryId,
-    isQueryIdOrUrl,
-    findQueryByName,
-    detectChanges,
-    getRelativeTime,
-} from "@app/azure-devops/utils";
-import type {
-    AzureConfig,
-    OutputFormat,
-    WorkItem,
-    QueryCache,
-    ChangeInfo,
-    QueryFilters,
-    QueriesCache,
-    QueryItemMetadata,
-} from "@app/azure-devops/types";
-import {
-    storage,
     CACHE_TTL,
+    formatJSON,
     loadGlobalCache,
     saveGlobalCache,
-    formatJSON,
     saveHistoryCache,
+    storage,
 } from "@app/azure-devops/cache";
 import { buildHistoryFromRevisions } from "@app/azure-devops/history";
+import type {
+    AzureConfig,
+    ChangeInfo,
+    OutputFormat,
+    QueriesCache,
+    QueryCache,
+    QueryFilters,
+    QueryItemMetadata,
+    WorkItem,
+} from "@app/azure-devops/types";
+import {
+    detectChanges,
+    extractQueryId,
+    findQueryByName,
+    getRelativeTime,
+    isQueryIdOrUrl,
+    requireConfig,
+} from "@app/azure-devops/utils";
+import logger, { consoleLog } from "@app/logger";
+import type { Command } from "commander";
 
 // Silent mode for JSON output - suppresses progress messages
 let silentMode = false;

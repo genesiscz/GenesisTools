@@ -1,11 +1,11 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import { registerAddSubcommand } from "./timelog/add";
-import { registerListSubcommand } from "./timelog/list";
-import { registerTypesSubcommand } from "./timelog/types";
-import { registerImportSubcommand } from "./timelog/import";
-import { registerDeleteSubcommand } from "./timelog/delete";
 import { registerConfigureSubcommand } from "./timelog/configure";
+import { registerDeleteSubcommand } from "./timelog/delete";
+import { registerImportSubcommand } from "./timelog/import";
+import { registerListSubcommand } from "./timelog/list";
 import { registerPrepareImportSubcommand } from "./timelog/prepare-import";
+import { registerTypesSubcommand } from "./timelog/types";
 
 function showHelpFull(): void {
     console.log(`

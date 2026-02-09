@@ -8,7 +8,10 @@
  * @param format - Format type: "json" for JSON code fence, "text" for plain text, "auto" to detect
  * @returns Formatted string for MCP text content
  */
-export function formatTextContent(content: string | Record<string, any>, format: "json" | "text" | "auto" = "auto"): string {
+export function formatTextContent(
+    content: string | Record<string, any>,
+    format: "json" | "text" | "auto" = "auto"
+): string {
     // Auto-detect format
     if (format === "auto") {
         format = typeof content === "object" ? "json" : "text";
@@ -45,7 +48,10 @@ export function formatErrorContent(message: string): Array<{ type: "text"; text:
 /**
  * Creates a standard MCP success response content
  */
-export function formatSuccessContent(content: string | Record<string, any>, format?: "json" | "text" | "auto"): Array<{ type: "text"; text: string }> {
+export function formatSuccessContent(
+    content: string | Record<string, any>,
+    format?: "json" | "text" | "auto"
+): Array<{ type: "text"; text: string }> {
     return [
         {
             type: "text",

@@ -2,10 +2,10 @@
  * TimeLog Interactive Prompts - @clack/prompts implementation
  */
 
+import { convertToMinutes, formatMinutes, getTodayDate, TimeLogApi } from "@app/azure-devops/timelog-api";
+import type { AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { TimeLogApi, formatMinutes, getTodayDate, convertToMinutes } from "@app/azure-devops/timelog-api";
-import type { TimeLogUser, AzureConfigWithTimeLog } from "@app/azure-devops/types";
 
 export async function runInteractiveAddClack(
     config: AzureConfigWithTimeLog,

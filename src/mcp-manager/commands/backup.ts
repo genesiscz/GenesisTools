@@ -1,10 +1,10 @@
-import chalk from "chalk";
 import logger from "@app/logger";
-import { existsSync } from "fs";
-import path from "path";
-import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { BackupManager } from "@app/mcp-manager/utils/backup.js";
 import { getUnifiedConfigPath } from "@app/mcp-manager/utils/config.utils.js";
+import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
+import chalk from "chalk";
+import { existsSync } from "fs";
+import path from "path";
 
 /**
  * Backup all configs for all providers and the unified config

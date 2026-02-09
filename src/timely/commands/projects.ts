@@ -1,11 +1,11 @@
-import { Command } from "commander";
-import { select } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import chalk from "chalk";
 import logger from "@app/logger";
-import { Storage } from "@app/utils/storage";
-import { TimelyService } from "@app/timely/api/service";
-import type { TimelyProject, TimelyClient } from "@app/timely/types";
+import type { TimelyService } from "@app/timely/api/service";
+import type { TimelyClient, TimelyProject } from "@app/timely/types";
+import type { Storage } from "@app/utils/storage";
+import { ExitPromptError } from "@inquirer/core";
+import { select } from "@inquirer/prompts";
+import chalk from "chalk";
+import type { Command } from "commander";
 
 export function registerProjectsCommand(program: Command, storage: Storage, service: TimelyService): void {
     program

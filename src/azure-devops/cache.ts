@@ -1,8 +1,9 @@
 /**
  * Shared cache utilities for Azure DevOps CLI
  */
+
+import type { IdentityRef, TimeType, WorkItemHistory } from "@app/azure-devops/types";
 import { Storage } from "@app/utils/storage";
-import type { TimeType, IdentityRef, WorkItemHistory } from "@app/azure-devops/types";
 
 // Shared storage instance
 export const storage = new Storage("azure-devops");

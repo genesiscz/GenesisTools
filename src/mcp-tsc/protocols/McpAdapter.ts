@@ -1,13 +1,13 @@
+import type { TSServer } from "@app/mcp-tsc/core/interfaces.js";
+import type { GetTsDiagnosticsArgs, GetTsHoverArgs, GetTsHoverResponse } from "@app/mcp-tsc/types/mcp.js";
+import { filterByTsconfig, resolveFiles } from "@app/mcp-tsc/utils/FileResolver.js";
+import { normalizeFilePaths } from "@app/utils.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import path from "path";
 import { readFileSync } from "fs";
+import path from "path";
 import ts from "typescript";
-import type { TSServer } from "@app/mcp-tsc/core/interfaces.js";
-import { resolveFiles, filterByTsconfig } from "@app/mcp-tsc/utils/FileResolver.js";
-import { normalizeFilePaths } from "@app/utils.js";
-import type { GetTsDiagnosticsArgs, GetTsHoverArgs, GetTsHoverResponse } from "@app/mcp-tsc/types/mcp.js";
 
 export interface McpAdapterOptions {
     server: TSServer; // The underlying TSServer implementation (always LspServer)

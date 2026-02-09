@@ -10,28 +10,28 @@
  * - Work item utilities
  */
 
-import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync } from "fs";
-import { join, dirname } from "path";
-import TurndownService from "turndown";
-import { gfm } from "turndown-plugin-gfm";
 import type {
     AzureConfig,
     AzureConfigWithTimeLog,
-    FoundTaskFile,
-    ParsedUrl,
-    Relation,
-    ParsedRelations,
     CacheEntry,
+    ChangeInfo,
+    FoundTaskFile,
+    ParsedRelations,
+    ParsedUrl,
+    QueryInfo,
+    Relation,
+    TimeLogUser,
+    UsedValuesCache,
     WorkItem,
     WorkItemFull,
-    ChangeInfo,
-    WorkItemTypeDefinition,
-    UsedValuesCache,
     WorkItemTemplate,
     WorkItemType,
-    QueryInfo,
-    TimeLogUser,
+    WorkItemTypeDefinition,
 } from "@app/azure-devops/types";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
+import TurndownService from "turndown";
+import { gfm } from "turndown-plugin-gfm";
 
 // ============= HTML to Markdown =============
 
@@ -452,7 +452,7 @@ export function extractDashboardId(input: string): string {
 }
 
 export function parseAzureDevOpsUrl(url: string): ParsedUrl {
-    const devAzureMatch = url.match(/https:\/\/dev\.azure\.com\/([^\/]+)\/([^\/]+)/i);
+    const devAzureMatch = url.match(/https:\/\/dev\.azure\.com\/([^/]+)\/([^/]+)/i);
     if (devAzureMatch) {
         return {
             org: `https://dev.azure.com/${devAzureMatch[1]}`,
@@ -460,7 +460,7 @@ export function parseAzureDevOpsUrl(url: string): ParsedUrl {
         };
     }
 
-    const vsMatch = url.match(/https:\/\/([^\.]+)\.visualstudio\.com\/([^\/]+)/i);
+    const vsMatch = url.match(/https:\/\/([^.]+)\.visualstudio\.com\/([^/]+)/i);
     if (vsMatch) {
         return {
             org: `https://dev.azure.com/${vsMatch[1]}`,

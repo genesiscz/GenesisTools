@@ -1,5 +1,5 @@
-import WebSocket from "ws";
 import logger from "@app/logger";
+import WebSocket from "ws";
 
 interface IMessage {
     timestamp: string;

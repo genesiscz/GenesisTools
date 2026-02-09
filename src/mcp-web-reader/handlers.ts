@@ -1,8 +1,8 @@
 import axios from "axios";
-import { getEngine, type EngineName } from "./engines/index.js";
-import { validateMarkdown } from "./utils/validation.js";
+import { type EngineName, getEngine } from "./engines/index.js";
 import { limitToTokens } from "./utils/tokens.js";
-import { ensureHttpUrl, buildJinaUrl } from "./utils/urls.js";
+import { buildJinaUrl, ensureHttpUrl } from "./utils/urls.js";
+import { validateMarkdown } from "./utils/validation.js";
 
 const UA =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";

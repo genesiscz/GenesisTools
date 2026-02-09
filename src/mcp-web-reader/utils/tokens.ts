@@ -9,10 +9,7 @@ export function countTokens(text: string): number {
     }
 }
 
-export function limitToTokens(
-    text: string,
-    maxTokens?: number
-): { text: string; tokens: number; truncated: boolean } {
+export function limitToTokens(text: string, maxTokens?: number): { text: string; tokens: number; truncated: boolean } {
     const tokens = countTokens(text);
 
     if (!maxTokens || tokens <= maxTokens) {

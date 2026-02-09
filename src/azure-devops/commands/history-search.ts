@@ -6,17 +6,17 @@
  *   2. Local (default): Scan cached history files, filter by assignee/state/date/time
  */
 
+import { readdirSync } from "node:fs";
+import { Api } from "@app/azure-devops/api";
+import { formatJSON, loadHistoryCache, storage } from "@app/azure-devops/cache";
+import { resolveUser, userMatches } from "@app/azure-devops/history";
+import type { AzureConfig, WorkItem, WorkItemHistory } from "@app/azure-devops/types";
+import { requireConfig } from "@app/azure-devops/utils";
+import { buildCombinedQuery, buildEverAssignedQuery } from "@app/azure-devops/wiql-builder";
+import logger from "@app/logger";
+import { suggestCommand } from "@app/utils/cli";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import logger from "@app/logger";
-import { Api } from "@app/azure-devops/api";
-import { requireConfig } from "@app/azure-devops/utils";
-import { storage, loadHistoryCache, formatJSON } from "@app/azure-devops/cache";
-import { resolveUser, userMatches } from "@app/azure-devops/history";
-import { buildCombinedQuery, buildEverAssignedQuery } from "@app/azure-devops/wiql-builder";
-import type { WorkItem, WorkItemHistory, AzureConfig } from "@app/azure-devops/types";
-import { readdirSync } from "node:fs";
-import { suggestCommand } from "@app/utils/cli";
 
 // ============= Types =============
 

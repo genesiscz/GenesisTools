@@ -1,11 +1,11 @@
-import { search, input, select } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import chalk from "chalk";
 import logger from "@app/logger";
-import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
-import type { UnifiedMCPServerConfig, MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
-import { readUnifiedConfig, writeUnifiedConfig, stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 import { parseCommandString, parseEnvString, parseHeaderString } from "@app/mcp-manager/utils/command.utils.js";
+import { readUnifiedConfig, stripMeta, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
+import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
+import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import { ExitPromptError } from "@inquirer/core";
+import { input, search, select } from "@inquirer/prompts";
+import chalk from "chalk";
 
 export interface InstallOptions {
     type?: string; // stdio, sse, http
@@ -93,7 +93,7 @@ export async function installServer(
 
         // Validate options.type if provided
         if (options.type) {
-            if (!validTypes.includes(options.type as typeof validTypes[number])) {
+            if (!validTypes.includes(options.type as (typeof validTypes)[number])) {
                 logger.error(`Invalid transport type '${options.type}'. Must be one of: ${validTypes.join(", ")}`);
                 process.exit(1);
             }
@@ -224,7 +224,7 @@ export async function installServer(
                 // Interactive: ask for env
                 try {
                     const inputEnv = await input({
-                        message: 'Enter ENV variables (JSON format recommended) or leave empty:',
+                        message: "Enter ENV variables (JSON format recommended) or leave empty:",
                         default: serverConfig?.env ? JSON.stringify(serverConfig.env) : "",
                     });
 
@@ -339,7 +339,8 @@ export async function installServer(
                 updatedConfig.mcpServers[finalServerName]._meta!.enabled = {};
             }
             for (const providerName of successfulProviders) {
-                (updatedConfig.mcpServers[finalServerName]._meta!.enabled as Record<string, boolean>)[providerName] = true;
+                (updatedConfig.mcpServers[finalServerName]._meta!.enabled as Record<string, boolean>)[providerName] =
+                    true;
             }
             await writeUnifiedConfig(updatedConfig);
         }

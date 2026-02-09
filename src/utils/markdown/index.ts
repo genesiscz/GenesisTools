@@ -1,10 +1,10 @@
-import MarkdownIt from "markdown-it";
-import cliHtml from "cli-html";
 import { alert } from "@mdit/plugin-alert";
+import chalk from "chalk";
+import cliHtml from "cli-html";
+import MarkdownIt from "markdown-it";
+import type Token from "markdown-it/lib/token.mjs";
 // @ts-expect-error - no types available for markdown-it-task-lists
 import taskLists from "markdown-it-task-lists";
-import chalk from "chalk";
-import type Token from "markdown-it/lib/token.mjs";
 
 // Languages that should NOT show line numbers (shell commands, config files, plain text)
 const NO_LINE_NUMBER_LANGS = new Set([
@@ -61,10 +61,7 @@ function createFencePlugin(md: MarkdownIt): void {
 
         // For shell/config languages, disable line numbers via data attribute on <code>
         if (NO_LINE_NUMBER_LANGS.has(info)) {
-            const escaped = code
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;");
+            const escaped = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
             const langClass = info ? `class="language-${info}" ` : "";
             return `<pre><code ${langClass}data-cli-numbers-enabled="false">${escaped}</code></pre>\n`;
         }
@@ -94,10 +91,7 @@ interface TableData {
     rows: string[][];
 }
 
-function parseTableTokens(
-    tokens: Token[],
-    startIdx: number
-): { data: TableData; endIdx: number } {
+function parseTableTokens(tokens: Token[], startIdx: number): { data: TableData; endIdx: number } {
     const data: TableData = { headers: [], alignments: [], rows: [] };
     let idx = startIdx;
 

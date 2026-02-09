@@ -4,8 +4,8 @@ const instance = createGit({ verbose: true });
 
 export const git = instance;
 export function setVerbose(enabled: boolean): void {
-	instance.setVerbose(enabled);
+    instance.setVerbose(enabled);
 }
 export function isVerbose(): boolean {
-	return instance.executor.verbose;
+    return instance.executor.verbose;
 }

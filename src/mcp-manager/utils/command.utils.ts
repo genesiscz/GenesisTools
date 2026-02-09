@@ -1,8 +1,7 @@
-import { checkbox } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
 import logger from "@app/logger";
-import type { UnifiedMCPConfig } from "./providers/types.js";
-import type { MCPProvider } from "./providers/types.js";
+import { ExitPromptError } from "@inquirer/core";
+import { checkbox } from "@inquirer/prompts";
+import type { MCPProvider, UnifiedMCPConfig } from "./providers/types.js";
 
 /**
  * Show help message for the mcp-manager tool
@@ -251,11 +250,11 @@ export function parseServerNames(input?: string): string[] {
  * @param availableProviders - List of available provider instances
  * @returns Array of validated provider names, or null if any invalid
  */
-export function parseProviderNames(
-    providerInput: string,
-    availableProviders: MCPProvider[]
-): string[] | null {
-    const providerNames = providerInput.split(",").map((p) => p.trim()).filter(Boolean);
+export function parseProviderNames(providerInput: string, availableProviders: MCPProvider[]): string[] | null {
+    const providerNames = providerInput
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean);
     const validProviders: string[] = [];
 
     for (const name of providerNames) {

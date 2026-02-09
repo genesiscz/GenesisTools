@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 
-import { Command } from "commander";
-import * as p from "@clack/prompts";
-import pc from "picocolors";
+import { isMultilineCancel, multilineText } from "@app/utils/prompts/clack";
 import { Storage } from "@app/utils/storage/storage";
-import { multilineText, isMultilineCancel } from "@app/utils/prompts/clack";
+import * as p from "@clack/prompts";
+import { Command } from "commander";
+import pc from "picocolors";
 
 // Types
 interface Order {
@@ -162,9 +162,7 @@ async function ensureCookies(forceNew: boolean = false): Promise<string | null> 
             const age = Date.now() - savedAt.getTime();
             const hoursAgo = Math.floor(age / (1000 * 60 * 60));
 
-            p.log.info(
-                `Using saved cookies ${pc.dim(`(saved ${hoursAgo < 1 ? "recently" : hoursAgo + "h ago"})`)}`,
-            );
+            p.log.info(`Using saved cookies ${pc.dim(`(saved ${hoursAgo < 1 ? "recently" : hoursAgo + "h ago"})`)}`);
 
             // Test if cookies still work
             const spinner = p.spinner();
@@ -259,15 +257,13 @@ async function main() {
                     p.log.message("");
                     p.log.message(pc.bold(`Order #${order.id}`));
                     p.log.message(pc.dim(`Date: ${new Date(order.orderTime).toLocaleDateString("cs-CZ")}`));
-                    p.log.message(
-                        pc.dim(`Total: ${order.priceComposition.total.amount.toFixed(2)} Kč`),
-                    );
+                    p.log.message(pc.dim(`Total: ${order.priceComposition.total.amount.toFixed(2)} Kč`));
                     p.log.message("");
                     p.log.message(pc.bold("Items:"));
 
                     for (const item of order.items) {
                         p.log.message(
-                            `  ${pc.cyan(item.quantity + "x")} ${item.name} - ${pc.green(item.totalPrice.amount.toFixed(2) + " Kč")}`,
+                            `  ${pc.cyan(item.quantity + "x")} ${item.name} - ${pc.green(item.totalPrice.amount.toFixed(2) + " Kč")}`
                         );
                     }
 
@@ -304,9 +300,7 @@ async function main() {
             }
 
             // Sort by date (oldest first for verbose output)
-            allOrders.sort(
-                (a, b) => new Date(a.orderTime).getTime() - new Date(b.orderTime).getTime(),
-            );
+            allOrders.sort((a, b) => new Date(a.orderTime).getTime() - new Date(b.orderTime).getTime());
 
             // Calculate totals
             let totalSpending = 0;
@@ -323,7 +317,7 @@ async function main() {
                 if (options.verbose) {
                     const date = new Date(order.orderTime).toLocaleDateString("cs-CZ");
                     p.log.message(
-                        `  ${pc.dim(date)} ${pc.dim(`(${order.itemsCount} items)`)} - ${pc.green(price.toFixed(2) + " Kč")} ${pc.dim(`#${order.id}`)}`,
+                        `  ${pc.dim(date)} ${pc.dim(`(${order.itemsCount} items)`)} - ${pc.green(price.toFixed(2) + " Kč")} ${pc.dim(`#${order.id}`)}`
                     );
                 }
             }
@@ -352,13 +346,11 @@ async function main() {
                 yearSummary +
                     "\n\n" +
                     pc.bold("Total: ") +
-                    pc.green(
-                        totalSpending.toLocaleString("cs-CZ", { minimumFractionDigits: 0 }) + " Kč",
-                    ) +
+                    pc.green(totalSpending.toLocaleString("cs-CZ", { minimumFractionDigits: 0 }) + " Kč") +
                     pc.dim(` from ${allOrders.length} orders`) +
                     "\n" +
                     pc.dim(`Average: ${Math.round(totalSpending / allOrders.length)} Kč/order`),
-                pc.bold("Rohlik Spending Summary"),
+                pc.bold("Rohlik Spending Summary")
             );
 
             p.outro(pc.green("Done!"));

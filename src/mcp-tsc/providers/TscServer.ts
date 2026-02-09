@@ -1,13 +1,13 @@
-import ts from "typescript";
-import path from "path";
 import type {
-    TSServer,
-    DiagnosticsResult,
     DiagnosticsOptions,
-    HoverResult,
+    DiagnosticsResult,
     HoverPosition,
+    HoverResult,
+    TSServer,
     TsDiagnostic,
 } from "@app/mcp-tsc/core/interfaces.js";
+import path from "path";
+import ts from "typescript";
 
 export interface TscServerOptions {
     cwd: string;

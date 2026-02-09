@@ -1,7 +1,7 @@
 import { htmlToMarkdown } from "mdream";
+import { extractContent } from "../utils/extraction.js";
 import { MarkdownEngine } from "./base.js";
 import type { ConversionOptions, ConversionResult, EngineName } from "./types.js";
-import { extractContent } from "../utils/extraction.js";
 
 export class MdreamEngine extends MarkdownEngine {
     name: EngineName = "mdream";

@@ -1,13 +1,13 @@
+import { consoleLog as logger } from "@app/logger";
+import { handleReadmeFlag } from "@app/utils/readme";
+import chalk from "chalk";
 import chokidar from "chokidar";
 import { Command } from "commander";
-import path from "path";
-import fs from "fs";
 import type { WatchEventType, WatchOptions } from "fs";
-import os from "os";
+import fs from "fs";
 import { glob } from "glob";
-import { consoleLog as logger } from "@app/logger";
-import chalk from "chalk";
-import { handleReadmeFlag } from "@app/utils/readme";
+import os from "os";
+import path from "path";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -153,7 +153,7 @@ function readFileWithLineLimit(
             // Instead of reading the whole file, we'll read backwards in chunks
             // to find just the last N lines
             const chunkSize = 1024; // Read 1KB at a time
-            let buffer = Buffer.alloc(chunkSize);
+            const buffer = Buffer.alloc(chunkSize);
             let lines: string[] = [];
             let position = fileSize;
             let foundLines = 0;
@@ -168,7 +168,7 @@ function readFileWithLineLimit(
                 fs.readSync(fd, buffer, 0, size, position);
 
                 // Convert to string and prepend any remainder from previous iteration
-                let content = buffer.slice(0, size).toString("utf8") + remainder;
+                const content = buffer.slice(0, size).toString("utf8") + remainder;
 
                 // Split into lines and count them
                 const chunk_lines = content.split("\n");
@@ -427,7 +427,7 @@ async function startWatcher() {
     // Sort files by last modified time - always show oldest first in initial display
     // so most recently modified appears at the bottom of the screen
     // Get the sorted files, but reverse them to get oldest first
-    let sortedFiles = getSortedFilesByModTime().reverse();
+    const sortedFiles = getSortedFilesByModTime().reverse();
 
     // If not in follow mode, display content and exit
     if (!options.follow) {

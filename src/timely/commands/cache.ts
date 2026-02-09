@@ -1,9 +1,9 @@
-import { Command } from "commander";
-import { confirm } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import chalk from "chalk";
 import logger from "@app/logger";
-import { Storage } from "@app/utils/storage";
+import type { Storage } from "@app/utils/storage";
+import { ExitPromptError } from "@inquirer/core";
+import { confirm } from "@inquirer/prompts";
+import chalk from "chalk";
+import type { Command } from "commander";
 
 export function registerCacheCommand(program: Command, storage: Storage): void {
     const cacheCmd = program.command("cache").description("Manage cache");
@@ -60,5 +60,4 @@ export function registerCacheCommand(program: Command, storage: Storage): void {
                 throw error;
             }
         });
-
 }

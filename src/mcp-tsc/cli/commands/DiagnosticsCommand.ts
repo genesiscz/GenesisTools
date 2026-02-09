@@ -1,10 +1,13 @@
-import path from "path";
-import type { CliArgs, TSServer, DiagnosticsResult } from "@app/mcp-tsc/core/interfaces.js";
-import { resolveFiles, filterByTsconfig } from "@app/mcp-tsc/utils/FileResolver.js";
+import type { CliArgs, DiagnosticsResult, TSServer } from "@app/mcp-tsc/core/interfaces.js";
+import { filterByTsconfig, resolveFiles } from "@app/mcp-tsc/utils/FileResolver.js";
 import { getPersistentServer } from "@app/mcp-tsc/utils/ServerManager.js";
+import path from "path";
 
 export class DiagnosticsCommand {
-    constructor(private tsServer: TSServer, private cwd: string) {}
+    constructor(
+        private tsServer: TSServer,
+        private cwd: string
+    ) {}
 
     async execute(argv: CliArgs): Promise<void> {
         const files = argv._;

@@ -2,10 +2,10 @@
  * TimeLog Interactive Prompts - @inquirer/prompts implementation (fallback)
  */
 
-import { input, select, confirm } from "@inquirer/prompts";
+import { convertToMinutes, formatMinutes, getTodayDate, TimeLogApi } from "@app/azure-devops/timelog-api";
+import type { AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import { ExitPromptError } from "@inquirer/core";
-import { TimeLogApi, formatMinutes, getTodayDate, convertToMinutes } from "@app/azure-devops/timelog-api";
-import type { TimeLogUser, AzureConfigWithTimeLog } from "@app/azure-devops/types";
+import { confirm, input, select } from "@inquirer/prompts";
 
 export async function runInteractiveAddInquirer(
     config: AzureConfigWithTimeLog,

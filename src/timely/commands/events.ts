@@ -1,13 +1,13 @@
-import { Command, Option } from "commander";
-import chalk from "chalk";
 import logger from "@app/logger";
-import { Storage } from "@app/utils/storage";
-import { TimelyService } from "@app/timely/api/service";
+import type { TimelyService } from "@app/timely/api/service";
+import type { OAuth2Tokens, TimelyEntry, TimelyEvent, TimelyEventSlim } from "@app/timely/types";
 import { formatDuration } from "@app/timely/utils/date";
-import { fetchMemoriesForDates, buildSubEntryMap } from "@app/timely/utils/memories";
-import { fuzzyMatchBest } from "@app/utils/fuzzy-match";
+import { buildSubEntryMap, fetchMemoriesForDates } from "@app/timely/utils/memories";
 import type { FuzzyMatchResult } from "@app/utils/fuzzy-match";
-import type { TimelyEvent, TimelyEventSlim, TimelyEntry, OAuth2Tokens } from "@app/timely/types";
+import { fuzzyMatchBest } from "@app/utils/fuzzy-match";
+import type { Storage } from "@app/utils/storage";
+import chalk from "chalk";
+import { type Command, Option } from "commander";
 
 export function registerEventsCommand(program: Command, storage: Storage, service: TimelyService): void {
     program
@@ -69,9 +69,9 @@ function extractHHMM(time: string): string | null {
 
 /** Get sub-entries from a memory (API uses "entries" field, TS type uses "sub_entries") */
 function getSubEntries(entry: TimelyEntry): typeof entry.sub_entries {
-    return entry.sub_entries
-        || (entry as unknown as Record<string, unknown>).entries as typeof entry.sub_entries
-        || [];
+    return (
+        entry.sub_entries || ((entry as unknown as Record<string, unknown>).entries as typeof entry.sub_entries) || []
+    );
 }
 
 type UnlinkedMemory = TimelyEntry & { suggestedMatch?: FuzzyMatchResult };
@@ -185,12 +185,12 @@ async function eventsAction(storage: Storage, service: TimelyService, options: E
 
             const withMatches: UnlinkedMemory[] = unlinked.map((memory) => {
                 const subs = getSubEntries(memory);
-                const subNotes = subs.map((s) => s.note).filter(Boolean).join(" ");
+                const subNotes = subs
+                    .map((s) => s.note)
+                    .filter(Boolean)
+                    .join(" ");
                 const text = `${memory.title} ${memory.note || ""} ${subNotes}`;
-                const match = fuzzyMatchBest(
-                    { from: memory.from, to: memory.to, text },
-                    candidates,
-                );
+                const match = fuzzyMatchBest({ from: memory.from, to: memory.to, text }, candidates);
                 return { ...memory, suggestedMatch: match || undefined };
             });
 
@@ -219,7 +219,7 @@ function outputJson(
     events: TimelyEvent[],
     options: EventsOptions,
     fetchEntries: boolean,
-    unlinkedByDay: Map<string, UnlinkedMemory[]>,
+    unlinkedByDay: Map<string, UnlinkedMemory[]>
 ): void {
     const hasUnlinked = unlinkedByDay.size > 0;
 
@@ -317,11 +317,7 @@ function outputCsv(events: TimelyEvent[]): void {
 
 // ─── Table Output ───
 
-function outputTable(
-    events: TimelyEvent[],
-    fetchEntries: boolean,
-    unlinkedByDay: Map<string, UnlinkedMemory[]>,
-): void {
+function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay: Map<string, UnlinkedMemory[]>): void {
     logger.info(chalk.cyan(`\nFound ${events.length} event(s):\n`));
 
     // Build event lookup for fuzzy match display
@@ -355,18 +351,25 @@ function outputTable(
                 const project = (event.project?.name || "No Project").padEnd(maxProjectLen);
                 const note = event.note ? ` ${chalk.dim(event.note)}` : "";
                 const fromTo = event.from && event.to ? chalk.dim(` ${event.from}-${event.to}`) : "";
-                console.log(`  ${chalk.bold(event.duration.formatted.padStart(5))} ${chalk.yellow(project)}${note}${fromTo}`);
+                console.log(
+                    `  ${chalk.bold(event.duration.formatted.padStart(5))} ${chalk.yellow(project)}${note}${fromTo}`
+                );
 
                 const entries = (event as TimelyEvent & { entries?: TimelyEntry[] }).entries;
                 if (entries && entries.length > 0) {
                     for (const ent of entries) {
-                        console.log(`  ${" ".repeat(5)} ${chalk.cyan(ent.title.padEnd(maxProjectLen))} ${chalk.dim(ent.duration.formatted)}`);
+                        console.log(
+                            `  ${" ".repeat(5)} ${chalk.cyan(ent.title.padEnd(maxProjectLen))} ${chalk.dim(ent.duration.formatted)}`
+                        );
                         const subs = getSubEntries(ent);
                         if (subs.length > 0) {
                             for (const sub of subs) {
                                 if (sub.note) {
-                                    const shortNote = sub.note.length > 60 ? sub.note.substring(0, 58) + ".." : sub.note;
-                                    console.log(`  ${" ".repeat(5)} ${" ".repeat(maxProjectLen)} ${chalk.dim(`${sub.duration.formatted} ${shortNote}`)}`);
+                                    const shortNote =
+                                        sub.note.length > 60 ? sub.note.substring(0, 58) + ".." : sub.note;
+                                    console.log(
+                                        `  ${" ".repeat(5)} ${" ".repeat(maxProjectLen)} ${chalk.dim(`${sub.duration.formatted} ${shortNote}`)}`
+                                    );
                                 }
                             }
                         }
@@ -395,7 +398,9 @@ function outputTable(
                         for (const sub of subs) {
                             if (sub.note) {
                                 const shortNote = sub.note.length > 60 ? sub.note.substring(0, 58) + ".." : sub.note;
-                                console.log(`  ${" ".repeat(5)} ${" ".repeat(maxProjectLen)} ${chalk.dim(`${sub.duration.formatted} ${shortNote}`)}`);
+                                console.log(
+                                    `  ${" ".repeat(5)} ${" ".repeat(maxProjectLen)} ${chalk.dim(`${sub.duration.formatted} ${shortNote}`)}`
+                                );
                             }
                         }
                     }

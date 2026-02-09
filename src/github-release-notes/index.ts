@@ -1,9 +1,9 @@
-import axios from "axios";
-import * as fs from "fs";
-import * as path from "path";
-import { Command } from "commander";
 import logger from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
+import axios from "axios";
+import { Command } from "commander";
+import * as fs from "fs";
+import * as path from "path";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);

@@ -1,9 +1,9 @@
 import logger from "@app/logger";
-import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import { getServerNames, promptForProjects, promptForProviders } from "@app/mcp-manager/utils/command.utils.js";
+import { readUnifiedConfig, stripMeta, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
+import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName, PerProjectEnabledState } from "@app/mcp-manager/utils/types.js";
-import { readUnifiedConfig, writeUnifiedConfig, stripMeta } from "@app/mcp-manager/utils/config.utils.js";
-import { getServerNames, promptForProviders, promptForProjects } from "@app/mcp-manager/utils/command.utils.js";
 
 export interface ToggleOptions {
     provider?: string; // Provider name for non-interactive mode
@@ -61,7 +61,10 @@ export async function toggleServer(
         }
         selectedProviderNames = [matchedProvider.getName()];
     } else {
-        selectedProviderNames = await promptForProviders(availableProviders, `Select providers to ${action} server(s) in:`);
+        selectedProviderNames = await promptForProviders(
+            availableProviders,
+            `Select providers to ${action} server(s) in:`
+        );
     }
 
     if (!selectedProviderNames || selectedProviderNames.length === 0) {
@@ -157,7 +160,8 @@ export async function toggleServer(
                 const enabledState = config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName];
 
                 // Determine if this is a global enablement (all projects) or per-project
-                const isGlobalEnablement = projectChoices && projectChoices.length === 1 && projectChoices[0].projectPath === null;
+                const isGlobalEnablement =
+                    projectChoices && projectChoices.length === 1 && projectChoices[0].projectPath === null;
 
                 if (projects.length > 0 && !isGlobalEnablement) {
                     // Provider supports projects and we have specific project selections - use project objects

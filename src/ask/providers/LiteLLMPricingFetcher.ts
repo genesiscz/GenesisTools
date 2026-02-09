@@ -1,6 +1,6 @@
-import { z } from "zod";
 import logger from "@app/logger";
 import type { PricingInfo } from "@ask/types/provider";
+import { z } from "zod";
 
 export const LITELLM_PRICING_URL =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";

@@ -1,12 +1,12 @@
-import { MCPProvider, WriteResult } from "./types.js";
-import type { UnifiedMCPServerConfig, MCPServerInfo } from "./types.js";
-import type { GeminiGenericConfig, GeminiMCPServerConfig } from "./gemini.types.js";
+import logger from "@app/logger";
+import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
+import chalk from "chalk";
 import { existsSync } from "fs";
 import { readFile } from "fs/promises";
 import path from "path";
-import logger from "@app/logger";
-import chalk from "chalk";
-import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
+import type { GeminiGenericConfig, GeminiMCPServerConfig } from "./gemini.types.js";
+import type { MCPServerInfo, UnifiedMCPServerConfig } from "./types.js";
+import { MCPProvider, WriteResult } from "./types.js";
 
 /**
  * Gemini Code Assist MCP provider.

@@ -1,8 +1,8 @@
-import { editor } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import { WebSocketServer } from "ws";
 import log from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { ExitPromptError } from "@inquirer/core";
+import { editor } from "@inquirer/prompts";
+import { WebSocketServer } from "ws";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);

@@ -1,31 +1,31 @@
-import { Command } from "commander";
-import { select, input } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
 import logger, { configureLogger } from "@app/logger";
-import { ClaudeProvider } from "./utils/providers/claude.js";
-import { GeminiProvider } from "./utils/providers/gemini.js";
-import { CodexProvider } from "./utils/providers/codex.js";
-import { CursorProvider } from "./utils/providers/cursor.js";
-import type { MCPProvider } from "./utils/providers/types.js";
-import { showHelp } from "./utils/command.utils.js";
 import { enhanceHelp } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { ExitPromptError } from "@inquirer/core";
+import { input, select } from "@inquirer/prompts";
+import { Command } from "commander";
+import { showHelp } from "./utils/command.utils.js";
+import { ClaudeProvider } from "./utils/providers/claude.js";
+import { CodexProvider } from "./utils/providers/codex.js";
+import { CursorProvider } from "./utils/providers/cursor.js";
+import { GeminiProvider } from "./utils/providers/gemini.js";
+import type { MCPProvider } from "./utils/providers/types.js";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
 import {
-    openConfig,
-    syncServers,
-    syncFromProviders,
-    listServers,
-    enableServer,
-    disableServer,
-    installServer,
-    showServerConfig,
     backupAllConfigs,
-    renameServer,
     configJson,
+    disableServer,
+    enableServer,
+    installServer,
+    listServers,
+    openConfig,
+    renameServer,
+    showServerConfig,
+    syncFromProviders,
+    syncServers,
 } from "./commands/index.js";
 import { setGlobalOptions } from "./utils/config.utils.js";
 
@@ -85,7 +85,10 @@ const program = new Command()
     .name("mcp-manager")
     .description("Manage MCP (Model Context Protocol) servers across multiple AI assistants")
     .option("-v, --verbose", "Enable verbose logging")
-    .option("-y, --yes", "Auto-confirm changes without prompting (only after you do the command without --yes and check the diff)")
+    .option(
+        "-y, --yes",
+        "Auto-confirm changes without prompting (only after you do the command without --yes and check the diff)"
+    )
     .option("-p, --provider <name>", "Provider name(s) for operations (claude, cursor, gemini, codex, or 'all')")
     .option("-?, --help-full", "Show detailed help message")
     .helpCommand(true)
@@ -165,8 +168,18 @@ program
     .command("install [server] [command]")
     .description("Install/add an MCP server to a provider")
     .option("-t, --type <type>", "Transport type (stdio, sse, http)")
-    .option("-H, --headers <str>", "Headers for http/sse (uses colon separator: 'Key: value')", (val, prev: string[]) => prev ? [...prev, val] : [val], [])
-    .option("-e, --env <str>", "Env vars for stdio (uses equals separator: 'KEY=value')", (val, prev: string[]) => prev ? [...prev, val] : [val], [])
+    .option(
+        "-H, --headers <str>",
+        "Headers for http/sse (uses colon separator: 'Key: value')",
+        (val, prev: string[]) => (prev ? [...prev, val] : [val]),
+        []
+    )
+    .option(
+        "-e, --env <str>",
+        "Env vars for stdio (uses equals separator: 'KEY=value')",
+        (val, prev: string[]) => (prev ? [...prev, val] : [val]),
+        []
+    )
     .action(async (server, command, options) => {
         const opts = program.opts();
         const providers = parseProviderArg(opts.provider, getProviders());

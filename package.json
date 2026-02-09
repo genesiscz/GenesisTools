@@ -6,9 +6,16 @@
     "scripts": {
         "typecheck:all": "tsgo --noEmit && tsgo -p src/claude-history-dashboard/tsconfig.json --noEmit",
         "tsgo": "tsgo --noEmit",
-        "tsc": "tsgo --noEmit"
+        "tsc": "tsgo --noEmit",
+        "lint": "biome check .",
+        "lint:fix": "biome check --write .",
+        "lint:dashboard": "biome check src/claude-history-dashboard",
+        "lint:dashboard:fix": "biome check --write src/claude-history-dashboard",
+        "format": "biome format --write .",
+        "format:dashboard": "biome format --write src/claude-history-dashboard"
     },
     "devDependencies": {
+        "@biomejs/biome": "^2.3.12",
         "@types/babel__core": "^7.20.5",
         "@types/better-sqlite3": "^7.6.13",
         "@types/bun": "latest",
@@ -17,6 +24,7 @@
         "@types/react": "^19.2.2",
         "@typescript-eslint/eslint-plugin": "^8.30.1",
         "@typescript-eslint/parser": "^8.30.1",
+        "@typescript/native-preview": "7.0.0-dev.20260208.1",
         "eslint-config-prettier": "^10.1.2",
         "eslint-plugin-import": "^2.31.0",
         "eslint-plugin-jsx-a11y": "^6.10.2",

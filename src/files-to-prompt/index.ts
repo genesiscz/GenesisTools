@@ -1,12 +1,12 @@
-import { Command } from "commander";
-import { basename, dirname, extname, join, resolve, relative } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile } from "node:fs/promises";
-import { minimatch } from "minimatch";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import logger from "@app/logger";
-import type { FileSink } from "bun";
-import { estimateTokens, formatTokens } from "@ask/utils/helpers";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { estimateTokens, formatTokens } from "@ask/utils/helpers";
+import type { FileSink } from "bun";
+import { Command } from "commander";
+import { minimatch } from "minimatch";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -382,9 +382,9 @@ async function processPath(
         statistics?: Statistics
     ): Promise<void> {
         // Read .gitignore specifically for this directory
-        let currentDirGitignoreRules = ignoreGitignore ? [] : await readGitignore(dirPath);
+        const currentDirGitignoreRules = ignoreGitignore ? [] : await readGitignore(dirPath);
         // Combine passed rules with current dir's rules
-        let effectiveGitignoreRules = [...passedRules, ...currentDirGitignoreRules];
+        const effectiveGitignoreRules = [...passedRules, ...currentDirGitignoreRules];
 
         try {
             const entries = await readdir(dirPath, { withFileTypes: true });
@@ -833,8 +833,8 @@ async function main(): Promise<void> {
             Array.isArray(options.extension)
                 ? options.extension
                 : typeof options.extension === "string"
-                ? [options.extension]
-                : []
+                  ? [options.extension]
+                  : []
         ).map((ext) => ext.toLowerCase().replace(/^\./, "")); // Normalize extensions
         const includeHidden = !!options.includeHidden;
         const ignoreFilesOnly = !!options.ignoreFilesOnly;
@@ -842,8 +842,8 @@ async function main(): Promise<void> {
         const ignorePatterns = Array.isArray(options.ignore)
             ? options.ignore
             : typeof options.ignore === "string"
-            ? [options.ignore]
-            : [];
+              ? [options.ignore]
+              : [];
         const outputFile = options.output;
         const claudeXml = !!options.cxml;
         const markdown = !!options.markdown;
@@ -980,7 +980,7 @@ async function main(): Promise<void> {
         // Process each path
         for (const path of processedPaths) {
             logger.debug(`Processing path: ${path}, cwd: ${process.cwd()}`);
-            let initialGitignoreRules = ignoreGitignore ? [] : await readGitignore(dirname(path));
+            const initialGitignoreRules = ignoreGitignore ? [] : await readGitignore(dirname(path));
             logger.debug(`Initial gitignore rules: ${initialGitignoreRules.length} rules`);
 
             await processPath(

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-import { Command } from "commander";
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { Command } from "commander";
 import { renderMarkdownToCli } from "../utils/markdown/index.js";
 
 const program = new Command();

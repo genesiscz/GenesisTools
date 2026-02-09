@@ -1,9 +1,12 @@
+import type { CliArgs, HoverResult, TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import path from "path";
 import ts from "typescript";
-import type { CliArgs, TSServer, HoverResult } from "@app/mcp-tsc/core/interfaces.js";
 
 export class HoverCommand {
-    constructor(private tsServer: TSServer, private cwd: string) {}
+    constructor(
+        private tsServer: TSServer,
+        private cwd: string
+    ) {}
 
     async execute(argv: CliArgs): Promise<void> {
         // Validate hover-specific requirements

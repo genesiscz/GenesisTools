@@ -1,10 +1,10 @@
-import { Command, Option } from "commander";
-import chalk from "chalk";
 import logger from "@app/logger";
-import { Storage } from "@app/utils/storage";
-import { TimelyService } from "@app/timely/api/service";
+import type { TimelyService } from "@app/timely/api/service";
+import type { OAuth2Tokens, TimelyEntry } from "@app/timely/types";
 import { fetchMemoriesForDates } from "@app/timely/utils/memories";
-import type { TimelyEntry, OAuth2Tokens } from "@app/timely/types";
+import type { Storage } from "@app/utils/storage";
+import chalk from "chalk";
+import { type Command, Option } from "commander";
 
 export function registerMemoriesCommand(program: Command, storage: Storage, service: TimelyService): void {
     program
@@ -135,17 +135,22 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
             // Show sub-entries for each memory in this app group
             for (const entry of data.entries) {
                 // API uses "entries" on suggested_entries, TS type uses "sub_entries"
-                const subs = entry.sub_entries
-                    || (entry as unknown as Record<string, unknown>).entries as typeof entry.sub_entries
-                    || [];
+                const subs =
+                    entry.sub_entries ||
+                    ((entry as unknown as Record<string, unknown>).entries as typeof entry.sub_entries) ||
+                    [];
                 if (subs.length > 0) {
                     for (const sub of subs) {
                         if (sub.note) {
-                            console.log(`    ${chalk.dim(padDur(fmtDurHm(sub.duration.total_seconds)))} ${chalk.blue(sub.note)}`);
+                            console.log(
+                                `    ${chalk.dim(padDur(fmtDurHm(sub.duration.total_seconds)))} ${chalk.blue(sub.note)}`
+                            );
                         }
                     }
                 } else if (entry.note) {
-                    console.log(`    ${chalk.dim(padDur(fmtDurHm(entry.duration.total_seconds)))} ${chalk.blue(entry.note)}`);
+                    console.log(
+                        `    ${chalk.dim(padDur(fmtDurHm(entry.duration.total_seconds)))} ${chalk.blue(entry.note)}`
+                    );
                 }
             }
         }

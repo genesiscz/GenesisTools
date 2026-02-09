@@ -1,22 +1,23 @@
-import { describe, it, expect, beforeEach, spyOn } from "bun:test";
-import { setupInquirerMock, setMockResponses } from "./inquirer-mock.js";
+import { beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { setMockResponses, setupInquirerMock } from "./inquirer-mock.js";
 
 // Setup @inquirer/prompts mock BEFORE importing command modules
 setupInquirerMock();
 
 // Now import after mocking
 const { syncFromProviders } = await import("../sync-from-providers.js");
-import { MockMCPProvider, createMockUnifiedConfig, createMockServerConfig } from "./test-utils.js";
+
+import logger from "@app/logger";
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPServerInfo } from "@app/mcp-manager/utils/providers/types.js";
-import logger from "@app/logger";
+import { createMockServerConfig, createMockUnifiedConfig, MockMCPProvider } from "./test-utils.js";
 
 describe("syncFromProviders", () => {
     let mockProvider: MockMCPProvider;
 
     beforeEach(() => {
         mockProvider = new MockMCPProvider("claude", "/mock/claude.json");
-        
+
         // Set default mock responses
         setMockResponses({
             selectedProviders: ["claude"],
@@ -32,16 +33,17 @@ describe("syncFromProviders", () => {
             provider: "claude",
         };
         mockProvider.listServersResult = [mockServerInfo];
-        
+
         let capturedConfig: any = null;
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
         spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
-            capturedConfig = config; return true;
+            capturedConfig = config;
+            return true;
         });
         spyOn(logger, "info");
         spyOn(logger, "debug");
         spyOn(logger, "warn");
-        
+
         setMockResponses({
             selectedProviders: ["claude"],
         });
@@ -74,7 +76,8 @@ describe("syncFromProviders", () => {
         let capturedConfig: any = null;
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
         spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
-            capturedConfig = config; return true;
+            capturedConfig = config;
+            return true;
         });
         spyOn(logger, "info");
         spyOn(logger, "debug");
@@ -97,7 +100,7 @@ describe("syncFromProviders", () => {
         const existingServer = createMockServerConfig("test-server");
         existingServer.command = "old-command";
         mockConfig.mcpServers["test-server"] = existingServer;
-        
+
         const conflictingServer: MCPServerInfo = {
             name: "test-server",
             config: { command: "new-command", args: ["new-arg"] },
@@ -105,12 +108,12 @@ describe("syncFromProviders", () => {
             provider: "claude",
         };
         mockProvider.listServersResult = [conflictingServer];
-        
+
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
         spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(true);
         spyOn(logger, "info");
         spyOn(logger, "warn");
-        
+
         setMockResponses({
             selectedProviders: ["claude"],
             choice: "current",
@@ -126,7 +129,7 @@ describe("syncFromProviders", () => {
         const existingServer = createMockServerConfig("test-server");
         existingServer._meta!.enabled!.gemini = true;
         mockConfig.mcpServers["test-server"] = existingServer;
-        
+
         const conflictingServer: MCPServerInfo = {
             name: "test-server",
             config: { command: "new-command" },
@@ -134,15 +137,16 @@ describe("syncFromProviders", () => {
             provider: "claude",
         };
         mockProvider.listServersResult = [conflictingServer];
-        
+
         let capturedConfig: any = null;
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
         spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
-            capturedConfig = config; return true;
+            capturedConfig = config;
+            return true;
         });
         spyOn(logger, "info");
         spyOn(logger, "warn");
-        
+
         setMockResponses({
             selectedProviders: ["claude"],
             choice: "incoming",
@@ -159,7 +163,7 @@ describe("syncFromProviders", () => {
     it("should return early if no providers selected", async () => {
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(createMockUnifiedConfig());
         spyOn(logger, "info");
-        
+
         setMockResponses({
             selectedProviders: [],
         });
@@ -171,25 +175,23 @@ describe("syncFromProviders", () => {
 
     it("should handle errors when reading from providers", async () => {
         mockProvider.errors.set("listServers", new Error("Read failed"));
-        
+
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(createMockUnifiedConfig());
         spyOn(logger, "error");
         spyOn(logger, "info");
-        
+
         setMockResponses({
             selectedProviders: ["claude"],
         });
 
         await syncFromProviders([mockProvider]);
 
-        expect(logger.error).toHaveBeenCalledWith(
-            expect.stringContaining("Failed to read from claude")
-        );
+        expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("Failed to read from claude"));
     });
 
     it("should skip providers without config files", async () => {
         mockProvider.configExistsResult = false;
-        
+
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(createMockUnifiedConfig());
         spyOn(logger, "warn");
 

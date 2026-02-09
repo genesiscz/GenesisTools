@@ -5,8 +5,9 @@
  * Wraps the generic Storage class with typed methods for
  * workitem, timelog, timetypes, teamMembers, and history caching.
  */
-import { Storage } from "@app/utils/storage";
+
 import type { TimeLogEntry } from "@app/azure-devops/types";
+import { Storage } from "@app/utils/storage";
 
 type CacheDomain = "workitem" | "timelog" | "timetypes" | "teamMembers" | "history";
 

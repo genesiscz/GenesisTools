@@ -1,8 +1,8 @@
-import { Command } from "commander";
+import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import { TimeLogApi, formatMinutes } from "@app/azure-devops/timelog-api";
-import pc from "picocolors";
 import Table from "cli-table3";
+import type { Command } from "commander";
+import pc from "picocolors";
 
 function collectUsers(value: string, previous: string[]): string[] {
     return previous.concat([value]);
@@ -86,9 +86,7 @@ export function registerListSubcommand(parent: Command): void {
                 // Post-filter by user name
                 if (options.user && options.user.length > 0) {
                     const userFilters = options.user.map((u) => u.toLowerCase());
-                    entries = entries.filter((e) =>
-                        userFilters.some((uf) => e.userName.toLowerCase().includes(uf))
-                    );
+                    entries = entries.filter((e) => userFilters.some((uf) => e.userName.toLowerCase().includes(uf)));
                 }
 
                 // Normalize date format (query returns "2026-01-30T00:00:00", per-WI returns "2026-01-30")
@@ -153,9 +151,8 @@ export function registerListSubcommand(parent: Command): void {
                 }
 
                 if (options.format === "md") {
-                    const title = hasWorkItem && !hasDateFilter
-                        ? `## Time Logs for #${options.workitem}\n`
-                        : `## Time Logs\n`;
+                    const title =
+                        hasWorkItem && !hasDateFilter ? `## Time Logs for #${options.workitem}\n` : `## Time Logs\n`;
                     console.log(title);
                     console.log(`| ID | Date | WI | Type | Time | User | Comment |`);
                     console.log(`|----|------|-----|------|------|------|---------|`);
@@ -170,9 +167,8 @@ export function registerListSubcommand(parent: Command): void {
                     console.log(`\n**Total: ${formatMinutes(totalMinutes)}**`);
                 } else {
                     // AI format
-                    const title = hasWorkItem && !hasDateFilter
-                        ? `Time Logs for Work Item #${options.workitem}`
-                        : "Time Logs";
+                    const title =
+                        hasWorkItem && !hasDateFilter ? `Time Logs for Work Item #${options.workitem}` : "Time Logs";
                     console.log(title);
                     console.log("=".repeat(40));
 

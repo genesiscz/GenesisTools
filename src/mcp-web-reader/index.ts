@@ -1,7 +1,7 @@
 #!/usr/bin/env node
+import { handleReadmeFlag } from "@app/utils/readme";
 import chalk from "chalk";
 import { Command } from "commander";
-import { handleReadmeFlag } from "@app/utils/readme";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -9,7 +9,8 @@ handleReadmeFlag(import.meta.url);
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-
+import { checkLLMModel, downloadLLMModel } from "@nanocollective/get-md";
+import { type EngineName, getEngine, listEngines } from "./engines/index.js";
 import {
     compactCodeBlocks,
     fetchText,
@@ -17,10 +18,8 @@ import {
     handleFetchWebMarkdown,
     handleFetchWebRaw,
 } from "./handlers.js";
-import { getEngine, listEngines, type EngineName } from "./engines/index.js";
-import { checkLLMModel, downloadLLMModel } from "@nanocollective/get-md";
 import { limitToTokens } from "./utils/tokens.js";
-import { ensureHttpUrl, buildJinaUrl } from "./utils/urls.js";
+import { buildJinaUrl, ensureHttpUrl } from "./utils/urls.js";
 
 const log = {
     info: (msg: string) => console.log(chalk.blue("ℹ️ ") + msg),
@@ -99,7 +98,9 @@ async function runCli(opts: CliOptions): Promise<void> {
 
             if (out) {
                 await Bun.write(out, limited.text);
-                log.ok(`Wrote extracted MD to ${out} (engine: ${engineName}, time: ${Math.round(result.metrics.conversionTimeMs)}ms)`);
+                log.ok(
+                    `Wrote extracted MD to ${out} (engine: ${engineName}, time: ${Math.round(result.metrics.conversionTimeMs)}ms)`
+                );
             } else {
                 process.stdout.write(limited.text + "\n");
             }
@@ -291,7 +292,9 @@ async function main(): Promise<void> {
                     lastUpdate = now;
                     process.stdout.clearLine?.(0);
                     process.stdout.cursorTo?.(0);
-                    process.stdout.write(`  Progress: ${pct.toFixed(1)}% (${(downloaded / 1e6).toFixed(0)}MB / ${(total / 1e6).toFixed(0)}MB)`);
+                    process.stdout.write(
+                        `  Progress: ${pct.toFixed(1)}% (${(downloaded / 1e6).toFixed(0)}MB / ${(total / 1e6).toFixed(0)}MB)`
+                    );
                 },
             });
             console.log("");

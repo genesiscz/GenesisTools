@@ -1,12 +1,12 @@
-import { Command } from "commander";
+import logger from "@app/logger";
+import type { TimelyService } from "@app/timely/api/service";
+import type { TimelyEvent } from "@app/timely/types";
+import { formatDuration, getDatesInMonth, getMonthDateRange } from "@app/timely/utils/date";
+import { generateReportMarkdown } from "@app/timely/utils/entry-processor";
+import type { Storage } from "@app/utils/storage";
 import chalk from "chalk";
 import Table from "cli-table3";
-import logger from "@app/logger";
-import { Storage } from "@app/utils/storage";
-import { TimelyService } from "@app/timely/api/service";
-import { getMonthDateRange, formatDuration, getDatesInMonth } from "@app/timely/utils/date";
-import { generateReportMarkdown } from "@app/timely/utils/entry-processor";
-import type { TimelyEvent } from "@app/timely/types";
+import type { Command } from "commander";
 
 export function registerExportMonthCommand(program: Command, storage: Storage, service: TimelyService): void {
     program

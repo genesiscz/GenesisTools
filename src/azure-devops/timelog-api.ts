@@ -5,16 +5,16 @@
  * API Host: boznet-timelogapi.azurewebsites.net
  */
 
-import logger from "@app/logger";
 import type {
-    TimeType,
-    TimeLogEntry,
-    TimeLogUser,
     CreateTimeLogRequest,
     CreateTimeLogResponse,
-    TimeLogQueryParams,
+    TimeLogEntry,
     TimeLogQueryEntry,
+    TimeLogQueryParams,
+    TimeLogUser,
+    TimeType,
 } from "@app/azure-devops/types";
+import logger from "@app/logger";
 
 export class TimeLogApi {
     private projectId: string;

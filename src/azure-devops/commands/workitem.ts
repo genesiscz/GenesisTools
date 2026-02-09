@@ -5,37 +5,36 @@
  * Exports handleWorkItem for use by other commands (e.g., query --download-workitems).
  */
 
-import { Command } from "commander";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, rmdirSync, readdirSync } from "fs";
-import { dirname } from "path";
-
-import logger, { consoleLog } from "@app/logger";
 import { Api } from "@app/azure-devops/api";
 import {
-    requireConfig,
+    CACHE_TTL,
+    formatJSON,
+    loadGlobalCache,
+    saveGlobalCache,
+    WORKITEM_FRESHNESS_MINUTES,
+} from "@app/azure-devops/cache";
+import type {
+    OutputFormat,
+    QueryItemMetadata,
+    WorkItemCache,
+    WorkItemFull,
+    WorkItemSettings,
+} from "@app/azure-devops/types";
+import {
     extractWorkItemIds,
     findTaskFile,
     findTaskFileAnywhere,
+    getRelativeTime,
     getTaskFilePath,
     getTasksDir,
-    parseRelations,
     htmlToMarkdown,
-    getRelativeTime,
+    parseRelations,
+    requireConfig,
 } from "@app/azure-devops/utils";
-import type {
-    OutputFormat,
-    WorkItemFull,
-    WorkItemCache,
-    WorkItemSettings,
-    QueryItemMetadata,
-} from "@app/azure-devops/types";
-import {
-    CACHE_TTL,
-    WORKITEM_FRESHNESS_MINUTES,
-    loadGlobalCache,
-    saveGlobalCache,
-    formatJSON,
-} from "@app/azure-devops/cache";
+import logger, { consoleLog } from "@app/logger";
+import type { Command } from "commander";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "fs";
+import { dirname } from "path";
 
 // Silent mode for JSON output - suppresses progress messages
 let silentMode = false;
