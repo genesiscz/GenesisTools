@@ -1,7 +1,8 @@
-import minimist from "minimist";
-import Enquirer from "enquirer";
+import { Command } from "commander";
+import * as p from "@clack/prompts";
 import { resolve, join, relative } from "node:path";
 import { existsSync, writeFileSync, statSync } from "node:fs";
+import { minimatch } from "minimatch";
 import logger from "../logger";
 import clipboardy from "clipboardy";
 import {
@@ -30,10 +31,6 @@ interface Options {
     help?: boolean;
     clipboard?: boolean;
     format?: "compact" | "detailed";
-}
-
-interface Args extends Options {
-    _: string[];
 }
 
 interface FileInfo {
@@ -174,32 +171,7 @@ interface ConstantInfo {
     jsDoc?: string;
 }
 
-const prompter = new Enquirer();
-
-function showHelp() {
-    logger.info(`
-Usage: tools ts-ai-context [options] <path>
-
-Generate AI-friendly markdown documentation from TypeScript codebase.
-
-Options:
-  -o, --output FILE          Output markdown file (default: ts-ai-context.md)
-  --include-private          Include private methods and properties
-  --include-protected        Include protected methods and properties (default: true)
-  --include-node-modules     Include files from node_modules (default: false)
-  -e, --exclude PATTERN      Glob pattern to exclude files (e.g., "**/tests/**")
-  -c, --clipboard            Copy output to clipboard instead of file
-  -f, --format FORMAT        Output format: compact (default) or detailed
-  -v, --verbose              Enable verbose logging
-  -h, --help                 Show this help message
-
-Examples:
-  tools ts-ai-context src/
-  tools ts-ai-context . --exclude "**/node_modules/**,**/tests/**"
-  tools ts-ai-context src/ --output api-docs.md --include-private
-  tools ts-ai-context lib/ --clipboard --format compact
-`);
-}
+// Commander handles help automatically
 
 function getJsDoc(node: Node): string | undefined {
     if (!('getJsDocs' in node)) return undefined;
@@ -836,136 +808,283 @@ function generateCompactMarkdown(fileInfos: FileInfo[], options: Options): strin
     return lines.join("\n");
 }
 
-async function main() {
-    const argv = minimist<Args>(process.argv.slice(2), {
-        alias: {
-            o: "output",
-            e: "exclude",
-            v: "verbose",
-            h: "help",
-            c: "clipboard",
-            f: "format",
-        },
-        boolean: ["includePrivate", "includeProtected", "includeNodeModules", "verbose", "help", "clipboard"],
-        string: ["output", "exclude", "format"],
-        default: {
-            output: "ts-ai-context.md",
-            includeProtected: true,
-            includeNodeModules: false,
-            format: "compact",
-        },
-    });
+function generateDetailedMarkdown(fileInfos: FileInfo[], options: Options): string {
+    const lines: string[] = [];
 
-    if (argv.help) {
-        showHelp();
-        process.exit(0);
-    }
+    lines.push("# TypeScript Codebase Documentation (Detailed)");
+    lines.push(`Generated: ${new Date().toISOString()}`);
+    lines.push(`Files analyzed: ${fileInfos.length}`);
+    lines.push("");
 
-    // Get path from arguments or prompt
-    let targetPath = argv._[0] || argv.path;
+    for (const file of fileInfos) {
+        const relPath = relative(process.cwd(), file.path) || file.path;
+        lines.push(`## ${relPath}`);
+        lines.push("");
 
-    if (!targetPath) {
-        const response = (await prompter.prompt({
-            type: "input",
-            name: "path",
-            message: "Enter the path to analyze:",
-            initial: ".",
-        })) as { path: string };
-
-        targetPath = response.path;
-    }
-
-    targetPath = resolve(targetPath);
-
-    if (!existsSync(targetPath)) {
-        logger.error(`Path does not exist: ${targetPath}`);
-        process.exit(1);
-    }
-
-    const isDirectory = statSync(targetPath).isDirectory();
-
-    logger.info(`🔍 Analyzing TypeScript codebase at: ${targetPath}`);
-
-    // Create ts-morph project
-    const project = new Project({
-        tsConfigFilePath: existsSync(join(targetPath, "tsconfig.json")) ? join(targetPath, "tsconfig.json") : undefined,
-        skipAddingFilesFromTsConfig: true,
-    });
-
-    // Add source files
-    if (isDirectory) {
-        const patterns = ["**/*.ts", "**/*.tsx"];
-        const excludePatterns = argv.exclude?.split(",").map((p) => p.trim()) || [];
-
-        if (!argv.includeNodeModules) {
-            excludePatterns.push("**/node_modules/**");
-        }
-
-        // Add common exclusions
-        excludePatterns.push("**/*.d.ts", "**/*.test.ts", "**/*.spec.ts");
-
-        project.addSourceFilesAtPaths(patterns.map((p: string) => join(targetPath, p)));
-        
-        // Filter out excluded files
-        const allSourceFiles = project.getSourceFiles();
-        const excludedPaths = excludePatterns.map((p: string) => join(targetPath, p));
-        
-        for (const sourceFile of allSourceFiles) {
-            const filePath = sourceFile.getFilePath();
-            for (const excludePattern of excludedPaths) {
-                if (filePath.includes(excludePattern.replace(/\*\*/g, '').replace(/\*/g, ''))) {
-                    project.removeSourceFile(sourceFile);
-                    break;
+        // Imports
+        if (file.imports.length > 0) {
+            lines.push("### Imports");
+            lines.push("```typescript");
+            for (const imp of file.imports) {
+                if (imp.defaultImport) {
+                    lines.push(`import ${imp.defaultImport} from "${imp.moduleSpecifier}";`);
+                } else if (imp.namespaceImport) {
+                    lines.push(`import * as ${imp.namespaceImport} from "${imp.moduleSpecifier}";`);
+                } else if (imp.namedImports && imp.namedImports.length > 0) {
+                    lines.push(`import { ${imp.namedImports.join(", ")} } from "${imp.moduleSpecifier}";`);
                 }
             }
-        }
-    } else {
-        project.addSourceFileAtPath(targetPath);
-    }
-
-    const sourceFiles = project.getSourceFiles();
-
-    if (sourceFiles.length === 0) {
-        logger.error("No TypeScript files found!");
-        process.exit(1);
-    }
-
-    logger.info(`📂 Found ${sourceFiles.length} TypeScript files`);
-
-    // Analyze files
-    const fileInfos: FileInfo[] = [];
-
-    for (const sourceFile of sourceFiles) {
-        if (argv.verbose) {
-            logger.debug(`Analyzing: ${sourceFile.getFilePath()}`);
+            lines.push("```");
+            lines.push("");
         }
 
-        try {
-            const fileInfo = analyzeSourceFile(sourceFile);
-            fileInfos.push(fileInfo);
-        } catch (error) {
-            logger.error(`Error analyzing ${sourceFile.getFilePath()}: ${error}`);
+        // Classes
+        for (const cls of file.classes) {
+            if (!cls.isExported && !options.includePrivate) continue;
+
+            lines.push(`### Class: ${cls.name}`);
+            if (cls.jsDoc) lines.push(`> ${cls.jsDoc}`);
+            if (cls.extends) lines.push(`- **Extends:** ${cls.extends}`);
+            if (cls.implements.length > 0) lines.push(`- **Implements:** ${cls.implements.join(", ")}`);
+            if (cls.isAbstract) lines.push("- **Abstract**");
+            if (cls.decorators.length > 0) lines.push(`- **Decorators:** ${cls.decorators.join(", ")}`);
+            lines.push("");
+
+            if (cls.properties.length > 0) {
+                lines.push("#### Properties");
+                lines.push("| Name | Type | Visibility | Static | Readonly | Optional |");
+                lines.push("|------|------|-----------|--------|----------|----------|");
+                for (const prop of cls.properties) {
+                    if (prop.visibility === "private" && !options.includePrivate) continue;
+                    if (prop.visibility === "protected" && !options.includeProtected) continue;
+                    lines.push(`| ${prop.name} | \`${prop.type}\` | ${prop.visibility ?? "public"} | ${prop.isStatic} | ${prop.isReadonly} | ${prop.isOptional} |`);
+                }
+                lines.push("");
+            }
+
+            if (cls.methods.length > 0) {
+                lines.push("#### Methods");
+                for (const method of cls.methods) {
+                    if (method.visibility === "private" && !options.includePrivate) continue;
+                    if (method.visibility === "protected" && !options.includeProtected) continue;
+                    const params = method.parameters.map((p) => `${p.name}: ${p.type}`).join(", ");
+                    lines.push(`- \`${method.visibility ?? "public"} ${method.isAsync ? "async " : ""}${method.name}(${params}): ${method.returnType}\``);
+                    if (method.jsDoc) lines.push(`  > ${method.jsDoc}`);
+                }
+                lines.push("");
+            }
         }
+
+        // Interfaces
+        for (const iface of file.interfaces) {
+            if (!iface.isExported && !options.includePrivate) continue;
+
+            lines.push(`### Interface: ${iface.name}`);
+            if (iface.jsDoc) lines.push(`> ${iface.jsDoc}`);
+            if (iface.extends.length > 0) lines.push(`- **Extends:** ${iface.extends.join(", ")}`);
+            lines.push("");
+
+            if (iface.properties.length > 0) {
+                lines.push("| Property | Type | Optional |");
+                lines.push("|----------|------|----------|");
+                for (const prop of iface.properties) {
+                    lines.push(`| ${prop.name} | \`${prop.type}\` | ${prop.isOptional} |`);
+                }
+                lines.push("");
+            }
+        }
+
+        // Functions
+        const funcs = file.functions.filter((f) => f.isExported || options.includePrivate);
+        if (funcs.length > 0) {
+            lines.push("### Functions");
+            for (const func of funcs) {
+                const params = func.parameters.map((p) => `${p.name}: ${p.type}`).join(", ");
+                lines.push(`- \`${func.isAsync ? "async " : ""}function ${func.name}(${params}): ${func.returnType}\``);
+                if (func.jsDoc) lines.push(`  > ${func.jsDoc}`);
+            }
+            lines.push("");
+        }
+
+        // Enums
+        const enums = file.enums.filter((e) => e.isExported || options.includePrivate);
+        if (enums.length > 0) {
+            lines.push("### Enums");
+            for (const en of enums) {
+                lines.push(`- \`${en.isConst ? "const " : ""}enum ${en.name}\``);
+                for (const m of en.members) {
+                    lines.push(`  - ${m.name}${m.value ? ` = ${m.value}` : ""}`);
+                }
+            }
+            lines.push("");
+        }
+
+        // Types
+        const types = file.types.filter((t) => t.isExported || options.includePrivate);
+        if (types.length > 0) {
+            lines.push("### Type Aliases");
+            for (const t of types) {
+                lines.push(`- \`type ${t.name} = ${t.type}\``);
+                if (t.jsDoc) lines.push(`  > ${t.jsDoc}`);
+            }
+            lines.push("");
+        }
+
+        // Constants
+        const consts = file.constants.filter((c) => c.isExported || options.includePrivate);
+        if (consts.length > 0) {
+            lines.push("### Constants");
+            for (const c of consts) {
+                lines.push(`- \`const ${c.name}: ${c.type}\`${c.value ? ` = \`${c.value}\`` : ""}`);
+                if (c.jsDoc) lines.push(`  > ${c.jsDoc}`);
+            }
+            lines.push("");
+        }
+
+        lines.push("---");
+        lines.push("");
     }
 
-    logger.info(`✅ Successfully analyzed ${fileInfos.length} files`);
-
-    // Generate markdown
-    const markdown = generateCompactMarkdown(fileInfos, argv);
-
-    // Output
-    if (argv.clipboard) {
-        await clipboardy.write(markdown);
-        logger.info("📋 Documentation copied to clipboard!");
-    } else {
-        const outputPath = resolve(argv.output!);
-        writeFileSync(outputPath, markdown);
-        logger.info(`📝 Documentation written to: ${outputPath}`);
-        logger.info(`📊 Output size: ${(markdown.length / 1024).toFixed(2)} KB`);
-    }
+    return lines.join("\n");
 }
 
-main().catch((err) => {
-    logger.error(`Error: ${err.message}`);
-    process.exit(1);
-});
+const program = new Command();
+
+program
+    .name("ts-ai-indexer")
+    .description("Generate AI-friendly markdown documentation from TypeScript codebase")
+    .argument("[path]", "Path to analyze")
+    .option("-o, --output <file>", "Output markdown file", "ts-ai-indexer.md")
+    .option("--include-private", "Include private methods and properties", false)
+    .option("--include-protected", "Include protected methods and properties", true)
+    .option("--include-node-modules", "Include files from node_modules", false)
+    .option("-e, --exclude <pattern>", "Glob pattern to exclude files (comma-separated)")
+    .option("-c, --clipboard", "Copy output to clipboard instead of file", false)
+    .option("-f, --format <format>", "Output format: compact or detailed", "compact")
+    .option("-v, --verbose", "Enable verbose logging", false)
+    .action(async (pathArg: string | undefined, opts) => {
+        const options: Options = {
+            output: opts.output,
+            includePrivate: opts.includePrivate,
+            includeProtected: opts.includeProtected,
+            includeNodeModules: opts.includeNodeModules,
+            excludePattern: opts.exclude,
+            clipboard: opts.clipboard,
+            format: opts.format,
+            verbose: opts.verbose,
+        };
+
+        // Get path from arguments or prompt
+        let targetPath = pathArg;
+
+        if (!targetPath) {
+            const result = await p.text({
+                message: "Enter the path to analyze:",
+                placeholder: ".",
+                defaultValue: ".",
+            });
+
+            if (p.isCancel(result)) {
+                p.cancel("Operation cancelled.");
+                process.exit(0);
+            }
+            targetPath = result;
+        }
+
+        targetPath = resolve(targetPath);
+
+        if (!existsSync(targetPath)) {
+            logger.error(`Path does not exist: ${targetPath}`);
+            process.exit(1);
+        }
+
+        const isDirectory = statSync(targetPath).isDirectory();
+
+        logger.info(`Analyzing TypeScript codebase at: ${targetPath}`);
+
+        // Create ts-morph project
+        const project = new Project({
+            tsConfigFilePath: existsSync(join(targetPath, "tsconfig.json"))
+                ? join(targetPath, "tsconfig.json")
+                : undefined,
+            skipAddingFilesFromTsConfig: true,
+        });
+
+        // Add source files
+        if (isDirectory) {
+            const patterns = ["**/*.ts", "**/*.tsx"];
+            const excludePatterns = options.excludePattern?.split(",").map((pat) => pat.trim()) || [];
+
+            if (!options.includeNodeModules) {
+                excludePatterns.push("**/node_modules/**");
+            }
+
+            // Add common exclusions
+            excludePatterns.push("**/*.d.ts", "**/*.test.ts", "**/*.spec.ts");
+
+            project.addSourceFilesAtPaths(patterns.map((pat: string) => join(targetPath, pat)));
+
+            // Filter out excluded files using minimatch
+            const allSourceFiles = project.getSourceFiles();
+
+            for (const sourceFile of allSourceFiles) {
+                const filePath = sourceFile.getFilePath();
+                const relativePath = relative(targetPath, filePath);
+
+                for (const pattern of excludePatterns) {
+                    if (minimatch(relativePath, pattern, { dot: true })) {
+                        project.removeSourceFile(sourceFile);
+                        break;
+                    }
+                }
+            }
+        } else {
+            project.addSourceFileAtPath(targetPath);
+        }
+
+        const sourceFiles = project.getSourceFiles();
+
+        if (sourceFiles.length === 0) {
+            logger.error("No TypeScript files found!");
+            process.exit(1);
+        }
+
+        logger.info(`Found ${sourceFiles.length} TypeScript files`);
+
+        // Analyze files
+        const fileInfos: FileInfo[] = [];
+
+        for (const sourceFile of sourceFiles) {
+            if (options.verbose) {
+                logger.debug(`Analyzing: ${sourceFile.getFilePath()}`);
+            }
+
+            try {
+                const fileInfo = analyzeSourceFile(sourceFile);
+                fileInfos.push(fileInfo);
+            } catch (error) {
+                logger.error(`Error analyzing ${sourceFile.getFilePath()}: ${error}`);
+            }
+        }
+
+        logger.info(`Successfully analyzed ${fileInfos.length} files`);
+
+        // Generate markdown
+        const markdown =
+            options.format === "detailed"
+                ? generateDetailedMarkdown(fileInfos, options)
+                : generateCompactMarkdown(fileInfos, options);
+
+        // Output
+        if (options.clipboard) {
+            await clipboardy.write(markdown);
+            logger.info("Documentation copied to clipboard!");
+        } else {
+            const outputPath = resolve(options.output!);
+            writeFileSync(outputPath, markdown);
+            logger.info(`Documentation written to: ${outputPath}`);
+            logger.info(`Output size: ${(markdown.length / 1024).toFixed(2)} KB`);
+        }
+    });
+
+program.parse();
