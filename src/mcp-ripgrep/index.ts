@@ -2,20 +2,14 @@
 import { spawn } from "node:child_process";
 import nodePath from "node:path";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { stripAnsi, escapeShellArg } from "@app/utils/string";
+import { wrapArray } from "@app/utils/array";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
-
-/**
- * Strip ANSI escape sequences from a string to make it human-readable.
- */
-function stripAnsiEscapeCodes(input: string): string {
-    // This regex matches ANSI escape sequences
-    return input.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "");
-}
 
 /**
  * Process the output based on whether colors are requested.
@@ -25,11 +19,6 @@ function processOutput(output: string, useColors: boolean): string {
     if (!output) return output;
     console.error("searchRoot", searchRoot);
     return searchRoot ? output.replaceAll(searchRoot, ".") : output;
-}
-
-function wrapArray(value: unknown | string | string[] | undefined): string[] {
-    if (!value) return [];
-    return Array.isArray(value) ? value : [String(value)];
 }
 
 // Common schema properties to avoid duplication
@@ -87,16 +76,6 @@ const server = new Server(
         },
     }
 );
-
-/**
- * Safely escape a string for shell command execution.
- * This is a basic implementation and should be replaced with a more robust solution in production.
- */
-function escapeShellArg(arg: string): string {
-    // Replace all single quotes with the sequence: '"'"'
-    // This ensures the argument is properly quoted in shell commands
-    return `'${arg.replace(/'/g, "'\"'\"'")}'`;
-}
 
 /**
  * Execute a command with isolated streams to prevent external processes
@@ -258,7 +237,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                 const pattern = String(args.pattern || "");
                 const path = String(args.path);
                 const caseSensitive = typeof args.caseSensitive === "boolean" ? args.caseSensitive : undefined;
-                const filePattern = wrapArray(args.filePattern);
+                const filePattern = wrapArray(args.filePattern as string | string[] | undefined);
                 const maxResults = typeof args.maxResults === "number" ? args.maxResults : undefined;
                 const context = typeof args.context === "number" ? args.context : undefined;
                 const useColors = typeof args.useColors === "boolean" ? args.useColors : false;
@@ -336,7 +315,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                 const path = String(args.path);
                 const caseSensitive = typeof args.caseSensitive === "boolean" ? args.caseSensitive : undefined;
                 const fixedStrings = typeof args.fixedStrings === "boolean" ? args.fixedStrings : undefined;
-                const filePattern = wrapArray(args.filePattern);
+                const filePattern = wrapArray(args.filePattern as string | string[] | undefined);
                 const fileType = args.fileType ? String(args.fileType) : undefined;
                 const maxResults = typeof args.maxResults === "number" ? args.maxResults : undefined;
                 const context = typeof args.context === "number" ? args.context : undefined;
@@ -459,7 +438,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                 const pattern = String(args.pattern || "");
                 const path = String(args.path);
                 const caseSensitive = typeof args.caseSensitive === "boolean" ? args.caseSensitive : undefined;
-                const filePattern = wrapArray(args.filePattern);
+                const filePattern = wrapArray(args.filePattern as string | string[] | undefined);
                 const countLines = typeof args.countLines === "boolean" ? args.countLines : true;
                 const useColors = typeof args.useColors === "boolean" ? args.useColors : false;
 
@@ -523,7 +502,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
             case "list-files": {
                 const path = String(args.path);
-                const filePattern = wrapArray(args.filePattern);
+                const filePattern = wrapArray(args.filePattern as string | string[] | undefined);
                 const fileType = args.fileType ? String(args.fileType) : undefined;
                 const includeHidden = typeof args.includeHidden === "boolean" ? args.includeHidden : undefined;
 
@@ -568,7 +547,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                     content: [
                         {
                             type: "text",
-                            text: stripAnsiEscapeCodes(stdout) || "No files found",
+                            text: stripAnsi(stdout) || "No files found",
                         },
                     ],
                 };
@@ -590,7 +569,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
                     content: [
                         {
                             type: "text",
-                            text: stripAnsiEscapeCodes(stdout) || "Failed to get file types",
+                            text: stripAnsi(stdout) || "Failed to get file types",
                         },
                     ],
                 };
@@ -622,7 +601,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
             content: [
                 {
                     type: "text",
-                    text: stripAnsiEscapeCodes(`Error: ${error.message}\n${error.stderr || ""}`),
+                    text: stripAnsi(`Error: ${error.message}\n${error.stderr || ""}`),
                 },
             ],
         };

@@ -1,6 +1,7 @@
 import logger from "@app/logger";
 import type { Args, CLIOptions, OutputFormat } from "@ask/types";
 import { Command } from "commander";
+import { formatDuration as _formatDuration } from "../../utils/format";
 
 export function parseCLIArguments(): Args {
     const program = new Command()
@@ -322,31 +323,10 @@ export function getConversationsDir(): string {
 }
 
 export function formatElapsedTime(milliseconds: number): string {
-    const seconds = Math.floor(milliseconds / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-
-    if (hours > 0) {
-        return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
-    } else if (minutes > 0) {
-        return `${minutes}m ${seconds % 60}s`;
-    } else {
-        return `${seconds}s`;
-    }
+    return _formatDuration(milliseconds, "ms", "hms");
 }
 
-export function formatBytes(bytes: number): string {
-    const units = ["B", "KB", "MB", "GB"];
-    let size = bytes;
-    let unitIndex = 0;
-
-    while (size >= 1024 && unitIndex < units.length - 1) {
-        size /= 1024;
-        unitIndex++;
-    }
-
-    return `${size.toFixed(1)} ${units[unitIndex]}`;
-}
+export { formatBytes } from "../../utils/format";
 
 export function sanitizeFilename(filename: string): string {
     // Remove invalid characters and ensure it's a valid filename

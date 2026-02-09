@@ -13,29 +13,7 @@ import type {
     WorkItemHistory,
     WorkItemUpdate,
 } from "@app/azure-devops/types";
-
-// Czech, French, and German diacritics mapping
-const DIACRITICS_MAP: Record<string, string> = {
-    á: "a",
-    č: "c",
-    ď: "d",
-    é: "e",
-    ě: "e",
-    í: "i",
-    ň: "n",
-    ó: "o",
-    ř: "r",
-    š: "s",
-    ť: "t",
-    ú: "u",
-    ů: "u",
-    ý: "y",
-    ž: "z",
-    ä: "a",
-    ö: "o",
-    ü: "u",
-    ñ: "n",
-};
+import { removeDiacritics } from "@app/utils/string";
 
 /**
  * Normalize a user name for fuzzy matching.
@@ -47,11 +25,7 @@ export function normalizeUserName(name: string): string {
         .toLowerCase()
         .replace(/\s*\([^)]*\)\s*/g, " ")
         .trim();
-    normalized = normalized
-        .split("")
-        .map((ch) => DIACRITICS_MAP[ch] ?? ch)
-        .join("");
-    return normalized;
+    return removeDiacritics(normalized);
 }
 
 /**

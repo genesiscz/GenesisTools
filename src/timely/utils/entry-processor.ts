@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { TimelyEntry } from "@app/timely/types/api";
 import type { Storage } from "@app/utils/storage";
 import { getDatesInMonth } from "./date";
+import { formatDuration as _formatDuration } from "@app/utils/format";
 
 export interface ProcessedEntry {
     title: string;
@@ -220,12 +221,7 @@ function groupEntries(entries: ProcessedEntry[], detailMode: boolean = false): G
  * Format duration from minutes to "Xh Ym" format
  */
 function formatDuration(minutes: number): string {
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    if (hours > 0) {
-        return `${hours}h ${mins}m`;
-    }
-    return `${mins}m`;
+    return _formatDuration(minutes, "min", "hm-smart");
 }
 
 /**

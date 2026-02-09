@@ -15,6 +15,7 @@ import { requireConfig } from "@app/azure-devops/utils";
 import { buildCombinedQuery, buildEverAssignedQuery } from "@app/azure-devops/wiql-builder";
 import logger from "@app/logger";
 import { suggestCommand } from "@app/utils/cli";
+import { formatDuration as _formatDuration } from "@app/utils/format";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 
@@ -61,10 +62,7 @@ function parseMinTime(raw: string): number {
 
 /** Format minutes as "Xh Ym" */
 function formatDuration(minutes: number): string {
-    if (minutes < 60) return `${minutes}m`;
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    return _formatDuration(minutes, "min", "hm-smart");
 }
 
 /** Pad a string to a fixed width (right-pad with spaces) */
