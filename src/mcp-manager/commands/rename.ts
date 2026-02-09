@@ -1,11 +1,11 @@
-import { search, input, confirm, checkbox } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
 import logger from "@app/logger";
-import chalk from "chalk";
-import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
-import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
+import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
+import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { DiffUtil } from "@app/utils/diff";
+import { ExitPromptError } from "@inquirer/core";
+import { checkbox, confirm, input, search } from "@inquirer/prompts";
+import chalk from "chalk";
 
 /**
  * Rename an MCP server key across unified config and all providers

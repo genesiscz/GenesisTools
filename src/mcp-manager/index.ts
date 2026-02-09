@@ -1,31 +1,31 @@
-import { Command } from "commander";
-import { select, input } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
 import logger, { configureLogger } from "@app/logger";
-import { ClaudeProvider } from "./utils/providers/claude.js";
-import { GeminiProvider } from "./utils/providers/gemini.js";
-import { CodexProvider } from "./utils/providers/codex.js";
-import { CursorProvider } from "./utils/providers/cursor.js";
-import type { MCPProvider } from "./utils/providers/types.js";
-import { showHelp } from "./utils/command.utils.js";
 import { enhanceHelp } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { ExitPromptError } from "@inquirer/core";
+import { input, select } from "@inquirer/prompts";
+import { Command } from "commander";
+import { showHelp } from "./utils/command.utils.js";
+import { ClaudeProvider } from "./utils/providers/claude.js";
+import { CodexProvider } from "./utils/providers/codex.js";
+import { CursorProvider } from "./utils/providers/cursor.js";
+import { GeminiProvider } from "./utils/providers/gemini.js";
+import type { MCPProvider } from "./utils/providers/types.js";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
 import {
-    openConfig,
-    syncServers,
-    syncFromProviders,
-    listServers,
-    enableServer,
-    disableServer,
-    installServer,
-    showServerConfig,
     backupAllConfigs,
-    renameServer,
     configJson,
+    disableServer,
+    enableServer,
+    installServer,
+    listServers,
+    openConfig,
+    renameServer,
+    showServerConfig,
+    syncFromProviders,
+    syncServers,
 } from "./commands/index.js";
 import { setGlobalOptions } from "./utils/config.utils.js";
 

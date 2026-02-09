@@ -1,39 +1,39 @@
-import { Suspense, useState } from "react";
-import { createFileRoute, Link, Await, defer } from "@tanstack/react-router";
+import { Await, createFileRoute, defer, Link } from "@tanstack/react-router";
 import {
-	getQuickStats,
+	Activity,
+	ArrowLeft,
+	Bot,
+	Calendar,
+	Coins,
+	Filter,
+	FolderOpen,
+	MessageSquare,
+	RefreshCw,
+	TrendingUp,
+	Wrench,
+} from "lucide-react";
+import { Suspense, useState } from "react";
+import { BranchActivityChart } from "@/components/stats/BranchActivityChart";
+import { ActivityChartSkeleton } from "@/components/stats/ChartSkeleton";
+import { ConversationLengthHistogram } from "@/components/stats/ConversationLengthHistogram";
+import { CumulativeChart } from "@/components/stats/CumulativeChart";
+import { HourlyHeatmap } from "@/components/stats/HourlyHeatmap";
+import { ModelUsageChart } from "@/components/stats/ModelUsageChart";
+import { ProjectListSkeleton, ToolBadgesSkeleton } from "@/components/stats/ProjectListSkeleton";
+import { TokenUsageCard } from "@/components/stats/TokenUsageCard";
+import { ToolCategoriesChart } from "@/components/stats/ToolCategoriesChart";
+import { WeeklyTrendsCard } from "@/components/stats/WeeklyTrendsCard";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
 	getFullStats,
+	getQuickStats,
 	getStatsInRange,
 	type QuickStatsResponse,
 	type SerializableStats,
 } from "@/server/conversations";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import {
-	ArrowLeft,
-	MessageSquare,
-	FolderOpen,
-	Wrench,
-	Activity,
-	Bot,
-	TrendingUp,
-	RefreshCw,
-	Calendar,
-	Coins,
-	Filter,
-} from "lucide-react";
-import { ActivityChartSkeleton } from "@/components/stats/ChartSkeleton";
-import { ProjectListSkeleton, ToolBadgesSkeleton } from "@/components/stats/ProjectListSkeleton";
-import { DateRangePicker } from "@/components/ui/date-range-picker";
-import { HourlyHeatmap } from "@/components/stats/HourlyHeatmap";
-import { ToolCategoriesChart } from "@/components/stats/ToolCategoriesChart";
-import { TokenUsageCard } from "@/components/stats/TokenUsageCard";
-import { ModelUsageChart } from "@/components/stats/ModelUsageChart";
-import { CumulativeChart } from "@/components/stats/CumulativeChart";
-import { WeeklyTrendsCard } from "@/components/stats/WeeklyTrendsCard";
-import { BranchActivityChart } from "@/components/stats/BranchActivityChart";
-import { ConversationLengthHistogram } from "@/components/stats/ConversationLengthHistogram";
-import { Skeleton } from "@/components/ui/skeleton";
 
 export const Route = createFileRoute("/stats")({
 	component: StatsPage,

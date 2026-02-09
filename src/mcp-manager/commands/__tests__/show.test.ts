@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, spyOn } from "bun:test";
-import { showServerConfig } from "@app/mcp-manager/commands/show.js";
-import { MockMCPProvider, createMockServerConfig } from "./test-utils.js";
+import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import logger, { consoleLog } from "@app/logger";
+import { showServerConfig } from "@app/mcp-manager/commands/show.js";
+import { createMockServerConfig, MockMCPProvider } from "./test-utils.js";
 
 describe("showServerConfig", () => {
     let mockProvider: MockMCPProvider;

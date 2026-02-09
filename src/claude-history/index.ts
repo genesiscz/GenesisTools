@@ -1,22 +1,22 @@
 #!/usr/bin/env bun
-import { program } from "commander";
-import { search, select, input } from "@inquirer/prompts";
-import { homedir } from "os";
-import chalk from "chalk";
+import { input, search, select } from "@inquirer/prompts";
 import { spawn } from "bun";
+import chalk from "chalk";
+import { program } from "commander";
+import { homedir } from "os";
 import { resolve, sep } from "path";
 import {
-    searchConversations,
-    listConversationSummaries,
+    type AssistantMessage,
+    type ConversationMessage,
     getAvailableProjects,
+    listConversationSummaries,
     parseDate,
     type SearchFilters,
     type SearchResult,
-    type ConversationMessage,
-    type AssistantMessage,
-    type UserMessage,
+    searchConversations,
     type TextBlock,
     type ToolUseBlock,
+    type UserMessage,
 } from "./lib";
 
 // =============================================================================

@@ -3,10 +3,10 @@
  * Ported from process_november_entries.ts but made generic and reusable
  */
 
-import type { TimelyEntry } from "@app/timely/types/api";
-import { Storage } from "@app/utils/storage";
-import { getDatesInMonth } from "./date";
 import { join } from "node:path";
+import type { TimelyEntry } from "@app/timely/types/api";
+import type { Storage } from "@app/utils/storage";
+import { getDatesInMonth } from "./date";
 
 export interface ProcessedEntry {
     title: string;
@@ -493,7 +493,7 @@ async function processDay(
                 const uniqueUrls = [...new Set(allUrls)].slice(0, 3);
                 const uniqueGitOps = [...new Set(allGitOps)];
 
-                let contextParts: string[] = [];
+                const contextParts: string[] = [];
                 if (uniqueFiles.length > 0) {
                     contextParts.push(`files: ${uniqueFiles.join(", ")}`);
                 }

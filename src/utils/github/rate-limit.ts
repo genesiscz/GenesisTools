@@ -93,7 +93,7 @@ export async function withRetry<T>(
 
             // Calculate delay
             const headerDelay = getDelayFromHeaders(error);
-            const exponentialDelay = INITIAL_DELAY_MS * Math.pow(2, attempt);
+            const exponentialDelay = INITIAL_DELAY_MS * 2 ** attempt;
             const delay = headerDelay ?? exponentialDelay;
 
             logger.warn(
@@ -117,7 +117,7 @@ export async function withRetry<T>(
 export function createRateLimitedCaller(minDelayMs: number = 100) {
     let lastCallTime = 0;
 
-    return async function <T>(fn: () => Promise<T>): Promise<T> {
+    return async <T>(fn: () => Promise<T>): Promise<T> => {
         const now = Date.now();
         const timeSinceLastCall = now - lastCallTime;
 

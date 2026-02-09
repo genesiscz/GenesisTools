@@ -1,9 +1,9 @@
-import TurndownService from "turndown";
 import { gfm } from "@truto/turndown-plugin-gfm";
-import { MarkdownEngine } from "./base.js";
-import type { ConversionOptions, ConversionResult, EngineName } from "./types.js";
+import TurndownService from "turndown";
 import { extractContent } from "../utils/extraction.js";
 import { resolveUrl } from "../utils/urls.js";
+import { MarkdownEngine } from "./base.js";
+import type { ConversionOptions, ConversionResult, EngineName } from "./types.js";
 
 export class TurndownEngine extends MarkdownEngine {
     name: EngineName = "turndown";

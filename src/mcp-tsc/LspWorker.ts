@@ -1,8 +1,8 @@
-import { ChildProcess, spawn } from "child_process";
+import logger from "@app/logger";
+import { type ChildProcess, spawn } from "child_process";
 import { readFileSync, statSync } from "fs";
 import path from "path";
 import { JSONRPCEndpoint, LspClient } from "ts-lsp-client";
-import logger from "@app/logger";
 
 // ============================================================================
 // Types
@@ -509,7 +509,7 @@ export class LspWorker {
 
             if (shouldRetry) {
                 // Exponential backoff
-                const delay = this.RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+                const delay = this.RETRY_DELAY_MS * 2 ** (attempt - 1);
                 this.log(`Retrying in ${delay}ms...`);
                 await new Promise((r) => setTimeout(r, delay));
 
@@ -646,9 +646,9 @@ export class LspWorker {
                 maxWaitMs,
                 "getDiagnostics"
             );
-            // @ts-ignore - Add extra info for error handling
+            // @ts-expect-error - Add extra info for error handling
             error.missingFiles = missingFiles;
-            // @ts-ignore
+            // @ts-expect-error
             error.isTimeout = true;
             throw error;
         }
@@ -730,7 +730,7 @@ export class LspWorker {
             });
 
             if (shouldRetry) {
-                const delay = this.RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+                const delay = this.RETRY_DELAY_MS * 2 ** (attempt - 1);
                 this.log(`Retrying hover in ${delay}ms...`);
                 await new Promise((r) => setTimeout(r, delay));
 

@@ -1,5 +1,5 @@
+import { ArrowDown, ArrowUp, Coins, Database, Zap } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Coins, ArrowUp, ArrowDown, Database, Zap } from "lucide-react";
 
 interface TokenUsage {
 	inputTokens: number;

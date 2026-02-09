@@ -1,10 +1,10 @@
-import { Command } from "commander";
-import { search, select, input } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import { resolve, isAbsolute, join as pathJoin } from "node:path";
+import { isAbsolute, join as pathJoin, resolve } from "node:path";
 import logger from "@app/logger";
-import clipboardy from "clipboardy";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { ExitPromptError } from "@inquirer/core";
+import { input, search, select } from "@inquirer/prompts";
+import clipboardy from "clipboardy";
+import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -175,7 +175,7 @@ async function main() {
     }
     const repoDir = resolve(repoDirArg);
 
-    let commits = options.commits ? parseInt(options.commits) : undefined;
+    const commits = options.commits ? parseInt(options.commits) : undefined;
     const outputFileArg = options.output; // Renamed for clarity
     const clipboardArg = options.clipboard;
     let diffStartRef: string;
@@ -279,7 +279,7 @@ async function main() {
         }
     }
 
-    let gitExecutablePath = "git";
+    const gitExecutablePath = "git";
 
     const gitArgs = [
         "diff",

@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach, spyOn } from "bun:test";
-import { backupAllConfigs } from "@app/mcp-manager/commands/backup.js";
-import { MockMCPProvider } from "./test-utils.js";
-import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
-import * as backupUtils from "@app/mcp-manager/utils/backup.js";
-import * as fs from "fs";
+import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import logger from "@app/logger";
+import { backupAllConfigs } from "@app/mcp-manager/commands/backup.js";
+import * as backupUtils from "@app/mcp-manager/utils/backup.js";
+import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
+import * as fs from "fs";
+import { MockMCPProvider } from "./test-utils.js";
 
 describe("backupAllConfigs", () => {
     let mockProvider: MockMCPProvider;

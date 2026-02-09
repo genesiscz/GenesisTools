@@ -1,8 +1,8 @@
-import { Command } from "commander";
-import { readdirSync, lstatSync } from "fs";
-import { resolve, join } from "path";
-import chalk from "chalk";
 import { handleReadmeFlag } from "@app/utils/readme";
+import chalk from "chalk";
+import { Command } from "commander";
+import { lstatSync, readdirSync } from "fs";
+import { join, resolve } from "path";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -164,9 +164,7 @@ function getFilesInDirectory(dirPath: string, basePath: string): FileChange[] {
                         mtime: stats.mtime,
                     });
                 }
-            } catch (_error: any) {
-                continue;
-            }
+            } catch (_error: any) {}
         }
     } catch (_error: any) {
         return result;

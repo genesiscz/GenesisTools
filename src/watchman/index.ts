@@ -1,11 +1,11 @@
-import * as watchman from "fb-watchman";
-import { Command } from "commander";
-import { search } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
 import logger from "@app/logger";
-import * as path from "path";
-import * as fs from "fs";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { ExitPromptError } from "@inquirer/core";
+import { search } from "@inquirer/prompts";
+import { Command } from "commander";
+import * as watchman from "fb-watchman";
+import * as fs from "fs";
+import * as path from "path";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);

@@ -1,12 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { getConversations } from "@/server/conversations";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { ArrowRight, Calendar, Cpu, GitBranch, MessageSquare, Search, Zap } from "lucide-react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from "@/components/ui/button";
-import { useState } from "react";
-import { MessageSquare, GitBranch, Calendar, Search, Cpu, Zap, ArrowRight } from "lucide-react";
+import { getConversations } from "@/server/conversations";
 
 export const Route = createFileRoute("/")({
 	component: IndexPage,

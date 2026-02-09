@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 /**
  * Git Analysis CLI Tool
  *
@@ -8,14 +9,13 @@
  *   tools git configure-workitem-patterns [--list|--add|--remove|--suggest]
  */
 
-import { Command } from "commander";
-import logger from "@app/logger";
-import { enhanceHelp } from "@app/utils/cli";
-import { Storage } from "@app/utils/storage";
-
 import { registerCommitsCommand } from "@app/git/commands/commits";
 import { registerConfigureAuthorsCommand } from "@app/git/commands/configure-authors";
 import { registerConfigureWorkitemPatternsCommand } from "@app/git/commands/configure-workitem-patterns";
+import logger from "@app/logger";
+import { enhanceHelp } from "@app/utils/cli";
+import { Storage } from "@app/utils/storage";
+import { Command } from "commander";
 
 const storage = new Storage("git");
 

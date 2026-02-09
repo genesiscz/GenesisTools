@@ -5,9 +5,9 @@
  * using configurable regex patterns stored in Storage("git").
  */
 
-import { Storage } from "@app/utils/storage";
-import type { DetailedCommitInfo } from "@app/utils/git";
 import logger from "@app/logger";
+import type { DetailedCommitInfo } from "@app/utils/git";
+import { Storage } from "@app/utils/storage";
 
 export interface WorkitemPattern {
     regex: string;

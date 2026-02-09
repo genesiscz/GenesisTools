@@ -1,10 +1,10 @@
-import { select, search } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import chalk from "chalk";
 import type { ProviderV2 } from "@ai-sdk/provider";
 import logger from "@app/logger";
-import type { DetectedProvider, ModelInfo, ProviderChoice } from "@ask/types";
 import { providerManager } from "@ask/providers/ProviderManager";
+import type { DetectedProvider, ModelInfo, ProviderChoice } from "@ask/types";
+import { ExitPromptError } from "@inquirer/core";
+import { search, select } from "@inquirer/prompts";
+import chalk from "chalk";
 
 export class ModelSelector {
     async selectModel(): Promise<ProviderChoice | null> {

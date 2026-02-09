@@ -1,8 +1,8 @@
-import { Command } from "commander";
-import { resolve, join, dirname, basename } from "node:path";
 import { mkdir } from "node:fs/promises"; // Using fs.promises for async operations - Bun implements this
+import { basename, dirname, join, resolve } from "node:path";
 import logger from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);

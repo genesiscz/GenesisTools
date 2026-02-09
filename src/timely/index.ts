@@ -2,24 +2,23 @@
 
 // src/timely/index.ts
 
-import { Command } from "commander";
-import chalk from "chalk";
 import logger from "@app/logger";
-import { Storage } from "@app/utils/storage";
 import { enhanceHelp } from "@app/utils/cli";
+import { Storage } from "@app/utils/storage";
+import chalk from "chalk";
+import { Command } from "commander";
 import { TimelyApiClient } from "./api/client";
 import { TimelyService } from "./api/service";
-
+import { registerAccountsCommand } from "./commands/accounts";
+import { registerCacheCommand } from "./commands/cache";
+import { registerEventsCommand } from "./commands/events";
+import { registerExportMonthCommand } from "./commands/export-month";
 // Commands
 import { registerLoginCommand } from "./commands/login";
 import { registerLogoutCommand } from "./commands/logout";
-import { registerStatusCommand } from "./commands/status";
-import { registerAccountsCommand } from "./commands/accounts";
-import { registerProjectsCommand } from "./commands/projects";
-import { registerEventsCommand } from "./commands/events";
-import { registerExportMonthCommand } from "./commands/export-month";
-import { registerCacheCommand } from "./commands/cache";
 import { registerMemoriesCommand } from "./commands/memories";
+import { registerProjectsCommand } from "./commands/projects";
+import { registerStatusCommand } from "./commands/status";
 
 // Initialize shared dependencies
 const storage = new Storage("timely");

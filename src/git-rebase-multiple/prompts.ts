@@ -1,5 +1,5 @@
+import { checkbox, confirm, input, search, select } from "@inquirer/prompts";
 import chalk from "chalk";
-import { search, checkbox, confirm, input, select } from "@inquirer/prompts";
 import { git } from "./git";
 import type { PlanStep } from "./types";
 

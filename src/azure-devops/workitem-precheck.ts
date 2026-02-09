@@ -5,9 +5,10 @@
  * If the work item type is not allowed (e.g., User Story), it checks children
  * for valid redirect targets (e.g., a single Task child).
  */
-import { $ } from "bun";
+
+import type { AllowedTypeConfig, AzWorkItemRaw, Relation } from "@app/azure-devops/types";
 import logger from "@app/logger";
-import type { Relation, AzWorkItemRaw, AllowedTypeConfig } from "@app/azure-devops/types";
+import { $ } from "bun";
 
 // ============= Types =============
 

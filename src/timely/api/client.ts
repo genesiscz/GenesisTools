@@ -1,9 +1,9 @@
-import { Storage } from "@app/utils/storage";
 import logger from "@app/logger";
-import { input, password } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import chalk from "chalk";
 import type { OAuth2Tokens, OAuthApplication } from "@app/timely/types";
+import type { Storage } from "@app/utils/storage";
+import { ExitPromptError } from "@inquirer/core";
+import { input, password } from "@inquirer/prompts";
+import chalk from "chalk";
 
 export interface RequestOptions {
     params?: Record<string, string | number | boolean>;

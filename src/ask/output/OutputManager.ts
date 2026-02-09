@@ -1,10 +1,10 @@
-import clipboardy from "clipboardy";
-import { write } from "bun";
-import { resolve, dirname } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
-import chalk from "chalk";
+import { dirname, resolve } from "node:path";
 import logger from "@app/logger";
 import type { OutputConfig, OutputFormat } from "@ask/types";
+import { write } from "bun";
+import chalk from "chalk";
+import clipboardy from "clipboardy";
 
 export interface FormattedResponse {
     content: string;

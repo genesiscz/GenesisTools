@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 
-import { Command } from "commander";
-import chalk from "chalk";
-import Table from "cli-table3";
-import logger from "@app/logger";
 import { UsageDatabase } from "@app/ask/output/UsageDatabase";
 import { dynamicPricingManager } from "@app/ask/providers/DynamicPricing";
+import logger from "@app/logger";
+import chalk from "chalk";
+import Table from "cli-table3";
+import { Command } from "commander";
 
 interface Options {
     days?: number;

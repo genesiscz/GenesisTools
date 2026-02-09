@@ -1,3 +1,4 @@
+import { handleReadmeFlag } from "@app/utils/readme";
 import chalk from "chalk";
 import { Command } from "commander";
 import { backupManager } from "./backup";
@@ -5,8 +6,7 @@ import { forkPointManager } from "./forkpoint";
 import { git } from "./git";
 import { prompts } from "./prompts";
 import { stateManager } from "./state";
-import type { CLIOptions, PlanStep, RebaseConfig, RebaseSummary, RebaseState } from "./types";
-import { handleReadmeFlag } from "@app/utils/readme";
+import type { CLIOptions, PlanStep, RebaseConfig, RebaseState, RebaseSummary } from "./types";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);

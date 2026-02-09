@@ -64,7 +64,7 @@ export default class Table<T extends ScalarDict> extends React.Component<
      * Gets all keyes used in data by traversing through the data.
      */
     getDataKeys(): (keyof T)[] {
-        let keys = new Set<keyof T>();
+        const keys = new Set<keyof T>();
 
         // Collect all the keys.
         for (const data of this.props.data) {
@@ -368,7 +368,7 @@ export function Skeleton(props: React.PropsWithChildren<{}>) {
  */
 function intersperse<T, I>(intersperser: (index: number) => I, elements: T[]): (T | I)[] {
     // Intersparse by reducing from left.
-    let interspersed: (T | I)[] = elements.reduce(
+    const interspersed: (T | I)[] = elements.reduce(
         (acc, element, index) => {
             // Only add element if it's the first one.
             if (acc.length === 0) return [element];

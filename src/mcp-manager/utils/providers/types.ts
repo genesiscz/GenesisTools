@@ -1,4 +1,4 @@
-import type { MCPServerMeta, EnabledMcpServers } from "@app/mcp-manager/utils/types.js";
+import type { EnabledMcpServers, MCPServerMeta } from "@app/mcp-manager/utils/types.js";
 import { writeFile } from "fs/promises";
 
 /**

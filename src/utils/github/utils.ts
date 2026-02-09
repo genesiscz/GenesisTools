@@ -1,7 +1,7 @@
 // Shared utility functions for GitHub commands
 
-import chalk from "chalk";
 import type { CommentData, CommentRecord, GitHubReactions } from "@app/github/types";
+import chalk from "chalk";
 
 /**
  * Global verbose state for HTTP request logging

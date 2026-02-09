@@ -1,5 +1,5 @@
-import pc from "picocolors";
 import type { Command } from "commander";
+import pc from "picocolors";
 
 /**
  * Enhance a Commander program with better help UX:

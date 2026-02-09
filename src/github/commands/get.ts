@@ -1,13 +1,13 @@
 // Get file content command implementation
 
-import { Command } from "commander";
-import chalk from "chalk";
-import clipboardy from "clipboardy";
+import logger from "@app/logger";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
-import { parseGitHubFileUrl, buildRawGitHubUrl } from "@app/utils/github/url-parser";
-import { verbose, setGlobalVerbose } from "@app/utils/github/utils";
-import logger from "@app/logger";
+import { buildRawGitHubUrl, parseGitHubFileUrl } from "@app/utils/github/url-parser";
+import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
+import chalk from "chalk";
+import clipboardy from "clipboardy";
+import { Command } from "commander";
 
 interface GetOptions {
     ref?: string;

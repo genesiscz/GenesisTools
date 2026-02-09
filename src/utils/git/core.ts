@@ -1,5 +1,5 @@
-import { Executor } from "@app/utils/cli";
 import type { ExecResult } from "@app/utils/cli";
+import { Executor } from "@app/utils/cli";
 import type { BranchInfo, DetailedCommitInfo } from "./types";
 
 export interface GitOptions {
@@ -369,9 +369,7 @@ export function createGit(options?: GitOptions) {
                     if (commitsAhead > 0) {
                         children.push({ name: branch.name, commitsAhead });
                     }
-                } catch {
-                    continue;
-                }
+                } catch {}
             }
 
             return children.sort((a, b) => a.name.localeCompare(b.name));

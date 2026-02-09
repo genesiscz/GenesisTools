@@ -4,11 +4,11 @@
  */
 
 import { Database } from "bun:sqlite";
+import logger from "@app/logger";
+import { existsSync, mkdirSync } from "fs";
+import { stat } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
-import { mkdirSync, existsSync } from "fs";
-import { stat } from "fs/promises";
-import logger from "@app/logger";
 
 const DEFAULT_CACHE_DIR = join(homedir(), ".genesis-tools", "claude-history");
 const DB_NAME = "stats-cache.db";

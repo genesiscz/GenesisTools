@@ -1,11 +1,11 @@
-import { Command } from "commander";
-import { confirm, input, password } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import chalk from "chalk";
 import logger from "@app/logger";
-import { Storage } from "@app/utils/storage";
-import { TimelyApiClient } from "@app/timely/api/client";
+import type { TimelyApiClient } from "@app/timely/api/client";
 import type { OAuthApplication } from "@app/timely/types";
+import type { Storage } from "@app/utils/storage";
+import { ExitPromptError } from "@inquirer/core";
+import { confirm, input, password } from "@inquirer/prompts";
+import chalk from "chalk";
+import type { Command } from "commander";
 
 export function registerLoginCommand(program: Command, storage: Storage, client: TimelyApiClient): void {
     program

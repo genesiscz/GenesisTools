@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-import { join } from "path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { homedir } from "os";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync, renameSync } from "fs";
+import { join } from "path";
 
 interface HookInput {
     session_id: string;

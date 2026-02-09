@@ -1,6 +1,6 @@
 // Output formatters for GitHub data
 
-import type { IssueData, PRData, CommentData, CommentStats, SearchResult, GitHubReactions } from "@app/github/types";
+import type { CommentData, CommentStats, GitHubReactions, IssueData, PRData, SearchResult } from "@app/github/types";
 import { sumReactions } from "@app/utils/github/utils";
 
 type OutputFormat = "ai" | "md" | "json";

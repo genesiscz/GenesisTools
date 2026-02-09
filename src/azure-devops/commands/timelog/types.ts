@@ -1,9 +1,9 @@
-import { Command } from "commander";
-import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import { loadTimeTypesCache, saveTimeTypesCache } from "@app/azure-devops/cache";
-import logger from "@app/logger";
+import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { TimeType } from "@app/azure-devops/types";
+import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
+import logger from "@app/logger";
+import type { Command } from "commander";
 
 export function registerTypesSubcommand(parent: Command): void {
     parent

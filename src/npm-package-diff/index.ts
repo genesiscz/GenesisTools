@@ -1,20 +1,19 @@
-import chokidar from "chokidar";
-import { Command } from "commander";
-import path from "path";
-import fs from "fs";
-import os from "os";
-import chalk from "chalk";
-import { spawn } from "child_process";
-import * as diff from "diff";
-import { minimatch } from "minimatch";
-import ora, { type Ora } from "ora";
-import Table from "cli-table3";
-import { filesize } from "filesize";
-import boxen from "boxen";
-import { createRequire } from "module";
-import { execSync } from "child_process";
 import { resolvePathWithTilde } from "@app/utils";
 import { handleReadmeFlag } from "@app/utils/readme";
+import boxen from "boxen";
+import chalk from "chalk";
+import { execSync, spawn } from "child_process";
+import chokidar from "chokidar";
+import Table from "cli-table3";
+import { Command } from "commander";
+import * as diff from "diff";
+import { filesize } from "filesize";
+import fs from "fs";
+import { minimatch } from "minimatch";
+import { createRequire } from "module";
+import ora, { type Ora } from "ora";
+import os from "os";
+import path from "path";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -818,7 +817,7 @@ class EnhancedPackageComparison {
 
     private outputInlineDiff(result: DiffResult): void {
         const context = this.options.context;
-        let outputLines: { type: "add" | "remove" | "normal"; content: string; lineNum?: number }[] = [];
+        const outputLines: { type: "add" | "remove" | "normal"; content: string; lineNum?: number }[] = [];
         let lineNumberOld = 1;
         let lineNumberNew = 1;
 

@@ -1,11 +1,11 @@
-import { checkbox, select } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import chalk from "chalk";
 import logger from "@app/logger";
+import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName, PerProjectEnabledState, ProviderEnabledState } from "@app/mcp-manager/utils/types.js";
-import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import { DiffUtil } from "@app/utils/diff";
+import { ExitPromptError } from "@inquirer/core";
+import { checkbox, select } from "@inquirer/prompts";
+import chalk from "chalk";
 
 export interface SyncFromOptions {
     provider?: string; // Provider name(s), comma-separated for non-interactive mode

@@ -1,11 +1,11 @@
+import logger, { consoleLog } from "@app/logger";
+import { DiffUtil } from "@app/utils/diff";
+import { ExitPromptError } from "@inquirer/core";
+import { confirm } from "@inquirer/prompts";
+import chalk from "chalk";
 import { existsSync, mkdirSync, readdirSync } from "fs";
 import { copyFile } from "fs/promises";
 import path from "path";
-import chalk from "chalk";
-import logger, { consoleLog } from "@app/logger";
-import { confirm } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import { DiffUtil } from "@app/utils/diff";
 import { getGlobalOptions } from "./config.utils.js";
 
 /**

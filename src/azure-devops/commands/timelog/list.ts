@@ -1,8 +1,8 @@
-import { Command } from "commander";
+import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import { TimeLogApi, formatMinutes } from "@app/azure-devops/timelog-api";
-import pc from "picocolors";
 import Table from "cli-table3";
+import type { Command } from "commander";
+import pc from "picocolors";
 
 function collectUsers(value: string, previous: string[]): string[] {
     return previous.concat([value]);

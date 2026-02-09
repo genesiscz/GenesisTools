@@ -1,11 +1,11 @@
 // Code search command implementation
 
-import { Command } from "commander";
-import chalk from "chalk";
+import logger from "@app/logger";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
-import { verbose, setGlobalVerbose } from "@app/utils/github/utils";
-import logger from "@app/logger";
+import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
+import chalk from "chalk";
+import { Command } from "commander";
 
 interface CodeSearchOptions {
     repo?: string;

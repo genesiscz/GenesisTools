@@ -1,10 +1,10 @@
-import { spawn, ChildProcess } from "child_process";
-import { Command } from "commander";
-import { select, checkbox } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import chalk from "chalk";
 import logger, { consoleLog } from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { ExitPromptError } from "@inquirer/core";
+import { checkbox, select } from "@inquirer/prompts";
+import chalk from "chalk";
+import { type ChildProcess, spawn } from "child_process";
+import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);

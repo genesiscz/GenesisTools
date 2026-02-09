@@ -8,12 +8,12 @@
  *   tools git commits --from 2026-02-01 --to 2026-02-08 [--author <name>] [--with-author <name>] [--format json|table] [--stat]
  */
 
-import { Command } from "commander";
-import chalk from "chalk";
-import { Storage } from "@app/utils/storage";
-import { Executor } from "@app/utils/cli";
 import { extractFromMessage, loadWorkitemPatternsAsync } from "@app/git/workitem-patterns";
+import { Executor } from "@app/utils/cli";
 import type { DetailedCommitInfo } from "@app/utils/git";
+import { Storage } from "@app/utils/storage";
+import chalk from "chalk";
+import type { Command } from "commander";
 
 interface CommitsOptions {
     from: string;

@@ -1,5 +1,5 @@
+import { Activity, Minus, TrendingDown, TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TrendingUp, TrendingDown, Minus, Activity } from "lucide-react";
 
 interface TokenUsage {
 	inputTokens: number;

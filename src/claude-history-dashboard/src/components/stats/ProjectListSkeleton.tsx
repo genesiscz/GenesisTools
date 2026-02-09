@@ -1,6 +1,6 @@
+import { FolderOpen, Wrench } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FolderOpen, Wrench } from "lucide-react";
 
 // Deterministic widths to avoid SSR hydration mismatch
 const PROJECT_SKELETON_WIDTHS = ["75%", "85%", "65%", "90%", "70%"];

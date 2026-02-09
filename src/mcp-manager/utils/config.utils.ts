@@ -1,9 +1,9 @@
+import logger from "@app/logger";
 import { Storage } from "@app/utils/storage";
+import chalk from "chalk";
+import { BackupManager } from "./backup.js";
 import type { UnifiedMCPConfig, UnifiedMCPServerConfig } from "./providers/types.js";
 import type { EnabledMcpServers } from "./types.js";
-import { BackupManager } from "./backup.js";
-import logger from "@app/logger";
-import chalk from "chalk";
 
 // Initialize Storage instance for mcp-manager
 const storage = new Storage("mcp-manager");

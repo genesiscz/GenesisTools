@@ -5,16 +5,16 @@
  * or per-item updates API.
  */
 
-import { readdirSync, readFileSync } from "fs";
-import { join } from "path";
-import * as p from "@clack/prompts";
-import pc from "picocolors";
+import { Api } from "@app/azure-devops/api";
+import { loadHistoryCache, saveHistoryCache, storage } from "@app/azure-devops/cache";
+import { buildHistoryFromRevisions, buildWorkItemHistory } from "@app/azure-devops/history";
+import { requireConfig } from "@app/azure-devops/utils";
 
 import logger from "@app/logger";
-import { Api } from "@app/azure-devops/api";
-import { requireConfig } from "@app/azure-devops/utils";
-import { storage, loadHistoryCache, saveHistoryCache } from "@app/azure-devops/cache";
-import { buildHistoryFromRevisions, buildWorkItemHistory } from "@app/azure-devops/history";
+import * as p from "@clack/prompts";
+import { readdirSync, readFileSync } from "fs";
+import { join } from "path";
+import pc from "picocolors";
 
 interface SyncOptions {
     force?: boolean;

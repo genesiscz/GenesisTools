@@ -1,10 +1,10 @@
-import MarkdownIt from "markdown-it";
-import cliHtml from "cli-html";
 import { alert } from "@mdit/plugin-alert";
+import chalk from "chalk";
+import cliHtml from "cli-html";
+import MarkdownIt from "markdown-it";
+import type Token from "markdown-it/lib/token.mjs";
 // @ts-expect-error - no types available for markdown-it-task-lists
 import taskLists from "markdown-it-task-lists";
-import chalk from "chalk";
-import type Token from "markdown-it/lib/token.mjs";
 
 // Languages that should NOT show line numbers (shell commands, config files, plain text)
 const NO_LINE_NUMBER_LANGS = new Set([

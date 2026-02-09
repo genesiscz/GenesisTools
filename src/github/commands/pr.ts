@@ -1,25 +1,25 @@
 // PR command implementation
 
-import { Command } from "commander";
-import chalk from "chalk";
-import { mkdirSync, existsSync } from "fs";
-import { join } from "path";
-import { getOctokit } from "@app/utils/github/octokit";
-import { withRetry } from "@app/utils/github/rate-limit";
-import { parseGitHubUrl, detectRepoFromGit } from "@app/utils/github/url-parser";
 import { getDatabase, getOrCreateRepo, upsertIssue } from "@app/github/lib/cache";
 import { formatPR } from "@app/github/lib/output";
-import { verbose, setGlobalVerbose } from "@app/utils/github/utils";
 import type {
-    PRCommandOptions,
+    CheckData,
+    CommitData,
     GitHubPullRequest,
     GitHubReviewComment,
+    PRCommandOptions,
     PRData,
     ReviewCommentData,
-    CommitData,
-    CheckData,
 } from "@app/github/types";
 import logger from "@app/logger";
+import { getOctokit } from "@app/utils/github/octokit";
+import { withRetry } from "@app/utils/github/rate-limit";
+import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
+import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
+import chalk from "chalk";
+import { Command } from "commander";
+import { existsSync, mkdirSync } from "fs";
+import { join } from "path";
 
 // Known bots
 const KNOWN_BOTS = [

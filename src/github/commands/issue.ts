@@ -1,48 +1,48 @@
 // Issue command implementation
 
-import { Command } from "commander";
-import chalk from "chalk";
-import { mkdirSync, existsSync } from "fs";
-import { join } from "path";
-import { getOctokit } from "@app/utils/github/octokit";
-import { withRetry } from "@app/utils/github/rate-limit";
-import { parseGitHubUrl, extractCommentId, parseDate, detectRepoFromGit } from "@app/utils/github/url-parser";
 import {
-    getDatabase,
-    getOrCreateRepo,
-    getIssue,
-    upsertIssue,
     getComments as getCachedComments,
-    getLastNComments,
-    upsertComments,
     getCommentCount,
-    upsertTimelineEvents,
+    getDatabase,
     getFetchMetadata,
+    getIssue,
+    getLastNComments,
+    getOrCreateRepo,
     updateFetchMetadata,
+    upsertComments,
+    upsertIssue,
+    upsertTimelineEvents,
 } from "@app/github/lib/cache";
-import { processQuotes, findReplyTarget, detectCrossReferences } from "@app/github/lib/quotes";
-import { formatIssue, calculateStats } from "@app/github/lib/output";
-import {
-    verbose,
-    toCommentRecord,
-    fromCommentRecord,
-    setGlobalVerbose,
-    sumReactions,
-    sumPositiveReactions,
-    sumNegativeReactions,
-} from "@app/utils/github/utils";
+import { calculateStats, formatIssue } from "@app/github/lib/output";
+import { detectCrossReferences, findReplyTarget, processQuotes } from "@app/github/lib/quotes";
 import type {
-    IssueCommandOptions,
-    GitHubIssue,
-    GitHubComment,
-    GitHubTimelineEvent,
-    IssueData,
     CommentData,
-    TimelineEventData,
     CommentRecord,
+    GitHubComment,
+    GitHubIssue,
+    GitHubTimelineEvent,
+    IssueCommandOptions,
+    IssueData,
     LinkedIssue,
+    TimelineEventData,
 } from "@app/github/types";
 import logger from "@app/logger";
+import { getOctokit } from "@app/utils/github/octokit";
+import { withRetry } from "@app/utils/github/rate-limit";
+import { detectRepoFromGit, extractCommentId, parseDate, parseGitHubUrl } from "@app/utils/github/url-parser";
+import {
+    fromCommentRecord,
+    setGlobalVerbose,
+    sumNegativeReactions,
+    sumPositiveReactions,
+    sumReactions,
+    toCommentRecord,
+    verbose,
+} from "@app/utils/github/utils";
+import chalk from "chalk";
+import { Command } from "commander";
+import { existsSync, mkdirSync } from "fs";
+import { join } from "path";
 
 // Known bots
 const KNOWN_BOTS = [
@@ -562,7 +562,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
     }
 
     // Resolve cross-references (automatic unless --no-resolve-refs)
-    let linkedIssues: LinkedIssue[] = [];
+    const linkedIssues: LinkedIssue[] = [];
     const shouldResolveRefs = !options.noResolveRefs && issue.body;
     if (shouldResolveRefs) {
         const refs = detectCrossReferences(issue.body!);

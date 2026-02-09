@@ -1,13 +1,13 @@
-import { Command, Option } from "commander";
-import chalk from "chalk";
 import logger from "@app/logger";
-import { Storage } from "@app/utils/storage";
-import { TimelyService } from "@app/timely/api/service";
+import type { TimelyService } from "@app/timely/api/service";
+import type { OAuth2Tokens, TimelyEntry, TimelyEvent, TimelyEventSlim } from "@app/timely/types";
 import { formatDuration } from "@app/timely/utils/date";
-import { fetchMemoriesForDates, buildSubEntryMap } from "@app/timely/utils/memories";
-import { fuzzyMatchBest } from "@app/utils/fuzzy-match";
+import { buildSubEntryMap, fetchMemoriesForDates } from "@app/timely/utils/memories";
 import type { FuzzyMatchResult } from "@app/utils/fuzzy-match";
-import type { TimelyEvent, TimelyEventSlim, TimelyEntry, OAuth2Tokens } from "@app/timely/types";
+import { fuzzyMatchBest } from "@app/utils/fuzzy-match";
+import type { Storage } from "@app/utils/storage";
+import chalk from "chalk";
+import { type Command, Option } from "commander";
 
 export function registerEventsCommand(program: Command, storage: Storage, service: TimelyService): void {
     program

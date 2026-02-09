@@ -1,9 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { getConversation } from "@/server/conversations";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { ArrowLeft, Bot, Calendar, ChevronRight, FolderOpen, GitBranch, User, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ArrowLeft, Bot, User, Wrench, GitBranch, Calendar, FolderOpen, ChevronRight } from "lucide-react";
+import { getConversation } from "@/server/conversations";
 
 export const Route = createFileRoute("/conversation/$id")({
 	component: ConversationPage,

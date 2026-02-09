@@ -1,17 +1,17 @@
 // SQLite cache manager for GitHub data (using bun:sqlite)
 
 import { Database } from "bun:sqlite";
-import { homedir } from "os";
-import { join } from "path";
-import { mkdirSync, existsSync } from "fs";
 import type {
-    RepoRecord,
-    IssueRecord,
     CommentRecord,
-    TimelineEventRecord,
     FetchMetadataRecord,
+    IssueRecord,
+    RepoRecord,
+    TimelineEventRecord,
 } from "@app/github/types";
 import logger from "@app/logger";
+import { existsSync, mkdirSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 
 const DEFAULT_CACHE_DIR = join(homedir(), ".genesis-tools", "github");
 const DB_NAME = "cache.db";

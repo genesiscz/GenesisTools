@@ -11,11 +11,11 @@
  *   tools git configure-authors    # interactive (default)
  */
 
-import { Command } from "commander";
+import { Executor } from "@app/utils/cli";
+import type { Storage } from "@app/utils/storage";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { Storage } from "@app/utils/storage";
-import { Executor } from "@app/utils/cli";
+import type { Command } from "commander";
 
 interface ConfigureAuthorsOptions {
     add?: string[];

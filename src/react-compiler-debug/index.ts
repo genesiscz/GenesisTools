@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 /**
  * React Compiler Debug Tool
  *
@@ -10,21 +11,22 @@
  *   echo "code" | tools react-compiler-debug --stdin
  */
 
-import { Command } from "commander";
+import { handleReadmeFlag } from "@app/utils/readme";
 import * as babel from "@babel/core";
+import generate from "@babel/generator";
 import { parse } from "@babel/parser";
 import traverse from "@babel/traverse";
-import generate from "@babel/generator";
 import * as t from "@babel/types";
 import chalk from "chalk";
-import { handleReadmeFlag } from "@app/utils/readme";
+import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
-import clipboardy from "clipboardy";
-import { resolve, dirname } from "path";
-import { fileURLToPath } from "url";
+
 import logger from "@app/logger";
+import clipboardy from "clipboardy";
+import { dirname, resolve } from "path";
+import { fileURLToPath } from "url";
 
 // Resolve babel-plugin-react-compiler from GenesisTools installation
 const __filename = fileURLToPath(import.meta.url);

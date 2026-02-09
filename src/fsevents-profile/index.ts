@@ -1,10 +1,10 @@
+import logger from "@app/logger";
+import { handleReadmeFlag } from "@app/utils/readme";
 import { spawn } from "bun";
 import chalk from "chalk";
 import { Command } from "commander";
 import * as fsevents from "fsevents";
 import * as path from "path";
-import logger from "@app/logger";
-import { handleReadmeFlag } from "@app/utils/readme";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);

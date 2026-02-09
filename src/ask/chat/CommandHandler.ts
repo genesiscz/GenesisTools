@@ -1,11 +1,11 @@
-import { input, confirm, select, password } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import type { LanguageModel } from "ai";
-import chalk from "chalk";
 import logger from "@app/logger";
+import { modelSelector } from "@ask/providers/ModelSelector";
 import type { OutputConfig, OutputFormat } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
-import { modelSelector } from "@ask/providers/ModelSelector";
+import { ExitPromptError } from "@inquirer/core";
+import { confirm, input, password, select } from "@inquirer/prompts";
+import type { LanguageModel } from "ai";
+import chalk from "chalk";
 
 export interface CommandResult {
     shouldExit?: boolean;

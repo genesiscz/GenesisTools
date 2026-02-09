@@ -1,10 +1,10 @@
-import { Command } from "commander";
-import { input, confirm, number } from "@inquirer/prompts";
-import { isPromptCancelled } from "@app/utils/prompt-helpers.js";
-import { resolve } from "node:path";
 import { existsSync, statSync } from "node:fs";
-import chalk from "chalk";
+import { resolve } from "node:path";
+import { isPromptCancelled } from "@app/utils/prompt-helpers.js";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { confirm, input, number } from "@inquirer/prompts";
+import chalk from "chalk";
+import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -96,7 +96,7 @@ async function getCommits(
     // Build git log command
     let gitArgs: string[] = [];
     let detectionMethod = "";
-    let baseBranchName: string | undefined = undefined;
+    let baseBranchName: string | undefined;
 
     if (currentBranchOnly) {
         // Only show commits that are unique to current branch (exclude base branch commits)
@@ -158,10 +158,7 @@ async function getCommits(
                         bestForkPointDate = forkPointDate;
                     }
                 }
-            } catch {
-                // Skip branches that don't have a valid fork point
-                continue;
-            }
+            } catch {}
         }
 
         // If no fork point found with --fork-point, fall back to regular merge-base

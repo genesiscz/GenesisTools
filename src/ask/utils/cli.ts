@@ -1,6 +1,6 @@
-import { Command } from "commander";
 import logger from "@app/logger";
-import type { CLIOptions, Args, OutputFormat } from "@ask/types";
+import type { Args, CLIOptions, OutputFormat } from "@ask/types";
+import { Command } from "commander";
 
 export function parseCLIArguments(): Args {
     const program = new Command()

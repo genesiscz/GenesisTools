@@ -1,7 +1,7 @@
 import logger from "@app/logger";
-import type { PricingInfo, OpenRouterModelsResponse, OpenRouterModelResponse, OpenRouterPricing } from "@ask/types";
-import type { LanguageModelUsage } from "ai";
 import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
+import type { OpenRouterModelResponse, OpenRouterModelsResponse, OpenRouterPricing, PricingInfo } from "@ask/types";
+import type { LanguageModelUsage } from "ai";
 
 export class DynamicPricingManager {
     private pricingCache = new Map<string, { pricing: PricingInfo; timestamp: number }>();
@@ -69,7 +69,7 @@ export class DynamicPricingManager {
                     return await this.fetchGroqPricing(modelId);
                 case "xai":
                     return await this.fetchXAIPricing(modelId);
-                default:
+                default: {
                     // For unknown providers, try LiteLLM first
                     const liteLLMCandidates = [`${provider}/${modelId}`, modelId];
 
@@ -82,6 +82,7 @@ export class DynamicPricingManager {
                     }
                     // Fallback to OpenRouter for all other providers
                     return await this.fetchOpenRouterPricing(`${provider}/${modelId}`);
+                }
             }
 
             // 3. For OpenAI models not in direct pricing, try LiteLLM as fallback

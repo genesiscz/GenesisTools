@@ -1,5 +1,5 @@
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
-import { toggleServer, type ToggleOptions } from "./toggle-server.js";
+import { type ToggleOptions, toggleServer } from "./toggle-server.js";
 
 /**
  * Disable MCP server(s) in selected provider(s)

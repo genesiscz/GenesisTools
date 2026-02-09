@@ -12,17 +12,17 @@
  *   tools git configure-workitem-patterns --suggest [--repo <path>]
  */
 
-import { Command } from "commander";
-import * as p from "@clack/prompts";
-import chalk from "chalk";
-import { Storage } from "@app/utils/storage";
-import { createGit } from "@app/utils/git";
 import {
+    loadWorkitemPatternsAsync,
     suggestPatterns,
     validatePattern,
-    loadWorkitemPatternsAsync,
     type WorkitemPattern,
 } from "@app/git/workitem-patterns";
+import { createGit } from "@app/utils/git";
+import type { Storage } from "@app/utils/storage";
+import * as p from "@clack/prompts";
+import chalk from "chalk";
+import type { Command } from "commander";
 
 interface ConfigurePatternsOptions {
     list?: boolean;

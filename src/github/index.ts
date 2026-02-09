@@ -1,20 +1,20 @@
 // GitHub CLI Tool - Main Entry Point
 
-import { Command } from "commander";
-import { select, input, confirm } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import chalk from "chalk";
+import { createCodeSearchCommand } from "@app/github/commands/code-search";
+import { commentsCommand, createCommentsCommand } from "@app/github/commands/comments";
+import { createGetCommand, getCommand } from "@app/github/commands/get";
 import { createIssueCommand, issueCommand } from "@app/github/commands/issue";
 import { createPRCommand, prCommand } from "@app/github/commands/pr";
-import { createCommentsCommand, commentsCommand } from "@app/github/commands/comments";
 import { createSearchCommand, searchCommand } from "@app/github/commands/search";
-import { createCodeSearchCommand } from "@app/github/commands/code-search";
-import { createGetCommand, getCommand } from "@app/github/commands/get";
-import { checkAuth, getRateLimit } from "@app/utils/github/octokit";
-import { parseGitHubUrl, detectRepoFromGit } from "@app/utils/github/url-parser";
-import { getCacheStats, closeDatabase } from "@app/github/lib/cache";
-import { enhanceHelp } from "@app/utils/cli";
+import { closeDatabase, getCacheStats } from "@app/github/lib/cache";
 import logger from "@app/logger";
+import { enhanceHelp } from "@app/utils/cli";
+import { checkAuth, getRateLimit } from "@app/utils/github/octokit";
+import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
+import { ExitPromptError } from "@inquirer/core";
+import { confirm, input, select } from "@inquirer/prompts";
+import chalk from "chalk";
+import { Command } from "commander";
 
 const program = new Command();
 

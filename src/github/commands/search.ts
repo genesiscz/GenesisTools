@@ -1,15 +1,15 @@
 // Search command implementation
 
-import { Command } from "commander";
-import chalk from "chalk";
+import { formatSearchResults } from "@app/github/lib/output";
+import type { SearchCommandOptions, SearchResult } from "@app/github/types";
+import logger from "@app/logger";
+import { batchFetchCommentReactions } from "@app/utils/github/graphql";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
 import { parseRepo } from "@app/utils/github/url-parser";
-import { formatSearchResults } from "@app/github/lib/output";
-import { verbose, setGlobalVerbose } from "@app/utils/github/utils";
-import { batchFetchCommentReactions } from "@app/utils/github/graphql";
-import type { SearchCommandOptions, SearchResult } from "@app/github/types";
-import logger from "@app/logger";
+import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
+import chalk from "chalk";
+import { Command } from "commander";
 
 interface GitHubSearchItem {
     number: number;

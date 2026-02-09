@@ -96,7 +96,7 @@ interface StopBuildArgs {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-interface GetQueueArgs {}
+type GetQueueArgs = {};
 
 interface GetJobConfigArgs {
     jobPath: string;

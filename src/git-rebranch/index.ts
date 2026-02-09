@@ -1,13 +1,13 @@
-import { Command } from "commander";
-import * as p from "@clack/prompts";
-import pc from "picocolors";
-import { handleReadmeFlag } from "@app/utils/readme";
-import { createGit } from "@app/utils/git";
 import type { DetailedCommitInfo } from "@app/utils/git";
-import { searchMultiselect, cancelSymbol } from "@app/utils/prompts/clack/search-multiselect";
+import { createGit } from "@app/utils/git";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
-import { parseCommit, groupCommits } from "./grouping";
-import type { CommitGroup, BranchResult } from "./types";
+import { cancelSymbol, searchMultiselect } from "@app/utils/prompts/clack/search-multiselect";
+import { handleReadmeFlag } from "@app/utils/readme";
+import * as p from "@clack/prompts";
+import { Command } from "commander";
+import pc from "picocolors";
+import { groupCommits, parseCommit } from "./grouping";
+import type { BranchResult, CommitGroup } from "./types";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -233,9 +233,7 @@ async function detectForkPoint(
                 bestForkSha = mb;
                 bestCommitCount = count;
             }
-        } catch {
-            continue;
-        }
+        } catch {}
     }
 
     if (!bestBase || !bestForkSha) {

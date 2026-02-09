@@ -1,6 +1,6 @@
 // GitHub URL parsing utilities
 
-import type { GitHubUrl, GitHubFileUrl } from "@app/github/types";
+import type { GitHubFileUrl, GitHubUrl } from "@app/github/types";
 
 /**
  * Parse a GitHub URL into its components

@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import { existsSync, mkdirSync } from "fs";
-import path from "path";
 import { tmpdir } from "os";
+import path from "path";
 
 export const SERVERS_DIR = path.join(tmpdir(), ".mcp-tsc-servers");
 

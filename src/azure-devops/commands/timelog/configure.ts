@@ -1,10 +1,10 @@
-import { Command } from "commander";
-import { $ } from "bun";
-import { readFileSync, writeFileSync } from "fs";
-import * as p from "@clack/prompts";
-import pc from "picocolors";
-import { loadConfig, findConfigPath } from "@app/azure-devops/utils";
 import type { AzureConfigWithTimeLog, TimeLogConfig } from "@app/azure-devops/types";
+import { findConfigPath, loadConfig } from "@app/azure-devops/utils";
+import * as p from "@clack/prompts";
+import { $ } from "bun";
+import type { Command } from "commander";
+import { readFileSync, writeFileSync } from "fs";
+import pc from "picocolors";
 
 // Common work item types in Azure DevOps
 const COMMON_WORK_ITEM_TYPES = ["Bug", "Task", "User Story", "Incident", "Feature", "Epic"] as const;

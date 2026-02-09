@@ -1,13 +1,13 @@
-import { MCPProvider, WriteResult } from "./types.js";
-import type { UnifiedMCPServerConfig, MCPServerInfo } from "./types.js";
-import type { CodexGenericConfig, CodexMCPServerConfig } from "./codex.types.js";
+import logger from "@app/logger";
+import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
+import * as TOML from "@iarna/toml";
+import chalk from "chalk";
 import { existsSync, mkdirSync } from "fs";
 import { readFile } from "fs/promises";
 import path from "path";
-import * as TOML from "@iarna/toml";
-import logger from "@app/logger";
-import chalk from "chalk";
-import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
+import type { CodexGenericConfig, CodexMCPServerConfig } from "./codex.types.js";
+import type { MCPServerInfo, UnifiedMCPServerConfig } from "./types.js";
+import { MCPProvider, WriteResult } from "./types.js";
 
 /**
  * Codex MCP provider.

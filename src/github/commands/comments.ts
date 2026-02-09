@@ -1,36 +1,36 @@
 // Comments command - shorthand for fetching just comments
 
-import { Command } from "commander";
-import chalk from "chalk";
-import { mkdirSync, existsSync } from "fs";
-import { join } from "path";
+import {
+    getComments as getCachedComments,
+    getDatabase,
+    getFetchMetadata,
+    getIssue,
+    getLastNComments,
+    getOrCreateRepo,
+    updateFetchMetadata,
+    upsertComments,
+    upsertIssue,
+} from "@app/github/lib/cache";
+import { calculateStats, formatIssue } from "@app/github/lib/output";
+import { findReplyTarget, processQuotes } from "@app/github/lib/quotes";
+import type { CommentData, CommentRecord, GitHubComment, IssueData } from "@app/github/types";
+import logger from "@app/logger";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
-import { parseGitHubUrl, extractCommentId, detectRepoFromGit } from "@app/utils/github/url-parser";
-import { processQuotes, findReplyTarget } from "@app/github/lib/quotes";
-import { formatIssue, calculateStats } from "@app/github/lib/output";
+import { detectRepoFromGit, extractCommentId, parseGitHubUrl } from "@app/utils/github/url-parser";
 import {
-    verbose,
-    toCommentRecord,
     fromCommentRecord,
     setGlobalVerbose,
-    sumReactions,
-    sumPositiveReactions,
     sumNegativeReactions,
+    sumPositiveReactions,
+    sumReactions,
+    toCommentRecord,
+    verbose,
 } from "@app/utils/github/utils";
-import {
-    getDatabase,
-    getOrCreateRepo,
-    getIssue,
-    upsertIssue,
-    getComments as getCachedComments,
-    getLastNComments,
-    upsertComments,
-    getFetchMetadata,
-    updateFetchMetadata,
-} from "@app/github/lib/cache";
-import type { GitHubComment, CommentData, CommentRecord, IssueData } from "@app/github/types";
-import logger from "@app/logger";
+import chalk from "chalk";
+import { Command } from "commander";
+import { existsSync, mkdirSync } from "fs";
+import { join } from "path";
 
 interface CommentsCommandOptions {
     repo?: string;

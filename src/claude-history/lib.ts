@@ -3,43 +3,43 @@
  * Reusable functions for searching and parsing conversation history
  */
 
-import { glob } from "glob";
-import { homedir } from "os";
-import { resolve, basename, sep } from "path";
 import { createReadStream } from "fs";
 import { stat } from "fs/promises";
+import { glob } from "glob";
+import { homedir } from "os";
+import { basename, resolve, sep } from "path";
 import { createInterface } from "readline";
 import {
+    getCacheStats as _getCacheStats,
+    invalidateToday as _invalidateToday,
+    aggregateDailyStats,
     type DailyStats,
     type DateRange,
-    type TokenUsage,
-    getDatabase,
-    getFileIndex,
-    upsertFileIndex,
-    getDailyStats,
-    upsertDailyStats,
-    getDailyStatsInRange,
     getCachedDates,
     getCachedTotals,
-    updateCachedTotals,
-    invalidateToday as _invalidateToday,
+    getDailyStats,
+    getDailyStatsInRange,
+    getDatabase,
+    getFileIndex,
     invalidateDateRange,
-    aggregateDailyStats,
     setCacheMeta,
-    getCacheStats as _getCacheStats,
+    type TokenUsage,
+    updateCachedTotals,
+    upsertDailyStats,
+    upsertFileIndex,
 } from "./cache";
 import type {
+    AssistantMessage,
     ConversationMessage,
+    ConversationMetadata,
+    CustomTitleMessage,
     SearchFilters,
     SearchResult,
-    AssistantMessage,
-    UserMessage,
     SummaryMessage,
-    CustomTitleMessage,
-    ToolUseBlock,
     TextBlock,
     ThinkingBlock,
-    ConversationMetadata,
+    ToolUseBlock,
+    UserMessage,
 } from "./types";
 
 // Re-export all types
@@ -1498,6 +1498,6 @@ export async function getStatsForDateRange(range: DateRange): Promise<Conversati
     return getConversationStatsWithCache({ dateRange: range });
 }
 
+export type { DailyStats, DateRange, TokenUsage } from "./cache";
 // Re-export cache functions for external use
-export { invalidateToday, getCachedTotals, getCacheStats } from "./cache";
-export type { DateRange, DailyStats, TokenUsage } from "./cache";
+export { getCachedTotals, getCacheStats, invalidateToday } from "./cache";

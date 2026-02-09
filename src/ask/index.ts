@@ -1,48 +1,48 @@
 #!/usr/bin/env bun
 
-import { input } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import chalk from "chalk";
-import type { LanguageModel } from "ai";
 import logger from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
-import { getLanguageModel } from "@ask/types";
+import { transcriptionManager } from "@ask/audio/TranscriptionManager";
 import { ChatEngine } from "@ask/chat/ChatEngine";
-import { commandHandler } from "@ask/chat/CommandHandler";
 import type { CommandResult } from "@ask/chat/CommandHandler";
+import { commandHandler } from "@ask/chat/CommandHandler";
 import { ConversationManager, conversationManager } from "@ask/chat/ConversationManager";
+import { costPredictor } from "@ask/output/CostPredictor";
+import { costTracker } from "@ask/output/CostTracker";
+import { outputManager } from "@ask/output/OutputManager";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
-import { transcriptionManager } from "@ask/audio/TranscriptionManager";
-import { outputManager } from "@ask/output/OutputManager";
-import { costTracker } from "@ask/output/CostTracker";
-import { costPredictor } from "@ask/output/CostPredictor";
+import { getLanguageModel } from "@ask/types";
 import { webSearchTool } from "@ask/utils/websearch";
+import { ExitPromptError } from "@inquirer/core";
+import { input } from "@inquirer/prompts";
+import type { LanguageModel } from "ai";
+import chalk from "chalk";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
+import { showPricing } from "@ask/pricing/index";
+import type { Args, ChatConfig, CLIOptions, ProviderChoice } from "@ask/types";
+import type { ModelsOptions } from "@ask/types/cli";
 import {
+    createSystemPrompt,
+    formatElapsedTime,
+    formatError,
+    getConversationsDir,
+    getOutputFormat,
+    isInteractiveMode,
     parseCLIArguments,
+    parseMaxTokens,
+    parseOutputFormat,
+    parseTemperature,
+    shouldShowHelp,
+    shouldShowVersion,
     showHelp,
     showVersion,
     validateOptions,
-    formatError,
-    isInteractiveMode,
-    shouldShowHelp,
-    shouldShowVersion,
-    parseOutputFormat,
-    getOutputFormat,
-    createSystemPrompt,
-    parseTemperature,
-    parseMaxTokens,
-    getConversationsDir,
-    formatElapsedTime,
 } from "@ask/utils/cli";
-import { generateSessionId, colorizeRole, colorizeProvider } from "@ask/utils/helpers";
-import type { Args, CLIOptions, ChatConfig, ProviderChoice } from "@ask/types";
-import type { ModelsOptions } from "@ask/types/cli";
-import { showPricing } from "@ask/pricing/index";
+import { colorizeProvider, colorizeRole, generateSessionId } from "@ask/utils/helpers";
 
 // Initialize conversation manager
 const convManager = conversationManager;

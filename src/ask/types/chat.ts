@@ -1,5 +1,5 @@
-import type { LanguageModelUsage, LanguageModel } from "ai";
 import type { ProviderV2 } from "@ai-sdk/provider";
+import type { LanguageModel, LanguageModelUsage } from "ai";
 import type { DetectedProvider, PricingInfo } from "./provider";
 
 // Message types

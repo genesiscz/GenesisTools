@@ -1,7 +1,7 @@
-import { Command } from "commander";
 import type { CliArgs, CommandType, TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import { LspServer } from "@app/mcp-tsc/providers/LspServer.js";
 import { TscServer } from "@app/mcp-tsc/providers/TscServer.js";
+import { Command } from "commander";
 
 /**
  * Handles CLI argument parsing and mode routing

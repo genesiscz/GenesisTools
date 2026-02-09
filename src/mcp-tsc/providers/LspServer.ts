@@ -1,12 +1,12 @@
-import { LspWorker } from "@app/mcp-tsc/LspWorker.js";
 import type {
-    TSServer,
-    DiagnosticsResult,
     DiagnosticsOptions,
-    HoverResult,
-    HoverPosition,
+    DiagnosticsResult,
     HoverOptions,
+    HoverPosition,
+    HoverResult,
+    TSServer,
 } from "@app/mcp-tsc/core/interfaces.js";
+import { LspWorker } from "@app/mcp-tsc/LspWorker.js";
 
 export interface LspServerOptions {
     cwd: string;

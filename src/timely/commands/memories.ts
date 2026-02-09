@@ -1,10 +1,10 @@
-import { Command, Option } from "commander";
-import chalk from "chalk";
 import logger from "@app/logger";
-import { Storage } from "@app/utils/storage";
-import { TimelyService } from "@app/timely/api/service";
+import type { TimelyService } from "@app/timely/api/service";
+import type { OAuth2Tokens, TimelyEntry } from "@app/timely/types";
 import { fetchMemoriesForDates } from "@app/timely/utils/memories";
-import type { TimelyEntry, OAuth2Tokens } from "@app/timely/types";
+import type { Storage } from "@app/utils/storage";
+import chalk from "chalk";
+import { type Command, Option } from "commander";
 
 export function registerMemoriesCommand(program: Command, storage: Storage, service: TimelyService): void {
     program

@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 
-import { Command } from "commander";
-import { checkbox, confirm, input } from "@inquirer/prompts";
+import logger from "@app/logger";
 import { ExitPromptError } from "@inquirer/core";
+import { checkbox, confirm, input } from "@inquirer/prompts";
 import chalk from "chalk";
 import clipboardy from "clipboardy";
-import logger from "@app/logger";
+import { Command } from "commander";
 import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 
@@ -208,7 +208,6 @@ function removeSections(
         // Remove input if requested
         if (removeInputs.has(toolName) && block.parametersStart !== undefined && block.parametersEnd !== undefined) {
             result = result.substring(0, block.parametersStart) + result.substring(block.parametersEnd);
-            continue;
         }
     }
 

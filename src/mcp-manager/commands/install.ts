@@ -1,11 +1,11 @@
-import { search, input, select } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
-import chalk from "chalk";
 import logger from "@app/logger";
-import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
-import type { UnifiedMCPServerConfig, MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
-import { readUnifiedConfig, writeUnifiedConfig, stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 import { parseCommandString, parseEnvString, parseHeaderString } from "@app/mcp-manager/utils/command.utils.js";
+import { readUnifiedConfig, stripMeta, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
+import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
+import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import { ExitPromptError } from "@inquirer/core";
+import { input, search, select } from "@inquirer/prompts";
+import chalk from "chalk";
 
 export interface InstallOptions {
     type?: string; // stdio, sse, http

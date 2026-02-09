@@ -1,6 +1,6 @@
+import { TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { TrendingUp } from "lucide-react";
 
 // Deterministic heights to avoid SSR hydration mismatch
 const CHART_SKELETON_HEIGHTS = Array.from({ length: 14 }, (_, i) => 20 + ((i * 37) % 60));

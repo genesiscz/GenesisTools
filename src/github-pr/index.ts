@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
 import { execSync } from "child_process";
+import { program } from "commander";
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
-import { program } from "commander";
 
 // =============================================================================
 // Types

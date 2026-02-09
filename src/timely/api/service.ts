@@ -1,15 +1,15 @@
-import type { TimelyApiClient } from "./client";
-import type {
-    TimelyAccount,
-    TimelyProject,
-    TimelyEvent,
-    TimelyUser,
-    CreateEventInput,
-    TimelyEntryResponse,
-    TimelyEntry,
-} from "@app/timely/types";
-import { Storage } from "@app/utils/storage";
 import logger from "@app/logger";
+import type {
+    CreateEventInput,
+    TimelyAccount,
+    TimelyEntry,
+    TimelyEntryResponse,
+    TimelyEvent,
+    TimelyProject,
+    TimelyUser,
+} from "@app/timely/types";
+import type { Storage } from "@app/utils/storage";
+import type { TimelyApiClient } from "./client";
 
 export interface GetEventsParams {
     since?: string; // YYYY-MM-DD
@@ -183,7 +183,6 @@ export class TimelyService {
                             }
                         } catch (error: any) {
                             logger.debug(`[entry] Failed to fetch from ${url}: ${error.message}`);
-                            continue;
                         }
                     }
 

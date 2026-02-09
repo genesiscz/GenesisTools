@@ -1,14 +1,15 @@
-import { describe, it, expect, beforeEach, spyOn } from "bun:test";
-import { setupInquirerMock, setMockResponses } from "./inquirer-mock.js";
+import { beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { setMockResponses, setupInquirerMock } from "./inquirer-mock.js";
 
 // Setup @inquirer/prompts mock BEFORE importing command modules
 setupInquirerMock();
 
 // Now import after mocking
 const { syncServers } = await import("../sync.js");
-import { MockMCPProvider, createMockUnifiedConfig } from "./test-utils.js";
-import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
+
 import logger from "@app/logger";
+import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
+import { createMockUnifiedConfig, MockMCPProvider } from "./test-utils.js";
 
 describe("syncServers", () => {
     let mockProvider: MockMCPProvider;
