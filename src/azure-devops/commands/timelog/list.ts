@@ -76,7 +76,7 @@ export function registerListSubcommand(parent: Command): void {
                     const toDate = resolvedTo;
 
                     if (!fromDate) {
-                        console.error("--since or --day is required for date queries");
+                        console.error("--from (or --since) or --day is required for date queries");
                         process.exit(1);
                     }
 
