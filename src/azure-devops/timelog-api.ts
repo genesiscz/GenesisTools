@@ -15,6 +15,7 @@ import type {
     TimeType,
 } from "@app/azure-devops/types";
 import logger from "@app/logger";
+import { buildUrl } from "@app/utils/url";
 
 export class TimeLogApi {
     private projectId: string;
@@ -26,14 +27,14 @@ export class TimeLogApi {
         this.projectId = projectId;
         this.functionsKey = functionsKey;
         this.currentUser = currentUser;
-        this.baseUrl = `https://boznet-timelogapi.azurewebsites.net/api/${orgId}`;
+        this.baseUrl = buildUrl({ base: "https://boznet-timelogapi.azurewebsites.net/api", segments: [orgId] });
     }
 
     /**
      * Make an HTTP request to the TimeLog API
      */
     private async request<T>(method: "GET" | "POST" | "PUT" | "DELETE", endpoint: string, body?: unknown): Promise<T> {
-        const url = `${this.baseUrl}${endpoint}`;
+        const url = buildUrl({ base: this.baseUrl, segments: [endpoint] });
         const shortUrl = endpoint.slice(0, 60);
 
         logger.debug(`[timelog-api] ${method} ${shortUrl}`);
@@ -152,15 +153,18 @@ export class TimeLogApi {
      * Uses the /timelog/query endpoint
      */
     async queryTimeLogs(params: TimeLogQueryParams): Promise<TimeLogQueryEntry[]> {
-        const queryStr = new URLSearchParams();
-        if (params.FromDate) queryStr.set("FromDate", params.FromDate);
-        if (params.ToDate) queryStr.set("ToDate", params.ToDate);
-        if (params.projectId) queryStr.set("projectId", params.projectId);
-        if (params.workitemId) queryStr.set("workitemId", String(params.workitemId));
-        if (params.userId) queryStr.set("userId", params.userId);
-
-        logger.debug(`[timelog-api] Querying time logs with params: ${queryStr.toString()}`);
-        return this.request<TimeLogQueryEntry[]>("GET", `/timelog/query?${queryStr.toString()}`);
+        const endpoint = buildUrl({
+            base: "/timelog/query",
+            queryParams: {
+                FromDate: params.FromDate,
+                ToDate: params.ToDate,
+                projectId: params.projectId,
+                workitemId: params.workitemId ? String(params.workitemId) : undefined,
+                userId: params.userId,
+            },
+        });
+        logger.debug(`[timelog-api] Querying time logs: ${endpoint}`);
+        return this.request<TimeLogQueryEntry[]>("GET", endpoint);
     }
 
     /**

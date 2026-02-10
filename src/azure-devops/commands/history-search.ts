@@ -159,7 +159,7 @@ async function wiqlSearch(options: SearchOptions, api: Api, config: AzureConfig)
 /** Fetch work items by IDs using az rest (since Api.get is private) */
 async function fetchWorkItemsBatch(config: AzureConfig, idsParam: string, fields: string): Promise<WorkItem[]> {
     const { $ } = await import("bun");
-    const url = `${config.org}/_apis/wit/workitems?ids=${idsParam}&fields=${fields}&api-version=7.1`;
+    const url = Api.orgUrl(config, ["wit", "workitems"], { ids: idsParam, fields });
 
     // Get a token via az CLI
     const tokenResult =
@@ -187,7 +187,7 @@ async function fetchWorkItemsBatch(config: AzureConfig, idsParam: string, fields
             state: (f["System.State"] as string) ?? "",
             changed: (f["System.ChangedDate"] as string) ?? "",
             assignee: (f["System.AssignedTo"] as { displayName?: string } | undefined)?.displayName,
-            url: `${config.org}/${encodeURIComponent(config.project)}/_workitems/edit/${item.id}`,
+            url: Api.workItemWebUrl(config, item.id),
         };
     });
 }
