@@ -7,7 +7,6 @@
 
 import { Api } from "@app/azure-devops/api";
 import {
-    CACHE_TTL,
     formatJSON,
     loadGlobalCache,
     saveGlobalCache,
@@ -198,48 +197,46 @@ export async function handleWorkItem(
     let skippedCount = 0;
     let downloadedCount = 0;
 
+    // Phase 1: Cache check — partition into cached vs needs-fetch
+    const needsFetch: number[] = [];
+    const cachedResults: Map<number, WorkItemFull> = new Map();
+    const existingFilePaths: Map<number, string | null> = new Map();
+
     for (const id of ids) {
         logger.debug(`[workitem] Processing work item #${id}`);
-        // Check cache for 5-minute TTL and settings
         const cache = await loadGlobalCache<WorkItemCache>("workitem", String(id));
         logger.debug(`[workitem] #${id} cache: ${cache ? `found (fetched ${cache.fetchedAt})` : "not found"}`);
 
-        // First, check if file already exists anywhere
         const existingFile = findTaskFileAnywhere(id, "json");
         logger.debug(`[workitem] #${id} existing file: ${existingFile ? existingFile.path : "none"}`);
 
-        // Determine settings: existing file location > args > cache > defaults
         let finalCategory: string | undefined;
         let finalTaskFolder: boolean;
 
         if (existingFile) {
-            // File exists - keep it where it is (respect existing location)
             finalCategory = existingFile.category;
             finalTaskFolder = existingFile.inTaskFolder;
         } else {
-            // New file - use args > cache > defaults
             finalCategory = categoryArg ?? cache?.category;
             finalTaskFolder = taskFoldersArg ?? cache?.taskFolder ?? false;
         }
 
         settingsMap.set(id, { category: finalCategory, taskFolder: finalTaskFolder });
 
-        // Ensure tasks directory exists
         const tasksDir = finalTaskFolder ? `${getTasksDir(finalCategory)}/${id}` : getTasksDir(finalCategory);
         if (!existsSync(tasksDir)) {
             mkdirSync(tasksDir, { recursive: true });
         }
 
         const existingJsonPath = existingFile?.path || null;
+        existingFilePaths.set(id, existingJsonPath);
 
-        // Smart cache check: when we have fresh query metadata, compare changed/rev instead of TTL
         if (queryMetadata && cache && existingJsonPath && existsSync(existingJsonPath)) {
             const freshMeta = queryMetadata.get(id);
             if (freshMeta && freshMeta.changed === cache.changed && freshMeta.rev === cache.rev) {
-                // Workitem hasn't changed since last download - use cached data
                 logger.debug(`[workitem] #${id} unchanged (rev=${cache.rev}), using cache`);
                 const cachedItem = JSON.parse(readFileSync(existingJsonPath, "utf-8")) as WorkItemFull;
-                results.push(cachedItem);
+                cachedResults.set(id, cachedItem);
                 cacheTimes.set(id, new Date(cache.fetchedAt));
                 skippedCount++;
                 continue;
@@ -247,14 +244,13 @@ export async function handleWorkItem(
             logger.debug(`[workitem] #${id} changed since cache (cache rev=${cache.rev}, fresh rev=${freshMeta?.rev})`);
         }
 
-        // TTL-based check for direct --workitem calls (no queryMetadata)
         if (!forceRefresh && !queryMetadata && cache && existingJsonPath && existsSync(existingJsonPath)) {
             const cacheDate = new Date(cache.fetchedAt);
             const ageMinutes = (Date.now() - cacheDate.getTime()) / 60000;
             if (ageMinutes < WORKITEM_FRESHNESS_MINUTES) {
                 logger.debug(`[workitem] #${id} cache fresh (${ageMinutes.toFixed(1)} min old), using cache`);
                 const cachedItem = JSON.parse(readFileSync(existingJsonPath, "utf-8")) as WorkItemFull;
-                results.push(cachedItem);
+                cachedResults.set(id, cachedItem);
                 cacheTimes.set(id, cacheDate);
                 skippedCount++;
                 continue;
@@ -262,30 +258,53 @@ export async function handleWorkItem(
             logger.debug(`[workitem] #${id} cache expired (${ageMinutes.toFixed(1)} min old)`);
         }
 
-        // Fetch fresh data
-        logger.debug(`[workitem] #${id} fetching from API...`);
-        const item = await api.getWorkItem(id);
-        logger.debug(`[workitem] #${id} fetched: "${item.title}" (${item.state})`);
-        results.push(item);
-        downloadedCount++;
+        needsFetch.push(id);
+    }
 
-        // Generate new slugified paths
-        const jsonPath = getTaskFilePath(id, item.title, "json", finalCategory, finalTaskFolder);
-        const mdPath = getTaskFilePath(id, item.title, "md", finalCategory, finalTaskFolder);
+    // Phase 2: Batch fetch fields+relations + parallel comments
+    const fetchedItems: Map<number, WorkItemFull> = new Map();
 
-        // Ensure target directory exists (in case of task folder)
+    if (needsFetch.length > 0) {
+        logger.debug(`[workitem] Batch fetching ${needsFetch.length} work items...`);
+
+        const [batchFields, batchComments] = await Promise.all([
+            api.batchGetFullWorkItems(needsFetch),
+            api.batchGetComments(needsFetch),
+        ]);
+
+        for (const id of needsFetch) {
+            const fields = batchFields.get(id);
+            const comments = batchComments.get(id) ?? [];
+
+            if (!fields) {
+                logger.warn(`[workitem] #${id} not found in batch response, skipping`);
+                continue;
+            }
+
+            const item: WorkItemFull = { ...fields, comments };
+            fetchedItems.set(id, item);
+            downloadedCount++;
+        }
+    }
+
+    // Phase 3: Save fetched items to disk + update cache
+    for (const [id, item] of fetchedItems) {
+        const existingJsonPath = existingFilePaths.get(id) ?? null;
+        const settings = settingsMap.get(id)!;
+
+        const jsonPath = getTaskFilePath(id, item.title, "json", settings.category, settings.taskFolder);
+        const mdPath = getTaskFilePath(id, item.title, "md", settings.category, settings.taskFolder);
+
         const targetDir = dirname(jsonPath);
         if (!existsSync(targetDir)) {
             mkdirSync(targetDir, { recursive: true });
         }
 
-        // Clean up old files if path changed (different slug, category, or folder setting)
         if (existingJsonPath && existingJsonPath !== jsonPath) {
             try {
                 const existingMdPath = existingJsonPath.replace(".json", ".md");
                 if (existsSync(existingJsonPath)) unlinkSync(existingJsonPath);
                 if (existsSync(existingMdPath)) unlinkSync(existingMdPath);
-                // Try to remove empty parent directory
                 const oldDir = dirname(existingJsonPath);
                 if (existsSync(oldDir) && readdirSync(oldDir).length === 0) {
                     rmdirSync(oldDir);
@@ -295,13 +314,11 @@ export async function handleWorkItem(
             }
         }
 
-        // Save to tasks (local in cwd)
         logger.debug(`[workitem] #${id} saving JSON: ${jsonPath}`);
         writeFileSync(jsonPath, JSON.stringify(item, null, 2));
         logger.debug(`[workitem] #${id} saving MD: ${mdPath}`);
         writeFileSync(mdPath, generateWorkItemMarkdown(item));
 
-        // Update global cache with settings
         logger.debug(`[workitem] #${id} updating global cache`);
         const cacheData: WorkItemCache = {
             id: item.id,
@@ -311,10 +328,23 @@ export async function handleWorkItem(
             state: item.state,
             commentCount: item.comments.length,
             fetchedAt: new Date().toISOString(),
-            category: finalCategory,
-            taskFolder: finalTaskFolder,
+            category: settings.category,
+            taskFolder: settings.taskFolder,
         };
         await saveGlobalCache("workitem", String(id), cacheData);
+    }
+
+    // Build results in original ID order
+    for (const id of ids) {
+        const cached = cachedResults.get(id);
+        if (cached) {
+            results.push(cached);
+            continue;
+        }
+        const fetched = fetchedItems.get(id);
+        if (fetched) {
+            results.push(fetched);
+        }
     }
 
     // Log download summary
