@@ -10,10 +10,8 @@ import {
     formatJSON,
     loadGlobalCache,
     saveGlobalCache,
-    saveHistoryCache,
     storage,
 } from "@app/azure-devops/cache";
-import { buildHistoryFromRevisions } from "@app/azure-devops/history";
 import type {
     AzureConfig,
     ChangeInfo,
@@ -216,7 +214,6 @@ interface QueryOptions {
     changesFrom?: string;
     changesTo?: string;
     downloadWorkitems?: boolean;
-    withoutHistory?: boolean;
     category?: string;
     taskFolders?: boolean;
 }
@@ -231,8 +228,7 @@ export async function handleQuery(
     filters?: QueryFilters,
     downloadWorkitems?: boolean,
     category?: string,
-    taskFolders?: boolean,
-    withoutHistory?: boolean
+    taskFolders?: boolean
 ): Promise<void> {
     silentMode = format === "json"; // Suppress progress messages for JSON output
     logger.debug(`[query] Starting with input: ${input}, force=${forceRefresh}`);
@@ -362,55 +358,6 @@ export async function handleQuery(
         const ids = items.map((item) => item.id).join(",");
         // Pass queryMetadata for smart comparison (ignores forceRefresh when metadata available)
         await workItemHandler(ids, format, false, effectiveCategory, effectiveTaskFolders, queryMetadata);
-
-        // Auto-fetch history for downloaded work items (unless --without-history)
-        if (!withoutHistory) {
-            await autoFetchHistory(
-                items.map((i) => i.id),
-                config
-            );
-        }
-    }
-}
-
-// ============= Auto-Fetch History =============
-
-/**
- * Auto-fetch history for work items after download using the batch reporting API.
- * Uses /reporting/workitemrevisions for efficient batch fetch (~1-2 API calls).
- */
-async function autoFetchHistory(workItemIds: number[], config: AzureConfig): Promise<void> {
-    if (workItemIds.length === 0) return;
-
-    const api = new Api(config);
-    log(`\nFetching history for ${workItemIds.length} work items...`);
-
-    try {
-        const revisionsByItem = await api.getReportingRevisions({
-            workItemIds,
-            startDateTime: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000), // Last 90 days
-            onProgress: ({ page, matchedItems, totalRevisions }) => {
-                log(
-                    `  Page ${page}: ${totalRevisions} revisions scanned, ${matchedItems}/${workItemIds.length} items matched`
-                );
-            },
-        });
-
-        let count = 0;
-        for (const id of workItemIds) {
-            const revisions = revisionsByItem.get(id);
-            if (revisions && revisions.length > 0) {
-                const history = buildHistoryFromRevisions(id, revisions);
-                await saveHistoryCache(id, history);
-                count++;
-            }
-        }
-
-        log(`Fetched history for ${count} work items`);
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.warn(`[query] Auto-fetch history failed: ${message}`);
-        log(`Warning: History fetch failed (${message}). Use 'history sync' to retry.`);
     }
 }
 
@@ -430,7 +377,6 @@ export function registerQueryCommand(program: Command): void {
         .option("--changes-from <date>", "Show changes from this date")
         .option("--changes-to <date>", "Show changes up to this date")
         .option("--download-workitems", "Download all work items to tasks/")
-        .option("--without-history", "Skip automatic history download with --download-workitems")
         .option("--category <name>", "Save to tasks/<category>/")
         .option("--task-folders", "Save in tasks/<id>/ subfolder")
         .action(async (input: string, options: QueryOptions) => {
@@ -465,8 +411,7 @@ export function registerQueryCommand(program: Command): void {
                 filters,
                 options.downloadWorkitems,
                 options.category,
-                options.taskFolders,
-                options.withoutHistory
+                options.taskFolders
             );
         });
 }
