@@ -23,6 +23,7 @@ import type {
     WorkItemUpdate,
 } from "@app/azure-devops/types";
 import logger from "@app/logger";
+import { buildUrl } from "@app/utils/url";
 import { $ } from "bun";
 
 // Azure DevOps API resource ID (constant for all Azure DevOps organizations)
@@ -64,6 +65,90 @@ export class Api {
 
     constructor(config: AzureConfig) {
         this.config = config;
+    }
+
+    // ============= Static URL Builders =============
+    // Project segment is auto-encoded. Other path segments are NOT auto-encoded
+    // (caller encodes when needed, e.g., work item type names with spaces).
+
+    private static filterParams(params?: Record<string, string | undefined>): Record<string, string> | undefined {
+        if (!params) return undefined;
+        const result: Record<string, string> = {};
+        for (const [k, v] of Object.entries(params)) {
+            if (v !== undefined) result[k] = v;
+        }
+        return Object.keys(result).length > 0 ? result : undefined;
+    }
+
+    /**
+     * Project-scoped WIT API URL: `{org}/{project}/_apis/wit/{path}?api-version=7.1`
+     */
+    static witUrl(config: AzureConfig, path: string | string[], queryParams?: Record<string, string | undefined>): string {
+        const segments = Array.isArray(path) ? path : [path];
+        return buildUrl({
+            base: config.org,
+            segments: [encodeURIComponent(config.project), "_apis", "wit", ...segments],
+            queryParams: { "api-version": "7.1", ...Api.filterParams(queryParams) },
+        });
+    }
+
+    /**
+     * Project-scoped WIT API URL with preview version.
+     * Default: `7.1-preview.3` (used for comments endpoint).
+     */
+    static witUrlPreview(config: AzureConfig, path: string | string[], queryParams?: Record<string, string | undefined>, version = "7.1-preview.3"): string {
+        const segments = Array.isArray(path) ? path : [path];
+        return buildUrl({
+            base: config.org,
+            segments: [encodeURIComponent(config.project), "_apis", "wit", ...segments],
+            queryParams: { "api-version": version, ...Api.filterParams(queryParams) },
+        });
+    }
+
+    /**
+     * Project-scoped non-WIT API URL (dashboard, etc.).
+     * `{org}/{project}/_apis/{resource}/{path}?api-version=...`
+     */
+    static projectApiUrl(config: AzureConfig, path: string[], queryParams?: Record<string, string | undefined>, apiVersion = "7.1"): string {
+        return buildUrl({
+            base: config.org,
+            segments: [encodeURIComponent(config.project), "_apis", ...path],
+            queryParams: { "api-version": apiVersion, ...Api.filterParams(queryParams) },
+        });
+    }
+
+    /**
+     * Org-scoped API URL (no project in path).
+     * `{org}/_apis/{path}?api-version=7.1`
+     */
+    static orgUrl(config: AzureConfig, path: string[], queryParams?: Record<string, string | undefined>): string {
+        return buildUrl({
+            base: config.org,
+            segments: ["_apis", ...path],
+            queryParams: { "api-version": "7.1", ...Api.filterParams(queryParams) },
+        });
+    }
+
+    /**
+     * Org-scoped URL from raw org string (for static methods that don't have a config).
+     */
+    static orgUrlRaw(org: string, path: string[], queryParams?: Record<string, string | undefined>): string {
+        return buildUrl({
+            base: org,
+            segments: ["_apis", ...path],
+            queryParams: { "api-version": "7.1", ...Api.filterParams(queryParams) },
+        });
+    }
+
+    /**
+     * Work item web UI URL (not API, no api-version).
+     * `{org}/{project}/_workitems/edit/{id}`
+     */
+    static workItemWebUrl(config: AzureConfig, id: number): string {
+        return buildUrl({
+            base: config.org,
+            segments: [encodeURIComponent(config.project), "_workitems", "edit", String(id)],
+        });
     }
 
     // ============= Private HTTP Helpers =============
