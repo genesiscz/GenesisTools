@@ -274,7 +274,7 @@ export class Api {
      * Generate the URL for a work item in Azure DevOps web UI
      */
     generateWorkItemUrl(id: number): string {
-        return `${this.config.org}/${encodeURIComponent(this.config.project)}/_workitems/edit/${id}`;
+        return Api.workItemWebUrl(this.config, id);
     }
 
     /**
@@ -283,7 +283,7 @@ export class Api {
      */
     async runQuery(queryId: string): Promise<WorkItem[]> {
         // Step 1: Run the query to get work item IDs
-        const queryUrl = `${this.config.org}/${encodeURIComponent(this.config.project)}/_apis/wit/wiql/${queryId}?api-version=7.1`;
+        const queryUrl = Api.witUrl(this.config, ["wiql", queryId]);
         const queryResult = await this.get<{ workItems?: Array<{ id: number; url: string }> }>(
             queryUrl,
             `query ${queryId.slice(0, 8)}`
@@ -318,7 +318,7 @@ export class Api {
         for (let i = 0; i < ids.length; i += batchSize) {
             const batchIds = ids.slice(i, i + batchSize);
             const idsParam = batchIds.join(",");
-            const itemsUrl = `${this.config.org}/_apis/wit/workitems?ids=${idsParam}&fields=${fields}&api-version=7.1`;
+            const itemsUrl = Api.orgUrl(this.config, ["wit", "workitems"], { ids: idsParam, fields });
             const itemsResult = await this.get<{
                 value: Array<{ id: number; rev: number; fields: Record<string, unknown> }>;
             }>(itemsUrl, `batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(ids.length / batchSize)}`);
@@ -356,7 +356,7 @@ export class Api {
         );
 
         // Get comments via REST API
-        const commentsUrl = `${this.config.org}/${encodeURIComponent(this.config.project)}/_apis/wit/workItems/${id}/comments?api-version=7.1-preview.3`;
+        const commentsUrl = Api.witUrlPreview(this.config, ["workItems", String(id), "comments"]);
         const commentsData = await this.get<{
             comments: Array<{ id: number; createdBy: { displayName: string }; createdDate: string; text: string }>;
         }>(commentsUrl, `comments for #${id}`);
@@ -396,7 +396,7 @@ export class Api {
      */
     async getDashboard(dashboardId: string): Promise<Dashboard> {
         logger.debug(`[api] Fetching dashboard ${dashboardId.slice(0, 8)}...`);
-        const dashboardsUrl = `${this.config.org}/${encodeURIComponent(this.config.project)}/_apis/dashboard/dashboards?api-version=7.1-preview.3`;
+        const dashboardsUrl = Api.projectApiUrl(this.config, ["dashboard", "dashboards"], undefined, "7.1-preview.3");
         const dashboardsData = await this.get<{ value: Array<{ id: string; name: string; groupId?: string }> }>(
             dashboardsUrl,
             "list dashboards"
@@ -409,7 +409,11 @@ export class Api {
         logger.debug(`[api] Found dashboard: "${dashboard.name}"`);
 
         const groupPath = dashboard.groupId ? `${this.config.projectId}/${dashboard.groupId}` : this.config.projectId;
-        const widgetsUrl = `${this.config.org}/${groupPath}/_apis/Dashboard/Dashboards/${dashboardId}?api-version=7.1-preview.3`;
+        const widgetsUrl = buildUrl({
+            base: this.config.org,
+            segments: [groupPath, "_apis", "Dashboard", "Dashboards", dashboardId],
+            queryParams: { "api-version": "7.1-preview.3" },
+        });
         const widgetsData = await this.get<{ name: string; widgets: Array<{ name: string; settings: string }> }>(
             widgetsUrl,
             "dashboard widgets"
@@ -449,7 +453,7 @@ export class Api {
     async createWorkItem(type: WorkItemType, operations: JsonPatchOperation[]): Promise<WorkItemFull> {
         logger.debug(`[api] Creating work item of type: ${type}`);
         logger.debug(`[api] Operations: ${operations.map((o) => o.path).join(", ")}`);
-        const url = `${this.config.org}/${encodeURIComponent(this.config.project)}/_apis/wit/workitems/$${encodeURIComponent(type)}?api-version=7.1`;
+        const url = Api.witUrl(this.config, ["workitems", `$${encodeURIComponent(type)}`]);
 
         const result = await this.post<Record<string, unknown>>(
             url,
@@ -487,7 +491,7 @@ export class Api {
      */
     async getWorkItemTypeDefinition(type: WorkItemType): Promise<WorkItemTypeDefinition> {
         logger.debug(`[api] Fetching type definition for: ${type}`);
-        const url = `${this.config.org}/${encodeURIComponent(this.config.project)}/_apis/wit/workitemtypes/${encodeURIComponent(type)}?api-version=7.1`;
+        const url = Api.witUrl(this.config, ["workitemtypes", encodeURIComponent(type)]);
         return this.get<WorkItemTypeDefinition>(url, `type definition: ${type}`);
     }
 
@@ -496,7 +500,7 @@ export class Api {
      */
     async getAvailableWorkItemTypes(): Promise<WorkItemType[]> {
         logger.debug("[api] Fetching available work item types");
-        const url = `${this.config.org}/${encodeURIComponent(this.config.project)}/_apis/wit/workitemtypes?api-version=7.1`;
+        const url = Api.witUrl(this.config, "workitemtypes");
         const result = await this.get<{ value: WorkItemTypeDefinition[] }>(url, "work item types");
         const types = result.value.filter((t) => !t.isDisabled).map((t) => t.name as WorkItemType);
         logger.debug(`[api] Found ${types.length} available work item types`);
@@ -512,7 +516,7 @@ export class Api {
         const queries: QueryInfo[] = [];
 
         // Azure DevOps Queries API - get root level queries
-        const rootUrl = `${this.config.org}/${encodeURIComponent(this.config.project)}/_apis/wit/queries?$depth=2&api-version=7.1`;
+        const rootUrl = Api.witUrl(this.config, "queries", { "$depth": "2" });
         const rootData = await this.get<{ value: QueryNode[] }>(rootUrl, "root queries");
 
         // Recursively process query tree
@@ -534,7 +538,7 @@ export class Api {
                     }
                 } else if (node.hasChildren) {
                     // Need to fetch children
-                    const childUrl = `${this.config.org}/${encodeURIComponent(this.config.project)}/_apis/wit/queries/${node.id}?$depth=2&api-version=7.1`;
+                    const childUrl = Api.witUrl(this.config, ["queries", node.id], { "$depth": "2" });
                     try {
                         const childData = await this.get<QueryNode>(childUrl);
                         if (childData.children) {
@@ -568,9 +572,7 @@ export class Api {
     // ============= History & Reporting Methods =============
 
     async runWiql(wiql: string, options?: { top?: number }): Promise<WiqlResponse> {
-        const params = new URLSearchParams({ "api-version": "7.1" });
-        if (options?.top) params.set("$top", String(options.top));
-        const url = `${this.config.org}/${encodeURIComponent(this.config.project)}/_apis/wit/wiql?${params}`;
+        const url = Api.witUrl(this.config, "wiql", { "$top": options?.top ? String(options.top) : undefined });
         return this.post<WiqlResponse>(url, { query: wiql }, "application/json", "WIQL query");
     }
 
@@ -594,7 +596,7 @@ export class Api {
         let skip = 0;
         const top = 200;
         while (true) {
-            const url = `${this.config.org}/${encodeURIComponent(this.config.project)}/_apis/wit/workItems/${id}/updates?$top=${top}&$skip=${skip}&api-version=7.1`;
+            const url = Api.witUrl(this.config, ["workItems", String(id), "updates"], { "$top": String(top), "$skip": String(skip) });
             const data = await this.get<{ count: number; value: WorkItemUpdate[] }>(
                 url,
                 `updates for #${id} (skip=${skip})`
@@ -638,10 +640,11 @@ export class Api {
 
         do {
             page++;
-            const params = new URLSearchParams({ "api-version": "7.1", $maxPageSize: String(maxPageSize) });
-            if (options.startDateTime) params.set("startDateTime", options.startDateTime.toISOString());
-            if (continuationToken) params.set("continuationToken", continuationToken);
-            const url = `${this.config.org}/${encodeURIComponent(this.config.project)}/_apis/wit/reporting/workitemrevisions?${params}`;
+            const url = Api.witUrl(this.config, ["reporting", "workitemrevisions"], {
+                "$maxPageSize": String(maxPageSize),
+                startDateTime: options.startDateTime?.toISOString(),
+                continuationToken,
+            });
             const data = await this.post<ReportingRevisionsResponse>(
                 url,
                 body,
@@ -670,10 +673,10 @@ export class Api {
         id: number,
         options?: { top?: number; expand?: string }
     ): Promise<Array<{ rev: number; fields: Record<string, unknown> }>> {
-        const params = new URLSearchParams({ "api-version": "7.1" });
-        if (options?.top) params.set("$top", String(options.top));
-        if (options?.expand) params.set("$expand", options.expand);
-        const url = `${this.config.org}/${encodeURIComponent(this.config.project)}/_apis/wit/workItems/${id}/revisions?${params}`;
+        const url = Api.witUrl(this.config, ["workItems", String(id), "revisions"], {
+            "$top": options?.top ? String(options.top) : undefined,
+            "$expand": options?.expand,
+        });
         const data = await this.get<{ value: Array<{ rev: number; fields: Record<string, unknown> }> }>(
             url,
             `revisions for #${id}`
@@ -689,13 +692,13 @@ export class Api {
         const cached = await loadTeamMembersCache(this.config.projectId);
         if (cached) return cached;
 
-        const teamsUrl = `${this.config.org}/_apis/projects/${this.config.projectId}/teams?api-version=7.1`;
+        const teamsUrl = Api.orgUrl(this.config, ["projects", this.config.projectId, "teams"]);
         const teams = await this.get<{ value: Array<{ id: string; name: string }> }>(teamsUrl, "teams");
         const members: IdentityRef[] = [];
         const seen = new Set<string>();
 
         for (const team of teams.value) {
-            const membersUrl = `${this.config.org}/_apis/projects/${this.config.projectId}/teams/${team.id}/members?api-version=7.1`;
+            const membersUrl = Api.orgUrl(this.config, ["projects", this.config.projectId, "teams", team.id, "members"]);
             const data = await this.get<{ value: Array<{ identity: IdentityRef }> }>(
                 membersUrl,
                 `members of ${team.name}`
@@ -723,7 +726,7 @@ export class Api {
             await $`az account get-access-token --resource ${AZURE_DEVOPS_RESOURCE_ID} --query accessToken -o tsv`.quiet();
         const token = result.text().trim();
 
-        const url = `${org}/_apis/projects/${encodeURIComponent(project)}?api-version=7.1`;
+        const url = Api.orgUrlRaw(org, ["projects", encodeURIComponent(project)]);
         logger.debug(`[api:static] GET ${url.replace(org, "")}`);
 
         const response = await fetch(url, {
@@ -749,7 +752,7 @@ export class Api {
             await $`az account get-access-token --resource ${AZURE_DEVOPS_RESOURCE_ID} --query accessToken -o tsv`.quiet();
         const token = result.text().trim();
 
-        const url = `${org}/_apis/projects?api-version=7.1`;
+        const url = Api.orgUrlRaw(org, ["projects"]);
         logger.debug(`[api:static] GET ${url.replace(org, "")}`);
 
         const response = await fetch(url, {
