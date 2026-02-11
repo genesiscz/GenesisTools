@@ -328,29 +328,6 @@ export interface UsedValuesCache {
     parents: { id: number; title: string }[]; // Common parent work items
 }
 
-/** Options for the --create command */
-export interface CreateOptions {
-    interactive: boolean;
-    fromFile?: string;
-    type?: WorkItemType;
-    sourceInput?: string;
-    title?: string;
-    description?: string;
-    area?: string;
-    iteration?: string;
-    severity?: string;
-    tags?: string;
-    assignee?: string;
-    parent?: string;
-}
-
-/** Cached work item type definitions */
-export interface TypeDefinitionCache {
-    project: string;
-    types: Record<string, WorkItemTypeDefinition>;
-    fetchedAt: string;
-}
-
 /** Query information from Azure DevOps */
 export interface QueryInfo {
     id: string;
@@ -367,9 +344,6 @@ export interface QueriesCache {
 }
 
 // ============= TimeLog Types (Third-Party Extension) =============
-
-/** TimeLog API base URL */
-export const TIMELOG_API_BASE = "https://boznet-timelogapi.azurewebsites.net/api";
 
 /** Time type definition from TimeLog API */
 export interface TimeType {

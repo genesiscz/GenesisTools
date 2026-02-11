@@ -181,30 +181,6 @@ export class Api {
     /**
      * Execute an az CLI command with logging
      */
-    private async azCommand<T>(command: string[], description: string): Promise<T> {
-        const cmdStr = command.join(" ");
-        logger.debug(`[api] ${description}`);
-        logger.debug(`[api] Running: az ${cmdStr}`);
-        const startTime = Date.now();
-
-        try {
-            const result = await $`az ${command}`.quiet();
-            const text = result.text();
-            const elapsed = Date.now() - startTime;
-            logger.debug(`[api] az command completed in ${elapsed}ms`);
-
-            if (!text.trim()) {
-                throw new Error(`Empty response from az ${command[0]}`);
-            }
-            const parsed = JSON.parse(text) as T;
-            return parsed;
-        } catch (error) {
-            const stderr = (error as { stderr?: { toString(): string } })?.stderr?.toString?.()?.trim();
-            const message = stderr || (error instanceof Error ? error.message : String(error));
-            throw new Error(`az ${command[0]} failed: ${message}`);
-        }
-    }
-
     /**
      * Make an HTTP request with logging and error handling
      */
@@ -719,26 +695,6 @@ export class Api {
         } while (continuationToken);
 
         return revisionsByItem;
-    }
-
-    /**
-     * Fetch full revision snapshots for a single work item.
-     * @note Not used in main flow because /updates provides oldValue/newValue deltas.
-     * @note Could be useful for: Reconstructing exact complete state at each revision.
-     */
-    async getWorkItemRevisions(
-        id: number,
-        options?: { top?: number; expand?: string }
-    ): Promise<Array<{ rev: number; fields: Record<string, unknown> }>> {
-        const url = Api.witUrl(this.config, ["workItems", String(id), "revisions"], {
-            "$top": options?.top ? String(options.top) : undefined,
-            "$expand": options?.expand,
-        });
-        const data = await this.get<{ value: Array<{ rev: number; fields: Record<string, unknown> }> }>(
-            url,
-            `revisions for #${id}`
-        );
-        return data.value;
     }
 
     /**
