@@ -60,6 +60,14 @@ export interface Dashboard {
 	queries: Array<{ name: string; queryId: string }>;
 }
 
+/** Options for getWorkItems — controls which extra data to fetch */
+export interface GetWorkItemsOptions {
+	/** Fetch comments for each item (parallel, concurrency=5). Default: true */
+	comments?: boolean;
+	/** Fetch field change updates/history for each item (parallel). Default: false */
+	updates?: boolean;
+}
+
 /** Query tree node from Queries API (internal to recursive traversal) */
 export interface QueryNode {
 	id: string;

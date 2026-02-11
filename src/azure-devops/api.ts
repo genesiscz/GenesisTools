@@ -11,10 +11,12 @@ import type {
 	Dashboard,
 	DashboardDetailResponse,
 	DashboardsListResponse,
+	GetWorkItemsOptions,
 	QueryNode,
 	TeamMembersResponse,
 	TeamsListResponse,
 } from "@app/azure-devops/api.types";
+import { concurrentMap } from "@app/utils/async";
 import type {
     AzureConfig,
     AzWorkItemRaw,
@@ -375,33 +377,29 @@ export class Api {
     }
 
     /**
-     * Get full details of a work item including comments and relations
+     * Get full details of a single work item including comments.
+     * Delegates to getWorkItems() for consistency.
      */
     async getWorkItem(id: number): Promise<WorkItemFull> {
-        const item = await this.azCommand<AzWorkItemRaw>(
-            ["boards", "work-item", "show", "--id", String(id), "-o", "json"],
-            `Fetching work item #${id}`
-        );
-
-        // Get comments via REST API
-        const commentsUrl = Api.witUrlPreview(this.config, ["workItems", String(id), "comments"]);
-        const commentsData = await this.get<CommentsResponse>(commentsUrl, `comments for #${id}`);
-        logger.debug(`[api] Work item #${id} has ${commentsData.comments?.length || 0} comments`);
-
-        return {
-            ...this.mapRawToWorkItemBase(item),
-            comments: this.mapComments(commentsData),
-        };
+        const results = await this.getWorkItems([id], { comments: true });
+        const item = results.get(id);
+        if (!item) throw new Error(`Work item #${id} not found`);
+        return item;
     }
 
     /**
-     * Batch fetch full work items (all fields + relations) in one REST call.
-     * Batches of 200 (API limit). Comments NOT included — use batchGetComments().
+     * Fetch work items by IDs with configurable extra data.
+     * Always fetches all fields + relations via $expand=all (batches of 200).
+     * Optionally fetches comments and/or updates in parallel.
      */
-    async batchGetFullWorkItems(ids: number[]): Promise<Map<number, Omit<WorkItemFull, "comments">>> {
-        const result = new Map<number, Omit<WorkItemFull, "comments">>();
+    async getWorkItems(
+        ids: number[],
+        options: GetWorkItemsOptions = { comments: true }
+    ): Promise<Map<number, WorkItemFull>> {
         const batchSize = 200;
 
+        // Phase 1: Batch fetch fields + relations
+        const allBaseItems = new Map<number, Omit<WorkItemFull, "comments" | "updates">>();
         for (let i = 0; i < ids.length; i += batchSize) {
             const batchIds = ids.slice(i, i + batchSize);
             const url = Api.orgUrl(this.config, ["wit", "workitems"], {
@@ -410,40 +408,66 @@ export class Api {
             });
             const response = await this.get<{ value: AzWorkItemRaw[] }>(
                 url,
-                `batch full ${Math.floor(i / batchSize) + 1}/${Math.ceil(ids.length / batchSize)}`
+                `batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(ids.length / batchSize)}`
             );
-
             for (const item of response.value) {
-                result.set(item.id, this.mapRawToWorkItemBase(item));
+                allBaseItems.set(item.id, this.mapRawToWorkItemBase(item));
             }
         }
 
-        logger.debug(`[api] Batch fetched ${result.size} full work items`);
+        logger.debug(`[api] Batch fetched ${allBaseItems.size} work items`);
+
+        // Phase 2: Parallel fetch of comments and/or updates
+        const fetchComments = options.comments !== false;
+        const fetchUpdates = options.updates === true;
+
+        const commentsMap = fetchComments
+            ? await this.fetchComments(ids)
+            : new Map<number, Comment[]>();
+
+        const updatesMap = fetchUpdates
+            ? await this.fetchUpdates(ids)
+            : new Map<number, WorkItemUpdate[]>();
+
+        // Phase 3: Assemble results
+        const result = new Map<number, WorkItemFull>();
+        for (const id of ids) {
+            const base = allBaseItems.get(id);
+            if (!base) continue;
+            const entry: WorkItemFull = {
+                ...base,
+                comments: commentsMap.get(id) ?? [],
+            };
+            if (fetchUpdates) {
+                entry.updates = updatesMap.get(id) ?? [];
+            }
+            result.set(id, entry);
+        }
+
         return result;
     }
 
-    /**
-     * Fetch comments for multiple work items in parallel with concurrency limit.
-     */
-    async batchGetComments(ids: number[], concurrency = 5): Promise<Map<number, Comment[]>> {
-        const result = new Map<number, Comment[]>();
+    private async fetchComments(ids: number[]): Promise<Map<number, Comment[]>> {
+        const result = await concurrentMap({
+            items: ids,
+            fn: async (id) => {
+                const url = Api.witUrlPreview(this.config, ["workItems", String(id), "comments"]);
+                const data = await this.get<CommentsResponse>(url, `comments #${id}`);
+                return this.mapComments(data);
+            },
+            onError: (id, error) => logger.warn(`[api] Failed to fetch comments for #${id}: ${error}`),
+        });
+        logger.debug(`[api] Fetched comments for ${result.size}/${ids.length} items`);
+        return result;
+    }
 
-        for (let i = 0; i < ids.length; i += concurrency) {
-            const batch = ids.slice(i, i + concurrency);
-            const promises = batch.map(async (id) => {
-                const commentsUrl = Api.witUrlPreview(this.config, ["workItems", String(id), "comments"]);
-                const commentsData = await this.get<CommentsResponse>(commentsUrl, `comments for #${id}`);
-                return { id, comments: this.mapComments(commentsData) };
-            });
-
-            const results = await Promise.all(promises);
-            for (const { id, comments } of results) {
-                result.set(id, comments);
-                logger.debug(`[api] Work item #${id} has ${comments.length} comments`);
-            }
-        }
-
-        logger.debug(`[api] Batch fetched comments for ${result.size} work items`);
+    private async fetchUpdates(ids: number[]): Promise<Map<number, WorkItemUpdate[]>> {
+        const result = await concurrentMap({
+            items: ids,
+            fn: async (id) => this.getWorkItemUpdates(id),
+            onError: (id, error) => logger.warn(`[api] Failed to fetch updates for #${id}: ${error}`),
+        });
+        logger.debug(`[api] Fetched updates for ${result.size}/${ids.length} items`);
         return result;
     }
 

@@ -267,21 +267,14 @@ export async function handleWorkItem(
     if (needsFetch.length > 0) {
         logger.debug(`[workitem] Batch fetching ${needsFetch.length} work items...`);
 
-        const [batchFields, batchComments] = await Promise.all([
-            api.batchGetFullWorkItems(needsFetch),
-            api.batchGetComments(needsFetch),
-        ]);
+        const fetched = await api.getWorkItems(needsFetch, { comments: true });
 
         for (const id of needsFetch) {
-            const fields = batchFields.get(id);
-            const comments = batchComments.get(id) ?? [];
-
-            if (!fields) {
+            const item = fetched.get(id);
+            if (!item) {
                 logger.warn(`[workitem] #${id} not found in batch response, skipping`);
                 continue;
             }
-
-            const item: WorkItemFull = { ...fields, comments };
             fetchedItems.set(id, item);
             downloadedCount++;
         }
