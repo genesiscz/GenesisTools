@@ -53,6 +53,8 @@ export interface WorkItemFull extends WorkItem {
     relations?: Relation[];
     /** Raw field values from Azure DevOps API (keyed by reference name, e.g., "System.AreaPath") */
     rawFields?: Record<string, unknown>;
+    /** Field change history (deltas). Populated when fetched with { updates: true } */
+    updates?: WorkItemUpdate[];
 }
 
 export interface Comment {

@@ -7,6 +7,15 @@
 
 import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/cache";
 import type {
+	CommentsResponse,
+	Dashboard,
+	DashboardDetailResponse,
+	DashboardsListResponse,
+	QueryNode,
+	TeamMembersResponse,
+	TeamsListResponse,
+} from "@app/azure-devops/api.types";
+import type {
     AzureConfig,
     AzWorkItemRaw,
     Comment,
@@ -29,25 +38,8 @@ import { $ } from "bun";
 // Azure DevOps API resource ID (constant for all Azure DevOps organizations)
 export const AZURE_DEVOPS_RESOURCE_ID = "499b84ac-1321-427f-aa17-267ca6975798";
 
-/**
- * Dashboard information returned from the API
- */
-export interface Dashboard {
-    name: string;
-    queries: Array<{ name: string; queryId: string }>;
-}
-
-/**
- * Query node from Azure DevOps Queries API
- */
-interface QueryNode {
-    id: string;
-    name: string;
-    path: string;
-    isFolder: boolean;
-    hasChildren?: boolean;
-    children?: QueryNode[];
-}
+// Re-export Dashboard for backwards compatibility
+export type { Dashboard };
 
 /**
  * Api class for Azure DevOps interactions
@@ -346,6 +338,42 @@ export class Api {
         return allItems;
     }
 
+    // ============= Shared Mappers =============
+
+    /**
+     * Map raw Azure DevOps work item fields to domain model.
+     * Shared by getWorkItem, getWorkItems, createWorkItem.
+     */
+    private mapRawToWorkItemBase(raw: AzWorkItemRaw): Omit<WorkItemFull, "comments" | "updates"> {
+        const fields = raw.fields ?? {};
+        return {
+            id: raw.id,
+            rev: raw.rev,
+            title: fields["System.Title"] as string,
+            state: fields["System.State"] as string,
+            changed: fields["System.ChangedDate"] as string,
+            severity: fields["Microsoft.VSTS.Common.Severity"] as string | undefined,
+            assignee: (fields["System.AssignedTo"] as { displayName?: string } | undefined)?.displayName,
+            tags: fields["System.Tags"] as string | undefined,
+            description: fields["System.Description"] as string | undefined,
+            created: fields["System.CreatedDate"] as string | undefined,
+            createdBy: (fields["System.CreatedBy"] as { displayName?: string } | undefined)?.displayName,
+            changedBy: (fields["System.ChangedBy"] as { displayName?: string } | undefined)?.displayName,
+            url: this.generateWorkItemUrl(raw.id),
+            relations: raw.relations,
+            rawFields: fields,
+        };
+    }
+
+    private mapComments(data: CommentsResponse): Comment[] {
+        return (data.comments || []).map((c) => ({
+            id: c.id,
+            author: c.createdBy?.displayName,
+            date: c.createdDate,
+            text: c.text,
+        }));
+    }
+
     /**
      * Get full details of a work item including comments and relations
      */
@@ -357,37 +385,12 @@ export class Api {
 
         // Get comments via REST API
         const commentsUrl = Api.witUrlPreview(this.config, ["workItems", String(id), "comments"]);
-        const commentsData = await this.get<{
-            comments: Array<{ id: number; createdBy: { displayName: string }; createdDate: string; text: string }>;
-        }>(commentsUrl, `comments for #${id}`);
+        const commentsData = await this.get<CommentsResponse>(commentsUrl, `comments for #${id}`);
         logger.debug(`[api] Work item #${id} has ${commentsData.comments?.length || 0} comments`);
 
-        const fields = item.fields;
-
         return {
-            id: item.id,
-            rev: item.rev,
-            title: fields?.["System.Title"] as string,
-            state: fields?.["System.State"] as string,
-            changed: fields?.["System.ChangedDate"] as string,
-            severity: fields?.["Microsoft.VSTS.Common.Severity"] as string | undefined,
-            assignee: (fields?.["System.AssignedTo"] as { displayName?: string } | undefined)?.displayName,
-            tags: fields?.["System.Tags"] as string | undefined,
-            description: fields?.["System.Description"] as string | undefined,
-            created: fields?.["System.CreatedDate"] as string | undefined,
-            createdBy: (fields?.["System.CreatedBy"] as { displayName?: string } | undefined)?.displayName,
-            changedBy: (fields?.["System.ChangedBy"] as { displayName?: string } | undefined)?.displayName,
-            url: this.generateWorkItemUrl(id),
-            comments: (commentsData.comments || []).map(
-                (c): Comment => ({
-                    id: c.id,
-                    author: c.createdBy?.displayName,
-                    date: c.createdDate,
-                    text: c.text,
-                })
-            ),
-            relations: item.relations,
-            rawFields: fields,
+            ...this.mapRawToWorkItemBase(item),
+            comments: this.mapComments(commentsData),
         };
     }
 
@@ -411,24 +414,7 @@ export class Api {
             );
 
             for (const item of response.value) {
-                const fields = item.fields ?? {};
-                result.set(item.id, {
-                    id: item.id,
-                    rev: item.rev,
-                    title: fields["System.Title"] as string,
-                    state: fields["System.State"] as string,
-                    changed: fields["System.ChangedDate"] as string,
-                    severity: fields["Microsoft.VSTS.Common.Severity"] as string | undefined,
-                    assignee: (fields["System.AssignedTo"] as { displayName?: string } | undefined)?.displayName,
-                    tags: fields["System.Tags"] as string | undefined,
-                    description: fields["System.Description"] as string | undefined,
-                    created: fields["System.CreatedDate"] as string | undefined,
-                    createdBy: (fields["System.CreatedBy"] as { displayName?: string } | undefined)?.displayName,
-                    changedBy: (fields["System.ChangedBy"] as { displayName?: string } | undefined)?.displayName,
-                    url: this.generateWorkItemUrl(item.id),
-                    relations: item.relations,
-                    rawFields: fields,
-                });
+                result.set(item.id, this.mapRawToWorkItemBase(item));
             }
         }
 
@@ -446,17 +432,8 @@ export class Api {
             const batch = ids.slice(i, i + concurrency);
             const promises = batch.map(async (id) => {
                 const commentsUrl = Api.witUrlPreview(this.config, ["workItems", String(id), "comments"]);
-                const commentsData = await this.get<{
-                    comments: Array<{ id: number; createdBy: { displayName: string }; createdDate: string; text: string }>;
-                }>(commentsUrl, `comments for #${id}`);
-
-                const comments: Comment[] = (commentsData.comments || []).map((c) => ({
-                    id: c.id,
-                    author: c.createdBy?.displayName,
-                    date: c.createdDate,
-                    text: c.text,
-                }));
-                return { id, comments };
+                const commentsData = await this.get<CommentsResponse>(commentsUrl, `comments for #${id}`);
+                return { id, comments: this.mapComments(commentsData) };
             });
 
             const results = await Promise.all(promises);
@@ -476,10 +453,7 @@ export class Api {
     async getDashboard(dashboardId: string): Promise<Dashboard> {
         logger.debug(`[api] Fetching dashboard ${dashboardId.slice(0, 8)}...`);
         const dashboardsUrl = Api.projectApiUrl(this.config, ["dashboard", "dashboards"], undefined, "7.1-preview.3");
-        const dashboardsData = await this.get<{ value: Array<{ id: string; name: string; groupId?: string }> }>(
-            dashboardsUrl,
-            "list dashboards"
-        );
+        const dashboardsData = await this.get<DashboardsListResponse>(dashboardsUrl, "list dashboards");
 
         const dashboard = dashboardsData.value.find((d) => d.id === dashboardId);
         if (!dashboard) {
@@ -493,10 +467,7 @@ export class Api {
             segments: [groupPath, "_apis", "Dashboard", "Dashboards", dashboardId],
             queryParams: { "api-version": "7.1-preview.3" },
         });
-        const widgetsData = await this.get<{ name: string; widgets: Array<{ name: string; settings: string }> }>(
-            widgetsUrl,
-            "dashboard widgets"
-        );
+        const widgetsData = await this.get<DashboardDetailResponse>(widgetsUrl, "dashboard widgets");
         logger.debug(`[api] Dashboard has ${widgetsData.widgets?.length || 0} widgets`);
 
         const queries: Array<{ name: string; queryId: string }> = [];
@@ -542,26 +513,9 @@ export class Api {
         );
         logger.debug(`[api] Created work item #${result.id}`);
 
-        // Transform API response to WorkItemFull format
-        const fields = result.fields as Record<string, unknown>;
-        const id = result.id as number;
-
         return {
-            id,
-            rev: result.rev as number,
-            title: fields?.["System.Title"] as string,
-            state: fields?.["System.State"] as string,
-            changed: fields?.["System.ChangedDate"] as string,
-            severity: fields?.["Microsoft.VSTS.Common.Severity"] as string | undefined,
-            assignee: (fields?.["System.AssignedTo"] as Record<string, unknown>)?.displayName as string | undefined,
-            tags: fields?.["System.Tags"] as string | undefined,
-            description: fields?.["System.Description"] as string | undefined,
-            created: fields?.["System.CreatedDate"] as string | undefined,
-            createdBy: (fields?.["System.CreatedBy"] as Record<string, unknown>)?.displayName as string | undefined,
-            changedBy: (fields?.["System.ChangedBy"] as Record<string, unknown>)?.displayName as string | undefined,
-            url: this.generateWorkItemUrl(id),
-            comments: [], // New work item has no comments
-            relations: result.relations as WorkItemFull["relations"],
+            ...this.mapRawToWorkItemBase(result as unknown as AzWorkItemRaw),
+            comments: [],
         };
     }
 
@@ -772,16 +726,13 @@ export class Api {
         if (cached) return cached;
 
         const teamsUrl = Api.orgUrl(this.config, ["projects", this.config.projectId, "teams"]);
-        const teams = await this.get<{ value: Array<{ id: string; name: string }> }>(teamsUrl, "teams");
+        const teams = await this.get<TeamsListResponse>(teamsUrl, "teams");
         const members: IdentityRef[] = [];
         const seen = new Set<string>();
 
         for (const team of teams.value) {
             const membersUrl = Api.orgUrl(this.config, ["projects", this.config.projectId, "teams", team.id, "members"]);
-            const data = await this.get<{ value: Array<{ identity: IdentityRef }> }>(
-                membersUrl,
-                `members of ${team.name}`
-            );
+            const data = await this.get<TeamMembersResponse>(membersUrl, `members of ${team.name}`);
             for (const m of data.value) {
                 const key = m.identity.uniqueName || m.identity.displayName;
                 if (!seen.has(key)) {
