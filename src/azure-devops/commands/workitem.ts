@@ -179,7 +179,8 @@ export async function handleWorkItem(
     forceRefresh: boolean,
     categoryArg?: string,
     taskFoldersArg?: boolean,
-    queryMetadata?: Map<number, QueryItemMetadata>
+    queryMetadata?: Map<number, QueryItemMetadata>,
+    fetchOptions?: { comments?: boolean; updates?: boolean }
 ): Promise<void> {
     silentMode = format === "json";
     logger.debug(
@@ -267,7 +268,10 @@ export async function handleWorkItem(
     if (needsFetch.length > 0) {
         logger.debug(`[workitem] Batch fetching ${needsFetch.length} work items...`);
 
-        const fetched = await api.getWorkItems(needsFetch, { comments: true });
+        const fetched = await api.getWorkItems(needsFetch, {
+            comments: fetchOptions?.comments !== false,
+            updates: fetchOptions?.updates,
+        });
 
         for (const id of needsFetch) {
             const item = fetched.get(id);
