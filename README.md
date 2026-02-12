@@ -62,10 +62,42 @@ cd GenesisTools
 | **Command** | `github-pr` | Fetch PR review comments, select fixes, implement and commit |
 | **Skill** | `azure-devops` | Fetch and manage Azure DevOps work items, queries, and time logging |
 | **Skill** | `react-compiler-debug` | Debug and inspect React Compiler output for memoization issues |
+| **Skill** | `claude-history` | Search past Claude Code conversations by keywords, files, or tools |
+| **Skill** | `github` | Interact with GitHub issues, PRs, and comments via CLI |
+| **Skill** | `timelog` | Sync tracked time from Timely to Azure DevOps time entries |
+| **Skill** | `analyze-har` | Token-efficient HAR file analysis with reference system |
 
-To use the plugin in Claude Code:
-- Commands are invoked with `/genesis-tools:setup`
-- Skills are automatically triggered when you ask about Azure DevOps work items
+### Using Commands
+
+Commands are invoked manually with `/genesis-tools:<name>`:
+
+```bash
+# Setup GenesisTools globally
+/genesis-tools:setup
+
+# Search Claude Code conversation history
+/genesis-tools:claude-history "refactored auth" --summary-only
+/genesis-tools:claude-history --file "config.ts" --since "7 days ago"
+/genesis-tools:claude-history --commit "27a6fa9"
+
+# Fix PR review comments
+/genesis-tools:github-pr 42          # Fix comments on PR #42
+/genesis-tools:github-pr 42 -u       # Only unresolved threads
+/genesis-tools:github-pr https://github.com/org/repo/pull/42 --open
+```
+
+### Using Skills
+
+Skills are triggered automatically when you mention relevant topics in conversation:
+
+| Skill | Trigger Phrases | What It Does |
+|-------|----------------|--------------|
+| `azure-devops` | "get workitem 1234", "show query", "log time", Azure DevOps URLs | Fetches work items, runs queries, manages time entries |
+| `react-compiler-debug` | "react compiler", "see compiled output", "why isn't this memoized" | Inspects React Compiler output, debugs memoization |
+| `claude-history` | "find conversation about X", "where did we discuss", "search history" | Searches past Claude Code conversations |
+| `github` | GitHub issue/PR URLs, "find issues matching", "get PR comments" | Fetches issues, PRs, comments with filtering |
+| `timelog` | "sync timely", "log my time from timely", "what did I work on today" | Syncs Timely tracked time to Azure DevOps |
+| `analyze-har` | "analyze HAR", `.har` file paths, "debug network traffic" | Token-efficient HAR analysis with reference system |
 
 ---
 
@@ -135,6 +167,8 @@ tools
 | **[MCP Manager](#17--mcp-manager)**                  | ⚙️ Cross-platform MCP configuration manager   |
 | **[Azure DevOps](#20--azure-devops)**                | 🔷 Fetch and manage Azure DevOps work items   |
 | **[React Compiler Debug](#22--react-compiler-debug)** | ⚛️ Inspect React Compiler output              |
+| **[HAR Analyzer](#24--har-analyzer)**                 | 🔍 Token-efficient HAR file analysis          |
+| **[JSON Schema](#25--json-schema)**                   | 📐 Infer schemas from JSON data               |
 
 ### 📊 Monitoring & Watching
 
@@ -1995,6 +2029,131 @@ tools git-rebranch --verbose
 | `--dry-run`   |       | Show execution plan without creating branches |
 | `--verbose`   | `-v`  | Show git commands being executed              |
 | `--help-full` | `-?`  | Show detailed help message                    |
+
+</details>
+
+---
+
+### 24. 🔍 HAR Analyzer
+
+Token-efficient HTTP Archive (HAR) file analyzer with a **reference system** that eliminates data repetition. Supports progressive disclosure (dashboard → entry list → detail → raw), domain grouping, security audits, timing waterfall, and more.
+
+<details>
+<summary>📖 Usage & Details</summary>
+
+```bash
+# Load a HAR file and show dashboard
+tools har-analyzer load capture.har
+
+# List entries with filters
+tools har-analyzer list --status 4xx,5xx --domain api.example.com
+
+# Show entry detail / full raw content
+tools har-analyzer show e14
+tools har-analyzer show e14 --raw --section body
+
+# Expand a referenced value (or view its schema first)
+tools har-analyzer expand e14.rs.body --schema            # compact skeleton
+tools har-analyzer expand e14.rs.body --schema typescript  # TypeScript interfaces
+tools har-analyzer expand e14.rs.body                      # full content
+
+# Domain drill-down with body previews
+tools har-analyzer domain api.example.com
+
+# Analysis commands
+tools har-analyzer errors       # 4xx/5xx focus with body previews
+tools har-analyzer waterfall    # ASCII timing chart
+tools har-analyzer security     # Find JWT, API keys, insecure cookies
+tools har-analyzer size         # Bandwidth breakdown by content type
+tools har-analyzer headers      # Deduplicated header analysis
+tools har-analyzer redirects    # Redirect chain tracking
+tools har-analyzer cookies      # Cookie flow (set/sent tracking)
+tools har-analyzer diff e5 e14  # Compare two entries
+tools har-analyzer search "error" --scope body
+
+# Export filtered/sanitized subset
+tools har-analyzer export --domain api.example.com --sanitize -o api-only.har
+
+# Interactive mode
+tools har-analyzer        # or tools har-analyzer -i
+
+# MCP server mode
+tools har-analyzer mcp
+```
+
+**Key Features:**
+- **Reference system**: Large data (>200 chars) shown once with a ref ID; subsequent views show preview + size. Use `expand` to re-show full content.
+- **Content skipping**: Static asset bodies (CSS, JS, images, fonts) are skipped by default. Use `--include-all` to override.
+- **Schema inference**: View JSON body structure before expanding full content with `--schema` flag.
+- **Session persistence**: HAR is parsed once and cached; subsequent commands reuse the session.
+- **Output formats**: `--format md|json|toon`, `--full` to bypass refs.
+
+| Command | Purpose |
+|---------|---------|
+| `load <file>` | Parse HAR, show dashboard |
+| `dashboard` | Re-show overview stats |
+| `list` | Compact entry table with filters |
+| `show <eN>` | Entry detail (`--raw` for full content) |
+| `expand <ref>` | Show full referenced data (`--schema` for structure) |
+| `domains` | List domains with stats |
+| `domain <name>` | Drill-down: paths + body previews |
+| `search <query>` | Grep across entries |
+| `errors` | 4xx/5xx focus with body previews |
+| `waterfall` | ASCII timing chart |
+| `security` | Find JWT, API keys, insecure cookies |
+| `size` | Bandwidth breakdown by type |
+| `headers` | Deduplicated header analysis |
+| `redirects` | Redirect chain tracking |
+| `cookies` | Cookie flow tracking |
+| `diff <e1> <e2>` | Compare two entries |
+| `export` | Export filtered HAR subset |
+
+</details>
+
+---
+
+### 25. 📐 JSON Schema
+
+Infer schemas from JSON data with multiple output modes: compact JSON Schema, structure skeleton, and TypeScript interfaces. Useful for understanding API response shapes without reading raw data.
+
+<details>
+<summary>📖 Usage & Details</summary>
+
+```bash
+# From file
+tools json-schema data.json
+tools json-schema data.json -m typescript
+tools json-schema data.json -m schema
+
+# From stdin (pipe from API, jq, etc.)
+curl -s https://api.example.com/users | tools json-schema
+cat response.json | tools json-schema -m typescript --pretty
+
+# Copy to clipboard
+tools json-schema data.json -m typescript --clipboard
+```
+
+**Output Modes:**
+
+| Mode | Flag | Output |
+|------|------|--------|
+| Skeleton (default) | `-m skeleton` | `{ users: { id: integer, name: string }[], total: integer }` |
+| TypeScript | `-m typescript` | `interface User { id: number; name: string }` |
+| JSON Schema | `-m schema` | Standard JSON Schema object |
+
+**Options:**
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--mode` | `-m` | Output mode: `skeleton`, `typescript`, `schema` | `skeleton` |
+| `--pretty` | `-p` | Multi-line indented output | `false` (compact) |
+| `--clipboard` | | Copy output to clipboard | `false` |
+
+**Smart Features:**
+- Arrays: Merges all items into a unified schema (handles heterogeneous arrays)
+- Optional fields: Marks fields as optional (`?`) when not present in all array items
+- TypeScript naming: Singularizes array parent names (`users` → `User[]`, `categories` → `Category[]`)
+- Compact mode: One interface per line (default), multi-line with `--pretty`
 
 </details>
 

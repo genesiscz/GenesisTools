@@ -58,15 +58,24 @@ export async function findClaudeCommand(): Promise<string> {
     const shell = process.env.SHELL || "/bin/sh";
 
     for (const candidate of ["ccc", "cc", "claude"]) {
-        const proc = Bun.spawn({
-            cmd: [shell, "-ic", `'${candidate}' --version 2>&1`],
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-        const stdout = await new Response(proc.stdout).text();
-        await proc.exited;
+        try {
+            const proc = Bun.spawn({
+                cmd: [shell, "-ic", `'${candidate}' --version 2>&1`],
+                stdio: ["ignore", "pipe", "pipe"],
+            });
+            const stdout = await Promise.race([
+                new Response(proc.stdout).text(),
+                new Promise<string>((_, reject) =>
+                    setTimeout(() => reject(new Error("timeout")), 3000),
+                ),
+            ]);
+            await proc.exited;
 
-        if (proc.exitCode === 0 && stdout.includes("Claude Code")) {
-            return candidate;
+            if (proc.exitCode === 0 && stdout.includes("Claude Code")) {
+                return candidate;
+            }
+        } catch {
+            // Timeout or spawn failure — skip this candidate
         }
     }
     return "claude";
