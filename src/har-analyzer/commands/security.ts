@@ -1,8 +1,8 @@
 import type { Command } from "commander";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
-import { truncatePath, printFormatted } from "@app/har-analyzer/core/formatter";
-import type { HarEntry, HarHeader, OutputOptions } from "@app/har-analyzer/types";
+import { truncatePath } from "@app/har-analyzer/core/formatter";
+import type { HarEntry, HarHeader } from "@app/har-analyzer/types";
 
 type Severity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -21,8 +21,8 @@ const SEVERITY_SYMBOLS: Record<Severity, string> = {
 	LOW: "[!]",
 };
 
-const API_KEY_PATTERNS = ["api_key", "apikey", "x-api-key", "secret", "token"];
-const SENSITIVE_PARAM_PATTERNS = ["password", "passwd", "auth"];
+const API_KEY_PATTERNS = ["api_key", "apikey", "x-api-key", "key", "secret", "token"];
+const SENSITIVE_PARAM_PATTERNS = ["password", "passwd", "secret", "token", "auth"];
 
 function findHeader(headers: HarHeader[], name: string): HarHeader | undefined {
 	const lower = name.toLowerCase();
@@ -30,10 +30,7 @@ function findHeader(headers: HarHeader[], name: string): HarHeader | undefined {
 }
 
 function decodeBase64Url(str: string): string {
-	let padded = str.replace(/-/g, "+").replace(/_/g, "/");
-	const remainder = padded.length % 4;
-	if (remainder === 2) padded += "==";
-	else if (remainder === 3) padded += "=";
+	const padded = str.replace(/-/g, "+").replace(/_/g, "/");
 	return atob(padded);
 }
 
@@ -101,25 +98,6 @@ function scanApiKeys(entry: HarEntry, index: number, findings: SecurityFinding[]
 				method: entry.request.method,
 				path: truncatePath(pathname + (hostname ? ` (${hostname})` : ""), 60),
 				detail: `Parameter "${paramName}" contains potential API key (${paramValue.length} chars)`,
-			});
-		}
-	}
-
-	// Also check request headers for API keys
-	for (const header of entry.request.headers) {
-		const lowerName = header.name.toLowerCase();
-		// Skip authorization header (handled by scanJwt)
-		if (lowerName === "authorization") continue;
-		const matched = API_KEY_PATTERNS.some((pattern) => lowerName === pattern || lowerName.includes(pattern));
-
-		if (matched && header.value.length > 0) {
-			findings.push({
-				severity: "HIGH",
-				category: "API Key in Header",
-				entryIndex: index,
-				method: entry.request.method,
-				path: truncatePath(pathname + (hostname ? ` (${hostname})` : ""), 60),
-				detail: `Header "${header.name}" contains potential API key (${header.value.length} chars)`,
 			});
 		}
 	}
@@ -192,9 +170,13 @@ export function registerSecurityCommand(program: Command): void {
 		.command("security")
 		.description("Scan for sensitive data exposure")
 		.action(async () => {
-			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.requireSession(parentOpts.session);
+			const session = await sm.loadSession();
+
+			if (!session) {
+				console.error("No session loaded. Use `load <file>` first.");
+				process.exit(1);
+			}
 
 			const har = await loadHarFile(session.sourceFile);
 			const findings: SecurityFinding[] = [];
@@ -208,7 +190,7 @@ export function registerSecurityCommand(program: Command): void {
 			}
 
 			if (findings.length === 0) {
-				await printFormatted("No security issues detected.", parentOpts.format);
+				console.log("No security issues detected.");
 				return;
 			}
 
@@ -244,6 +226,6 @@ export function registerSecurityCommand(program: Command): void {
 				lines.push("");
 			}
 
-			await printFormatted(lines.join("\n"), parentOpts.format);
+			console.log(lines.join("\n"));
 		});
 }

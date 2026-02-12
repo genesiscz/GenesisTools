@@ -3,7 +3,7 @@ import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import { RefStoreManager } from "@app/har-analyzer/core/ref-store";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { filterEntries, groupByDomain } from "@app/har-analyzer/core/query-engine";
-import { truncatePath, printFormatted } from "@app/har-analyzer/core/formatter";
+import { truncatePath } from "@app/har-analyzer/core/formatter";
 import { formatTable } from "@app/utils/table";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
@@ -14,9 +14,13 @@ export function registerDomainsCommand(program: Command): void {
 		.command("domains")
 		.description("List all domains sorted by request count")
 		.action(async () => {
-			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.requireSession(parentOpts.session);
+			const session = await sm.loadSession();
+
+			if (!session) {
+				console.error("No session loaded. Use `load <file>` first.");
+				process.exit(1);
+			}
 
 			const groups = groupByDomain(session.entries);
 
@@ -48,8 +52,8 @@ export function registerDomainsCommand(program: Command): void {
 				formatDuration(d.avgTime),
 			]);
 
-			const output = formatTable(rows, headers, { alignRight: [1, 2, 3] }) + `\n\n${domainStats.length} domains`;
-			await printFormatted(output, parentOpts.format);
+			console.log(formatTable(rows, headers, { alignRight: [1, 2, 3] }));
+			console.log(`\n${domainStats.length} domains`);
 		});
 }
 
@@ -72,7 +76,12 @@ export function registerDomainCommand(program: Command): void {
 			const parentOpts = program.opts<OutputOptions>();
 
 			const sm = new SessionManager();
-			const session = await sm.requireSession(parentOpts.session);
+			const session = await sm.loadSession();
+
+			if (!session) {
+				console.error("No session loaded. Use `load <file>` first.");
+				process.exit(1);
+			}
 
 			const filter: EntryFilter = {
 				domain: name,
@@ -121,7 +130,7 @@ export function registerDomainCommand(program: Command): void {
 				]);
 			}
 
-			const output = formatTable(rows, headers) + `\n\n${entries.length} entries for ${name}`;
-			await printFormatted(output, parentOpts.format);
+			console.log(formatTable(rows, headers));
+			console.log(`\n${entries.length} entries for ${name}`);
 		});
 }

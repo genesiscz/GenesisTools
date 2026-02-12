@@ -2,8 +2,7 @@ import type { Command } from "commander";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import { formatBytes } from "@app/utils/format";
 import { formatTable } from "@app/utils/table";
-import { printFormatted } from "@app/har-analyzer/core/formatter";
-import type { IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
+import type { IndexedEntry } from "@app/har-analyzer/types";
 
 interface MimeBucket {
 	mime: string;
@@ -39,9 +38,13 @@ export function registerSizeCommand(program: Command): void {
 		.command("size")
 		.description("Bandwidth breakdown by content type")
 		.action(async () => {
-			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.requireSession(parentOpts.session);
+			const session = await sm.loadSession();
+
+			if (!session) {
+				console.error("No session loaded. Use `load <file>` first.");
+				process.exit(1);
+			}
 
 			const entries = session.entries;
 			const totalSize = entries.reduce((sum, e) => sum + e.responseSize, 0);
@@ -88,6 +91,6 @@ export function registerSizeCommand(program: Command): void {
 
 			lines.push(formatTable(topRows, topHeaders, { alignRight: [2] }));
 
-			await printFormatted(lines.join("\n"), parentOpts.format);
+			console.log(lines.join("\n"));
 		});
 }

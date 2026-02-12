@@ -1,14 +1,7 @@
 import type { EntryFilter, HarSession, IndexedEntry } from "@app/har-analyzer/types.ts";
 import { matchGlob } from "@app/utils/string";
 
-export function parseEntryIndex(entry: string): number {
-	const cleaned = entry.startsWith("e") ? entry.slice(1) : entry;
-	const index = Number.parseInt(cleaned, 10);
-	if (Number.isNaN(index)) {
-		throw new Error(`Invalid entry reference: "${entry}". Use format like "e14" or "14".`);
-	}
-	return index;
-}
+export { matchGlob };
 
 export function matchStatus(status: number, pattern: string): boolean {
 	const parts = pattern.split(",").map((p) => p.trim());
@@ -89,9 +82,7 @@ export function filterEntries(entries: IndexedEntry[], filter: EntryFilter): Ind
 export function getEntriesForDomain(session: HarSession, domain: string): IndexedEntry[] {
 	const indices = session.domains[domain];
 	if (!indices) return [];
-	return indices
-		.filter((i) => i >= 0 && i < session.entries.length)
-		.map((i) => session.entries[i]);
+	return indices.map((i) => session.entries[i]);
 }
 
 export function groupByDomain(entries: IndexedEntry[]): Map<string, IndexedEntry[]> {

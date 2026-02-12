@@ -2,8 +2,8 @@ import type { Command } from "commander";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { filterEntries } from "@app/har-analyzer/core/query-engine";
-import { truncatePath, printFormatted } from "@app/har-analyzer/core/formatter";
-import type { HarFile, IndexedEntry, EntryFilter, OutputOptions } from "@app/har-analyzer/types";
+import { truncatePath } from "@app/har-analyzer/core/formatter";
+import type { HarFile, IndexedEntry, EntryFilter } from "@app/har-analyzer/types";
 
 type SearchScope = "url" | "body" | "header" | "all";
 
@@ -42,11 +42,9 @@ function searchInUrl(entry: IndexedEntry, query: string): string | null {
 
 function searchInBody(har: HarFile, entry: IndexedEntry, query: string): string | null {
 	const harEntry = har.log.entries[entry.index];
-	const responseBody = harEntry.response.content.text ?? "";
-	const requestBody = harEntry.request.postData?.text ?? "";
-	const combined = responseBody + requestBody;
-	if (!combined) return null;
-	return extractContext(combined, query);
+	const bodyText = harEntry.response.content.text;
+	if (!bodyText) return null;
+	return extractContext(bodyText, query);
 }
 
 function searchInHeaders(har: HarFile, entry: IndexedEntry, query: string): string | null {
@@ -77,9 +75,13 @@ export function registerSearchCommand(program: Command): void {
 		.option("--domain <glob>", "Filter by domain glob pattern")
 		.option("--limit <n>", "Maximum results to show", "20")
 		.action(async (query: string, options: SearchOptions) => {
-			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.requireSession(parentOpts.session);
+			const session = await sm.loadSession();
+
+			if (!session) {
+				console.error("No session loaded. Use `load <file>` first.");
+				process.exit(1);
+			}
 
 			const filter: EntryFilter = {
 				domain: options.domain,
@@ -128,13 +130,12 @@ export function registerSearchCommand(program: Command): void {
 				return;
 			}
 
-			const lines = matches.map((match) => {
+			for (const match of matches) {
 				const e = match.entry;
 				const path = truncatePath(e.path, 40);
-				return `[e${e.index}] ${e.method} ${path} ${e.status} → ${match.context}`;
-			});
-			lines.push(`\n${matches.length} matches found`);
+				console.log(`[e${e.index}] ${e.method} ${path} ${e.status} → ${match.context}`);
+			}
 
-			await printFormatted(lines.join("\n"), parentOpts.format);
+			console.log(`\n${matches.length} matches found`);
 		});
 }

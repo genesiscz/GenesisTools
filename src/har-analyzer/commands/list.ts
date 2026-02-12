@@ -1,10 +1,10 @@
 import type { Command } from "commander";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import { filterEntries } from "@app/har-analyzer/core/query-engine";
-import { truncatePath, printFormatted } from "@app/har-analyzer/core/formatter";
+import { truncatePath } from "@app/har-analyzer/core/formatter";
 import { formatTable } from "@app/utils/table";
 import { formatBytes, formatDuration } from "@app/utils/format";
-import type { EntryFilter, OutputOptions } from "@app/har-analyzer/types";
+import type { EntryFilter } from "@app/har-analyzer/types";
 
 interface ListOptions {
 	domain?: string;
@@ -30,9 +30,13 @@ export function registerListCommand(program: Command): void {
 		.option("--min-size <bytes>", "Minimum response size in bytes")
 		.option("--limit <n>", "Maximum entries to show", "50")
 		.action(async (options: ListOptions) => {
-			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.requireSession(parentOpts.session);
+			const session = await sm.loadSession();
+
+			if (!session) {
+				console.error("No session loaded. Use `load <file>` first.");
+				process.exit(1);
+			}
 
 			const filter: EntryFilter = {
 				domain: options.domain,
@@ -62,7 +66,7 @@ export function registerListCommand(program: Command): void {
 				formatDuration(entry.timeMs, "ms", "tiered"),
 			]);
 
-			const output = formatTable(rows, headers, { alignRight: [4, 5] }) + `\n\n${entries.length} entries shown`;
-			await printFormatted(output, parentOpts.format);
+			console.log(formatTable(rows, headers, { alignRight: [4, 5] }));
+			console.log(`\n${entries.length} entries shown`);
 		});
 }

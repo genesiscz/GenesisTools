@@ -2,11 +2,18 @@ import type { Command } from "commander";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { formatBytes, formatDuration } from "@app/utils/format";
-import { printFormatted } from "@app/har-analyzer/core/formatter";
-import type { HarEntry, HarHeader, OutputOptions } from "@app/har-analyzer/types";
+import type { HarEntry, HarHeader } from "@app/har-analyzer/types";
 import { RefStoreManager } from "@app/har-analyzer/core/ref-store";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
-import { parseEntryIndex } from "@app/har-analyzer/core/query-engine";
+
+function parseEntryIndex(entry: string): number {
+	const cleaned = entry.startsWith("e") ? entry.slice(1) : entry;
+	const index = Number.parseInt(cleaned, 10);
+	if (Number.isNaN(index)) {
+		throw new Error(`Invalid entry reference: "${entry}". Use format like "e14" or "14".`);
+	}
+	return index;
+}
 
 function headerMap(headers: HarHeader[]): Map<string, string> {
 	const map = new Map<string, string>();
@@ -24,9 +31,13 @@ export function registerDiffCommand(program: Command): void {
 			const idx1 = parseEntryIndex(entry1Str);
 			const idx2 = parseEntryIndex(entry2Str);
 
-			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.requireSession(parentOpts.session);
+			const session = await sm.loadSession();
+
+			if (!session) {
+				console.error("No session loaded. Use `load <file>` first.");
+				process.exit(1);
+			}
 
 			for (const idx of [idx1, idx2]) {
 				if (idx < 0 || idx >= session.entries.length) {
@@ -90,7 +101,7 @@ export function registerDiffCommand(program: Command): void {
 			await appendBodyLine(lines, `  ${label1}:`, e1, idx1, refStore);
 			await appendBodyLine(lines, `  ${label2}:`, e2, idx2, refStore);
 
-			await printFormatted(lines.join("\n"), parentOpts.format);
+			console.log(lines.join("\n"));
 		});
 }
 

@@ -189,5 +189,5 @@ const INTERESTING_MIME_TYPES = [
 // Returns true if body content should be shown for this MIME type
 export function isInterestingMimeType(mimeType: string): boolean {
 	const normalized = mimeType.split(";")[0].trim().toLowerCase();
-	return INTERESTING_MIME_TYPES.includes(normalized) || normalized.startsWith("application/json");
+	return INTERESTING_MIME_TYPES.some((t) => normalized === t || normalized.startsWith("application/json"));
 }

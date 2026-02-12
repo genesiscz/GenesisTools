@@ -5,10 +5,17 @@ import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
 import type { HarEntry, HarHeader, OutputOptions } from "@app/har-analyzer/types";
-import { printFormatted } from "@app/har-analyzer/core/formatter";
 import { formatSchema } from "@app/utils/json-schema";
 import { parseJSON } from "@app/utils/json";
-import { parseEntryIndex } from "@app/har-analyzer/core/query-engine";
+
+function parseEntryIndex(entry: string): number {
+	const cleaned = entry.startsWith("e") ? entry.slice(1) : entry;
+	const index = Number.parseInt(cleaned, 10);
+	if (Number.isNaN(index)) {
+		throw new Error(`Invalid entry reference: "${entry}". Use format like "e14" or "14".`);
+	}
+	return index;
+}
 
 function formatHeaders(headers: HarHeader[]): string {
 	return headers.map((h) => `${h.name}: ${h.value}`).join("\n");
@@ -34,9 +41,13 @@ export function registerShowCommand(program: Command): void {
 		.option("--section <section>", "Filter section in raw mode: body, headers, cookies")
 		.action(async (entry: string, options: ShowOptions) => {
 			const index = parseEntryIndex(entry);
-			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.requireSession(parentOpts.session);
+			const session = await sm.loadSession();
+
+			if (!session) {
+				console.error("No session loaded. Use `load <file>` first.");
+				process.exit(1);
+			}
 
 			const indexedEntry = session.entries[index];
 			if (!indexedEntry) {
@@ -46,19 +57,19 @@ export function registerShowCommand(program: Command): void {
 
 			const harFile = await loadHarFile(session.sourceFile);
 			const harEntry = harFile.log.entries[index];
+
+			const parentOpts = program.opts<OutputOptions>();
 			const refStore = new RefStoreManager(session.sourceHash);
 
 			if (options.raw) {
-				await showRaw(harEntry, index, refStore, parentOpts, options.section, parentOpts.format);
+				await showRaw(harEntry, index, refStore, parentOpts, options.section);
 			} else {
-				showDetail(harEntry, indexedEntry.url, parentOpts.format);
+				showDetail(harEntry, indexedEntry.url);
 			}
 		});
 }
 
-import type { OutputFormat } from "@app/har-analyzer/types";
-
-async function showDetail(entry: HarEntry, fullUrl: string, format: OutputFormat): Promise<void> {
+function showDetail(entry: HarEntry, fullUrl: string): void {
 	const lines: string[] = [];
 
 	// Request line
@@ -117,12 +128,7 @@ async function showDetail(entry: HarEntry, fullUrl: string, format: OutputFormat
 
 	// Request body summary
 	if (entry.request.postData) {
-		const bodySize = entry.request.bodySize >= 0
-			? formatBytes(entry.request.bodySize)
-			: entry.request.postData.text?.length != null
-				? formatBytes(entry.request.postData.text.length)
-				: "unknown";
-		lines.push(`Request Body: ${bodySize} (${entry.request.postData.mimeType})`);
+		lines.push(`Request Body: ${formatBytes(entry.request.bodySize)} (${entry.request.postData.mimeType})`);
 	} else {
 		lines.push("Request Body: none");
 	}
@@ -131,7 +137,7 @@ async function showDetail(entry: HarEntry, fullUrl: string, format: OutputFormat
 	const content = entry.response.content;
 	lines.push(`Response Body: ${formatBytes(content.size)} (${content.mimeType})`);
 
-	await printFormatted(lines.join("\n"), format);
+	console.log(lines.join("\n"));
 }
 
 async function showRaw(
@@ -139,8 +145,7 @@ async function showRaw(
 	index: number,
 	refStore: RefStoreManager,
 	parentOpts: OutputOptions,
-	section: ShowSection | undefined,
-	format: OutputFormat,
+	section?: ShowSection,
 ): Promise<void> {
 	const lines: string[] = [];
 	const full = parentOpts.full ?? false;
@@ -237,7 +242,7 @@ async function showRaw(
 		lines.push("");
 	}
 
-	await printFormatted(lines.join("\n"), format);
+	console.log(lines.join("\n"));
 }
 
 export function registerExpandCommand(program: Command): void {
@@ -254,9 +259,13 @@ export function registerExpandCommand(program: Command): void {
 			}
 			const entryIndex = Number.parseInt(match[1], 10);
 
-			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.requireSession(parentOpts.session);
+			const session = await sm.loadSession();
+
+			if (!session) {
+				console.error("No session loaded. Use `load <file>` first.");
+				process.exit(1);
+			}
 
 			if (entryIndex < 0 || entryIndex >= session.entries.length) {
 				console.error(`Entry e${entryIndex} not found. Session has ${session.entries.length} entries (0-${session.entries.length - 1}).`);
@@ -287,11 +296,11 @@ export function registerExpandCommand(program: Command): void {
 					console.error(`Invalid schema mode: "${mode}". Use: skeleton, typescript, schema`);
 					process.exit(1);
 				}
-				await printFormatted(formatSchema(parsed, mode as "skeleton" | "typescript" | "schema"), parentOpts.format);
+				console.log(formatSchema(parsed, mode as "skeleton" | "typescript" | "schema"));
 				return;
 			}
 
-			await printFormatted(content, parentOpts.format);
+			console.log(content);
 		});
 }
 

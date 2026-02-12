@@ -92,21 +92,16 @@ export function formatDashboard(stats: SessionStats, sourceFile: string): string
 	return lines.join("\n");
 }
 
-/**
- * Print text output in the requested format.
- * md: passthrough, json: wrap in {output: text}, toon: encode as TOON.
- */
-export async function printFormatted(text: string, format: OutputFormat): Promise<void> {
+export async function applyFormat(output: string, format: OutputFormat): Promise<string> {
 	switch (format) {
+		case "md":
+			return output;
 		case "json":
-			console.log(JSON.stringify({ output: text }));
-			break;
+			return JSON.stringify({ output });
 		case "toon": {
+			// Dynamic import to avoid loading toon when not needed
 			const { encode } = await import("@toon-format/toon");
-			console.log(encode({ output: text }));
-			break;
+			return encode({ output });
 		}
-		default:
-			console.log(text);
 	}
 }

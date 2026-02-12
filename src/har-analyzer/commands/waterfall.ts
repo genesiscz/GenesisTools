@@ -1,9 +1,9 @@
 import type { Command } from "commander";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import { filterEntries } from "@app/har-analyzer/core/query-engine";
-import { truncatePath, printFormatted } from "@app/har-analyzer/core/formatter";
+import { truncatePath } from "@app/har-analyzer/core/formatter";
 import { formatDuration } from "@app/utils/format";
-import type { EntryFilter, IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
+import type { EntryFilter, IndexedEntry } from "@app/har-analyzer/types";
 
 const BAR_WIDTH = 40;
 
@@ -24,9 +24,7 @@ function buildBar(startOffset: number, duration: number, totalSpan: number): str
 }
 
 function getStartMs(entry: IndexedEntry): number {
-	const ms = new Date(entry.startedDateTime).getTime();
-	// Fallback to 0 for malformed dates to avoid NaN in calculations
-	return Number.isNaN(ms) ? 0 : ms;
+	return new Date(entry.startedDateTime).getTime();
 }
 
 export function registerWaterfallCommand(program: Command): void {
@@ -36,9 +34,13 @@ export function registerWaterfallCommand(program: Command): void {
 		.option("--domain <glob>", "Filter by domain glob pattern")
 		.option("--limit <n>", "Maximum entries to show", "30")
 		.action(async (options: WaterfallOptions) => {
-			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.requireSession(parentOpts.session);
+			const session = await sm.loadSession();
+
+			if (!session) {
+				console.error("No session loaded. Use `load <file>` first.");
+				process.exit(1);
+			}
 
 			const filter: EntryFilter = {
 				domain: options.domain,
@@ -83,6 +85,6 @@ export function registerWaterfallCommand(program: Command): void {
 				lines.push(`${id}  ${method}  ${path}  |${bar}|  ${time}`);
 			}
 
-			await printFormatted(lines.join("\n"), parentOpts.format);
+			console.log(lines.join("\n"));
 		});
 }

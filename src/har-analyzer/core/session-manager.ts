@@ -35,11 +35,7 @@ export class SessionManager {
 		} else if (!hashOrPath.includes("/") && !hashOrPath.includes(".")) {
 			hash = hashOrPath;
 		} else {
-			const file = Bun.file(resolve(hashOrPath));
-			if (!(await file.exists())) {
-				return null;
-			}
-			const fileContent = await file.text();
+			const fileContent = await Bun.file(resolve(hashOrPath)).text();
 			hash = Bun.hash(fileContent).toString(16);
 		}
 
@@ -132,15 +128,6 @@ export class SessionManager {
 		}
 
 		return deletedCount;
-	}
-
-	async requireSession(hash?: string): Promise<HarSession> {
-		const session = await this.loadSession(hash);
-		if (!session) {
-			console.error("No session loaded. Use `load <file>` first.");
-			process.exit(1);
-		}
-		return session;
 	}
 
 	getSourceHash(session: HarSession): string {
