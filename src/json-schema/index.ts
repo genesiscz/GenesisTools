@@ -1,9 +1,12 @@
-import { Command, Option } from "commander";
-import { formatSchema, type OutputMode } from "@app/utils/json-schema";
+import { Command } from "commander";
+import { formatSchema } from "@app/utils/json-schema";
+import { parseJSON } from "@app/utils/json";
 import clipboardy from "clipboardy";
 
+type Mode = "schema" | "skeleton" | "typescript";
+
 interface Options {
-	mode: OutputMode;
+	mode: Mode;
 	pretty?: boolean;
 	clipboard?: boolean;
 }
@@ -29,16 +32,14 @@ program
 	.name("json-schema")
 	.description("Infer schema from JSON data. Reads from file or stdin.")
 	.argument("[file]", "JSON file to analyze")
-	.addOption(new Option("-m, --mode <mode>", "Output mode").choices(["schema", "skeleton", "typescript"]).default("skeleton"))
+	.option("-m, --mode <mode>", "Output mode: schema, skeleton, typescript", "skeleton")
 	.option("-p, --pretty", "Multi-line indented output (default: compact one-line)")
 	.option("-c, --clipboard", "Copy output to clipboard")
 	.action(async (file: string | undefined, options: Options) => {
 		const raw = await readInput(file);
+		const value = parseJSON(raw);
 
-		let value: unknown;
-		try {
-			value = JSON.parse(raw);
-		} catch {
+		if (value === null) {
 			console.error("Failed to parse JSON input.");
 			process.exit(1);
 		}
