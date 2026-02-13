@@ -221,6 +221,8 @@ export interface SearchFilters {
     commitHash?: string;
     commitMessage?: string;
     sortByRelevance?: boolean;
+    /** Progress callback: (processed, total, currentFile) */
+    onProgress?: (processed: number, total: number, currentFile: string) => void;
 }
 
 export interface SearchResult {

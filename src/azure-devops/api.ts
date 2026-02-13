@@ -7,14 +7,14 @@
 
 import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/cache";
 import type {
-	CommentsResponse,
-	Dashboard,
-	DashboardDetailResponse,
-	DashboardsListResponse,
-	GetWorkItemsOptions,
-	QueryNode,
-	TeamMembersResponse,
-	TeamsListResponse,
+    CommentsResponse,
+    Dashboard,
+    DashboardDetailResponse,
+    DashboardsListResponse,
+    GetWorkItemsOptions,
+    QueryNode,
+    TeamMembersResponse,
+    TeamsListResponse,
 } from "@app/azure-devops/api.types";
 import { concurrentMap } from "@app/utils/async";
 import type {
@@ -238,6 +238,32 @@ export class Api {
         description?: string
     ): Promise<T> {
         return this.request<T>("POST", url, { body, contentType, description });
+    }
+
+    /**
+     * Download binary content from Azure DevOps (for attachments).
+     * Returns ArrayBuffer (caller saves to disk).
+     */
+    async fetchBinary(url: string, description?: string): Promise<ArrayBuffer> {
+        const shortUrl = url.replace(this.config.org, "").slice(0, 80);
+        logger.debug(`[api] GET binary ${shortUrl}${description ? ` (${description})` : ""}`);
+        const startTime = Date.now();
+
+        const token = await this.getAccessToken();
+        const response = await fetch(url, {
+            method: "GET",
+            headers: { Authorization: `Bearer ${token}` },
+        });
+
+        const elapsed = Date.now() - startTime;
+        logger.debug(`[api] GET binary response: ${response.status} ${response.statusText} (${elapsed}ms)`);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`API Error ${response.status}: ${errorText}`);
+        }
+
+        return response.arrayBuffer();
     }
 
     /**
