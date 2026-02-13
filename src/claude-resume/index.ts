@@ -144,42 +144,52 @@ function matchByIdOrName(all: DisplaySession[], query: string): DisplaySession[]
 }
 
 async function searchByContent(query: string, spinner: Spinner, project?: string): Promise<DisplaySession[]> {
-	// Phase 1: Fast metadata-only search (SQLite — includes allUserText)
-	const metaResults = await searchConversations({
-		query,
-		project,
-		sortByRelevance: true,
-		limit: 20,
-		summaryOnly: true,
+	// Run both phases in parallel — rg is fast and catches content
+	// that metadata misses (assistant messages, text past 5000-char cap)
+	const [metaResults, matchingFiles] = await Promise.all([
+		// Phase 1: SQLite metadata search (title, summary, firstPrompt, allUserText)
+		searchConversations({
+			query,
+			project,
+			sortByRelevance: true,
+			limit: 20,
+			summaryOnly: true,
+		}),
+		// Phase 2: ripgrep full-content search (everything in JSONL)
+		rgSearchFiles(query, { project, limit: 30 }),
+	]);
+
+	const metaSessions = metaResults.map((r) =>
+		toDisplay(r.sessionId, {
+			title: r.customTitle,
+			summary: r.summary,
+			branch: r.gitBranch,
+			project: r.project,
+			timestamp: r.timestamp.toISOString(),
+			source: "search",
+		}),
+	);
+
+	// Build set of session IDs already found by metadata search
+	const metaSessionIds = new Set(metaSessions.map((s) => s.sessionId));
+
+	// Add rg-only results (not already in metadata results) with snippets
+	const rgOnlyFiles = matchingFiles.filter((filePath) => {
+		const cached = getSessionMetadata(filePath);
+		const sid = cached?.sessionId || basename(filePath, ".jsonl");
+		return !metaSessionIds.has(sid);
 	});
 
-	if (metaResults.length > 0) {
-		return metaResults.map((r) =>
-			toDisplay(r.sessionId, {
-				title: r.customTitle,
-				summary: r.summary,
-				branch: r.gitBranch,
-				project: r.project,
-				timestamp: r.timestamp.toISOString(),
-				source: "search",
-			}),
-		);
+	if (rgOnlyFiles.length > 0) {
+		spinner.message(`Loading ${rgOnlyFiles.length} deep matches...`);
 	}
 
-	// Phase 2: ripgrep full-content search (fast, searches everything)
-	spinner.message("Deep searching with rg...");
-	const matchingFiles = await rgSearchFiles(query, { project, limit: 30 });
-
-	if (matchingFiles.length === 0) return [];
-
-	spinner.message(`Found ${matchingFiles.length} matches, loading metadata...`);
-
-	const results: DisplaySession[] = [];
-	for (const filePath of matchingFiles.slice(0, 20)) {
+	const rgSessions: DisplaySession[] = [];
+	for (const filePath of rgOnlyFiles.slice(0, 20 - metaSessions.length)) {
 		const cached = getSessionMetadata(filePath);
 		const snippet = await rgExtractSnippet(query, filePath);
 
-		results.push(toDisplay(
+		rgSessions.push(toDisplay(
 			cached?.sessionId || basename(filePath, ".jsonl"),
 			{
 				title: cached?.customTitle,
@@ -194,7 +204,8 @@ async function searchByContent(query: string, spinner: Spinner, project?: string
 		));
 	}
 
-	return results;
+	// Metadata results first (ranked by relevance), then rg-only results
+	return [...metaSessions, ...rgSessions];
 }
 
 // --- UI ---
