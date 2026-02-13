@@ -25,6 +25,7 @@ const PROMPT_PREVIEW_LEN = 60;
 interface DisplaySession {
 	sessionId: string;
 	name: string;
+	summary: string;
 	branch: string;
 	project: string;
 	modified: string;
@@ -61,6 +62,7 @@ function toDisplay(
 			opts.summary ||
 			opts.firstPrompt?.slice(0, PROMPT_PREVIEW_LEN) ||
 			"(unnamed)",
+		summary: opts.summary || "",
 		branch: opts.branch || "",
 		project: opts.project || "",
 		modified: opts.timestamp || "",
@@ -197,6 +199,31 @@ async function searchByContent(query: string, spinner: Spinner, project?: string
 
 // --- UI ---
 
+const EXCERPT_MAX_LEN = 120;
+
+/**
+ * Build a conversation excerpt line that adds context beyond the session name.
+ * Priority: matchSnippet > summary (if name isn't summary) > firstPrompt (if name isn't firstPrompt).
+ */
+function buildExcerpt(s: DisplaySession): string | undefined {
+	if (s.matchSnippet) return s.matchSnippet;
+
+	const nameNorm = s.name.toLowerCase().trim();
+
+	// If name came from custom title → show summary or first prompt
+	if (s.summary && s.summary.toLowerCase().trim() !== nameNorm) {
+		return s.summary;
+	}
+
+	// If name came from summary → show first prompt
+	const promptPreview = s.firstPrompt.slice(0, PROMPT_PREVIEW_LEN);
+	if (s.firstPrompt && promptPreview.toLowerCase().trim() !== nameNorm) {
+		return s.firstPrompt;
+	}
+
+	return undefined;
+}
+
 function sessionOption(s: DisplaySession) {
 	const hints = [
 		pc.dim(s.sessionId.slice(0, ID_PREFIX_LEN)),
@@ -206,11 +233,16 @@ function sessionOption(s: DisplaySession) {
 		s.source === "search" ? pc.yellow("[search]") : "",
 	].filter(Boolean);
 
+	const excerpt = buildExcerpt(s);
+	let label = s.name.slice(0, NAME_MAX_LEN);
+	if (excerpt) {
+		const cleaned = excerpt.slice(0, EXCERPT_MAX_LEN).replace(/\n/g, " ").trim();
+		label += `\n  ${pc.dim(cleaned)}`;
+	}
+
 	return {
 		value: s,
-		label: s.matchSnippet
-			? `${s.name.slice(0, NAME_MAX_LEN)}\n  ${pc.dim(s.matchSnippet.slice(0, 100))}`
-			: s.name.slice(0, NAME_MAX_LEN),
+		label,
 		hint: hints.join(" "),
 	};
 }
