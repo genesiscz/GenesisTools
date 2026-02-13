@@ -3,7 +3,7 @@
  * Reusable functions for searching and parsing conversation history
  */
 
-import { createReadStream } from "fs";
+import { createReadStream, existsSync, readdirSync } from "fs";
 import { stat } from "fs/promises";
 import { glob } from "glob";
 import { homedir } from "os";
@@ -15,18 +15,23 @@ import {
     aggregateDailyStats,
     type DailyStats,
     type DateRange,
+    getAllSessionMetadata,
     getCachedDates,
+    getSessionMetadataByDir,
     getCachedTotals,
     getDailyStats,
     getDailyStatsInRange,
     getDatabase,
     getFileIndex,
+    getSessionMetadata,
     invalidateDateRange,
     setCacheMeta,
+    type SessionMetadataRecord,
     type TokenUsage,
     updateCachedTotals,
     upsertDailyStats,
     upsertFileIndex,
+    upsertSessionMetadata,
 } from "./cache";
 import type {
     AssistantMessage,
@@ -423,11 +428,83 @@ function matchesFilters(message: ConversationMessage, filters: SearchFilters, al
 // Search Implementation
 // =============================================================================
 
+/**
+ * Fast summary-only search using SQLite session_metadata cache.
+ * No JSONL parsing needed — searches custom_title, summary, first_prompt.
+ */
+function searchSessionMetadataCache(filters: SearchFilters): SearchResult[] {
+    // First ensure cache is populated for the target scope
+    const all = filters.project
+        ? getAllSessionMetadata().filter(
+              (s) => s.project?.toLowerCase().includes(filters.project!.toLowerCase())
+          )
+        : getAllSessionMetadata();
+
+    const results: SearchResult[] = [];
+
+    for (const s of all) {
+        if (filters.excludeAgents && s.isSubagent) continue;
+        if (filters.agentsOnly && !s.isSubagent) continue;
+
+        if (filters.excludeCurrentSession && s.sessionId === filters.excludeCurrentSession) continue;
+
+        const firstTimestamp = s.firstTimestamp ? new Date(s.firstTimestamp) : undefined;
+        if (filters.conversationDate && firstTimestamp && firstTimestamp < filters.conversationDate) continue;
+        if (filters.conversationDateUntil && firstTimestamp && firstTimestamp > filters.conversationDateUntil) continue;
+
+        const titleText = s.customTitle || s.summary || "";
+        if (filters.query && !matchesQuery(titleText, filters.query, !!filters.exact, !!filters.regex)) {
+            // Also check firstPrompt
+            if (!s.firstPrompt || !matchesQuery(s.firstPrompt, filters.query, !!filters.exact, !!filters.regex)) {
+                continue;
+            }
+        }
+
+        results.push({
+            filePath: s.filePath,
+            project: s.project || "",
+            sessionId: s.sessionId || basename(s.filePath, ".jsonl"),
+            timestamp: firstTimestamp || new Date(),
+            summary: s.summary ?? undefined,
+            customTitle: s.customTitle ?? undefined,
+            gitBranch: s.gitBranch ?? undefined,
+            matchedMessages: [],
+            isSubagent: s.isSubagent,
+            relevanceScore: filters.query
+                ? calculateRelevanceScore(
+                      filters.query,
+                      s.summary ?? undefined,
+                      s.customTitle ?? undefined,
+                      s.firstPrompt ?? undefined,
+                      titleText,
+                      firstTimestamp || new Date()
+                  )
+                : 0,
+        });
+    }
+
+    if (filters.sortByRelevance) {
+        results.sort((a, b) => (b.relevanceScore ?? 0) - (a.relevanceScore ?? 0));
+    }
+
+    return filters.limit ? results.slice(0, filters.limit) : results;
+}
+
 export async function searchConversations(filters: SearchFilters): Promise<SearchResult[]> {
+    // Fast path: summary-only searches use SQLite cache (no JSONL parsing)
+    if (filters.summaryOnly && !filters.commitHash && !filters.commitMessage) {
+        return searchSessionMetadataCache(filters);
+    }
+
     let results: SearchResult[] = [];
     const files = await findConversationFiles(filters);
+    const total = files.length;
+    let processed = 0;
 
     for (const filePath of files) {
+        processed++;
+        filters.onProgress?.(processed, total, basename(filePath, ".jsonl"));
+
         const messages = await parseJsonlFile(filePath);
         if (messages.length === 0) continue;
 
@@ -847,6 +924,217 @@ export async function getAvailableProjects(): Promise<string[]> {
     const dirs = await glob(`${PROJECTS_DIR}/*/`, { absolute: true });
     // extractProjectName handles OS-native separators from absolute paths
     return [...new Set(dirs.map((d) => extractProjectName(d)))].sort();
+}
+
+// =============================================================================
+// Session Listing (cached, incremental)
+// =============================================================================
+
+export interface SessionListingOptions {
+    /** Limit to specific project name (default: all) */
+    project?: string;
+    /** Exclude subagent sessions (default: true) */
+    excludeSubagents?: boolean;
+    /** Max results (default: unlimited) */
+    limit?: number;
+    /** Progress callback: (processed, total, currentFile) */
+    onProgress?: (processed: number, total: number, currentFile: string) => void;
+}
+
+/**
+ * Get a fast, cached listing of all sessions with metadata.
+ * Uses SQLite cache with mtime-based incremental updates.
+ * Only parses first ~30 lines of JSONL files for new/changed files.
+ */
+export interface SessionListingResult {
+    sessions: SessionMetadataRecord[];
+    total: number;
+    subagents: number;
+}
+
+export async function getSessionListing(options: SessionListingOptions = {}): Promise<SessionListingResult> {
+    const { excludeSubagents = true, limit } = options;
+
+    // Resolve project to exact encoded dir path for precise scoping
+    const projectDir = options.project ? resolveProjectDir(options.project) : undefined;
+
+    // 1. Discover JSONL files (scoped to project dir if available)
+    const files = projectDir
+        ? await findConversationFilesInDir(projectDir, excludeSubagents)
+        : await findConversationFiles({ excludeAgents: excludeSubagents });
+
+    // 2. Incrementally index: only parse new/changed files
+    const total = files.length;
+    let processed = 0;
+    for (const filePath of files) {
+        processed++;
+        try {
+            const fileStat = await stat(filePath);
+            const mtime = Math.floor(fileStat.mtimeMs);
+
+            const cached = getSessionMetadata(filePath);
+            if (cached && cached.mtime === mtime) continue;
+
+            options.onProgress?.(processed, total, basename(filePath, ".jsonl"));
+
+            const metadata = await extractSessionMetadataFromFile(filePath, mtime);
+            if (metadata) {
+                upsertSessionMetadata(metadata);
+            }
+        } catch {
+            // Skip unreadable files
+        }
+    }
+
+    // 3. Query cached metadata (scoped to the same files we just indexed)
+    const all = projectDir
+        ? getSessionMetadataByDir(projectDir)
+        : getAllSessionMetadata();
+
+    const subagentCount = all.filter((s) => s.isSubagent).length;
+    const sessions = excludeSubagents ? all.filter((s) => !s.isSubagent) : all;
+
+    sessions.sort((a, b) => {
+        const ta = a.firstTimestamp ? new Date(a.firstTimestamp).getTime() : 0;
+        const tb = b.firstTimestamp ? new Date(b.firstTimestamp).getTime() : 0;
+        return tb - ta;
+    });
+
+    return {
+        sessions: limit ? sessions.slice(0, limit) : sessions,
+        total: all.length,
+        subagents: subagentCount,
+    };
+}
+
+/**
+ * Resolve a project name (e.g. "GenesisTools") to its exact encoded dir path.
+ * Falls back to glob matching if direct encoding doesn't exist.
+ */
+function resolveProjectDir(project: string): string | undefined {
+    // Try exact cwd-based encoding first
+    const cwd = process.cwd();
+    const encoded = cwd.replaceAll("/", "-");
+    const exact = resolve(PROJECTS_DIR, encoded);
+    if (existsSync(exact)) return exact;
+
+    // Fallback: find any dir ending with the project name
+    try {
+        const dirs = readdirSync(PROJECTS_DIR);
+        const match = dirs.find((d) => d.endsWith(`-${project}`) || d === project);
+        if (match) return resolve(PROJECTS_DIR, match);
+    } catch {
+        // ignore
+    }
+    return undefined;
+}
+
+/**
+ * Find JSONL files in a specific project directory (fast, no glob).
+ */
+async function findConversationFilesInDir(projectDir: string, excludeSubagents: boolean): Promise<string[]> {
+    try {
+        const entries = readdirSync(projectDir);
+        let files = entries
+            .filter((e) => e.endsWith(".jsonl"))
+            .map((e) => resolve(projectDir, e));
+
+        if (excludeSubagents) {
+            files = files.filter((f) => !basename(f).startsWith("agent-"));
+        }
+        return files;
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * Extract session metadata by reading only the first ~30 lines of a JSONL file.
+ * Much faster than full parsing — only needs summary, custom-title, sessionId, gitBranch, cwd.
+ */
+async function extractSessionMetadataFromFile(
+    filePath: string,
+    mtime: number
+): Promise<SessionMetadataRecord | null> {
+    const project = extractProjectName(filePath);
+    const isSubagent = filePath.includes("/subagents/") || basename(filePath).startsWith("agent-");
+
+    try {
+        const fileStream = createReadStream(filePath, { end: 64 * 1024 }); // Read max 64KB
+        const rl = createInterface({ input: fileStream, crlfDelay: Number.POSITIVE_INFINITY });
+
+        let sessionId: string | null = null;
+        let customTitle: string | null = null;
+        let summary: string | null = null;
+        let firstPrompt: string | null = null;
+        let gitBranch: string | null = null;
+        let cwd: string | null = null;
+        let firstTimestamp: string | null = null;
+        let lineCount = 0;
+
+        for await (const line of rl) {
+            if (!line.trim()) continue;
+            if (++lineCount > 50) break; // Only read first 50 lines
+
+            try {
+                const obj = JSON.parse(line);
+                if (obj.type === "summary" && obj.summary) {
+                    summary = obj.summary;
+                }
+                if (obj.type === "custom-title" && obj.customTitle) {
+                    customTitle = obj.customTitle;
+                }
+                if (obj.sessionId && !sessionId) {
+                    sessionId = obj.sessionId;
+                }
+                if (obj.gitBranch && !gitBranch) {
+                    gitBranch = obj.gitBranch;
+                }
+                if (obj.cwd && !cwd) {
+                    cwd = obj.cwd;
+                }
+                if (obj.timestamp && !firstTimestamp) {
+                    firstTimestamp = obj.timestamp;
+                }
+                // Get first user prompt
+                if (obj.type === "user" && !firstPrompt) {
+                    if (typeof obj.message?.content === "string") {
+                        firstPrompt = obj.message.content.slice(0, 120);
+                    } else if (Array.isArray(obj.message?.content)) {
+                        const textBlock = obj.message.content.find(
+                            (b: { type: string }) => b.type === "text"
+                        );
+                        if (textBlock?.text) {
+                            firstPrompt = textBlock.text.slice(0, 120);
+                        }
+                    }
+                }
+            } catch {
+                // Skip unparseable lines
+            }
+        }
+
+        // Fall back to filename as sessionId
+        if (!sessionId) {
+            sessionId = basename(filePath, ".jsonl");
+        }
+
+        return {
+            filePath,
+            sessionId,
+            customTitle,
+            summary,
+            firstPrompt,
+            gitBranch,
+            project,
+            cwd,
+            mtime,
+            firstTimestamp,
+            isSubagent,
+        };
+    } catch {
+        return null;
+    }
 }
 
 // =============================================================================
@@ -1498,6 +1786,6 @@ export async function getStatsForDateRange(range: DateRange): Promise<Conversati
     return getConversationStatsWithCache({ dateRange: range });
 }
 
-export type { DailyStats, DateRange, TokenUsage } from "./cache";
+export type { DailyStats, DateRange, SessionMetadataRecord, TokenUsage } from "./cache";
 // Re-export cache functions for external use
 export { getCachedTotals, getCacheStats, invalidateToday } from "./cache";

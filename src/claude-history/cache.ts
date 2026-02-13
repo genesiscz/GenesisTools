@@ -97,9 +97,25 @@ function initSchema(db: Database): void {
       last_updated TEXT NOT NULL
     );
 
+    -- Session metadata cache (for claude-resume fast lookup)
+    CREATE TABLE IF NOT EXISTS session_metadata (
+      file_path TEXT PRIMARY KEY,
+      session_id TEXT,
+      custom_title TEXT,
+      summary TEXT,
+      first_prompt TEXT,
+      git_branch TEXT,
+      project TEXT,
+      cwd TEXT,
+      mtime INTEGER NOT NULL,
+      first_timestamp TEXT,
+      is_subagent INTEGER NOT NULL DEFAULT 0
+    );
+
     CREATE INDEX IF NOT EXISTS idx_daily_stats_date ON daily_stats(date);
     CREATE INDEX IF NOT EXISTS idx_file_index_mtime ON file_index(mtime);
     CREATE INDEX IF NOT EXISTS idx_file_index_project ON file_index(project);
+    CREATE INDEX IF NOT EXISTS idx_session_metadata_session_id ON session_metadata(session_id);
   `);
 
     // Migrations: Add columns that may be missing from older schemas
@@ -140,6 +156,20 @@ export interface DailyStats {
     tokenUsage: TokenUsage;
     modelCounts: Record<string, number>; // { "opus": 50, "sonnet": 30, "haiku": 10 }
     branchCounts: Record<string, number>; // { "main": 100, "feat/xyz": 50 }
+}
+
+export interface SessionMetadataRecord {
+    filePath: string;
+    sessionId: string | null;
+    customTitle: string | null;
+    summary: string | null;
+    firstPrompt: string | null;
+    gitBranch: string | null;
+    project: string | null;
+    cwd: string | null;
+    mtime: number;
+    firstTimestamp: string | null;
+    isSubagent: boolean;
 }
 
 export interface FileIndexRecord {
@@ -585,4 +615,160 @@ export function getCacheStats(): {
         newestDate: newest,
         lastUpdated,
     };
+}
+
+// =============================================================================
+// Session Metadata Operations
+// =============================================================================
+
+export function getSessionMetadata(filePath: string): SessionMetadataRecord | null {
+    const db = getDatabase();
+    const row = db.query("SELECT * FROM session_metadata WHERE file_path = ?").get(filePath) as {
+        file_path: string;
+        session_id: string | null;
+        custom_title: string | null;
+        summary: string | null;
+        first_prompt: string | null;
+        git_branch: string | null;
+        project: string | null;
+        cwd: string | null;
+        mtime: number;
+        first_timestamp: string | null;
+        is_subagent: number;
+    } | null;
+
+    if (!row) return null;
+
+    return {
+        filePath: row.file_path,
+        sessionId: row.session_id,
+        customTitle: row.custom_title,
+        summary: row.summary,
+        firstPrompt: row.first_prompt,
+        gitBranch: row.git_branch,
+        project: row.project,
+        cwd: row.cwd,
+        mtime: row.mtime,
+        firstTimestamp: row.first_timestamp,
+        isSubagent: row.is_subagent === 1,
+    };
+}
+
+export function upsertSessionMetadata(record: SessionMetadataRecord): void {
+    const db = getDatabase();
+    db.query(`
+    INSERT OR REPLACE INTO session_metadata
+      (file_path, session_id, custom_title, summary, first_prompt, git_branch, project, cwd, mtime, first_timestamp, is_subagent)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+        record.filePath,
+        record.sessionId,
+        record.customTitle,
+        record.summary,
+        record.firstPrompt,
+        record.gitBranch,
+        record.project,
+        record.cwd,
+        record.mtime,
+        record.firstTimestamp,
+        record.isSubagent ? 1 : 0
+    );
+}
+
+export function getAllSessionMetadata(): SessionMetadataRecord[] {
+    const db = getDatabase();
+    const rows = db.query("SELECT * FROM session_metadata ORDER BY first_timestamp DESC").all() as Array<{
+        file_path: string;
+        session_id: string | null;
+        custom_title: string | null;
+        summary: string | null;
+        first_prompt: string | null;
+        git_branch: string | null;
+        project: string | null;
+        cwd: string | null;
+        mtime: number;
+        first_timestamp: string | null;
+        is_subagent: number;
+    }>;
+
+    return rows.map((row) => ({
+        filePath: row.file_path,
+        sessionId: row.session_id,
+        customTitle: row.custom_title,
+        summary: row.summary,
+        firstPrompt: row.first_prompt,
+        gitBranch: row.git_branch,
+        project: row.project,
+        cwd: row.cwd,
+        mtime: row.mtime,
+        firstTimestamp: row.first_timestamp,
+        isSubagent: row.is_subagent === 1,
+    }));
+}
+
+export function getSessionMetadataByDir(dirPath: string): SessionMetadataRecord[] {
+    const db = getDatabase();
+    const prefix = dirPath.endsWith("/") ? dirPath : `${dirPath}/`;
+    const rows = db
+        .query("SELECT * FROM session_metadata WHERE file_path LIKE ? ORDER BY first_timestamp DESC")
+        .all(`${prefix}%`) as Array<{
+        file_path: string;
+        session_id: string | null;
+        custom_title: string | null;
+        summary: string | null;
+        first_prompt: string | null;
+        git_branch: string | null;
+        project: string | null;
+        cwd: string | null;
+        mtime: number;
+        first_timestamp: string | null;
+        is_subagent: number;
+    }>;
+
+    return rows.map((row) => ({
+        filePath: row.file_path,
+        sessionId: row.session_id,
+        customTitle: row.custom_title,
+        summary: row.summary,
+        firstPrompt: row.first_prompt,
+        gitBranch: row.git_branch,
+        project: row.project,
+        cwd: row.cwd,
+        mtime: row.mtime,
+        firstTimestamp: row.first_timestamp,
+        isSubagent: row.is_subagent === 1,
+    }));
+}
+
+export function getSessionMetadataByProject(project: string): SessionMetadataRecord[] {
+    const db = getDatabase();
+    const rows = db
+        .query("SELECT * FROM session_metadata WHERE project = ? ORDER BY first_timestamp DESC")
+        .all(project) as Array<{
+        file_path: string;
+        session_id: string | null;
+        custom_title: string | null;
+        summary: string | null;
+        first_prompt: string | null;
+        git_branch: string | null;
+        project: string | null;
+        cwd: string | null;
+        mtime: number;
+        first_timestamp: string | null;
+        is_subagent: number;
+    }>;
+
+    return rows.map((row) => ({
+        filePath: row.file_path,
+        sessionId: row.session_id,
+        customTitle: row.custom_title,
+        summary: row.summary,
+        firstPrompt: row.first_prompt,
+        gitBranch: row.git_branch,
+        project: row.project,
+        cwd: row.cwd,
+        mtime: row.mtime,
+        firstTimestamp: row.first_timestamp,
+        isSubagent: row.is_subagent === 1,
+    }));
 }

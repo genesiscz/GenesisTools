@@ -47,3 +47,43 @@ export async function parseJsonlTranscript<T = Record<string, unknown>>(
 
     return messages;
 }
+
+/**
+ * Find the claude CLI command name available on this system.
+ * Checks for `ccc`, `cc` (aliases/functions) first, then falls back to `claude`.
+ * Uses interactive shell to resolve functions/aliases from ~/.zshrc,
+ * and verifies the command is actually Claude (not e.g. the C compiler for `cc`).
+ */
+export async function findClaudeCommand(): Promise<string> {
+    const shell = process.env.SHELL || "/bin/zsh";
+
+    for (const cmd of ["ccc", "cc", "claude"]) {
+        const proc = Bun.spawn({
+            cmd: [shell, "-ic", `${cmd} --version 2>&1`],
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+        const stdout = await new Response(proc.stdout).text();
+        await proc.exited;
+
+        if (proc.exitCode === 0 && stdout.includes("Claude Code")) {
+            return cmd;
+        }
+    }
+    return "claude";
+}
+
+/**
+ * Detect the current project name from cwd.
+ * Returns the last path segment (directory name), e.g. "GenesisTools".
+ */
+export function detectCurrentProject(): string | undefined {
+    return process.cwd().split("/").pop();
+}
+
+/**
+ * Get the encoded project directory name for a cwd path.
+ * Claude encodes /Users/Martin/Projects/Foo as -Users-Martin-Projects-Foo.
+ */
+export function encodedProjectDir(cwd?: string): string {
+    return (cwd ?? process.cwd()).replaceAll("/", "-");
+}
