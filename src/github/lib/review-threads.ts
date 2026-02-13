@@ -364,8 +364,8 @@ function detectSeverity(body: string): "high" | "medium" | "low" {
     const lowerBody = body.toLowerCase();
 
     if (
-        body.includes("high-priority") ||
-        body.includes("![high]") ||
+        lowerBody.includes("high-priority") ||
+        lowerBody.includes("![high]") ||
         lowerBody.includes("critical") ||
         lowerBody.includes("security vulnerability") ||
         lowerBody.includes("bug")
@@ -374,8 +374,8 @@ function detectSeverity(body: string): "high" | "medium" | "low" {
     }
 
     if (
-        body.includes("medium-priority") ||
-        body.includes("![medium]") ||
+        lowerBody.includes("medium-priority") ||
+        lowerBody.includes("![medium]") ||
         lowerBody.includes("should") ||
         lowerBody.includes("consider") ||
         lowerBody.includes("suggestion")

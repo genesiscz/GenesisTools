@@ -5,6 +5,7 @@ import { calculateReviewStats, fetchPRReviewThreads, markThreadResolved, parseTh
 import type { ReviewCommandOptions, ReviewData } from "@app/github/types";
 import logger from "@app/logger";
 import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
+import { setGlobalVerbose } from "@app/utils/github/utils";
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -12,13 +13,17 @@ import { Command } from "commander";
  * Main review command handler
  */
 export async function reviewCommand(input: string, options: ReviewCommandOptions): Promise<void> {
+    // Set global verbose for HTTP request logging
+    if (options.verbose) {
+        setGlobalVerbose(true);
+    }
+
     // Parse input
     const defaultRepo = options.repo || (await detectRepoFromGit()) || undefined;
     const parsed = parseGitHubUrl(input, defaultRepo);
 
     if (!parsed) {
-        console.error(chalk.red("Invalid input. Please provide a GitHub PR URL or number."));
-        process.exit(1);
+        throw new Error("Invalid input. Please provide a GitHub PR URL or number.");
     }
 
     const { owner, repo, number: prNumber } = parsed;
@@ -26,37 +31,28 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
     // Validate thread-id is provided when respond or resolve operations are requested
     const resolveThreadOpt = options.resolveThread || options.resolve;
     if ((options.respond || resolveThreadOpt) && !options.threadId) {
-        console.error(chalk.red("Error: --thread-id is required when using --respond or --resolve-thread"));
-        console.error(chalk.dim('Usage: tools github review <pr> -r "message" -t <thread-id>'));
-        console.error(chalk.dim("       tools github review <pr> --resolve-thread -t <thread-id>"));
-        process.exit(1);
+        throw new Error(
+            '--thread-id is required when using --respond or --resolve-thread\n' +
+            'Usage: tools github review <pr> --respond "message" -t <thread-id>\n' +
+            '       tools github review <pr> --resolve-thread -t <thread-id>'
+        );
     }
 
     // Handle respond and/or resolve operations
     if ((options.respond || resolveThreadOpt) && options.threadId) {
         if (options.respond) {
-            try {
-                console.error(chalk.dim(`Replying to thread ${options.threadId}...`));
-                const replyId = await replyToThread(options.threadId, options.respond);
-                console.log(chalk.green(`✓ Reply posted successfully! Reply ID: ${replyId}`));
-            } catch (error) {
-                console.error(chalk.red(`Error replying to thread: ${(error as Error).message}`));
-                process.exit(1);
-            }
+            console.error(chalk.dim(`Replying to thread ${options.threadId}...`));
+            const replyId = await replyToThread(options.threadId, options.respond);
+            console.log(chalk.green(`✓ Reply posted successfully! Reply ID: ${replyId}`));
         }
 
         if (resolveThreadOpt) {
-            try {
-                console.error(chalk.dim(`Resolving thread ${options.threadId}...`));
-                const resolved = await markThreadResolved(options.threadId);
-                if (resolved) {
-                    console.log(chalk.green(`✓ Thread resolved successfully!`));
-                } else {
-                    console.log(chalk.red(`✗ Failed to resolve thread`));
-                }
-            } catch (error) {
-                console.error(chalk.red(`Error resolving thread: ${(error as Error).message}`));
-                process.exit(1);
+            console.error(chalk.dim(`Resolving thread ${options.threadId}...`));
+            const resolved = await markThreadResolved(options.threadId);
+            if (resolved) {
+                console.log(chalk.green(`✓ Thread resolved successfully!`));
+            } else {
+                throw new Error("Failed to resolve thread");
             }
         }
 
@@ -68,13 +64,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
         console.error(chalk.dim(`Fetching PR #${prNumber} from ${owner}/${repo}...`));
     }
 
-    let prInfo;
-    try {
-        prInfo = await fetchPRReviewThreads(owner, repo, prNumber);
-    } catch (error) {
-        console.error(chalk.red(`Error: ${(error as Error).message}`));
-        process.exit(1);
-    }
+    const prInfo = await fetchPRReviewThreads(owner, repo, prNumber);
 
     // Parse threads and compute stats on ALL threads
     const allThreads = parseThreads(prInfo.threads);
@@ -128,9 +118,9 @@ Examples:
   $ tools github review 137 -u                                           # Show only unresolved threads
   $ tools github review 137 --json                                       # Output as JSON
   $ tools github review 137 --md -g                                      # Save as grouped markdown file
-  $ tools github review 137 -r "ok" -t <thread-id>                       # Reply to a thread
+  $ tools github review 137 --respond "ok" -t <thread-id>                # Reply to a thread
   $ tools github review 137 --resolve-thread -t <thread-id>              # Mark a thread as resolved
-  $ tools github review 137 -r "fixed" --resolve-thread -t <thread-id>   # Reply AND resolve`
+  $ tools github review 137 --respond "fixed" --resolve-thread -t <thread-id>  # Reply AND resolve`
         )
         .argument("<pr>", "PR number or full GitHub URL")
         .option("-r, --repo <owner/repo>", "Repository (auto-detected from URL or git)")

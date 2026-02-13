@@ -206,7 +206,10 @@ function formatMarkdownThread(thread: ParsedReviewThread): string {
     }
 
     if (thread.suggestedCode) {
-        output += `**Suggested Change:**\n\n\`\`\`suggestion\n${thread.suggestedCode}\`\`\`\n\n`;
+        const suggested = thread.suggestedCode.endsWith("\n")
+            ? thread.suggestedCode
+            : thread.suggestedCode + "\n";
+        output += `**Suggested Change:**\n\n\`\`\`suggestion\n${suggested}\`\`\`\n\n`;
     }
 
     if (thread.replies.length > 0) {

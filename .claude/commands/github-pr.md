@@ -23,7 +23,7 @@ Parse arguments:
 
 ### Step 1: Fetch PR Review Comments
 
-Run the github-pr tool with markdown output:
+Run the github review command with markdown output:
 
 ```bash
 tools github review <pr-number-or-url> -g --md [-u if flag present]

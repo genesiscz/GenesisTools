@@ -184,7 +184,12 @@ function formatPRSummary(data: PRData, options: FormatOptions): string {
             stats: data.reviewThreadStats,
         };
         const reviewSection = formatReviewTerminal(reviewData, true);
-        output += "\n" + reviewSection;
+        const fetchedIdx = output.lastIndexOf("_Fetched:");
+        if (fetchedIdx > 0) {
+            output = output.slice(0, fetchedIdx) + "\n" + reviewSection + "\n" + output.slice(fetchedIdx);
+        } else {
+            output += "\n" + reviewSection;
+        }
     }
 
     return output;
@@ -408,7 +413,12 @@ function formatPRMarkdown(data: PRData, options: FormatOptions): string {
         if (statsPoint > 0) {
             output = output.slice(0, statsPoint) + "\n---\n\n" + reviewMd + output.slice(statsPoint);
         } else {
-            output += "\n---\n\n" + reviewMd;
+            const footerPoint = output.lastIndexOf("\n---\n_Fetched");
+            if (footerPoint > 0) {
+                output = output.slice(0, footerPoint) + "\n---\n\n" + reviewMd + output.slice(footerPoint);
+            } else {
+                output += "\n---\n\n" + reviewMd;
+            }
         }
     }
 
