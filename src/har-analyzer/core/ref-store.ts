@@ -40,7 +40,7 @@ export class RefStoreManager {
 		if (existing && existing.shown) {
 			// Already shown once - return compact reference
 			const preview = this.generatePreview(value);
-			return `[ref:${refId}] ${preview}... (${value.length} chars)`;
+			return `[ref:${refId}] ${preview} (${value.length} chars)`;
 		}
 
 		// First time showing or ref not yet marked as shown - show full content

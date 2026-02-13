@@ -33,13 +33,24 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
 
 		const spinner = p.spinner();
 		spinner.start("Loading HAR file...");
-		session = await sm.createSession(filePath);
-		spinner.stop(`Loaded ${session.stats.entryCount} entries`);
+		try {
+			session = await sm.createSession(filePath);
+			spinner.stop(`Loaded ${session.stats.entryCount} entries`);
+		} catch (err) {
+			spinner.stop("Failed");
+			p.log.error(`Could not load HAR file: ${err instanceof Error ? err.message : err}`);
+			process.exit(1);
+		}
 	} else {
 		p.log.info(`Resuming session: ${session.sourceFile} (${session.stats.entryCount} entries)`);
 	}
 
-	harFile = await loadHarFile(session.sourceFile);
+	try {
+		harFile = await loadHarFile(session.sourceFile);
+	} catch (err) {
+		p.log.error(`Could not read HAR source file: ${err instanceof Error ? err.message : err}`);
+		process.exit(1);
+	}
 	refStore = new RefStoreManager(session.sourceHash);
 
 	// Show dashboard

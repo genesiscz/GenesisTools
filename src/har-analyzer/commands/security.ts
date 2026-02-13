@@ -101,6 +101,25 @@ function scanApiKeys(entry: HarEntry, index: number, findings: SecurityFinding[]
 			});
 		}
 	}
+
+	// Also check request headers for API keys
+	for (const header of entry.request.headers) {
+		const lowerName = header.name.toLowerCase();
+		// Skip authorization header (handled by scanJwt)
+		if (lowerName === "authorization") continue;
+		const matched = API_KEY_PATTERNS.some((pattern) => lowerName === pattern || lowerName.includes(pattern));
+
+		if (matched && header.value.length > 0) {
+			findings.push({
+				severity: "HIGH",
+				category: "API Key in Header",
+				entryIndex: index,
+				method: entry.request.method,
+				path: truncatePath(pathname + (hostname ? ` (${hostname})` : ""), 60),
+				detail: `Header "${header.name}" contains potential API key (${header.value.length} chars)`,
+			});
+		}
+	}
 }
 
 function scanCookies(entry: HarEntry, index: number, findings: SecurityFinding[]): void {
