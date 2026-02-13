@@ -3,6 +3,17 @@ import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import { truncatePath, printFormatted } from "@app/har-analyzer/core/formatter";
 import type { IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
 
+function urlMatches(fullUrl: string, target: string): boolean {
+	if (fullUrl === target) return true;
+	try {
+		const a = new URL(fullUrl);
+		const b = new URL(target, fullUrl); // resolve relative target against fullUrl
+		return a.origin === b.origin && a.pathname === b.pathname;
+	} catch {
+		return fullUrl.endsWith(target);
+	}
+}
+
 interface RedirectChain {
 	entries: IndexedEntry[];
 	finalStatus: number;
@@ -12,24 +23,13 @@ function buildRedirectChains(entries: IndexedEntry[]): RedirectChain[] {
 	const chains: RedirectChain[] = [];
 	const visited = new Set<number>();
 
-	// Index entries by URL for quick lookup
-	const entriesByUrl = new Map<string, IndexedEntry[]>();
-	for (const entry of entries) {
-		const existing = entriesByUrl.get(entry.url);
-		if (existing) {
-			existing.push(entry);
-		} else {
-			entriesByUrl.set(entry.url, [entry]);
-		}
-	}
-
 	for (const entry of entries) {
 		// Skip if already part of a chain or not a redirect
 		if (visited.has(entry.index) || !entry.isRedirect) continue;
 
 		// Check if this entry is the target of another redirect (i.e., not a chain start)
 		const isTarget = entries.some(
-			(e) => e.isRedirect && e.redirectURL && entry.url.endsWith(e.redirectURL),
+			(e) => e.isRedirect && e.redirectURL && urlMatches(entry.url, e.redirectURL),
 		);
 		if (isTarget) continue;
 

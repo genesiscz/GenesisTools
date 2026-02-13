@@ -196,9 +196,9 @@ export function formatSchema(value: unknown, mode: OutputMode, options?: FormatO
 // ─── Skeleton: compact (default) ─────────────────────────────────────
 
 function formatSkeletonCompact(node: SchemaNode): string {
-	const type = Array.isArray(node.type) ? node.type.join(" | ") : node.type;
+	const typeStr = Array.isArray(node.type) ? node.type.join(" | ") : node.type;
 
-	if (type === "object" && node.properties) {
+	if (hasType(node.type, "object") && node.properties) {
 		const required = new Set(node.required ?? []);
 		const entries = Object.entries(node.properties);
 		if (entries.length === 0) return "{}";
@@ -208,24 +208,28 @@ function formatSkeletonCompact(node: SchemaNode): string {
 			return `${key}${opt}: ${formatSkeletonCompact(child)}`;
 		});
 
-		return `{ ${parts.join(", ")} }`;
+		const obj = `{ ${parts.join(", ")} }`;
+		const extras = Array.isArray(node.type) ? node.type.filter((t) => t !== "object") : [];
+		return extras.length > 0 ? `${obj} | ${extras.join(" | ")}` : obj;
 	}
 
-	if (type === "array" && node.items) {
+	if (hasType(node.type, "array") && node.items) {
 		const itemStr = formatSkeletonCompact(node.items);
-		return `${itemStr}[]`;
+		const arr = `${itemStr}[]`;
+		const extras = Array.isArray(node.type) ? node.type.filter((t) => t !== "array") : [];
+		return extras.length > 0 ? `${arr} | ${extras.join(" | ")}` : arr;
 	}
 
-	return type;
+	return typeStr;
 }
 
 // ─── Skeleton: pretty ────────────────────────────────────────────────
 
 function formatSkeletonPretty(node: SchemaNode, indent: number): string {
 	const pad = "  ".repeat(indent);
-	const type = Array.isArray(node.type) ? node.type.join(" | ") : node.type;
+	const typeStr = Array.isArray(node.type) ? node.type.join(" | ") : node.type;
 
-	if (type === "object" && node.properties) {
+	if (hasType(node.type, "object") && node.properties) {
 		const required = new Set(node.required ?? []);
 		const entries = Object.entries(node.properties);
 		if (entries.length === 0) return "{}";
@@ -237,18 +241,22 @@ function formatSkeletonPretty(node: SchemaNode, indent: number): string {
 			lines.push(`${pad}  ${key}${opt}: ${childStr}`);
 		}
 		lines.push(`${pad}}`);
-		return lines.join("\n");
+		const obj = lines.join("\n");
+		const extras = Array.isArray(node.type) ? node.type.filter((t) => t !== "object") : [];
+		return extras.length > 0 ? `${obj} | ${extras.join(" | ")}` : obj;
 	}
 
-	if (type === "array" && node.items) {
+	if (hasType(node.type, "array") && node.items) {
 		const itemStr = formatSkeletonPretty(node.items, indent);
+		const extras = Array.isArray(node.type) ? node.type.filter((t) => t !== "array") : [];
+		const suffix = extras.length > 0 ? ` | ${extras.join(" | ")}` : "";
 		if (itemStr.includes("\n")) {
-			return `[${itemStr}]`;
+			return `[${itemStr}]${suffix}`;
 		}
-		return `${itemStr}[]`;
+		return `${itemStr}[]${suffix}`;
 	}
 
-	return type;
+	return typeStr;
 }
 
 // ─── TypeScript: compact (default) ───────────────────────────────────
