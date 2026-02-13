@@ -85,5 +85,7 @@ export function detectCurrentProject(): string | undefined {
  * Claude encodes /Users/Martin/Projects/Foo as -Users-Martin-Projects-Foo.
  */
 export function encodedProjectDir(cwd?: string): string {
-    return (cwd ?? process.cwd()).replaceAll("/", "-");
+    const path = cwd ?? process.cwd();
+    // Prepend a dash to match the observed encoding format.
+    return `-${path.replace(/^\//, "").replaceAll("/", "-")}`;
 }
