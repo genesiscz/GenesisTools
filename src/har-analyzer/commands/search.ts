@@ -42,9 +42,11 @@ function searchInUrl(entry: IndexedEntry, query: string): string | null {
 
 function searchInBody(har: HarFile, entry: IndexedEntry, query: string): string | null {
 	const harEntry = har.log.entries[entry.index];
-	const bodyText = harEntry.response.content.text;
-	if (!bodyText) return null;
-	return extractContext(bodyText, query);
+	const responseBody = harEntry.response.content.text ?? "";
+	const requestBody = harEntry.request.postData?.text ?? "";
+	const combined = responseBody + requestBody;
+	if (!combined) return null;
+	return extractContext(combined, query);
 }
 
 function searchInHeaders(har: HarFile, entry: IndexedEntry, query: string): string | null {

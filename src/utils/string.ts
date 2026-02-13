@@ -65,6 +65,6 @@ export function sanitizeOutput(text: string, removeANSI: boolean = false): strin
  * Case-insensitive. Escapes regex special chars except `*`.
  */
 export function matchGlob(value: string, pattern: string): boolean {
-    const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+    const escaped = pattern.replace(/[.+^${}()|[\]\\?]/g, "\\$&").replace(/\*/g, ".*");
     return new RegExp(`^${escaped}$`, "i").test(value);
 }

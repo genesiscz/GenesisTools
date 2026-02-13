@@ -119,8 +119,7 @@ export function registerExportCommand(program: Command): void {
 
 			const exportedHar: HarFile = {
 				log: {
-					version: harFile.log.version,
-					creator: harFile.log.creator,
+					...harFile.log,
 					entries,
 				},
 			};

@@ -89,7 +89,9 @@ export function filterEntries(entries: IndexedEntry[], filter: EntryFilter): Ind
 export function getEntriesForDomain(session: HarSession, domain: string): IndexedEntry[] {
 	const indices = session.domains[domain];
 	if (!indices) return [];
-	return indices.map((i) => session.entries[i]);
+	return indices
+		.filter((i) => i >= 0 && i < session.entries.length)
+		.map((i) => session.entries[i]);
 }
 
 export function groupByDomain(entries: IndexedEntry[]): Map<string, IndexedEntry[]> {

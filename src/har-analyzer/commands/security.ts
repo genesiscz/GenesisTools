@@ -21,8 +21,8 @@ const SEVERITY_SYMBOLS: Record<Severity, string> = {
 	LOW: "[!]",
 };
 
-const API_KEY_PATTERNS = ["api_key", "apikey", "x-api-key", "key", "secret", "token"];
-const SENSITIVE_PARAM_PATTERNS = ["password", "passwd", "secret", "token", "auth"];
+const API_KEY_PATTERNS = ["api_key", "apikey", "x-api-key", "secret", "token"];
+const SENSITIVE_PARAM_PATTERNS = ["password", "passwd", "auth"];
 
 function findHeader(headers: HarHeader[], name: string): HarHeader | undefined {
 	const lower = name.toLowerCase();
@@ -30,7 +30,10 @@ function findHeader(headers: HarHeader[], name: string): HarHeader | undefined {
 }
 
 function decodeBase64Url(str: string): string {
-	const padded = str.replace(/-/g, "+").replace(/_/g, "/");
+	let padded = str.replace(/-/g, "+").replace(/_/g, "/");
+	const remainder = padded.length % 4;
+	if (remainder === 2) padded += "==";
+	else if (remainder === 3) padded += "=";
 	return atob(padded);
 }
 
@@ -205,7 +208,7 @@ export function registerSecurityCommand(program: Command): void {
 			}
 
 			if (findings.length === 0) {
-				console.log("No security issues detected.");
+				await printFormatted("No security issues detected.", parentOpts.format);
 				return;
 			}
 

@@ -217,7 +217,7 @@ export async function startMcpServer(): Promise<void> {
 					if (entry.request.queryString.length > 0) {
 						lines.push(`Query: ${entry.request.queryString.map((q) => `${q.name}=${q.value}`).join("&")}`);
 					}
-					lines.push(`Request Body: ${entry.request.postData ? formatBytes(entry.request.bodySize) : "none"}`);
+					lines.push(`Request Body: ${entry.request.postData && entry.request.bodySize >= 0 ? formatBytes(entry.request.bodySize) : entry.request.postData ? "unknown" : "none"}`);
 					lines.push(`Response Body: ${formatBytes(entry.response.content.size)} (${entry.response.content.mimeType})`);
 
 					return { content: [{ type: "text", text: lines.join("\n") }] };
