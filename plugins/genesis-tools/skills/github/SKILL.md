@@ -189,7 +189,10 @@ tools github code "interface Props" --repo vercel/next.js --language typescript
 
 ### PR-Specific Features
 ```bash
-# Include code review comments
+# Include review threads (GraphQL, threaded with severity/suggestions)
+tools github pr <url> --reviews
+
+# Include review comments (REST, flat list — legacy, prefer --reviews)
 tools github pr <url> --review-comments
 
 # Include diff
@@ -200,6 +203,30 @@ tools github pr <url> --commits
 
 # Include CI check status
 tools github pr <url> --checks
+```
+
+### Review Threads (Code Review Workflow)
+
+Fetch, reply to, and resolve PR review threads with severity detection and suggestions.
+
+```bash
+# View all review threads
+tools github review 137
+
+# Only unresolved threads
+tools github review 137 -u
+
+# Save as markdown to .claude/github/reviews/
+tools github review 137 --md -g
+
+# Reply to a thread
+tools github review 137 --respond "Fixed in latest commit" -t <thread-id>
+
+# Resolve a thread
+tools github review 137 --resolve-thread -t <thread-id>
+
+# Reply AND resolve
+tools github review 137 --respond "Done" --resolve-thread -t <thread-id>
 ```
 
 ## Caching Behavior

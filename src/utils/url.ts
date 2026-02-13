@@ -1,5 +1,5 @@
-type QueryParamValue = string | string[] | undefined;
-type QueryParams = Record<string, QueryParamValue>;
+export type QueryParamValue = string | string[] | undefined;
+export type QueryParams = Record<string, QueryParamValue>;
 
 interface BuildUrlOptions {
     base: string;

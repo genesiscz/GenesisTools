@@ -53,6 +53,8 @@ export interface WorkItemFull extends WorkItem {
     relations?: Relation[];
     /** Raw field values from Azure DevOps API (keyed by reference name, e.g., "System.AreaPath") */
     rawFields?: Record<string, unknown>;
+    /** Field change history (deltas). Populated when fetched with { updates: true } */
+    updates?: WorkItemUpdate[];
 }
 
 export interface Comment {
@@ -68,6 +70,11 @@ export interface Relation {
     attributes?: {
         name?: string;
         comment?: string;
+        // Attachment-specific fields (populated when rel === "AttachedFile")
+        resourceCreatedDate?: string;
+        resourceModifiedDate?: string;
+        resourceSize?: number;
+        id?: number;
     };
 }
 
@@ -76,6 +83,28 @@ export interface ParsedRelations {
     children: number[];
     related: number[];
     other: string[];
+}
+
+// ============= Attachment Types =============
+
+export interface AttachmentInfo {
+    /** GUID extracted from attachment URL */
+    id: string;
+    filename: string;
+    size: number;
+    createdDate: string;
+    /** Full path on disk (set after download or if already exists) */
+    localPath?: string;
+    /** Whether this invocation downloaded the file (false = already existed) */
+    downloaded?: boolean;
+}
+
+export interface AttachmentFilter {
+    from?: Date;
+    to?: Date;
+    prefix?: string;
+    suffix?: string;
+    outputDir?: string;
 }
 
 // ============= Cache Types =============
@@ -326,29 +355,6 @@ export interface UsedValuesCache {
     parents: { id: number; title: string }[]; // Common parent work items
 }
 
-/** Options for the --create command */
-export interface CreateOptions {
-    interactive: boolean;
-    fromFile?: string;
-    type?: WorkItemType;
-    sourceInput?: string;
-    title?: string;
-    description?: string;
-    area?: string;
-    iteration?: string;
-    severity?: string;
-    tags?: string;
-    assignee?: string;
-    parent?: string;
-}
-
-/** Cached work item type definitions */
-export interface TypeDefinitionCache {
-    project: string;
-    types: Record<string, WorkItemTypeDefinition>;
-    fetchedAt: string;
-}
-
 /** Query information from Azure DevOps */
 export interface QueryInfo {
     id: string;
@@ -365,9 +371,6 @@ export interface QueriesCache {
 }
 
 // ============= TimeLog Types (Third-Party Extension) =============
-
-/** TimeLog API base URL */
-export const TIMELOG_API_BASE = "https://boznet-timelogapi.azurewebsites.net/api";
 
 /** Time type definition from TimeLog API */
 export interface TimeType {

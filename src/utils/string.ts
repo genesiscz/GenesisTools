@@ -59,3 +59,12 @@ export function sanitizeOutput(text: string, removeANSI: boolean = false): strin
     sanitized = sanitized.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
     return sanitized;
 }
+
+/**
+ * Simple glob matching: `*` matches any sequence of characters.
+ * Case-insensitive. Escapes regex special chars except `*`.
+ */
+export function matchGlob(value: string, pattern: string): boolean {
+    const escaped = pattern.replace(/[.+^${}()|[\]\\?]/g, "\\$&").replace(/\*/g, ".*");
+    return new RegExp(`^${escaped}$`, "i").test(value);
+}

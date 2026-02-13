@@ -43,7 +43,7 @@ export function formatDuration(
 
     switch (style) {
         case "tiered": {
-            if (ms < 1000) return `${ms}ms`;
+            if (ms < 1000) return `${Math.round(ms)}ms`;
             if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
             if (ms < 3600000) return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
             return `${Math.floor(ms / 3600000)}h ${Math.floor((ms % 3600000) / 60000)}m`;
@@ -90,16 +90,19 @@ interface FormatRelativeTimeOptions {
     fallbackFormat?: (date: Date) => string;
     /** Rounding mode for time units. Default: "floor" */
     rounding?: "floor" | "round";
+    /** Compact output: "5m ago", "3h ago", "2d ago". Default: false */
+    compact?: boolean;
 }
 
 /**
  * Format a Date as a relative time string like "5 minutes ago".
+ * With compact: true, returns "5m ago", "3h ago", "2d ago".
  *
  * @param date - The date to format
  * @param options - Formatting options
  */
 export function formatRelativeTime(date: Date, options?: FormatRelativeTimeOptions): string {
-    const { maxDays = Infinity, fallbackFormat, rounding = "floor" } = options ?? {};
+    const { maxDays = Infinity, fallbackFormat, rounding = "floor", compact = false } = options ?? {};
     const round = rounding === "round" ? Math.round : Math.floor;
 
     const diffMs = Date.now() - date.getTime();
@@ -109,6 +112,14 @@ export function formatRelativeTime(date: Date, options?: FormatRelativeTimeOptio
 
     if (maxDays !== Infinity && diffDays >= maxDays && fallbackFormat) {
         return fallbackFormat(date);
+    }
+
+    if (compact) {
+        if (diffMinutes < 1) return "now";
+        if (diffHours < 1) return `${diffMinutes}m ago`;
+        if (diffDays < 1) return `${diffHours}h ago`;
+        if (diffDays < 7) return `${diffDays}d ago`;
+        return date.toISOString().slice(0, 10);
     }
 
     if (diffMinutes < 1) return "just now";

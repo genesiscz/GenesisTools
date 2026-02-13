@@ -191,7 +191,8 @@ export type WorkItemHandler = (
     forceRefresh: boolean,
     category?: string,
     taskFolders?: boolean,
-    queryMetadata?: Map<number, QueryItemMetadata>
+    queryMetadata?: Map<number, QueryItemMetadata>,
+    fetchOptions?: { comments?: boolean; updates?: boolean }
 ) => Promise<void>;
 
 let workItemHandler: WorkItemHandler | null = null;
@@ -357,7 +358,7 @@ export async function handleQuery(
         );
         const ids = items.map((item) => item.id).join(",");
         // Pass queryMetadata for smart comparison (ignores forceRefresh when metadata available)
-        await workItemHandler(ids, format, false, effectiveCategory, effectiveTaskFolders, queryMetadata);
+        await workItemHandler(ids, format, false, effectiveCategory, effectiveTaskFolders, queryMetadata, { comments: true });
     }
 }
 

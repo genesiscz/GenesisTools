@@ -12,7 +12,10 @@ import {
     saveGlobalCache,
     WORKITEM_FRESHNESS_MINUTES,
 } from "@app/azure-devops/cache";
+import { downloadAttachments } from "@app/azure-devops/commands/attachments";
 import type {
+    AttachmentFilter,
+    AttachmentInfo,
     OutputFormat,
     QueryItemMetadata,
     WorkItemCache,
@@ -23,10 +26,12 @@ import {
     extractWorkItemIds,
     findTaskFile,
     findTaskFileAnywhere,
+    formatBytes,
     getRelativeTime,
     getTaskFilePath,
     getTasksDir,
     htmlToMarkdown,
+    parseAttachments,
     parseRelations,
     requireConfig,
 } from "@app/azure-devops/utils";
@@ -43,7 +48,12 @@ const log = (msg: string) => {
 
 // ============= Output Formatters =============
 
-function formatWorkItemAI(item: WorkItemFull, taskPath: string, cacheTime?: Date): string {
+function formatWorkItemAI(
+    item: WorkItemFull,
+    taskPath: string,
+    cacheTime?: Date,
+    downloadedAttachments?: AttachmentInfo[],
+): string {
     const lines: string[] = [];
 
     lines.push(`# Work Item #${item.id}`);
@@ -97,7 +107,34 @@ function formatWorkItemAI(item: WorkItemFull, taskPath: string, cacheTime?: Date
             lines.push(`- **Related**: ${parsed.related.map((id) => `#${id}`).join(", ")}`);
         }
         if (parsed.other.length > 0) {
-            lines.push(`- **Other links**: ${parsed.other.length} (attachments, hyperlinks, etc.)`);
+            lines.push(`- **Other links**: ${parsed.other.length} (hyperlinks, etc.)`);
+        }
+    }
+
+    // Attachments section
+    const attachments = parseAttachments(item.relations ?? []);
+    if (attachments.length > 0) {
+        lines.push("");
+        if (downloadedAttachments && downloadedAttachments.length > 0) {
+            const dlCount = downloadedAttachments.filter((a) => a.downloaded).length;
+            const existCount = downloadedAttachments.length - dlCount;
+            const parts = [];
+            if (dlCount > 0) parts.push(`${dlCount} downloaded`);
+            if (existCount > 0) parts.push(`${existCount} already existed`);
+            lines.push(`## Attachments (${parts.join(", ")})`);
+            for (const att of downloadedAttachments) {
+                const status = att.downloaded ? "Downloaded" : "Already exists";
+                lines.push(`- ${att.filename} (${formatBytes(att.size)}) ${status}`);
+                lines.push(`  ${att.localPath}`);
+            }
+        } else {
+            lines.push(`## Attachments (${attachments.length})`);
+            for (const att of attachments) {
+                const date = att.createdDate ? new Date(att.createdDate).toLocaleDateString() : "";
+                lines.push(`- ${att.filename} (${formatBytes(att.size)}${date ? `, ${date}` : ""})`);
+            }
+            lines.push("");
+            lines.push(`Download: tools azure-devops workitem ${item.id} --attachments-suffix .har`);
         }
     }
 
@@ -146,6 +183,18 @@ function generateWorkItemMarkdown(item: WorkItemFull): string {
         }
     }
 
+    // Attachments listing in markdown
+    const attachments = parseAttachments(item.relations ?? []);
+    if (attachments.length > 0) {
+        lines.push("");
+        lines.push("## Attachments");
+        lines.push("");
+        for (const att of attachments) {
+            const date = att.createdDate ? new Date(att.createdDate).toLocaleDateString() : "";
+            lines.push(`- ${att.filename} (${formatBytes(att.size)}${date ? `, ${date}` : ""})`);
+        }
+    }
+
     if (item.comments.length > 0) {
         lines.push("");
         lines.push(`## Comments (${item.comments.length})`);
@@ -179,7 +228,9 @@ export async function handleWorkItem(
     forceRefresh: boolean,
     categoryArg?: string,
     taskFoldersArg?: boolean,
-    queryMetadata?: Map<number, QueryItemMetadata>
+    queryMetadata?: Map<number, QueryItemMetadata>,
+    fetchOptions?: { comments?: boolean; updates?: boolean },
+    attachmentFilter?: AttachmentFilter,
 ): Promise<void> {
     silentMode = format === "json";
     logger.debug(
@@ -267,25 +318,31 @@ export async function handleWorkItem(
     if (needsFetch.length > 0) {
         logger.debug(`[workitem] Batch fetching ${needsFetch.length} work items...`);
 
-        const [batchFields, batchComments] = await Promise.all([
-            api.batchGetFullWorkItems(needsFetch),
-            api.batchGetComments(needsFetch),
-        ]);
+        const fetched = await api.getWorkItems(needsFetch, {
+            comments: fetchOptions?.comments !== false,
+            updates: fetchOptions?.updates,
+        });
 
         for (const id of needsFetch) {
-            const fields = batchFields.get(id);
-            const comments = batchComments.get(id) ?? [];
-
-            if (!fields) {
+            const item = fetched.get(id);
+            if (!item) {
                 logger.warn(`[workitem] #${id} not found in batch response, skipping`);
                 continue;
             }
-
-            const item: WorkItemFull = { ...fields, comments };
             fetchedItems.set(id, item);
             downloadedCount++;
         }
     }
+
+    // Phase 2.5: Download attachments if filter provided
+    let attachmentsMap = new Map<number, AttachmentInfo[]>();
+    if (attachmentFilter) {
+        const allItems = new Map<number, WorkItemFull>([...cachedResults, ...fetchedItems]);
+        if (allItems.size > 0) {
+            attachmentsMap = await downloadAttachments(api, allItems, settingsMap, attachmentFilter);
+        }
+    }
+
 
     // Phase 3: Save fetched items to disk + update cache
     for (const [id, item] of fetchedItems) {
@@ -365,7 +422,7 @@ export async function handleWorkItem(
 
         switch (format) {
             case "ai":
-                console.log(formatWorkItemAI(item, taskPath, cacheTime));
+                console.log(formatWorkItemAI(item, taskPath, cacheTime, attachmentsMap.get(item.id)));
                 break;
             case "md":
                 console.log(
@@ -393,17 +450,57 @@ export function registerWorkitemCommand(program: Command): void {
         .option("--force", "Force refresh, ignore cache")
         .option("--category <name>", "Save to tasks/<category>/")
         .option("--task-folders", "Save in tasks/<id>/ subfolder")
+        .option("--attachments-from <datetime>", "Download attachments created after this date")
+        .option("--attachments-to <datetime>", "Download attachments created before this date")
+        .option("--attachments-prefix <prefix>", "Only attachments starting with this name")
+        .option("--attachments-suffix <suffix>", "Only attachments ending with this (e.g. .har)")
+        .option("--output-dir <path>", "Custom directory for downloaded attachments")
         .action(
             async (
                 input: string,
-                options: { format: OutputFormat; force?: boolean; category?: string; taskFolders?: boolean }
+                options: {
+                    format: OutputFormat;
+                    force?: boolean;
+                    category?: string;
+                    taskFolders?: boolean;
+                    attachmentsFrom?: string;
+                    attachmentsTo?: string;
+                    attachmentsPrefix?: string;
+                    attachmentsSuffix?: string;
+                    outputDir?: string;
+                },
             ) => {
+                const hasAttachmentFilter =
+                    options.attachmentsFrom || options.attachmentsTo ||
+                    options.attachmentsPrefix || options.attachmentsSuffix ||
+                    options.outputDir;
+
+                const parseDate = (s: string | undefined): Date | undefined => {
+                    if (!s) return undefined;
+                    const d = new Date(s);
+                    if (Number.isNaN(d.getTime())) throw new Error(`Invalid date format: ${s}`);
+                    return d;
+                };
+
+                const attachmentFilter: AttachmentFilter | undefined = hasAttachmentFilter
+                    ? {
+                          from: parseDate(options.attachmentsFrom),
+                          to: parseDate(options.attachmentsTo),
+                          prefix: options.attachmentsPrefix,
+                          suffix: options.attachmentsSuffix,
+                          outputDir: options.outputDir,
+                      }
+                    : undefined;
+
                 await handleWorkItem(
                     input,
                     options.format,
                     options.force ?? false,
                     options.category,
-                    options.taskFolders
+                    options.taskFolders,
+                    undefined,
+                    undefined,
+                    attachmentFilter,
                 );
             }
         );

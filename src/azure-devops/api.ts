@@ -7,6 +7,17 @@
 
 import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/cache";
 import type {
+    CommentsResponse,
+    Dashboard,
+    DashboardDetailResponse,
+    DashboardsListResponse,
+    GetWorkItemsOptions,
+    QueryNode,
+    TeamMembersResponse,
+    TeamsListResponse,
+} from "@app/azure-devops/api.types";
+import { concurrentMap } from "@app/utils/async";
+import type {
     AzureConfig,
     AzWorkItemRaw,
     Comment,
@@ -29,25 +40,8 @@ import { $ } from "bun";
 // Azure DevOps API resource ID (constant for all Azure DevOps organizations)
 export const AZURE_DEVOPS_RESOURCE_ID = "499b84ac-1321-427f-aa17-267ca6975798";
 
-/**
- * Dashboard information returned from the API
- */
-export interface Dashboard {
-    name: string;
-    queries: Array<{ name: string; queryId: string }>;
-}
-
-/**
- * Query node from Azure DevOps Queries API
- */
-interface QueryNode {
-    id: string;
-    name: string;
-    path: string;
-    isFolder: boolean;
-    hasChildren?: boolean;
-    children?: QueryNode[];
-}
+// Re-export Dashboard for backwards compatibility
+export type { Dashboard };
 
 /**
  * Api class for Azure DevOps interactions
@@ -187,30 +181,6 @@ export class Api {
     /**
      * Execute an az CLI command with logging
      */
-    private async azCommand<T>(command: string[], description: string): Promise<T> {
-        const cmdStr = command.join(" ");
-        logger.debug(`[api] ${description}`);
-        logger.debug(`[api] Running: az ${cmdStr}`);
-        const startTime = Date.now();
-
-        try {
-            const result = await $`az ${command}`.quiet();
-            const text = result.text();
-            const elapsed = Date.now() - startTime;
-            logger.debug(`[api] az command completed in ${elapsed}ms`);
-
-            if (!text.trim()) {
-                throw new Error(`Empty response from az ${command[0]}`);
-            }
-            const parsed = JSON.parse(text) as T;
-            return parsed;
-        } catch (error) {
-            const stderr = (error as { stderr?: { toString(): string } })?.stderr?.toString?.()?.trim();
-            const message = stderr || (error instanceof Error ? error.message : String(error));
-            throw new Error(`az ${command[0]} failed: ${message}`);
-        }
-    }
-
     /**
      * Make an HTTP request with logging and error handling
      */
@@ -268,6 +238,32 @@ export class Api {
         description?: string
     ): Promise<T> {
         return this.request<T>("POST", url, { body, contentType, description });
+    }
+
+    /**
+     * Download binary content from Azure DevOps (for attachments).
+     * Returns ArrayBuffer (caller saves to disk).
+     */
+    async fetchBinary(url: string, description?: string): Promise<ArrayBuffer> {
+        const shortUrl = url.replace(this.config.org, "").slice(0, 80);
+        logger.debug(`[api] GET binary ${shortUrl}${description ? ` (${description})` : ""}`);
+        const startTime = Date.now();
+
+        const token = await this.getAccessToken();
+        const response = await fetch(url, {
+            method: "GET",
+            headers: { Authorization: `Bearer ${token}` },
+        });
+
+        const elapsed = Date.now() - startTime;
+        logger.debug(`[api] GET binary response: ${response.status} ${response.statusText} (${elapsed}ms)`);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`API Error ${response.status}: ${errorText}`);
+        }
+
+        return response.arrayBuffer();
     }
 
     /**
@@ -346,49 +342,135 @@ export class Api {
         return allItems;
     }
 
+    // ============= Shared Mappers =============
+
     /**
-     * Get full details of a work item including comments and relations
+     * Map raw Azure DevOps work item fields to domain model.
+     * Shared by getWorkItem, getWorkItems, createWorkItem.
      */
-    async getWorkItem(id: number): Promise<WorkItemFull> {
-        const item = await this.azCommand<AzWorkItemRaw>(
-            ["boards", "work-item", "show", "--id", String(id), "-o", "json"],
-            `Fetching work item #${id}`
-        );
-
-        // Get comments via REST API
-        const commentsUrl = Api.witUrlPreview(this.config, ["workItems", String(id), "comments"]);
-        const commentsData = await this.get<{
-            comments: Array<{ id: number; createdBy: { displayName: string }; createdDate: string; text: string }>;
-        }>(commentsUrl, `comments for #${id}`);
-        logger.debug(`[api] Work item #${id} has ${commentsData.comments?.length || 0} comments`);
-
-        const fields = item.fields;
-
+    private mapRawToWorkItemBase(raw: AzWorkItemRaw): Omit<WorkItemFull, "comments" | "updates"> {
+        const fields = raw.fields ?? {};
         return {
-            id: item.id,
-            rev: item.rev,
-            title: fields?.["System.Title"] as string,
-            state: fields?.["System.State"] as string,
-            changed: fields?.["System.ChangedDate"] as string,
-            severity: fields?.["Microsoft.VSTS.Common.Severity"] as string | undefined,
-            assignee: (fields?.["System.AssignedTo"] as { displayName?: string } | undefined)?.displayName,
-            tags: fields?.["System.Tags"] as string | undefined,
-            description: fields?.["System.Description"] as string | undefined,
-            created: fields?.["System.CreatedDate"] as string | undefined,
-            createdBy: (fields?.["System.CreatedBy"] as { displayName?: string } | undefined)?.displayName,
-            changedBy: (fields?.["System.ChangedBy"] as { displayName?: string } | undefined)?.displayName,
-            url: this.generateWorkItemUrl(id),
-            comments: (commentsData.comments || []).map(
-                (c): Comment => ({
-                    id: c.id,
-                    author: c.createdBy?.displayName,
-                    date: c.createdDate,
-                    text: c.text,
-                })
-            ),
-            relations: item.relations,
+            id: raw.id,
+            rev: raw.rev,
+            title: fields["System.Title"] as string,
+            state: fields["System.State"] as string,
+            changed: fields["System.ChangedDate"] as string,
+            severity: fields["Microsoft.VSTS.Common.Severity"] as string | undefined,
+            assignee: (fields["System.AssignedTo"] as { displayName?: string } | undefined)?.displayName,
+            tags: fields["System.Tags"] as string | undefined,
+            description: fields["System.Description"] as string | undefined,
+            created: fields["System.CreatedDate"] as string | undefined,
+            createdBy: (fields["System.CreatedBy"] as { displayName?: string } | undefined)?.displayName,
+            changedBy: (fields["System.ChangedBy"] as { displayName?: string } | undefined)?.displayName,
+            url: this.generateWorkItemUrl(raw.id),
+            relations: raw.relations,
             rawFields: fields,
         };
+    }
+
+    private mapComments(data: CommentsResponse): Comment[] {
+        return (data.comments || []).map((c) => ({
+            id: c.id,
+            author: c.createdBy?.displayName,
+            date: c.createdDate,
+            text: c.text,
+        }));
+    }
+
+    /**
+     * Get full details of a single work item including comments.
+     * Delegates to getWorkItems() for consistency.
+     */
+    async getWorkItem(id: number): Promise<WorkItemFull> {
+        const results = await this.getWorkItems([id], { comments: true });
+        const item = results.get(id);
+        if (!item) throw new Error(`Work item #${id} not found`);
+        return item;
+    }
+
+    /**
+     * Fetch work items by IDs with configurable extra data.
+     * Always fetches all fields + relations via $expand=all (batches of 200).
+     * Optionally fetches comments and/or updates in parallel.
+     */
+    async getWorkItems(
+        ids: number[],
+        options: GetWorkItemsOptions = { comments: true }
+    ): Promise<Map<number, WorkItemFull>> {
+        const batchSize = 200;
+
+        // Phase 1: Batch fetch fields + relations
+        const allBaseItems = new Map<number, Omit<WorkItemFull, "comments" | "updates">>();
+        for (let i = 0; i < ids.length; i += batchSize) {
+            const batchIds = ids.slice(i, i + batchSize);
+            const url = Api.orgUrl(this.config, ["wit", "workitems"], {
+                ids: batchIds.join(","),
+                "$expand": "all",
+            });
+            const response = await this.get<{ value: AzWorkItemRaw[] }>(
+                url,
+                `batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(ids.length / batchSize)}`
+            );
+            for (const item of response.value) {
+                allBaseItems.set(item.id, this.mapRawToWorkItemBase(item));
+            }
+        }
+
+        logger.debug(`[api] Batch fetched ${allBaseItems.size} work items`);
+
+        // Phase 2: Parallel fetch of comments and/or updates
+        const fetchComments = options.comments !== false;
+        const fetchUpdates = options.updates === true;
+
+        const commentsMap = fetchComments
+            ? await this.fetchComments(ids)
+            : new Map<number, Comment[]>();
+
+        const updatesMap = fetchUpdates
+            ? await this.fetchUpdates(ids)
+            : new Map<number, WorkItemUpdate[]>();
+
+        // Phase 3: Assemble results
+        const result = new Map<number, WorkItemFull>();
+        for (const id of ids) {
+            const base = allBaseItems.get(id);
+            if (!base) continue;
+            const entry: WorkItemFull = {
+                ...base,
+                comments: commentsMap.get(id) ?? [],
+            };
+            if (fetchUpdates) {
+                entry.updates = updatesMap.get(id) ?? [];
+            }
+            result.set(id, entry);
+        }
+
+        return result;
+    }
+
+    private async fetchComments(ids: number[]): Promise<Map<number, Comment[]>> {
+        const result = await concurrentMap({
+            items: ids,
+            fn: async (id) => {
+                const url = Api.witUrlPreview(this.config, ["workItems", String(id), "comments"]);
+                const data = await this.get<CommentsResponse>(url, `comments #${id}`);
+                return this.mapComments(data);
+            },
+            onError: (id, error) => logger.warn(`[api] Failed to fetch comments for #${id}: ${error}`),
+        });
+        logger.debug(`[api] Fetched comments for ${result.size}/${ids.length} items`);
+        return result;
+    }
+
+    private async fetchUpdates(ids: number[]): Promise<Map<number, WorkItemUpdate[]>> {
+        const result = await concurrentMap({
+            items: ids,
+            fn: async (id) => this.getWorkItemUpdates(id),
+            onError: (id, error) => logger.warn(`[api] Failed to fetch updates for #${id}: ${error}`),
+        });
+        logger.debug(`[api] Fetched updates for ${result.size}/${ids.length} items`);
+        return result;
     }
 
     /**
@@ -476,10 +558,7 @@ export class Api {
     async getDashboard(dashboardId: string): Promise<Dashboard> {
         logger.debug(`[api] Fetching dashboard ${dashboardId.slice(0, 8)}...`);
         const dashboardsUrl = Api.projectApiUrl(this.config, ["dashboard", "dashboards"], undefined, "7.1-preview.3");
-        const dashboardsData = await this.get<{ value: Array<{ id: string; name: string; groupId?: string }> }>(
-            dashboardsUrl,
-            "list dashboards"
-        );
+        const dashboardsData = await this.get<DashboardsListResponse>(dashboardsUrl, "list dashboards");
 
         const dashboard = dashboardsData.value.find((d) => d.id === dashboardId);
         if (!dashboard) {
@@ -493,10 +572,7 @@ export class Api {
             segments: [groupPath, "_apis", "Dashboard", "Dashboards", dashboardId],
             queryParams: { "api-version": "7.1-preview.3" },
         });
-        const widgetsData = await this.get<{ name: string; widgets: Array<{ name: string; settings: string }> }>(
-            widgetsUrl,
-            "dashboard widgets"
-        );
+        const widgetsData = await this.get<DashboardDetailResponse>(widgetsUrl, "dashboard widgets");
         logger.debug(`[api] Dashboard has ${widgetsData.widgets?.length || 0} widgets`);
 
         const queries: Array<{ name: string; queryId: string }> = [];
@@ -542,26 +618,9 @@ export class Api {
         );
         logger.debug(`[api] Created work item #${result.id}`);
 
-        // Transform API response to WorkItemFull format
-        const fields = result.fields as Record<string, unknown>;
-        const id = result.id as number;
-
         return {
-            id,
-            rev: result.rev as number,
-            title: fields?.["System.Title"] as string,
-            state: fields?.["System.State"] as string,
-            changed: fields?.["System.ChangedDate"] as string,
-            severity: fields?.["Microsoft.VSTS.Common.Severity"] as string | undefined,
-            assignee: (fields?.["System.AssignedTo"] as Record<string, unknown>)?.displayName as string | undefined,
-            tags: fields?.["System.Tags"] as string | undefined,
-            description: fields?.["System.Description"] as string | undefined,
-            created: fields?.["System.CreatedDate"] as string | undefined,
-            createdBy: (fields?.["System.CreatedBy"] as Record<string, unknown>)?.displayName as string | undefined,
-            changedBy: (fields?.["System.ChangedBy"] as Record<string, unknown>)?.displayName as string | undefined,
-            url: this.generateWorkItemUrl(id),
-            comments: [], // New work item has no comments
-            relations: result.relations as WorkItemFull["relations"],
+            ...this.mapRawToWorkItemBase(result as unknown as AzWorkItemRaw),
+            comments: [],
         };
     }
 
@@ -772,16 +831,13 @@ export class Api {
         if (cached) return cached;
 
         const teamsUrl = Api.orgUrl(this.config, ["projects", this.config.projectId, "teams"]);
-        const teams = await this.get<{ value: Array<{ id: string; name: string }> }>(teamsUrl, "teams");
+        const teams = await this.get<TeamsListResponse>(teamsUrl, "teams");
         const members: IdentityRef[] = [];
         const seen = new Set<string>();
 
         for (const team of teams.value) {
             const membersUrl = Api.orgUrl(this.config, ["projects", this.config.projectId, "teams", team.id, "members"]);
-            const data = await this.get<{ value: Array<{ identity: IdentityRef }> }>(
-                membersUrl,
-                `members of ${team.name}`
-            );
+            const data = await this.get<TeamMembersResponse>(membersUrl, `members of ${team.name}`);
             for (const m of data.value) {
                 const key = m.identity.uniqueName || m.identity.displayName;
                 if (!seen.has(key)) {

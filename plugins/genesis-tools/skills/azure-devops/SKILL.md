@@ -38,12 +38,25 @@ tools azure-devops timelog import <file>         # Bulk import time logs (with p
 | `--download-workitems` | Download all items from query |
 | `--category <name>` | Save to tasks/<category>/ |
 | `--task-folders` | Save in tasks/<id>/ subfolder |
+| `--attachments-from <datetime>` | Download attachments created after this date |
+| `--attachments-to <datetime>` | Download attachments created before this date (default: now) |
+| `--attachments-prefix <prefix>` | Only attachments starting with this name |
+| `--attachments-suffix <suffix>` | Only attachments ending with this (e.g. .har) |
+| `--output-dir <path>` | Custom directory for downloaded attachments |
 
 ### Output Paths
 
 - **Tasks**: `.claude/azure/tasks/` → `<id>-<Slug-Title>.md`
 - With `--category react19`: `.claude/azure/tasks/react19/<id>-<Slug>.md`
 - With `--task-folders`: `.claude/azure/tasks/<id>/<id>-<Slug>.md`
+
+### Attachment Output Paths
+
+Attachments are downloaded when any `--attachments-*` filter flag is provided. Without filters, attachments are listed in output with a suggested download command.
+
+- **Default**: Same folder as task file: `.claude/azure/tasks/<taskid>-<attachment-name>`
+- With `--task-folders`: `.claude/azure/tasks/<id>/<taskid>-<attachment-name>`
+- With `--output-dir /custom/path`: `/custom/path/<taskid>-<attachment-name>`
 
 ## Operations
 
@@ -157,6 +170,9 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 | "Download React19 bugs" | `tools azure-devops query "React19 Bugs" --download-workitems --category react19` |
 | "Analyze task 261575" | Fetch → Explore agent → Write .analysis.md |
 | "Analyze all active bugs" | Fetch query with --download-workitems → Parallel Explore agents → Write .analysis.md files |
+| "Download .har files from task 12345" | `tools azure-devops workitem 12345 --attachments-suffix .har` |
+| "Get attachments from last hour for 12345" | Compute datetime 1h ago, then `tools azure-devops workitem 12345 --attachments-from "2026-02-12T10:00:00"` |
+| "Download all attachments for task 12345" | `tools azure-devops workitem 12345 --attachments-from 2000-01-01` |
 
 ## Creating Work Items
 

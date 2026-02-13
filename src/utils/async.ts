@@ -131,3 +131,45 @@ export function withTimeout<T>(
         clearTimeout(timer);
     });
 }
+
+// ============= Concurrent Map =============
+
+interface ConcurrentMapOptions<T, R> {
+    /** Items to process */
+    items: T[];
+    /** Async function to apply to each item */
+    fn: (item: T) => Promise<R>;
+    /** Max concurrent operations. Default: 5 */
+    concurrency?: number;
+    /** Called for each rejected item. If omitted, failures are silently skipped. */
+    onError?: (item: T, error: unknown) => void;
+}
+
+/**
+ * Map over items with bounded concurrency using Promise.allSettled.
+ * Failed items are skipped (logged via onError) — a single failure doesn't abort the batch.
+ */
+export async function concurrentMap<T, R>({
+    items,
+    fn,
+    concurrency = 5,
+    onError,
+}: ConcurrentMapOptions<T, R>): Promise<Map<T, R>> {
+    if (concurrency < 1) throw new Error(`concurrentMap: concurrency must be >= 1, got ${concurrency}`);
+    const result = new Map<T, R>();
+
+    for (let i = 0; i < items.length; i += concurrency) {
+        const batch = items.slice(i, i + concurrency);
+        const settled = await Promise.allSettled(batch.map(fn));
+
+        settled.forEach((entry, index) => {
+            if (entry.status === "fulfilled") {
+                result.set(batch[index], entry.value);
+            } else {
+                onError?.(batch[index], entry.reason);
+            }
+        });
+    }
+
+    return result;
+}

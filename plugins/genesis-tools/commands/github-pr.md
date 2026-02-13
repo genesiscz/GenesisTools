@@ -29,13 +29,13 @@ Parse arguments:
 
 ### Step 1: Fetch PR Review Comments
 
-Run the github-pr tool with markdown output:
+Run the github review command with markdown output:
 
 ```bash
-tools github-pr <pr-number-or-url> -g --md [-u if flag present]
+tools github review <pr-number-or-url> -g --md [-u if flag present]
 ```
 
-The script outputs the file path to stdout (e.g., `.claude/reviews/pr-137-2026-01-03T13-44-20.md`).
+The script outputs the file path to stdout (e.g., `.claude/github/reviews/pr-137-2026-01-03T13-44-20.md`).
 
 ### Step 2: Read and Display Review
 
@@ -139,8 +139,8 @@ Display final summary:
 ```
 User: /github-pr 137 -u
 
-1. Run: tools github-pr 137 -g --md -u
-2. cat .claude/reviews/pr-137-2026-01-03T13-44-20.md
+1. Run: tools github review 137 -g --md -u
+2. cat .claude/github/reviews/pr-137-2026-01-03T13-44-20.md
 3. Display: "PR #137 has 14 unresolved threads (0 HIGH, 14 MEDIUM, 0 LOW)"
 4. Ask: "Which threads to fix?"
 5. User selects: "Fix all unresolved"
