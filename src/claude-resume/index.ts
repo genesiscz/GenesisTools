@@ -193,10 +193,15 @@ async function selectSession(candidates: DisplaySession[]): Promise<DisplaySessi
 }
 
 async function resumeSession(session: DisplaySession): Promise<never> {
+	// Validate sessionId to prevent shell injection
+	if (!/^[\w-]+$/.test(session.sessionId)) {
+		throw new Error(`Invalid session ID: ${session.sessionId}`);
+	}
+
 	const cmd = await findClaudeCommand();
 	p.outro(`${pc.green("Resuming:")} ${cmd} --resume ${session.sessionId}`);
 
-	const shell = process.env.SHELL || "/bin/zsh";
+	const shell = process.env.SHELL || "/bin/sh";
 	const proc = Bun.spawn({
 		cmd: [shell, "-ic", `exec ${cmd} --resume '${session.sessionId}'`],
 		stdio: ["inherit", "inherit", "inherit"],
@@ -210,7 +215,7 @@ async function resumeSession(session: DisplaySession): Promise<never> {
 
 async function main(query: string | undefined, opts: Options) {
 	p.intro(pc.bgCyan(pc.black(" claude-resume ")));
-	const limit = parseInt(opts.limit, 10);
+	const limit = parseInt(opts.limit, 10) || 20;
 
 	const spinner = p.spinner();
 	spinner.start("Loading sessions...");
@@ -274,7 +279,7 @@ program
 		try {
 			await main(query, opts);
 		} catch (error) {
-			if (error instanceof Error && error.name === "ExitPromptError") {
+			if (error instanceof Error && (error.name === "ExitPromptError" || error.message === "Cancelled")) {
 				process.exit(0);
 			}
 			logger.error(`claude-resume error: ${error}`);

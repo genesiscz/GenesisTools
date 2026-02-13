@@ -8,7 +8,7 @@ import logger from "@app/logger";
 import { existsSync, mkdirSync } from "fs";
 import { stat } from "fs/promises";
 import { homedir } from "os";
-import { join } from "path";
+import { join, sep } from "path";
 
 const DEFAULT_CACHE_DIR = join(homedir(), ".genesis-tools", "claude-history");
 const DB_NAME = "stats-cache.db";
@@ -621,24 +621,21 @@ export function getCacheStats(): {
 // Session Metadata Operations
 // =============================================================================
 
-export function getSessionMetadata(filePath: string): SessionMetadataRecord | null {
-    const db = getDatabase();
-    const row = db.query("SELECT * FROM session_metadata WHERE file_path = ?").get(filePath) as {
-        file_path: string;
-        session_id: string | null;
-        custom_title: string | null;
-        summary: string | null;
-        first_prompt: string | null;
-        git_branch: string | null;
-        project: string | null;
-        cwd: string | null;
-        mtime: number;
-        first_timestamp: string | null;
-        is_subagent: number;
-    } | null;
+interface SessionMetadataRow {
+    file_path: string;
+    session_id: string | null;
+    custom_title: string | null;
+    summary: string | null;
+    first_prompt: string | null;
+    git_branch: string | null;
+    project: string | null;
+    cwd: string | null;
+    mtime: number;
+    first_timestamp: string | null;
+    is_subagent: number;
+}
 
-    if (!row) return null;
-
+function rowToSessionMetadataRecord(row: SessionMetadataRow): SessionMetadataRecord {
     return {
         filePath: row.file_path,
         sessionId: row.session_id,
@@ -652,6 +649,12 @@ export function getSessionMetadata(filePath: string): SessionMetadataRecord | nu
         firstTimestamp: row.first_timestamp,
         isSubagent: row.is_subagent === 1,
     };
+}
+
+export function getSessionMetadata(filePath: string): SessionMetadataRecord | null {
+    const db = getDatabase();
+    const row = db.query("SELECT * FROM session_metadata WHERE file_path = ?").get(filePath) as SessionMetadataRow | null;
+    return row ? rowToSessionMetadataRecord(row) : null;
 }
 
 export function upsertSessionMetadata(record: SessionMetadataRecord): void {
@@ -677,98 +680,25 @@ export function upsertSessionMetadata(record: SessionMetadataRecord): void {
 
 export function getAllSessionMetadata(): SessionMetadataRecord[] {
     const db = getDatabase();
-    const rows = db.query("SELECT * FROM session_metadata ORDER BY first_timestamp DESC").all() as Array<{
-        file_path: string;
-        session_id: string | null;
-        custom_title: string | null;
-        summary: string | null;
-        first_prompt: string | null;
-        git_branch: string | null;
-        project: string | null;
-        cwd: string | null;
-        mtime: number;
-        first_timestamp: string | null;
-        is_subagent: number;
-    }>;
-
-    return rows.map((row) => ({
-        filePath: row.file_path,
-        sessionId: row.session_id,
-        customTitle: row.custom_title,
-        summary: row.summary,
-        firstPrompt: row.first_prompt,
-        gitBranch: row.git_branch,
-        project: row.project,
-        cwd: row.cwd,
-        mtime: row.mtime,
-        firstTimestamp: row.first_timestamp,
-        isSubagent: row.is_subagent === 1,
-    }));
+    const rows = db.query(
+        "SELECT * FROM session_metadata ORDER BY COALESCE(first_timestamp, '') DESC"
+    ).all() as SessionMetadataRow[];
+    return rows.map(rowToSessionMetadataRecord);
 }
 
 export function getSessionMetadataByDir(dirPath: string): SessionMetadataRecord[] {
     const db = getDatabase();
-    const prefix = dirPath.endsWith("/") ? dirPath : `${dirPath}/`;
+    const prefix = dirPath.endsWith(sep) ? dirPath : `${dirPath}${sep}`;
     const rows = db
-        .query("SELECT * FROM session_metadata WHERE file_path LIKE ? ORDER BY first_timestamp DESC")
-        .all(`${prefix}%`) as Array<{
-        file_path: string;
-        session_id: string | null;
-        custom_title: string | null;
-        summary: string | null;
-        first_prompt: string | null;
-        git_branch: string | null;
-        project: string | null;
-        cwd: string | null;
-        mtime: number;
-        first_timestamp: string | null;
-        is_subagent: number;
-    }>;
-
-    return rows.map((row) => ({
-        filePath: row.file_path,
-        sessionId: row.session_id,
-        customTitle: row.custom_title,
-        summary: row.summary,
-        firstPrompt: row.first_prompt,
-        gitBranch: row.git_branch,
-        project: row.project,
-        cwd: row.cwd,
-        mtime: row.mtime,
-        firstTimestamp: row.first_timestamp,
-        isSubagent: row.is_subagent === 1,
-    }));
+        .query("SELECT * FROM session_metadata WHERE file_path LIKE ? ORDER BY COALESCE(first_timestamp, '') DESC")
+        .all(`${prefix}%`) as SessionMetadataRow[];
+    return rows.map(rowToSessionMetadataRecord);
 }
 
 export function getSessionMetadataByProject(project: string): SessionMetadataRecord[] {
     const db = getDatabase();
     const rows = db
-        .query("SELECT * FROM session_metadata WHERE project = ? ORDER BY first_timestamp DESC")
-        .all(project) as Array<{
-        file_path: string;
-        session_id: string | null;
-        custom_title: string | null;
-        summary: string | null;
-        first_prompt: string | null;
-        git_branch: string | null;
-        project: string | null;
-        cwd: string | null;
-        mtime: number;
-        first_timestamp: string | null;
-        is_subagent: number;
-    }>;
-
-    return rows.map((row) => ({
-        filePath: row.file_path,
-        sessionId: row.session_id,
-        customTitle: row.custom_title,
-        summary: row.summary,
-        firstPrompt: row.first_prompt,
-        gitBranch: row.git_branch,
-        project: row.project,
-        cwd: row.cwd,
-        mtime: row.mtime,
-        firstTimestamp: row.first_timestamp,
-        isSubagent: row.is_subagent === 1,
-    }));
+        .query("SELECT * FROM session_metadata WHERE project = ? ORDER BY COALESCE(first_timestamp, '') DESC")
+        .all(project) as SessionMetadataRow[];
+    return rows.map(rowToSessionMetadataRecord);
 }

@@ -452,12 +452,9 @@ function searchSessionMetadataCache(filters: SearchFilters): SearchResult[] {
         if (filters.conversationDate && firstTimestamp && firstTimestamp < filters.conversationDate) continue;
         if (filters.conversationDateUntil && firstTimestamp && firstTimestamp > filters.conversationDateUntil) continue;
 
-        const titleText = s.customTitle || s.summary || "";
-        if (filters.query && !matchesQuery(titleText, filters.query, !!filters.exact, !!filters.regex)) {
-            // Also check firstPrompt
-            if (!s.firstPrompt || !matchesQuery(s.firstPrompt, filters.query, !!filters.exact, !!filters.regex)) {
-                continue;
-            }
+        const allSearchText = [s.customTitle, s.summary, s.firstPrompt].filter(Boolean).join(" ");
+        if (filters.query && !matchesQuery(allSearchText, filters.query, !!filters.exact, !!filters.regex)) {
+            continue;
         }
 
         results.push({
@@ -476,7 +473,7 @@ function searchSessionMetadataCache(filters: SearchFilters): SearchResult[] {
                       s.summary ?? undefined,
                       s.customTitle ?? undefined,
                       s.firstPrompt ?? undefined,
-                      titleText,
+                      allSearchText,
                       firstTimestamp || new Date()
                   )
                 : 0,
@@ -509,7 +506,7 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
         if (messages.length === 0) continue;
 
         const project = extractProjectName(filePath);
-        const isSubagent = filePath.includes("/subagents/") || basename(filePath).startsWith("agent-");
+        const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
 
         // Extract metadata
         let summary: string | undefined;
@@ -732,7 +729,7 @@ export async function listConversationSummaries(filters: SearchFilters): Promise
         if (messages.length === 0) continue;
 
         const project = extractProjectName(filePath);
-        const isSubagent = filePath.includes("/subagents/") || basename(filePath).startsWith("agent-");
+        const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
 
         let summary: string | undefined;
         let customTitle: string | undefined;
@@ -801,7 +798,7 @@ export async function listConversationSummaries(filters: SearchFilters): Promise
 export async function getConversationMetadata(filePath: string): Promise<ConversationMetadata> {
     const messages = await parseJsonlFile(filePath);
     const project = extractProjectName(filePath);
-    const isSubagent = filePath.includes("/subagents/") || basename(filePath).startsWith("agent-");
+    const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
 
     let summary: string | undefined;
     let customTitle: string | undefined;
@@ -861,7 +858,7 @@ export async function getAllConversations(filters: SearchFilters = {}): Promise<
         if (messages.length === 0) continue;
 
         const project = extractProjectName(filePath);
-        const isSubagent = filePath.includes("/subagents/") || basename(filePath).startsWith("agent-");
+        const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
 
         let summary: string | undefined;
         let customTitle: string | undefined;
@@ -1014,7 +1011,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
 function resolveProjectDir(project: string): string | undefined {
     // Try exact cwd-based encoding first
     const cwd = process.cwd();
-    const encoded = cwd.replaceAll("/", "-");
+    const encoded = cwd.replaceAll(sep, "-");
     const exact = resolve(PROJECTS_DIR, encoded);
     if (existsSync(exact)) return exact;
 
@@ -1049,7 +1046,7 @@ async function findConversationFilesInDir(projectDir: string, excludeSubagents: 
 }
 
 /**
- * Extract session metadata by reading only the first ~30 lines of a JSONL file.
+ * Extract session metadata by reading only the first ~50 lines of a JSONL file.
  * Much faster than full parsing — only needs summary, custom-title, sessionId, gitBranch, cwd.
  */
 async function extractSessionMetadataFromFile(
@@ -1057,7 +1054,7 @@ async function extractSessionMetadataFromFile(
     mtime: number
 ): Promise<SessionMetadataRecord | null> {
     const project = extractProjectName(filePath);
-    const isSubagent = filePath.includes("/subagents/") || basename(filePath).startsWith("agent-");
+    const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
 
     try {
         const fileStream = createReadStream(filePath, { end: 64 * 1024 }); // Read max 64KB
@@ -1152,7 +1149,7 @@ export async function getConversationBySessionId(sessionId: string): Promise<Sea
             if (messages.length === 0) continue;
 
             const project = extractProjectName(filePath);
-            const isSubagent = filePath.includes("/subagents/") || basename(filePath).startsWith("agent-");
+            const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
 
             let summary: string | undefined;
             let customTitle: string | undefined;
@@ -1252,7 +1249,7 @@ export async function getConversationStats(): Promise<ConversationStats> {
         const project = extractProjectName(filePath);
         stats.projectCounts[project] = (stats.projectCounts[project] || 0) + 1;
 
-        const isSubagent = filePath.includes("/subagents/") || basename(filePath).startsWith("agent-");
+        const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
         if (isSubagent) stats.subagentCount++;
 
         for (const msg of messages) {
@@ -1411,7 +1408,7 @@ function extractModelName(modelId: string): string {
  */
 export async function computeFileStats(filePath: string): Promise<FileStats> {
     const messages = await parseJsonlFile(filePath);
-    const isSubagent = filePath.includes("/subagents/") || basename(filePath).startsWith("agent-");
+    const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
 
     const stats: FileStats = {
         conversations: 1,
@@ -1520,7 +1517,7 @@ export async function processFileForCache(filePath: string): Promise<FileStats |
         const fileStat = await stat(filePath);
         const mtime = Math.floor(fileStat.mtimeMs);
         const project = extractProjectName(filePath);
-        const isSubagent = filePath.includes("/subagents/") || basename(filePath).startsWith("agent-");
+        const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
 
         // Check if file is already indexed
         const existing = getFileIndex(filePath);

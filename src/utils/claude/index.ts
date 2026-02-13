@@ -5,7 +5,7 @@
 
 import { createReadStream, existsSync } from "fs";
 import { homedir } from "os";
-import { resolve } from "path";
+import { basename, resolve, sep } from "path";
 import { createInterface } from "readline";
 
 export const CLAUDE_DIR = resolve(homedir(), ".claude");
@@ -55,18 +55,18 @@ export async function parseJsonlTranscript<T = Record<string, unknown>>(
  * and verifies the command is actually Claude (not e.g. the C compiler for `cc`).
  */
 export async function findClaudeCommand(): Promise<string> {
-    const shell = process.env.SHELL || "/bin/zsh";
+    const shell = process.env.SHELL || "/bin/sh";
 
-    for (const cmd of ["ccc", "cc", "claude"]) {
+    for (const candidate of ["ccc", "cc", "claude"]) {
         const proc = Bun.spawn({
-            cmd: [shell, "-ic", `${cmd} --version 2>&1`],
+            cmd: [shell, "-ic", `'${candidate}' --version 2>&1`],
             stdio: ["ignore", "pipe", "pipe"],
         });
         const stdout = await new Response(proc.stdout).text();
         await proc.exited;
 
         if (proc.exitCode === 0 && stdout.includes("Claude Code")) {
-            return cmd;
+            return candidate;
         }
     }
     return "claude";
@@ -77,7 +77,7 @@ export async function findClaudeCommand(): Promise<string> {
  * Returns the last path segment (directory name), e.g. "GenesisTools".
  */
 export function detectCurrentProject(): string | undefined {
-    return process.cwd().split("/").pop();
+    return basename(process.cwd()) || undefined;
 }
 
 /**
@@ -85,7 +85,7 @@ export function detectCurrentProject(): string | undefined {
  * Claude encodes /Users/Martin/Projects/Foo as -Users-Martin-Projects-Foo.
  */
 export function encodedProjectDir(cwd?: string): string {
-    const path = cwd ?? process.cwd();
+    const p = cwd ?? process.cwd();
     // Prepend a dash to match the observed encoding format.
-    return `-${path.replace(/^\//, "").replaceAll("/", "-")}`;
+    return `-${p.replace(/^\//, "").replaceAll(sep, "-")}`;
 }
