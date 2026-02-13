@@ -103,6 +103,11 @@ interface LoadResult {
 	total: number;
 	subagents: number;
 	project: string | undefined;
+	indexed: number;
+	staleRemoved: number;
+	reindexed: boolean;
+	projectCount: number;
+	scope: string;
 }
 
 async function loadSessions(allProjects: boolean, spinner: Spinner): Promise<LoadResult> {
@@ -126,6 +131,11 @@ async function loadSessions(allProjects: boolean, spinner: Spinner): Promise<Loa
 		total: result.total,
 		subagents: result.subagents,
 		project,
+		indexed: result.indexed,
+		staleRemoved: result.staleRemoved,
+		reindexed: result.reindexed,
+		projectCount: result.projectCount,
+		scope: result.scope,
 	};
 }
 
@@ -306,10 +316,25 @@ async function main(query: string | undefined, opts: Options) {
 
 	const spinner = p.spinner();
 	spinner.start("Loading sessions...");
-	const { sessions, total, subagents, project } = await loadSessions(opts.allProjects ?? false, spinner);
-	const statsLine = subagents > 0
-		? `${sessions.length} sessions (+ ${subagents} subagents, total ${total})`
-		: `${sessions.length} sessions`;
+	const loadResult = await loadSessions(opts.allProjects ?? false, spinner);
+	const { sessions, subagents, project, indexed, staleRemoved, reindexed, projectCount, scope } = loadResult;
+
+	const statsParts = [
+		`${sessions.length} sessions`,
+		subagents > 0 ? `${subagents} subagents` : "",
+		`${projectCount} projects`,
+		pc.dim(`[${scope}]`),
+	].filter(Boolean);
+
+	const indexParts = [
+		reindexed ? pc.yellow("reindexed") : "",
+		indexed > 0 ? `${indexed} new` : "",
+		staleRemoved > 0 ? `${staleRemoved} stale removed` : "",
+	].filter(Boolean);
+
+	const statsLine = indexParts.length > 0
+		? `${statsParts.join(", ")} ${pc.dim("(")}${indexParts.join(", ")}${pc.dim(")")}`
+		: statsParts.join(", ");
 	spinner.stop(statsLine);
 
 	if (sessions.length === 0) {

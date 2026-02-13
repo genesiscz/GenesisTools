@@ -126,18 +126,76 @@ export async function findConversationFiles(filters: SearchFilters): Promise<str
     return fileStats.map((f) => f.path);
 }
 
+const projectNameCache = new Map<string, string>();
+
 export function extractProjectName(filePath: string): string {
     // Extract project name from path like:
     // /Users/Martin/.claude/projects/-Users-Martin-Tresors-Projects-GenesisTools/...
     const projectDir = filePath.replace(PROJECTS_DIR + sep, "").split(sep)[0];
-    // Only treat as encoded path if it starts with dash (like "-Users-Martin-...")
-    // This preserves legitimate dashed project names like "my-cool-project"
-    if (projectDir.startsWith("-")) {
-        // Convert -Users-Martin-Tresors-Projects-GenesisTools to GenesisTools
+
+    const cached = projectNameCache.get(projectDir);
+    if (cached) return cached;
+
+    const name = resolveProjectNameFromEncoded(projectDir);
+    projectNameCache.set(projectDir, name);
+    return name;
+}
+
+/**
+ * Resolve a project name from an encoded Claude projects directory name.
+ * Claude encodes cwds by replacing "/" with "-", which is ambiguous for
+ * directory names containing dashes (e.g. "col-fe" → "col" + "fe").
+ * We resolve by progressively checking the filesystem for each candidate path.
+ */
+function resolveProjectNameFromEncoded(projectDir: string): string {
+    if (!projectDir.startsWith("-")) return projectDir;
+
+    const home = homedir();
+    const homeEncoded = home.replaceAll("/", "-");
+
+    if (!projectDir.startsWith(homeEncoded)) {
+        // Unknown prefix — fall back to last segment
         const parts = projectDir.split("-");
         return parts[parts.length - 1] || projectDir;
     }
-    return projectDir;
+
+    // Reconstruct original path by progressively resolving dash-separated parts
+    // E.g. "Tresors-Projects-CEZ-col-fe" → checks /Users/Martin/Tresors,
+    //   then /Tresors/Projects, then /Projects/CEZ, then /CEZ/col → no →
+    //   /CEZ/col-fe → exists! → returns "col-fe"
+    const relativeEncoded = projectDir.slice(homeEncoded.length + 1);
+    const parts = relativeEncoded.split("-");
+    let resolved = home;
+
+    for (let i = 0; i < parts.length; i++) {
+        const asDir = `${resolved}/${parts[i]}`;
+        if (existsSync(asDir)) {
+            resolved = asDir;
+            continue;
+        }
+
+        // Part might contain dashes — try accumulating remaining parts
+        let accumulated = parts[i];
+        let found = false;
+        for (let j = i + 1; j < parts.length; j++) {
+            accumulated += `-${parts[j]}`;
+            const tryPath = `${resolved}/${accumulated}`;
+            if (existsSync(tryPath)) {
+                resolved = tryPath;
+                i = j;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            // Can't resolve further — use accumulated as the name
+            resolved += `/${accumulated}`;
+            break;
+        }
+    }
+
+    return resolved.split("/").pop() || projectDir;
 }
 
 // =============================================================================
@@ -962,6 +1020,16 @@ export interface SessionListingResult {
     sessions: SessionMetadataRecord[];
     total: number;
     subagents: number;
+    /** How many files were newly indexed or re-indexed this run */
+    indexed: number;
+    /** How many stale cache entries were cleaned up */
+    staleRemoved: number;
+    /** Whether a full re-index was triggered by version change */
+    reindexed: boolean;
+    /** Number of distinct projects found */
+    projectCount: number;
+    /** Scoped search directory (or "all projects") */
+    scope: string;
 }
 
 export async function getSessionListing(options: SessionListingOptions = {}): Promise<SessionListingResult> {
@@ -969,13 +1037,17 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
 
     // Auto-reindex when extraction logic changes
     const cachedVersion = getCacheMeta("metadata_version");
-    if (cachedVersion !== METADATA_VERSION) {
+    const reindexed = cachedVersion !== METADATA_VERSION;
+    if (reindexed) {
         resetDatabase();
         setCacheMeta("metadata_version", METADATA_VERSION);
     }
 
     // Resolve project to exact encoded dir path for precise scoping
     const projectDir = options.project ? resolveProjectDir(options.project) : undefined;
+    const scope = projectDir
+        ? options.project || projectDir.split(sep).pop() || "unknown"
+        : "all projects";
 
     // 1. Discover JSONL files (scoped to project dir if available)
     const files = projectDir
@@ -985,6 +1057,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
     // 2. Incrementally index: only parse new/changed files
     const total = files.length;
     let processed = 0;
+    let indexed = 0;
     for (const filePath of files) {
         processed++;
         try {
@@ -999,6 +1072,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
             const metadata = await extractSessionMetadataFromFile(filePath, mtime);
             if (metadata) {
                 upsertSessionMetadata(metadata);
+                indexed++;
             }
         } catch {
             // Skip unreadable files
@@ -1020,6 +1094,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
 
     const subagentCount = all.filter((s) => s.isSubagent).length;
     const sessions = excludeSubagents ? all.filter((s) => !s.isSubagent) : all;
+    const projects = new Set(all.map((s) => s.project).filter(Boolean));
 
     sessions.sort((a, b) => {
         const ta = a.firstTimestamp ? new Date(a.firstTimestamp).getTime() : 0;
@@ -1031,6 +1106,11 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
         sessions: limit ? sessions.slice(0, limit) : sessions,
         total: all.length,
         subagents: subagentCount,
+        indexed,
+        staleRemoved: stalePaths.length,
+        reindexed,
+        projectCount: projects.size,
+        scope,
     };
 }
 
