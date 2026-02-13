@@ -2,8 +2,8 @@ import type { Command } from "commander";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { filterEntries } from "@app/har-analyzer/core/query-engine";
-import { truncatePath } from "@app/har-analyzer/core/formatter";
-import type { HarFile, IndexedEntry, EntryFilter } from "@app/har-analyzer/types";
+import { truncatePath, printFormatted } from "@app/har-analyzer/core/formatter";
+import type { HarFile, IndexedEntry, EntryFilter, OutputOptions } from "@app/har-analyzer/types";
 
 type SearchScope = "url" | "body" | "header" | "all";
 
@@ -75,13 +75,9 @@ export function registerSearchCommand(program: Command): void {
 		.option("--domain <glob>", "Filter by domain glob pattern")
 		.option("--limit <n>", "Maximum results to show", "20")
 		.action(async (query: string, options: SearchOptions) => {
+			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.loadSession();
-
-			if (!session) {
-				console.error("No session loaded. Use `load <file>` first.");
-				process.exit(1);
-			}
+			const session = await sm.requireSession(parentOpts.session);
 
 			const filter: EntryFilter = {
 				domain: options.domain,
@@ -130,12 +126,13 @@ export function registerSearchCommand(program: Command): void {
 				return;
 			}
 
-			for (const match of matches) {
+			const lines = matches.map((match) => {
 				const e = match.entry;
 				const path = truncatePath(e.path, 40);
-				console.log(`[e${e.index}] ${e.method} ${path} ${e.status} → ${match.context}`);
-			}
+				return `[e${e.index}] ${e.method} ${path} ${e.status} → ${match.context}`;
+			});
+			lines.push(`\n${matches.length} matches found`);
 
-			console.log(`\n${matches.length} matches found`);
+			await printFormatted(lines.join("\n"), parentOpts.format);
 		});
 }

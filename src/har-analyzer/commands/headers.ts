@@ -1,7 +1,8 @@
 import type { Command } from "commander";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
-import type { HarFile, HarHeader, HarSession } from "@app/har-analyzer/types";
+import { printFormatted } from "@app/har-analyzer/core/formatter";
+import type { HarFile, HarHeader, HarSession, OutputOptions } from "@app/har-analyzer/types";
 
 type HeaderScope = "request" | "response" | "both";
 
@@ -80,13 +81,9 @@ export function registerHeadersCommand(program: Command): void {
 		.description("Show deduplicated header analysis")
 		.option("--scope <scope>", "Scope: request, response, both", "both")
 		.action(async (options: HeadersOptions) => {
+			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.loadSession();
-
-			if (!session) {
-				console.error("No session loaded. Use `load <file>` first.");
-				process.exit(1);
-			}
+			const session = await sm.requireSession(parentOpts.session);
 
 			const har = await loadHarFile(session.sourceFile);
 			const headerMap = collectHeaders(har, session, options.scope);
@@ -138,6 +135,6 @@ export function registerHeadersCommand(program: Command): void {
 
 			lines.push(`${headerMap.size} unique header names (${common.length} common, ${uncommon.length} uncommon)`);
 
-			console.log(lines.join("\n"));
+			await printFormatted(lines.join("\n"), parentOpts.format);
 		});
 }

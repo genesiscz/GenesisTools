@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
-import { truncatePath } from "@app/har-analyzer/core/formatter";
-import type { IndexedEntry } from "@app/har-analyzer/types";
+import { truncatePath, printFormatted } from "@app/har-analyzer/core/formatter";
+import type { IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
 
 interface RedirectChain {
 	entries: IndexedEntry[];
@@ -121,13 +121,9 @@ export function registerRedirectsCommand(program: Command): void {
 		.command("redirects")
 		.description("Show redirect chains")
 		.action(async () => {
+			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.loadSession();
-
-			if (!session) {
-				console.error("No session loaded. Use `load <file>` first.");
-				process.exit(1);
-			}
+			const session = await sm.requireSession(parentOpts.session);
 
 			const chains = buildRedirectChains(session.entries);
 
@@ -136,8 +132,8 @@ export function registerRedirectsCommand(program: Command): void {
 				return;
 			}
 
-			const output = chains.map((chain, i) => formatChain(chain, i + 1)).join("\n\n");
-			console.log(output);
-			console.log(`\n${chains.length} redirect chain${chains.length !== 1 ? "s" : ""} found`);
+			const output = chains.map((chain, i) => formatChain(chain, i + 1)).join("\n\n")
+				+ `\n\n${chains.length} redirect chain${chains.length !== 1 ? "s" : ""} found`;
+			await printFormatted(output, parentOpts.format);
 		});
 }

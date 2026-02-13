@@ -5,17 +5,10 @@ import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
 import type { HarEntry, HarHeader, OutputOptions } from "@app/har-analyzer/types";
+import { printFormatted } from "@app/har-analyzer/core/formatter";
 import { formatSchema } from "@app/utils/json-schema";
 import { parseJSON } from "@app/utils/json";
-
-function parseEntryIndex(entry: string): number {
-	const cleaned = entry.startsWith("e") ? entry.slice(1) : entry;
-	const index = Number.parseInt(cleaned, 10);
-	if (Number.isNaN(index)) {
-		throw new Error(`Invalid entry reference: "${entry}". Use format like "e14" or "14".`);
-	}
-	return index;
-}
+import { parseEntryIndex } from "@app/har-analyzer/core/query-engine";
 
 function formatHeaders(headers: HarHeader[]): string {
 	return headers.map((h) => `${h.name}: ${h.value}`).join("\n");
@@ -41,13 +34,9 @@ export function registerShowCommand(program: Command): void {
 		.option("--section <section>", "Filter section in raw mode: body, headers, cookies")
 		.action(async (entry: string, options: ShowOptions) => {
 			const index = parseEntryIndex(entry);
+			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.loadSession();
-
-			if (!session) {
-				console.error("No session loaded. Use `load <file>` first.");
-				process.exit(1);
-			}
+			const session = await sm.requireSession(parentOpts.session);
 
 			const indexedEntry = session.entries[index];
 			if (!indexedEntry) {
@@ -57,19 +46,19 @@ export function registerShowCommand(program: Command): void {
 
 			const harFile = await loadHarFile(session.sourceFile);
 			const harEntry = harFile.log.entries[index];
-
-			const parentOpts = program.opts<OutputOptions>();
 			const refStore = new RefStoreManager(session.sourceHash);
 
 			if (options.raw) {
-				await showRaw(harEntry, index, refStore, parentOpts, options.section);
+				await showRaw(harEntry, index, refStore, parentOpts, options.section, parentOpts.format);
 			} else {
-				showDetail(harEntry, indexedEntry.url);
+				showDetail(harEntry, indexedEntry.url, parentOpts.format);
 			}
 		});
 }
 
-function showDetail(entry: HarEntry, fullUrl: string): void {
+import type { OutputFormat } from "@app/har-analyzer/types";
+
+async function showDetail(entry: HarEntry, fullUrl: string, format: OutputFormat): Promise<void> {
 	const lines: string[] = [];
 
 	// Request line
@@ -137,7 +126,7 @@ function showDetail(entry: HarEntry, fullUrl: string): void {
 	const content = entry.response.content;
 	lines.push(`Response Body: ${formatBytes(content.size)} (${content.mimeType})`);
 
-	console.log(lines.join("\n"));
+	await printFormatted(lines.join("\n"), format);
 }
 
 async function showRaw(
@@ -145,7 +134,8 @@ async function showRaw(
 	index: number,
 	refStore: RefStoreManager,
 	parentOpts: OutputOptions,
-	section?: ShowSection,
+	section: ShowSection | undefined,
+	format: OutputFormat,
 ): Promise<void> {
 	const lines: string[] = [];
 	const full = parentOpts.full ?? false;
@@ -242,7 +232,7 @@ async function showRaw(
 		lines.push("");
 	}
 
-	console.log(lines.join("\n"));
+	await printFormatted(lines.join("\n"), format);
 }
 
 export function registerExpandCommand(program: Command): void {
@@ -259,13 +249,9 @@ export function registerExpandCommand(program: Command): void {
 			}
 			const entryIndex = Number.parseInt(match[1], 10);
 
+			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.loadSession();
-
-			if (!session) {
-				console.error("No session loaded. Use `load <file>` first.");
-				process.exit(1);
-			}
+			const session = await sm.requireSession(parentOpts.session);
 
 			if (entryIndex < 0 || entryIndex >= session.entries.length) {
 				console.error(`Entry e${entryIndex} not found. Session has ${session.entries.length} entries (0-${session.entries.length - 1}).`);

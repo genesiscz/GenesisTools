@@ -130,6 +130,15 @@ export class SessionManager {
 		return deletedCount;
 	}
 
+	async requireSession(hash?: string): Promise<HarSession> {
+		const session = await this.loadSession(hash);
+		if (!session) {
+			console.error("No session loaded. Use `load <file>` first.");
+			process.exit(1);
+		}
+		return session;
+	}
+
 	getSourceHash(session: HarSession): string {
 		return session.sourceHash;
 	}

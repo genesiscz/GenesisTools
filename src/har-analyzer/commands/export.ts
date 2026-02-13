@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { filterEntries } from "@app/har-analyzer/core/query-engine";
-import type { HarEntry, HarFile, EntryFilter } from "@app/har-analyzer/types";
+import type { HarEntry, HarFile, EntryFilter, OutputOptions } from "@app/har-analyzer/types";
 
 const SENSITIVE_HEADER_NAMES = new Set([
 	"authorization",
@@ -90,13 +90,9 @@ export function registerExportCommand(program: Command): void {
 			stripBodies?: boolean;
 			output?: string;
 		}) => {
+			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.loadSession();
-
-			if (!session) {
-				console.error("No session loaded. Use `load <file>` first.");
-				process.exit(1);
-			}
+			const session = await sm.requireSession(parentOpts.session);
 
 			const harFile = await loadHarFile(session.sourceFile);
 
