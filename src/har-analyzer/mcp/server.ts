@@ -102,36 +102,13 @@ export async function startMcpServer(): Promise<void> {
 			},
 			{
 				name: "har_analyze",
-				description: "Run analysis: headers, waterfall, errors, security, size",
+				description: "Run analysis: errors, security",
 				inputSchema: {
 					type: "object" as const,
 					properties: {
-						type: { type: "string", description: "Analysis type: headers, waterfall, errors, security, size" },
+						type: { type: "string", enum: ["errors", "security"], description: "Analysis type: errors, security" },
 					},
 					required: ["type"],
-				},
-			},
-			{
-				name: "har_flow",
-				description: "Track redirects or cookies flow",
-				inputSchema: {
-					type: "object" as const,
-					properties: {
-						type: { type: "string", description: "Flow type: redirects, cookies" },
-					},
-					required: ["type"],
-				},
-			},
-			{
-				name: "har_diff",
-				description: "Compare two entries",
-				inputSchema: {
-					type: "object" as const,
-					properties: {
-						entry1: { type: "number", description: "First entry index" },
-						entry2: { type: "number", description: "Second entry index" },
-					},
-					required: ["entry1", "entry2"],
 				},
 			},
 			{
@@ -350,15 +327,7 @@ export async function startMcpServer(): Promise<void> {
 						return { content: [{ type: "text", text: findings.length > 0 ? findings.join("\n") : "No security findings." }] };
 					}
 
-					return { content: [{ type: "text", text: `Use CLI for ${type} analysis: tools har-analyzer ${type}` }] };
-				}
-
-				case "har_flow": {
-					return { content: [{ type: "text", text: `Use CLI: tools har-analyzer ${a.type as string}` }] };
-				}
-
-				case "har_diff": {
-					return { content: [{ type: "text", text: `Use CLI: tools har-analyzer diff e${a.entry1} e${a.entry2}` }] };
+					return { content: [{ type: "text", text: `Unknown analysis type: ${type}. Supported: errors, security` }] };
 				}
 
 				case "har_export": {

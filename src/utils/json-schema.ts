@@ -15,7 +15,7 @@
 
 // ─── Types ───────────────────────────────────────────────────────────
 
-interface SchemaNode {
+export interface SchemaNode {
 	type: string | string[]; // "string", "number", "object", "array", "boolean", "null", or union
 	properties?: Record<string, SchemaNode>;
 	required?: string[];
@@ -23,7 +23,7 @@ interface SchemaNode {
 	enum?: unknown[];
 }
 
-type OutputMode = "schema" | "skeleton" | "typescript";
+export type OutputMode = "schema" | "skeleton" | "typescript";
 
 interface FormatOptions {
 	/** Max depth to recurse (default: 20) */
@@ -81,10 +81,7 @@ function inferNode(value: unknown, depth: number, maxDepth: number): SchemaNode 
  * For different types: create a type union.
  */
 function mergeNodes(a: SchemaNode, b: SchemaNode): SchemaNode {
-	const aType = normalizeType(a.type);
-	const bType = normalizeType(b.type);
-
-	if (aType === "object" && bType === "object") {
+	if (hasType(a.type, "object") && hasType(b.type, "object")) {
 		const aProps = a.properties ?? {};
 		const bProps = b.properties ?? {};
 		const aRequired = new Set(a.required ?? []);
@@ -110,26 +107,59 @@ function mergeNodes(a: SchemaNode, b: SchemaNode): SchemaNode {
 			}
 		}
 
-		return { type: "object", properties: merged, required };
+		// Preserve extra union types (e.g. null) from either side
+		const extraTypes = new Set<string>();
+		for (const t of Array.isArray(a.type) ? a.type : [a.type]) {
+			if (t !== "object") extraTypes.add(t);
+		}
+		for (const t of Array.isArray(b.type) ? b.type : [b.type]) {
+			if (t !== "object") extraTypes.add(t);
+		}
+
+		const resultType: string | string[] = extraTypes.size > 0 ? ["object", ...extraTypes] : "object";
+		return { type: resultType, properties: merged, required };
 	}
 
-	if (aType === "array" && bType === "array") {
+	if (hasType(a.type, "array") && hasType(b.type, "array")) {
 		const mergedItems = a.items && b.items ? mergeNodes(a.items, b.items) : (a.items ?? b.items ?? { type: "unknown" });
-		return { type: "array", items: mergedItems };
+
+		const extraTypes = new Set<string>();
+		for (const t of Array.isArray(a.type) ? a.type : [a.type]) {
+			if (t !== "array") extraTypes.add(t);
+		}
+		for (const t of Array.isArray(b.type) ? b.type : [b.type]) {
+			if (t !== "array") extraTypes.add(t);
+		}
+
+		const resultType: string | string[] = extraTypes.size > 0 ? ["array", ...extraTypes] : "array";
+		return { type: resultType, items: mergedItems };
 	}
 
-	if (aType === bType) return a;
+	// Different types — create union, preserving structural info
+	const aTypes = Array.isArray(a.type) ? a.type : [a.type];
+	const bTypes = Array.isArray(b.type) ? b.type : [b.type];
+	const union = new Set([...aTypes, ...bTypes]);
 
-	const types = new Set([
-		...(Array.isArray(a.type) ? a.type : [a.type]),
-		...(Array.isArray(b.type) ? b.type : [b.type]),
-	]);
+	if (union.size === 1) return a;
 
-	return { type: [...types] };
+	const result: SchemaNode = { type: [...union] };
+
+	// Preserve properties/items from the structural side
+	const structural = a.properties ? a : b.properties ? b : null;
+	if (structural?.properties) {
+		result.properties = structural.properties;
+		result.required = structural.required;
+	}
+	const arrayLike = a.items ? a : b.items ? b : null;
+	if (arrayLike?.items) {
+		result.items = arrayLike.items;
+	}
+
+	return result;
 }
 
-function normalizeType(type: string | string[]): string {
-	return Array.isArray(type) ? type[0] : type;
+function hasType(type: string | string[], target: string): boolean {
+	return Array.isArray(type) ? type.includes(target) : type === target;
 }
 
 // ─── Public API ──────────────────────────────────────────────────────
@@ -223,7 +253,7 @@ function formatSkeletonPretty(node: SchemaNode, indent: number): string {
 
 // ─── TypeScript: compact (default) ───────────────────────────────────
 
-function formatTypeScriptCompact(schema: SchemaNode): string {
+function collectTypeScriptInterfaces(schema: SchemaNode): { interfaces: CollectedInterface[]; rootType: string } {
 	const interfaces: CollectedInterface[] = [];
 	const nameCounters = new Map<string, number>();
 
@@ -239,13 +269,16 @@ function formatTypeScriptCompact(schema: SchemaNode): string {
 		if (type.includes("object") && node.properties) {
 			const iName = uniqueName(contextName);
 			collectInterface(node, iName);
-			return iName;
+			const extraTypes = type.filter((t) => t !== "object").map(mapPrimitive);
+			return extraTypes.length > 0 ? `${iName} | ${extraTypes.join(" | ")}` : iName;
 		}
 
 		if (type.includes("array") && node.items) {
 			const singularName = singularize(contextName);
 			const itemType = nodeToType(node.items, pascalCase(singularName));
-			return `${itemType}[]`;
+			const extraTypes = type.filter((t) => t !== "array").map(mapPrimitive);
+			const arrayExpr = `${itemType}[]`;
+			return extraTypes.length > 0 ? `${arrayExpr} | ${extraTypes.join(" | ")}` : arrayExpr;
 		}
 
 		return type.map(mapPrimitive).join(" | ");
@@ -264,12 +297,18 @@ function formatTypeScriptCompact(schema: SchemaNode): string {
 	}
 
 	const rootType = nodeToType(schema, "Root");
+	return { interfaces, rootType };
+}
+
+// ─── TypeScript: compact (default) ───────────────────────────────────
+
+function formatTypeScriptCompact(schema: SchemaNode): string {
+	const { interfaces, rootType } = collectTypeScriptInterfaces(schema);
 
 	if (interfaces.length === 0) {
 		return `type Root = ${rootType};`;
 	}
 
-	// 1 interface = 1 line
 	return interfaces
 		.map((iface) => {
 			const fields = iface.fields
@@ -282,51 +321,8 @@ function formatTypeScriptCompact(schema: SchemaNode): string {
 
 // ─── TypeScript: pretty ──────────────────────────────────────────────
 
-/**
- * Generate TypeScript interfaces from a schema (multi-line).
- * Smart naming: Root for top-level, singularized parent key for nested objects.
- */
 function formatTypeScriptPretty(schema: SchemaNode): string {
-	const interfaces: CollectedInterface[] = [];
-	const nameCounters = new Map<string, number>();
-
-	function uniqueName(base: string): string {
-		const count = nameCounters.get(base) ?? 0;
-		nameCounters.set(base, count + 1);
-		return count === 0 ? base : `${base}${count + 1}`;
-	}
-
-	function nodeToType(node: SchemaNode, contextName: string): string {
-		const type = Array.isArray(node.type) ? node.type : [node.type];
-
-		if (type.includes("object") && node.properties) {
-			const iName = uniqueName(contextName);
-			collectInterface(node, iName);
-			return iName;
-		}
-
-		if (type.includes("array") && node.items) {
-			const singularName = singularize(contextName);
-			const itemType = nodeToType(node.items, pascalCase(singularName));
-			return `${itemType}[]`;
-		}
-
-		return type.map(mapPrimitive).join(" | ");
-	}
-
-	function collectInterface(node: SchemaNode, name: string): void {
-		const required = new Set(node.required ?? []);
-		const fields: CollectedInterface["fields"] = [];
-
-		for (const [key, child] of Object.entries(node.properties ?? {})) {
-			const childType = nodeToType(child, pascalCase(key));
-			fields.push({ key, type: childType, optional: !required.has(key) });
-		}
-
-		interfaces.push({ name, fields });
-	}
-
-	const rootType = nodeToType(schema, "Root");
+	const { interfaces, rootType } = collectTypeScriptInterfaces(schema);
 
 	if (interfaces.length === 0) {
 		return `type Root = ${rootType};\n`;

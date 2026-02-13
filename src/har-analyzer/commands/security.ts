@@ -1,8 +1,8 @@
 import type { Command } from "commander";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
-import { truncatePath } from "@app/har-analyzer/core/formatter";
-import type { HarEntry, HarHeader } from "@app/har-analyzer/types";
+import { truncatePath, printFormatted } from "@app/har-analyzer/core/formatter";
+import type { HarEntry, HarHeader, OutputOptions } from "@app/har-analyzer/types";
 
 type Severity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -170,13 +170,9 @@ export function registerSecurityCommand(program: Command): void {
 		.command("security")
 		.description("Scan for sensitive data exposure")
 		.action(async () => {
+			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.loadSession();
-
-			if (!session) {
-				console.error("No session loaded. Use `load <file>` first.");
-				process.exit(1);
-			}
+			const session = await sm.requireSession(parentOpts.session);
 
 			const har = await loadHarFile(session.sourceFile);
 			const findings: SecurityFinding[] = [];
@@ -226,6 +222,6 @@ export function registerSecurityCommand(program: Command): void {
 				lines.push("");
 			}
 
-			console.log(lines.join("\n"));
+			await printFormatted(lines.join("\n"), parentOpts.format);
 		});
 }

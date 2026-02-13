@@ -1,8 +1,8 @@
 import type { Command } from "commander";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
-import { truncatePath } from "@app/har-analyzer/core/formatter";
-import type { HarEntry } from "@app/har-analyzer/types";
+import { truncatePath, printFormatted } from "@app/har-analyzer/core/formatter";
+import type { HarEntry, OutputOptions } from "@app/har-analyzer/types";
 
 interface CookieInfo {
 	name: string;
@@ -130,13 +130,9 @@ export function registerCookiesCommand(program: Command): void {
 		.command("cookies")
 		.description("Track cookie flow across requests")
 		.action(async () => {
+			const parentOpts = program.opts<OutputOptions>();
 			const sm = new SessionManager();
-			const session = await sm.loadSession();
-
-			if (!session) {
-				console.error("No session loaded. Use `load <file>` first.");
-				process.exit(1);
-			}
+			const session = await sm.requireSession(parentOpts.session);
 
 			const har = await loadHarFile(session.sourceFile);
 			const cookies = analyzeCookies(har.log.entries);
@@ -153,7 +149,12 @@ export function registerCookiesCommand(program: Command): void {
 				lines.push(`  ${cookie.name}`);
 
 				if (cookie.setByEntry !== null) {
-					const path = truncatePath(new URL(cookie.setByUrl).pathname, 40);
+					let path: string;
+					try {
+						path = truncatePath(new URL(cookie.setByUrl).pathname, 40);
+					} catch {
+						path = truncatePath(cookie.setByUrl, 40);
+					}
 					lines.push(`    Set by: e${cookie.setByEntry} ${path}`);
 				} else {
 					lines.push(`    Set by: ${cookie.setByUrl}`);
@@ -169,6 +170,6 @@ export function registerCookiesCommand(program: Command): void {
 				lines.push("");
 			}
 
-			console.log(lines.join("\n"));
+			await printFormatted(lines.join("\n"), parentOpts.format);
 		});
 }
