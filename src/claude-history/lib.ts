@@ -3,7 +3,8 @@
  * Reusable functions for searching and parsing conversation history
  */
 
-import { createReadStream, existsSync, readdirSync } from "fs";
+import { createHash } from "crypto";
+import { createReadStream, existsSync, readFileSync, readdirSync } from "fs";
 import { stat } from "fs/promises";
 import { glob } from "glob";
 import { homedir } from "os";
@@ -16,7 +17,9 @@ import {
     type DailyStats,
     type DateRange,
     getAllSessionMetadata,
+    getAllSessionMetadataFilePaths,
     getCachedDates,
+    getCacheMeta,
     getSessionMetadataByDir,
     getCachedTotals,
     getDailyStats,
@@ -25,6 +28,8 @@ import {
     getFileIndex,
     getSessionMetadata,
     invalidateDateRange,
+    removeSessionMetadataBatch,
+    resetDatabase,
     setCacheMeta,
     type SessionMetadataRecord,
     type TokenUsage,
@@ -49,6 +54,16 @@ import type {
 
 // Re-export all types
 export * from "./types";
+
+/**
+ * Auto-derived metadata version — hash of lib.ts + cache.ts source.
+ * When ANY extraction/cache logic changes, this hash changes, forcing re-index.
+ */
+const METADATA_VERSION = createHash("md5")
+    .update(readFileSync(new URL("./lib.ts", import.meta.url), "utf-8"))
+    .update(readFileSync(new URL("./cache.ts", import.meta.url), "utf-8"))
+    .digest("hex")
+    .slice(0, 8);
 
 export const CLAUDE_DIR = resolve(homedir(), ".claude");
 export const PROJECTS_DIR = resolve(CLAUDE_DIR, "projects");
@@ -452,7 +467,7 @@ function searchSessionMetadataCache(filters: SearchFilters): SearchResult[] {
         if (filters.conversationDate && firstTimestamp && firstTimestamp < filters.conversationDate) continue;
         if (filters.conversationDateUntil && firstTimestamp && firstTimestamp > filters.conversationDateUntil) continue;
 
-        const allSearchText = [s.customTitle, s.summary, s.firstPrompt].filter(Boolean).join(" ");
+        const allSearchText = [s.customTitle, s.summary, s.firstPrompt, s.allUserText].filter(Boolean).join(" ");
         if (filters.query && !matchesQuery(allSearchText, filters.query, !!filters.exact, !!filters.regex)) {
             continue;
         }
@@ -952,6 +967,13 @@ export interface SessionListingResult {
 export async function getSessionListing(options: SessionListingOptions = {}): Promise<SessionListingResult> {
     const { excludeSubagents = true, limit } = options;
 
+    // Auto-reindex when extraction logic changes
+    const cachedVersion = getCacheMeta("metadata_version");
+    if (cachedVersion !== METADATA_VERSION) {
+        resetDatabase();
+        setCacheMeta("metadata_version", METADATA_VERSION);
+    }
+
     // Resolve project to exact encoded dir path for precise scoping
     const projectDir = options.project ? resolveProjectDir(options.project) : undefined;
 
@@ -981,6 +1003,14 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
         } catch {
             // Skip unreadable files
         }
+    }
+
+    // Clean up stale entries for deleted files
+    const diskFiles = new Set(files);
+    const cachedPaths = getAllSessionMetadataFilePaths();
+    const stalePaths = cachedPaths.filter((p) => !diskFiles.has(p));
+    if (stalePaths.length > 0) {
+        removeSessionMetadataBatch(stalePaths);
     }
 
     // 3. Query cached metadata (scoped to the same files we just indexed)
@@ -1060,8 +1090,9 @@ async function findConversationFilesInDir(projectDir: string, excludeSubagents: 
 }
 
 /**
- * Extract session metadata by reading only the first ~50 lines of a JSONL file.
- * Much faster than full parsing — only needs summary, custom-title, sessionId, gitBranch, cwd.
+ * Extract session metadata by reading the entire JSONL file.
+ * Captures: summary, custom-title, sessionId, gitBranch, cwd,
+ * full first prompt, and all user message text (capped at 5000 chars).
  */
 async function extractSessionMetadataFromFile(
     filePath: string,
@@ -1071,7 +1102,7 @@ async function extractSessionMetadataFromFile(
     const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
 
     try {
-        const fileStream = createReadStream(filePath, { end: 64 * 1024 }); // Read max 64KB
+        const fileStream = createReadStream(filePath);
         const rl = createInterface({ input: fileStream, crlfDelay: Number.POSITIVE_INFINITY });
 
         let sessionId: string | null = null;
@@ -1081,14 +1112,17 @@ async function extractSessionMetadataFromFile(
         let gitBranch: string | null = null;
         let cwd: string | null = null;
         let firstTimestamp: string | null = null;
-        let lineCount = 0;
+        const userTexts: string[] = [];
+        let userTextLen = 0;
+        const USER_TEXT_CAP = 5000;
 
         for await (const line of rl) {
             if (!line.trim()) continue;
-            if (++lineCount > 50) break; // Only read first 50 lines
 
             try {
                 const obj = JSON.parse(line);
+
+                // Always capture summary/custom-title (latest wins)
                 if (obj.type === "summary" && obj.summary) {
                     summary = obj.summary;
                 }
@@ -1107,17 +1141,23 @@ async function extractSessionMetadataFromFile(
                 if (obj.timestamp && !firstTimestamp) {
                     firstTimestamp = obj.timestamp;
                 }
-                // Get first user prompt
-                if (obj.type === "user" && !firstPrompt) {
+
+                // Collect ALL user messages
+                if (obj.type === "user" && userTextLen < USER_TEXT_CAP) {
+                    let text = "";
                     if (typeof obj.message?.content === "string") {
-                        firstPrompt = obj.message.content.slice(0, 120);
+                        text = obj.message.content;
                     } else if (Array.isArray(obj.message?.content)) {
                         const textBlock = obj.message.content.find(
                             (b: { type: string }) => b.type === "text"
                         );
-                        if (textBlock?.text) {
-                            firstPrompt = textBlock.text.slice(0, 120);
-                        }
+                        if (textBlock?.text) text = textBlock.text;
+                    }
+                    if (text) {
+                        if (!firstPrompt) firstPrompt = text;
+                        const remaining = USER_TEXT_CAP - userTextLen;
+                        userTexts.push(text.slice(0, remaining));
+                        userTextLen += text.length;
                     }
                 }
             } catch {
@@ -1142,9 +1182,112 @@ async function extractSessionMetadataFromFile(
             mtime,
             firstTimestamp,
             isSubagent,
+            allUserText: userTexts.join(" "),
         };
     } catch {
         return null;
+    }
+}
+
+// =============================================================================
+// Ripgrep Full-Content Search
+// =============================================================================
+
+/**
+ * Use ripgrep to find JSONL files containing a query string.
+ * Returns file paths of matching sessions — extremely fast.
+ */
+export async function rgSearchFiles(
+    query: string,
+    options: { project?: string; limit?: number } = {}
+): Promise<string[]> {
+    const searchDir = options.project
+        ? resolveProjectDir(options.project) || PROJECTS_DIR
+        : PROJECTS_DIR;
+
+    const proc = Bun.spawn({
+        cmd: [
+            "rg", "-l", "--glob", "*.jsonl",
+            "-i",
+            "--max-count", "1",
+            query,
+            searchDir,
+        ],
+        stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const output = await new Response(proc.stdout).text();
+    await proc.exited;
+
+    let files = output.trim().split("\n").filter(Boolean);
+
+    if (options.limit && files.length > options.limit) {
+        files = files.slice(0, options.limit);
+    }
+
+    return files;
+}
+
+/**
+ * Use ripgrep to extract a snippet around the first match in a file.
+ */
+export async function rgExtractSnippet(
+    query: string,
+    filePath: string,
+): Promise<string | undefined> {
+    const proc = Bun.spawn({
+        cmd: ["rg", "-i", "-m", "1", "--no-filename", "--no-line-number", query, filePath],
+        stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const output = await new Response(proc.stdout).text();
+    await proc.exited;
+
+    const line = output.trim();
+    if (!line) return undefined;
+
+    // Try to extract readable text from the JSON line
+    try {
+        const obj = JSON.parse(line);
+        let text = "";
+        if (obj.type === "user" && typeof obj.message?.content === "string") {
+            text = obj.message.content;
+        } else if (obj.type === "user" && Array.isArray(obj.message?.content)) {
+            text = obj.message.content
+                .filter((b: { type: string }) => b.type === "text")
+                .map((b: { text: string }) => b.text)
+                .join(" ");
+        } else if (obj.type === "assistant" && Array.isArray(obj.message?.content)) {
+            text = obj.message.content
+                .filter((b: { type: string }) => b.type === "text")
+                .map((b: { text: string }) => b.text)
+                .join(" ");
+        } else if (obj.type === "summary") {
+            text = obj.summary || "";
+        }
+
+        if (!text) return undefined;
+
+        const lowerText = text.toLowerCase();
+        const lowerQuery = query.toLowerCase();
+        const idx = lowerText.indexOf(lowerQuery);
+        if (idx === -1) return text.slice(0, 100);
+
+        const start = Math.max(0, idx - 40);
+        const end = Math.min(text.length, idx + query.length + 60);
+        return (start > 0 ? "..." : "") +
+            text.slice(start, end).replace(/\n/g, " ").trim() +
+            (end < text.length ? "..." : "");
+    } catch {
+        // If JSON parsing fails, try to extract from raw text
+        const lowerLine = line.toLowerCase();
+        const lowerQuery = query.toLowerCase();
+        const idx = lowerLine.indexOf(lowerQuery);
+        if (idx === -1) return undefined;
+
+        const start = Math.max(0, idx - 40);
+        const end = Math.min(line.length, idx + query.length + 60);
+        return "..." + line.slice(start, end).replace(/\\n/g, " ").trim() + "...";
     }
 }
 

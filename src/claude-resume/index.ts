@@ -5,8 +5,11 @@ import { basename } from "node:path";
 import { formatRelativeTime } from "@app/utils/format";
 import { detectCurrentProject, findClaudeCommand } from "@app/utils/claude";
 import logger from "@app/logger";
+import { getSessionMetadata } from "@app/claude-history/cache";
 import {
 	getSessionListing,
+	rgExtractSnippet,
+	rgSearchFiles,
 	searchConversations,
 	type SessionMetadataRecord,
 } from "@app/claude-history/lib";
@@ -26,6 +29,8 @@ interface DisplaySession {
 	project: string;
 	modified: string;
 	source: "cache" | "search";
+	firstPrompt: string;
+	matchSnippet?: string;
 }
 
 interface Options {
@@ -46,6 +51,7 @@ function toDisplay(
 		project?: string | null;
 		timestamp?: string | null;
 		source?: "cache" | "search";
+		matchSnippet?: string;
 	},
 ): DisplaySession {
 	return {
@@ -59,6 +65,8 @@ function toDisplay(
 		project: opts.project || "",
 		modified: opts.timestamp || "",
 		source: opts.source ?? "cache",
+		firstPrompt: opts.firstPrompt || "",
+		matchSnippet: opts.matchSnippet,
 	};
 }
 
@@ -128,46 +136,82 @@ function matchByIdOrName(all: DisplaySession[], query: string): DisplaySession[]
 		(s) =>
 			s.name.toLowerCase().includes(q) ||
 			s.branch.toLowerCase().includes(q) ||
-			s.project.toLowerCase().includes(q),
+			s.project.toLowerCase().includes(q) ||
+			s.firstPrompt.toLowerCase().includes(q),
 	);
 }
 
 async function searchByContent(query: string, spinner: Spinner, project?: string): Promise<DisplaySession[]> {
-	const results = await searchConversations({
+	// Phase 1: Fast metadata-only search (SQLite — includes allUserText)
+	const metaResults = await searchConversations({
 		query,
 		project,
 		sortByRelevance: true,
 		limit: 20,
 		summaryOnly: true,
-		onProgress: progressUpdater(spinner),
 	});
-	return results.map((r) =>
-		toDisplay(r.sessionId, {
-			title: r.customTitle,
-			summary: r.summary,
-			branch: r.gitBranch,
-			project: r.project,
-			timestamp: r.timestamp.toISOString(),
-			source: "search",
-		}),
-	);
+
+	if (metaResults.length > 0) {
+		return metaResults.map((r) =>
+			toDisplay(r.sessionId, {
+				title: r.customTitle,
+				summary: r.summary,
+				branch: r.gitBranch,
+				project: r.project,
+				timestamp: r.timestamp.toISOString(),
+				source: "search",
+			}),
+		);
+	}
+
+	// Phase 2: ripgrep full-content search (fast, searches everything)
+	spinner.message("Deep searching with rg...");
+	const matchingFiles = await rgSearchFiles(query, { project, limit: 30 });
+
+	if (matchingFiles.length === 0) return [];
+
+	spinner.message(`Found ${matchingFiles.length} matches, loading metadata...`);
+
+	const results: DisplaySession[] = [];
+	for (const filePath of matchingFiles.slice(0, 20)) {
+		const cached = getSessionMetadata(filePath);
+		const snippet = await rgExtractSnippet(query, filePath);
+
+		results.push(toDisplay(
+			cached?.sessionId || basename(filePath, ".jsonl"),
+			{
+				title: cached?.customTitle,
+				summary: cached?.summary,
+				firstPrompt: cached?.firstPrompt,
+				branch: cached?.gitBranch,
+				project: cached?.project,
+				timestamp: cached?.firstTimestamp || new Date(0).toISOString(),
+				source: "search",
+				matchSnippet: snippet,
+			},
+		));
+	}
+
+	return results;
 }
 
 // --- UI ---
 
 function sessionOption(s: DisplaySession) {
+	const hints = [
+		pc.dim(s.sessionId.slice(0, ID_PREFIX_LEN)),
+		s.branch ? pc.magenta(s.branch) : "",
+		s.project ? pc.blue(s.project) : "",
+		pc.dim(formatDate(s.modified)),
+		s.source === "search" ? pc.yellow("[search]") : "",
+	].filter(Boolean);
+
 	return {
 		value: s,
-		label: s.name.slice(0, NAME_MAX_LEN),
-		hint: [
-			pc.dim(s.sessionId.slice(0, ID_PREFIX_LEN)),
-			s.branch ? pc.magenta(s.branch) : "",
-			s.project ? pc.blue(s.project) : "",
-			pc.dim(formatDate(s.modified)),
-			s.source === "search" ? pc.yellow("[search]") : "",
-		]
-			.filter(Boolean)
-			.join(" "),
+		label: s.matchSnippet
+			? `${s.name.slice(0, NAME_MAX_LEN)}\n  ${pc.dim(s.matchSnippet.slice(0, 100))}`
+			: s.name.slice(0, NAME_MAX_LEN),
+		hint: hints.join(" "),
 	};
 }
 
