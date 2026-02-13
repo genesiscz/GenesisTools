@@ -343,6 +343,7 @@ export async function handleWorkItem(
         }
     }
 
+
     // Phase 3: Save fetched items to disk + update cache
     for (const [id, item] of fetchedItems) {
         const existingJsonPath = existingFilePaths.get(id) ?? null;

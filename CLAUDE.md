@@ -55,6 +55,19 @@ GenesisTools is a TypeScript-based CLI toolkit that runs on Bun. The architectur
 -   **MCP Integration**: Several tools implement Model Context Protocol servers for AI assistant integration
 -   **No Build Step**: Bun executes TypeScript directly without compilation
 
+### Utility Convention
+
+When creating a new tool and writing helper functions, check if the utility is **general-purpose** (usable by other tools). If so, place it in `src/utils/` instead of inside the tool directory:
+
+- `src/utils/format.ts` - Formatting: bytes, duration, tokens, numbers, lists
+- `src/utils/table.ts` - Text table formatting
+- `src/utils/string.ts` - String utilities (glob matching, ANSI stripping)
+- `src/utils/storage/storage.ts` - Config & cache management
+- `src/utils/async.ts` - Async helpers (concurrency, etc.)
+- `src/utils/json-schema.ts` - JSON schema inference: `inferSchema()`, `formatSchema(value, "skeleton"|"typescript"|"schema")`
+
+Tool-specific logic stays in the tool directory (e.g., `src/har-analyzer/core/`).
+
 ### Tool Patterns
 
 Most tools follow these common patterns:

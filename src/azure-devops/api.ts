@@ -474,6 +474,85 @@ export class Api {
     }
 
     /**
+     * Batch fetch full work items (all fields + relations) in one REST call.
+     * Batches of 200 (API limit). Comments NOT included — use batchGetComments().
+     */
+    async batchGetFullWorkItems(ids: number[]): Promise<Map<number, Omit<WorkItemFull, "comments">>> {
+        const result = new Map<number, Omit<WorkItemFull, "comments">>();
+        const batchSize = 200;
+
+        for (let i = 0; i < ids.length; i += batchSize) {
+            const batchIds = ids.slice(i, i + batchSize);
+            const url = Api.orgUrl(this.config, ["wit", "workitems"], {
+                ids: batchIds.join(","),
+                "$expand": "all",
+            });
+            const response = await this.get<{ value: AzWorkItemRaw[] }>(
+                url,
+                `batch full ${Math.floor(i / batchSize) + 1}/${Math.ceil(ids.length / batchSize)}`
+            );
+
+            for (const item of response.value) {
+                const fields = item.fields ?? {};
+                result.set(item.id, {
+                    id: item.id,
+                    rev: item.rev,
+                    title: fields["System.Title"] as string,
+                    state: fields["System.State"] as string,
+                    changed: fields["System.ChangedDate"] as string,
+                    severity: fields["Microsoft.VSTS.Common.Severity"] as string | undefined,
+                    assignee: (fields["System.AssignedTo"] as { displayName?: string } | undefined)?.displayName,
+                    tags: fields["System.Tags"] as string | undefined,
+                    description: fields["System.Description"] as string | undefined,
+                    created: fields["System.CreatedDate"] as string | undefined,
+                    createdBy: (fields["System.CreatedBy"] as { displayName?: string } | undefined)?.displayName,
+                    changedBy: (fields["System.ChangedBy"] as { displayName?: string } | undefined)?.displayName,
+                    url: this.generateWorkItemUrl(item.id),
+                    relations: item.relations,
+                    rawFields: fields,
+                });
+            }
+        }
+
+        logger.debug(`[api] Batch fetched ${result.size} full work items`);
+        return result;
+    }
+
+    /**
+     * Fetch comments for multiple work items in parallel with concurrency limit.
+     */
+    async batchGetComments(ids: number[], concurrency = 5): Promise<Map<number, Comment[]>> {
+        const result = new Map<number, Comment[]>();
+
+        for (let i = 0; i < ids.length; i += concurrency) {
+            const batch = ids.slice(i, i + concurrency);
+            const promises = batch.map(async (id) => {
+                const commentsUrl = Api.witUrlPreview(this.config, ["workItems", String(id), "comments"]);
+                const commentsData = await this.get<{
+                    comments: Array<{ id: number; createdBy: { displayName: string }; createdDate: string; text: string }>;
+                }>(commentsUrl, `comments for #${id}`);
+
+                const comments: Comment[] = (commentsData.comments || []).map((c) => ({
+                    id: c.id,
+                    author: c.createdBy?.displayName,
+                    date: c.createdDate,
+                    text: c.text,
+                }));
+                return { id, comments };
+            });
+
+            const results = await Promise.all(promises);
+            for (const { id, comments } of results) {
+                result.set(id, comments);
+                logger.debug(`[api] Work item #${id} has ${comments.length} comments`);
+            }
+        }
+
+        logger.debug(`[api] Batch fetched comments for ${result.size} work items`);
+        return result;
+    }
+
+    /**
      * Get dashboard information including all queries it contains
      */
     async getDashboard(dashboardId: string): Promise<Dashboard> {
@@ -721,6 +800,26 @@ export class Api {
         } while (continuationToken);
 
         return revisionsByItem;
+    }
+
+    /**
+     * Fetch full revision snapshots for a single work item.
+     * @note Not used in main flow because /updates provides oldValue/newValue deltas.
+     * @note Could be useful for: Reconstructing exact complete state at each revision.
+     */
+    async getWorkItemRevisions(
+        id: number,
+        options?: { top?: number; expand?: string }
+    ): Promise<Array<{ rev: number; fields: Record<string, unknown> }>> {
+        const url = Api.witUrl(this.config, ["workItems", String(id), "revisions"], {
+            "$top": options?.top ? String(options.top) : undefined,
+            "$expand": options?.expand,
+        });
+        const data = await this.get<{ value: Array<{ rev: number; fields: Record<string, unknown> }> }>(
+            url,
+            `revisions for #${id}`
+        );
+        return data.value;
     }
 
     /**

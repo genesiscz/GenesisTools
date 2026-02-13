@@ -1036,6 +1036,20 @@ async function findConversationFilesInDir(projectDir: string, excludeSubagents: 
             .filter((e) => e.endsWith(".jsonl"))
             .map((e) => resolve(projectDir, e));
 
+        // Also scan subagents/ subdirectory for .jsonl files
+        if (!excludeSubagents) {
+            const subagentsDir = resolve(projectDir, "subagents");
+            try {
+                const subEntries = readdirSync(subagentsDir);
+                const subFiles = subEntries
+                    .filter((e) => e.endsWith(".jsonl"))
+                    .map((e) => resolve(subagentsDir, e));
+                files = files.concat(subFiles);
+            } catch {
+                // subagents/ doesn't exist or isn't readable — skip
+            }
+        }
+
         if (excludeSubagents) {
             files = files.filter((f) => !basename(f).startsWith("agent-"));
         }

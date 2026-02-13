@@ -406,7 +406,11 @@ function formatPRMarkdown(data: PRData, options: FormatOptions): string {
             threads: data.reviewThreads,
             stats: data.reviewThreadStats,
         };
-        const reviewMd = formatReviewMarkdown(reviewData, true);
+        let reviewMd = formatReviewMarkdown(reviewData, true);
+        // Demote H1 to H2 when embedding inside the full PR output
+        if (reviewMd.startsWith("# ")) {
+            reviewMd = "#" + reviewMd.slice(1);
+        }
 
         // Insert before Statistics
         const statsPoint = output.lastIndexOf("\n---\n\n## Statistics");

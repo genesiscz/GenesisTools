@@ -82,7 +82,7 @@ type Spinner = ReturnType<typeof p.spinner>;
 
 function progressUpdater(spinner: Spinner) {
 	return (processed: number, total: number, file: string) => {
-		const pct = Math.round((processed / total) * 100);
+		const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
 		const shortId = file.length > 8 ? file.slice(0, 8) : file;
 		spinner.message(`${processed}/${total} (${pct}%) ${shortId}...`);
 	};
@@ -110,7 +110,7 @@ async function loadSessions(allProjects: boolean, spinner: Spinner): Promise<Loa
 				firstPrompt: s.firstPrompt,
 				branch: s.gitBranch,
 				project: s.project,
-				timestamp: s.firstTimestamp,
+				timestamp: new Date(s.mtime).toISOString(),
 			}),
 		),
 		total: result.total,
