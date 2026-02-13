@@ -210,6 +210,7 @@ export interface IssueCommandOptions {
 
 export interface PRCommandOptions extends IssueCommandOptions {
     reviewComments?: boolean;
+    reviews?: boolean;
     diff?: boolean;
     commits?: boolean;
     checks?: boolean;
@@ -248,6 +249,8 @@ export interface IssueData {
 export interface PRData extends IssueData {
     pr: GitHubPullRequest;
     reviewComments?: ReviewCommentData[];
+    reviewThreads?: ParsedReviewThread[];
+    reviewThreadStats?: ReviewThreadStats;
     commits?: CommitData[];
     checks?: CheckData[];
     diff?: string;
@@ -311,6 +314,73 @@ export interface LinkedIssue {
     title: string;
     state: string;
     linkType: "fixes" | "closes" | "related";
+}
+
+// Review Thread types (GraphQL-based)
+
+export interface ReviewThread {
+    id: string;
+    isResolved: boolean;
+    path: string;
+    line: number | null;
+    startLine: number | null;
+    comments: ReviewThreadComment[];
+}
+
+export interface ReviewThreadComment {
+    id: string;
+    author: string;
+    body: string;
+    createdAt: string;
+    diffHunk: string | null;
+}
+
+export interface ParsedReviewThread {
+    threadId: string;
+    threadNumber: number;
+    status: "resolved" | "unresolved";
+    severity: "high" | "medium" | "low";
+    file: string;
+    line: number | null;
+    author: string;
+    title: string;
+    issue: string;
+    diffHunk: string | null;
+    suggestedCode: string | null;
+    firstCommentId: string;
+    replies: { author: string; body: string; id: string }[];
+}
+
+export interface ReviewThreadStats {
+    total: number;
+    resolved: number;
+    unresolved: number;
+    high: number;
+    medium: number;
+    low: number;
+}
+
+export interface ReviewData {
+    owner: string;
+    repo: string;
+    prNumber: number;
+    title: string;
+    state: string;
+    threads: ParsedReviewThread[];
+    stats: ReviewThreadStats;
+}
+
+export interface ReviewCommandOptions {
+    repo?: string;
+    unresolvedOnly?: boolean;
+    groupByFile?: boolean;
+    md?: boolean;
+    json?: boolean;
+    respond?: string;
+    threadId?: string;
+    resolveThread?: boolean;
+    resolve?: boolean;
+    verbose?: boolean;
 }
 
 // Search results

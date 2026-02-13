@@ -5,6 +5,7 @@ import { commentsCommand, createCommentsCommand } from "@app/github/commands/com
 import { createGetCommand, getCommand } from "@app/github/commands/get";
 import { createIssueCommand, issueCommand } from "@app/github/commands/issue";
 import { createPRCommand, prCommand } from "@app/github/commands/pr";
+import { createReviewCommand, reviewCommand } from "@app/github/commands/review";
 import { createSearchCommand, searchCommand } from "@app/github/commands/search";
 import { closeDatabase, getCacheStats } from "@app/github/lib/cache";
 import logger from "@app/logger";
@@ -27,6 +28,7 @@ program.addCommand(createCommentsCommand());
 program.addCommand(createSearchCommand());
 program.addCommand(createCodeSearchCommand());
 program.addCommand(createGetCommand());
+program.addCommand(createReviewCommand());
 
 // Status command
 program
@@ -87,6 +89,7 @@ async function interactiveMode(): Promise<void> {
                 choices: [
                     { value: "issue", name: "📋 Fetch Issue" },
                     { value: "pr", name: "🔀 Fetch Pull Request" },
+                    { value: "review", name: "📝 Review PR Threads" },
                     { value: "comments", name: "💬 Fetch Comments" },
                     { value: "search", name: "🔍 Search Issues/PRs" },
                     { value: "get", name: "📄 Get File Content" },
@@ -149,6 +152,31 @@ async function interactiveMode(): Promise<void> {
                     format: "ai",
                 });
 
+                continue;
+            }
+
+            if (action === "review") {
+                const prUrl = await input({ message: "Enter PR number or URL:" });
+                if (!prUrl.trim()) {
+                    console.log(chalk.yellow("No input provided."));
+                    continue;
+                }
+                const unresolvedOnly = await confirm({ message: "Show only unresolved?", default: true });
+                const groupByFile = await confirm({ message: "Group by file?", default: true });
+                const outputFormat = await select({
+                    message: "Output format:",
+                    choices: [
+                        { value: "terminal", name: "Terminal (colorized)" },
+                        { value: "md", name: "Markdown (save to file)" },
+                        { value: "json", name: "JSON" },
+                    ],
+                });
+                await reviewCommand(prUrl, {
+                    unresolvedOnly,
+                    groupByFile,
+                    md: outputFormat === "md",
+                    json: outputFormat === "json",
+                });
                 continue;
             }
 

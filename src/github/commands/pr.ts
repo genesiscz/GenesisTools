@@ -2,11 +2,13 @@
 
 import { getDatabase, getOrCreateRepo, upsertIssue } from "@app/github/lib/cache";
 import { formatPR } from "@app/github/lib/output";
+import { calculateReviewStats, fetchPRReviewThreads, parseThreads } from "@app/github/lib/review-threads";
 import type {
     CheckData,
     CommitData,
     GitHubPullRequest,
     GitHubReviewComment,
+    ParsedReviewThread,
     PRCommandOptions,
     PRData,
     ReviewCommentData,
@@ -280,11 +282,23 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
     // Fetch additional PR-specific data
     let reviewComments: ReviewCommentData[] = [];
     if (options.reviewComments) {
-        verbose(options, "Fetching review comments...");
+        verbose(options, "Fetching review comments (REST)...");
         console.log(chalk.dim("Fetching review comments..."));
         const apiReviewComments = await fetchReviewComments(owner, repo, number);
         reviewComments = apiReviewComments.map(toReviewCommentData);
         verbose(options, `Fetched ${reviewComments.length} review comments`);
+    }
+
+    let reviewThreads: ParsedReviewThread[] | undefined;
+    let reviewThreadStats;
+    if (options.reviews) {
+        verbose(options, "Fetching review threads (GraphQL)...");
+        console.log(chalk.dim("Fetching review threads..."));
+        const prInfo = await fetchPRReviewThreads(owner, repo, number);
+        const allThreads = parseThreads(prInfo.threads);
+        reviewThreadStats = calculateReviewStats(allThreads);
+        reviewThreads = allThreads;
+        verbose(options, `Fetched ${allThreads.length} review threads`);
     }
 
     let commits: CommitData[] = [];
@@ -320,6 +334,8 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
         comments: [], // Will be filled by issue command if needed
         events: [],
         reviewComments: reviewComments.length > 0 ? reviewComments : undefined,
+        reviewThreads,
+        reviewThreadStats,
         commits: commits.length > 0 ? commits : undefined,
         checks: checks.length > 0 ? checks : undefined,
         diff,
@@ -358,7 +374,7 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
     );
     console.log(
         chalk.dim(
-            `\nFetched: PR #${number}${reviewComments.length > 0 ? `, ${reviewComments.length} review comments` : ""}${commits.length > 0 ? `, ${commits.length} commits` : ""}`
+            `\nFetched: PR #${number}${reviewThreads ? `, ${reviewThreads.length} review threads` : ""}${reviewComments.length > 0 ? `, ${reviewComments.length} review comments` : ""}${commits.length > 0 ? `, ${commits.length} commits` : ""}`
         )
     );
 }
@@ -396,7 +412,8 @@ export function createPRCommand(): Command {
         .option("-o, --output <file>", "Custom output path")
         .option("--stats", "Show comment statistics")
         // PR-specific options
-        .option("--review-comments", "Include review thread comments")
+        .option("--review-comments", "Include review comments (REST, flat list)")
+        .option("--reviews", "Include review threads (GraphQL, threaded)")
         .option("--diff", "Include PR diff")
         .option("--commits", "Include commit list")
         .option("--checks", "Include CI check status")

@@ -1,6 +1,7 @@
 // Output formatters for GitHub data
 
-import type { CommentData, CommentStats, GitHubReactions, IssueData, PRData, SearchResult } from "@app/github/types";
+import { formatReviewMarkdown, formatReviewTerminal } from "@app/github/lib/review-output";
+import type { CommentData, CommentStats, GitHubReactions, IssueData, PRData, ReviewData, SearchResult } from "@app/github/types";
 import { sumReactions } from "@app/utils/github/utils";
 
 type OutputFormat = "ai" | "md" | "json";
@@ -169,6 +170,21 @@ function formatPRSummary(data: PRData, options: FormatOptions): string {
         if (fetchedIdx > 0) {
             output = output.slice(0, fetchedIdx) + prStats.join("\n") + output.slice(fetchedIdx);
         }
+    }
+
+    // Add review threads if present
+    if (data.reviewThreads && data.reviewThreads.length > 0 && data.reviewThreadStats) {
+        const reviewData: ReviewData = {
+            owner: data.owner,
+            repo: data.repo,
+            prNumber: data.pr.number,
+            title: data.pr.title,
+            state: data.pr.state,
+            threads: data.reviewThreads,
+            stats: data.reviewThreadStats,
+        };
+        const reviewSection = formatReviewTerminal(reviewData, true);
+        output += "\n" + reviewSection;
     }
 
     return output;
@@ -374,7 +390,29 @@ function formatPRMarkdown(data: PRData, options: FormatOptions): string {
         output = output.slice(0, indexPoint) + prInfo.join("\n") + output.slice(indexPoint);
     }
 
-    // Add review comments if present
+    // Add review threads (GraphQL, threaded) if present
+    if (data.reviewThreads && data.reviewThreads.length > 0 && data.reviewThreadStats) {
+        const reviewData: ReviewData = {
+            owner: data.owner,
+            repo: data.repo,
+            prNumber: data.pr.number,
+            title: data.pr.title,
+            state: data.pr.state,
+            threads: data.reviewThreads,
+            stats: data.reviewThreadStats,
+        };
+        const reviewMd = formatReviewMarkdown(reviewData, true);
+
+        // Insert before Statistics
+        const statsPoint = output.lastIndexOf("\n---\n\n## Statistics");
+        if (statsPoint > 0) {
+            output = output.slice(0, statsPoint) + "\n---\n\n" + reviewMd + output.slice(statsPoint);
+        } else {
+            output += "\n---\n\n" + reviewMd;
+        }
+    }
+
+    // Add review comments (REST, flat list) if present
     if (data.reviewComments && data.reviewComments.length > 0) {
         const reviewSection: string[] = [];
         reviewSection.push("");
