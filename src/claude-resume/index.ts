@@ -203,7 +203,8 @@ async function searchByContent(query: string, spinner: Spinner, project?: string
 	}
 
 	const rgSessions: DisplaySession[] = [];
-	for (const filePath of rgOnlyFiles.slice(0, 20 - metaSessions.length)) {
+	const remainingSlots = Math.max(5, 20 - metaSessions.length);
+	for (const filePath of rgOnlyFiles.slice(0, remainingSlots)) {
 		const cached = getSessionMetadata(filePath);
 		const snippet = await rgExtractSnippet(query, filePath);
 
@@ -387,7 +388,9 @@ async function main(query: string | undefined, opts: Options) {
 				candidates = dedup(
 					result.sessions.map((h) => {
 						const cached = sessions.find((s) => s.sessionId === h.sessionId);
-						return cached ? { ...cached, source: "search" as const } : h;
+						return cached
+							? { ...cached, source: "search" as const, matchSnippet: h.matchSnippet }
+							: h;
 					}),
 				);
 			}

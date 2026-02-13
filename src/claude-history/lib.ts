@@ -6,6 +6,7 @@
 import { createHash } from "crypto";
 import { createReadStream, existsSync, readFileSync, readdirSync } from "fs";
 import { stat } from "fs/promises";
+import logger from "@app/logger";
 import { glob } from "glob";
 import { homedir } from "os";
 import { basename, resolve, sep } from "path";
@@ -58,12 +59,18 @@ export * from "./types";
 /**
  * Auto-derived metadata version — hash of lib.ts + cache.ts source.
  * When ANY extraction/cache logic changes, this hash changes, forcing re-index.
+ * Falls back to "v1" in bundled environments where source files aren't on disk.
  */
-const METADATA_VERSION = createHash("md5")
-    .update(readFileSync(new URL("./lib.ts", import.meta.url), "utf-8"))
-    .update(readFileSync(new URL("./cache.ts", import.meta.url), "utf-8"))
-    .digest("hex")
-    .slice(0, 8);
+let METADATA_VERSION: string;
+try {
+    METADATA_VERSION = createHash("md5")
+        .update(readFileSync(new URL("./lib.ts", import.meta.url), "utf-8"))
+        .update(readFileSync(new URL("./cache.ts", import.meta.url), "utf-8"))
+        .digest("hex")
+        .slice(0, 8);
+} catch {
+    METADATA_VERSION = "v1";
+}
 
 export const CLAUDE_DIR = resolve(homedir(), ".claude");
 export const PROJECTS_DIR = resolve(CLAUDE_DIR, "projects");
@@ -1079,10 +1086,13 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
         }
     }
 
-    // Clean up stale entries for deleted files
+    // Clean up stale entries for deleted files (scoped to current listing)
     const diskFiles = new Set(files);
     const cachedPaths = getAllSessionMetadataFilePaths();
-    const stalePaths = cachedPaths.filter((p) => !diskFiles.has(p));
+    const cachedPathsInScope = projectDir
+        ? cachedPaths.filter((p) => p.startsWith(projectDir + sep) || p === projectDir)
+        : cachedPaths;
+    const stalePaths = cachedPathsInScope.filter((p) => !diskFiles.has(p));
     if (stalePaths.length > 0) {
         removeSessionMetadataBatch(stalePaths);
     }
@@ -1182,6 +1192,10 @@ async function extractSessionMetadataFromFile(
     const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
 
     try {
+        // Skip extremely large session files to avoid performance issues
+        const fileStat = await stat(filePath);
+        if (fileStat.size > 10 * 1024 * 1024) return null;
+
         const fileStream = createReadStream(filePath);
         const rl = createInterface({ input: fileStream, crlfDelay: Number.POSITIVE_INFINITY });
 
@@ -1240,6 +1254,12 @@ async function extractSessionMetadataFromFile(
                         userTextLen += text.length;
                     }
                 }
+
+                // Early exit: all metadata found and user text cap reached
+                if (summary && customTitle && sessionId && gitBranch && firstTimestamp && userTextLen >= USER_TEXT_CAP) {
+                    fileStream.destroy();
+                    break;
+                }
             } catch {
                 // Skip unparseable lines
             }
@@ -1285,27 +1305,39 @@ export async function rgSearchFiles(
         ? resolveProjectDir(options.project) || PROJECTS_DIR
         : PROJECTS_DIR;
 
-    const proc = Bun.spawn({
-        cmd: [
-            "rg", "-l", "--glob", "*.jsonl",
-            "-i",
-            "--max-count", "1",
-            query,
-            searchDir,
-        ],
-        stdio: ["ignore", "pipe", "pipe"],
-    });
+    try {
+        const proc = Bun.spawn({
+            cmd: [
+                "rg", "-l", "--glob", "*.jsonl",
+                "-i", "-F",
+                "--max-count", "1",
+                "--", query,
+                searchDir,
+            ],
+            stdio: ["ignore", "pipe", "pipe"],
+        });
 
-    const output = await new Response(proc.stdout).text();
-    await proc.exited;
+        const output = await new Response(proc.stdout).text();
+        const exitCode = await proc.exited;
 
-    let files = output.trim().split("\n").filter(Boolean);
+        // rg exit 1 = no matches (OK), 2+ = actual error
+        if (exitCode > 1) {
+            const stderr = await new Response(proc.stderr).text();
+            logger.warn(`rgSearchFiles failed (exit ${exitCode}): ${stderr.trim()}`);
+            return [];
+        }
 
-    if (options.limit && files.length > options.limit) {
-        files = files.slice(0, options.limit);
+        let files = output.trim().split("\n").filter(Boolean);
+
+        if (options.limit && files.length > options.limit) {
+            files = files.slice(0, options.limit);
+        }
+
+        return files;
+    } catch (error) {
+        logger.warn(`rgSearchFiles error: ${error}`);
+        return [];
     }
-
-    return files;
 }
 
 /**
@@ -1315,59 +1347,50 @@ export async function rgExtractSnippet(
     query: string,
     filePath: string,
 ): Promise<string | undefined> {
-    const proc = Bun.spawn({
-        cmd: ["rg", "-i", "-m", "1", "--no-filename", "--no-line-number", query, filePath],
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const output = await new Response(proc.stdout).text();
-    await proc.exited;
-
-    const line = output.trim();
-    if (!line) return undefined;
-
-    // Try to extract readable text from the JSON line
     try {
-        const obj = JSON.parse(line);
-        let text = "";
-        if (obj.type === "user" && typeof obj.message?.content === "string") {
-            text = obj.message.content;
-        } else if (obj.type === "user" && Array.isArray(obj.message?.content)) {
-            text = obj.message.content
-                .filter((b: { type: string }) => b.type === "text")
-                .map((b: { text: string }) => b.text)
-                .join(" ");
-        } else if (obj.type === "assistant" && Array.isArray(obj.message?.content)) {
-            text = obj.message.content
-                .filter((b: { type: string }) => b.type === "text")
-                .map((b: { text: string }) => b.text)
-                .join(" ");
-        } else if (obj.type === "summary") {
-            text = obj.summary || "";
+        const proc = Bun.spawn({
+            cmd: ["rg", "-i", "-F", "-m", "1", "--no-filename", "--no-line-number", "--", query, filePath],
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        const output = await new Response(proc.stdout).text();
+        const exitCode = await proc.exited;
+
+        if (exitCode > 1) return undefined;
+
+        const line = output.trim();
+        if (!line) return undefined;
+
+        // Try to extract readable text from the JSON line
+        try {
+            const obj = JSON.parse(line);
+            const text = extractTextFromMessage(obj as ConversationMessage, true);
+
+            if (!text) return undefined;
+
+            const lowerText = text.toLowerCase();
+            const lowerQuery = query.toLowerCase();
+            const idx = lowerText.indexOf(lowerQuery);
+            if (idx === -1) return text.slice(0, 100);
+
+            const start = Math.max(0, idx - 40);
+            const end = Math.min(text.length, idx + query.length + 60);
+            return (start > 0 ? "..." : "") +
+                text.slice(start, end).replace(/\n/g, " ").trim() +
+                (end < text.length ? "..." : "");
+        } catch {
+            // If JSON parsing fails, try to extract from raw text
+            const lowerLine = line.toLowerCase();
+            const lowerQuery = query.toLowerCase();
+            const idx = lowerLine.indexOf(lowerQuery);
+            if (idx === -1) return undefined;
+
+            const start = Math.max(0, idx - 40);
+            const end = Math.min(line.length, idx + query.length + 60);
+            return "..." + line.slice(start, end).replace(/\\n/g, " ").trim() + "...";
         }
-
-        if (!text) return undefined;
-
-        const lowerText = text.toLowerCase();
-        const lowerQuery = query.toLowerCase();
-        const idx = lowerText.indexOf(lowerQuery);
-        if (idx === -1) return text.slice(0, 100);
-
-        const start = Math.max(0, idx - 40);
-        const end = Math.min(text.length, idx + query.length + 60);
-        return (start > 0 ? "..." : "") +
-            text.slice(start, end).replace(/\n/g, " ").trim() +
-            (end < text.length ? "..." : "");
     } catch {
-        // If JSON parsing fails, try to extract from raw text
-        const lowerLine = line.toLowerCase();
-        const lowerQuery = query.toLowerCase();
-        const idx = lowerLine.indexOf(lowerQuery);
-        if (idx === -1) return undefined;
-
-        const start = Math.max(0, idx - 40);
-        const end = Math.min(line.length, idx + query.length + 60);
-        return "..." + line.slice(start, end).replace(/\\n/g, " ").trim() + "...";
+        return undefined;
     }
 }
 

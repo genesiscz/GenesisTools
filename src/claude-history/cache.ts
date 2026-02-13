@@ -5,7 +5,7 @@
 
 import { Database } from "bun:sqlite";
 import logger from "@app/logger";
-import { existsSync, mkdirSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, rmSync } from "fs";
 import { stat } from "fs/promises";
 import { homedir } from "os";
 import { join, sep } from "path";
@@ -715,9 +715,9 @@ export function getSessionMetadataByProject(project: string): SessionMetadataRec
 export function resetDatabase(): void {
     closeDatabase();
     const dbPath = join(DEFAULT_CACHE_DIR, DB_NAME);
-    try { unlinkSync(dbPath); } catch { /* may not exist */ }
-    try { unlinkSync(`${dbPath}-wal`); } catch { /* may not exist */ }
-    try { unlinkSync(`${dbPath}-shm`); } catch { /* may not exist */ }
+    for (const suffix of ["", "-wal", "-shm"]) {
+        rmSync(`${dbPath}${suffix}`, { force: true });
+    }
 }
 
 export function clearSessionMetadata(): void {
