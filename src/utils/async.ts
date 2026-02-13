@@ -155,21 +155,20 @@ export async function concurrentMap<T, R>({
     concurrency = 5,
     onError,
 }: ConcurrentMapOptions<T, R>): Promise<Map<T, R>> {
+    if (concurrency < 1) throw new Error(`concurrentMap: concurrency must be >= 1, got ${concurrency}`);
     const result = new Map<T, R>();
 
     for (let i = 0; i < items.length; i += concurrency) {
         const batch = items.slice(i, i + concurrency);
-        const settled = await Promise.allSettled(
-            batch.map(async (item) => ({ item, value: await fn(item) }))
-        );
+        const settled = await Promise.allSettled(batch.map(fn));
 
-        for (const entry of settled) {
+        settled.forEach((entry, index) => {
             if (entry.status === "fulfilled") {
-                result.set(entry.value.item, entry.value.value);
+                result.set(batch[index], entry.value);
             } else {
-                onError?.(batch[settled.indexOf(entry)], entry.reason);
+                onError?.(batch[index], entry.reason);
             }
-        }
+        });
     }
 
     return result;

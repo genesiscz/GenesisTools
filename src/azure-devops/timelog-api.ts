@@ -15,6 +15,7 @@ import type {
     TimeType,
 } from "@app/azure-devops/types";
 import logger from "@app/logger";
+import type { QueryParams } from "@app/utils/url";
 import { buildUrl } from "@app/utils/url";
 
 export class TimeLogApi {
@@ -33,8 +34,8 @@ export class TimeLogApi {
     /**
      * Make an HTTP request to the TimeLog API
      */
-    private async request<T>(method: "GET" | "POST" | "PUT" | "DELETE", endpoint: string, body?: unknown): Promise<T> {
-        const url = buildUrl({ base: this.baseUrl, segments: [endpoint] });
+    private async request<T>(method: "GET" | "POST" | "PUT" | "DELETE", endpoint: string, body?: unknown, queryParams?: QueryParams): Promise<T> {
+        const url = buildUrl({ base: this.baseUrl, segments: [endpoint], queryParams });
         const shortUrl = endpoint.slice(0, 60);
 
         logger.debug(`[timelog-api] ${method} ${shortUrl}`);
@@ -153,18 +154,15 @@ export class TimeLogApi {
      * Uses the /timelog/query endpoint
      */
     async queryTimeLogs(params: TimeLogQueryParams): Promise<TimeLogQueryEntry[]> {
-        const endpoint = buildUrl({
-            base: "/timelog/query",
-            queryParams: {
-                FromDate: params.FromDate,
-                ToDate: params.ToDate,
-                projectId: params.projectId,
-                workitemId: params.workitemId ? String(params.workitemId) : undefined,
-                userId: params.userId,
-            },
-        });
-        logger.debug(`[timelog-api] Querying time logs: ${endpoint}`);
-        return this.request<TimeLogQueryEntry[]>("GET", endpoint);
+        const queryParams = {
+            FromDate: params.FromDate,
+            ToDate: params.ToDate,
+            projectId: params.projectId,
+            workitemId: params.workitemId ? String(params.workitemId) : undefined,
+            userId: params.userId,
+        };
+        logger.debug(`[timelog-api] Querying time logs: /timelog/query ${JSON.stringify(queryParams)}`);
+        return this.request<TimeLogQueryEntry[]>("GET", "/timelog/query", undefined, queryParams);
     }
 
     /**

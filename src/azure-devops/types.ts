@@ -70,6 +70,11 @@ export interface Relation {
     attributes?: {
         name?: string;
         comment?: string;
+        // Attachment-specific fields (populated when rel === "AttachedFile")
+        resourceCreatedDate?: string;
+        resourceModifiedDate?: string;
+        resourceSize?: number;
+        id?: number;
     };
 }
 
@@ -78,6 +83,28 @@ export interface ParsedRelations {
     children: number[];
     related: number[];
     other: string[];
+}
+
+// ============= Attachment Types =============
+
+export interface AttachmentInfo {
+    /** GUID extracted from attachment URL */
+    id: string;
+    filename: string;
+    size: number;
+    createdDate: string;
+    /** Full path on disk (set after download or if already exists) */
+    localPath?: string;
+    /** Whether this invocation downloaded the file (false = already existed) */
+    downloaded?: boolean;
+}
+
+export interface AttachmentFilter {
+    from?: Date;
+    to?: Date;
+    prefix?: string;
+    suffix?: string;
+    outputDir?: string;
 }
 
 // ============= Cache Types =============
