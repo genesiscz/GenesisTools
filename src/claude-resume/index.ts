@@ -153,7 +153,15 @@ function matchByIdOrName(all: DisplaySession[], query: string): DisplaySession[]
 	);
 }
 
-async function searchByContent(query: string, spinner: Spinner, project?: string): Promise<DisplaySession[]> {
+interface ContentSearchResult {
+	sessions: DisplaySession[];
+	metaHits: number;
+	rgTotalHits: number;
+	rgUniqueHits: number;
+	overlap: number;
+}
+
+async function searchByContent(query: string, spinner: Spinner, project?: string): Promise<ContentSearchResult> {
 	// Run both phases in parallel — rg is fast and catches content
 	// that metadata misses (assistant messages, text past 5000-char cap)
 	const [metaResults, matchingFiles] = await Promise.all([
@@ -214,8 +222,15 @@ async function searchByContent(query: string, spinner: Spinner, project?: string
 		));
 	}
 
-	// Metadata results first (ranked by relevance), then rg-only results
-	return [...metaSessions, ...rgSessions];
+	const overlap = matchingFiles.length - rgOnlyFiles.length;
+
+	return {
+		sessions: [...metaSessions, ...rgSessions],
+		metaHits: metaSessions.length,
+		rgTotalHits: matchingFiles.length,
+		rgUniqueHits: rgOnlyFiles.length,
+		overlap,
+	};
 }
 
 // --- UI ---
@@ -349,18 +364,30 @@ async function main(query: string | undefined, opts: Options) {
 	} else {
 		candidates = matchByIdOrName(sessions, query);
 
-		if (candidates.length === 0) {
-			p.log.info(`No index match for "${query}", searching content...`);
+		if (candidates.length > 0) {
+			p.log.info(
+				pc.dim(`index: ${candidates.length} match${candidates.length !== 1 ? "es" : ""} `) +
+				pc.dim(`(name/branch/project/prompt)`),
+			);
+		} else {
+			p.log.info(pc.dim(`index: 0 matches for "${query}", searching content...`));
 			const searchSpinner = p.spinner();
 			searchSpinner.start("Searching...");
-			const found = await searchByContent(query, searchSpinner, project);
-			searchSpinner.stop(found.length ? `${found.length} matches` : "No matches");
+			const result = await searchByContent(query, searchSpinner, project);
 
-			if (found.length > 0) {
+			const searchStatsParts = [
+				`${pc.cyan(`${result.metaHits}`)} meta`,
+				`${pc.cyan(`${result.rgTotalHits}`)} rg`,
+				result.overlap > 0 ? `${result.overlap} overlap` : "",
+				result.rgUniqueHits > 0 ? `${pc.yellow(`${result.rgUniqueHits}`)} rg-only` : "",
+			].filter(Boolean);
+			searchSpinner.stop(`${result.sessions.length} matches ${pc.dim(`(${searchStatsParts.join(", ")})`)}`);
+
+			if (result.sessions.length > 0) {
 				candidates = dedup(
-					found.map((h) => {
-						const indexed = sessions.find((s) => s.sessionId === h.sessionId);
-						return indexed ? { ...indexed, source: "search" as const } : h;
+					result.sessions.map((h) => {
+						const cached = sessions.find((s) => s.sessionId === h.sessionId);
+						return cached ? { ...cached, source: "search" as const } : h;
 					}),
 				);
 			}
