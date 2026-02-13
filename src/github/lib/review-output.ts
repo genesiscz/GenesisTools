@@ -215,8 +215,10 @@ function formatMarkdownThread(thread: ParsedReviewThread): string {
     if (thread.replies.length > 0) {
         output += `**Replies:**\n\n`;
         for (const reply of thread.replies) {
-            const replyPreview = reply.body.split("\n")[0].substring(0, 100);
-            output += `- **@${reply.author}** (\`${reply.id}\`): ${replyPreview}${reply.body.length > 100 ? "..." : ""}\n`;
+            const firstLine = reply.body.split("\n")[0];
+            const replyPreview = firstLine.substring(0, 100);
+            const truncated = firstLine.length > 100 || reply.body.length > firstLine.length;
+            output += `- **@${reply.author}** (\`${reply.id}\`): ${replyPreview}${truncated ? "..." : ""}\n`;
         }
         output += "\n";
     }
@@ -265,7 +267,7 @@ export function formatReviewMarkdown(data: ReviewData, groupByFile: boolean): st
         }
 
         for (const [file, fileThreads] of byFile) {
-            output += `## \`${file}\`\n\n`;
+            output += `### \`${file}\`\n\n`;
             output += `*${fileThreads.length} thread(s)*\n\n`;
             for (const thread of fileThreads) {
                 output += formatMarkdownThread(thread);

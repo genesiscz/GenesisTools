@@ -24,7 +24,9 @@ function buildBar(startOffset: number, duration: number, totalSpan: number): str
 }
 
 function getStartMs(entry: IndexedEntry): number {
-	return new Date(entry.startedDateTime).getTime();
+	const ms = new Date(entry.startedDateTime).getTime();
+	// Fallback to 0 for malformed dates to avoid NaN in calculations
+	return Number.isNaN(ms) ? 0 : ms;
 }
 
 export function registerWaterfallCommand(program: Command): void {

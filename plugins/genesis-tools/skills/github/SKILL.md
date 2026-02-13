@@ -192,7 +192,7 @@ tools github code "interface Props" --repo vercel/next.js --language typescript
 # Include review threads (GraphQL, threaded with severity/suggestions)
 tools github pr <url> --reviews
 
-# Include review comments (REST, flat list - legacy)
+# Include review comments (REST, flat list — legacy, prefer --reviews)
 tools github pr <url> --review-comments
 
 # Include diff

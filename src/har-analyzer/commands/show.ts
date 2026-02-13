@@ -117,7 +117,12 @@ async function showDetail(entry: HarEntry, fullUrl: string, format: OutputFormat
 
 	// Request body summary
 	if (entry.request.postData) {
-		lines.push(`Request Body: ${formatBytes(entry.request.bodySize)} (${entry.request.postData.mimeType})`);
+		const bodySize = entry.request.bodySize >= 0
+			? formatBytes(entry.request.bodySize)
+			: entry.request.postData.text?.length != null
+				? formatBytes(entry.request.postData.text.length)
+				: "unknown";
+		lines.push(`Request Body: ${bodySize} (${entry.request.postData.mimeType})`);
 	} else {
 		lines.push("Request Body: none");
 	}
@@ -282,11 +287,11 @@ export function registerExpandCommand(program: Command): void {
 					console.error(`Invalid schema mode: "${mode}". Use: skeleton, typescript, schema`);
 					process.exit(1);
 				}
-				console.log(formatSchema(parsed, mode as "skeleton" | "typescript" | "schema"));
+				await printFormatted(formatSchema(parsed, mode as "skeleton" | "typescript" | "schema"), parentOpts.format);
 				return;
 			}
 
-			console.log(content);
+			await printFormatted(content, parentOpts.format);
 		});
 }
 

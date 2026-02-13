@@ -35,7 +35,11 @@ export class SessionManager {
 		} else if (!hashOrPath.includes("/") && !hashOrPath.includes(".")) {
 			hash = hashOrPath;
 		} else {
-			const fileContent = await Bun.file(resolve(hashOrPath)).text();
+			const file = Bun.file(resolve(hashOrPath));
+			if (!(await file.exists())) {
+				return null;
+			}
+			const fileContent = await file.text();
 			hash = Bun.hash(fileContent).toString(16);
 		}
 

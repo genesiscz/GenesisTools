@@ -295,13 +295,8 @@ export async function markThreadResolved(threadId: string): Promise<boolean> {
     }
   `;
 
-    try {
-        await octokit.graphql(query, { threadId });
-        return true;
-    } catch (error) {
-        console.error(`Failed to resolve thread: ${error}`);
-        return false;
-    }
+    await octokit.graphql(query, { threadId });
+    return true;
 }
 
 // =============================================================================
@@ -352,10 +347,22 @@ function trimDiffHunk(diffHunk: string | null, targetLine: number | null, contex
 
     if (relevantLines.length === 0) return diffHunk;
 
-    // Build new header with the actual line range we're showing
+    // Build new header with separate old/new line counts
     const firstLineNum = relevantLines.find((r) => r.lineNum !== null)?.lineNum ?? targetLine;
-    const lineCount = relevantLines.filter((r) => r.lineNum !== null).length || 1;
-    const newHeader = `@@ -${firstLineNum},${lineCount} +${firstLineNum},${lineCount} @@`;
+    let oldCount = 0;
+    let newCount = 0;
+    for (const r of relevantLines) {
+        if (r.line.startsWith("-")) {
+            oldCount++;
+        } else if (r.line.startsWith("+")) {
+            newCount++;
+        } else {
+            // Context lines count in both
+            oldCount++;
+            newCount++;
+        }
+    }
+    const newHeader = `@@ -${firstLineNum},${oldCount || 1} +${firstLineNum},${newCount || 1} @@`;
 
     return [newHeader, ...relevantLines.map((r) => r.line)].join("\n");
 }
@@ -368,7 +375,7 @@ function detectSeverity(body: string): "high" | "medium" | "low" {
         lowerBody.includes("![high]") ||
         lowerBody.includes("critical") ||
         lowerBody.includes("security vulnerability") ||
-        lowerBody.includes("bug")
+        /\bbug\b/.test(lowerBody)
     ) {
         return "high";
     }
@@ -376,9 +383,10 @@ function detectSeverity(body: string): "high" | "medium" | "low" {
     if (
         lowerBody.includes("medium-priority") ||
         lowerBody.includes("![medium]") ||
-        lowerBody.includes("should") ||
-        lowerBody.includes("consider") ||
-        lowerBody.includes("suggestion")
+        lowerBody.includes("suggestion") ||
+        lowerBody.includes("refactor") ||
+        lowerBody.includes("performance") ||
+        lowerBody.includes("style")
     ) {
         return "medium";
     }

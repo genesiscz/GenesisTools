@@ -21,9 +21,11 @@
 
 In `src/har-analyzer/types.ts`, add the format type and update `OutputOptions`:
 
+The existing `OutputFormat` type is `"md" | "json" | "toon"` (defined in `src/har-analyzer/types.ts`). The `outputResult()` helper should accept this same type and map `"md"` to the text output path:
+
 ```typescript
-// Add near the top of the file, after the filter types
-export type OutputFormat = "text" | "json";
+// Already defined in types.ts — no change needed:
+export type OutputFormat = "md" | "json" | "toon";
 ```
 
 Update the `OutputOptions` interface:

@@ -63,7 +63,7 @@ cd GenesisTools
 | **Skill** | `azure-devops` | Fetch and manage Azure DevOps work items, queries, and time logging |
 | **Skill** | `react-compiler-debug` | Debug and inspect React Compiler output for memoization issues |
 | **Skill** | `claude-history` | Search past Claude Code conversations by keywords, files, or tools |
-| **Skill** | `github` | Interact with GitHub issues, PRs, and comments via CLI |
+| **Skill** | `github` | Interact with GitHub issues, PRs, and comments via GitHub CLI |
 | **Skill** | `timelog` | Sync tracked time from Timely to Azure DevOps time entries |
 | **Skill** | `analyze-har` | Token-efficient HAR file analysis with reference system |
 
@@ -95,7 +95,7 @@ Skills are triggered automatically when you mention relevant topics in conversat
 | `azure-devops` | "get workitem 1234", "show query", "log time", Azure DevOps URLs | Fetches work items, runs queries, manages time entries |
 | `react-compiler-debug` | "react compiler", "see compiled output", "why isn't this memoized" | Inspects React Compiler output, debugs memoization |
 | `claude-history` | "find conversation about X", "where did we discuss", "search history" | Searches past Claude Code conversations |
-| `github` | GitHub issue/PR URLs, "find issues matching", "get PR comments" | Fetches issues, PRs, comments with filtering |
+| `github` | GitHub issue/PR URLs, "find issues matching", "get PR comments" | Fetches GitHub issues, PRs, comments with filtering |
 | `timelog` | "sync timely", "log my time from timely", "what did I work on today" | Syncs Timely tracked time to Azure DevOps |
 | `analyze-har` | "analyze HAR", `.har` file paths, "debug network traffic" | Token-efficient HAR analysis with reference system |
 
