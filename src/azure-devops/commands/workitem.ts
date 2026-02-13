@@ -471,7 +471,8 @@ export function registerWorkitemCommand(program: Command): void {
             ) => {
                 const hasAttachmentFilter =
                     options.attachmentsFrom || options.attachmentsTo ||
-                    options.attachmentsPrefix || options.attachmentsSuffix;
+                    options.attachmentsPrefix || options.attachmentsSuffix ||
+                    options.outputDir;
 
                 const parseDate = (s: string | undefined): Date | undefined => {
                     if (!s) return undefined;

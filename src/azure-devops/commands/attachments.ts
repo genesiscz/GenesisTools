@@ -9,9 +9,10 @@ import type { Api } from "@app/azure-devops/api";
 import type { AttachmentFilter, AttachmentInfo, Relation, WorkItemFull, WorkItemSettings } from "@app/azure-devops/types";
 import { filterAttachments, getTaskFilePath } from "@app/azure-devops/utils";
 import { concurrentMap } from "@app/utils/async";
+import { withQueryParams } from "@app/utils/url";
 import logger, { consoleLog } from "@app/logger";
 import { existsSync, mkdirSync, statSync } from "fs";
-import { dirname, join, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
 
 /** Extract attachment GUID from Azure DevOps attachment URL */
 function extractAttachmentId(url: string): string {
@@ -39,12 +40,16 @@ async function downloadSingleAttachment(
     workItemId: number,
     outputDir: string,
 ): Promise<AttachmentInfo> {
-    const attrs = relation.attributes!;
+    const attrs = relation.attributes;
+    if (!attrs?.name) {
+        throw new Error(`Attachment relation for work item #${workItemId} is missing attributes or name`);
+    }
     const attachmentId = extractAttachmentId(relation.url);
-    const filename = attrs.name!;
+    const filename = attrs.name;
     const size = attrs.resourceSize ?? 0;
     const createdDate = attrs.resourceCreatedDate ?? "";
-    const targetPath = join(outputDir, `${workItemId}-${filename}`);
+    const sanitized = basename(filename).replace(/[<>:"|?*\x00-\x1f]/g, "_");
+    const targetPath = join(outputDir, `${workItemId}-${sanitized}`);
 
     // Skip if already downloaded with matching size
     if (existsSync(targetPath) && size > 0) {
@@ -64,7 +69,7 @@ async function downloadSingleAttachment(
     }
 
     // Build download URL
-    const downloadUrl = `${relation.url}${relation.url.includes("?") ? "&" : "?"}download=true`;
+    const downloadUrl = withQueryParams(relation.url, { download: "true" });
     const buffer = await api.fetchBinary(downloadUrl, filename);
 
     // Save to disk

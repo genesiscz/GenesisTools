@@ -453,23 +453,18 @@ export function filterAttachments(relations: Relation[], filter: AttachmentFilte
         .filter((r) => r.rel === "AttachedFile" && r.attributes?.name)
         .filter((r) => {
             const attrs = r.attributes!;
-            if (filter.from && attrs.resourceCreatedDate && new Date(attrs.resourceCreatedDate) < filter.from)
+            if (filter.from && (!attrs.resourceCreatedDate || new Date(attrs.resourceCreatedDate) < filter.from))
                 return false;
-            if (filter.to && attrs.resourceCreatedDate && new Date(attrs.resourceCreatedDate) > filter.to) return false;
+            if (filter.to && (!attrs.resourceCreatedDate || new Date(attrs.resourceCreatedDate) > filter.to))
+                return false;
             if (filter.prefix && !attrs.name!.startsWith(filter.prefix)) return false;
             if (filter.suffix && !attrs.name!.endsWith(filter.suffix)) return false;
             return true;
         });
 }
 
-/** Format bytes to human-readable string */
-export function formatBytes(bytes: number): string {
-    if (bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${(bytes / k ** i).toFixed(1)} ${sizes[i]}`;
-}
+// formatBytes re-exported from shared utility
+export { formatBytes } from "@app/utils/format";
 
 export function detectChanges(oldItems: CacheEntry[], newItems: WorkItem[]): ChangeInfo[] {
     const changes: ChangeInfo[] = [];
