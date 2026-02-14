@@ -61,25 +61,14 @@ export * from "./types";
  * When ANY extraction/cache logic changes, this hash changes, forcing re-index.
  * Falls back to "v1" in bundled environments where source files aren't on disk.
  */
-let METADATA_VERSION: string;
-try {
-    METADATA_VERSION = createHash("md5")
-        .update(readFileSync(new URL("./lib.ts", import.meta.url), "utf-8"))
- *
- * In some deployment environments (e.g. bundlers, transpilers), the source
- * files may not be available at runtime. In that case, we fall back to a
- * stable default version string instead of throwing at module load time.
- */
 function getMetadataVersion(): string {
     try {
-        const hash = createHash("md5")
+        return createHash("md5")
             .update(readFileSync(new URL("./lib.ts", import.meta.url), "utf-8"))
             .update(readFileSync(new URL("./cache.ts", import.meta.url), "utf-8"))
             .digest("hex")
             .slice(0, 8);
-        return hash;
     } catch {
-        // Fallback: manually bump this string if metadata extraction logic changes
         return "v1";
     }
 }
@@ -150,7 +139,7 @@ const projectNameCache = new Map<string, string>();
 
 export function extractProjectName(filePath: string): string {
     // Extract project name from path like:
-    // /Users/Martin/.claude/projects/-Users-Martin-Tresors-Projects-GenesisTools/...
+    // ~/.claude/projects/-Users-jane-Code-my-app/...
     const projectDir = filePath.replace(PROJECTS_DIR + sep, "").split(sep)[0];
 
     const cached = projectNameCache.get(projectDir);
@@ -164,7 +153,7 @@ export function extractProjectName(filePath: string): string {
 /**
  * Resolve a project name from an encoded Claude projects directory name.
  * Claude encodes cwds by replacing "/" with "-", which is ambiguous for
- * directory names containing dashes (e.g. "col-fe" → "col" + "fe").
+ * directory names containing dashes (e.g. "my-app" → "my" + "app").
  * We resolve by progressively checking the filesystem for each candidate path.
  */
 function resolveProjectNameFromEncoded(projectDir: string): string {
@@ -179,10 +168,9 @@ function resolveProjectNameFromEncoded(projectDir: string): string {
         return parts[parts.length - 1] || projectDir;
     }
 
-    // Reconstruct original path by progressively resolving dash-separated parts
-    // E.g. "Tresors-Projects-CEZ-col-fe" → checks /Users/Martin/Tresors,
-    //   then /Tresors/Projects, then /Projects/CEZ, then /CEZ/col → no →
-    //   /CEZ/col-fe → exists! → returns "col-fe"
+    // Reconstruct original path by progressively resolving dash-separated parts.
+    // E.g. "Code-my-app" → checks ~/Code → exists, then ~/Code/my → no,
+    //   then ~/Code/my-app → exists! → returns "my-app"
     const relativeEncoded = projectDir.slice(homeEncoded.length + 1);
     const parts = relativeEncoded.split("-");
     let resolved = home;
@@ -1269,7 +1257,7 @@ async function extractSessionMetadataFromFile(
                 }
 
                 // Early exit: all metadata found and user text cap reached
-                if (summary && customTitle && sessionId && gitBranch && firstTimestamp && userTextLen >= USER_TEXT_CAP) {
+                if (summary && customTitle && sessionId && gitBranch && cwd && firstTimestamp && userTextLen >= USER_TEXT_CAP) {
                     fileStream.destroy();
                     break;
                 }
@@ -1295,7 +1283,7 @@ async function extractSessionMetadataFromFile(
             mtime,
             firstTimestamp,
             isSubagent,
-            allUserText: userTexts.join(" "),
+            allUserText: userTexts.length > 0 ? userTexts.join(" ") : null,
         };
     } catch {
         return null;

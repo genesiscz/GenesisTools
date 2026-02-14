@@ -91,7 +91,7 @@ export function detectCurrentProject(): string | undefined {
 
 /**
  * Get the encoded project directory name for a cwd path.
- * Claude encodes /Users/Martin/Projects/Foo as -Users-Martin-Projects-Foo.
+ * Claude encodes /Users/jane/Projects/Foo as -Users-jane-Projects-Foo.
  */
 export function encodedProjectDir(cwd?: string): string {
     const p = cwd ?? process.cwd();
