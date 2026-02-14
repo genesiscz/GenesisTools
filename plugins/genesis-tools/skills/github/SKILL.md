@@ -229,6 +229,28 @@ tools github review 137 --resolve-thread -t <thread-id>
 tools github review 137 --respond "Done" --resolve-thread -t <thread-id>
 ```
 
+### Resolving Review Threads
+
+After fixing review comments, reply to and resolve threads:
+
+```bash
+# Reply to a thread
+tools github review 137 --respond "Fixed in commit abc1234" -t <thread-id>
+
+# Reply AND resolve in one command
+tools github review 137 --respond "Fixed" --resolve-thread -t <thread-id>
+
+# Resolve without replying
+tools github review 137 --resolve-thread -t <thread-id>
+```
+
+**Permission note:** The `--resolve-thread` mutation requires a GitHub PAT with `pull_requests:write` scope. If it fails with "Resource not accessible by personal access token", the `--respond` reply will still succeed — you just can't auto-resolve. In that case, reply with status and let the user resolve manually on GitHub.
+
+**After fixing PR comments, always:**
+1. Reply to each addressed thread with: what was fixed, how it was fixed, and a link to the commit (e.g. "Fixed in abc1234 — scoped stale cleanup to current project directory to avoid deleting other projects' cache entries.")
+2. Reply "Won't fix" to deliberately skipped threads with a detailed explanation of why the change isn't warranted (technical reasoning, not just a dismissal)
+3. Do NOT resolve threads automatically — only resolve when the user explicitly asks to resolve them
+
 ## Caching Behavior
 
 - **Default storage:** `~/.genesis-tools/github/cache.db`

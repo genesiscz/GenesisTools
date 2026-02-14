@@ -126,13 +126,37 @@ EOF
 )"
 ```
 
-### Step 6: Report Summary
+### Step 6: Reply to Threads
+
+After committing, reply to each thread on GitHub explaining what happened:
+
+**For fixed threads** — explain what was fixed, how, and link the commit:
+```bash
+tools github review <pr> --respond "Fixed in abc1234 — scoped stale cleanup to current project directory to avoid deleting other projects' cache entries." -t <thread-id>
+```
+
+**For skipped threads** — provide a detailed technical explanation of why:
+```bash
+tools github review <pr> --respond "Won't fix — the projectNameCache already prevents repeated filesystem resolution. The initial resolution is O(n) where n is path depth (~4-6 segments), and each existsSync call is a single stat syscall cached by the OS. Binary search wouldn't reduce the number of calls since we must verify each path segment exists. The current approach is correct and fast enough." -t <thread-id>
+```
+
+**Important:** Do NOT use `--resolve-thread` unless the user explicitly asks to resolve threads. Only reply.
+
+**When the user asks to resolve threads**, add `--resolve-thread` to the reply command:
+```bash
+tools github review <pr> --respond "Fixed in abc1234 — scoped stale cleanup to ..." --resolve-thread -t <thread-id>
+```
+
+**Permission note:** `--resolve-thread` requires a GitHub PAT with `pull_requests:write` scope. If it fails with "Resource not accessible by personal access token", the `--respond` reply will still succeed. Report the permission issue to the user so they can resolve threads manually on GitHub.
+
+### Step 7: Report Summary
 
 Display final summary:
 - Number of threads fixed
+- Number of threads skipped (with reasons)
 - Files modified
 - Commit hash
-- Any threads skipped and why
+- Whether thread resolution succeeded or failed (permission issue)
 
 ## Example Flow
 
