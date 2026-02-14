@@ -65,13 +65,26 @@ let METADATA_VERSION: string;
 try {
     METADATA_VERSION = createHash("md5")
         .update(readFileSync(new URL("./lib.ts", import.meta.url), "utf-8"))
-        .update(readFileSync(new URL("./cache.ts", import.meta.url), "utf-8"))
-        .digest("hex")
-        .slice(0, 8);
-} catch {
-    METADATA_VERSION = "v1";
+ *
+ * In some deployment environments (e.g. bundlers, transpilers), the source
+ * files may not be available at runtime. In that case, we fall back to a
+ * stable default version string instead of throwing at module load time.
+ */
+function getMetadataVersion(): string {
+    try {
+        const hash = createHash("md5")
+            .update(readFileSync(new URL("./lib.ts", import.meta.url), "utf-8"))
+            .update(readFileSync(new URL("./cache.ts", import.meta.url), "utf-8"))
+            .digest("hex")
+            .slice(0, 8);
+        return hash;
+    } catch {
+        // Fallback: manually bump this string if metadata extraction logic changes
+        return "v1";
+    }
 }
 
+const METADATA_VERSION = getMetadataVersion();
 export const CLAUDE_DIR = resolve(homedir(), ".claude");
 export const PROJECTS_DIR = resolve(CLAUDE_DIR, "projects");
 
