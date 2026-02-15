@@ -227,7 +227,18 @@ tools github review 137 --resolve-thread -t <thread-id>
 
 # Reply AND resolve
 tools github review 137 --respond "Done" --resolve-thread -t <thread-id>
+
+# Batch: resolve multiple threads (comma-separated IDs)
+tools github review 137 --resolve-thread -t PRRT_id1,PRRT_id2,PRRT_id3
+
+# Batch: reply to multiple threads with same message
+tools github review 137 --respond "Fixed in abc1234" -t PRRT_id1,PRRT_id2
+
+# Batch: reply + resolve multiple threads
+tools github review 137 --respond "Fixed" --resolve-thread -t PRRT_id1,PRRT_id2,PRRT_id3
 ```
+
+> **Full PR review workflow:** For an end-to-end flow (fetch review threads, triage, implement fixes, commit, reply to threads), use the `/github-pr <pr>` command instead of manual `tools github review` calls.
 
 ### Resolving Review Threads
 
@@ -242,6 +253,9 @@ tools github review 137 --respond "Fixed" --resolve-thread -t <thread-id>
 
 # Resolve without replying
 tools github review 137 --resolve-thread -t <thread-id>
+
+# Batch: reply + resolve multiple threads
+tools github review 137 --respond "Fixed in abc1234" --resolve-thread -t PRRT_id1,PRRT_id2,PRRT_id3
 ```
 
 **Permission note:** The `--resolve-thread` mutation requires a GitHub PAT with `pull_requests:write` scope. If it fails with "Resource not accessible by personal access token", the `--respond` reply will still succeed — you just can't auto-resolve. In that case, reply with status and let the user resolve manually on GitHub.

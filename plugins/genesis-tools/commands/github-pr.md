@@ -17,6 +17,8 @@ Fetch PR review comments, let user select which to fix, implement fixes, and com
 /github-pr <pr-number-or-url> --open-only  # Open in Cursor only, wait for input
 ```
 
+> **Underlying CLI:** This command uses `tools github review` under the hood. See the `genesis-tools:github` skill for full CLI reference and options.
+
 ## Input: $ARGUMENTS
 
 Parse arguments:
@@ -140,11 +142,21 @@ tools github review <pr> --respond "Fixed in abc1234 — scoped stale cleanup to
 tools github review <pr> --respond "Won't fix — the projectNameCache already prevents repeated filesystem resolution. The initial resolution is O(n) where n is path depth (~4-6 segments), and each existsSync call is a single stat syscall cached by the OS. Binary search wouldn't reduce the number of calls since we must verify each path segment exists. The current approach is correct and fast enough." -t <thread-id>
 ```
 
+**Batch operations:** When multiple threads have the same fix/response, use comma-separated IDs:
+```bash
+tools github review <pr> --respond "Fixed in abc1234 — addressed review feedback." -t <thread-id1>,<thread-id2>,<thread-id3>
+```
+
 **Important:** Do NOT use `--resolve-thread` unless the user explicitly asks to resolve threads. Only reply.
 
 **When the user asks to resolve threads**, add `--resolve-thread` to the reply command:
 ```bash
 tools github review <pr> --respond "Fixed in abc1234 — scoped stale cleanup to ..." --resolve-thread -t <thread-id>
+```
+
+When resolving in batch:
+```bash
+tools github review <pr> --respond "Fixed in abc1234" --resolve-thread -t <thread-id1>,<thread-id2>,<thread-id3>
 ```
 
 **Permission note:** `--resolve-thread` requires a GitHub PAT with `pull_requests:write` scope. If it fails with "Resource not accessible by personal access token", the `--respond` reply will still succeed. Report the permission issue to the user so they can resolve threads manually on GitHub.

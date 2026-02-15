@@ -299,6 +299,82 @@ export async function markThreadResolved(threadId: string): Promise<boolean> {
     return true;
 }
 
+/**
+ * Resolve multiple review threads with progress reporting.
+ * Continues on individual failures, collecting failed IDs.
+ */
+export async function batchResolveThreads(
+    threadIds: string[],
+    options?: { onProgress?: (done: number, total: number) => void }
+): Promise<{ resolved: number; failed: string[] }> {
+    let resolved = 0;
+    const failed: string[] = [];
+
+    for (const threadId of threadIds) {
+        try {
+            await markThreadResolved(threadId);
+            resolved++;
+            options?.onProgress?.(resolved, threadIds.length);
+        } catch {
+            failed.push(threadId);
+        }
+    }
+
+    return { resolved, failed };
+}
+
+/**
+ * Reply to and resolve multiple threads with the same message.
+ * If reply succeeds but resolve fails, the reply is still kept.
+ */
+export async function batchReplyAndResolve(
+    threadIds: string[],
+    message: string,
+    options?: { onProgress?: (done: number, total: number) => void }
+): Promise<{ replied: number; resolved: number; failed: string[] }> {
+    let replied = 0;
+    let resolved = 0;
+    const failed: string[] = [];
+
+    for (const threadId of threadIds) {
+        try {
+            await replyToThread(threadId, message);
+            replied++;
+            await markThreadResolved(threadId);
+            resolved++;
+            options?.onProgress?.(resolved, threadIds.length);
+        } catch {
+            failed.push(threadId);
+        }
+    }
+
+    return { replied, resolved, failed };
+}
+
+/**
+ * Reply to multiple threads with the same message.
+ */
+export async function batchReply(
+    threadIds: string[],
+    message: string,
+    options?: { onProgress?: (done: number, total: number) => void }
+): Promise<{ replied: number; failed: string[] }> {
+    let replied = 0;
+    const failed: string[] = [];
+
+    for (const threadId of threadIds) {
+        try {
+            await replyToThread(threadId, message);
+            replied++;
+            options?.onProgress?.(replied, threadIds.length);
+        } catch {
+            failed.push(threadId);
+        }
+    }
+
+    return { replied, failed };
+}
+
 // =============================================================================
 // Thread Parsing
 // =============================================================================
