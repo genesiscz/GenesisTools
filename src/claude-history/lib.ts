@@ -3,8 +3,10 @@
  * Reusable functions for searching and parsing conversation history
  */
 
-import { createReadStream, existsSync, readdirSync } from "fs";
+import { createHash } from "crypto";
+import { createReadStream, existsSync, readFileSync, readdirSync } from "fs";
 import { stat } from "fs/promises";
+import logger from "@app/logger";
 import { glob } from "glob";
 import { homedir } from "os";
 import { basename, resolve, sep } from "path";
@@ -16,7 +18,9 @@ import {
     type DailyStats,
     type DateRange,
     getAllSessionMetadata,
+    getAllSessionMetadataFilePaths,
     getCachedDates,
+    getCacheMeta,
     getSessionMetadataByDir,
     getCachedTotals,
     getDailyStats,
@@ -25,6 +29,8 @@ import {
     getFileIndex,
     getSessionMetadata,
     invalidateDateRange,
+    removeSessionMetadataBatch,
+    resetDatabase,
     setCacheMeta,
     type SessionMetadataRecord,
     type TokenUsage,
@@ -50,6 +56,24 @@ import type {
 // Re-export all types
 export * from "./types";
 
+/**
+ * Auto-derived metadata version — hash of lib.ts + cache.ts source.
+ * When ANY extraction/cache logic changes, this hash changes, forcing re-index.
+ * Falls back to "v1" in bundled environments where source files aren't on disk.
+ */
+function getMetadataVersion(): string {
+    try {
+        return createHash("md5")
+            .update(readFileSync(new URL("./lib.ts", import.meta.url), "utf-8"))
+            .update(readFileSync(new URL("./cache.ts", import.meta.url), "utf-8"))
+            .digest("hex")
+            .slice(0, 8);
+    } catch {
+        return "v1";
+    }
+}
+
+const METADATA_VERSION = getMetadataVersion();
 export const CLAUDE_DIR = resolve(homedir(), ".claude");
 export const PROJECTS_DIR = resolve(CLAUDE_DIR, "projects");
 
@@ -111,18 +135,75 @@ export async function findConversationFiles(filters: SearchFilters): Promise<str
     return fileStats.map((f) => f.path);
 }
 
+const projectNameCache = new Map<string, string>();
+
 export function extractProjectName(filePath: string): string {
     // Extract project name from path like:
-    // /Users/Martin/.claude/projects/-Users-Martin-Tresors-Projects-GenesisTools/...
+    // ~/.claude/projects/-Users-jane-Code-my-app/...
     const projectDir = filePath.replace(PROJECTS_DIR + sep, "").split(sep)[0];
-    // Only treat as encoded path if it starts with dash (like "-Users-Martin-...")
-    // This preserves legitimate dashed project names like "my-cool-project"
-    if (projectDir.startsWith("-")) {
-        // Convert -Users-Martin-Tresors-Projects-GenesisTools to GenesisTools
+
+    const cached = projectNameCache.get(projectDir);
+    if (cached) return cached;
+
+    const name = resolveProjectNameFromEncoded(projectDir);
+    projectNameCache.set(projectDir, name);
+    return name;
+}
+
+/**
+ * Resolve a project name from an encoded Claude projects directory name.
+ * Claude encodes cwds by replacing "/" with "-", which is ambiguous for
+ * directory names containing dashes (e.g. "my-app" → "my" + "app").
+ * We resolve by progressively checking the filesystem for each candidate path.
+ */
+function resolveProjectNameFromEncoded(projectDir: string): string {
+    if (!projectDir.startsWith("-")) return projectDir;
+
+    const home = homedir();
+    const homeEncoded = home.replaceAll("/", "-");
+
+    if (!projectDir.startsWith(homeEncoded)) {
+        // Unknown prefix — fall back to last segment
         const parts = projectDir.split("-");
         return parts[parts.length - 1] || projectDir;
     }
-    return projectDir;
+
+    // Reconstruct original path by progressively resolving dash-separated parts.
+    // E.g. "Code-my-app" → checks ~/Code → exists, then ~/Code/my → no,
+    //   then ~/Code/my-app → exists! → returns "my-app"
+    const relativeEncoded = projectDir.slice(homeEncoded.length + 1);
+    const parts = relativeEncoded.split("-");
+    let resolved = home;
+
+    for (let i = 0; i < parts.length; i++) {
+        const asDir = `${resolved}/${parts[i]}`;
+        if (existsSync(asDir)) {
+            resolved = asDir;
+            continue;
+        }
+
+        // Part might contain dashes — try accumulating remaining parts
+        let accumulated = parts[i];
+        let found = false;
+        for (let j = i + 1; j < parts.length; j++) {
+            accumulated += `-${parts[j]}`;
+            const tryPath = `${resolved}/${accumulated}`;
+            if (existsSync(tryPath)) {
+                resolved = tryPath;
+                i = j;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            // Can't resolve further — use accumulated as the name
+            resolved += `/${accumulated}`;
+            break;
+        }
+    }
+
+    return resolved.split("/").pop() || projectDir;
 }
 
 // =============================================================================
@@ -452,7 +533,7 @@ function searchSessionMetadataCache(filters: SearchFilters): SearchResult[] {
         if (filters.conversationDate && firstTimestamp && firstTimestamp < filters.conversationDate) continue;
         if (filters.conversationDateUntil && firstTimestamp && firstTimestamp > filters.conversationDateUntil) continue;
 
-        const allSearchText = [s.customTitle, s.summary, s.firstPrompt].filter(Boolean).join(" ");
+        const allSearchText = [s.customTitle, s.summary, s.firstPrompt, s.allUserText].filter(Boolean).join(" ");
         if (filters.query && !matchesQuery(allSearchText, filters.query, !!filters.exact, !!filters.regex)) {
             continue;
         }
@@ -947,13 +1028,34 @@ export interface SessionListingResult {
     sessions: SessionMetadataRecord[];
     total: number;
     subagents: number;
+    /** How many files were newly indexed or re-indexed this run */
+    indexed: number;
+    /** How many stale cache entries were cleaned up */
+    staleRemoved: number;
+    /** Whether a full re-index was triggered by version change */
+    reindexed: boolean;
+    /** Number of distinct projects found */
+    projectCount: number;
+    /** Scoped search directory (or "all projects") */
+    scope: string;
 }
 
 export async function getSessionListing(options: SessionListingOptions = {}): Promise<SessionListingResult> {
     const { excludeSubagents = true, limit } = options;
 
+    // Auto-reindex when extraction logic changes
+    const cachedVersion = getCacheMeta("metadata_version");
+    const reindexed = cachedVersion !== METADATA_VERSION;
+    if (reindexed) {
+        resetDatabase();
+        setCacheMeta("metadata_version", METADATA_VERSION);
+    }
+
     // Resolve project to exact encoded dir path for precise scoping
     const projectDir = options.project ? resolveProjectDir(options.project) : undefined;
+    const scope = projectDir
+        ? options.project || projectDir.split(sep).pop() || "unknown"
+        : "all projects";
 
     // 1. Discover JSONL files (scoped to project dir if available)
     const files = projectDir
@@ -963,6 +1065,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
     // 2. Incrementally index: only parse new/changed files
     const total = files.length;
     let processed = 0;
+    let indexed = 0;
     for (const filePath of files) {
         processed++;
         try {
@@ -977,10 +1080,22 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
             const metadata = await extractSessionMetadataFromFile(filePath, mtime);
             if (metadata) {
                 upsertSessionMetadata(metadata);
+                indexed++;
             }
         } catch {
             // Skip unreadable files
         }
+    }
+
+    // Clean up stale entries for deleted files (scoped to current listing)
+    const diskFiles = new Set(files);
+    const cachedPaths = getAllSessionMetadataFilePaths();
+    const cachedPathsInScope = projectDir
+        ? cachedPaths.filter((p) => p.startsWith(projectDir + sep) || p === projectDir)
+        : cachedPaths;
+    const stalePaths = cachedPathsInScope.filter((p) => !diskFiles.has(p));
+    if (stalePaths.length > 0) {
+        removeSessionMetadataBatch(stalePaths);
     }
 
     // 3. Query cached metadata (scoped to the same files we just indexed)
@@ -990,6 +1105,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
 
     const subagentCount = all.filter((s) => s.isSubagent).length;
     const sessions = excludeSubagents ? all.filter((s) => !s.isSubagent) : all;
+    const projects = new Set(all.map((s) => s.project).filter(Boolean));
 
     sessions.sort((a, b) => {
         const ta = a.firstTimestamp ? new Date(a.firstTimestamp).getTime() : 0;
@@ -1001,6 +1117,11 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
         sessions: limit ? sessions.slice(0, limit) : sessions,
         total: all.length,
         subagents: subagentCount,
+        indexed,
+        staleRemoved: stalePaths.length,
+        reindexed,
+        projectCount: projects.size,
+        scope,
     };
 }
 
@@ -1060,8 +1181,9 @@ async function findConversationFilesInDir(projectDir: string, excludeSubagents: 
 }
 
 /**
- * Extract session metadata by reading only the first ~50 lines of a JSONL file.
- * Much faster than full parsing — only needs summary, custom-title, sessionId, gitBranch, cwd.
+ * Extract session metadata by reading the entire JSONL file.
+ * Captures: summary, custom-title, sessionId, gitBranch, cwd,
+ * full first prompt, and all user message text (capped at 5000 chars).
  */
 async function extractSessionMetadataFromFile(
     filePath: string,
@@ -1071,7 +1193,11 @@ async function extractSessionMetadataFromFile(
     const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
 
     try {
-        const fileStream = createReadStream(filePath, { end: 64 * 1024 }); // Read max 64KB
+        // Skip extremely large session files to avoid performance issues
+        const fileStat = await stat(filePath);
+        if (fileStat.size > 10 * 1024 * 1024) return null;
+
+        const fileStream = createReadStream(filePath);
         const rl = createInterface({ input: fileStream, crlfDelay: Number.POSITIVE_INFINITY });
 
         let sessionId: string | null = null;
@@ -1081,14 +1207,17 @@ async function extractSessionMetadataFromFile(
         let gitBranch: string | null = null;
         let cwd: string | null = null;
         let firstTimestamp: string | null = null;
-        let lineCount = 0;
+        const userTexts: string[] = [];
+        let userTextLen = 0;
+        const USER_TEXT_CAP = 5000;
 
         for await (const line of rl) {
             if (!line.trim()) continue;
-            if (++lineCount > 50) break; // Only read first 50 lines
 
             try {
                 const obj = JSON.parse(line);
+
+                // Always capture summary/custom-title (latest wins)
                 if (obj.type === "summary" && obj.summary) {
                     summary = obj.summary;
                 }
@@ -1107,18 +1236,30 @@ async function extractSessionMetadataFromFile(
                 if (obj.timestamp && !firstTimestamp) {
                     firstTimestamp = obj.timestamp;
                 }
-                // Get first user prompt
-                if (obj.type === "user" && !firstPrompt) {
+
+                // Collect ALL user messages
+                if (obj.type === "user" && userTextLen < USER_TEXT_CAP) {
+                    let text = "";
                     if (typeof obj.message?.content === "string") {
-                        firstPrompt = obj.message.content.slice(0, 120);
+                        text = obj.message.content;
                     } else if (Array.isArray(obj.message?.content)) {
                         const textBlock = obj.message.content.find(
                             (b: { type: string }) => b.type === "text"
                         );
-                        if (textBlock?.text) {
-                            firstPrompt = textBlock.text.slice(0, 120);
-                        }
+                        if (textBlock?.text) text = textBlock.text;
                     }
+                    if (text) {
+                        if (!firstPrompt) firstPrompt = text;
+                        const remaining = USER_TEXT_CAP - userTextLen;
+                        userTexts.push(text.slice(0, remaining));
+                        userTextLen += text.length;
+                    }
+                }
+
+                // Early exit: all metadata found and user text cap reached
+                if (summary && customTitle && sessionId && gitBranch && cwd && firstTimestamp && userTextLen >= USER_TEXT_CAP) {
+                    fileStream.destroy();
+                    break;
                 }
             } catch {
                 // Skip unparseable lines
@@ -1142,9 +1283,115 @@ async function extractSessionMetadataFromFile(
             mtime,
             firstTimestamp,
             isSubagent,
+            allUserText: userTexts.length > 0 ? userTexts.join(" ") : null,
         };
     } catch {
         return null;
+    }
+}
+
+// =============================================================================
+// Ripgrep Full-Content Search
+// =============================================================================
+
+/**
+ * Use ripgrep to find JSONL files containing a query string.
+ * Returns file paths of matching sessions — extremely fast.
+ */
+export async function rgSearchFiles(
+    query: string,
+    options: { project?: string; limit?: number } = {}
+): Promise<string[]> {
+    const searchDir = options.project
+        ? resolveProjectDir(options.project) || PROJECTS_DIR
+        : PROJECTS_DIR;
+
+    try {
+        const proc = Bun.spawn({
+            cmd: [
+                "rg", "-l", "--glob", "*.jsonl",
+                "-i", "-F",
+                "--max-count", "1",
+                "--", query,
+                searchDir,
+            ],
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        const output = await new Response(proc.stdout).text();
+        const exitCode = await proc.exited;
+
+        // rg exit 1 = no matches (OK), 2+ = actual error
+        if (exitCode > 1) {
+            const stderr = await new Response(proc.stderr).text();
+            logger.warn(`rgSearchFiles failed (exit ${exitCode}): ${stderr.trim()}`);
+            return [];
+        }
+
+        let files = output.trim().split("\n").filter(Boolean);
+
+        if (options.limit && files.length > options.limit) {
+            files = files.slice(0, options.limit);
+        }
+
+        return files;
+    } catch (error) {
+        logger.warn(`rgSearchFiles error: ${error}`);
+        return [];
+    }
+}
+
+/**
+ * Use ripgrep to extract a snippet around the first match in a file.
+ */
+export async function rgExtractSnippet(
+    query: string,
+    filePath: string,
+): Promise<string | undefined> {
+    try {
+        const proc = Bun.spawn({
+            cmd: ["rg", "-i", "-F", "-m", "1", "--no-filename", "--no-line-number", "--", query, filePath],
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        const output = await new Response(proc.stdout).text();
+        const exitCode = await proc.exited;
+
+        if (exitCode > 1) return undefined;
+
+        const line = output.trim();
+        if (!line) return undefined;
+
+        // Try to extract readable text from the JSON line
+        try {
+            const obj = JSON.parse(line);
+            const text = extractTextFromMessage(obj as ConversationMessage, true);
+
+            if (!text) return undefined;
+
+            const lowerText = text.toLowerCase();
+            const lowerQuery = query.toLowerCase();
+            const idx = lowerText.indexOf(lowerQuery);
+            if (idx === -1) return text.slice(0, 100);
+
+            const start = Math.max(0, idx - 40);
+            const end = Math.min(text.length, idx + query.length + 60);
+            return (start > 0 ? "..." : "") +
+                text.slice(start, end).replace(/\n/g, " ").trim() +
+                (end < text.length ? "..." : "");
+        } catch {
+            // If JSON parsing fails, try to extract from raw text
+            const lowerLine = line.toLowerCase();
+            const lowerQuery = query.toLowerCase();
+            const idx = lowerLine.indexOf(lowerQuery);
+            if (idx === -1) return undefined;
+
+            const start = Math.max(0, idx - 40);
+            const end = Math.min(line.length, idx + query.length + 60);
+            return "..." + line.slice(start, end).replace(/\\n/g, " ").trim() + "...";
+        }
+    } catch {
+        return undefined;
     }
 }
 

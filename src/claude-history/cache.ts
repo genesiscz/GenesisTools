@@ -5,13 +5,13 @@
 
 import { Database } from "bun:sqlite";
 import logger from "@app/logger";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, rmSync } from "fs";
 import { stat } from "fs/promises";
 import { homedir } from "os";
 import { join, sep } from "path";
 
 const DEFAULT_CACHE_DIR = join(homedir(), ".genesis-tools", "claude-history");
-const DB_NAME = "stats-cache.db";
+const DB_NAME = "index.db";
 
 let _db: Database | null = null;
 
@@ -123,6 +123,7 @@ function initSchema(db: Database): void {
         "ALTER TABLE daily_stats ADD COLUMN token_usage TEXT",
         "ALTER TABLE daily_stats ADD COLUMN model_counts TEXT",
         "ALTER TABLE daily_stats ADD COLUMN branch_counts TEXT",
+        "ALTER TABLE session_metadata ADD COLUMN all_user_text TEXT",
     ];
 
     for (const migration of migrations) {
@@ -170,6 +171,7 @@ export interface SessionMetadataRecord {
     mtime: number;
     firstTimestamp: string | null;
     isSubagent: boolean;
+    allUserText: string | null;
 }
 
 export interface FileIndexRecord {
@@ -633,6 +635,7 @@ interface SessionMetadataRow {
     mtime: number;
     first_timestamp: string | null;
     is_subagent: number;
+    all_user_text: string | null;
 }
 
 function rowToSessionMetadataRecord(row: SessionMetadataRow): SessionMetadataRecord {
@@ -648,6 +651,7 @@ function rowToSessionMetadataRecord(row: SessionMetadataRow): SessionMetadataRec
         mtime: row.mtime,
         firstTimestamp: row.first_timestamp,
         isSubagent: row.is_subagent === 1,
+        allUserText: row.all_user_text,
     };
 }
 
@@ -661,8 +665,8 @@ export function upsertSessionMetadata(record: SessionMetadataRecord): void {
     const db = getDatabase();
     db.query(`
     INSERT OR REPLACE INTO session_metadata
-      (file_path, session_id, custom_title, summary, first_prompt, git_branch, project, cwd, mtime, first_timestamp, is_subagent)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (file_path, session_id, custom_title, summary, first_prompt, git_branch, project, cwd, mtime, first_timestamp, is_subagent, all_user_text)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
         record.filePath,
         record.sessionId,
@@ -674,7 +678,8 @@ export function upsertSessionMetadata(record: SessionMetadataRecord): void {
         record.cwd,
         record.mtime,
         record.firstTimestamp,
-        record.isSubagent ? 1 : 0
+        record.isSubagent ? 1 : 0,
+        record.allUserText
     );
 }
 
@@ -701,4 +706,39 @@ export function getSessionMetadataByProject(project: string): SessionMetadataRec
         .query("SELECT * FROM session_metadata WHERE project = ? ORDER BY COALESCE(first_timestamp, '') DESC")
         .all(project) as SessionMetadataRow[];
     return rows.map(rowToSessionMetadataRecord);
+}
+
+// =============================================================================
+// Database Reset & Cleanup
+// =============================================================================
+
+export function resetDatabase(): void {
+    closeDatabase();
+    const dbPath = join(DEFAULT_CACHE_DIR, DB_NAME);
+    for (const suffix of ["", "-wal", "-shm"]) {
+        rmSync(`${dbPath}${suffix}`, { force: true });
+    }
+}
+
+export function clearSessionMetadata(): void {
+    const db = getDatabase();
+    db.run("DELETE FROM session_metadata");
+}
+
+export function getAllSessionMetadataFilePaths(): string[] {
+    const db = getDatabase();
+    const rows = db.query("SELECT file_path FROM session_metadata").all() as Array<{ file_path: string }>;
+    return rows.map((r) => r.file_path);
+}
+
+export function removeSessionMetadataBatch(filePaths: string[]): void {
+    if (filePaths.length === 0) return;
+    const db = getDatabase();
+    const stmt = db.prepare("DELETE FROM session_metadata WHERE file_path = ?");
+    const transaction = db.transaction((paths: string[]) => {
+        for (const path of paths) {
+            stmt.run(path);
+        }
+    });
+    transaction(filePaths);
 }
