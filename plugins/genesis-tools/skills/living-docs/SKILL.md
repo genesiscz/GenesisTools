@@ -77,7 +77,7 @@ When documentation exists:
 3. **Check patterns** - Are documented patterns still used?
 4. **Flag drift** - Output a drift report
 
-```
+```text
 DRIFT DETECTED in .claude/docs/features/auth.md:
 - Line 12: useAuth hook moved from /hooks/useAuth to /lib/auth
 - Line 34: loginWithEmail() renamed to signInWithEmail()
@@ -117,7 +117,7 @@ When converting old trigger formats to context rules:
 
 ## Documentation Structure
 
-```
+```text
 .claude/
 ├── CLAUDE.md              # Main context + rules (load first, always)
 ├── docs/
@@ -149,7 +149,7 @@ When converting old trigger formats to context rules:
 
 [Only if non-obvious. Show PATH through files, not logic.]
 
-```
+```text
 User action -> Screen.tsx -> useFeature() -> rpc_name() -> DB
 ```
 
@@ -402,7 +402,7 @@ Before considering docs "done":
 
 When done, always report:
 
-```
+```text
 ACTION: [what was done]
 
 CREATED/UPDATED:

@@ -193,13 +193,19 @@ async function main() {
         const destPath = flat ? join(targetDir, basename(relativePath)) : join(targetDir, relativePath);
         const destSubDir = dirname(destPath);
 
-        // Ensure the subdirectory structure exists in the target, only if not flat
-        if (!flat) {
-            await mkdir(destSubDir, { recursive: true });
+        try {
+            // Ensure the subdirectory structure exists in the target, only if not flat
+            if (!flat) {
+                await mkdir(destSubDir, { recursive: true });
+            }
+            await Bun.write(destPath, sourceFile);
+            logger.info(`  → Copied: ${relativePath} ${flat ? "as " + basename(relativePath) : ""}`);
+            copiedCount++;
+        } catch (error: unknown) {
+            const msg = error instanceof Error ? error.message : String(error);
+            logger.warn(`  ⚠ Failed to copy ${relativePath}: ${msg}`);
+            skippedCount++;
         }
-        await Bun.write(destPath, sourceFile);
-        logger.info(`  → Copied: ${relativePath} ${flat ? "as " + basename(relativePath) : ""}`);
-        copiedCount++;
     }
 
     logger.info("\n--- Summary ---");

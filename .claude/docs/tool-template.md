@@ -15,7 +15,6 @@ Create either:
 import { Command } from "commander";
 import { input, select } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
-import chalk from "chalk";
 import clipboardy from "clipboardy";
 import logger from "../logger";
 

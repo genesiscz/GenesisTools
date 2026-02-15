@@ -102,7 +102,7 @@ When the compiler skips optimization, check for these common causes:
 |---------|-----------------|-----|
 | Mutable ref in render | `ref.current = x` during render is a side effect | Move to `useEffect` or event handler |
 | Side effects in render | Direct DOM manipulation, logging, mutations | Wrap in `useEffect` |
-| Dynamic property access | `obj[dynamicKey]` prevents static analysis | Use explicit property access or destructuring |
-| Spreading unknown props | `{...props}` on components blocks tracking | Destructure known props explicitly |
-| try/catch in component | Compiler can't track control flow through catch | Extract try/catch to a utility function |
-| Indirect function calls | `const fn = arr[0]; fn()` | Use direct function references |
+| `try` without `catch` / `try...finally` | Compiler can't analyze incomplete error handling paths | Add explicit `catch` block or extract to utility |
+| `this` expressions | Class-based patterns not statically analyzable | Convert to function components |
+| JSX spread children | `{...items}` as JSX children is unsupported AST | Map items explicitly: `{items.map(i => ...)}` |
+| Dynamic `import()` | Async module loading breaks static analysis | Move to top-level imports or lazy boundaries |
