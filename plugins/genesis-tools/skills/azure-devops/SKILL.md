@@ -595,3 +595,23 @@ This command:
 - Filters by configured authors (see `tools git configure authors`)
 
 The extracted workitem IDs can be used to match commits to Azure DevOps work items for time logging purposes.
+
+## HAR File Analysis from Work Items
+
+When user explicitly asks to download and analyze HAR attachments from a work item:
+```bash
+# 1. Download HAR attachment
+tools azure-devops workitem <id> --attachments-suffix .har --output-dir /tmp/har
+
+# 2. Load and analyze with har-analyzer
+tools har-analyzer load /tmp/har/<taskid>-capture.har
+```
+
+Do NOT download or analyze HAR files automatically -- only when the user requests it.
+
+## Documentation Resources
+
+For deeper API research beyond this skill:
+- **Local docs**: `src/azure-devops/docs/` contains 14 reference files (work items, iterations, PRs, REST API, WIQL syntax, timelog history)
+- **Context7**: Use library ID `/websites/learn_microsoft_en-us_rest_api_azure_devops` for detailed REST API specs
+- **CLAUDE.md**: Contains context7 library IDs and batch endpoint quick reference

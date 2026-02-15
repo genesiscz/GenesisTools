@@ -1,5 +1,5 @@
 ---
-name: react-compiler-debug
+name: genesis-tools:react-compiler-debug
 description: Debug and inspect React Compiler (babel-plugin-react-compiler) output. Use when user asks to see what React Compiler generates, debug memoization issues, understand why a component isn't being optimized, or compare original vs compiled code. Triggers on "react compiler", "compiler output", "see compiled", "memoization debug", "why isn't this memoized".
 ---
 
@@ -93,3 +93,21 @@ function Greeting(t0) {
 ```
 
 The compiler memoizes the JSX based on `name` prop changes.
+
+## Common Bail-out Patterns
+
+When the compiler skips optimization, check for these common causes:
+
+| Pattern | Why it bails out | Fix |
+|---------|-----------------|-----|
+| Mutable ref in render | `ref.current = x` is validated by `validateNoRefAccessInRender` | Move to `useEffect` or event handler |
+| setState in render | `setState()` during render validated by `validateNoSetStateInRender` | Move to event handler or `useEffect` |
+| JSX inside try/catch | `validateNoJSXInTryStatement` errors — use error boundaries instead | Wrap component in `<ErrorBoundary>`, remove try/catch |
+| `try` without `catch` | Lowering TODO — compiler can't build HIR for incomplete try | Add explicit `catch` block |
+| `try...finally` | Lowering TODO — finalizer clause not yet supported | Restructure to `try/catch` or extract to utility |
+| `throw` inside try/catch | Lowering TODO — ThrowStatement in try/catch not handled | Extract throwing logic to a separate function |
+| Inline `class` declaration | `UnsupportedSyntax` — class inside component not supported | Move class outside component/hook |
+| `for-await` loops | Lowering TODO — async iteration not yet supported | Use `Promise.all()` or manual iteration |
+| `with` statement | `UnsupportedSyntax` — deprecated JS syntax | Remove `with`, use explicit property access |
+
+> **Debugging tip:** Add `"use no memo"` at the top of a function body to temporarily opt it out of compilation and confirm the compiler is involved in an issue. Source: [BuildHIR.ts](https://github.com/facebook/react/blob/main/compiler/packages/babel-plugin-react-compiler/src/HIR/BuildHIR.ts), [ValidateNoJSXInTryStatement.ts](https://github.com/facebook/react/blob/main/compiler/packages/babel-plugin-react-compiler/src/Validation/ValidateNoJSXInTryStatement.ts)

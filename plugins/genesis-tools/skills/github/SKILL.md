@@ -1,13 +1,16 @@
 ---
 name: genesis-tools:github
 description: |
-  Efficiently interact with GitHub issues, PRs, and comments using the `tools github` CLI.
+  Efficiently interact with GitHub issues, PRs, comments, and code using the `tools github` CLI.
   Use when:
   - User provides a GitHub issue/PR URL and wants details or comments
   - User asks about recent activity on an issue
   - User wants to find issues/PRs matching criteria
   - User asks for comments starting from a specific point
   - User wants to filter comments by reactions, author, or date
+  - User wants to search code in a repository (e.g. "find how X is implemented")
+  - User wants to find issues or discussions about a library or framework
+  - User asks "how does library X handle Y" or "are there issues about Z"
 ---
 
 # GitHub Tool Usage Guide
@@ -261,6 +264,19 @@ tools github review 137 --resolve-thread -t <thread-id>
 1. Reply to each addressed thread with: what was fixed, how it was fixed, and a **clickable link** to the commit using markdown: `[short-sha](https://github.com/owner/repo/commit/full-sha)` (e.g. "Fixed in [abc1234](https://github.com/owner/repo/commit/abc1234def5678) — scoped stale cleanup to current project directory.")
 2. Reply "Won't fix" to deliberately skipped threads with a detailed explanation of why the change isn't warranted (technical reasoning, not just a dismissal)
 3. Do NOT resolve threads automatically — only resolve when the user explicitly asks to resolve them
+
+### Review Fix Workflow (End-to-End)
+
+When fixing PR review comments:
+
+1. **Fetch unresolved threads:** `tools github review <pr> -u`
+2. **Read each file** mentioned in the threads
+3. **Implement fixes** for each review comment
+4. **Commit** with PR reference in message
+5. **Reply to threads:** `tools github review <pr> --respond "Fixed in [sha](url)" -t <thread-ids>`
+6. **Resolve threads** (only when user explicitly approves): `tools github review <pr> --resolve-thread -t <thread-ids>`
+
+> For the full automated flow (fetch, triage, fix, commit, reply), use the `/github-pr <pr>` command instead.
 
 ## Caching Behavior
 
