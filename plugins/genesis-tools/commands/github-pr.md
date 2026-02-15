@@ -130,11 +130,16 @@ EOF
 
 ### Step 6: Reply to Threads
 
-After committing, reply to each thread on GitHub explaining what happened:
+After committing, reply to each thread on GitHub explaining what happened.
+
+**Commit links:** Always include a clickable link to the commit. Build the URL as:
+`https://github.com/<owner>/<repo>/commit/<full-sha>`
+
+Use markdown link format in the reply: `[short-sha](full-url)`.
 
 **For fixed threads** — explain what was fixed, how, and link the commit:
 ```bash
-tools github review <pr> --respond "Fixed in abc1234 — scoped stale cleanup to current project directory to avoid deleting other projects' cache entries." -t <thread-id>
+tools github review <pr> --respond "Fixed in [abc1234](https://github.com/owner/repo/commit/abc1234def5678) — scoped stale cleanup to current project directory to avoid deleting other projects' cache entries." -t <thread-id>
 ```
 
 **For skipped threads** — provide a detailed technical explanation of why:
@@ -144,7 +149,7 @@ tools github review <pr> --respond "Won't fix — the projectNameCache already p
 
 **Batch operations:** When multiple threads have the same fix/response, use comma-separated IDs:
 ```bash
-tools github review <pr> --respond "Fixed in abc1234 — addressed review feedback." -t <thread-id1>,<thread-id2>,<thread-id3>
+tools github review <pr> --respond "Fixed in [abc1234](https://github.com/owner/repo/commit/abc1234def5678) — addressed review feedback." -t <thread-id1>,<thread-id2>,<thread-id3>
 ```
 
 **Important:** Do NOT use `--resolve-thread` unless the user explicitly asks to resolve threads. Only reply.
