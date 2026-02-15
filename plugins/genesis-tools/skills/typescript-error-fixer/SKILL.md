@@ -1,5 +1,5 @@
 ---
-name: typescript-error-fixer
+name: genesis-tools:typescript-error-fixer
 description: "Fix TypeScript compilation errors and eliminate 'any' types across the codebase. Use when build fails due to type errors, when auditing type safety, or when eliminating 'any' types."
 ---
 
@@ -12,8 +12,9 @@ Fix all TypeScript compilation errors systematically using a 4-phase workflow. Z
 1. Detect the package manager (check for `package-lock.json`, `yarn.lock`, `bun.lockb`, `pnpm-lock.yaml`).
 2. Run the TypeScript compiler with a 1-2 minute timeout, redirecting output to a log file:
    ```
-   <package-manager> run tsc > tsc-<YYYY-MM-DD-HHmmss>.log
+   tsgo --noEmit 2>&1 | tee tsc-<YYYY-MM-DD-HHmmss>.log
    ```
+   Filter to specific directories: `tsgo --noEmit | rg "src/"`
 3. Parse the log: extract every error with its file path, line number, error code, and message.
 4. Group errors by file and produce a structured error report.
 
@@ -41,7 +42,7 @@ For each file with errors, deploy a subagent (via the Agent tool):
 
 ## Phase 4: Verification
 
-1. Re-run the TypeScript compiler.
+1. Re-run `tsgo --noEmit` (or filter: `tsgo --noEmit | rg "src/"`).
 2. Confirm all original errors are resolved.
 3. Confirm no new errors were introduced.
 4. Produce a summary report: files changed, errors fixed, types improved.
@@ -62,9 +63,22 @@ For each file with errors, deploy a subagent (via the Agent tool):
    - Create dedicated type/interface definitions for complex shapes
 3. **If `any` is temporarily unavoidable**, add a `// TODO:` comment explaining why and the resolution path. This is the only exception.
 
+## Type Research Tools
+
+**Per-file checking (faster than full recompilation):**
+- `tools mcp-tsc <file>` -- persistent LSP server, ~100ms for incremental checks
+- `tools mcp-tsc --hover --line N --text symbol file.ts` -- type introspection to find the correct type replacing `any`
+
+**Claude Code LSP operations (built-in):**
+- `goToDefinition` -- trace type origins to their source
+- `hover` -- get inline type info for any symbol
+- `findReferences` -- understand usage patterns across the codebase
+
+Use these when researching actual types to replace `any` instead of guessing.
+
 ## Error Handling
 
-- If `tsc` fails to run, check `tsconfig.json` for config issues first.
+- If `tsgo` fails to run, check `tsconfig.json` for config issues first.
 - If errors span >100 files, prioritize critical/shared files and process in batches.
 - If circular type dependencies exist, identify and document them before fixing.
 

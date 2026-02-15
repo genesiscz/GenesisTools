@@ -1,5 +1,5 @@
 ---
-name: react-compiler-debug
+name: genesis-tools:react-compiler-debug
 description: Debug and inspect React Compiler (babel-plugin-react-compiler) output. Use when user asks to see what React Compiler generates, debug memoization issues, understand why a component isn't being optimized, or compare original vs compiled code. Triggers on "react compiler", "compiler output", "see compiled", "memoization debug", "why isn't this memoized".
 ---
 
@@ -93,3 +93,16 @@ function Greeting(t0) {
 ```
 
 The compiler memoizes the JSX based on `name` prop changes.
+
+## Common Bail-out Patterns
+
+When the compiler skips optimization, check for these common causes:
+
+| Pattern | Why it bails out | Fix |
+|---------|-----------------|-----|
+| Mutable ref in render | `ref.current = x` during render is a side effect | Move to `useEffect` or event handler |
+| Side effects in render | Direct DOM manipulation, logging, mutations | Wrap in `useEffect` |
+| Dynamic property access | `obj[dynamicKey]` prevents static analysis | Use explicit property access or destructuring |
+| Spreading unknown props | `{...props}` on components blocks tracking | Destructure known props explicitly |
+| try/catch in component | Compiler can't track control flow through catch | Extract try/catch to a utility function |
+| Indirect function calls | `const fn = arr[0]; fn()` | Use direct function references |

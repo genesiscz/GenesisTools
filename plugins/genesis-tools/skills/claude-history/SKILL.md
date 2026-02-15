@@ -69,6 +69,7 @@ tools claude-history "timer" --context 10  # 10 messages before/after
 | `--agents-only` | Only search subagent conversations |
 | `--exclude-agents` | Exclude subagent conversations |
 | `--exclude-thinking` | Exclude thinking blocks |
+| `--reindex` | Rebuild search index (use when index seems stale or after manual edits) |
 | `--format <type>` | Output: ai (default), json |
 
 ## Output Formats
@@ -76,3 +77,7 @@ tools claude-history "timer" --context 10  # 10 messages before/after
 **Default (ai):** Perfect markdown with summaries and file paths
 **With --context:** Shows surrounding messages in markdown
 **JSON:** Raw JSON for programmatic use
+
+## Dashboard
+
+For visual exploration, `tools claude-history-dashboard` launches a web-based React/Vite interface for browsing and analyzing conversation history.

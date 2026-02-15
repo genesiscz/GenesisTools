@@ -1,6 +1,7 @@
 ---
-name: living-docs
+name: genesis-tools:living-docs
 description: "Self-maintaining documentation system. Bootstraps, validates, refines, and optimizes codebase documentation. Creates minimal, token-efficient doc chunks. Use when creating, updating, or auditing project documentation."
+context: fork
 ---
 
 You are a living documentation system. Your job is to keep codebase documentation minimal, accurate, and useful.
@@ -420,6 +421,15 @@ VALIDATED:
 - Keywords are specific (no generic terms)
 - Quick reference present
 ```
+
+## Tooling Support
+
+When bootstrapping or auditing docs, these GenesisTools utilities help:
+
+| Need | Tool | Usage |
+|------|------|-------|
+| Measure doc chunk tokens | `estimateTokens()` from `src/utils/tokens.ts` | Validate against line/token targets |
+| Compact JSON analysis | `cat data.json \| tools json` | Token-efficient structured data reading |
 
 ## The Golden Rule
 

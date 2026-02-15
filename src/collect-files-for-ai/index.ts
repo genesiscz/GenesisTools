@@ -148,17 +148,17 @@ async function main() {
         logger.debug("⏳ Fetching list of changed files...");
         let gitOutput = "";
         if (mode === "commits") {
-            gitOutput = await runGitCommand(["diff", "--name-only", `HEAD~${commits}`, "HEAD"], repoDir);
+            gitOutput = await runGitCommand(["diff", "--name-only", "--diff-filter=d", `HEAD~${commits}`, "HEAD"], repoDir);
         } else if (mode === "staged") {
-            gitOutput = await runGitCommand(["diff", "--name-only", "--cached"], repoDir);
+            gitOutput = await runGitCommand(["diff", "--name-only", "--diff-filter=d", "--cached"], repoDir);
         } else if (mode === "unstaged") {
             // This includes untracked files if they aren't ignored.
             // Consider using status porcelain if only modified/deleted tracked files are needed.
             // For now, diff covers modified/deleted tracked files.
-            gitOutput = await runGitCommand(["diff", "--name-only"], repoDir);
+            gitOutput = await runGitCommand(["diff", "--name-only", "--diff-filter=d"], repoDir);
         } else {
             // mode === 'all'
-            const combined = (await runGitCommand(["diff", "--name-only", "HEAD"], repoDir)).split("\n");
+            const combined = (await runGitCommand(["diff", "--name-only", "--diff-filter=d", "HEAD"], repoDir)).split("\n");
             gitOutput = Array.from(combined)
                 .filter((f) => f)
                 .join("\n"); // Filter out empty lines
@@ -179,37 +179,36 @@ async function main() {
     // --- Copy Files ---
     logger.info(`⏳ Copying files to ${targetDir}${flat ? " (flat)" : ""}...`);
     let copiedCount = 0;
-    let errorCount = 0;
+    let skippedCount = 0;
 
     for (const relativePath of fileList) {
         const sourcePath = join(repoDir, relativePath);
+        const sourceFile = Bun.file(sourcePath);
+
+        if (!(await sourceFile.exists())) {
+            skippedCount++;
+            continue;
+        }
+
         const destPath = flat ? join(targetDir, basename(relativePath)) : join(targetDir, relativePath);
         const destSubDir = dirname(destPath);
 
-        try {
-            // Ensure the subdirectory structure exists in the target, only if not flat
-            if (!flat) {
-                await mkdir(destSubDir, { recursive: true });
-            }
-            // Use Bun.write to copy - simpler than node:fs/promises cp for this case
-            await Bun.write(destPath, Bun.file(sourcePath));
-            logger.info(`  → Copied: ${relativePath} ${flat ? "as " + basename(relativePath) : ""}`);
-            copiedCount++;
-        } catch (error: any) {
-            logger.error(`  ✖ Error copying ${relativePath}: ${error.message}`);
-            errorCount++;
+        // Ensure the subdirectory structure exists in the target, only if not flat
+        if (!flat) {
+            await mkdir(destSubDir, { recursive: true });
         }
+        await Bun.write(destPath, sourceFile);
+        logger.info(`  → Copied: ${relativePath} ${flat ? "as " + basename(relativePath) : ""}`);
+        copiedCount++;
     }
 
     logger.info("\n--- Summary ---");
     logger.info(`Total files found: ${fileList.length}`);
     logger.info(`Successfully copied: ${copiedCount}`);
-    logger.error(`Copying errors: ${errorCount}`);
-    if (errorCount > 0) {
-        process.exit(1); // Exit with error if any copy failed
-    } else {
-        logger.info(`✔ File collection completed successfully.`);
+    if (skippedCount > 0) {
+        logger.info(`Skipped (deleted/missing): ${skippedCount}`);
     }
+    logger.info(`✔ File collection completed successfully.`);
 }
 
 // --- Run Main ---

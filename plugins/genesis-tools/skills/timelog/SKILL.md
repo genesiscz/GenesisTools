@@ -225,6 +225,8 @@ These workitems are always the same and should be used automatically:
 | Release (only when user explicitly says) | **262351** | Release | Release work |
 | `col-<taskid>` in commit messages | **\<taskid\>** | Development | Maps directly to that workitem |
 
+> **Validation:** Periodically verify these IDs are still active: `tools azure-devops workitem 262042,269409,266796,262351 --format ai`. Update mappings if any return Closed/Removed state.
+
 ## Git Commit Stats for Time Estimation
 
 When estimating time from commits (useful for days without Timely events or for distributing "Development" hours across workitems):
