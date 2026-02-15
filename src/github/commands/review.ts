@@ -53,10 +53,9 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                     : undefined,
             });
             if (result.replied === 0 && result.failed.length > 0) {
-                console.error(chalk.red(`Failed to reply to or resolve any of ${result.failed.length} thread(s)`));
-            } else {
-                console.log(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
+                throw new Error(`Failed to reply to or resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`);
             }
+            console.log(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
             if (result.failed.length) {
                 console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
             }
@@ -67,10 +66,9 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                     : undefined,
             });
             if (result.resolved === 0 && result.failed.length > 0) {
-                console.error(chalk.red(`Failed to resolve any of ${result.failed.length} thread(s)`));
-            } else {
-                console.log(chalk.green(`Resolved ${result.resolved} thread(s)`));
+                throw new Error(`Failed to resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`);
             }
+            console.log(chalk.green(`Resolved ${result.resolved} thread(s)`));
             if (result.failed.length) {
                 console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
             }
@@ -81,10 +79,9 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                     : undefined,
             });
             if (result.replied === 0 && result.failed.length > 0) {
-                console.error(chalk.red(`Failed to reply to any of ${result.failed.length} thread(s)`));
-            } else {
-                console.log(chalk.green(`Replied to ${result.replied} thread(s)`));
+                throw new Error(`Failed to reply to any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`);
             }
+            console.log(chalk.green(`Replied to ${result.replied} thread(s)`));
             if (result.failed.length) {
                 console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
             }
