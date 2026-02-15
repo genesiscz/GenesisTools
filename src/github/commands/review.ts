@@ -40,7 +40,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
 
     // Handle respond and/or resolve operations (supports comma-separated thread IDs)
     if ((options.respond || resolveThreadOpt) && options.threadId) {
-        const threadIds = options.threadId.split(",").map((s) => s.trim());
+        const threadIds = options.threadId.split(",").map((s) => s.trim()).filter(Boolean);
         const showProgress = threadIds.length > 1;
 
         if (options.respond && resolveThreadOpt) {
