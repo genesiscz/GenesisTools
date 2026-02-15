@@ -41,6 +41,9 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
     // Handle respond and/or resolve operations (supports comma-separated thread IDs)
     if ((options.respond || resolveThreadOpt) && options.threadId) {
         const threadIds = options.threadId.split(",").map((s) => s.trim()).filter(Boolean);
+        if (threadIds.length === 0) {
+            throw new Error("No valid thread IDs provided. Check your --thread-id value.");
+        }
         const showProgress = threadIds.length > 1;
 
         if (options.respond && resolveThreadOpt) {
@@ -49,7 +52,11 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                     ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
                     : undefined,
             });
-            console.log(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
+            if (result.replied === 0 && result.failed.length > 0) {
+                console.error(chalk.red(`Failed to reply to or resolve any of ${result.failed.length} thread(s)`));
+            } else {
+                console.log(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
+            }
             if (result.failed.length) {
                 console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
             }
@@ -59,7 +66,11 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                     ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
                     : undefined,
             });
-            console.log(chalk.green(`Resolved ${result.resolved} thread(s)`));
+            if (result.resolved === 0 && result.failed.length > 0) {
+                console.error(chalk.red(`Failed to resolve any of ${result.failed.length} thread(s)`));
+            } else {
+                console.log(chalk.green(`Resolved ${result.resolved} thread(s)`));
+            }
             if (result.failed.length) {
                 console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
             }
@@ -69,7 +80,11 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                     ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
                     : undefined,
             });
-            console.log(chalk.green(`Replied to ${result.replied} thread(s)`));
+            if (result.replied === 0 && result.failed.length > 0) {
+                console.error(chalk.red(`Failed to reply to any of ${result.failed.length} thread(s)`));
+            } else {
+                console.log(chalk.green(`Replied to ${result.replied} thread(s)`));
+            }
             if (result.failed.length) {
                 console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
             }
