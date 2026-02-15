@@ -250,6 +250,23 @@ export function parseGitHubFileUrl(input: string): GitHubFileUrl | null {
 }
 
 /**
+ * Build a GitHub commit URL.
+ * Without prNumber: https://github.com/owner/repo/commit/SHA
+ * With prNumber: https://github.com/owner/repo/pull/N/commits/SHA
+ */
+export function buildGitHubCommitUrl(
+    owner: string,
+    repo: string,
+    sha: string,
+    prNumber?: number
+): string {
+    if (prNumber) {
+        return `https://github.com/${owner}/${repo}/pull/${prNumber}/commits/${sha}`;
+    }
+    return `https://github.com/${owner}/${repo}/commit/${sha}`;
+}
+
+/**
  * Build raw.githubusercontent.com URL from components
  */
 export function buildRawGitHubUrl(owner: string, repo: string, ref: string, path: string): string {

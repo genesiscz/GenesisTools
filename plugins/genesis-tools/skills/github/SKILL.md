@@ -227,7 +227,40 @@ tools github review 137 --resolve-thread -t <thread-id>
 
 # Reply AND resolve
 tools github review 137 --respond "Done" --resolve-thread -t <thread-id>
+
+# Batch: resolve multiple threads (comma-separated IDs)
+tools github review 137 --resolve-thread -t PRRT_id1,PRRT_id2,PRRT_id3
+
+# Batch: reply to multiple threads with same message
+tools github review 137 --respond "Fixed in abc1234" -t PRRT_id1,PRRT_id2
+
+# Batch: reply + resolve multiple threads
+tools github review 137 --respond "Fixed" --resolve-thread -t PRRT_id1,PRRT_id2,PRRT_id3
 ```
+
+> **Full PR review workflow:** For an end-to-end flow (fetch review threads, triage, implement fixes, commit, reply to threads), use the `/github-pr <pr>` command instead of manual `tools github review` calls.
+
+### Resolving Review Threads
+
+After fixing review comments, reply to and resolve threads:
+
+```bash
+# Reply to a thread
+tools github review 137 --respond "Fixed in commit abc1234" -t <thread-id>
+
+# Reply AND resolve in one command
+tools github review 137 --respond "Fixed" --resolve-thread -t <thread-id>
+
+# Resolve without replying
+tools github review 137 --resolve-thread -t <thread-id>
+```
+
+**Permission note:** The `--resolve-thread` mutation requires a GitHub PAT with `pull_requests:write` scope. If it fails with "Resource not accessible by personal access token", the `--respond` reply will still succeed — you just can't auto-resolve. In that case, reply with status and let the user resolve manually on GitHub.
+
+**After fixing PR comments, always:**
+1. Reply to each addressed thread with: what was fixed, how it was fixed, and a **clickable link** to the commit using markdown: `[short-sha](https://github.com/owner/repo/commit/full-sha)` (e.g. "Fixed in [abc1234](https://github.com/owner/repo/commit/abc1234def5678) — scoped stale cleanup to current project directory.")
+2. Reply "Won't fix" to deliberately skipped threads with a detailed explanation of why the change isn't warranted (technical reasoning, not just a dismissal)
+3. Do NOT resolve threads automatically — only resolve when the user explicitly asks to resolve them
 
 ## Caching Behavior
 

@@ -1,7 +1,7 @@
 // Review command - fetch, display, reply to, and resolve PR review threads
 
 import { formatReviewJSON, formatReviewMarkdown, formatReviewTerminal, saveReviewMarkdown } from "@app/github/lib/review-output";
-import { calculateReviewStats, fetchPRReviewThreads, markThreadResolved, parseThreads, replyToThread } from "@app/github/lib/review-threads";
+import { batchReply, batchReplyAndResolve, batchResolveThreads, calculateReviewStats, fetchPRReviewThreads, parseThreads } from "@app/github/lib/review-threads";
 import type { ReviewCommandOptions, ReviewData } from "@app/github/types";
 import logger from "@app/logger";
 import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
@@ -38,21 +38,52 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
         );
     }
 
-    // Handle respond and/or resolve operations
+    // Handle respond and/or resolve operations (supports comma-separated thread IDs)
     if ((options.respond || resolveThreadOpt) && options.threadId) {
-        if (options.respond) {
-            console.error(chalk.dim(`Replying to thread ${options.threadId}...`));
-            const replyId = await replyToThread(options.threadId, options.respond);
-            console.log(chalk.green(`✓ Reply posted successfully! Reply ID: ${replyId}`));
+        const threadIds = options.threadId.split(",").map((s) => s.trim()).filter(Boolean);
+        if (threadIds.length === 0) {
+            throw new Error("No valid thread IDs provided. Check your --thread-id value.");
         }
+        const showProgress = threadIds.length > 1;
 
-        if (resolveThreadOpt) {
-            console.error(chalk.dim(`Resolving thread ${options.threadId}...`));
-            const resolved = await markThreadResolved(options.threadId);
-            if (resolved) {
-                console.log(chalk.green(`✓ Thread resolved successfully!`));
-            } else {
-                throw new Error("Failed to resolve thread");
+        if (options.respond && resolveThreadOpt) {
+            const result = await batchReplyAndResolve(threadIds, options.respond, {
+                onProgress: showProgress
+                    ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
+                    : undefined,
+            });
+            if (result.replied === 0 && result.failed.length > 0) {
+                throw new Error(`Failed to reply to or resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`);
+            }
+            console.log(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
+            if (result.failed.length) {
+                console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+            }
+        } else if (resolveThreadOpt) {
+            const result = await batchResolveThreads(threadIds, {
+                onProgress: showProgress
+                    ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
+                    : undefined,
+            });
+            if (result.resolved === 0 && result.failed.length > 0) {
+                throw new Error(`Failed to resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`);
+            }
+            console.log(chalk.green(`Resolved ${result.resolved} thread(s)`));
+            if (result.failed.length) {
+                console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+            }
+        } else {
+            const result = await batchReply(threadIds, options.respond!, {
+                onProgress: showProgress
+                    ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
+                    : undefined,
+            });
+            if (result.replied === 0 && result.failed.length > 0) {
+                throw new Error(`Failed to reply to any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`);
+            }
+            console.log(chalk.green(`Replied to ${result.replied} thread(s)`));
+            if (result.failed.length) {
+                console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
             }
         }
 
@@ -120,7 +151,12 @@ Examples:
   $ tools github review 137 --md -g                                      # Save as grouped markdown file
   $ tools github review 137 --respond "ok" -t <thread-id>                # Reply to a thread
   $ tools github review 137 --resolve-thread -t <thread-id>              # Mark a thread as resolved
-  $ tools github review 137 --respond "fixed" --resolve-thread -t <thread-id>  # Reply AND resolve`
+  $ tools github review 137 --respond "fixed" --resolve-thread -t <thread-id>  # Reply AND resolve
+
+  Batch operations (comma-separated thread IDs):
+  $ tools github review 137 --resolve-thread -t id1,id2,id3              # Resolve multiple threads
+  $ tools github review 137 --respond "Fixed" -t id1,id2                 # Reply to multiple threads
+  $ tools github review 137 --respond "Fixed" --resolve-thread -t id1,id2,id3  # Reply+resolve batch`
         )
         .argument("<pr>", "PR number or full GitHub URL")
         .option("--repo <owner/repo>", "Repository (auto-detected from URL or git)")
@@ -129,7 +165,7 @@ Examples:
         .option("-m, --md", "Save output as markdown file to .claude/github/reviews/", false)
         .option("-j, --json", "Output as JSON", false)
         .option("-r, --respond <message>", "Reply to a thread with this message")
-        .option("-t, --thread-id <id>", "Thread ID for operations like reply/resolve")
+        .option("-t, --thread-id <ids>", "Thread ID(s) for reply/resolve (comma-separated for batch)")
         .option("-R, --resolve-thread", "Mark a thread as resolved", false)
         .option("--resolve", "Alias for --resolve-thread", false)
         .option("-v, --verbose", "Enable verbose logging")

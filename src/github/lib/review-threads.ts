@@ -299,6 +299,95 @@ export async function markThreadResolved(threadId: string): Promise<boolean> {
     return true;
 }
 
+/**
+ * Resolve multiple review threads with progress reporting.
+ * Continues on individual failures, collecting failed IDs.
+ * Progress reports processed count (success + failure), not just successes.
+ */
+export async function batchResolveThreads(
+    threadIds: string[],
+    options?: { onProgress?: (done: number, total: number) => void }
+): Promise<{ resolved: number; failed: string[] }> {
+    let resolved = 0;
+    let processed = 0;
+    const failed: string[] = [];
+
+    for (const threadId of threadIds) {
+        try {
+            await markThreadResolved(threadId);
+            resolved++;
+        } catch {
+            failed.push(threadId);
+        }
+        processed++;
+        options?.onProgress?.(processed, threadIds.length);
+    }
+
+    return { resolved, failed };
+}
+
+/**
+ * Reply to and resolve multiple threads with the same message.
+ * If reply succeeds but resolve fails, the reply is kept and the thread
+ * is added to the failed list. Progress reports processed count.
+ */
+export async function batchReplyAndResolve(
+    threadIds: string[],
+    message: string,
+    options?: { onProgress?: (done: number, total: number) => void }
+): Promise<{ replied: number; resolved: number; failed: string[] }> {
+    let replied = 0;
+    let resolved = 0;
+    let processed = 0;
+    const failed: string[] = [];
+
+    for (const threadId of threadIds) {
+        try {
+            await replyToThread(threadId, message);
+            replied++;
+            try {
+                await markThreadResolved(threadId);
+                resolved++;
+            } catch {
+                failed.push(threadId);
+            }
+        } catch {
+            failed.push(threadId);
+        }
+        processed++;
+        options?.onProgress?.(processed, threadIds.length);
+    }
+
+    return { replied, resolved, failed };
+}
+
+/**
+ * Reply to multiple threads with the same message.
+ * Progress reports processed count (success + failure).
+ */
+export async function batchReply(
+    threadIds: string[],
+    message: string,
+    options?: { onProgress?: (done: number, total: number) => void }
+): Promise<{ replied: number; failed: string[] }> {
+    let replied = 0;
+    let processed = 0;
+    const failed: string[] = [];
+
+    for (const threadId of threadIds) {
+        try {
+            await replyToThread(threadId, message);
+            replied++;
+        } catch {
+            failed.push(threadId);
+        }
+        processed++;
+        options?.onProgress?.(processed, threadIds.length);
+    }
+
+    return { replied, failed };
+}
+
 // =============================================================================
 // Thread Parsing
 // =============================================================================
