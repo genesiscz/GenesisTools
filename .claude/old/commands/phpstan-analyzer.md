@@ -70,7 +70,7 @@ mkdir -p docs/tasks/phpstan
 Run the provided script to create individual markdown files for each pattern:
 
 ```bash
-/scripts/create_phpstan_docs.sh
+scripts/create_phpstan_docs.sh
 ```
 
 Or manually generate with:
@@ -176,7 +176,7 @@ cat phpstan7.log | jq -r '[...]' | jq -s '.[0:100]' > /tmp/phpstan_patterns.json
 mkdir -p docs/tasks/phpstan
 
 # 3. Generate task files
-/scripts/create_phpstan_docs.sh
+scripts/create_phpstan_docs.sh
 
 # 4. Spawn agent (in Claude Code):
 #    /phpstan-analyzer (this command)

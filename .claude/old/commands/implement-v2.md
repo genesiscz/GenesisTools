@@ -7,7 +7,7 @@ Execute implementation workflow for a task. Works in all environments:
 
 ## Usage
 
-```
+```text
 /implement-v2 <plan-name> [--base=<branch>] [--no-vendor-link]
 ```
 

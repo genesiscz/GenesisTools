@@ -100,9 +100,14 @@ When the compiler skips optimization, check for these common causes:
 
 | Pattern | Why it bails out | Fix |
 |---------|-----------------|-----|
-| Mutable ref in render | `ref.current = x` during render is a side effect | Move to `useEffect` or event handler |
-| Side effects in render | Direct DOM manipulation, logging, mutations | Wrap in `useEffect` |
-| `try` without `catch` / `try...finally` | Compiler can't analyze incomplete error handling paths | Add explicit `catch` block or extract to utility |
-| `this` expressions | Class-based patterns not statically analyzable | Convert to function components |
-| JSX spread children | `{...items}` as JSX children is unsupported AST | Map items explicitly: `{items.map(i => ...)}` |
-| Dynamic `import()` | Async module loading breaks static analysis | Move to top-level imports or lazy boundaries |
+| Mutable ref in render | `ref.current = x` is validated by `validateNoRefAccessInRender` | Move to `useEffect` or event handler |
+| setState in render | `setState()` during render validated by `validateNoSetStateInRender` | Move to event handler or `useEffect` |
+| JSX inside try/catch | `validateNoJSXInTryStatement` errors — use error boundaries instead | Wrap component in `<ErrorBoundary>`, remove try/catch |
+| `try` without `catch` | Lowering TODO — compiler can't build HIR for incomplete try | Add explicit `catch` block |
+| `try...finally` | Lowering TODO — finalizer clause not yet supported | Restructure to `try/catch` or extract to utility |
+| `throw` inside try/catch | Lowering TODO — ThrowStatement in try/catch not handled | Extract throwing logic to a separate function |
+| Inline `class` declaration | `UnsupportedSyntax` — class inside component not supported | Move class outside component/hook |
+| `for-await` loops | Lowering TODO — async iteration not yet supported | Use `Promise.all()` or manual iteration |
+| `with` statement | `UnsupportedSyntax` — deprecated JS syntax | Remove `with`, use explicit property access |
+
+> **Debugging tip:** Add `"use no memo"` at the top of a function body to temporarily opt it out of compilation and confirm the compiler is involved in an issue. Source: [BuildHIR.ts](https://github.com/facebook/react/blob/main/compiler/packages/babel-plugin-react-compiler/src/HIR/BuildHIR.ts), [ValidateNoJSXInTryStatement.ts](https://github.com/facebook/react/blob/main/compiler/packages/babel-plugin-react-compiler/src/Validation/ValidateNoJSXInTryStatement.ts)

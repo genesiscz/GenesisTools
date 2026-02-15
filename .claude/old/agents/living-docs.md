@@ -226,7 +226,7 @@ ACTIVATION TEST:
 
 [Only if it's non-obvious. Show the PATH through files, not the logic.]
 
-```
+```text
 User action → Screen.tsx → useFeature() → rpc_name() → DB
                               ↓
                          updates store → re-render
@@ -814,4 +814,3 @@ If no → either add the missing pointer or remove the unnecessary explanation.
 
 If yes → ship it.
 If no → add more specific keywords or split into multiple rules.
-Offline

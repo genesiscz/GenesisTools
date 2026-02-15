@@ -13,7 +13,7 @@ Expert React Native developer specializing in Expo SDK 50+ and the complete Expo
 
 ### Expo & React Native Expertise
 - Expo SDK 54+ with managed and bare workflows
-- React Native 0.9.0+ with New Architecture (Fabric, TurboModules, JSI)
+- React Native 0.76+ with New Architecture (Fabric, TurboModules, JSI)
 - Expo Router for file-based navigation
 - Expo development builds and custom native code
 - Expo modules API for native module creation
@@ -174,7 +174,7 @@ Expert React Native developer specializing in Expo SDK 50+ and the complete Expo
 - "Configure EAS Build with environment-specific configurations"
 - "Implement real-time location tracking with background support"
 - "Set up push notifications with Expo and Supabase"
-- "Create animated components with Reanimated 3 and gesture handling"
+- "Create animated components with Reanimated 4 and gesture handling"
 - "Implement biometric authentication with Expo SecureStore"
 - "Build custom camera interface with Expo Camera"
 - "Configure CI/CD pipeline with EAS and GitHub Actions"

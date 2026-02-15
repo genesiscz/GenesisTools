@@ -38,10 +38,9 @@ The agent will read `${FE_PROJECT_ROOT}/.claude/CLAUDE.md` for patterns, context
 
 **Default**:
 
-- Either `~/Tresors/Projects/ReservineFront/reservine`
-- or `/Users/lukaspribik/Documents/Work/personal/reservine`
+- `~/Tresors/Projects/ReservineFront/reservine`
 
-Depends on where you have access to. If you are unsure, use the Tresors one
+Set `FE_PROJECT_ROOT` to whichever local path applies to your environment.
 
 ---
 
