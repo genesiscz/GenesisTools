@@ -1,0 +1,49 @@
+{
+  "$schema": "genesis-tools-preset-v1",
+  "name": "Project Backup",
+  "description": "Glob important files and copy to a backup directory",
+  "trigger": { "type": "manual" },
+  "vars": {
+    "sourceDir": { "type": "string", "description": "Source directory", "default": "." },
+    "backupDir": { "type": "string", "description": "Backup destination", "default": "./backup" },
+    "pattern": { "type": "string", "description": "Glob pattern for files", "default": "**/*.{ts,json,md}" }
+  },
+  "steps": [
+    {
+      "id": "find-files",
+      "name": "Find important files",
+      "action": "file.glob",
+      "params": {
+        "pattern": "{{ vars.pattern }}",
+        "cwd": "{{ vars.sourceDir }}"
+      }
+    },
+    {
+      "id": "copy-files",
+      "name": "Copy files to backup",
+      "action": "forEach",
+      "params": {
+        "items": "{{ steps.find-files.output.files }}",
+        "concurrency": 10,
+        "step": {
+          "id": "copy",
+          "name": "Copy file",
+          "action": "file.copy",
+          "params": {
+            "source": "{{ item }}",
+            "destination": "{{ vars.backupDir }}/{{ item }}"
+          }
+        }
+      }
+    },
+    {
+      "id": "notify",
+      "name": "Backup complete",
+      "action": "notify.desktop",
+      "params": {
+        "title": "Backup Complete",
+        "message": "Backed up {{ steps.find-files.output.count }} files to {{ vars.backupDir }}"
+      }
+    }
+  ]
+}

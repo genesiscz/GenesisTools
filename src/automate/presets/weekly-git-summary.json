@@ -1,0 +1,41 @@
+{
+  "$schema": "genesis-tools-preset-v1",
+  "name": "Weekly Git Summary",
+  "description": "Get recent commits, format as markdown, copy to clipboard",
+  "trigger": { "type": "manual" },
+  "steps": [
+    {
+      "id": "log",
+      "name": "Get recent commits",
+      "action": "git.log",
+      "params": {
+        "limit": 50
+      }
+    },
+    {
+      "id": "format",
+      "name": "Format as markdown",
+      "action": "text.template",
+      "params": {
+        "template": "# Weekly Git Summary\n\nCommits: {{ steps.log.output.count }}\n\n{{ steps.log.output.commits }}"
+      }
+    },
+    {
+      "id": "copy",
+      "name": "Copy to clipboard",
+      "action": "notify.clipboard",
+      "params": {
+        "content": "{{ steps.format.output }}"
+      }
+    },
+    {
+      "id": "done",
+      "name": "Show notification",
+      "action": "notify.desktop",
+      "params": {
+        "title": "Git Summary",
+        "message": "{{ steps.log.output.count }} commits copied to clipboard"
+      }
+    }
+  ]
+}
