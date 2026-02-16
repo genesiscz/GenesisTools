@@ -1,7 +1,10 @@
 /**
  * Shared utilities for working with Claude Code data (projects, transcripts).
- * Provides path resolution and JSONL transcript parsing.
+ * Provides path resolution, JSONL transcript parsing, and shared types.
  */
+
+// Re-export shared types
+export * from "./types";
 
 import { createReadStream, existsSync } from "fs";
 import { homedir } from "os";
