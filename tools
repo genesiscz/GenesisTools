@@ -86,11 +86,16 @@ async function executeTool(scriptId, scriptArgs) {
 
         if (!targetScript) {
             const chalk = (await import("chalk")).default;
-            // Fuzzy match: find tools that start with or contain the input
+            // Fuzzy match: find tools that contain the input or share segments
             const availableTools = await getAvailableTools(srcDir);
-            const matches = availableTools.filter(t =>
-                t.toLowerCase().includes(scriptId.toLowerCase())
-            );
+            const searchTerm = scriptId.toLowerCase().replace(/[-_]+$/, ""); // strip trailing dashes
+            const matches = availableTools.filter(t => {
+                const lower = t.toLowerCase();
+                if (lower.includes(scriptId.toLowerCase())) return true;
+                if (searchTerm && lower.includes(searchTerm)) return true;
+                // Segment match: any dash-separated part starts with search term
+                return lower.split("-").some(seg => seg.startsWith(searchTerm));
+            });
 
             if (matches.length === 0) {
                 console.error(
