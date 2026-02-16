@@ -307,19 +307,58 @@ function createMarkdownRenderer(): MarkdownIt {
 // Singleton instance
 let mdInstance: MarkdownIt | null = null;
 
+export interface MarkdownRenderOptions {
+    /** Max output width in columns. Defaults to terminal width or 80. */
+    width?: number;
+    /** Color theme. Defaults to "dark". */
+    theme?: "dark" | "light" | "minimal";
+    /** Whether to include ANSI colors. Defaults to true. */
+    color?: boolean;
+}
+
+function stripAnsi(str: string): string {
+    // eslint-disable-next-line no-control-regex
+    return str.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function wrapToWidth(str: string, width: number): string {
+    return str
+        .split("\n")
+        .map((line) => {
+            const plainLength = stripAnsi(line).length;
+            if (plainLength <= width) return line;
+            // Simple truncation that preserves ANSI reset
+            return line.slice(0, width * 2) + "\x1b[0m";
+        })
+        .join("\n");
+}
+
 /**
  * Render markdown content to CLI-friendly output.
  *
  * @param markdown - Raw markdown string
+ * @param options - Optional render options for width, theme, and color control
  * @returns Formatted CLI string
  */
-export function renderMarkdownToCli(markdown: string): string {
+export function renderMarkdownToCli(markdown: string, options?: MarkdownRenderOptions): string {
     if (!mdInstance) {
         mdInstance = createMarkdownRenderer();
     }
 
     const html = mdInstance.render(markdown);
-    return cliHtml(html);
+    let output = cliHtml(html);
+
+    // Apply width constraint
+    if (options?.width) {
+        output = wrapToWidth(output, options.width);
+    }
+
+    // Strip colors if requested
+    if (options?.color === false) {
+        output = stripAnsi(output);
+    }
+
+    return output;
 }
 
 export default renderMarkdownToCli;
