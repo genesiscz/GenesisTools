@@ -82,7 +82,7 @@ async function selectToolAndCopyCommand(tools) {
     }
 }
 
-function executeTool(scriptId, scriptArgs) {
+async function executeTool(scriptId, scriptArgs) {
     const workspaceRoot = resolve(__dirname); // Assumes the script is run from the root
     const srcDir = join(workspaceRoot, SRC_DIR_NAME);
 
@@ -117,16 +117,44 @@ function executeTool(scriptId, scriptArgs) {
         }
 
         if (!targetScript) {
-            logger.error(`✖ Error: Could not find a script matching '${scriptId}'.`);
-            logger.error("Looked for:");
-            INDEX_FILE_NAMES.forEach((indexFile) => {
-                logger.error(`  - ${join(srcDir, scriptId, indexFile)}`);
-            });
-            SCRIPT_EXTENSIONS.forEach((ext) => {
-                logger.error(`  - ${join(srcDir, `${scriptId}${ext}`)}`);
-            });
-            logger.error(`  - ${pathAsIs} (if it ends with ${SCRIPT_EXTENSIONS.join(" or ")})`);
-            process.exit(1);
+            const chalk = (await import("chalk")).default;
+            // Fuzzy match: find tools that start with or contain the input
+            const availableTools = await getAvailableTools(srcDir);
+            const matches = availableTools.filter(t =>
+                t.toLowerCase().includes(scriptId.toLowerCase())
+            );
+
+            if (matches.length === 0) {
+                console.error(
+                    `\n  ${chalk.red("Tool not found:")} ${chalk.bold(scriptId)}\n` +
+                    `  Looked in: ${chalk.dim(srcDir)}\n`
+                );
+                process.exit(1);
+            }
+
+            // Launch interactive selector pre-filtered with matches
+            console.log(`\n  ${chalk.yellow("No exact match for")} ${chalk.bold(scriptId)}${chalk.yellow(". Did you mean?")}\n`);
+
+            try {
+                const tool = await search({
+                    message: "Select a tool:",
+                    source: async (term) => {
+                        const filtered = matches.filter(t =>
+                            t.toLowerCase().includes((term || "").toLowerCase())
+                        );
+                        return filtered.map(t => ({ value: t, name: t }));
+                    },
+                });
+
+                // Re-execute with the selected tool
+                executeTool(tool, scriptArgs);
+            } catch (error) {
+                if (error instanceof ExitPromptError) {
+                    process.exit(0);
+                }
+                throw error;
+            }
+            return;
         }
     }
 
@@ -155,7 +183,7 @@ async function main() {
         // Arguments provided: Execute the tool
         const scriptId = args[0];
         const scriptArgs = args.slice(1);
-        executeTool(scriptId, scriptArgs);
+        await executeTool(scriptId, scriptArgs);
     }
 }
 
