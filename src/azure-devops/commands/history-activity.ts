@@ -20,6 +20,7 @@ import { buildWorkItemHistory, resolveUser, userMatches } from "@app/azure-devop
 import { escapeWiqlValue } from "@app/azure-devops/wiql-builder";
 import type { Comment, IdentityRef, WorkItemUpdate } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
+import { suggestCommand } from "@app/utils/cli";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 
@@ -29,10 +30,9 @@ export interface ActivityOptions {
     user?: string;
     from?: string;
     to?: string;
-    output: "timeline" | "json" | "summary";
+    format: "timeline" | "json" | "summary";
     includeComments?: boolean;
     discover?: boolean;
-    sync?: boolean;
 }
 
 /** A single activity event — one thing the user did */
@@ -122,13 +122,14 @@ async function scanCachedActivity(
     fromDate?: Date,
     toDate?: Date,
     includeComments = true,
-): Promise<{ events: ActivityEvent[]; scannedCount: number; matchedItems: Set<number> }> {
+): Promise<{ events: ActivityEvent[]; scannedCount: number; totalCached: number; withoutHistory: number; matchedItems: Set<number> }> {
     const cacheFiles = await storage.listCacheFiles(false);
     const workitemFiles = cacheFiles.filter((f) => f.startsWith("workitem-") && f.endsWith(".json"));
 
     const events: ActivityEvent[] = [];
     const matchedItems = new Set<number>();
     let scannedCount = 0;
+    let withoutHistory = 0;
 
     for (const file of workitemFiles) {
         const idMatch = file.match(/^workitem-(\d+)\.json$/);
@@ -140,6 +141,10 @@ async function scanCachedActivity(
 
         const title = cached.title || `#${id}`;
         const updates = cached.history?.updates ?? [];
+
+        if (!cached.history) {
+            withoutHistory++;
+        }
 
         if (updates.length === 0 && (!includeComments || !cached.comments?.length)) continue;
         scannedCount++;
@@ -177,7 +182,7 @@ async function scanCachedActivity(
         }
     }
 
-    return { events, scannedCount, matchedItems };
+    return { events, scannedCount, totalCached: workitemFiles.length, withoutHistory, matchedItems };
 }
 
 // ============= Discovery =============
@@ -332,7 +337,7 @@ function printTimeline(days: ActivityDay[]): void {
             const time = formatTime(event.date);
             const icon = TYPE_COLORS[event.type](TYPE_ICONS[event.type]);
             const id = pc.dim(`#${event.workItemId}`);
-            const shortTitle = event.title.length > 35 ? event.title.slice(0, 32) + "..." : event.title;
+            const shortTitle = event.title;
             console.log(`  ${pc.dim(time)}  ${icon} ${id} ${event.description}`);
             if (event.type !== "field_edit") {
                 console.log(`  ${" ".repeat(8)}${pc.dim(shortTitle)}`);
@@ -379,7 +384,7 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
     const config = requireConfig();
     const api = new Api(config);
     const userName = options.user ?? "@me";
-    const output = options.output ?? "timeline";
+    const output = options.format ?? "timeline";
     const includeComments = options.includeComments !== false;
 
     // Migrate old history-*.json if any exist
@@ -423,8 +428,12 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
     ].join(" → ");
     p.log.info(`Date range: ${pc.bold(dateRangeStr)}`);
 
-    // Step 1: Discover uncached items (optional)
-    if (options.discover || options.sync) {
+    // Step 1: Discover uncached items (optional, requires --from)
+    if (options.discover) {
+        if (!fromDate) {
+            p.log.error("--discover requires --from to limit the WIQL query scope. Add e.g. --from 2026-01-01");
+            process.exit(1);
+        }
         const spinner = p.spinner();
         spinner.start("Discovering work items changed by user...");
         const newIds = await discoverAndSync(api, userName, fromDate, toDate);
@@ -436,7 +445,7 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
     // Step 2: Scan cached data (updates + cached comments)
     const spinner = p.spinner();
     spinner.start("Scanning cached work items...");
-    const { events, scannedCount, matchedItems } = await scanCachedActivity(
+    const { events, scannedCount, totalCached, withoutHistory, matchedItems } = await scanCachedActivity(
         resolvedUserName, fromDate, toDate, includeComments,
     );
     spinner.stop(`Scanned ${scannedCount} items, found ${events.length} actions across ${matchedItems.size} items`);
@@ -471,5 +480,20 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
         case "timeline": printTimeline(days); break;
         case "summary": printSummary(days); break;
         case "json": printJson(days); break;
+    }
+
+    // Suggest --discover if not used
+    if (!options.discover) {
+        const stats = [`${totalCached} cached items`];
+        if (withoutHistory > 0) stats.push(`${withoutHistory} without history`);
+        stats.push(`${scannedCount} with activity data`);
+
+        const cmd = suggestCommand("tools azure-devops", {
+            add: ["--discover", ...(fromDate ? [] : ["--from", "2026-01-01"])],
+        });
+        p.log.message(
+            pc.dim(`Only locally cached items were scanned (${stats.join(", ")}). To query Azure DevOps for all items you changed:`)
+            + "\n" + pc.cyan(`  ${cmd}`),
+        );
     }
 }

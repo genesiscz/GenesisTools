@@ -386,10 +386,9 @@ export function registerHistoryCommand(program: Command): void {
         .option("--since <date>", "Alias for --from")
         .option("--to <date>", "To date (ISO format)")
         .option("--until <date>", "Alias for --to")
-        .option("-o, --output <format>", "Output format (timeline, summary, json)", "timeline")
+        .option("-o, --format <format>", "Output format (timeline, summary, json)", "timeline")
         .option("--no-comments", "Skip fetching comments (faster)")
-        .option("--discover", "Discover & sync items changed by user but not yet cached")
-        .option("--sync", "Alias for --discover")
+        .option("--discover", "Query Azure DevOps for all items you changed (not just locally cached)")
         .action(async (opts: ActivityOptions & { since?: string; until?: string; comments?: boolean }) => {
             if (opts.since && !opts.from) opts.from = opts.since;
             if (opts.until && !opts.to) opts.to = opts.until;
