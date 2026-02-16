@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 
-import clipboardy from "clipboardy";
 import { search } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
 import { spawnSync } from "node:child_process";
@@ -12,7 +11,6 @@ import logger from "@app/logger";
 const SRC_DIR_NAME = "src";
 const INDEX_FILE_NAMES = ["index.ts", "index.tsx"];
 const SCRIPT_EXTENSIONS = [".ts", ".tsx"];
-const EXECUTABLE_NAME = "tools"; // How this script is invoked
 
 // --- Helper Functions ---
 async function getAvailableTools(srcDir) {
@@ -50,36 +48,6 @@ async function getAvailableTools(srcDir) {
         logger.error(`✖ Error reading source directory ${srcDir}:`, readError);
     }
     return tools.sort(); // Return sorted list
-}
-
-async function selectToolAndCopyCommand(tools) {
-    if (tools.length === 0) {
-        logger.info("ℹ️ No tools found in the src directory.");
-        process.exit(0);
-    }
-
-    try {
-        const tool = await search({
-            message: "Select a tool to copy its command:",
-            source: async (term) => {
-                const filtered = tools.filter((t) =>
-                    t.toLowerCase().includes((term || "").toLowerCase())
-                );
-                return filtered.map((t) => ({ value: t, name: t }));
-            },
-        });
-
-        const commandToCopy = `${EXECUTABLE_NAME} ${tool}`;
-        await clipboardy.write(commandToCopy);
-        logger.info(`✔ Command "${commandToCopy}" copied to clipboard!`);
-    } catch (error) {
-        if (error instanceof ExitPromptError) {
-            logger.info("\n✖ Tool selection cancelled.");
-            process.exit(0);
-        }
-        logger.error("\n✖ An error occurred during tool selection:", error);
-        process.exit(1);
-    }
 }
 
 async function executeTool(scriptId, scriptArgs) {
@@ -175,10 +143,12 @@ async function main() {
     const srcDir = join(workspaceRoot, SRC_DIR_NAME);
 
     if (args.length === 0) {
-        // No arguments: Show interactive tool list
-        logger.info("ℹ️ No tool specified. Listing available tools...");
-        const availableTools = await getAvailableTools(srcDir);
-        await selectToolAndCopyCommand(availableTools);
+        // Launch interactive tool browser
+        const result = spawnSync("bun", ["run", join(srcDir, "tools", "index.ts")], {
+            stdio: "inherit",
+            cwd: process.cwd(),
+        });
+        process.exit(result.status ?? 0);
     } else {
         // Arguments provided: Execute the tool
         const scriptId = args[0];
