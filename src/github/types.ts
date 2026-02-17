@@ -230,6 +230,7 @@ export interface SearchCommandOptions {
     legacy?: boolean;
     minReactions?: number;
     minCommentReactions?: number;
+    stars?: number;
 }
 
 // Output data structures
@@ -398,4 +399,122 @@ export interface SearchResult {
     repo: string;
     url: string;
     source?: "advanced" | "legacy" | "both";
+}
+
+// ============================================
+// Notification Types
+// ============================================
+
+export type NotificationReason =
+    | "approval_requested"
+    | "assign"
+    | "author"
+    | "ci_activity"
+    | "comment"
+    | "invitation"
+    | "manual"
+    | "member_feature_requested"
+    | "mention"
+    | "review_requested"
+    | "security_alert"
+    | "security_advisory_credit"
+    | "state_change"
+    | "subscribed"
+    | "team_mention";
+
+export type NotificationSubjectType =
+    | "Issue"
+    | "PullRequest"
+    | "Release"
+    | "Discussion"
+    | "CheckSuite"
+    | "Commit";
+
+export interface GitHubNotification {
+    id: string;
+    unread: boolean;
+    reason: NotificationReason;
+    updated_at: string;
+    last_read_at: string | null;
+    subject: {
+        title: string;
+        url: string | null;
+        latest_comment_url: string | null;
+        type: NotificationSubjectType;
+    };
+    repository: {
+        id: number;
+        full_name: string;
+        html_url: string;
+        owner: { login: string };
+        name: string;
+    };
+    url: string;
+    subscription_url: string;
+}
+
+export interface NotificationItem {
+    id: string;
+    title: string;
+    repo: string;
+    reason: NotificationReason;
+    type: NotificationSubjectType;
+    unread: boolean;
+    updatedAt: string;
+    webUrl: string;
+    number: number | null;
+}
+
+export interface NotificationsCommandOptions {
+    reason?: string;
+    repo?: string;
+    titleMatch?: string;
+    since?: string;
+    author?: string;
+    state?: "read" | "unread" | "all";
+    participating?: boolean;
+    type?: string;
+    open?: boolean;
+    markRead?: boolean;
+    markDone?: boolean;
+    limit?: number;
+    format?: "ai" | "md" | "json";
+    output?: string;
+    verbose?: boolean;
+}
+
+// ============================================
+// Activity Types
+// ============================================
+
+export interface GitHubEvent {
+    id: string;
+    type: string;
+    actor: { login: string; display_login: string };
+    repo: { name: string };
+    payload: Record<string, unknown>;
+    created_at: string;
+    public: boolean;
+}
+
+export interface ActivityItem {
+    id: string;
+    type: string;
+    actor: string;
+    repo: string;
+    summary: string;
+    createdAt: string;
+    url: string | null;
+}
+
+export interface ActivityCommandOptions {
+    user?: string;
+    received?: boolean;
+    repo?: string;
+    type?: string;
+    since?: string;
+    limit?: number;
+    format?: "ai" | "md" | "json";
+    output?: string;
+    verbose?: boolean;
 }

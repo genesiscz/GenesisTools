@@ -1,7 +1,7 @@
 // Output formatters for GitHub data
 
 import { formatReviewMarkdown, formatReviewTerminal } from "@app/github/lib/review-output";
-import type { CommentData, CommentStats, GitHubReactions, IssueData, PRData, ReviewData, SearchResult } from "@app/github/types";
+import type { ActivityItem, CommentData, CommentStats, GitHubReactions, IssueData, NotificationItem, PRData, ReviewData, SearchResult } from "@app/github/types";
 import { sumReactions } from "@app/utils/github/utils";
 
 type OutputFormat = "ai" | "md" | "json";
@@ -511,6 +511,73 @@ function formatSearchMarkdown(results: SearchResult[]): string {
 
     lines.push("");
     lines.push(`_Found ${results.length} results_`);
+
+    return lines.join("\n");
+}
+
+// Notification and Activity formatters
+
+export function formatNotifications(
+    items: NotificationItem[],
+    format: "ai" | "md" | "json",
+): string {
+    if (format === "json") return JSON.stringify(items, null, 2);
+
+    const lines: string[] = [];
+    lines.push(`# Notifications (${items.length})\n`);
+
+    if (items.length === 0) {
+        lines.push("No notifications found.");
+        return lines.join("\n");
+    }
+
+    const unreadCount = items.filter(i => i.unread).length;
+    const byReason = new Map<string, number>();
+    for (const item of items) {
+        byReason.set(item.reason, (byReason.get(item.reason) ?? 0) + 1);
+    }
+    lines.push(`**Unread:** ${unreadCount} / ${items.length}`);
+    lines.push(`**Reasons:** ${[...byReason.entries()].map(([r, c]) => `${r} (${c})`).join(", ")}\n`);
+
+    lines.push("| # | State | Type | Title | Repo | Reason | Updated |");
+    lines.push("|---|-------|------|-------|------|--------|---------|");
+
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const state = item.unread ? "●" : "○";
+        const shortType = item.type === "PullRequest" ? "PR" : item.type;
+        const num = item.number ? `#${item.number}` : "";
+        const title = `[${item.title}](${item.webUrl}) ${num}`;
+        const date = new Date(item.updatedAt).toLocaleDateString();
+        lines.push(`| ${i + 1} | ${state} | ${shortType} | ${title} | ${item.repo} | ${item.reason} | ${date} |`);
+    }
+
+    return lines.join("\n");
+}
+
+export function formatActivity(
+    items: ActivityItem[],
+    format: "ai" | "md" | "json",
+): string {
+    if (format === "json") return JSON.stringify(items, null, 2);
+
+    const lines: string[] = [];
+    lines.push(`# Activity Feed (${items.length})\n`);
+
+    if (items.length === 0) {
+        lines.push("No activity found.");
+        return lines.join("\n");
+    }
+
+    lines.push("| # | Time | Actor | Type | Summary | Repo |");
+    lines.push("|---|------|-------|------|---------|------|");
+
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const time = new Date(item.createdAt).toLocaleString();
+        const summary = item.url ? `[${item.summary}](${item.url})` : item.summary;
+        lines.push(`| ${i + 1} | ${time} | @${item.actor} | ${item.type} | ${summary} | ${item.repo} |`);
+    }
 
     return lines.join("\n");
 }
