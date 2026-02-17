@@ -1,6 +1,7 @@
 import logger from "@app/logger";
 import type { TimelyApiClient } from "@app/timely/api/client";
 import type { OAuthApplication } from "@app/timely/types";
+import { Browser } from "@app/utils/browser";
 import type { Storage } from "@app/utils/storage";
 import { ExitPromptError } from "@inquirer/core";
 import { confirm, input, password } from "@inquirer/prompts";
@@ -77,15 +78,7 @@ async function loginAction(storage: Storage, client: TimelyApiClient): Promise<v
     logger.info(chalk.white(authUrl.toString()) + "\n");
 
     // Try to open browser automatically
-    try {
-        const proc = Bun.spawn({
-            cmd: ["open", authUrl.toString()],
-            stdio: ["ignore", "ignore", "ignore"],
-        });
-        await proc.exited;
-    } catch {
-        // Ignore if open command fails
-    }
+    await Browser.open(authUrl.toString());
 
     // Prompt for authorization code
     const code = await input({
