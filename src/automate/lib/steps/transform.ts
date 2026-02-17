@@ -115,22 +115,18 @@ async function arrayHandler(step: PresetStep, ctx: StepContext): Promise<StepRes
     switch (subAction) {
       case "filter": {
         const expression = params.expression!;
+        const fn = new Function("item", "index", "vars", "steps", "env", `return (${expression});`);
         const result = input.filter((item, index) =>
-          Boolean(
-            ctx.evaluate(
-              expression.replace(/\bitem\b/g, JSON.stringify(item)).replace(/\bindex\b/g, String(index)),
-            ),
-          ),
+          Boolean(fn(item, index, ctx.variables, ctx.steps, ctx.env)),
         );
         return makeResult("success", result, start);
       }
 
       case "map": {
         const expression = params.expression!;
+        const fn = new Function("item", "index", "vars", "steps", "env", `return (${expression});`);
         const result = input.map((item, index) =>
-          ctx.evaluate(
-            expression.replace(/\bitem\b/g, JSON.stringify(item)).replace(/\bindex\b/g, String(index)),
-          ),
+          fn(item, index, ctx.variables, ctx.steps, ctx.env),
         );
         return makeResult("success", result, start);
       }

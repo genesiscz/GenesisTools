@@ -83,6 +83,7 @@ export async function runPreset(preset: Preset, options: RunOptions = {}): Promi
       if (typeof result.output === "string" && result.output) {
         p.log.info(pc.dim(`  ${result.output}`));
       }
+      ctx.steps[step.id] = result;
       results.push({ id: step.id, name: step.name, result });
       i++;
       continue;

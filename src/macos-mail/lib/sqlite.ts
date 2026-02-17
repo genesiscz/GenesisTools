@@ -127,10 +127,11 @@ export function searchMessages(opts: SearchOptions): MailMessageRow[] {
         )
         ${whereClause}
         ORDER BY m.date_sent DESC
-        LIMIT ${limit}
+        LIMIT $limit
     `;
 
     logger.debug(`Running search query with pattern: ${queryPattern}`);
+    params.$limit = limit;
     const stmt = db.prepare(sql);
     return stmt.all(params) as MailMessageRow[];
 }

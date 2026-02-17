@@ -8,6 +8,14 @@ import type { StoredCredential } from "./types";
 
 const CREDENTIALS_DIR = join(homedir(), ".genesis-tools", "automate", "credentials");
 
+/** Validate credential name to prevent path traversal */
+function safeName(name: string): string {
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+    throw new Error(`Invalid credential name "${name}": must be alphanumeric with hyphens/underscores only`);
+  }
+  return name;
+}
+
 /** Ensure credentials directory exists with restrictive permissions */
 function ensureDir(): void {
   if (!existsSync(CREDENTIALS_DIR)) {
@@ -21,7 +29,7 @@ function ensureDir(): void {
  */
 export async function saveCredential(credential: StoredCredential): Promise<void> {
   ensureDir();
-  const filePath = join(CREDENTIALS_DIR, `${credential.name}.json`);
+  const filePath = join(CREDENTIALS_DIR, `${safeName(credential.name)}.json`);
   await Bun.write(filePath, JSON.stringify(credential, null, 2));
   chmodSync(filePath, 0o600);
   logger.debug(`Credential saved: ${credential.name}`);
@@ -32,7 +40,7 @@ export async function saveCredential(credential: StoredCredential): Promise<void
  * Returns null if not found.
  */
 export async function loadCredential(name: string): Promise<StoredCredential | null> {
-  const filePath = join(CREDENTIALS_DIR, `${name}.json`);
+  const filePath = join(CREDENTIALS_DIR, `${safeName(name)}.json`);
   if (!existsSync(filePath)) return null;
 
   try {
@@ -54,7 +62,7 @@ export function listCredentials(): string[] {
 
 /** Delete a credential by name */
 export function deleteCredential(name: string): boolean {
-  const filePath = join(CREDENTIALS_DIR, `${name}.json`);
+  const filePath = join(CREDENTIALS_DIR, `${safeName(name)}.json`);
   if (!existsSync(filePath)) return false;
   unlinkSync(filePath);
   logger.debug(`Credential deleted: ${name}`);
