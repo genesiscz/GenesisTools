@@ -7,9 +7,9 @@
 
 import { formatDuration as _formatDuration } from "@app/utils/format";
 import { Api } from "@app/azure-devops/api";
-import { formatJSON, loadHistoryCache, saveHistoryCache } from "@app/azure-devops/cache";
+import { formatJSON, isHistoryFresh, loadWorkItemCache, updateWorkItemCacheSection } from "@app/azure-devops/cache";
 import { buildWorkItemHistory, calculateTimeInState, userMatches } from "@app/azure-devops/history";
-import type { AssignmentPeriod, StatePeriod, WorkItemHistory } from "@app/azure-devops/types";
+import type { AssignmentPeriod, StatePeriod, WorkItemHistorySection } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
 import logger from "@app/logger";
 import * as p from "@clack/prompts";
@@ -69,7 +69,7 @@ function pad(str: string, width: number): string {
 /**
  * Filter assignment and state periods by assignee, state, and date range.
  */
-function filterHistory(history: WorkItemHistory, options: ShowOptions): FilteredHistory {
+function filterHistory(history: WorkItemHistorySection, options: ShowOptions): FilteredHistory {
     let { assignmentPeriods, statePeriods } = history;
 
     // Filter by assigned-to
@@ -113,7 +113,7 @@ function filterHistory(history: WorkItemHistory, options: ShowOptions): Filtered
 /**
  * Print a summary view: assignment periods table, state periods table, and time-in-state.
  */
-function printSummary(workItemId: number, filtered: FilteredHistory, history: WorkItemHistory): void {
+function printSummary(workItemId: number, filtered: FilteredHistory, history: WorkItemHistorySection): void {
     p.intro(pc.bgCyan(pc.black(` Work Item #${workItemId} History `)));
 
     // Assignment periods table
@@ -245,10 +245,9 @@ function printTimeline(workItemId: number, filtered: FilteredHistory): void {
 /**
  * Print JSON output of the filtered history data.
  */
-function printJson(workItemId: number, filtered: FilteredHistory, history: WorkItemHistory): void {
+function printJson(workItemId: number, filtered: FilteredHistory, history: WorkItemHistorySection): void {
     const output = {
         workItemId,
-        fetchedAt: history.fetchedAt,
         assignmentPeriods: filtered.assignmentPeriods,
         statePeriods: filtered.statePeriods,
         timeInState: Object.fromEntries(
@@ -277,11 +276,12 @@ async function handleHistoryShow(idStr: string, options: ShowOptions): Promise<v
     const format = options.format ?? "summary";
 
     // Check cache unless --force
-    let history: WorkItemHistory | null = null;
+    let history: WorkItemHistorySection | null = null;
     if (!options.force) {
-        history = await loadHistoryCache(id);
-        if (history) {
-            logger.debug(`[history] Loaded from cache for work item #${id}`);
+        const cached = await loadWorkItemCache(id);
+        if (cached && isHistoryFresh(cached) && cached.history) {
+            history = cached.history;
+            logger.debug(`[history] Loaded from workitem cache for #${id}`);
         }
     }
 
@@ -293,8 +293,13 @@ async function handleHistoryShow(idStr: string, options: ShowOptions): Promise<v
 
         try {
             const updates = await api.getWorkItemUpdates(id);
-            history = buildWorkItemHistory(id, updates);
-            await saveHistoryCache(id, history);
+            const built = buildWorkItemHistory(id, updates);
+            history = {
+                updates: built.updates,
+                assignmentPeriods: built.assignmentPeriods,
+                statePeriods: built.statePeriods,
+            };
+            await updateWorkItemCacheSection(id, { history });
             spinner.stop(`Fetched ${updates.length} updates for work item #${id}`);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

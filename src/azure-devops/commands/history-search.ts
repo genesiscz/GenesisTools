@@ -6,11 +6,10 @@
  *   2. Local (default): Scan cached history files, filter by assignee/state/date/time
  */
 
-import { readdirSync } from "node:fs";
 import { Api } from "@app/azure-devops/api";
-import { formatJSON, loadHistoryCache, storage } from "@app/azure-devops/cache";
+import { formatJSON, loadWorkItemCache, storage } from "@app/azure-devops/cache";
 import { resolveUser, userMatches } from "@app/azure-devops/history";
-import type { AzureConfig, WorkItem, WorkItemHistory } from "@app/azure-devops/types";
+import type { AzureConfig, WorkItem, WorkItemCache } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
 import { buildCombinedQuery, buildEverAssignedQuery } from "@app/azure-devops/wiql-builder";
 import logger from "@app/logger";
@@ -214,25 +213,25 @@ function printWorkItemsTable(items: WorkItem[]): void {
 // ============= Mode 2: Local Search =============
 
 async function localSearch(options: SearchOptions): Promise<void> {
-    const cacheDir = storage.getCacheDir();
     const minTimeMinutes = options.minTime ? parseMinTime(options.minTime) : 0;
 
-    // Scan cache directory for history-<id>.json files
-    let historyFiles: string[];
+    // Scan cache directory for workitem-<id>.json files
+    let workitemFiles: string[];
     try {
-        historyFiles = readdirSync(cacheDir).filter((f) => f.startsWith("history-") && f.endsWith(".json"));
+        const cacheFiles = await storage.listCacheFiles(false);
+        workitemFiles = cacheFiles.filter((f) => f.startsWith("workitem-") && f.endsWith(".json"));
     } catch {
-        p.log.warn("No history cache found. Run history download first.");
+        p.log.warn("No cache found. Run a query first.");
         return;
     }
 
-    if (historyFiles.length === 0) {
-        p.log.warn("No cached history files found. Download history first.");
+    if (workitemFiles.length === 0) {
+        p.log.warn("No cached work items found.");
         return;
     }
 
     const spinner = p.spinner();
-    spinner.start(`Scanning ${historyFiles.length} history files...`);
+    spinner.start(`Scanning ${workitemFiles.length} work item files...`);
 
     const results: LocalSearchResult[] = [];
     let oldestActivity = Infinity;
@@ -240,16 +239,17 @@ async function localSearch(options: SearchOptions): Promise<void> {
     let lastSyncTime = 0;
     let scannedCount = 0;
 
-    for (const file of historyFiles) {
-        const idMatch = file.match(/^history-(\d+)\.json$/);
+    for (const file of workitemFiles) {
+        const idMatch = file.match(/^workitem-(\d+)\.json$/);
         if (!idMatch) continue;
 
         const id = parseInt(idMatch[1], 10);
-        const history = await loadHistoryCache(id);
-        if (!history) continue;
+        const cached = await loadWorkItemCache(id);
+        if (!cached?.history) continue;
 
+        const history = cached.history;
         scannedCount++;
-        const fetchTime = new Date(history.fetchedAt).getTime();
+        const fetchTime = cached.cache?.historyFetchedAt ? new Date(cached.cache.historyFetchedAt).getTime() : 0;
         if (fetchTime > lastSyncTime) lastSyncTime = fetchTime;
 
         // Track data date range from earliest state/assignment period
@@ -273,7 +273,7 @@ async function localSearch(options: SearchOptions): Promise<void> {
 
         if (options.state) {
             const states = options.state.split(",").map((s) => s.trim().toLowerCase());
-            matchedPeriods = matchedPeriods.filter((p) => states.includes(p.state.toLowerCase()));
+            matchedPeriods = matchedPeriods.filter((sp) => states.includes(sp.state.toLowerCase()));
         }
 
         if (options.assignedTo) {
@@ -304,14 +304,14 @@ async function localSearch(options: SearchOptions): Promise<void> {
         // Filter by minimum time
         if (totalMinutes < minTimeMinutes) continue;
 
-        // Derive title/state from last update or fallback
-        const currentState = deriveCurrentState(history);
-        const currentAssignee = deriveCurrentAssignee(history);
+        // Derive title/state from cache or history
+        const currentState = deriveCurrentState(cached);
+        const currentAssignee = deriveCurrentAssignee(cached);
         const matchedStates = [...new Set(matchedPeriods.map((mp) => mp.state))];
 
         results.push({
-            workItemId: history.workItemId,
-            title: deriveTitle(history),
+            workItemId: cached.id,
+            title: deriveTitle(cached),
             currentState,
             assignee: currentAssignee,
             totalMinutes,
@@ -349,27 +349,31 @@ async function localSearch(options: SearchOptions): Promise<void> {
     }
 }
 
-/** Derive the current state from the last state period */
-function deriveCurrentState(history: WorkItemHistory): string {
-    if (history.statePeriods.length === 0) return "Unknown";
-    return history.statePeriods[history.statePeriods.length - 1].state;
+/** Derive the current state from cache or last state period */
+function deriveCurrentState(cache: WorkItemCache): string {
+    if (cache.state) return cache.state;
+    const periods = cache.history?.statePeriods ?? [];
+    if (periods.length === 0) return "Unknown";
+    return periods[periods.length - 1].state;
 }
 
 /** Derive the current assignee from the last assignment period */
-function deriveCurrentAssignee(history: WorkItemHistory): string {
-    if (history.assignmentPeriods.length === 0) return "-";
-    return history.assignmentPeriods[history.assignmentPeriods.length - 1].assignee;
+function deriveCurrentAssignee(cache: WorkItemCache): string {
+    const periods = cache.history?.assignmentPeriods ?? [];
+    if (periods.length === 0) return "-";
+    return periods[periods.length - 1].assignee;
 }
 
-/** Derive title from the first update that set System.Title */
-function deriveTitle(history: WorkItemHistory): string {
-    for (const update of history.updates) {
+/** Derive title from cache or first update that set System.Title */
+function deriveTitle(cache: WorkItemCache): string {
+    if (cache.title) return cache.title;
+    for (const update of cache.history?.updates ?? []) {
         const titleChange = update.fields?.["System.Title"];
         if (titleChange?.newValue) {
             return titleChange.newValue as string;
         }
     }
-    return `Work Item #${history.workItemId}`;
+    return `#${cache.id}`;
 }
 
 /** Print local search results as a table */

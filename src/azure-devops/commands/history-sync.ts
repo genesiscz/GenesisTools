@@ -6,7 +6,7 @@
  */
 
 import { Api } from "@app/azure-devops/api";
-import { loadHistoryCache, saveHistoryCache, storage } from "@app/azure-devops/cache";
+import { isHistoryFresh, loadWorkItemCache, migrateHistoryCache, storage, updateWorkItemCacheSection } from "@app/azure-devops/cache";
 import { buildHistoryFromRevisions, buildWorkItemHistory } from "@app/azure-devops/history";
 import { requireConfig } from "@app/azure-devops/utils";
 
@@ -68,8 +68,8 @@ async function getItemsNeedingSync(allItems: CachedWorkItem[], force: boolean): 
 
     const needSync: CachedWorkItem[] = [];
     for (const item of allItems) {
-        const cached = await loadHistoryCache(item.id);
-        if (!cached) {
+        const cached = await loadWorkItemCache(item.id);
+        if (!cached || !isHistoryFresh(cached)) {
             needSync.push(item);
         }
     }
@@ -86,6 +86,10 @@ async function getItemsNeedingSync(allItems: CachedWorkItem[], force: boolean): 
 export async function handleHistorySync(options: SyncOptions): Promise<void> {
     const config = requireConfig();
     const api = new Api(config);
+
+    // Migrate old history-*.json if any exist
+    const migrated = await migrateHistoryCache();
+    if (migrated > 0) p.log.info(`Migrated ${migrated} history files into workitem cache`);
 
     // Step 1: Find cached work item files
     const allItems = getCachedWorkItems();
@@ -138,8 +142,14 @@ export async function handleHistorySync(options: SyncOptions): Promise<void> {
             logger.debug(`[history-sync] Fetching updates for #${id}`);
             spinner.message(`${synced + 1}/${idsToSync.length} #${id} ${shortTitle(id)}`);
             const updates = await api.getWorkItemUpdates(id);
-            const history = buildWorkItemHistory(id, updates);
-            await saveHistoryCache(id, history);
+            const built = buildWorkItemHistory(id, updates);
+            await updateWorkItemCacheSection(id, {
+                history: {
+                    updates: built.updates,
+                    assignmentPeriods: built.assignmentPeriods,
+                    statePeriods: built.statePeriods,
+                },
+            });
             synced++;
         }
 
@@ -176,8 +186,14 @@ export async function handleHistorySync(options: SyncOptions): Promise<void> {
                 logger.debug(`[history-sync] No revisions found for #${id}, skipping`);
                 continue;
             }
-            const history = buildHistoryFromRevisions(id, revisions);
-            await saveHistoryCache(id, history);
+            const built = buildHistoryFromRevisions(id, revisions);
+            await updateWorkItemCacheSection(id, {
+                history: {
+                    updates: [],  // reporting revisions don't give us deltas
+                    assignmentPeriods: built.assignmentPeriods,
+                    statePeriods: built.statePeriods,
+                },
+            });
             saved++;
             saveSpinner.message(`Saved ${saved}/${idsToSync.length} #${id} ${shortTitle(id)}`);
         }
