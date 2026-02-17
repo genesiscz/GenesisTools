@@ -69,7 +69,7 @@ function handleLog(
   start: number,
 ): { result: StepResult } {
   const params = step.params
-    ? resolveParams(step.params as Record<string, string | number | boolean | string[]>, ctx)
+    ? resolveParams(step.params as Record<string, unknown>, ctx)
     : {};
   const message = String(params.message ?? "");
 
@@ -91,7 +91,7 @@ async function handlePrompt(
   start: number,
 ): Promise<{ result: StepResult }> {
   const params = step.params
-    ? resolveParams(step.params as Record<string, string | number | boolean | string[]>, ctx)
+    ? resolveParams(step.params as Record<string, unknown>, ctx)
     : {};
   const message = String(params.message ?? "Enter value:");
   const defaultValue = params.default != null ? String(params.default) : undefined;
@@ -129,7 +129,7 @@ async function handleShell(
   start: number,
 ): Promise<{ result: StepResult }> {
   const params = step.params
-    ? resolveParams(step.params as Record<string, string | number | boolean | string[]>, ctx)
+    ? resolveParams(step.params as Record<string, unknown>, ctx)
     : {};
   const command = String(params.command ?? params.cmd ?? "");
 
@@ -189,7 +189,7 @@ function handleSet(
   start: number,
 ): { result: StepResult } {
   const params = step.params
-    ? resolveParams(step.params as Record<string, string | number | boolean | string[]>, ctx)
+    ? resolveParams(step.params as Record<string, unknown>, ctx)
     : {};
 
   for (const [key, value] of Object.entries(params)) {

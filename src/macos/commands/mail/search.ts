@@ -1,5 +1,7 @@
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
+import { tmpdir } from "os";
+import { join } from "path";
 import logger from "@app/logger";
 import {
     searchMessages,
@@ -138,8 +140,9 @@ export function registerSearchCommand(program: Command): void {
                         dateReceived: m.dateReceived.toISOString(),
                     }))
                 );
-                await Bun.write("/tmp/macos-mail-last-search.json", tempResults);
-                logger.debug("Saved search results to /tmp/macos-mail-last-search.json");
+                const resultsPath = join(tmpdir(), "macos-mail-last-search.json");
+                await Bun.write(resultsPath, tempResults);
+                logger.debug(`Saved search results to ${resultsPath}`);
 
             } catch (error) {
                 p.log.error(

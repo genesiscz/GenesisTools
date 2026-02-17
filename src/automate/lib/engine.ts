@@ -136,16 +136,15 @@ export async function runPreset(preset: Preset, options: RunOptions = {}): Promi
       const errorMsg = error instanceof Error ? error.message : String(error);
       p.log.error(errorMsg);
 
-      results.push({
-        id: step.id,
-        name: step.name,
-        result: {
-          status: "error",
-          output: null,
-          duration: Date.now() - totalStart,
-          error: errorMsg,
-        },
-      });
+      const exceptionResult: StepResult = {
+        status: "error",
+        output: null,
+        duration: 0,
+        error: errorMsg,
+      };
+      // Make the error result available to subsequent steps via ctx.steps
+      ctx.steps[step.id] = exceptionResult;
+      results.push({ id: step.id, name: step.name, result: exceptionResult });
 
       const errorStrategy = step.onError ?? "stop";
       if (errorStrategy === "stop") break;
