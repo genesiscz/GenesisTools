@@ -1,7 +1,7 @@
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { join, resolve } from "path";
+import { basename, join, resolve } from "path";
 import logger from "@app/logger";
 import { getRecipients, cleanup } from "@app/macos-mail/lib/sqlite";
 import { getMessageBody, saveAttachment } from "@app/macos-mail/lib/jxa";
@@ -148,7 +148,8 @@ export function registerDownloadCommand(program: Command): void {
                     // Save attachments if requested
                     if (options.saveAttachments && msg.attachments.length > 0) {
                         for (const att of msg.attachments) {
-                            const attPath = join(outputDir, "attachments", att.name);
+                            const safeAttName = basename(att.name).replace(/[^\w.\-]/g, "_");
+                            const attPath = join(outputDir, "attachments", safeAttName);
                             if (!existsSync(attPath)) {
                                 await saveAttachment(
                                     msg.subject,

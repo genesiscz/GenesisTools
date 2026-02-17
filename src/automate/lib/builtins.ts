@@ -138,6 +138,7 @@ async function handleShell(
   }
 
   const cwd = params.cwd ? String(params.cwd) : process.cwd();
+  const timeoutMs = params.timeout ? Number(params.timeout) * 1000 : 300_000;
 
   const proc = Bun.spawn(["bash", "-c", command], {
     cwd,
@@ -145,9 +146,22 @@ async function handleShell(
     env: { ...process.env },
   });
 
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  const exitCode = await proc.exited;
+  let timer: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      proc.kill();
+      reject(new Error(`Shell command timed out after ${timeoutMs / 1000}s`));
+    }, timeoutMs);
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.race([
+    Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]),
+    timeoutPromise,
+  ]).finally(() => clearTimeout(timer!)) as [string, string, number];
 
   // Try to parse stdout as JSON for structured access
   let output: unknown = stdout.trim();

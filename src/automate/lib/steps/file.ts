@@ -86,9 +86,10 @@ async function fileHandler(step: PresetStep, ctx: StepContext): Promise<StepResu
         // Apply explicit variables first
         let rendered = templateContent;
         if (params.variables) {
+          const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
           for (const [key, value] of Object.entries(params.variables)) {
             const resolvedValue = ctx.interpolate(value);
-            rendered = rendered.replace(new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, "g"), resolvedValue);
+            rendered = rendered.replace(new RegExp(`\\{\\{\\s*${escapeRegex(key)}\\s*\\}\\}`, "g"), resolvedValue);
           }
         }
         // Then run through the main expression interpolator
