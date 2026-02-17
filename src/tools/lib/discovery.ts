@@ -76,7 +76,7 @@ function extractDescription(toolDir: string): string {
     }
 
     // Fallback: humanize the directory/tool name
-    const name = toolDir.split("/").pop() || "Unknown";
+    const name = basename(toolDir) || "Unknown";
     return name.replace(/[-_]/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 }
 

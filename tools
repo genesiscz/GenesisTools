@@ -120,7 +120,7 @@ async function executeTool(scriptId, scriptArgs) {
                 });
 
                 // Re-execute with the selected tool
-                executeTool(tool, scriptArgs);
+                await executeTool(tool, scriptArgs);
             } catch (error) {
                 if (error instanceof ExitPromptError) {
                     process.exit(0);

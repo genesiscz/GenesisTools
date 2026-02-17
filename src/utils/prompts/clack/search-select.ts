@@ -202,7 +202,7 @@ export async function searchSelect<T>(options: SearchSelectOptions<T>): Promise<
             }
 
             if (key.name === "down") {
-                cursor = Math.min(filtered.length - 1, cursor + 1);
+                cursor = filtered.length > 0 ? Math.min(filtered.length - 1, cursor + 1) : 0;
                 emitHighlight();
                 render();
                 return;

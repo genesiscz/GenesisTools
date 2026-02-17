@@ -5,6 +5,7 @@ import MarkdownIt from "markdown-it";
 import type Token from "markdown-it/lib/token.mjs";
 // @ts-expect-error - no types available for markdown-it-task-lists
 import taskLists from "markdown-it-task-lists";
+import { stripAnsi } from "../string.js";
 
 // ── Theme palette system ──────────────────────────────────────────────
 
@@ -362,19 +363,26 @@ export interface MarkdownRenderOptions {
     color?: boolean;
 }
 
-function stripAnsi(str: string): string {
-    // eslint-disable-next-line no-control-regex
-    return str.replace(/\x1b\[[0-9;]*m/g, "");
-}
-
 function wrapToWidth(str: string, width: number): string {
     return str
         .split("\n")
         .map((line) => {
             const plainLength = stripAnsi(line).length;
             if (plainLength <= width) return line;
-            // Simple truncation that preserves ANSI reset
-            return line.slice(0, width * 2) + "\x1b[0m";
+            // Walk the string, counting only visible characters
+            let visible = 0;
+            let i = 0;
+            while (i < line.length && visible < width) {
+                if (line[i] === "\x1b" && line[i + 1] === "[") {
+                    // Skip entire ANSI escape sequence
+                    const seqEnd = line.indexOf("m", i);
+                    i = seqEnd === -1 ? line.length : seqEnd + 1;
+                } else {
+                    visible++;
+                    i++;
+                }
+            }
+            return line.slice(0, i) + "\x1b[0m";
         })
         .join("\n");
 }

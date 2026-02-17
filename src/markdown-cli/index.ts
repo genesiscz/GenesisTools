@@ -17,7 +17,7 @@ program
     .option("--no-color", "Strip ANSI color codes from output")
     .action((file?: string, opts?: { watch?: boolean; width?: number; theme?: string; color?: boolean }) => {
         const renderOpts: MarkdownRenderOptions = {
-            width: opts?.width,
+            width: opts?.width && !isNaN(opts.width) ? opts.width : undefined,
             theme: (opts?.theme as MarkdownRenderOptions["theme"]) || "dark",
             color: opts?.color !== false,
         };
@@ -45,12 +45,14 @@ program
                 process.stdout.write("\x1b[2J\x1b[H"); // Clear screen
             }
             console.log(renderMarkdownToCli(markdown, renderOpts));
+            if (opts?.watch) {
+                console.log(`\n--- Watching ${filePath} for changes (Ctrl+C to stop) ---\n`);
+            }
         }
 
         renderFile();
 
         if (opts?.watch) {
-            console.log(`\n--- Watching ${filePath} for changes (Ctrl+C to stop) ---\n`);
             const watcher = chokidar.watch(filePath, { ignoreInitial: true });
             watcher.on("change", () => {
                 renderFile();
