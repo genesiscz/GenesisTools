@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import chokidar from "chokidar";
 import { renderMarkdownToCli, type MarkdownRenderOptions } from "../utils/markdown/index.js";
 
@@ -13,7 +13,7 @@ program
     .argument("[file]", "Markdown file to render (or pipe via stdin)")
     .option("-w, --watch", "Watch file for changes and re-render")
     .option("--width <n>", "Max output width in columns", parseInt)
-    .option("--theme <name>", "Color theme: dark, light, minimal", "dark")
+    .addOption(new Option("--theme <name>", "Color theme: dark, light, minimal").choices(["dark", "light", "minimal"]).default("dark"))
     .option("--no-color", "Strip ANSI color codes from output")
     .action((file?: string, opts?: { watch?: boolean; width?: number; theme?: string; color?: boolean }) => {
         const renderOpts: MarkdownRenderOptions = {

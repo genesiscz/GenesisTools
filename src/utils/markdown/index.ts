@@ -364,10 +364,12 @@ export interface MarkdownRenderOptions {
 }
 
 function wrapToWidth(str: string, width: number): string {
+    const emojiRegex = /\p{Emoji_Presentation}|\p{Extended_Pictographic}/gu;
     return str
         .split("\n")
         .map((line) => {
-            const plainLength = stripAnsi(line).length;
+            // Use display width (emoji = 2 cols) for the early-exit check
+            const plainLength = getDisplayWidth(stripAnsi(line));
             if (plainLength <= width) return line;
             // Walk the string, counting only visible characters
             let visible = 0;
@@ -378,7 +380,13 @@ function wrapToWidth(str: string, width: number): string {
                     const seqEnd = line.indexOf("m", i);
                     i = seqEnd === -1 ? line.length : seqEnd + 1;
                 } else {
-                    visible++;
+                    // Check if this char is wide (emoji/CJK)
+                    const ch = line[i]!;
+                    emojiRegex.lastIndex = 0; // reset stateful regex
+                    const isWide = emojiRegex.test(ch);
+                    const charWidth = isWide ? 2 : 1;
+                    if (visible + charWidth > width) break;
+                    visible += charWidth;
                     i++;
                 }
             }

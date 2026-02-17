@@ -16,6 +16,7 @@ export interface ToolInfo {
  */
 export function discoverTools(srcDir: string): ToolInfo[] {
     const tools: ToolInfo[] = [];
+    if (!existsSync(srcDir)) return tools;
     const entries = readdirSync(srcDir);
 
     for (const entry of entries) {
