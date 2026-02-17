@@ -22,6 +22,7 @@ import type {
     WorkItemFull,
     WorkItemSettings,
 } from "@app/azure-devops/types";
+import { WORKITEM_CACHE_VERSION } from "@app/azure-devops/types";
 import {
     extractWorkItemIds,
     findTaskFile,
@@ -379,12 +380,13 @@ export async function handleWorkItem(
         logger.debug(`[workitem] #${id} updating workitem cache`);
         const now = new Date().toISOString();
         const existingCache = await loadWorkItemCache(id);
+        const commentsFetched = fetchOptions?.comments !== false;
         const cacheData: WorkItemCache = {
-            version: "1.0.0",
+            version: WORKITEM_CACHE_VERSION,
             cache: {
                 fieldsFetchedAt: now,
                 historyFetchedAt: existingCache?.cache?.historyFetchedAt,
-                commentsFetchedAt: item.comments.length > 0 ? now : existingCache?.cache?.commentsFetchedAt,
+                commentsFetchedAt: commentsFetched ? now : existingCache?.cache?.commentsFetchedAt,
             },
             id: item.id,
             rev: item.rev,
@@ -394,7 +396,7 @@ export async function handleWorkItem(
             category: settings.category,
             taskFolder: settings.taskFolder,
             history: existingCache?.history,
-            comments: item.comments.length > 0 ? item.comments : existingCache?.comments,
+            comments: commentsFetched ? item.comments : existingCache?.comments,
         };
         await saveWorkItemCache(id, cacheData);
     }

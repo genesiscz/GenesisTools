@@ -142,7 +142,7 @@ export async function handleHistorySync(options: SyncOptions): Promise<void> {
             logger.debug(`[history-sync] Fetching updates for #${id}`);
             spinner.message(`${synced + 1}/${idsToSync.length} #${id} ${shortTitle(id)}`);
             const updates = await api.getWorkItemUpdates(id);
-            const built = buildWorkItemHistory(id, updates);
+            const built = buildWorkItemHistory(updates);
             await updateWorkItemCacheSection(id, {
                 history: {
                     updates: built.updates,
@@ -186,7 +186,7 @@ export async function handleHistorySync(options: SyncOptions): Promise<void> {
                 logger.debug(`[history-sync] No revisions found for #${id}, skipping`);
                 continue;
             }
-            const built = buildHistoryFromRevisions(id, revisions);
+            const built = buildHistoryFromRevisions(revisions);
             await updateWorkItemCacheSection(id, {
                 history: {
                     updates: [],  // reporting revisions don't give us deltas

@@ -17,6 +17,7 @@ import {
     updateWorkItemCacheSection,
 } from "@app/azure-devops/cache";
 import { buildWorkItemHistory, resolveUser, userMatches } from "@app/azure-devops/history";
+import { escapeWiqlValue } from "@app/azure-devops/wiql-builder";
 import type { Comment, IdentityRef, WorkItemUpdate } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
 import * as p from "@clack/prompts";
@@ -198,7 +199,7 @@ async function discoverAndSync(
 
     // WIQL: items changed by user in date range
     const isMeMacro = userName.toLowerCase() === "@me";
-    const userValue = isMeMacro ? "@Me" : `'${userName}'`;
+    const userValue = isMeMacro ? "@Me" : `'${escapeWiqlValue(userName)}'`;
 
     let wiql = `SELECT [System.Id] FROM WorkItems WHERE [System.ChangedBy] = ${userValue}`;
     if (fromDate) wiql += ` AND [System.ChangedDate] >= '${fromDate.toISOString().slice(0, 10)}'`;
@@ -224,7 +225,7 @@ async function discoverAndSync(
     // Sync history for discovered items
     for (const id of needSync) {
         const updates = await api.getWorkItemUpdates(id);
-        const built = buildWorkItemHistory(id, updates);
+        const built = buildWorkItemHistory(updates);
         await updateWorkItemCacheSection(id, {
             history: {
                 updates: built.updates,
@@ -237,8 +238,12 @@ async function discoverAndSync(
     // Also fetch comments for all discovered items
     const comments = await api.batchGetComments(needSync, 5);
     for (const [id, itemComments] of comments) {
-        if (itemComments.length > 0) {
-            await updateWorkItemCacheSection(id, { comments: itemComments });
+        await updateWorkItemCacheSection(id, { comments: itemComments });
+    }
+    // Mark items not returned by batchGetComments as having no comments
+    for (const id of needSync) {
+        if (!comments.has(id)) {
+            await updateWorkItemCacheSection(id, { comments: [] });
         }
     }
 
@@ -265,6 +270,12 @@ async function fetchMissingComments(
     const comments = await api.batchGetComments(needComments, 5);
     for (const [id, itemComments] of comments) {
         await updateWorkItemCacheSection(id, { comments: itemComments });
+    }
+    // Mark items not returned by batchGetComments as having no comments
+    for (const id of needComments) {
+        if (!comments.has(id)) {
+            await updateWorkItemCacheSection(id, { comments: [] });
+        }
     }
 
     return needComments.length;
@@ -380,8 +391,19 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
     if (userName.toLowerCase() === "@me") {
         const members = await api.getTeamMembers();
         const { $ } = await import("bun");
-        const azResult = await $`az account show --query user.name -o tsv`.quiet();
-        const azUser = azResult.text().trim();
+        let azUser: string;
+        try {
+            const azResult = await $`az account show --query user.name -o tsv`.quiet();
+            if (azResult.exitCode !== 0) throw new Error(`exit code ${azResult.exitCode}`);
+            azUser = azResult.text().trim();
+        } catch {
+            p.log.error("Failed to resolve @me — is Azure CLI installed and logged in? (az login)");
+            process.exit(1);
+        }
+        if (!azUser) {
+            p.log.error("Azure CLI returned empty user name. Run `az login` first.");
+            process.exit(1);
+        }
         const resolved = resolveUser(azUser, members);
         resolvedUserName = resolved?.displayName ?? azUser;
     }
@@ -429,9 +451,10 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
             // Re-scan to include newly fetched comments
             const rescan = await scanCachedActivity(resolvedUserName, fromDate, toDate, true);
             // Only add NEW comment events (avoid duplicates from first scan)
-            const existingKeys = new Set(events.map((e) => `${e.date}-${e.workItemId}-${e.type}`));
+            const makeKey = (e: ActivityEvent) => `${e.date}-${e.workItemId}-${e.type}${e.type === "comment" ? `-${e.description}` : ""}`;
+            const existingKeys = new Set(events.map(makeKey));
             for (const e of rescan.events) {
-                const key = `${e.date}-${e.workItemId}-${e.type}`;
+                const key = makeKey(e);
                 if (e.type === "comment" && !existingKeys.has(key)) {
                     events.push(e);
                 }

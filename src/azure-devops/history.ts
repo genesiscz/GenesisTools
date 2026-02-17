@@ -191,7 +191,7 @@ export function computeStatePeriods(updates: WorkItemUpdate[]): StatePeriod[] {
  * Build a complete work item history from update records.
  * Computes both assignment and state periods from the raw updates.
  */
-export function buildWorkItemHistory(_workItemId: number, updates: WorkItemUpdate[]): WorkItemHistorySection {
+export function buildWorkItemHistory(updates: WorkItemUpdate[]): WorkItemHistorySection {
     return {
         updates,
         assignmentPeriods: computeAssignmentPeriods(updates),
@@ -206,7 +206,7 @@ export function buildWorkItemHistory(_workItemId: number, updates: WorkItemUpdat
  * The reporting API returns full field snapshots per revision, so we compare
  * consecutive revisions to detect field changes.
  */
-export function buildHistoryFromRevisions(_workItemId: number, revisions: ReportingRevision[]): WorkItemHistorySection {
+export function buildHistoryFromRevisions(revisions: ReportingRevision[]): WorkItemHistorySection {
     const sorted = [...revisions].sort((a, b) => a.rev - b.rev);
     const assignmentPeriods: AssignmentPeriod[] = [];
     const statePeriods: StatePeriod[] = [];

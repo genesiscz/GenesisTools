@@ -294,7 +294,7 @@ async function handleHistoryShow(idStr: string, options: ShowOptions): Promise<v
 
         try {
             const updates = await api.getWorkItemUpdates(id);
-            const built = buildWorkItemHistory(id, updates);
+            const built = buildWorkItemHistory(updates);
             history = {
                 updates: built.updates,
                 assignmentPeriods: built.assignmentPeriods,
