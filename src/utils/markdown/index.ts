@@ -1,10 +1,60 @@
 import { alert } from "@mdit/plugin-alert";
-import chalk from "chalk";
+import chalk, { type ChalkInstance } from "chalk";
 import cliHtml from "cli-html";
 import MarkdownIt from "markdown-it";
 import type Token from "markdown-it/lib/token.mjs";
 // @ts-expect-error - no types available for markdown-it-task-lists
 import taskLists from "markdown-it-task-lists";
+
+// ── Theme palette system ──────────────────────────────────────────────
+
+export type ThemeName = "dark" | "light" | "minimal";
+
+interface ThemePalette {
+    mermaidHeader: ChalkInstance;
+    mermaidBorder: ChalkInstance;
+    mermaidLine: ChalkInstance;
+    mermaidContent: ChalkInstance;
+    tableBorder: ChalkInstance;
+    tableHeader: ChalkInstance;
+    alertColors: Record<string, string>;
+    dim: ChalkInstance;
+}
+
+const themes: Record<ThemeName, ThemePalette> = {
+    dark: {
+        mermaidHeader: chalk.bgBlue.white.bold,
+        mermaidBorder: chalk.blue,
+        mermaidLine: chalk.cyan,
+        mermaidContent: chalk.dim,
+        tableBorder: chalk.dim,
+        tableHeader: chalk.bold,
+        alertColors: { important: "red", note: "blue", tip: "green", warning: "yellow", caution: "magenta" },
+        dim: chalk.dim,
+    },
+    light: {
+        mermaidHeader: chalk.bgCyan.black.bold,
+        mermaidBorder: chalk.cyan,
+        mermaidLine: chalk.blue,
+        mermaidContent: chalk.gray,
+        tableBorder: chalk.gray,
+        tableHeader: chalk.bold,
+        alertColors: { important: "redBright", note: "blueBright", tip: "greenBright", warning: "yellowBright", caution: "magentaBright" },
+        dim: chalk.gray,
+    },
+    minimal: {
+        mermaidHeader: chalk.bold,
+        mermaidBorder: chalk.dim,
+        mermaidLine: chalk.dim,
+        mermaidContent: chalk.reset,
+        tableBorder: chalk.dim,
+        tableHeader: chalk.bold,
+        alertColors: { important: "white", note: "white", tip: "white", warning: "white", caution: "white" },
+        dim: chalk.dim,
+    },
+};
+
+let currentPalette: ThemePalette = themes.dark;
 
 // Languages that should NOT show line numbers (shell commands, config files, plain text)
 const NO_LINE_NUMBER_LANGS = new Set([
@@ -74,9 +124,10 @@ function createFencePlugin(md: MarkdownIt): void {
  * Render a Mermaid diagram block for CLI display.
  */
 function renderMermaidBlock(code: string): string {
-    const header = chalk.bgBlue.white.bold(" 📊 MERMAID DIAGRAM ");
-    const border = chalk.blue("─".repeat(50));
-    const lines = code.split("\n").map((line) => chalk.cyan("  │ ") + chalk.dim(line));
+    const p = currentPalette;
+    const header = p.mermaidHeader(" 📊 MERMAID DIAGRAM ");
+    const border = p.mermaidBorder("─".repeat(50));
+    const lines = code.split("\n").map((line) => p.mermaidLine("  │ ") + p.mermaidContent(line));
 
     return `\n${header}\n${border}\n${lines.join("\n")}\n${border}\n`;
 }
@@ -205,27 +256,29 @@ function renderAsciiTable(data: TableData): string {
     // Build table lines
     const lines: string[] = [];
 
+    const p = currentPalette;
+
     // Top border
     const topBorder = "┌" + colWidths.map((w) => "─".repeat(w + 2)).join("┬") + "┐";
-    lines.push(chalk.dim(topBorder));
+    lines.push(p.tableBorder(topBorder));
 
     // Header row
     const headerCells = headers.map((h, i) => padCell(h, colWidths[i], alignments[i] || "left"));
-    lines.push(chalk.dim("│ ") + chalk.bold(headerCells.join(chalk.dim(" │ "))) + chalk.dim(" │"));
+    lines.push(p.tableBorder("│ ") + p.tableHeader(headerCells.join(p.tableBorder(" │ "))) + p.tableBorder(" │"));
 
     // Header separator
     const headerSep = "├" + colWidths.map((w) => "─".repeat(w + 2)).join("┼") + "┤";
-    lines.push(chalk.dim(headerSep));
+    lines.push(p.tableBorder(headerSep));
 
     // Data rows
     for (const row of rows) {
         const cells = colWidths.map((w, i) => padCell(row[i] || "", w, alignments[i] || "left"));
-        lines.push(chalk.dim("│ ") + cells.join(chalk.dim(" │ ")) + chalk.dim(" │"));
+        lines.push(p.tableBorder("│ ") + cells.join(p.tableBorder(" │ ")) + p.tableBorder(" │"));
     }
 
     // Bottom border
     const bottomBorder = "└" + colWidths.map((w) => "─".repeat(w + 2)).join("┴") + "┘";
-    lines.push(chalk.dim(bottomBorder));
+    lines.push(p.tableBorder(bottomBorder));
 
     // Wrap in <pre> to prevent cli-html from wrapping the table
     return "\n<pre>" + lines.join("\n") + "</pre>\n";
@@ -269,14 +322,7 @@ function createMarkdownRenderer(): MarkdownIt {
         deep: false,
         openRender: (tokens, index) => {
             const token = tokens[index];
-            const colors: Record<string, string> = {
-                important: "red",
-                note: "blue",
-                tip: "green",
-                warning: "yellow",
-                caution: "magenta",
-            };
-            const color = colors[token.markup] || "blue";
+            const color = currentPalette.alertColors[token.markup] || "blue";
             return `<blockquote style="border-left-color: ${color}">`;
         },
         closeRender: () => "</blockquote>\n",
@@ -344,6 +390,10 @@ export function renderMarkdownToCli(markdown: string, options?: MarkdownRenderOp
     if (!mdInstance) {
         mdInstance = createMarkdownRenderer();
     }
+
+    // Set active theme palette before rendering
+    const themeName: ThemeName = options?.theme ?? "dark";
+    currentPalette = themes[themeName];
 
     const html = mdInstance.render(markdown);
     let output = cliHtml(html);
