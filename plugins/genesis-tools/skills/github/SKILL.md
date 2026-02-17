@@ -11,8 +11,8 @@ description: |
   - User wants to search code in a repository (e.g. "find how X is implemented")
   - User wants to find issues or discussions about a library or framework
   - User asks "how does library X handle Y" or "are there issues about Z"
-  - User asks to fix/address/review PR review comments → invoke the `genesis-tools:github-pr` skill instead
-  - User provides multiple PR URLs to analyze → invoke the `genesis-tools:github-pr` skill instead
+  - User asks to fix/address/review PR review comments → use the `/genesis-tools:github-pr` command instead
+  - User provides multiple PR URLs to analyze → use the `/genesis-tools:github-pr` command instead
 ---
 
 # GitHub Tool Usage Guide
@@ -243,7 +243,7 @@ tools github review 137 --respond "Fixed in abc1234" -t PRRT_id1,PRRT_id2
 tools github review 137 --respond "Fixed" --resolve-thread -t PRRT_id1,PRRT_id2,PRRT_id3
 ```
 
-> **PR review fix workflow:** If the user asks to fix, address, or analyze PR review comments — or provides multiple PR URLs — invoke the `genesis-tools:github-pr` skill. It handles the full end-to-end flow: fetch threads, critically evaluate each comment (pushing back on false positives), implement fixes, commit, reply to reviewers, and for multiple PRs: spawn parallel agents and produce a consolidated report.
+> **PR review fix workflow:** If the user asks to fix, address, or analyze PR review comments — or provides multiple PR URLs — use the `/genesis-tools:github-pr` command (via the `Skill` tool). It handles the full end-to-end flow: fetch threads, critically evaluate each comment (pushing back on false positives), implement fixes, commit, reply to reviewers, and for multiple PRs: spawn parallel agents and produce a consolidated report.
 
 ### Resolving Review Threads
 
@@ -278,7 +278,7 @@ When fixing PR review comments:
 5. **Reply to threads:** `tools github review <pr> --respond "Fixed in [sha](url)" -t <thread-ids>`
 6. **Resolve threads** (only when user explicitly approves): `tools github review <pr> --resolve-thread -t <thread-ids>`
 
-> For the full automated flow (fetch, triage, fix, commit, reply), invoke the `genesis-tools:github-pr` skill instead.
+> For the full automated flow (fetch, triage, fix, commit, reply), use the `/genesis-tools:github-pr` command instead.
 
 ## Caching Behavior
 
