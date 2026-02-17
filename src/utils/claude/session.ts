@@ -12,7 +12,7 @@
  * ```
  */
 
-import { existsSync, readdirSync, statSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import { stat } from "fs/promises";
 import { glob } from "glob";
 import { basename, resolve, sep } from "path";
@@ -24,12 +24,16 @@ import type {
     ContentBlock,
     ConversationMessage,
     CustomTitleMessage,
+    ImageBlock,
     MessageType,
+    PrLinkMessage,
+    ProgressMessage,
     SubagentMessage,
     SummaryMessage,
     SystemMessage,
     TextBlock,
     ThinkingBlock,
+    ToolReferenceBlock,
     ToolResultBlock,
     ToolUseBlock,
     Usage,
@@ -192,8 +196,14 @@ function extractUserText(content: string | ContentBlock[]): string {
             } else if (Array.isArray(tr.content)) {
                 for (const inner of tr.content) {
                     if (inner.type === "text") parts.push((inner as TextBlock).text);
+                    else if (inner.type === "image") parts.push(`[Image: ${(inner as ImageBlock).source.media_type}]`);
+                    else if (inner.type === "tool_reference") parts.push(`[Tool Reference: ${(inner as ToolReferenceBlock).tool_name}]`);
                 }
             }
+        } else if (block.type === "image") {
+            parts.push(`[Image: ${(block as ImageBlock).source.media_type}]`);
+        } else if (block.type === "tool_reference") {
+            parts.push(`[Tool Reference: ${(block as ToolReferenceBlock).tool_name}]`);
         }
     }
     return parts.join("\n");
@@ -412,10 +422,15 @@ export class ClaudeSession {
                     projectName = parts[parts.length - 1] || null;
                 }
 
-                // Use actual line count if we read the whole file, otherwise estimate
-                // readHeadTailLines returns all lines for small files
-                const actualText = await Bun.file(filePath).text();
-                messageCount = actualText.split("\n").filter((l) => l.trim()).length;
+                // Estimate message count from file size instead of re-reading the whole file.
+                // readHeadTailLines already returns all lines for small files.
+                // For larger files, estimate ~300 bytes per JSONL line on average.
+                if (lines.length <= 25) {
+                    // Small file — we already have all lines from readHeadTailLines
+                    messageCount = lines.length;
+                } else {
+                    messageCount = Math.max(lines.length, Math.round(fileStat.size / 300));
+                }
 
                 // Apply date filters
                 if (since && startDate && startDate < since) continue;
@@ -588,6 +603,9 @@ export class ClaudeSession {
         const parts: string[] = [];
 
         for (const msg of this._messages) {
+            // Skip progress messages — they are noisy real-time updates
+            if (msg.type === "progress") continue;
+
             if (msg.type === "user") {
                 const userMsg = msg as UserMessage;
                 const text = extractUserText(userMsg.message.content);
@@ -603,12 +621,18 @@ export class ClaudeSession {
                         const tool = block as ToolUseBlock;
                         const fp = extractFilePathFromInput(tool.input);
                         parts.push(fp ? `[${tool.name}] ${fp}` : `[${tool.name}]`);
+                    } else if (block.type === "image") {
+                        parts.push(`[Image: ${(block as ImageBlock).source.media_type}]`);
+                    } else if (block.type === "tool_reference") {
+                        parts.push(`[Tool Reference: ${(block as ToolReferenceBlock).tool_name}]`);
                     }
                 }
             } else if (msg.type === "summary") {
                 parts.push((msg as SummaryMessage).summary);
             } else if (msg.type === "custom-title") {
                 parts.push((msg as CustomTitleMessage).customTitle);
+            } else if (msg.type === "pr-link") {
+                parts.push(`[PR Link]: ${(msg as PrLinkMessage).url}`);
             } else if (msg.type === "system" && includeSystemMessages) {
                 const sysMsg = msg as SystemMessage;
                 parts.push(`[System: ${sysMsg.subtype}]`);
@@ -622,6 +646,10 @@ export class ClaudeSession {
                     for (const block of content) {
                         if (block.type === "text") {
                             parts.push((block as TextBlock).text);
+                        } else if (block.type === "image") {
+                            parts.push(`[Image: ${(block as ImageBlock).source.media_type}]`);
+                        } else if (block.type === "tool_reference") {
+                            parts.push(`[Tool Reference: ${(block as ToolReferenceBlock).tool_name}]`);
                         }
                     }
                 }
@@ -720,6 +748,24 @@ export class ClaudeSession {
                                             hashes.add(match);
                                         }
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Check bash progress messages (real-time command output)
+            if (msg.type === "progress") {
+                const progressMsg = msg as ProgressMessage;
+                if (progressMsg.data.type === "bash_progress") {
+                    const output = progressMsg.data.output || "";
+                    if (gitCommitContext.test(output)) {
+                        const matches = output.match(commitPattern);
+                        if (matches) {
+                            for (const match of matches) {
+                                if (match.length >= 7 && !/^(.)\1+$/.test(match)) {
+                                    hashes.add(match);
                                 }
                             }
                         }
@@ -966,6 +1012,9 @@ export class ClaudeSession {
 
         // Format a single message into readable lines
         const formatMessage = (msg: ConversationMessage): string[] => {
+            // Skip progress messages — they are noisy real-time updates
+            if (msg.type === "progress") return [];
+
             const lines: string[] = [];
             const timestamp = includeTimestamps && hasTimestamp(msg) ? `[${msg.timestamp}] ` : "";
 
@@ -990,10 +1039,16 @@ export class ClaudeSession {
                         const tool = block as ToolUseBlock;
                         const fp = extractFilePathFromInput(tool.input);
                         lines.push(`${timestamp}[Tool: ${tool.name}]${fp ? ` ${fp}` : ""}`);
+                    } else if (block.type === "image") {
+                        lines.push(`${timestamp}[Image: ${(block as ImageBlock).source.media_type}]`);
+                    } else if (block.type === "tool_reference") {
+                        lines.push(`${timestamp}[Tool Reference: ${(block as ToolReferenceBlock).tool_name}]`);
                     }
                 }
             } else if (msg.type === "summary") {
                 lines.push(`${timestamp}[Summary]: ${(msg as SummaryMessage).summary}`);
+            } else if (msg.type === "pr-link") {
+                lines.push(`${timestamp}[PR Link]: ${(msg as PrLinkMessage).url}`);
             }
 
             return lines;
@@ -1100,6 +1155,10 @@ export class ClaudeSession {
         for (const block of content) {
             if (block.type === "text") {
                 parts.push((block as TextBlock).text);
+            } else if (block.type === "image") {
+                parts.push(`[Image: ${(block as ImageBlock).source.media_type}]`);
+            } else if (block.type === "tool_reference") {
+                parts.push(`[Tool Reference: ${(block as ToolReferenceBlock).tool_name}]`);
             } else if (block.type === "tool_result" && includeToolResults) {
                 const tr = block as ToolResultBlock;
                 if (typeof tr.content === "string") {
@@ -1107,6 +1166,8 @@ export class ClaudeSession {
                 } else if (Array.isArray(tr.content)) {
                     for (const inner of tr.content) {
                         if (inner.type === "text") parts.push((inner as TextBlock).text);
+                        else if (inner.type === "image") parts.push(`[Image: ${(inner as ImageBlock).source.media_type}]`);
+                        else if (inner.type === "tool_reference") parts.push(`[Tool Reference: ${(inner as ToolReferenceBlock).tool_name}]`);
                     }
                 }
             }
