@@ -127,7 +127,11 @@ export function registerCredentialsCommand(program: Command): void {
       for (const [key, value] of Object.entries(cred)) {
         if (key === "name" || key === "type") continue;
         if (typeof value === "string") {
-          const masked = value.startsWith("{{") ? value : `${value.substring(0, Math.min(4, value.length))}${"*".repeat(Math.max(0, value.length - 4))}`;
+          const masked = value.startsWith("{{")
+            ? value
+            : value.length <= 4
+              ? "*".repeat(value.length)
+              : `${value.substring(0, 4)}${"*".repeat(value.length - 4)}`;
           console.log(`  ${pc.bold(`${key}:`)} ${pc.dim(masked)}`);
         }
       }

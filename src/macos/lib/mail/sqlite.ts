@@ -15,6 +15,11 @@ import type {
 let _tempDbPath: string | null = null;
 let _db: Database | null = null;
 
+/** Escape LIKE metacharacters so user input is treated as literal text */
+function escapeLike(s: string): string {
+    return s.replace(/[%_\\]/g, "\\$&");
+}
+
 /**
  * Copy the Envelope Index to a temp file and open it.
  * Reuses the same copy within a single CLI invocation.
@@ -69,7 +74,7 @@ export function cleanup(): void {
 export function searchMessages(opts: SearchOptions): MailMessageRow[] {
     const db = getDatabase();
     const params: Record<string, string | number> = {};
-    const queryPattern = `%${opts.query}%`;
+    const queryPattern = `%${escapeLike(opts.query)}%`;
     params.$query = queryPattern;
 
     // Build WHERE clauses for filters
@@ -84,16 +89,16 @@ export function searchMessages(opts: SearchOptions): MailMessageRow[] {
         params.$dateTo = Math.floor(opts.to.getTime() / 1000);
     }
     if (opts.mailbox) {
-        filters.push("mb.url LIKE $mailbox");
-        params.$mailbox = `%${opts.mailbox}%`;
+        filters.push("mb.url LIKE $mailbox ESCAPE '\\'");
+        params.$mailbox = `%${escapeLike(opts.mailbox)}%`;
     }
     if (opts.receiver) {
         filters.push(`m.ROWID IN (
             SELECT r.message FROM recipients r
             JOIN addresses a ON r.address = a.ROWID
-            WHERE a.address LIKE $receiver
+            WHERE a.address LIKE $receiver ESCAPE '\\'
         )`);
-        params.$receiver = `%${opts.receiver}%`;
+        params.$receiver = `%${escapeLike(opts.receiver)}%`;
     }
 
     const whereClause = filters.length > 0 ? `AND ${filters.join(" AND ")}` : "";
@@ -117,12 +122,12 @@ export function searchMessages(opts: SearchOptions): MailMessageRow[] {
         JOIN addresses a ON m.sender = a.ROWID
         JOIN mailboxes mb ON m.mailbox = mb.ROWID
         WHERE (
-            s.subject LIKE $query
-            OR a.address LIKE $query
-            OR a.comment LIKE $query
+            s.subject LIKE $query ESCAPE '\\'
+            OR a.address LIKE $query ESCAPE '\\'
+            OR a.comment LIKE $query ESCAPE '\\'
             OR m.ROWID IN (
                 SELECT att.message FROM attachments att
-                WHERE att.name LIKE $query
+                WHERE att.name LIKE $query ESCAPE '\\'
             )
         )
         ${whereClause}

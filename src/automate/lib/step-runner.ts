@@ -116,7 +116,7 @@ function buildToolsArgs(step: PresetStep, ctx: ExecutionContext): string[] {
   if (!step.params) return parts;
 
   const resolved = resolveParams(
-    step.params as Record<string, string | number | boolean | string[]>,
+    step.params as Record<string, unknown>,
     ctx,
   );
   const args: string[] = [...parts];

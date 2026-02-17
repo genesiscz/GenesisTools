@@ -1,7 +1,9 @@
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
 import { basename, join, resolve } from "path";
+import logger from "@app/logger";
 import { getRecipients, cleanup } from "@app/macos/lib/mail/sqlite";
 import { getMessageBody, saveAttachment } from "@app/macos/lib/mail/jxa";
 import {
@@ -13,7 +15,7 @@ import type { MailMessage } from "@app/macos/lib/mail/types";
 
 /** Load the last search results from temp file */
 function loadLastSearchResults(): MailMessage[] | null {
-    const path = "/tmp/macos-mail-last-search.json";
+    const path = join(tmpdir(), "macos-mail-last-search.json");
     if (!existsSync(path)) return null;
 
     try {
@@ -120,11 +122,12 @@ export function registerDownloadCommand(program: Command): void {
 
                 // Process each email
                 const spinner = p.spinner();
+                spinner.start("Processing emails...");
                 let processed = 0;
 
                 for (const msg of messages) {
                     processed++;
-                    spinner.start(
+                    spinner.message(
                         `[${processed}/${messages.length}] ${msg.subject.slice(0, 50)}...`
                     );
 
@@ -156,6 +159,15 @@ export function registerDownloadCommand(program: Command): void {
                                     att.name,
                                     attPath,
                                 );
+                            } else {
+                                // Disambiguate with rowid to avoid silently dropping duplicates
+                                const dotIdx = safeAttName.lastIndexOf(".");
+                                const ext = dotIdx !== -1 ? safeAttName.slice(dotIdx) : "";
+                                const base = safeAttName.slice(0, safeAttName.length - ext.length);
+                                const disambiguated = `${base}_${msg.rowid}${ext}`;
+                                const altPath = join(outputDir, "attachments", disambiguated);
+                                logger.debug(`Attachment collision: ${safeAttName} → saving as ${disambiguated}`);
+                                await saveAttachment(msg.subject, msg.senderAddress, att.name, altPath);
                             }
                         }
                     }

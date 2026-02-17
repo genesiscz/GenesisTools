@@ -25,6 +25,28 @@ export function resolveExpression(template: string, ctx: ExecutionContext): unkn
 }
 
 /**
+ * Rewrite hyphenated dot-path segments under vars/steps/env to bracket notation
+ * so they are valid JavaScript identifiers inside `new Function`.
+ *
+ * Example:
+ *   steps.my-step.output.count > 0
+ *   → steps["my-step"].output.count > 0
+ */
+function rewriteHyphenatedPaths(expr: string): string {
+  return expr.replace(
+    /\b(vars|steps|env)((?:\.[a-zA-Z0-9_-]+)+)/g,
+    (_match, root: string, rest: string) => {
+      const segments = rest.slice(1).split(".");
+      const rewritten = segments.map((seg) =>
+        seg.includes("-") ? `["${seg}"]` : `.${seg}`,
+      );
+      // Join: if first segment uses bracket notation, no leading dot needed
+      return root + rewritten.join("").replace(/^\./, ".");
+    },
+  );
+}
+
+/**
  * Evaluate a single expression.
  * Examples:
  *   "vars.startDate"                -> ctx.vars.startDate
@@ -42,7 +64,11 @@ function evaluateExpression(expr: string, ctx: ExecutionContext): unknown {
   // Complex expression: use Function constructor with sandboxed context
   // Safe for local CLI tool where user writes their own presets
   try {
-    const fn = new Function("vars", "steps", "env", `return (${expr});`);
+    // Rewrite hyphenated path segments to bracket notation before passing to
+    // new Function, because `steps.my-step.output` parses as subtraction there.
+    // e.g. steps.my-step.output.count > 0 → steps["my-step"].output.count > 0
+    const rewritten = rewriteHyphenatedPaths(expr);
+    const fn = new Function("vars", "steps", "env", `return (${rewritten});`);
     return fn(ctx.vars, ctx.steps, ctx.env);
   } catch (error) {
     throw new Error(
@@ -76,9 +102,10 @@ function resolvePropertyPath(path: string, ctx: ExecutionContext): unknown {
  * Returns a new object with all string values resolved.
  * Non-string values (numbers, booleans) pass through unchanged.
  * Arrays have each string element resolved.
+ * Nested objects are resolved recursively.
  */
 export function resolveParams(
-  params: Record<string, string | number | boolean | string[]>,
+  params: Record<string, unknown>,
   ctx: ExecutionContext,
 ): Record<string, unknown> {
   const resolved: Record<string, unknown> = {};
@@ -90,6 +117,8 @@ export function resolveParams(
       resolved[key] = value.map((v) =>
         typeof v === "string" ? resolveExpression(v, ctx) : v,
       );
+    } else if (value !== null && typeof value === "object") {
+      resolved[key] = resolveParams(value as Record<string, unknown>, ctx);
     } else {
       resolved[key] = value;
     }
