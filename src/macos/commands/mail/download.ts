@@ -2,15 +2,14 @@ import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
-import logger from "@app/logger";
-import { getRecipients, cleanup } from "@app/macos-mail/lib/sqlite";
-import { getMessageBody, saveAttachment } from "@app/macos-mail/lib/jxa";
+import { getRecipients, cleanup } from "@app/macos/lib/mail/sqlite";
+import { getMessageBody, saveAttachment } from "@app/macos/lib/mail/jxa";
 import {
     generateEmailMarkdown,
     generateIndexMarkdown,
     generateSlug,
-} from "@app/macos-mail/lib/format";
-import type { MailMessage } from "@app/macos-mail/lib/types";
+} from "@app/macos/lib/mail/format";
+import type { MailMessage } from "@app/macos/lib/mail/types";
 
 /** Load the last search results from temp file */
 function loadLastSearchResults(): MailMessage[] | null {
@@ -52,7 +51,7 @@ export function registerDownloadCommand(program: Command): void {
                 const messages = loadLastSearchResults();
                 if (!messages || messages.length === 0) {
                     p.log.error(
-                        "No search results found. Run 'tools macos-mail search <query>' first."
+                        "No search results found. Run 'tools macos mail search <query>' first."
                     );
                     process.exit(1);
                 }

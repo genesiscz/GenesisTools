@@ -4,10 +4,10 @@ import {
     listMessages,
     getAttachments,
     cleanup,
-} from "@app/macos-mail/lib/sqlite";
-import { formatResultsTable } from "@app/macos-mail/lib/format";
-import { rowToMessage } from "@app/macos-mail/lib/transform";
-import type { MailMessage } from "@app/macos-mail/lib/types";
+} from "@app/macos/lib/mail/sqlite";
+import { formatResultsTable } from "@app/macos/lib/mail/format";
+import { rowToMessage } from "@app/macos/lib/mail/transform";
+import type { MailMessage } from "@app/macos/lib/mail/types";
 
 export function registerListCommand(program: Command): void {
     program

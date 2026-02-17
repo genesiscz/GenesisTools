@@ -1,40 +1,33 @@
 #!/usr/bin/env bun
 
 /**
- * macOS Mail CLI Tool
+ * macOS Native Tools
  *
- * Search, list, and download emails from Mail.app.
- * Uses a hybrid SQLite + JXA approach for performance.
+ * Umbrella tool for interacting with macOS native frameworks.
  *
  * Usage:
- *   tools macos-mail search <query> [options]
- *   tools macos-mail list [mailbox] [options]
- *   tools macos-mail download <output-dir> [options]
+ *   tools macos mail search <query> [options]
+ *   tools macos mail list [mailbox] [options]
+ *   tools macos mail download <output-dir> [options]
+ *
+ * Future subcommands:
+ *   tools macos calendar events
+ *   tools macos contacts search
  */
 
-import { handleReadmeFlag } from "@app/utils/readme";
 import logger from "@app/logger";
 import { Command } from "commander";
-
-// Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
-
-import { registerSearchCommand } from "@app/macos-mail/commands/search";
-import { registerListCommand } from "@app/macos-mail/commands/list";
-import { registerDownloadCommand } from "@app/macos-mail/commands/download";
+import { registerMailCommand } from "@app/macos/commands/mail/index";
 
 const program = new Command();
 
 program
-    .name("macos-mail")
-    .description("Search, list, and download emails from macOS Mail.app")
+    .name("macos")
+    .description("Interact with macOS native frameworks (Mail, Calendar, Contacts, ...)")
     .version("1.0.0")
     .showHelpAfterError(true);
 
-// Register all commands
-registerSearchCommand(program);
-registerListCommand(program);
-registerDownloadCommand(program);
+registerMailCommand(program);
 
 async function main(): Promise<void> {
     try {
@@ -43,7 +36,6 @@ async function main(): Promise<void> {
         const message = error instanceof Error ? error.message : String(error);
         logger.error(`Error: ${message}`);
 
-        // Check for common permission errors
         if (message.includes("not authorized") || message.includes("permission")) {
             console.log("\nTo fix permission issues:");
             console.log("  1. Open System Settings > Privacy & Security > Full Disk Access");

@@ -7,11 +7,11 @@ import {
     listReceivers,
     cleanup,
     getMessageCount,
-} from "@app/macos-mail/lib/sqlite";
-import { searchBodies } from "@app/macos-mail/lib/jxa";
-import { formatResultsTable } from "@app/macos-mail/lib/format";
-import { rowToMessage } from "@app/macos-mail/lib/transform";
-import type { MailMessage, SearchOptions } from "@app/macos-mail/lib/types";
+} from "@app/macos/lib/mail/sqlite";
+import { searchBodies } from "@app/macos/lib/mail/jxa";
+import { formatResultsTable } from "@app/macos/lib/mail/format";
+import { rowToMessage } from "@app/macos/lib/mail/transform";
+import type { MailMessage, SearchOptions } from "@app/macos/lib/mail/types";
 
 export function registerSearchCommand(program: Command): void {
     program
@@ -128,7 +128,7 @@ export function registerSearchCommand(program: Command): void {
                     showBodyMatch: !searchOpts.withoutBody,
                 }));
                 console.log("");
-                p.log.info(`${messages.length} results. Use 'tools macos-mail download <dir>' to export.`);
+                p.log.info(`${messages.length} results. Use 'tools macos mail download <dir>' to export.`);
 
                 // Save results to temp file for download command
                 const tempResults = JSON.stringify(
