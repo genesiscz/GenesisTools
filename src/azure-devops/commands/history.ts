@@ -16,6 +16,7 @@ import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 
+import { handleHistoryActivity, type ActivityOptions } from "./history-activity";
 import { handleHistorySearch, type SearchOptions } from "./history-search";
 import { handleHistorySync } from "./history-sync";
 
@@ -376,4 +377,23 @@ export function registerHistoryCommand(program: Command): void {
         .option("--since <date>", "Only revisions since date")
         .option("--batch", "Use batch reporting API instead of per-item /updates")
         .action(handleHistorySync);
+
+    history
+        .command("activity")
+        .description("Show user activity timeline across work items")
+        .option("--user <name>", "User to show activity for (default: @me)")
+        .option("--from <date>", "From date (ISO format, e.g. 2026-02-07)")
+        .option("--since <date>", "Alias for --from")
+        .option("--to <date>", "To date (ISO format)")
+        .option("--until <date>", "Alias for --to")
+        .option("-o, --output <format>", "Output format (timeline, summary, json)", "timeline")
+        .option("--no-comments", "Skip fetching comments (faster)")
+        .option("--discover", "Discover & sync items changed by user but not yet cached")
+        .option("--sync", "Alias for --discover")
+        .action(async (opts: ActivityOptions & { since?: string; until?: string; comments?: boolean }) => {
+            if (opts.since && !opts.from) opts.from = opts.since;
+            if (opts.until && !opts.to) opts.to = opts.until;
+            opts.includeComments = opts.comments !== false;
+            await handleHistoryActivity(opts);
+        });
 }
