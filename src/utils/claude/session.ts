@@ -100,7 +100,15 @@ export interface SessionStats {
     userMessageCount: number;
     /** Number of assistant-role messages. */
     assistantMessageCount: number;
-    /** Total number of tool_use blocks across all assistant messages. */
+    /** Number of system messages (errors, stop hooks, etc.). */
+    systemMessageCount: number;
+    /** Number of subagent messages. */
+    subagentMessageCount: number;
+    /** Number of progress messages. */
+    progressMessageCount: number;
+    /** Number of PR link messages. */
+    prLinkCount: number;
+    /** Total number of tool_use blocks across all assistant and subagent messages. */
     toolCallCount: number;
     /** Tool name -> invocation count. */
     toolUsage: Record<string, number>;
@@ -213,6 +221,14 @@ function extractUserText(content: string | ContentBlock[]): string {
 function getToolUseBlocks(msg: AssistantMessage): ToolUseBlock[] {
     if (!Array.isArray(msg.message?.content)) return [];
     return msg.message.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
+}
+
+/** Extract tool_use blocks from a subagent assistant message. */
+function getSubagentToolUseBlocks(msg: SubagentMessage): ToolUseBlock[] {
+    if (msg.role !== "assistant") return [];
+    const content = (msg.message as AssistantMessageContent).content;
+    if (!Array.isArray(content)) return [];
+    return content.filter((b): b is ToolUseBlock => b.type === "tool_use");
 }
 
 /** Extract file path from a tool input object, checking common field names. */
@@ -581,6 +597,21 @@ export class ClaudeSession {
         return this._messages.filter((m): m is SystemMessage => m.type === "system");
     }
 
+    /** Only subagent messages (both user and assistant role). */
+    get subagentMessages(): SubagentMessage[] {
+        return this._messages.filter((m): m is SubagentMessage => m.type === "subagent");
+    }
+
+    /** Only progress messages (real-time updates like bash output, hook status). */
+    get progressMessages(): ProgressMessage[] {
+        return this._messages.filter((m): m is ProgressMessage => m.type === "progress");
+    }
+
+    /** Only PR link messages. */
+    get prLinkMessages(): PrLinkMessage[] {
+        return this._messages.filter((m): m is PrLinkMessage => m.type === "pr-link");
+    }
+
     // =========================================================================
     // Content Extraction
     // =========================================================================
@@ -679,24 +710,33 @@ export class ClaudeSession {
     }
 
     /**
-     * Extract all tool calls from assistant messages with metadata.
+     * Extract all tool calls from assistant and subagent assistant messages with metadata.
      * @returns Array of `ToolCallSummary` in chronological order.
      */
     extractToolCalls(): ToolCallSummary[] {
         const calls: ToolCallSummary[] = [];
 
         for (const msg of this._messages) {
-            if (msg.type !== "assistant") continue;
-            const assistantMsg = msg as AssistantMessage;
             const timestamp = hasTimestamp(msg) ? msg.timestamp : undefined;
 
-            for (const block of getToolUseBlocks(assistantMsg)) {
-                calls.push({
-                    name: block.name,
-                    input: block.input,
-                    filePath: extractFilePathFromInput(block.input),
-                    timestamp,
-                });
+            if (msg.type === "assistant") {
+                for (const block of getToolUseBlocks(msg as AssistantMessage)) {
+                    calls.push({
+                        name: block.name,
+                        input: block.input,
+                        filePath: extractFilePathFromInput(block.input),
+                        timestamp,
+                    });
+                }
+            } else if (msg.type === "subagent") {
+                for (const block of getSubagentToolUseBlocks(msg as SubagentMessage)) {
+                    calls.push({
+                        name: block.name,
+                        input: block.input,
+                        filePath: extractFilePathFromInput(block.input),
+                        timestamp,
+                    });
+                }
             }
         }
 
@@ -704,7 +744,7 @@ export class ClaudeSession {
     }
 
     /**
-     * Extract unique file paths referenced in tool calls.
+     * Extract unique file paths referenced in tool calls (assistant + subagent).
      * Checks common input fields: `file_path`, `path`, `filePath`, `notebook_path`.
      */
     extractFilePaths(): string[] {
@@ -713,8 +753,13 @@ export class ClaudeSession {
         const paths = new Set<string>();
 
         for (const msg of this._messages) {
-            if (msg.type !== "assistant") continue;
-            for (const tool of getToolUseBlocks(msg as AssistantMessage)) {
+            let toolBlocks: ToolUseBlock[] = [];
+            if (msg.type === "assistant") {
+                toolBlocks = getToolUseBlocks(msg as AssistantMessage);
+            } else if (msg.type === "subagent") {
+                toolBlocks = getSubagentToolUseBlocks(msg as SubagentMessage);
+            }
+            for (const tool of toolBlocks) {
                 const fp = extractFilePathFromInput(tool.input);
                 if (fp) paths.add(fp);
             }
@@ -778,16 +823,21 @@ export class ClaudeSession {
     }
 
     /**
-     * Extract all thinking/reasoning blocks from assistant messages.
+     * Extract all thinking/reasoning blocks from assistant and subagent messages.
      * @returns Array of thinking text strings in chronological order.
      */
     extractThinkingBlocks(): string[] {
         const blocks: string[] = [];
 
         for (const msg of this._messages) {
-            if (msg.type !== "assistant") continue;
-            const assistantMsg = msg as AssistantMessage;
-            for (const block of assistantMsg.message.content) {
+            let contentBlocks: ContentBlock[] | undefined;
+            if (msg.type === "assistant") {
+                contentBlocks = (msg as AssistantMessage).message.content;
+            } else if (msg.type === "subagent" && (msg as SubagentMessage).role === "assistant") {
+                contentBlocks = ((msg as SubagentMessage).message as AssistantMessageContent).content;
+            }
+            if (!contentBlocks) continue;
+            for (const block of contentBlocks) {
                 if (block.type === "thinking") {
                     blocks.push((block as ThinkingBlock).thinking);
                 }
@@ -797,13 +847,23 @@ export class ClaudeSession {
         return blocks;
     }
 
+    /**
+     * Extract all PR link URLs from pr-link messages.
+     * @returns Array of URL strings in chronological order.
+     */
+    extractPrLinks(): string[] {
+        return this._messages
+            .filter((m): m is PrLinkMessage => m.type === "pr-link")
+            .map((m) => m.url);
+    }
+
     // =========================================================================
     // Filtering (returns new ClaudeSession with filtered messages)
     // =========================================================================
 
     /**
      * Return a new session containing only messages that reference the given tool.
-     * Matches assistant messages with a tool_use block of that name,
+     * Matches assistant and subagent messages with a tool_use block of that name,
      * plus adjacent user messages containing the tool_result.
      */
     filterByTool(toolName: string): ClaudeSession {
@@ -811,17 +871,22 @@ export class ClaudeSession {
         const matchingToolUseIds = new Set<string>();
         const filtered: ConversationMessage[] = [];
 
-        // First pass: find matching assistant messages and collect tool_use IDs
+        // First pass: find matching assistant/subagent messages and collect tool_use IDs
         for (const msg of this._messages) {
+            let tools: ToolUseBlock[] = [];
             if (msg.type === "assistant") {
-                const tools = getToolUseBlocks(msg as AssistantMessage);
-                const hasMatch = tools.some((t) => t.name.toLowerCase() === lowerName);
-                if (hasMatch) {
-                    filtered.push(msg);
-                    for (const t of tools) {
-                        if (t.name.toLowerCase() === lowerName) {
-                            matchingToolUseIds.add(t.id);
-                        }
+                tools = getToolUseBlocks(msg as AssistantMessage);
+            } else if (msg.type === "subagent") {
+                tools = getSubagentToolUseBlocks(msg as SubagentMessage);
+            }
+            if (tools.length === 0) continue;
+
+            const hasMatch = tools.some((t) => t.name.toLowerCase() === lowerName);
+            if (hasMatch) {
+                filtered.push(msg);
+                for (const t of tools) {
+                    if (t.name.toLowerCase() === lowerName) {
+                        matchingToolUseIds.add(t.id);
                     }
                 }
             }
@@ -869,7 +934,8 @@ export class ClaudeSession {
 
     /**
      * Return a new session with only messages whose text content matches the query.
-     * Case-insensitive substring match.
+     * Case-insensitive substring match. Searches across user, assistant, subagent,
+     * summary, custom-title, and pr-link messages.
      */
     filterByContent(query: string): ClaudeSession {
         const lowerQuery = query.toLowerCase();
@@ -884,10 +950,23 @@ export class ClaudeSession {
                     .filter((b): b is TextBlock => b.type === "text")
                     .map((b) => b.text)
                     .join(" ");
+            } else if (msg.type === "subagent") {
+                const sub = msg as SubagentMessage;
+                if (sub.role === "user") {
+                    text = extractUserText((sub.message as UserMessageContent).content);
+                } else {
+                    const blocks = (sub.message as AssistantMessageContent).content;
+                    text = blocks
+                        .filter((b): b is TextBlock => b.type === "text")
+                        .map((b) => b.text)
+                        .join(" ");
+                }
             } else if (msg.type === "summary") {
                 text = (msg as SummaryMessage).summary;
             } else if (msg.type === "custom-title") {
                 text = (msg as CustomTitleMessage).customTitle;
+            } else if (msg.type === "pr-link") {
+                text = (msg as PrLinkMessage).url;
             }
             return text.toLowerCase().includes(lowerQuery);
         });
@@ -914,6 +993,10 @@ export class ClaudeSession {
 
         let userMessageCount = 0;
         let assistantMessageCount = 0;
+        let systemMessageCount = 0;
+        let subagentMessageCount = 0;
+        let progressMessageCount = 0;
+        let prLinkCount = 0;
         let toolCallCount = 0;
         const toolUsage: Record<string, number> = {};
         const tokenUsage = { input: 0, output: 0, cached: 0 };
@@ -953,10 +1036,36 @@ export class ClaudeSession {
                 for (const tool of getToolUseBlocks(assistantMsg)) {
                     toolCallCount++;
                     toolUsage[tool.name] = (toolUsage[tool.name] || 0) + 1;
-
                     const fp = extractFilePathFromInput(tool.input);
                     if (fp) filesSet.add(fp);
                 }
+            } else if (msg.type === "system") {
+                systemMessageCount++;
+            } else if (msg.type === "subagent") {
+                subagentMessageCount++;
+                const sub = msg as SubagentMessage;
+
+                // Track subagent assistant models and token usage
+                if (sub.role === "assistant") {
+                    const assistantContent = sub.message as AssistantMessageContent;
+                    if (assistantContent.model) modelsSet.add(assistantContent.model);
+                    if (assistantContent.usage) {
+                        tokenUsage.input += assistantContent.usage.input_tokens || 0;
+                        tokenUsage.output += assistantContent.usage.output_tokens || 0;
+                        tokenUsage.cached += assistantContent.usage.cache_read_input_tokens || 0;
+                    }
+                    // Track subagent tool calls
+                    for (const tool of getSubagentToolUseBlocks(sub)) {
+                        toolCallCount++;
+                        toolUsage[tool.name] = (toolUsage[tool.name] || 0) + 1;
+                        const fp = extractFilePathFromInput(tool.input);
+                        if (fp) filesSet.add(fp);
+                    }
+                }
+            } else if (msg.type === "progress") {
+                progressMessageCount++;
+            } else if (msg.type === "pr-link") {
+                prLinkCount++;
             }
         }
 
@@ -967,6 +1076,10 @@ export class ClaudeSession {
             messageCount: this._messages.length,
             userMessageCount,
             assistantMessageCount,
+            systemMessageCount,
+            subagentMessageCount,
+            progressMessageCount,
+            prLinkCount,
             toolCallCount,
             toolUsage,
             tokenUsage,
@@ -1043,6 +1156,36 @@ export class ClaudeSession {
                         lines.push(`${timestamp}[Image: ${(block as ImageBlock).source.media_type}]`);
                     } else if (block.type === "tool_reference") {
                         lines.push(`${timestamp}[Tool Reference: ${(block as ToolReferenceBlock).tool_name}]`);
+                    }
+                }
+            } else if (msg.type === "subagent") {
+                const sub = msg as SubagentMessage;
+                if (sub.role === "user") {
+                    const content = (sub.message as UserMessageContent).content;
+                    const text = typeof content === "string"
+                        ? content
+                        : this._extractUserTextBlocks(content, includeToolResults);
+                    if (text.trim()) {
+                        lines.push(`${timestamp}[Subagent User]: ${text.trim()}`);
+                    }
+                } else {
+                    const content = (sub.message as AssistantMessageContent).content;
+                    for (const block of content) {
+                        if (block.type === "text") {
+                            const text = (block as TextBlock).text.trim();
+                            if (text) lines.push(`${timestamp}[Subagent]: ${text}`);
+                        } else if (block.type === "thinking" && includeThinking) {
+                            const text = (block as ThinkingBlock).thinking.trim();
+                            if (text) lines.push(`${timestamp}[Subagent Thinking]: ${text}`);
+                        } else if (block.type === "tool_use") {
+                            const tool = block as ToolUseBlock;
+                            const fp = extractFilePathFromInput(tool.input);
+                            lines.push(`${timestamp}[Subagent Tool: ${tool.name}]${fp ? ` ${fp}` : ""}`);
+                        } else if (block.type === "image") {
+                            lines.push(`${timestamp}[Image: ${(block as ImageBlock).source.media_type}]`);
+                        } else if (block.type === "tool_reference") {
+                            lines.push(`${timestamp}[Tool Reference: ${(block as ToolReferenceBlock).tool_name}]`);
+                        }
                     }
                 }
             } else if (msg.type === "summary") {
