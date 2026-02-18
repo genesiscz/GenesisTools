@@ -31,7 +31,10 @@ async function handleList(): Promise<void> {
         return;
     }
 
-    const items: Array<{ id: number; title: string; state: string; fetchedAt: Date; hasTask: boolean }> = [];
+    const items: Array<{
+        id: number; title: string; state: string; fetchedAt: Date;
+        hasTask: boolean; hasHistory: boolean; hasComments: boolean;
+    }> = [];
 
     for (const file of workitemFiles) {
         try {
@@ -42,8 +45,10 @@ async function handleList(): Promise<void> {
                     id: cache.id,
                     title: cache.title,
                     state: cache.state,
-                    fetchedAt: new Date(cache.fetchedAt),
+                    fetchedAt: new Date(cache.cache?.fieldsFetchedAt ?? 0),
                     hasTask: taskFile !== null,
+                    hasHistory: !!cache.cache?.historyFetchedAt,
+                    hasComments: !!cache.cache?.commentsFetchedAt,
                 });
             }
         } catch {
@@ -56,13 +61,13 @@ async function handleList(): Promise<void> {
 
     lines.push(`Found ${items.length} cached work items:`);
     lines.push("");
-    lines.push("| ID | Title | State | Cached | Has File |");
-    lines.push("|-----|-------|-------|--------|----------|");
+    lines.push("| ID | Title | State | Cached | File | Hist | Cmts |");
+    lines.push("|-----|-------|-------|--------|------|------|------|");
 
     for (const item of items) {
         const title = item.title.length > 35 ? item.title.slice(0, 32) + "..." : item.title;
         const age = getRelativeTime(item.fetchedAt);
-        lines.push(`| ${item.id} | ${title} | ${item.state} | ${age} | ${item.hasTask ? "✓" : "✗"} |`);
+        lines.push(`| ${item.id} | ${title} | ${item.state} | ${age} | ${item.hasTask ? "✓" : "✗"} | ${item.hasHistory ? "✓" : "✗"} | ${item.hasComments ? "✓" : "✗"} |`);
     }
 
     lines.push("");

@@ -2,7 +2,20 @@
  * Shared cache utilities for Azure DevOps CLI
  */
 
-import type { IdentityRef, TimeType, WorkItemHistory } from "@app/azure-devops/types";
+import type {
+    AssignmentPeriod,
+    Comment,
+    IdentityRef,
+    StatePeriod,
+    TimeType,
+    WorkItemCache,
+    WorkItemHistorySection,
+    WorkItemUpdate,
+} from "@app/azure-devops/types";
+import { WORKITEM_CACHE_VERSION } from "@app/azure-devops/types";
+import logger from "@app/logger";
+import { readdirSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { Storage } from "@app/utils/storage";
 
 // Shared storage instance
@@ -17,7 +30,7 @@ export const CACHE_TTL = {
     project: "30 days", // project metadata cache
     timetypes: "7 days", // time types cache
     teamMembers: "30 days", // team members cache
-    history: "7 days", // work item history cache
+    // history/comments TTL checked via isHistoryFresh()/isCommentsFresh() on cache.* timestamps
 } as const;
 
 // Short TTL for workitem freshness check (in minutes)
@@ -78,18 +91,130 @@ export async function saveTeamMembersCache(projectId: string, members: IdentityR
     await storage.putCacheFile(`team-members-${projectId}.json`, members, CACHE_TTL.teamMembers);
 }
 
-/**
- * Load work item history from cache
- */
-export async function loadHistoryCache(id: number): Promise<WorkItemHistory | null> {
+// ============= Workitem Cache Helpers =============
+
+const SECTION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days for history/comments
+
+/** Load a workitem cache entry (uses 365-day file-level TTL). */
+export async function loadWorkItemCache(id: number): Promise<WorkItemCache | null> {
     await storage.ensureDirs();
-    return storage.getCacheFile<WorkItemHistory>(`history-${id}.json`, CACHE_TTL.history);
+    return storage.getCacheFile<WorkItemCache>(`workitem-${id}.json`, CACHE_TTL.workitem);
+}
+
+/** Save the full workitem cache entry (always stamps version). */
+export async function saveWorkItemCache(id: number, data: WorkItemCache): Promise<void> {
+    await storage.ensureDirs();
+    data.version = WORKITEM_CACHE_VERSION;
+    await storage.putCacheFile(`workitem-${id}.json`, data, CACHE_TTL.workitem);
 }
 
 /**
- * Save work item history to cache
+ * Atomically update sections of a workitem cache entry.
+ * Merges the update into the existing cache without clobbering other sections.
+ * Also updates the relevant `cache.*FetchedAt` timestamp.
  */
-export async function saveHistoryCache(id: number, history: WorkItemHistory): Promise<void> {
+export async function updateWorkItemCacheSection(
+    id: number,
+    update: {
+        history?: WorkItemHistorySection;
+        comments?: Comment[];
+    },
+): Promise<void> {
     await storage.ensureDirs();
-    await storage.putCacheFile(`history-${id}.json`, history, CACHE_TTL.history);
+    const now = new Date().toISOString();
+    await storage.atomicUpdate<WorkItemCache>(`workitem-${id}.json`, (current) => {
+        const base: WorkItemCache = current ?? {
+            version: WORKITEM_CACHE_VERSION,
+            cache: { fieldsFetchedAt: now },
+            id,
+            rev: 0,
+            changed: "",
+            title: `#${id}`,
+            state: "Unknown",
+        };
+
+        // Ensure version + cache metadata exist (handles pre-migration entries)
+        base.version = WORKITEM_CACHE_VERSION;
+        if (!base.cache) {
+            // Handle pre-migration entries that have fetchedAt at top level
+            const legacyFetchedAt = "fetchedAt" in base ? String((base as unknown as { fetchedAt: string }).fetchedAt) : now;
+            base.cache = { fieldsFetchedAt: legacyFetchedAt };
+        }
+
+        if (update.history !== undefined) {
+            base.history = update.history;
+            base.cache.historyFetchedAt = now;
+        }
+        if (update.comments !== undefined) {
+            base.comments = update.comments;
+            base.cache.commentsFetchedAt = now;
+        }
+
+        return base;
+    });
+}
+
+/** Check if a workitem's history section is fresh (within 7-day TTL). */
+export function isHistoryFresh(cache: WorkItemCache): boolean {
+    const fetchedAt = cache.cache?.historyFetchedAt;
+    if (!fetchedAt) return false;
+    return (Date.now() - new Date(fetchedAt).getTime()) < SECTION_TTL_MS;
+}
+
+/** Check if a workitem's comments section is fresh (within 7-day TTL). */
+export function isCommentsFresh(cache: WorkItemCache): boolean {
+    const fetchedAt = cache.cache?.commentsFetchedAt;
+    if (!fetchedAt) return false;
+    return (Date.now() - new Date(fetchedAt).getTime()) < SECTION_TTL_MS;
+}
+
+/**
+ * One-time migration: merge existing history-*.json files into workitem-*.json.
+ * Safe to run multiple times — skips items already merged.
+ * Deletes history-*.json files after successful merge.
+ */
+export async function migrateHistoryCache(): Promise<number> {
+    const cacheDir = storage.getCacheDir();
+    let historyFiles: string[];
+    try {
+        const files = readdirSync(cacheDir);
+        historyFiles = files.filter((f) => f.startsWith("history-") && f.endsWith(".json"));
+    } catch {
+        return 0;
+    }
+
+    if (historyFiles.length === 0) return 0;
+
+    let migrated = 0;
+    for (const file of historyFiles) {
+        const idMatch = file.match(/^history-(\d+)\.json$/);
+        if (!idMatch) continue;
+
+        const id = parseInt(idMatch[1], 10);
+        try {
+            const content = await Bun.file(join(cacheDir, file)).text();
+            const oldHistory = JSON.parse(content) as {
+                workItemId: number;
+                updates: WorkItemUpdate[];
+                fetchedAt: string;
+                assignmentPeriods: AssignmentPeriod[];
+                statePeriods: StatePeriod[];
+            };
+
+            await updateWorkItemCacheSection(id, {
+                history: {
+                    updates: oldHistory.updates,
+                    assignmentPeriods: oldHistory.assignmentPeriods,
+                    statePeriods: oldHistory.statePeriods,
+                },
+            });
+
+            unlinkSync(join(cacheDir, file));
+            migrated++;
+        } catch (error) {
+            logger.warn(`[cache] Failed to migrate history-${id}.json: ${error}`);
+        }
+    }
+
+    return migrated;
 }

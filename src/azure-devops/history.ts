@@ -10,7 +10,7 @@ import type {
     IdentityRef,
     ReportingRevision,
     StatePeriod,
-    WorkItemHistory,
+    WorkItemHistorySection,
     WorkItemUpdate,
 } from "@app/azure-devops/types";
 import { removeDiacritics } from "@app/utils/string";
@@ -191,11 +191,9 @@ export function computeStatePeriods(updates: WorkItemUpdate[]): StatePeriod[] {
  * Build a complete work item history from update records.
  * Computes both assignment and state periods from the raw updates.
  */
-export function buildWorkItemHistory(workItemId: number, updates: WorkItemUpdate[]): WorkItemHistory {
+export function buildWorkItemHistory(updates: WorkItemUpdate[]): WorkItemHistorySection {
     return {
-        workItemId,
         updates,
-        fetchedAt: new Date().toISOString(),
         assignmentPeriods: computeAssignmentPeriods(updates),
         statePeriods: computeStatePeriods(updates),
     };
@@ -208,7 +206,7 @@ export function buildWorkItemHistory(workItemId: number, updates: WorkItemUpdate
  * The reporting API returns full field snapshots per revision, so we compare
  * consecutive revisions to detect field changes.
  */
-export function buildHistoryFromRevisions(workItemId: number, revisions: ReportingRevision[]): WorkItemHistory {
+export function buildHistoryFromRevisions(revisions: ReportingRevision[]): WorkItemHistorySection {
     const sorted = [...revisions].sort((a, b) => a.rev - b.rev);
     const assignmentPeriods: AssignmentPeriod[] = [];
     const statePeriods: StatePeriod[] = [];
@@ -281,9 +279,7 @@ export function buildHistoryFromRevisions(workItemId: number, revisions: Reporti
     }
 
     return {
-        workItemId,
         updates: [],
-        fetchedAt: new Date().toISOString(),
         assignmentPeriods,
         statePeriods,
     };
@@ -294,7 +290,7 @@ export function buildHistoryFromRevisions(workItemId: number, revisions: Reporti
  * Only considers closed periods (with endDate) for accurate totals.
  */
 export function calculateTimeInState(
-    history: WorkItemHistory
+    history: WorkItemHistorySection
 ): Map<string, { totalMinutes: number; byAssignee: Map<string, number> }> {
     const result = new Map<string, { totalMinutes: number; byAssignee: Map<string, number> }>();
 

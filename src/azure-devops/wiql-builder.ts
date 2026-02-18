@@ -24,7 +24,7 @@ const ASOF_SELECT_FIELDS = ["[System.Id]", "[System.Title]", "[System.State]", "
  * WIQL uses single quotes for string values, and a single quote inside
  * a value must be doubled (i.e., ' becomes '').
  */
-function escapeWiqlValue(value: string): string {
+export function escapeWiqlValue(value: string): string {
     return value.replace(/'/g, "''");
 }
 

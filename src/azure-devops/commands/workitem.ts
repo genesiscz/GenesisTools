@@ -8,8 +8,8 @@
 import { Api } from "@app/azure-devops/api";
 import {
     formatJSON,
-    loadGlobalCache,
-    saveGlobalCache,
+    loadWorkItemCache,
+    saveWorkItemCache,
     WORKITEM_FRESHNESS_MINUTES,
 } from "@app/azure-devops/cache";
 import { downloadAttachments } from "@app/azure-devops/commands/attachments";
@@ -22,6 +22,7 @@ import type {
     WorkItemFull,
     WorkItemSettings,
 } from "@app/azure-devops/types";
+import { WORKITEM_CACHE_VERSION } from "@app/azure-devops/types";
 import {
     extractWorkItemIds,
     findTaskFile,
@@ -255,8 +256,8 @@ export async function handleWorkItem(
 
     for (const id of ids) {
         logger.debug(`[workitem] Processing work item #${id}`);
-        const cache = await loadGlobalCache<WorkItemCache>("workitem", String(id));
-        logger.debug(`[workitem] #${id} cache: ${cache ? `found (fetched ${cache.fetchedAt})` : "not found"}`);
+        const cache = await loadWorkItemCache(id);
+        logger.debug(`[workitem] #${id} cache: ${cache ? `found (fetched ${cache.cache?.fieldsFetchedAt})` : "not found"}`);
 
         const existingFile = findTaskFileAnywhere(id, "json");
         logger.debug(`[workitem] #${id} existing file: ${existingFile ? existingFile.path : "none"}`);
@@ -288,7 +289,7 @@ export async function handleWorkItem(
                 logger.debug(`[workitem] #${id} unchanged (rev=${cache.rev}), using cache`);
                 const cachedItem = JSON.parse(readFileSync(existingJsonPath, "utf-8")) as WorkItemFull;
                 cachedResults.set(id, cachedItem);
-                cacheTimes.set(id, new Date(cache.fetchedAt));
+                cacheTimes.set(id, new Date(cache.cache?.fieldsFetchedAt ?? 0));
                 skippedCount++;
                 continue;
             }
@@ -296,7 +297,7 @@ export async function handleWorkItem(
         }
 
         if (!forceRefresh && !queryMetadata && cache && existingJsonPath && existsSync(existingJsonPath)) {
-            const cacheDate = new Date(cache.fetchedAt);
+            const cacheDate = new Date(cache.cache?.fieldsFetchedAt ?? 0);
             const ageMinutes = (Date.now() - cacheDate.getTime()) / 60000;
             if (ageMinutes < WORKITEM_FRESHNESS_MINUTES) {
                 logger.debug(`[workitem] #${id} cache fresh (${ageMinutes.toFixed(1)} min old), using cache`);
@@ -376,19 +377,28 @@ export async function handleWorkItem(
         logger.debug(`[workitem] #${id} saving MD: ${mdPath}`);
         writeFileSync(mdPath, generateWorkItemMarkdown(item));
 
-        logger.debug(`[workitem] #${id} updating global cache`);
+        logger.debug(`[workitem] #${id} updating workitem cache`);
+        const now = new Date().toISOString();
+        const existingCache = await loadWorkItemCache(id);
+        const commentsFetched = fetchOptions?.comments !== false;
         const cacheData: WorkItemCache = {
+            version: WORKITEM_CACHE_VERSION,
+            cache: {
+                fieldsFetchedAt: now,
+                historyFetchedAt: existingCache?.cache?.historyFetchedAt,
+                commentsFetchedAt: commentsFetched ? now : existingCache?.cache?.commentsFetchedAt,
+            },
             id: item.id,
             rev: item.rev,
             changed: item.changed,
             title: item.title,
             state: item.state,
-            commentCount: item.comments.length,
-            fetchedAt: new Date().toISOString(),
             category: settings.category,
             taskFolder: settings.taskFolder,
+            history: existingCache?.history,
+            comments: commentsFetched ? item.comments : existingCache?.comments,
         };
-        await saveGlobalCache("workitem", String(id), cacheData);
+        await saveWorkItemCache(id, cacheData);
     }
 
     // Build results in original ID order

@@ -130,16 +130,36 @@ export interface CacheEntry {
     url: string;
 }
 
+/** Current cache format version. Bump when schema changes. */
+export const WORKITEM_CACHE_VERSION = "1.0.0";
+
+/** Cache metadata — tracks freshness per section independently */
+export interface WorkItemCacheMeta {
+    fieldsFetchedAt: string;
+    historyFetchedAt?: string;
+    commentsFetchedAt?: string;
+}
+
+/** History section stored inside WorkItemCache */
+export interface WorkItemHistorySection {
+    updates: WorkItemUpdate[];
+    assignmentPeriods: AssignmentPeriod[];
+    statePeriods: StatePeriod[];
+}
+
+/** Unified work item cache — all data for one work item in a single file */
 export interface WorkItemCache {
+    version: string;
+    cache: WorkItemCacheMeta;
     id: number;
     rev: number;
     changed: string;
     title: string;
     state: string;
-    commentCount: number;
-    fetchedAt: string;
     category?: string;
-    taskFolder?: boolean; // Whether stored in <id>/ subfolder
+    taskFolder?: boolean;
+    history?: WorkItemHistorySection;
+    comments?: Comment[];
 }
 
 export interface QueryCache {
@@ -194,15 +214,6 @@ export interface WorkItemUpdate {
         updated?: RelationChange[];
     };
     url: string;
-}
-
-/** Cached history for a work item */
-export interface WorkItemHistory {
-    workItemId: number;
-    updates: WorkItemUpdate[];
-    fetchedAt: string;
-    assignmentPeriods: AssignmentPeriod[];
-    statePeriods: StatePeriod[];
 }
 
 /** Period when someone was assigned */

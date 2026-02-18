@@ -246,6 +246,37 @@ Line count estimation heuristics:
 - Tests (1000+ lines): 2-4h (test code is repetitive, faster to write)
 - Rebased/merge commits: count as 0.5-2h for the rebase work itself, don't count old commit lines
 
+## Azure DevOps Activity (for Gap Filling)
+
+When Timely data is missing or incomplete, use Azure DevOps activity to reconstruct what the user worked on:
+
+```bash
+# Get activity timeline for a date range (reads from cache)
+tools azure-devops history activity --from YYYY-MM-DD --to YYYY-MM-DD -o json 2>/dev/null | tools json
+
+# Discover + sync items not yet cached, then show activity
+tools azure-devops history activity --from YYYY-MM-DD --to YYYY-MM-DD --discover -o json 2>/dev/null | tools json
+```
+
+The output is grouped by day, with events like:
+- `state_change` — user moved an item (Active → Resolved)
+- `assignment_change` — user (re)assigned an item
+- `comment` — user commented on an item
+- `created` — user created a new item
+- `field_edit` — user edited fields (description, title, etc.)
+
+**Mapping activity to time entries:**
+- Multiple actions on the same work item within a short window = single work session
+- State changes (especially → Resolved/Closed) indicate focused work
+- Comments often indicate code review or investigation
+- Item creation = analysis/planning time
+
+**Prerequisite:** Sync history first if cache is empty:
+```bash
+tools azure-devops history sync                              # sync all cached items
+tools azure-devops history activity --from YYYY-MM-DD --discover  # discover + sync new items
+```
+
 ## Import JSON Format
 
 For bulk importing time entries, create a JSON file:

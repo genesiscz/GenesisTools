@@ -193,6 +193,11 @@ export class Api {
         const shortUrl = url.replace(this.config.org, "").slice(0, 80);
 
         logger.debug(`[api] ${method} ${shortUrl}${description ? ` (${description})` : ""}`);
+        if (body !== undefined) {
+            const bodyStr = JSON.stringify(body);
+            const truncated = bodyStr.length > 500 ? bodyStr.slice(0, 500) + `... (${bodyStr.length} chars)` : bodyStr;
+            logger.debug(`[api] ${method} body: ${truncated}`);
+        }
         const startTime = Date.now();
 
         const token = await this.getAccessToken();
@@ -797,6 +802,13 @@ export class Api {
             }
             continuationToken = data.continuationToken;
             options.onProgress?.({ page, matchedItems: revisionsByItem.size, totalRevisions });
+
+            // Azure DevOps sometimes returns continuation tokens on final/empty pages.
+            // Stop if: explicit last batch flag, empty page, or no continuation token.
+            if (data.isLastBatch || data.values.length === 0) {
+                logger.debug(`[api] Reporting API: stopping pagination (isLastBatch=${data.isLastBatch}, pageSize=${data.values.length})`);
+                break;
+            }
         } while (continuationToken);
 
         return revisionsByItem;
