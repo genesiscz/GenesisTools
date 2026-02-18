@@ -79,14 +79,17 @@ export function extractCommentId(input: string): number | null {
  * Parse date input (ISO 8601 or relative like "2d", "1w")
  */
 export function parseDate(input: string): Date | null {
-    // Relative format: Nd, Nw, Nm
-    const relativeMatch = input.match(/^(\d+)([dwm])$/);
+    // Relative format: Nh, Nd, Nw, Nm
+    const relativeMatch = input.match(/^(\d+)([hdwm])$/);
     if (relativeMatch) {
         const [, amount, unit] = relativeMatch;
         const now = new Date();
         const value = parseInt(amount, 10);
 
         switch (unit) {
+            case "h":
+                now.setHours(now.getHours() - value);
+                return now;
             case "d":
                 now.setDate(now.getDate() - value);
                 return now;
@@ -271,4 +274,48 @@ export function buildGitHubCommitUrl(
  */
 export function buildRawGitHubUrl(owner: string, repo: string, ref: string, path: string): string {
     return `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${path}`;
+}
+
+/**
+ * Convert a GitHub API URL to a web browser URL
+ *
+ * API: https://api.github.com/repos/owner/repo/issues/123 -> https://github.com/owner/repo/issues/123
+ * API: https://api.github.com/repos/owner/repo/pulls/456  -> https://github.com/owner/repo/pull/456
+ * API: https://api.github.com/repos/owner/repo/commits/sha -> https://github.com/owner/repo/commit/sha
+ */
+export function apiUrlToWebUrl(
+    apiUrl: string | null,
+    repoHtmlUrl: string,
+): string {
+    if (!apiUrl) return repoHtmlUrl;
+
+    const match = apiUrl.match(
+        /api\.github\.com\/repos\/([^/]+\/[^/]+)\/(issues|pulls|releases|commits)\/(.+)/,
+    );
+    if (!match) return repoHtmlUrl;
+
+    const [, repoPath, resource, identifier] = match;
+    const base = `https://github.com/${repoPath}`;
+
+    switch (resource) {
+        case "issues":
+            return `${base}/issues/${identifier}`;
+        case "pulls":
+            return `${base}/pull/${identifier}`; // plural->singular
+        case "commits":
+            return `${base}/commit/${identifier}`;
+        case "releases":
+            return `${base}/releases`;
+        default:
+            return repoHtmlUrl;
+    }
+}
+
+/**
+ * Extract issue/PR number from a GitHub API URL
+ */
+export function extractNumberFromApiUrl(apiUrl: string | null): number | null {
+    if (!apiUrl) return null;
+    const match = apiUrl.match(/\/(issues|pulls)\/(\d+)$/);
+    return match ? parseInt(match[2], 10) : null;
 }

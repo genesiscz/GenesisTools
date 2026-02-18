@@ -1,9 +1,11 @@
 // GitHub CLI Tool - Main Entry Point
 
+import { createActivityCommand, activityCommand } from "@app/github/commands/activity";
 import { createCodeSearchCommand } from "@app/github/commands/code-search";
 import { commentsCommand, createCommentsCommand } from "@app/github/commands/comments";
 import { createGetCommand, getCommand } from "@app/github/commands/get";
 import { createIssueCommand, issueCommand } from "@app/github/commands/issue";
+import { createNotificationsCommand, notificationsCommand } from "@app/github/commands/notifications";
 import { createPRCommand, prCommand } from "@app/github/commands/pr";
 import { createReviewCommand, reviewCommand } from "@app/github/commands/review";
 import { createSearchCommand, searchCommand } from "@app/github/commands/search";
@@ -29,6 +31,8 @@ program.addCommand(createSearchCommand());
 program.addCommand(createCodeSearchCommand());
 program.addCommand(createGetCommand());
 program.addCommand(createReviewCommand());
+program.addCommand(createNotificationsCommand());
+program.addCommand(createActivityCommand());
 
 // Status command
 program
@@ -87,6 +91,8 @@ async function interactiveMode(): Promise<void> {
             const action = await select({
                 message: "What would you like to do?",
                 choices: [
+                    { value: "notifications", name: "🔔 Notifications" },
+                    { value: "activity", name: "📊 Activity Feed" },
                     { value: "issue", name: "📋 Fetch Issue" },
                     { value: "pr", name: "🔀 Fetch Pull Request" },
                     { value: "review", name: "📝 Review PR Threads" },
@@ -176,6 +182,69 @@ async function interactiveMode(): Promise<void> {
                     groupByFile,
                     md: outputFormat === "md",
                     json: outputFormat === "json",
+                });
+                continue;
+            }
+
+            if (action === "notifications") {
+                const stateFilter = await select({
+                    message: "Show notifications:",
+                    choices: [
+                        { value: "all", name: "All" },
+                        { value: "unread", name: "Unread only" },
+                        { value: "read", name: "Read only" },
+                    ],
+                });
+
+                const sinceFilter = await select({
+                    message: "Time range:",
+                    choices: [
+                        { value: undefined, name: "All time" },
+                        { value: "1d", name: "Last 24 hours" },
+                        { value: "7d", name: "Last 7 days" },
+                        { value: "30d", name: "Last 30 days" },
+                    ],
+                });
+
+                const repoFilter = await input({
+                    message: "Filter by repo (owner/repo, or empty for all):",
+                });
+
+                await notificationsCommand({
+                    state: stateFilter as "read" | "unread" | "all",
+                    since: sinceFilter ?? undefined,
+                    repo: repoFilter.trim() || undefined,
+                    format: "ai",
+                });
+
+                continue;
+            }
+
+            if (action === "activity") {
+                const sinceFilter = await select({
+                    message: "Time range:",
+                    choices: [
+                        { value: "1d", name: "Last 24 hours" },
+                        { value: "7d", name: "Last 7 days" },
+                        { value: "30d", name: "Last 30 days" },
+                    ],
+                });
+
+                const typeFilter = await select({
+                    message: "Event type:",
+                    choices: [
+                        { value: undefined, name: "All" },
+                        { value: "push", name: "Pushes" },
+                        { value: "pr", name: "Pull Requests" },
+                        { value: "issue", name: "Issues" },
+                        { value: "comment", name: "Comments" },
+                    ],
+                });
+
+                await activityCommand({
+                    since: sinceFilter ?? undefined,
+                    type: typeFilter ?? undefined,
+                    format: "ai",
                 });
                 continue;
             }

@@ -15,6 +15,7 @@
         "format:dashboard": "biome format --write src/claude-history-dashboard"
     },
     "devDependencies": {
+        "@anthropic-ai/claude-code": "^2.1.45",
         "@biomejs/biome": "^2.3.12",
         "@types/babel__core": "^7.20.5",
         "@types/better-sqlite3": "^7.6.13",

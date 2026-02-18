@@ -23,6 +23,13 @@ Search, fetch, and analyze GitHub issues, PRs, and comments with caching.
 
 | Task | Command |
 |------|---------|
+| List unread notifications | `tools github notifications` |
+| Notifications for a repo | `tools github notifications -r owner/repo` |
+| Open unread mentions | `tools github notifications --reason mention --open` |
+| Mark notifications read | `tools github notifications --mark-read` |
+| Activity feed (last 7d) | `tools github activity --since 7d` |
+| Activity for specific user | `tools github activity -u username` |
+| Search with min stars | `tools github search "query" --stars 1000` |
 | Get issue with comments | `tools github issue <url>` |
 | Get last 5 comments | `tools github issue <url> --last 5` |
 | Comments since specific one | `tools github comments <url>#issuecomment-123 --since 123` |
@@ -192,6 +199,63 @@ tools github code "interface Props" --repo vercel/next.js --language typescript
 | Find code using a function | `tools github code "useMemo" --repo facebook/react --language typescript` |
 | Find config files | `tools github code "version" --repo owner/repo --path "*.json"` |
 
+### Notifications
+```bash
+# All unread notifications
+tools github notifications
+
+# Filter by repo
+tools github notifications -r anthropics/claude-code
+
+# Filter by reason (mention, review_requested, comment, assign, etc.)
+tools github notifications --reason mention,review_requested
+
+# Filter by type (Issue, PullRequest, Release, Discussion)
+tools github notifications --type PullRequest
+
+# Filter by title (regex or substring)
+tools github notifications --title "bug fix"
+
+# Unread only, last 7 days
+tools github notifications --state unread --since 7d
+
+# Open all matching in browser
+tools github notifications --reason mention --open
+
+# Mark matching as read
+tools github notifications --state unread --mark-read
+
+# Mark as done (remove from inbox)
+tools github notifications --mark-done
+
+# Combine filters
+tools github notifications -r owner/repo --reason review_requested --since 1d --open
+```
+
+### Activity Feed
+```bash
+# Your recent activity
+tools github activity
+
+# Activity from last 24 hours
+tools github activity --since 1d
+
+# Another user's activity
+tools github activity -u username
+
+# Filter by event type (Push, Issues, PullRequest, IssueComment, etc.)
+tools github activity --type Push,PullRequest
+
+# Filter by repo
+tools github activity -r owner/repo
+
+# Received events (others' activity affecting you)
+tools github activity --received
+
+# JSON output
+tools github activity --format json -o activity.json
+```
+
 ### PR-Specific Features
 ```bash
 # Include review threads (GraphQL, threaded with severity/suggestions)
@@ -266,6 +330,8 @@ tools github review 137 --resolve-thread -t <thread-id>
 1. Reply to each addressed thread with: what was fixed, how it was fixed, and a **clickable link** to the commit using markdown: `[short-sha](https://github.com/owner/repo/commit/full-sha)` (e.g. "Fixed in [abc1234](https://github.com/owner/repo/commit/abc1234def5678) — scoped stale cleanup to current project directory.")
 2. Reply "Won't fix" to deliberately skipped threads with a detailed explanation of why the change isn't warranted (technical reasoning, not just a dismissal)
 3. Do NOT resolve threads automatically — only resolve when the user explicitly asks to resolve them
+4. **Tag the review author** in replies: `@coderabbitai` for CodeRabbit, `/gemini` for Gemini Code Assist. **Do not tag Copilot** (`@copilot-pull-request-reviewer`) as it doesn't respond to @mentions. For human reviewers, use `@<username>`
+5. **Delegate replies to a background haiku agent** — thread replies are independent shell commands that don't need main context. Spawn a `Bash` agent with `model: "haiku"` and `run_in_background: true` containing all the `tools github review --respond` commands. Don't wait for it — continue immediately.
 
 ### Review Fix Workflow (End-to-End)
 
@@ -372,6 +438,7 @@ Options:
   -L, --limit <n>              Max results (default: 30)
   --min-reactions <n>          Min reaction count on issue/PR
   --min-comment-reactions <n>  Min reactions on any comment (GraphQL, slower)
+  --stars <n>                  Min star count on repository
   --advanced                   Use only advanced search backend
   --legacy                     Use only legacy search backend
   -f, --format <format>        Output format
@@ -392,14 +459,50 @@ Options:
   -v, --verbose           Enable verbose logging
 ```
 
+### Notifications Command
+```
+tools github notifications [options]
+
+Options:
+  --reason <reasons>          Filter by reason (comma-separated)
+  -r, --repo <repo>           Filter by repository (partial match)
+  --title <pattern>           Filter by title (regex)
+  --since <date>              Since date/time (e.g., 7d, 24h, 2025-01-01)
+  --type <types>              Filter by type (Issue,PullRequest,Release,Discussion)
+  --state <state>             Filter: read|unread|all (default: unread)
+  --participating             Only participating notifications
+  --open                      Open matching in browser
+  --mark-read                 Mark matching as read
+  --mark-done                 Mark matching as done
+  -L, --limit <n>             Max results (default: 50)
+  -f, --format <format>       Output: ai|md|json
+  -o, --output <file>         Output path
+  -v, --verbose               Enable verbose logging
+```
+
+### Activity Command
+```
+tools github activity [options]
+
+Options:
+  -u, --user <username>       GitHub username (default: authenticated user)
+  --received                  Show received events
+  -r, --repo <repo>           Filter by repository (partial match)
+  --type <types>              Filter by event type (comma-separated)
+  --since <date>              Since date/time (e.g., 7d, 24h)
+  -L, --limit <n>             Max results (default: 30)
+  -f, --format <format>       Output: ai|md|json
+  -o, --output <file>         Output path
+  -v, --verbose               Enable verbose logging
+```
+
 ## Interactive Mode
 
 Run `tools github` without arguments for interactive mode:
-1. Select action: Issue / PR / Comments / Search
-2. Enter URL or search query
-3. Configure filters interactively
-4. Choose output format
-5. Continue with another query or exit
+1. Select action: Notifications / Activity / Issue / PR / Comments / Search
+2. Enter URL, search query, or configure filters interactively
+3. Choose output format
+4. Continue with another query or exit
 
 ## Authentication
 

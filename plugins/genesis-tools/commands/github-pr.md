@@ -156,19 +156,28 @@ EOF
 
 After committing, reply to each thread on GitHub explaining what happened.
 
+**IMPORTANT: Delegate to a background agent.** Thread replies are many independent shell commands that don't need the main agent's context. Spawn a **haiku** Task agent (subagent_type: `Bash`) to run all the reply commands. This saves significant time and tokens.
+
+#### Preparing the reply commands
+
 **Commit links:** Always include a clickable link to the commit. Build the URL as:
 `https://github.com/<owner>/<repo>/commit/<full-sha>`
 
 Use markdown link format in the reply: `[short-sha](full-url)`.
 
+**Author tagging:** When replying, tag the review author in the response:
+- For `@coderabbitai` threads: prefix reply with `@coderabbitai`
+- For `@gemini-code-assist` threads: prefix reply with `/gemini`
+- For other bot reviewers: tag them with `@<username>`
+
 **For fixed threads** — explain what was fixed, how, and link the commit:
 ```bash
-tools github review <pr> --respond "Fixed in [abc1234](https://github.com/owner/repo/commit/abc1234def5678) — scoped stale cleanup to current project directory to avoid deleting other projects' cache entries." -t <thread-id>
+tools github review <pr> --respond "@coderabbitai Fixed in [abc1234](https://github.com/owner/repo/commit/abc1234def5678) — scoped stale cleanup to current project directory." -t <thread-id>
 ```
 
 **For skipped threads** — provide a detailed technical explanation of why:
 ```bash
-tools github review <pr> --respond "Won't fix — the projectNameCache already prevents repeated filesystem resolution. The initial resolution is O(n) where n is path depth (~4-6 segments), and each existsSync call is a single stat syscall cached by the OS. Binary search wouldn't reduce the number of calls since we must verify each path segment exists. The current approach is correct and fast enough." -t <thread-id>
+tools github review <pr> --respond "/gemini Won't fix — the projectNameCache already prevents repeated filesystem resolution." -t <thread-id>
 ```
 
 **Batch operations:** When multiple threads have the same fix/response, use comma-separated IDs:
@@ -176,16 +185,31 @@ tools github review <pr> --respond "Won't fix — the projectNameCache already p
 tools github review <pr> --respond "Fixed in [abc1234](https://github.com/owner/repo/commit/abc1234def5678) — addressed review feedback." -t <thread-id1>,<thread-id2>,<thread-id3>
 ```
 
-**Important:** Do NOT use `--resolve-thread` unless the user explicitly asks to resolve threads. Only reply.
+#### Dispatching to a background agent
 
-**When the user asks to resolve threads**, add `--resolve-thread` to the reply command:
-```bash
-tools github review <pr> --respond "Fixed in abc1234 — scoped stale cleanup to ..." --resolve-thread -t <thread-id>
+Build the full list of `tools github review <pr> --respond "..." -t <id>` commands, then spawn a **haiku** agent with `run_in_background: true`:
+
+```
+Task tool call:
+  subagent_type: "Bash"
+  model: "haiku"
+  run_in_background: true
+  prompt: |
+    Run each of these commands. Report only errors — if a command succeeds, just note the thread ID.
+    If a command fails, include the full error output.
+
+    1. tools github review <pr> --respond "..." -t <id1>
+    2. tools github review <pr> --respond "..." -t <id2>,<id3>
+    ...
 ```
 
-When resolving in batch:
+The main agent should **not wait** for the reply agent — continue to Step 7 immediately.
+
+**Important:** Do NOT use `--resolve-thread` unless the user explicitly asks to resolve threads. Only reply.
+
+**When the user asks to resolve threads**, add `--resolve-thread` to the reply commands:
 ```bash
-tools github review <pr> --respond "Fixed in abc1234" --resolve-thread -t <thread-id1>,<thread-id2>,<thread-id3>
+tools github review <pr> --respond "Fixed in abc1234" --resolve-thread -t <thread-id1>,<thread-id2>
 ```
 
 **Permission note:** `--resolve-thread` uses `resolveReviewThread` GraphQL mutation. Fine-grained PATs may fail with "Resource not accessible by personal access token" even with `pull_requests:write` set, because GitHub does not support this mutation for fine-grained PATs. The tool now automatically falls back to the `gh` CLI token (classic OAuth with `repo` scope) which always has the needed permission. No manual action required.
