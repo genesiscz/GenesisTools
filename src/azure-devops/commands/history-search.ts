@@ -97,12 +97,12 @@ async function wiqlSearch(options: SearchOptions, api: Api, config: AzureConfig)
     const wiql =
         assignedToValue && !options.state
             ? useCurrent
-                ? {
+                ? buildCombinedQuery({
                       currentAssignedTo: assignedToValue,
                       from: options.from,
                       to: options.to,
                       isMacro: isMeMacro,
-                  }
+                  })
                 : buildEverAssignedQuery(assignedToValue, options.from, options.to, isMeMacro)
             : buildCombinedQuery({
                   assignedTo: useCurrent ? undefined : assignedToValue,
