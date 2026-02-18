@@ -11,6 +11,8 @@ description: |
   - User wants to search code in a repository (e.g. "find how X is implemented")
   - User wants to find issues or discussions about a library or framework
   - User asks "how does library X handle Y" or "are there issues about Z"
+  - User asks to fix/address/review PR review comments → use the `/genesis-tools:github-pr` command instead
+  - User provides multiple PR URLs to analyze → use the `/genesis-tools:github-pr` command instead
 ---
 
 # GitHub Tool Usage Guide
@@ -241,7 +243,7 @@ tools github review 137 --respond "Fixed in abc1234" -t PRRT_id1,PRRT_id2
 tools github review 137 --respond "Fixed" --resolve-thread -t PRRT_id1,PRRT_id2,PRRT_id3
 ```
 
-> **Full PR review workflow:** For an end-to-end flow (fetch review threads, triage, implement fixes, commit, reply to threads), use the `/github-pr <pr>` command instead of manual `tools github review` calls.
+> **PR review fix workflow:** If the user asks to fix, address, or analyze PR review comments — or provides multiple PR URLs — use the `/genesis-tools:github-pr` command (via the `Skill` tool). It handles the full end-to-end flow: fetch threads, critically evaluate each comment (pushing back on false positives), implement fixes, commit, reply to reviewers, and for multiple PRs: spawn parallel agents and produce a consolidated report.
 
 ### Resolving Review Threads
 
@@ -264,6 +266,8 @@ tools github review 137 --resolve-thread -t <thread-id>
 1. Reply to each addressed thread with: what was fixed, how it was fixed, and a **clickable link** to the commit using markdown: `[short-sha](https://github.com/owner/repo/commit/full-sha)` (e.g. "Fixed in [abc1234](https://github.com/owner/repo/commit/abc1234def5678) — scoped stale cleanup to current project directory.")
 2. Reply "Won't fix" to deliberately skipped threads with a detailed explanation of why the change isn't warranted (technical reasoning, not just a dismissal)
 3. Do NOT resolve threads automatically — only resolve when the user explicitly asks to resolve them
+4. **Tag the review author** in replies: `@coderabbitai` for CodeRabbit, `/gemini` for Gemini Code Assist. **Do not tag Copilot** (`@copilot-pull-request-reviewer`) as it doesn't respond to @mentions. For human reviewers, use `@<username>`
+5. **Delegate replies to a background haiku agent** — thread replies are independent shell commands that don't need main context. Spawn a `Bash` agent with `model: "haiku"` and `run_in_background: true` containing all the `tools github review --respond` commands. Don't wait for it — continue immediately.
 
 ### Review Fix Workflow (End-to-End)
 
@@ -276,7 +280,7 @@ When fixing PR review comments:
 5. **Reply to threads:** `tools github review <pr> --respond "Fixed in [sha](url)" -t <thread-ids>`
 6. **Resolve threads** (only when user explicitly approves): `tools github review <pr> --resolve-thread -t <thread-ids>`
 
-> For the full automated flow (fetch, triage, fix, commit, reply), use the `/github-pr <pr>` command instead.
+> For the full automated flow (fetch, triage, fix, commit, reply), use the `/genesis-tools:github-pr` command instead.
 
 ## Caching Behavior
 

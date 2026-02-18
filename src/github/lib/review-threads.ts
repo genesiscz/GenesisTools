@@ -2,7 +2,8 @@
 // Extracted from src/github-pr/index.ts, adapted to use shared octokit
 
 import type { ParsedReviewThread, ReviewThread, ReviewThreadComment, ReviewThreadStats } from "@app/github/types";
-import { getOctokit } from "@app/utils/github/octokit";
+import { getGhCliToken, getOctokit } from "@app/utils/github/octokit";
+import { Octokit } from "octokit";
 
 // =============================================================================
 // GraphQL Queries
@@ -279,24 +280,37 @@ export async function replyToThread(pullRequestReviewThreadId: string, body: str
     return data.addPullRequestReviewThreadReply.comment.id;
 }
 
-/**
- * Mark a review thread as resolved
- */
-export async function markThreadResolved(threadId: string): Promise<boolean> {
-    const octokit = getOctokit();
-
-    const query = `
-    mutation($threadId: ID!) {
-      resolveReviewThread(input: {threadId: $threadId}) {
-        thread {
-          isResolved
-        }
+const RESOLVE_THREAD_MUTATION = `
+  mutation($threadId: ID!) {
+    resolveReviewThread(input: {threadId: $threadId}) {
+      thread {
+        isResolved
       }
     }
-  `;
+  }
+`;
 
-    await octokit.graphql(query, { threadId });
-    return true;
+/**
+ * Mark a review thread as resolved.
+ * Fine-grained PATs may lack pull_requests:write — if the primary token
+ * fails with a permission error, automatically retries with the gh CLI token
+ * (classic OAuth with repo scope) which always has the needed permissions.
+ */
+export async function markThreadResolved(threadId: string): Promise<boolean> {
+    try {
+        await getOctokit().graphql(RESOLVE_THREAD_MUTATION, { threadId });
+        return true;
+    } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!msg.includes("Resource not accessible by personal access token")) {
+            throw err;
+        }
+        // Fine-grained PAT lacks pull_requests:write — fall back to gh CLI token
+        const ghToken = getGhCliToken();
+        if (!ghToken) throw err;
+        await new Octokit({ auth: ghToken }).graphql(RESOLVE_THREAD_MUTATION, { threadId });
+        return true;
+    }
 }
 
 /**
