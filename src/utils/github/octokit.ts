@@ -46,20 +46,10 @@ function getGitHubToken(): string | undefined {
     }
 
     // 2. Try `gh auth token` command (works with modern gh CLI)
-    try {
-        const result = Bun.spawnSync(["gh", "auth", "token"], {
-            stdout: "pipe",
-            stderr: "pipe",
-        });
-        if (result.exitCode === 0) {
-            const token = result.stdout.toString().trim();
-            if (token) {
-                logger.debug("Using token from gh auth token");
-                return token;
-            }
-        }
-    } catch (err) {
-        logger.debug({ err }, "Failed to run gh auth token");
+    const ghToken = getGhCliToken();
+    if (ghToken) {
+        logger.debug("Using token from gh auth token");
+        return ghToken;
     }
 
     // 3. Fallback: Try to read from gh CLI config (older versions)
@@ -80,6 +70,27 @@ function getGitHubToken(): string | undefined {
 
     // 4. Return undefined (will work for public repos only)
     logger.warn("No GitHub token found. Will have limited API access.");
+    return undefined;
+}
+
+/**
+ * Get the token from the gh CLI (classic OAuth token).
+ * This token has `repo` scope, which includes pull_requests:write,
+ * making it usable for operations that fine-grained PATs may lack permission for.
+ */
+export function getGhCliToken(): string | undefined {
+    try {
+        const result = Bun.spawnSync(["gh", "auth", "token"], {
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        if (result.exitCode === 0) {
+            const token = result.stdout.toString().trim();
+            if (token) return token;
+        }
+    } catch (err) {
+        logger.debug({ err }, "Failed to run gh auth token");
+    }
     return undefined;
 }
 
