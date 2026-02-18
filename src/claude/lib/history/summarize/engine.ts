@@ -49,6 +49,8 @@ export interface SummarizeOptions {
     outputPath?: string;
     clipboard?: boolean;
     memoryDir?: string;
+    appleNotes?: boolean;
+    appleNotesFolderId?: string;
 }
 
 export interface SummarizeResult {
@@ -215,6 +217,20 @@ export class SummarizeEngine {
         // Copy to clipboard
         if (clipboard) {
             await clipboardy.write(content);
+        }
+
+        // Save to Apple Notes
+        if (this.options.appleNotes && this.options.appleNotesFolderId) {
+            const { createAppleNote } = await import("@app/utils/macos/apple-notes");
+            const sessionTitle = this.options.session.title ?? this.options.session.summary ?? "Claude Summary";
+            const dateStr = this.options.session.startDate?.toISOString().split("T")[0] ?? "unknown";
+            const noteTitle = `${sessionTitle} (${dateStr})`;
+            createAppleNote({
+                folderId: this.options.appleNotesFolderId,
+                title: noteTitle,
+                body: content,
+            });
+            outputPaths.push(`apple-notes://${noteTitle}`);
         }
 
         // For memorization mode: parse topic tags and write separate files

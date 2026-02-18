@@ -15,6 +15,7 @@ import type { SummarizeOptions, SummarizeResult } from "@app/claude/lib/history/
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { parseDate } from "@app/claude/lib/history/search";
+import { listAppleNotesFolders } from "@app/utils/macos/apple-notes";
 
 // =============================================================================
 // Types
@@ -39,6 +40,7 @@ interface SummarizeCommandOptions {
     interactive?: boolean;
     customPrompt?: string;
     memoryDir?: string;
+    appleNotes?: boolean;
 }
 
 // =============================================================================
@@ -134,6 +136,47 @@ async function pickSessionInteractively(): Promise<ClaudeSession> {
     }
 
     return ClaudeSession.fromFile(selected as string);
+}
+
+// =============================================================================
+// Apple Notes Folder Picker
+// =============================================================================
+
+async function pickAppleNotesFolder(): Promise<string> {
+    const folders = listAppleNotesFolders();
+    if (folders.length === 0) {
+        throw new Error("No Apple Notes folders found.");
+    }
+
+    // Deduplicate by showing account name when there are name collisions
+    const nameCount = new Map<string, number>();
+    for (const f of folders) {
+        nameCount.set(f.name, (nameCount.get(f.name) ?? 0) + 1);
+    }
+
+    const choices = folders
+        .filter((f) => f.noteCount > 0 || !f.name.startsWith("Notes"))
+        .map((f) => {
+            const showAccount = (nameCount.get(f.name) ?? 0) > 1;
+            const label = showAccount ? `${f.name} (${f.account})` : f.name;
+            return {
+                value: f.id,
+                label,
+                hint: `${f.noteCount} notes`,
+            };
+        });
+
+    const selected = await p.select({
+        message: "Select Apple Notes folder:",
+        options: choices,
+    });
+
+    if (p.isCancel(selected)) {
+        p.cancel("Cancelled.");
+        process.exit(0);
+    }
+
+    return selected as string;
 }
 
 // =============================================================================
@@ -237,6 +280,12 @@ async function runInteractiveFlow(
         }
     }
 
+    // Apple Notes folder picker
+    let appleNotesFolderId: string | undefined;
+    if (opts.appleNotes) {
+        appleNotesFolderId = await pickAppleNotesFolder();
+    }
+
     return {
         session,
         mode,
@@ -253,6 +302,8 @@ async function runInteractiveFlow(
         outputPath: opts.output,
         clipboard: opts.clipboard,
         memoryDir: opts.memoryDir,
+        appleNotes: opts.appleNotes,
+        appleNotesFolderId,
     };
 }
 
@@ -289,6 +340,7 @@ function buildNonInteractiveOptions(
         outputPath: opts.output,
         clipboard: opts.clipboard,
         memoryDir: opts.memoryDir,
+        appleNotes: opts.appleNotes,
     };
 }
 
@@ -353,6 +405,7 @@ export function registerSummarizeCommand(program: Command): void {
         .option("-i, --interactive", "Interactive flow with prompts")
         .option("--custom-prompt <text>", "Custom prompt text (for custom mode)")
         .option("--memory-dir <path>", "Output dir for memorization topic files")
+        .option("--apple-notes", "Save to Apple Notes (interactive folder picker)")
         .action(async (sessionId: string | undefined, cmdOpts: SummarizeCommandOptions) => {
             try {
                 const sessions = await resolveSessionIds(sessionId, cmdOpts);
@@ -365,6 +418,11 @@ export function registerSummarizeCommand(program: Command): void {
                         engineOptions = await runInteractiveFlow(session, cmdOpts);
                     } else {
                         engineOptions = buildNonInteractiveOptions(session, cmdOpts);
+                    }
+
+                    // Apple Notes always needs the folder picker (even in non-interactive mode)
+                    if (cmdOpts.appleNotes && !engineOptions.appleNotesFolderId) {
+                        engineOptions.appleNotesFolderId = await pickAppleNotesFolder();
                     }
 
                     const engine = new SummarizeEngine(engineOptions);
