@@ -29,6 +29,8 @@ export interface MailMessage {
     attachments: MailAttachment[];
     body?: string;
     bodyMatchesQuery?: boolean;
+    /** Cosine distance from query (0 = identical). Set when semantic ranking is active. */
+    semanticScore?: number;
     recipients?: MailRecipient[];
 }
 
