@@ -29,7 +29,8 @@ Search, fetch, and analyze GitHub issues, PRs, and comments with caching.
 | Mark notifications read | `tools github notifications --mark-read` |
 | Activity feed (last 7d) | `tools github activity --since 7d` |
 | Activity for specific user | `tools github activity -u username` |
-| Search with min stars | `tools github search "query" --stars 1000` |
+| Search with min stars | `tools github search "query" --min-stars 1000` |
+| Search repositories | `tools github search "query" --type repo --sort stars` |
 | Get issue with comments | `tools github issue <url>` |
 | Get last 5 comments | `tools github issue <url> --last 5` |
 | Comments since specific one | `tools github comments <url>#issuecomment-123 --since 123` |
@@ -163,6 +164,24 @@ tools github search "error" --repo owner/repo --advanced
 tools github search "error" --repo owner/repo --legacy
 ```
 
+### Search Repositories
+```bash
+# Search for repos matching a topic/query
+tools github search "react state management" --type repo
+
+# Filter by language
+tools github search "http client" --type repo --language typescript
+
+# Sort by stars
+tools github search "machine learning" --type repo --sort stars -L 20
+
+# Minimum star count (shorthand for stars:>=N)
+tools github search "cli" --type repo --min-stars 1000
+
+# Combine qualifiers in query (GitHub native syntax)
+tools github search "topic:react stars:>5000" --type repo
+```
+
 ### Search Code (Files)
 ```bash
 # Search for code containing text
@@ -180,9 +199,11 @@ tools github code "interface Props" --repo vercel/next.js --language typescript
 **For Issues/PRs** (`tools github search`):
 - Searches both issues and PRs by default
 - Use `--type issue` or `--type pr` to filter
+- Use `--type repo` to search GitHub repositories instead (uses `/search/repositories`)
 - Use `--repo owner/repo` to limit to a repository
 - Use `--state open|closed` to filter by state
-- Use `--sort reactions|comments|created|updated` to sort results
+- Use `--sort reactions|comments|created|updated` to sort results (issues/PRs)
+- Use `--sort stars|forks|updated|help-wanted-issues` to sort repos
 
 **For Code** (`tools github code`):
 - **Recommended: specify `--repo`** for best results (API limitation)
@@ -196,6 +217,8 @@ tools github code "interface Props" --repo vercel/next.js --language typescript
 |------|---------|
 | Find open bugs in repo | `tools github search "bug" --repo owner/repo --type issue --state open` |
 | Find PRs mentioning feature | `tools github search "dark mode" --repo owner/repo --type pr` |
+| Find top TypeScript repos | `tools github search "http client" --type repo --language typescript --sort stars` |
+| Find popular repos on a topic | `tools github search "topic:react" --type repo --min-stars 5000` |
 | Find code using a function | `tools github code "useMemo" --repo facebook/react --language typescript` |
 | Find config files | `tools github code "version" --repo owner/repo --path "*.json"` |
 
@@ -431,14 +454,16 @@ Same as issue (including all reaction filters), plus:
 tools github search <query> [options]
 
 Options:
-  --type <type>                Filter: issue|pr|all
+  --type <type>                Filter: issue|pr|all|repo
   -r, --repo <owner/repo>     Limit to repository
   --state <state>              Filter: open|closed|all
-  --sort <field>               Sort: created|updated|comments|reactions
+  --sort <field>               Sort: created|updated|comments|reactions (issues/PRs);
+                               stars|forks|updated|help-wanted-issues (repos)
   -L, --limit <n>              Max results (default: 30)
   --min-reactions <n>          Min reaction count on issue/PR
   --min-comment-reactions <n>  Min reactions on any comment (GraphQL, slower)
-  --stars <n>                  Min star count on repository
+  --language <lang>            Filter repos by language
+  --min-stars <n>              Minimum star count for repo search
   --advanced                   Use only advanced search backend
   --legacy                     Use only legacy search backend
   -f, --format <format>        Output format

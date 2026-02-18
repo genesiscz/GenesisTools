@@ -218,7 +218,7 @@ export interface PRCommandOptions extends IssueCommandOptions {
 }
 
 export interface SearchCommandOptions {
-    type?: "issue" | "pr" | "all";
+    type?: "issue" | "pr" | "all" | "repo";
     repo?: string;
     state?: "open" | "closed" | "all";
     sort?: string;
@@ -230,7 +230,8 @@ export interface SearchCommandOptions {
     legacy?: boolean;
     minReactions?: number;
     minCommentReactions?: number;
-    stars?: number;
+    language?: string;
+    minStars?: number;
 }
 
 // Output data structures
@@ -382,6 +383,21 @@ export interface ReviewCommandOptions {
     resolveThread?: boolean;
     resolve?: boolean;
     verbose?: boolean;
+}
+
+export interface RepoSearchResult {
+    name: string;
+    description: string | null;
+    language: string | null;
+    stars: number;
+    forks: number;
+    openIssues: number;
+    topics: string[];
+    archived: boolean;
+    url: string;
+    pushedAt: string;
+    createdAt: string;
+    license: string | null;
 }
 
 // Search results

@@ -1,7 +1,7 @@
 // Search command implementation
 
-import { formatSearchResults } from "@app/github/lib/output";
-import type { SearchCommandOptions, SearchResult } from "@app/github/types";
+import { formatRepoResults, formatSearchResults } from "@app/github/lib/output";
+import type { RepoSearchResult, SearchCommandOptions, SearchResult } from "@app/github/types";
 import logger from "@app/logger";
 import { batchFetchCommentReactions } from "@app/utils/github/graphql";
 import { getOctokit } from "@app/utils/github/octokit";
@@ -56,8 +56,8 @@ function buildBaseQuery(query: string, options: SearchCommandOptions): string {
         searchQuery += ` reactions:>=${options.minReactions}`;
     }
 
-    if (options.stars !== undefined) {
-        searchQuery += ` stars:>=${options.stars}`;
+    if (options.minStars !== undefined) {
+        searchQuery += ` stars:>=${options.minStars}`;
     }
 
     return searchQuery;
@@ -196,6 +196,50 @@ function mergeAndDeduplicate(advancedResults: SearchResult[], legacyResults: Sea
 }
 
 /**
+ * Search GitHub repositories using /search/repositories
+ */
+async function searchRepos(query: string, options: SearchCommandOptions): Promise<RepoSearchResult[]> {
+    const octokit = getOctokit();
+    let searchQuery = query;
+
+    // Convenience options
+    if (options.language) {
+        searchQuery += ` language:${options.language}`;
+    }
+    if (options.minStars !== undefined) {
+        searchQuery += ` stars:>=${options.minStars}`;
+    }
+
+    console.log(chalk.dim(`Searching repos: ${searchQuery}`));
+
+    const { data } = await withRetry(
+        () =>
+            octokit.rest.search.repos({
+                q: searchQuery,
+                sort: options.sort as "stars" | "forks" | "help-wanted-issues" | "updated" | undefined,
+                order: "desc",
+                per_page: options.limit || 30,
+            }),
+        { label: `GET /search/repositories?q=${encodeURIComponent(searchQuery.slice(0, 50))}...` }
+    );
+
+    return data.items.map((item) => ({
+        name: item.full_name,
+        description: item.description ?? null,
+        language: item.language ?? null,
+        stars: item.stargazers_count,
+        forks: item.forks_count,
+        openIssues: item.open_issues_count,
+        topics: item.topics ?? [],
+        archived: item.archived ?? false,
+        url: item.html_url,
+        pushedAt: item.pushed_at ?? item.updated_at,
+        createdAt: item.created_at,
+        license: item.license?.spdx_id ?? null,
+    }));
+}
+
+/**
  * Main search command handler
  */
 export async function searchCommand(query: string, options: SearchCommandOptions): Promise<void> {
@@ -209,6 +253,26 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         options,
         `Options: type=${options.type || "all"}, repo=${options.repo || "any"}, state=${options.state || "all"}`
     );
+
+    // Repo search uses a completely different endpoint
+    if (options.type === "repo") {
+        const repos = await searchRepos(query, options);
+        verbose(options, `Found ${repos.length} repositories`);
+        if (repos.length === 0) {
+            console.log(chalk.yellow("No repositories found."));
+            return;
+        }
+        const format = options.format || "ai";
+        const output = formatRepoResults(repos, format);
+        if (options.output) {
+            await Bun.write(options.output, output);
+            console.log(chalk.green(`✔ Output written to ${options.output}`));
+        } else {
+            console.log(output);
+        }
+        verbose(options, `Completed: ${repos.length} repos displayed`);
+        return;
+    }
 
     // Determine which backends to run
     const runAdvanced = options.advanced || (!options.advanced && !options.legacy);
@@ -342,17 +406,21 @@ export function createSearchCommand(): Command {
     const cmd = new Command("search")
         .description("Search GitHub issues and PRs")
         .argument("<query>", "Search query")
-        .option("--type <type>", "Filter: issue|pr|all", "all")
+        .option("--type <type>", "Filter: issue|pr|all|repo", "all")
         .option("-r, --repo <owner/repo>", "Limit to repository")
         .option("--state <state>", "Filter: open|closed|all", "all")
-        .option("--sort <field>", "Sort: created|updated|comments|reactions")
+        .option(
+            "--sort <field>",
+            "Sort: created|updated|comments|reactions (issues/PRs); stars|forks|updated|help-wanted-issues (repos)"
+        )
         .option("-L, --limit <n>", "Max results", parseInt, 30)
         .option("-f, --format <format>", "Output format: ai|md|json", "ai")
         .option("--advanced", "Use only advanced search backend")
         .option("--legacy", "Use only legacy search backend")
         .option("--min-reactions <n>", "Min reaction count on issue/PR", parseInt)
         .option("--min-comment-reactions <n>", "Min reactions on any comment (uses GraphQL, slower)", parseInt)
-        .option("--stars <n>", "Min star count on repository", parseInt)
+        .option("--language <lang>", "Filter repos by language (shorthand for language:<lang>)")
+        .option("--min-stars <n>", "Minimum stars for repo search (shorthand for stars:>=N)", parseInt)
         .option("-o, --output <file>", "Output path")
         .option("-v, --verbose", "Enable verbose logging")
         .action(async (query, opts) => {
