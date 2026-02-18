@@ -9,3 +9,4 @@ import "./transform";
 import "./notify";
 import "./parallel";
 import "./loop";
+import "./nlp";
