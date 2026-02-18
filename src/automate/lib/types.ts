@@ -103,6 +103,7 @@ export type JsonAction = "parse" | "stringify" | "query";
 export type TextAction = "regex" | "template" | "split" | "join";
 export type ArrayAction = "filter" | "map" | "sort" | "flatten";
 export type NotifyAction = "desktop" | "clipboard" | "sound";
+export type NlpAction = "sentiment" | "language" | "tag" | "distance" | "embed";
 
 // ---------------------------------------------------------------------------
 // Step Params per Action Type
@@ -168,6 +169,19 @@ export interface NotifyStepParams {
   message?: string;
   content?: string;
   sound?: string;
+}
+
+export interface NlpStepParams {
+  /** Text to analyze */
+  text?: string;
+  /** For nlp.distance: second text to compare against */
+  text2?: string;
+  /** For nlp.tag: which schemes to apply. Default: ["lexicalClass"] */
+  schemes?: Array<"lexicalClass" | "nameType" | "lemma" | "sentimentScore" | "language">;
+  /** BCP-47 language code. Default: "en" */
+  language?: string;
+  /** For nlp.embed/nlp.distance: "word" or "sentence". Default: "sentence" */
+  type?: "word" | "sentence";
 }
 
 export interface ParallelStepParams {
