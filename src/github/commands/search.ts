@@ -56,6 +56,10 @@ function buildBaseQuery(query: string, options: SearchCommandOptions): string {
         searchQuery += ` reactions:>=${options.minReactions}`;
     }
 
+    if (options.stars !== undefined) {
+        searchQuery += ` stars:>=${options.stars}`;
+    }
+
     return searchQuery;
 }
 
@@ -348,6 +352,7 @@ export function createSearchCommand(): Command {
         .option("--legacy", "Use only legacy search backend")
         .option("--min-reactions <n>", "Min reaction count on issue/PR", parseInt)
         .option("--min-comment-reactions <n>", "Min reactions on any comment (uses GraphQL, slower)", parseInt)
+        .option("--stars <n>", "Min star count on repository", parseInt)
         .option("-o, --output <file>", "Output path")
         .option("-v, --verbose", "Enable verbose logging")
         .action(async (query, opts) => {
