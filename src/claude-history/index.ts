@@ -18,6 +18,7 @@ import {
     type ToolUseBlock,
     type UserMessage,
 } from "./lib";
+import { registerSummarizeCommand } from "./commands/summarize";
 
 // =============================================================================
 // Output Formatting
@@ -288,6 +289,33 @@ program
             } else {
                 console.log(formatResultsAsMarkdown(results, filters));
             }
+
+            // Post-search: offer to summarize a session (TTY + interactive only)
+            if (process.stdout.isTTY && options.interactive && results.length > 0) {
+                const { confirm: confirmPrompt, select: selectPrompt, isCancel } = await import("@clack/prompts");
+                const wantSummarize = await confirmPrompt({
+                    message: "Would you like to summarize one of these sessions?",
+                    initialValue: false,
+                });
+                if (!isCancel(wantSummarize) && wantSummarize) {
+                    const sessionChoices = results.map((r) => ({
+                        value: r.sessionId,
+                        label: `${r.customTitle || r.summary || r.sessionId} (${r.timestamp.toISOString().split("T")[0]})`,
+                    }));
+                    const chosen = await selectPrompt({
+                        message: "Select session to summarize:",
+                        options: sessionChoices,
+                    });
+                    if (!isCancel(chosen)) {
+                        // Spawn the summarize command in interactive mode
+                        const proc = spawn({
+                            cmd: ["bun", "run", import.meta.path, "summarize", chosen as string, "-i"],
+                            stdio: ["inherit", "inherit", "inherit"],
+                        });
+                        await proc.exited;
+                    }
+                }
+            }
         } catch (error) {
             if ((error as Error).message?.includes("canceled")) {
                 console.log(chalk.dim("\nOperation cancelled."));
@@ -317,5 +345,8 @@ program
 
         await proc.exited;
     });
+
+// Summarize subcommand
+registerSummarizeCommand(program);
 
 program.parse();
