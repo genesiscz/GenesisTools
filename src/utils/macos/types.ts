@@ -147,3 +147,34 @@ export interface NamedEntity {
   text: string;
   type: "person" | "organization" | "place" | "other";
 }
+
+/** A content word extracted from text with its POS class and lemma */
+export interface Keyword {
+  word: string;
+  /** Root/lemma form of the word */
+  lemma: string;
+  lexicalClass: "Noun" | "Verb" | "Adjective" | "Other";
+}
+
+/** Result of text classification against a list of candidate categories */
+export interface ClassificationResult {
+  /** The best-matching category */
+  category: string;
+  /** Similarity confidence 0–1 (higher = more confident) */
+  confidence: number;
+  /** All categories ranked by score descending */
+  scores: Array<{ category: string; score: number }>;
+}
+
+/** A classification result for a single item in a batch */
+export interface ClassificationItem<IdType = string> extends ClassificationResult {
+  id: IdType;
+}
+
+/** A group of semantically similar items produced by clusterBySimilarity */
+export interface Cluster<T> {
+  /** All items in this cluster */
+  items: T[];
+  /** The text of the first item, used as the cluster centroid label */
+  centroid: string;
+}
