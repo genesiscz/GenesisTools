@@ -75,8 +75,9 @@ function getGitHubToken(): string | undefined {
 
 /**
  * Get the token from the gh CLI (classic OAuth token).
- * This token has `repo` scope, which includes pull_requests:write,
- * making it usable for operations that fine-grained PATs may lack permission for.
+ * This token typically has the classic `repo` scope, allowing repository
+ * mutations (including pull request updates) that some fine-grained PATs
+ * may not be authorized to perform.
  */
 export function getGhCliToken(): string | undefined {
     try {
