@@ -1,7 +1,7 @@
 // Output formatters for GitHub data
 
 import { formatReviewMarkdown, formatReviewTerminal } from "@app/github/lib/review-output";
-import type { ActivityItem, CommentData, CommentStats, GitHubReactions, IssueData, NotificationItem, PRData, ReviewData, SearchResult } from "@app/github/types";
+import type { ActivityItem, CommentData, CommentStats, GitHubReactions, IssueData, NotificationItem, PRData, RepoSearchResult, ReviewData, SearchResult } from "@app/github/types";
 import { sumReactions } from "@app/utils/github/utils";
 
 type OutputFormat = "ai" | "md" | "json";
@@ -61,6 +61,49 @@ export function formatSearchResults(results: SearchResult[], format: OutputForma
         default:
             return formatSearchMarkdown(results);
     }
+}
+
+/**
+ * Format repository search results
+ */
+export function formatRepoResults(repos: RepoSearchResult[], format: OutputFormat): string {
+    switch (format) {
+        case "json":
+            return JSON.stringify(repos, null, 2);
+        case "ai":
+        case "md":
+        default:
+            return formatRepoMarkdown(repos);
+    }
+}
+
+function formatRepoMarkdown(repos: RepoSearchResult[]): string {
+    const lines: string[] = [];
+    lines.push(`Found ${repos.length} repositor${repos.length === 1 ? "y" : "ies"}`);
+    lines.push("");
+
+    for (const repo of repos) {
+        const stars = formatStarCount(repo.stars);
+        const forks = formatStarCount(repo.forks);
+        const lang = repo.language ? ` · ${repo.language}` : "";
+        const archived = repo.archived ? " [ARCHIVED]" : "";
+        lines.push(`**${repo.name}**${archived} — ★${stars} forks:${forks}${lang}`);
+        if (repo.description) {
+            lines.push(`  ${repo.description}`);
+        }
+        if (repo.topics.length > 0) {
+            lines.push(`  Topics: ${repo.topics.slice(0, 8).join(", ")}`);
+        }
+        lines.push(`  ${repo.url} · pushed ${formatDate(repo.pushedAt)}`);
+        lines.push("");
+    }
+
+    return lines.join("\n");
+}
+
+function formatStarCount(n: number): string {
+    if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+    return String(n);
 }
 
 // AI Summary formatters (condensed output for AI consumption)
