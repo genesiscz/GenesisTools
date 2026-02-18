@@ -308,6 +308,10 @@ export async function markThreadResolved(threadId: string): Promise<boolean> {
         // Fine-grained PAT lacks pull_requests:write — fall back to gh CLI token
         const ghToken = getGhCliToken();
         if (!ghToken) throw err;
+        console.warn(
+            `[markThreadResolved] Primary GitHub token lacked permissions to resolve review thread ${threadId}; ` +
+                `retrying with gh CLI token. Original error: ${msg}`
+        );
         await new Octokit({ auth: ghToken }).graphql(RESOLVE_THREAD_MUTATION, { threadId });
         return true;
     }
