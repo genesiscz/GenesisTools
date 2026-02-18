@@ -415,7 +415,12 @@ export async function batchReply(
  * GitHub's API returns the entire file diff for new files, but we want
  * to show only ~4 lines of context around the comment line (like GitHub UI).
  */
-function trimDiffHunk(diffHunk: string | null, targetLine: number | null, contextLines: number = 4): string | null {
+function trimDiffHunk(
+    diffHunk: string | null,
+    targetLine: number | null,
+    startLine: number | null = null,
+    contextLines: number = 3
+): string | null {
     if (!diffHunk || !targetLine) return diffHunk;
 
     const lines = diffHunk.split("\n");
@@ -430,7 +435,8 @@ function trimDiffHunk(diffHunk: string | null, targetLine: number | null, contex
     // Track line numbers and collect lines within the context window
     let currentLine = newStartLine;
     const relevantLines: { line: string; lineNum: number | null }[] = [];
-    const minLine = targetLine - contextLines;
+    const rangeStart = startLine ?? targetLine;
+    const minLine = rangeStart - contextLines;
     const maxLine = targetLine + contextLines;
 
     for (let i = 1; i < lines.length; i++) {
@@ -450,6 +456,25 @@ function trimDiffHunk(diffHunk: string | null, targetLine: number | null, contex
         }
 
         currentLine++;
+    }
+
+    // Hard-cap at 15 content lines
+    const MAX_CONTENT_LINES = 15;
+    if (relevantLines.length > MAX_CONTENT_LINES) {
+        const targetIdx = relevantLines.findIndex((r) => r.lineNum === targetLine);
+        if (targetIdx >= 0) {
+            const halfWindow = Math.floor(MAX_CONTENT_LINES / 2);
+            let start = Math.max(0, targetIdx - halfWindow);
+            let end = start + MAX_CONTENT_LINES;
+            if (end > relevantLines.length) {
+                end = relevantLines.length;
+                start = Math.max(0, end - MAX_CONTENT_LINES);
+            }
+            relevantLines.splice(end);
+            relevantLines.splice(0, start);
+        } else {
+            relevantLines.splice(0, relevantLines.length - MAX_CONTENT_LINES);
+        }
     }
 
     if (relevantLines.length === 0) return diffHunk;
@@ -562,10 +587,11 @@ export function parseThreads(threads: ReviewThread[]): ParsedReviewThread[] {
                 severity: detectSeverity(firstComment.body),
                 file: thread.path,
                 line: thread.line,
+                startLine: thread.startLine,
                 author: firstComment.author,
                 title: extractTitle(firstComment.body),
                 issue: extractIssue(firstComment.body),
-                diffHunk: trimDiffHunk(firstComment.diffHunk, thread.line),
+                diffHunk: trimDiffHunk(firstComment.diffHunk, thread.line, thread.startLine),
                 suggestedCode: extractSuggestion(firstComment.body),
                 firstCommentId: firstComment.id,
                 replies,
