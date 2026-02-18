@@ -8,10 +8,11 @@ import chalk from "chalk";
  */
 export function formatResultsTable(
     messages: MailMessage[],
-    options?: { showBodyMatch?: boolean }
+    options?: { showBodyMatch?: boolean; showSemanticScore?: boolean }
 ): string {
     const headers = ["Date", "From", "Subject", "Attachments"];
     if (options?.showBodyMatch) headers.push("Body");
+    if (options?.showSemanticScore) headers.push("Relevance");
 
     const rows = messages.map(msg => {
         const row = [
@@ -22,6 +23,13 @@ export function formatResultsTable(
         ];
         if (options?.showBodyMatch) {
             row.push(msg.bodyMatchesQuery ? chalk.green("yes") : "");
+        }
+        if (options?.showSemanticScore) {
+            row.push(
+                msg.semanticScore !== undefined
+                    ? chalk.cyan((1 - msg.semanticScore / 2).toFixed(2))
+                    : ""
+            );
         }
         return row;
     });
