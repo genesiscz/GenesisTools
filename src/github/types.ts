@@ -344,6 +344,7 @@ export interface ParsedReviewThread {
     severity: "high" | "medium" | "low";
     file: string;
     line: number | null;
+    startLine: number | null;
     author: string;
     title: string;
     issue: string;

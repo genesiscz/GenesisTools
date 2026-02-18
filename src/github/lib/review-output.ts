@@ -10,20 +10,44 @@ import { join } from "path";
 // Terminal Formatting (chalk)
 // =============================================================================
 
-function formatDiffHunk(diffHunk: string | null): string {
+function formatDiffHunk(
+    diffHunk: string | null,
+    targetLine: number | null = null,
+    startLine: number | null = null
+): string {
     if (!diffHunk) return "";
 
     const lines = diffHunk.split("\n");
+
+    // Parse @@ header for line tracking
+    let currentLine = 0;
+    let canTrackLines = false;
+    const headerMatch = lines[0]?.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (headerMatch && targetLine) {
+        currentLine = parseInt(headerMatch[1], 10);
+        canTrackLines = true;
+    }
+    const rangeStart = startLine ?? targetLine ?? 0;
+    const rangeEnd = targetLine ?? 0;
+
     return lines
-        .map((line) => {
-            if (line.startsWith("+")) {
-                return chalk.green(line);
-            } else if (line.startsWith("-")) {
-                return chalk.red(line);
-            } else if (line.startsWith("@@")) {
-                return chalk.cyan(line);
+        .map((line, idx) => {
+            if (line.startsWith("@@")) return chalk.cyan(line);
+
+            let isTarget = false;
+            if (canTrackLines && idx > 0) {
+                if (line.startsWith("-")) {
+                    // Removed lines don't advance new-file counter
+                } else {
+                    isTarget = currentLine >= rangeStart && currentLine <= rangeEnd;
+                    currentLine++;
+                }
             }
-            return chalk.dim(line);
+
+            const marker = isTarget ? chalk.bold.white("-> ") : "   ";
+            if (line.startsWith("+")) return marker + chalk.green(line);
+            if (line.startsWith("-")) return "   " + chalk.red(line);
+            return marker + chalk.dim(line);
         })
         .join("\n");
 }
@@ -64,7 +88,7 @@ function formatThread(thread: ParsedReviewThread): string {
     let output = "\n";
     output += chalk.cyan("=".repeat(90)) + "\n";
     output +=
-        chalk.bold(`[THREAD #${thread.threadNumber}] `) +
+        chalk.bold(`[THREAD #${thread.threadNumber} ${thread.threadId}] `) +
         severityColor.bold(severityText) +
         ` - ${thread.title}\n`;
     output += chalk.cyan("=".repeat(90)) + "\n";
@@ -76,13 +100,15 @@ function formatThread(thread: ParsedReviewThread): string {
     output += "\n";
 
     output += `${chalk.bold("File:")}     ${chalk.cyan(thread.file)}`;
-    if (thread.line) {
+    if (thread.startLine && thread.startLine !== thread.line) {
+        output += chalk.yellow(`:${thread.startLine}-${thread.line}`);
+    } else if (thread.line) {
         output += chalk.yellow(`:${thread.line}`);
     }
     output += "\n";
 
     output += `${chalk.bold("Author:")}   ${thread.author}\n`;
-    output += `${chalk.bold("Thread ID:")} ${chalk.dim(thread.threadId)}\n`;
+    output += `${chalk.bold("Thread ID:")} #${thread.threadNumber} (${chalk.dim(thread.threadId)})\n`;
     output += `${chalk.bold("First Comment ID:")} ${chalk.dim(thread.firstCommentId)}\n`;
 
     output += `\n${chalk.bold.magenta("Issue:")}\n${thread.issue}\n`;
@@ -90,7 +116,7 @@ function formatThread(thread: ParsedReviewThread): string {
     // Show diff context if available
     if (thread.diffHunk) {
         output += `\n${chalk.bold.blue("Code Context:")}\n`;
-        output += formatDiffHunk(thread.diffHunk) + "\n";
+        output += formatDiffHunk(thread.diffHunk, thread.line, thread.startLine) + "\n";
     }
 
     // Show suggestion if available
@@ -184,15 +210,18 @@ function formatMarkdownThread(thread: ParsedReviewThread): string {
     const severityEmoji = thread.severity === "high" ? "[HIGH]" : thread.severity === "medium" ? "[MED]" : "[LOW]";
     const statusEmoji = thread.status === "resolved" ? "[OK]" : "[X]";
 
-    let output = `### Thread #${thread.threadNumber}: ${thread.title}\n\n`;
+    let output = `### Thread #${thread.threadNumber} (${thread.threadId}): ${thread.title}\n\n`;
 
     output += `| Property | Value |\n`;
     output += `|----------|-------|\n`;
     output += `| **Status** | ${statusEmoji} ${thread.status.toUpperCase()} |\n`;
     output += `| **Severity** | ${severityEmoji} ${thread.severity.toUpperCase()} |\n`;
-    output += `| **File** | \`${thread.file}${thread.line ? `:${thread.line}` : ""}\` |\n`;
+    const lineRef = thread.startLine && thread.startLine !== thread.line
+        ? `:${thread.startLine}-${thread.line}`
+        : thread.line ? `:${thread.line}` : "";
+    output += `| **File** | \`${thread.file}${lineRef}\` |\n`;
     output += `| **Author** | @${thread.author} |\n`;
-    output += `| **Thread ID** | \`${thread.threadId}\` |\n`;
+    output += `| **Thread ID** | #${thread.threadNumber} (\`${thread.threadId}\`) |\n`;
     output += `| **First Comment ID** | \`${thread.firstCommentId}\` |\n`;
     if (thread.replies.length > 0) {
         output += `| **Replies** | ${thread.replies.length} |\n`;
@@ -202,7 +231,11 @@ function formatMarkdownThread(thread: ParsedReviewThread): string {
     output += `**Issue:**\n\n${thread.issue}\n\n`;
 
     if (thread.diffHunk) {
-        output += `<details>\n<summary>Code Context</summary>\n\n\`\`\`diff\n${thread.diffHunk}\n\`\`\`\n\n</details>\n\n`;
+        const mdLineRef = thread.startLine && thread.startLine !== thread.line
+            ? `lines ${thread.startLine}-${thread.line}`
+            : thread.line ? `line ${thread.line}` : null;
+        const lineNote = mdLineRef ? `> Comment targets **${mdLineRef}**\n\n` : "";
+        output += `<details>\n<summary>Code Context</summary>\n\n${lineNote}\`\`\`diff\n${thread.diffHunk}\n\`\`\`\n\n</details>\n\n`;
     }
 
     if (thread.suggestedCode) {
