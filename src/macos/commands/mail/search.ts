@@ -14,6 +14,7 @@ import { searchBodies } from "@app/macos/lib/mail/jxa";
 import { formatResultsTable } from "@app/macos/lib/mail/format";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import type { MailMessage, SearchOptions } from "@app/macos/lib/mail/types";
+import { rankBySimilarity, closeDarwinKit } from "@app/utils/macos";
 
 export function registerSearchCommand(program: Command): void {
     program
@@ -26,6 +27,8 @@ export function registerSearchCommand(program: Command): void {
         .option("--to <date>", "Search to date (ISO format)")
         .option("--mailbox <name>", "Restrict to specific mailbox (e.g. INBOX, Sent)")
         .option("--limit <n>", "Max results", "100")
+        .option("--no-semantic", "Disable semantic re-ranking (faster, uses keyword order only)")
+        .option("--max-distance <n>", "Max semantic distance to include (0–2, default: 1.2)", "1.2")
         .action(async (query: string, options: {
             withoutBody?: boolean;
             receiver?: string;
@@ -34,6 +37,8 @@ export function registerSearchCommand(program: Command): void {
             to?: string;
             mailbox?: string;
             limit?: string;
+            semantic?: boolean;
+            maxDistance?: string;
         }) => {
             try {
                 // Handle --help-receivers: list receiver addresses and exit
@@ -124,10 +129,50 @@ export function registerSearchCommand(program: Command): void {
                     );
                 }
 
+                // Phase 3: Semantic re-ranking via darwinkit (default ON, opt out with --no-semantic)
+                let semanticActive = false;
+                if (options.semantic !== false && messages.length > 0) {
+                    spinner.start(`Ranking ${messages.length} results by semantic similarity...`);
+                    try {
+                        const maxDist = parseFloat(options.maxDistance ?? "1.2");
+                        const items = messages.map(m => ({
+                            ...m,
+                            text: [m.subject, m.senderName, m.senderAddress].filter(Boolean).join(" "),
+                        }));
+                        const ranked = await rankBySimilarity(query, items, {
+                            maxDistance: maxDist,
+                            language: "en",
+                        });
+                        // Re-order messages and attach scores
+                        const reordered: MailMessage[] = ranked.map(r => {
+                            const msg = r.item as MailMessage;
+                            msg.semanticScore = r.score;
+                            return msg;
+                        });
+                        // Append messages that were filtered out (beyond maxDistance)
+                        const rankedIds = new Set(reordered.map(m => m.rowid));
+                        for (const msg of messages) {
+                            if (!rankedIds.has(msg.rowid)) reordered.push(msg);
+                        }
+                        messages.length = 0;
+                        messages.push(...reordered);
+                        semanticActive = true;
+                        spinner.stop(`Semantic ranking complete (${ranked.length} relevant results)`);
+                    } catch (err) {
+                        spinner.stop(
+                            `Semantic ranking skipped: ${err instanceof Error ? err.message : String(err)}`
+                        );
+                        logger.warn(`Semantic ranking failed, falling back to keyword order: ${err}`);
+                    } finally {
+                        closeDarwinKit();
+                    }
+                }
+
                 // Output results table
                 console.log("");
                 console.log(formatResultsTable(messages, {
                     showBodyMatch: !searchOpts.withoutBody,
+                    showSemanticScore: semanticActive,
                 }));
                 console.log("");
                 p.log.info(`${messages.length} results. Use 'tools macos mail download <dir>' to export.`);
