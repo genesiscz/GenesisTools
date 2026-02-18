@@ -10,6 +10,7 @@ import {
     findManifestPath,
     installSkill,
     readManifest,
+    writeManifest,
 } from "./lib";
 
 handleReadmeFlag(import.meta.url);
@@ -33,7 +34,15 @@ async function main(): Promise<void> {
     }
 
     const manifest = readManifest(manifestPath);
-    const skills = discoverLocalSkills(manifest);
+    const allSkills = discoverLocalSkills(manifest);
+
+    const builtInConflicts = allSkills.filter((s) => s.installedEntry?.creatorType === "anthropic");
+    if (builtInConflicts.length > 0) {
+        p.log.warn(
+            `Ignoring local skills that would overwrite built-in skills: ${builtInConflicts.map((s) => s.name).join(", ")}`
+        );
+    }
+    const skills = allSkills.filter((s) => s.installedEntry?.creatorType !== "anthropic");
 
     if (skills.length === 0) {
         p.cancel(`No skills found in ${CLAUDE_CODE_SKILLS}`);
@@ -59,13 +68,22 @@ async function main(): Promise<void> {
         const selected = await withCancel(
             p.multiselect({
                 message: `Select skills to install ${pc.dim("(space to toggle, enter to confirm)")}`,
-                options: skills.map((s) => ({
-                    value: s,
-                    label: s.installedEntry
-                        ? `${s.name} ${pc.dim("(already installed — will update)")}`
-                        : s.name,
-                    hint: s.description.length > 70 ? s.description.slice(0, 70) + "…" : s.description,
-                })),
+                options: skills.map((s) => {
+                    const isAnthropicBuiltIn = s.installedEntry?.creatorType === "anthropic";
+                    const label = s.installedEntry
+                        ? isAnthropicBuiltIn
+                            ? `${s.name} ${pc.dim("(built-in — cannot update)")}`
+                            : `${s.name} ${pc.dim("(already installed — will update)")}`
+                        : s.name;
+                    const hint =
+                        s.description.length > 70 ? s.description.slice(0, 70) + "…" : s.description;
+                    return {
+                        value: s,
+                        label,
+                        hint,
+                        selected: !!s.installedEntry,
+                    };
+                }),
                 required: false,
             })
         );
@@ -97,6 +115,17 @@ async function main(): Promise<void> {
 
     const failed = results.filter((r) => r.error);
     const succeeded = results.filter((r) => !r.error);
+
+    if (succeeded.length > 0) {
+        spinner.start("Updating manifest...");
+        try {
+            writeManifest(manifest, manifestPath);
+            spinner.stop("Manifest updated.");
+        } catch (err) {
+            spinner.stop("Failed to write manifest.");
+            p.log.error(String(err));
+        }
+    }
 
     if (failed.length > 0) {
         p.log.warn(`${failed.length} skill(s) failed to install.`);

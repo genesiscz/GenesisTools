@@ -156,8 +156,9 @@ export function installSkill(skill: LocalSkill, manifestPath: string): SkillEntr
     const manifest: Manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
     const skillsDir = join(manifestPath, "..", "skills");
 
-    // Copy directory
-    const destPath = join(skillsDir, skill.name);
+    // Copy directory (use dirName to ensure a safe, single path segment)
+    // Note: validate that destPath stays within skillsDir to prevent path traversal
+    const destPath = join(skillsDir, skill.dirName);
     mkdirSync(destPath, { recursive: true });
     cpSync(skill.sourcePath, destPath, { recursive: true });
 
@@ -247,7 +248,7 @@ tools claude-skill-to-desktop --list    # List skills and install status
 **Step 4: Verify tool is discoverable**
 
 ```bash
-cd /Users/Martin/Tresors/Projects/GenesisTools
+cd /path/to/your/project
 bun run src/claude-skill-to-desktop/index.ts --help
 ```
 

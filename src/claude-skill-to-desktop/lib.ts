@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 export const CLAUDE_CODE_SKILLS = join(homedir(), ".claude", "skills");
 export const CLAUDE_DESKTOP_BASE = join(
@@ -88,10 +88,25 @@ export function discoverLocalSkills(manifest: Manifest | null): LocalSkill[] {
 export function installSkill(skill: LocalSkill, manifest: Manifest, manifestPath: string): SkillEntry {
     const skillsDir = join(manifestPath, "..", "skills");
     const destPath = join(skillsDir, skill.name);
+
+    // Guard against path traversal
+    const resolvedDest = resolve(destPath);
+    const resolvedSkillsDir = resolve(skillsDir);
+    if (!resolvedDest.startsWith(resolvedSkillsDir + sep)) {
+        throw new Error(`Skill name "${skill.name}" would escape skills directory`);
+    }
+
+    const idx = manifest.skills.findIndex((s) => s.name === skill.name);
+
+    // Guard against overwriting anthropic built-in skills
+    if (idx >= 0 && manifest.skills[idx]?.creatorType === "anthropic") {
+        throw new Error(`Cannot overwrite built-in skill "${skill.name}" (creatorType: anthropic)`);
+    }
+
     if (existsSync(destPath)) rmSync(destPath, { recursive: true });
     mkdirSync(destPath, { recursive: true });
     cpSync(skill.sourcePath, destPath, { recursive: true });
-    const idx = manifest.skills.findIndex((s) => s.name === skill.name);
+
     const entry: SkillEntry = {
         skillId: idx >= 0 ? manifest.skills[idx].skillId : generateSkillId(),
         name: skill.name,
@@ -105,9 +120,12 @@ export function installSkill(skill: LocalSkill, manifest: Manifest, manifestPath
     } else {
         manifest.skills.push(entry);
     }
+    return entry;
+}
+
+export function writeManifest(manifest: Manifest, manifestPath: string): void {
     manifest.lastUpdated = Date.now();
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-    return entry;
 }
 
 export function readManifest(manifestPath: string): Manifest {
