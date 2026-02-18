@@ -13,6 +13,9 @@ export {
   textDistance,
   areSimilar,
   findNeighbors,
+  lemmatize,
+  getKeywords,
+  scoreRelevance,
 } from "./nlp";
 
 // OCR
@@ -29,8 +32,20 @@ export {
   batchSentiment,
   groupByLanguage,
   extractEntitiesBatch,
+  deduplicateTexts,
+  clusterBySimilarity,
 } from "./text-analysis";
-export type { RankOptions, BatchSentimentOptions, GroupByLanguageOptions, TextEntities } from "./text-analysis";
+export type {
+  RankOptions,
+  BatchSentimentOptions,
+  GroupByLanguageOptions,
+  TextEntities,
+  DeduplicateOptions,
+  ClusterOptions,
+} from "./text-analysis";
+
+// Classification
+export { classifyText, classifyBatch, groupByCategory } from "./classification";
 
 // Types
 export type {
@@ -54,4 +69,8 @@ export type {
   SentimentItem,
   LanguageItem,
   NamedEntity,
+  Keyword,
+  ClassificationResult,
+  ClassificationItem,
+  Cluster,
 } from "./types";

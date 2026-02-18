@@ -8,6 +8,7 @@ import type {
   LanguageItem,
   NamedEntity,
   SentimentResult,
+  Cluster,
 } from "./types";
 
 // ─── Semantic Ranking ─────────────────────────────────────────────────────────
@@ -183,4 +184,130 @@ export async function extractEntitiesBatch<IdType = string>(
   }
 
   return results;
+}
+
+// ─── Deduplication ────────────────────────────────────────────────────────────
+
+export interface DeduplicateOptions {
+  /** Cosine distance threshold — items closer than this are considered duplicates. Default: 0.3 */
+  threshold?: number;
+  /** BCP-47 language code. Default: "en" */
+  language?: string;
+}
+
+/**
+ * Remove semantically duplicate items from a list.
+ * Keeps the first occurrence when two items are within `threshold` cosine distance.
+ *
+ * O(n²) — suitable for lists up to ~200 items.
+ *
+ * @example
+ * const items = [
+ *   { text: "fix authentication bug" },
+ *   { text: "authentication issue fix" },   // duplicate → removed
+ *   { text: "add dark mode support" },
+ * ];
+ * const deduped = await deduplicateTexts(items);
+ * // → [ { text: "fix authentication bug" }, { text: "add dark mode support" } ]
+ */
+export async function deduplicateTexts<T extends { text: string }>(
+  items: T[],
+  options: DeduplicateOptions = {},
+): Promise<T[]> {
+  if (items.length <= 1) return [...items];
+  const threshold = options.threshold ?? 0.3;
+  const language = options.language ?? "en";
+
+  const kept: T[] = [];
+
+  for (const item of items) {
+    let isDuplicate = false;
+    for (const keptItem of kept) {
+      try {
+        const { distance } = await textDistance(item.text, keptItem.text, language, "sentence");
+        if (distance <= threshold) {
+          isDuplicate = true;
+          break;
+        }
+      } catch {
+        // On error, assume not a duplicate
+      }
+    }
+    if (!isDuplicate) kept.push(item);
+  }
+
+  return kept;
+}
+
+// ─── Clustering ───────────────────────────────────────────────────────────────
+
+export interface ClusterOptions {
+  /** Cosine distance threshold — items closer than this join the same cluster. Default: 0.5 */
+  threshold?: number;
+  /** BCP-47 language code. Default: "en" */
+  language?: string;
+}
+
+/**
+ * Group semantically similar items into clusters using greedy single-linkage.
+ * Each item is assigned to the first cluster whose seed is within `threshold` distance.
+ * Items that don't fit any existing cluster start a new one.
+ *
+ * O(n²) — suitable for lists up to ~200 items.
+ *
+ * @example
+ * const commits = [
+ *   { text: "fix login bug" },
+ *   { text: "fix authentication error" },   // → same cluster as above
+ *   { text: "add dark mode" },
+ *   { text: "implement dark theme" },        // → same cluster as above
+ * ];
+ * const clusters = await clusterBySimilarity(commits);
+ * // → [
+ * //     { items: [fix login bug, fix auth error], centroid: "fix login bug" },
+ * //     { items: [add dark mode, implement dark theme], centroid: "add dark mode" },
+ * //   ]
+ */
+export async function clusterBySimilarity<T extends { text: string }>(
+  items: T[],
+  options: ClusterOptions = {},
+): Promise<Array<Cluster<T>>> {
+  if (items.length === 0) return [];
+
+  const threshold = options.threshold ?? 0.5;
+  const language = options.language ?? "en";
+
+  const clusterSeeds: T[] = [];
+  const clusterBuckets: T[][] = [];
+  const assigned = new Set<number>();
+
+  for (let i = 0; i < items.length; i++) {
+    if (assigned.has(i)) continue;
+
+    // Start a new cluster with items[i] as seed
+    clusterSeeds.push(items[i]);
+    const bucket: T[] = [items[i]];
+    assigned.add(i);
+
+    // Greedily add unassigned items within threshold of this seed
+    for (let j = i + 1; j < items.length; j++) {
+      if (assigned.has(j)) continue;
+      try {
+        const { distance } = await textDistance(items[i].text, items[j].text, language, "sentence");
+        if (distance <= threshold) {
+          bucket.push(items[j]);
+          assigned.add(j);
+        }
+      } catch {
+        // On error, skip this pair
+      }
+    }
+
+    clusterBuckets.push(bucket);
+  }
+
+  return clusterBuckets.map((clusterItems) => ({
+    items: clusterItems,
+    centroid: clusterItems[0].text,
+  }));
 }
