@@ -2,7 +2,7 @@ import logger from "@app/logger";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { ModelsOptions } from "@ask/types/cli";
-import chalk from "chalk";
+import pc from "picocolors";
 import Table from "cli-table3";
 
 // Re-export for backward compatibility
@@ -19,8 +19,8 @@ function formatContextWindow(tokens: number): string {
 }
 
 function formatPrice(price: number | undefined): string {
-    if (price === undefined) return chalk.gray("N/A");
-    if (price === 0) return chalk.green("Free");
+    if (price === undefined) return pc.dim("N/A");
+    if (price === 0) return pc.green("Free");
     return `$${price.toFixed(4)}`;
 }
 
@@ -29,13 +29,13 @@ function formatCapabilities(capabilities: string[]): string {
         .map((cap) => {
             switch (cap.toLowerCase()) {
                 case "chat":
-                    return chalk.blue("chat");
+                    return pc.blue("chat");
                 case "vision":
-                    return chalk.magenta("vision");
+                    return pc.magenta("vision");
                 case "function-calling":
-                    return chalk.yellow("functions");
+                    return pc.yellow("functions");
                 case "reasoning":
-                    return chalk.cyan("reasoning");
+                    return pc.cyan("reasoning");
                 default:
                     return cap;
             }
@@ -86,7 +86,7 @@ function sortModels(modelsWithPricing: Array<{ model: any; pricing: any }>, sort
 }
 
 async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions["sort"], filterCapabilities?: string) {
-    console.log(chalk.bold.cyan("\n💰 MODEL PRICING & INFORMATION\n"));
+    console.log(pc.bold(pc.cyan("\n💰 MODEL PRICING & INFORMATION\n")));
 
     const providers = await providerManager.detectProviders();
     const filteredProviders = providerFilter
@@ -94,21 +94,21 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
         : providers;
 
     if (filteredProviders.length === 0) {
-        console.log(chalk.yellow(`No providers found${providerFilter ? ` matching "${providerFilter}"` : ""}`));
+        console.log(pc.yellow(`No providers found${providerFilter ? ` matching "${providerFilter}"` : ""}`));
         return;
     }
 
     // Group models by provider
     for (const provider of filteredProviders) {
         console.log(
-            chalk.bold.blue(
+            pc.bold(pc.blue(
                 `\n${provider.name.toUpperCase()} (${provider.models.length} model${
                     provider.models.length !== 1 ? "s" : ""
                 })`
-            )
+            ))
         );
         if (provider.config.description) {
-            console.log(chalk.gray(`  ${provider.config.description}\n`));
+            console.log(pc.dim(`  ${provider.config.description}\n`));
         } else {
             console.log();
         }
@@ -173,21 +173,21 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
 
         for (const { model, pricing } of modelsWithPricing) {
             const modelName = model.name || model.id;
-            const modelId = chalk.gray(model.id);
+            const modelId = pc.dim(model.id);
             const context = formatContextWindow(model.contextWindow);
             const inputPrice = formatPrice(pricing?.inputPer1M);
             const outputPrice = formatPrice(pricing?.outputPer1M);
             const cachedPrice = formatPrice(pricing?.cachedReadPer1M);
             const capabilities = formatCapabilities(model.capabilities);
 
-            table.push([chalk.green(modelName), modelId, context, inputPrice, outputPrice, cachedPrice, capabilities]);
+            table.push([pc.green(modelName), modelId, context, inputPrice, outputPrice, cachedPrice, capabilities]);
         }
 
         console.log(table.toString());
     }
 
     // Show summary
-    console.log(chalk.bold.cyan("\n📊 SUMMARY\n"));
+    console.log(pc.bold(pc.cyan("\n📊 SUMMARY\n")));
 
     // Collect all filtered models (accounting for capability filtering)
     const allFilteredModels: Array<{ model: any; provider: string; pricing: any }> = [];
@@ -214,8 +214,8 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
     const totalProviders = filteredProviders.length;
     const totalModels = allFilteredModels.length;
 
-    console.log(chalk.white(`Total Providers: ${chalk.cyan(totalProviders.toString())}`));
-    console.log(chalk.white(`Total Models: ${chalk.cyan(totalModels.toString())}`));
+    console.log(pc.white(`Total Providers: ${pc.cyan(totalProviders.toString())}`));
+    console.log(pc.white(`Total Models: ${pc.cyan(totalModels.toString())}`));
 
     const modelsWithPricing = allFilteredModels;
 
@@ -258,19 +258,19 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
             (m.pricing?.inputPer1M ?? 0) > (max.pricing?.inputPer1M ?? 0) ? m : max
         );
 
-        console.log(chalk.white("\nPricing:"));
+        console.log(pc.white("\nPricing:"));
         console.log(
-            chalk.white(
-                `  Cheapest Input: ${chalk.green(cheapest.model.name || cheapest.model.id)} (${chalk.yellow(
+            pc.white(
+                `  Cheapest Input: ${pc.green(cheapest.model.name || cheapest.model.id)} (${pc.yellow(
                     `$${cheapest.pricing?.inputPer1M.toFixed(4)}/1M`
                 )})`
             )
         );
         console.log(
-            chalk.white(
-                `  Most Expensive Input: ${chalk.red(
+            pc.white(
+                `  Most Expensive Input: ${pc.red(
                     mostExpensive.model.name || mostExpensive.model.id
-                )} (${chalk.yellow(`$${mostExpensive.pricing?.inputPer1M.toFixed(4)}/1M`)})`
+                )} (${pc.yellow(`$${mostExpensive.pricing?.inputPer1M.toFixed(4)}/1M`)})`
             )
         );
 
@@ -279,7 +279,7 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
             (m) => m.pricing?.inputPer1MAbove200k || m.pricing?.outputPer1MAbove200k
         );
         if (tieredModels.length > 0) {
-            console.log(chalk.white(`  Tiered Pricing Models: ${chalk.magenta(tieredModels.length.toString())}`));
+            console.log(pc.white(`  Tiered Pricing Models: ${pc.magenta(tieredModels.length.toString())}`));
         }
     }
 
@@ -292,11 +292,11 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
     });
 
     if (Object.keys(capabilityCounts).length > 0) {
-        console.log(chalk.white("\nCapabilities:"));
+        console.log(pc.white("\nCapabilities:"));
         Object.entries(capabilityCounts)
             .sort((a, b) => b[1] - a[1])
             .forEach(([cap, count]) => {
-                console.log(chalk.white(`  ${cap}: ${chalk.cyan(count.toString())}`));
+                console.log(pc.white(`  ${cap}: ${pc.cyan(count.toString())}`));
             });
     }
 
@@ -307,10 +307,10 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
         const minContext = contextWindows[contextWindows.length - 1];
         const avgContext = Math.round(contextWindows.reduce((a, b) => a + b, 0) / contextWindows.length);
 
-        console.log(chalk.white("\nContext Windows:"));
-        console.log(chalk.white(`  Max: ${chalk.cyan(formatContextWindow(maxContext))}`));
-        console.log(chalk.white(`  Min: ${chalk.cyan(formatContextWindow(minContext))}`));
-        console.log(chalk.white(`  Avg: ${chalk.cyan(formatContextWindow(avgContext))}`));
+        console.log(pc.white("\nContext Windows:"));
+        console.log(pc.white(`  Max: ${pc.cyan(formatContextWindow(maxContext))}`));
+        console.log(pc.white(`  Min: ${pc.cyan(formatContextWindow(minContext))}`));
+        console.log(pc.white(`  Avg: ${pc.cyan(formatContextWindow(avgContext))}`));
     }
 }
 

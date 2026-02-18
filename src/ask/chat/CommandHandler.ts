@@ -2,10 +2,9 @@ import logger from "@app/logger";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import type { OutputConfig, OutputFormat } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
-import { ExitPromptError } from "@inquirer/core";
-import { confirm, input, password, select } from "@inquirer/prompts";
+import * as p from "@clack/prompts";
 import type { LanguageModel } from "ai";
-import chalk from "chalk";
+import pc from "picocolors";
 
 export interface CommandResult {
     shouldExit?: boolean;
@@ -20,7 +19,7 @@ export interface CommandResult {
 }
 
 export class CommandHandler {
-    async handleCommand(command: string, currentProvider: string, currentModelName: string): Promise<CommandResult> {
+    async handleCommand(command: string, _currentProvider: string, _currentModelName: string): Promise<CommandResult> {
         const parts = command.trim().split(/\s+/);
         const cmd = parts[0].toLowerCase();
         const args = parts.slice(1);
@@ -47,24 +46,20 @@ export class CommandHandler {
                     return {};
             }
         } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nCommand cancelled.");
-                return {};
-            }
             logger.error(`Error executing command ${cmd}: ${error}`);
             return {};
         }
     }
 
     private async handleModelCommand(): Promise<CommandResult> {
-        logger.info(chalk.blue("\n🔄 Selecting new model..."));
+        p.log.info(pc.blue("Selecting new model..."));
 
         const newChoice = await modelSelector.selectModel();
         if (!newChoice) {
             return {};
         }
 
-        logger.info(chalk.green(`✓ Switched to ${newChoice.provider.name}/${newChoice.model.name}`));
+        p.log.success(`Switched to ${newChoice.provider.name}/${newChoice.model.name}`);
 
         const model = getLanguageModel(newChoice.provider.provider, newChoice.model.id);
         return {
@@ -102,28 +97,29 @@ export class CommandHandler {
     }
 
     private showOutputFormats(): void {
-        console.log(chalk.cyan("\nAvailable output formats:"));
-        console.log(chalk.white("  text        ") + chalk.gray("Plain text output (default)"));
-        console.log(chalk.white("  json        ") + chalk.gray("Structured JSON responses"));
-        console.log(chalk.white("  markdown    ") + chalk.gray("Markdown formatted output"));
-        console.log(chalk.white("  clipboard   ") + chalk.gray("Auto-copy responses to clipboard"));
-        console.log(chalk.white("  file <name> ") + chalk.gray("Save responses to specified file"));
-        console.log(chalk.gray("\nUsage: /output <format>"));
-        console.log(chalk.gray("Example: /output file responses.txt"));
+        console.log(pc.cyan("\nAvailable output formats:"));
+        console.log(pc.bold("  text        ") + pc.dim("Plain text output (default)"));
+        console.log(pc.bold("  json        ") + pc.dim("Structured JSON responses"));
+        console.log(pc.bold("  markdown    ") + pc.dim("Markdown formatted output"));
+        console.log(pc.bold("  clipboard   ") + pc.dim("Auto-copy responses to clipboard"));
+        console.log(pc.bold("  file <name> ") + pc.dim("Save responses to specified file"));
+        console.log(pc.dim("\nUsage: /output <format>"));
+        console.log(pc.dim("Example: /output file responses.txt"));
     }
 
     private async handleSSTCommand(args: string[]): Promise<CommandResult> {
         if (args.length === 0) {
-            const file = await input({
+            const file = await p.text({
                 message: "Enter audio file path:",
-                validate: (value: string) => {
-                    if (!value.trim()) {
+                validate: (value) => {
+                    if (!value?.trim()) {
                         return "Please enter a file path.";
                     }
-                    return true;
+                    return undefined;
                 },
             });
 
+            if (p.isCancel(file)) return {};
             return { transcriptionFile: file };
         }
 
@@ -132,38 +128,38 @@ export class CommandHandler {
     }
 
     showHelp(): void {
-        console.log(chalk.cyan("\n📖 Available Commands:"));
+        console.log(pc.cyan("\nAvailable Commands:"));
         console.log();
 
-        console.log(chalk.white("  /model") + chalk.gray("              Switch to a different AI model"));
-        console.log(chalk.gray("    Opens interactive model selection with autocomplete"));
+        console.log(pc.bold("  /model") + pc.dim("              Switch to a different AI model"));
+        console.log(pc.dim("    Opens interactive model selection with autocomplete"));
 
-        console.log(chalk.white("  /output <format>") + chalk.gray("     Change output format"));
-        console.log(chalk.gray("    Formats: text, json, markdown, clipboard, file <filename>"));
-        console.log(chalk.gray("    Example: /output file chat.txt"));
+        console.log(pc.bold("  /output <format>") + pc.dim("     Change output format"));
+        console.log(pc.dim("    Formats: text, json, markdown, clipboard, file <filename>"));
+        console.log(pc.dim("    Example: /output file chat.txt"));
 
-        console.log(chalk.white("  /clear") + chalk.gray("              Clear conversation history"));
-        console.log(chalk.gray("    Removes all messages from current session"));
+        console.log(pc.bold("  /clear") + pc.dim("              Clear conversation history"));
+        console.log(pc.dim("    Removes all messages from current session"));
 
-        console.log(chalk.white("  /save") + chalk.gray("               Save current conversation"));
-        console.log(chalk.gray("    Manually saves conversation to disk"));
+        console.log(pc.bold("  /save") + pc.dim("               Save current conversation"));
+        console.log(pc.dim("    Manually saves conversation to disk"));
 
-        console.log(chalk.white("  /sst <file>") + chalk.gray("           Transcribe audio file"));
-        console.log(chalk.gray("    Supports MP3, WAV, M4A, FLAC, OGG, WebM"));
-        console.log(chalk.gray("    Example: /sst recording.mp3"));
+        console.log(pc.bold("  /sst <file>") + pc.dim("           Transcribe audio file"));
+        console.log(pc.dim("    Supports MP3, WAV, M4A, FLAC, OGG, WebM"));
+        console.log(pc.dim("    Example: /sst recording.mp3"));
 
-        console.log(chalk.white("  /help") + chalk.gray("               Show this help message"));
-        console.log(chalk.gray("    Displays all available commands"));
+        console.log(pc.bold("  /help") + pc.dim("               Show this help message"));
+        console.log(pc.dim("    Displays all available commands"));
 
-        console.log(chalk.white("  /quit") + chalk.gray("               Exit the chat session"));
-        console.log(chalk.white("  /exit") + chalk.gray("               Exit the chat session"));
+        console.log(pc.bold("  /quit") + pc.dim("               Exit the chat session"));
+        console.log(pc.bold("  /exit") + pc.dim("               Exit the chat session"));
         console.log();
 
-        console.log(chalk.yellow("💡 Tips:"));
-        console.log(chalk.gray("  • Commands can be entered at any time during chat"));
-        console.log(chalk.gray("  • Use Tab to autocomplete in model selection"));
-        console.log(chalk.gray("  • Audio files are automatically transcribed with optimal provider"));
-        console.log(chalk.gray("  • Conversations are auto-saved every 5 messages"));
+        console.log(pc.yellow("Tips:"));
+        console.log(pc.dim("  - Commands can be entered at any time during chat"));
+        console.log(pc.dim("  - Use Tab to autocomplete in model selection"));
+        console.log(pc.dim("  - Audio files are automatically transcribed with optimal provider"));
+        console.log(pc.dim("  - Conversations are auto-saved every 5 messages"));
         console.log();
     }
 
@@ -184,54 +180,41 @@ export class CommandHandler {
     }
 
     async confirmAction(message: string): Promise<boolean> {
-        try {
-            return await confirm({
-                message,
-                default: false,
-            });
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                return false;
-            }
-            throw error;
-        }
+        const result = await p.confirm({
+            message,
+            initialValue: false,
+        });
+        if (p.isCancel(result)) return false;
+        return result;
     }
 
     async getInput(prompt: string, secure = false): Promise<string> {
-        try {
-            const promptFn = secure ? password : input;
-            return await promptFn({
-                message: prompt,
-                validate: (value: string) => {
-                    if (!value.trim()) {
-                        return "This field is required.";
-                    }
-                    return true;
-                },
-            });
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                throw new ExitPromptError();
-            }
-            throw error;
+        const result = secure
+            ? await p.password({ message: prompt })
+            : await p.text({
+                  message: prompt,
+                  validate: (value) => {
+                      if (!value?.trim()) return "This field is required.";
+                      return undefined;
+                  },
+              });
+
+        if (p.isCancel(result)) {
+            throw new Error("Input cancelled");
         }
+        return result;
     }
 
     async selectFromList(prompt: string, choices: string[]): Promise<string | null> {
-        try {
-            return await select({
-                message: prompt,
-                choices: choices.map((choice) => ({
-                    name: choice,
-                    value: choice,
-                })),
-            });
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                return null;
-            }
-            throw error;
-        }
+        const result = await p.select({
+            message: prompt,
+            options: choices.map((choice) => ({
+                value: choice,
+                label: choice,
+            })),
+        });
+        if (p.isCancel(result)) return null;
+        return result;
     }
 
     formatFileSize(bytes: number): string {
@@ -248,18 +231,10 @@ export class CommandHandler {
     }
 
     async showProgress(message: string, duration: number): Promise<void> {
-        const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let index = 0;
-
-        const interval = setInterval(() => {
-            process.stdout.write(`\r${spinner[index]} ${message}`);
-            index = (index + 1) % spinner.length;
-        }, 100);
-
+        const spinner = p.spinner();
+        spinner.start(message);
         await new Promise((resolve) => setTimeout(resolve, duration));
-
-        clearInterval(interval);
-        process.stdout.write(`\r${chalk.green("✓")} ${message}\n`);
+        spinner.stop(message);
     }
 }
 

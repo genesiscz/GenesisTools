@@ -1,63 +1,48 @@
 import type { ProviderV2 } from "@ai-sdk/provider";
 import logger from "@app/logger";
+import { searchSelect, searchSelectCancelSymbol } from "@app/utils/prompts/clack";
+import type { SearchItem } from "@app/utils/prompts/clack";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { DetectedProvider, ModelInfo, ProviderChoice } from "@ask/types";
-import { ExitPromptError } from "@inquirer/core";
-import { search, select } from "@inquirer/prompts";
-import chalk from "chalk";
+import { colorizeByPriceTier } from "@ask/utils/helpers";
+import * as p from "@clack/prompts";
+import pc from "picocolors";
 
 export class ModelSelector {
     async selectModel(): Promise<ProviderChoice | null> {
-        try {
-            const providers = await providerManager.detectProviders();
+        const providers = await providerManager.detectProviders();
 
-            if (providers.length === 0) {
-                logger.error("No AI providers available. Please configure API keys.");
-                return null;
-            }
-
-            if (providers.length === 1) {
-                // Only one provider, select a model from it
-                const model = await this.selectModelFromProvider(providers[0]);
-                return model ? { provider: providers[0], model } : null;
-            }
-
-            // Multiple providers, let user choose first
-            const providerChoice = await this.selectProvider(providers);
-            if (!providerChoice) {
-                return null;
-            }
-
-            const model = await this.selectModelFromProvider(providerChoice);
-            return model ? { provider: providerChoice, model } : null;
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nModel selection cancelled.");
-                return null;
-            }
-            throw error;
+        if (providers.length === 0) {
+            logger.error("No AI providers available. Please configure API keys.");
+            return null;
         }
+
+        if (providers.length === 1) {
+            const model = await this.selectModelFromProvider(providers[0]);
+            return model ? { provider: providers[0], model } : null;
+        }
+
+        const providerChoice = await this.selectProvider(providers);
+        if (!providerChoice) {
+            return null;
+        }
+
+        const model = await this.selectModelFromProvider(providerChoice);
+        return model ? { provider: providerChoice, model } : null;
     }
 
     async selectProvider(providers: DetectedProvider[]): Promise<DetectedProvider | null> {
-        const choices = providers.map((provider) => ({
-            name: `${chalk.cyan(provider.name)} - ${
-                provider.config.description || `${provider.models.length} models available`
-            }`,
-            value: provider,
-        }));
+        const result = await p.select({
+            message: "Choose AI provider:",
+            options: providers.map((provider) => ({
+                value: provider,
+                label: pc.cyan(provider.name),
+                hint: provider.config.description || `${provider.models.length} models`,
+            })),
+        });
 
-        try {
-            return await select({
-                message: "Choose AI provider:",
-                choices: choices,
-            });
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                return null;
-            }
-            throw error;
-        }
+        if (p.isCancel(result)) return null;
+        return result;
     }
 
     async selectModelFromProvider(provider: DetectedProvider): Promise<ModelInfo | null> {
@@ -71,53 +56,38 @@ export class ModelSelector {
             return provider.models[0];
         }
 
-        // Sort models by name alphabetically
         const sortedModels = [...provider.models].sort((a, b) => {
             const aName = a.name || a.id;
             const bName = b.name || b.id;
             return aName.localeCompare(bName);
         });
 
-        const choices = sortedModels.map((model) => ({
-            name: this.formatModelChoice(model),
+        const items: SearchItem<ModelInfo>[] = sortedModels.map((model) => ({
+            label: this.formatModelChoice(model),
             value: model,
+            hint: model.id,
         }));
 
-        try {
-            return await search({
-                message: `Choose ${chalk.cyan(provider.name)} model:`,
-                source: async (term) => {
-                    if (!term) {
-                        return choices;
-                    }
-                    const lowerTerm = term.toLowerCase();
-                    return choices.filter(
-                        (choice) =>
-                            choice.value.id.toLowerCase().includes(lowerTerm) ||
-                            choice.value.name.toLowerCase().includes(lowerTerm)
-                    );
-                },
-            });
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                return null;
-            }
-            throw error;
-        }
+        const result = await searchSelect({
+            message: `Choose ${pc.cyan(provider.name)} model:`,
+            items,
+        });
+
+        if (result === searchSelectCancelSymbol) return null;
+        return result as ModelInfo;
     }
 
     private formatModelChoice(model: ModelInfo): string {
-        const parts = [chalk.green(model.name), chalk.gray(`(${this.formatTokens(model.contextWindow)} tokens)`)];
+        const name = colorizeByPriceTier(model.name, model.pricing?.inputPer1M);
+        const parts = [name, pc.dim(`(${this.formatTokens(model.contextWindow)} ctx)`)];
 
         if (model.pricing) {
             const costStr =
                 model.pricing.inputPer1M != null && model.pricing.outputPer1M != null
-                    ? chalk.yellow(
-                          `$${model.pricing.inputPer1M.toFixed(2)}/${model.pricing.outputPer1M.toFixed(
-                              2
-                          )} per 1M tokens`
+                    ? pc.dim(
+                          `$${model.pricing.inputPer1M.toFixed(2)}/$${model.pricing.outputPer1M.toFixed(2)} /1M`
                       )
-                    : chalk.yellow("pricing unknown");
+                    : pc.dim("pricing unknown");
             parts.push(costStr);
         }
 
@@ -126,17 +96,17 @@ export class ModelSelector {
                 .map((cap) => {
                     switch (cap) {
                         case "vision":
-                            return chalk.blue("👁️");
+                            return pc.blue("V");
                         case "function-calling":
-                            return chalk.magenta("🔧");
+                            return pc.magenta("F");
                         case "reasoning":
-                            return chalk.red("🧠");
+                            return pc.red("R");
                         default:
-                            return chalk.gray(cap);
+                            return pc.dim(cap);
                     }
                 })
-                .join(" ");
-            parts.push(caps);
+                .join("");
+            if (caps) parts.push(pc.dim("[") + caps + pc.dim("]"));
         }
 
         return parts.join(" ");
@@ -158,7 +128,6 @@ export class ModelSelector {
             let targetProvider: DetectedProvider | undefined;
             let targetModel: ModelInfo | undefined;
 
-            // If model is specified but provider is not, try to find the provider that has this model
             if (modelName && !providerName) {
                 for (const provider of providers) {
                     const model = provider.models.find((m) => m.id === modelName || m.name === modelName);
@@ -166,7 +135,7 @@ export class ModelSelector {
                         targetProvider = provider;
                         targetModel = model;
                         logger.info(
-                            `Auto-selected provider ${chalk.cyan(provider.name)} for model ${chalk.yellow(modelName)}`
+                            `Auto-selected provider ${pc.cyan(provider.name)} for model ${pc.yellow(modelName)}`
                         );
                         break;
                     }
@@ -182,13 +151,12 @@ export class ModelSelector {
                     return null;
                 }
             } else {
-                // Normal provider-first selection
                 if (providerName) {
-                    targetProvider = providers.find((p) => p.name === providerName);
+                    targetProvider = providers.find((prov) => prov.name === providerName);
                     if (!targetProvider) {
                         logger.error(
                             `Provider "${providerName}" not found. Available: ${providers
-                                .map((p) => p.name)
+                                .map((prov) => prov.name)
                                 .join(", ")}`
                         );
                         return null;
@@ -197,7 +165,7 @@ export class ModelSelector {
                     targetProvider = providers[0];
                 } else {
                     logger.error("Multiple providers available. Please specify a provider.");
-                    logger.info(`Available providers: ${providers.map((p) => p.name).join(", ")}`);
+                    logger.info(`Available providers: ${providers.map((prov) => prov.name).join(", ")}`);
                     return null;
                 }
 
@@ -244,12 +212,11 @@ export class ModelSelector {
             { name: "gladia", envKey: "GLADIA_API_KEY", model: "default", maxFileSize: 100 * 1024 * 1024 },
         ];
 
-        // Filter by file size and available API keys
-        const availableProviders = transcriptionProviders.filter((p) => {
-            if (fileSize && fileSize > p.maxFileSize) {
+        const availableProviders = transcriptionProviders.filter((prov) => {
+            if (fileSize && fileSize > prov.maxFileSize) {
                 return false;
             }
-            return process.env[p.envKey];
+            return process.env[prov.envKey];
         });
 
         if (availableProviders.length === 0) {
@@ -260,7 +227,6 @@ export class ModelSelector {
             return null;
         }
 
-        // Select best provider based on priority
         const selectedProvider = availableProviders[0];
 
         try {

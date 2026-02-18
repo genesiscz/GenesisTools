@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import logger from "@app/logger";
 import type { OutputConfig, OutputFormat } from "@ask/types";
 import { write } from "bun";
-import chalk from "chalk";
+import pc from "picocolors";
 import clipboardy from "clipboardy";
 
 export interface FormattedResponse {
@@ -112,10 +112,10 @@ export class OutputManager {
             }
 
             await clipboardy.write(clipboardContent);
-            console.log(chalk.green("✓ Content copied to clipboard"));
+            console.log(pc.green("✓ Content copied to clipboard"));
 
             if (metadata) {
-                console.log(chalk.gray("Metadata included in clipboard content"));
+                console.log(pc.dim("Metadata included in clipboard content"));
             }
         } catch (error) {
             logger.error(`Failed to copy to clipboard: ${error}`);
@@ -149,12 +149,12 @@ export class OutputManager {
             }
 
             await write(filePath, fileContent);
-            console.log(chalk.green(`✓ Content saved to ${filePath}`));
+            console.log(pc.green(`✓ Content saved to ${filePath}`));
 
             // Show file size
             const stats = Bun.file(filePath);
             const size = this.formatFileSize(stats.size);
-            console.log(chalk.gray(`File size: ${size}`));
+            console.log(pc.dim(`File size: ${size}`));
         } catch (error) {
             logger.error(`Failed to write to file ${filename}: ${error}`);
             throw error;
@@ -323,22 +323,22 @@ export class OutputManager {
         }
 
         let output = "\n" + "=".repeat(60) + "\n";
-        output += chalk.cyan("💰 COST BREAKDOWN\n");
+        output += pc.cyan("💰 COST BREAKDOWN\n");
         output += "=".repeat(60) + "\n\n";
 
         for (const breakdown of breakdowns) {
-            output += chalk.white(`${breakdown.provider}/${breakdown.model}:\n`);
+            output += pc.white(`${breakdown.provider}/${breakdown.model}:\n`);
 
             if (breakdown.inputTokens > 0) {
                 const inputCost = breakdown.cost * (breakdown.inputTokens / breakdown.totalTokens);
-                output += `  Input:  ${this.formatTokens(breakdown.inputTokens)} (${chalk.yellow(
+                output += `  Input:  ${this.formatTokens(breakdown.inputTokens)} (${pc.yellow(
                     this.formatCost(inputCost)
                 )})\n`;
             }
 
             if (breakdown.outputTokens > 0) {
                 const outputCost = breakdown.cost * (breakdown.outputTokens / breakdown.totalTokens);
-                output += `  Output: ${this.formatTokens(breakdown.outputTokens)} (${chalk.yellow(
+                output += `  Output: ${this.formatTokens(breakdown.outputTokens)} (${pc.yellow(
                     this.formatCost(outputCost)
                 )})\n`;
             }
@@ -347,18 +347,18 @@ export class OutputManager {
                 output += `  Cached: ${this.formatTokens(breakdown.cachedInputTokens)}\n`;
             }
 
-            output += `  Total:  ${chalk.green(this.formatTokens(breakdown.totalTokens))} (${chalk.green(
+            output += `  Total:  ${pc.green(this.formatTokens(breakdown.totalTokens))} (${pc.green(
                 this.formatCost(breakdown.cost)
             )})\n\n`;
         }
 
         const totalCost = breakdowns.reduce((sum, bd) => sum + bd.cost, 0);
-        output += chalk.white("Grand Total: ") + chalk.green.bold(this.formatCost(totalCost));
+        output += "Grand Total: " + pc.bold(pc.green(this.formatCost(totalCost)));
         output += "\n";
 
         // Cost alerts
         if (totalCost > 0.1) {
-            output += chalk.yellow("⚠️  High cost alert: This session has exceeded $0.10\n");
+            output += pc.yellow("⚠️  High cost alert: This session has exceeded $0.10\n");
         }
 
         return output;
@@ -369,22 +369,22 @@ export class OutputManager {
     }
 
     showOutputHelp(): void {
-        console.log(chalk.cyan("\n📤 Output Formats:"));
+        console.log(pc.cyan("\n📤 Output Formats:"));
         console.log();
 
-        console.log(chalk.white("  text") + chalk.gray("        ") + "Plain text output with metadata header");
-        console.log(chalk.white("  json") + chalk.gray("        ") + "Structured JSON with metadata");
-        console.log(chalk.white("  markdown") + chalk.gray("    ") + "Markdown formatted with metadata");
-        console.log(chalk.white("  clipboard") + chalk.gray("   ") + "Copy to system clipboard");
-        console.log(chalk.white("  file") + chalk.gray("         ") + "Save to file (format based on extension)");
+        console.log(pc.white("  text") + pc.dim("        ") + "Plain text output with metadata header");
+        console.log(pc.white("  json") + pc.dim("        ") + "Structured JSON with metadata");
+        console.log(pc.white("  markdown") + pc.dim("    ") + "Markdown formatted with metadata");
+        console.log(pc.white("  clipboard") + pc.dim("   ") + "Copy to system clipboard");
+        console.log(pc.white("  file") + pc.dim("         ") + "Save to file (format based on extension)");
         console.log();
 
-        console.log(chalk.yellow("💡 Examples:"));
-        console.log(chalk.gray("  /output text           # Plain text"));
-        console.log(chalk.gray("  /output json           # JSON format"));
-        console.log(chalk.gray("  /output file chat.txt  # Save to file"));
-        console.log(chalk.gray("  /output file resp.json # Save as JSON"));
-        console.log(chalk.gray("  /output file out.md    # Save as Markdown"));
+        console.log(pc.yellow("💡 Examples:"));
+        console.log(pc.dim("  /output text           # Plain text"));
+        console.log(pc.dim("  /output json           # JSON format"));
+        console.log(pc.dim("  /output file chat.txt  # Save to file"));
+        console.log(pc.dim("  /output file resp.json # Save as JSON"));
+        console.log(pc.dim("  /output file out.md    # Save as Markdown"));
         console.log();
     }
 
