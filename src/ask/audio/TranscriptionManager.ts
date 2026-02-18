@@ -4,7 +4,7 @@ import logger from "@app/logger";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import type { TranscriptionModel } from "ai";
 import { experimental_transcribe as transcribe } from "ai";
-import chalk from "chalk";
+import pc from "picocolors";
 
 // Helper to get transcription model from ProviderV2
 function getTranscriptionModel(provider: ProviderV2, modelId: string): TranscriptionModel {
@@ -55,7 +55,7 @@ export class TranscriptionManager {
 
             // Get file size
             const fileSize = this.getFileSize(filePath);
-            logger.info(`Transcribing ${chalk.cyan(filePath)} (${this.formatFileSize(fileSize)})`);
+            logger.info(`Transcribing ${pc.cyan(filePath)} (${this.formatFileSize(fileSize)})`);
 
             // Select best transcription model based on file size and options
             const transcriptionModel = await this.selectBestTranscriptionModel(
@@ -69,7 +69,7 @@ export class TranscriptionManager {
             }
 
             logger.info(
-                `Using ${chalk.green(transcriptionModel.provider)} with model ${chalk.yellow(transcriptionModel.model)}`
+                `Using ${pc.green(transcriptionModel.provider)} with model ${pc.yellow(transcriptionModel.model)}`
             );
 
             // Read audio file
@@ -95,7 +95,7 @@ export class TranscriptionManager {
             // Note: result from experimental_transcribe doesn't have duration property
             // Duration would need to be calculated separately if needed
 
-            logger.info(`Transcription completed in ${chalk.green((processingTime / 1000).toFixed(1))}s`);
+            logger.info(`Transcription completed in ${pc.green((processingTime / 1000).toFixed(1))}s`);
 
             return transcriptionResult;
         } catch (error) {
@@ -129,7 +129,7 @@ export class TranscriptionManager {
         for (const { env, provider } of fallbackProviders) {
             if (process.env[env] && provider !== options.provider) {
                 try {
-                    logger.info(`Trying fallback provider: ${chalk.cyan(provider)}`);
+                    logger.info(`Trying fallback provider: ${pc.cyan(provider)}`);
                     const result = await this.transcribeAudio(filePath, {
                         ...options,
                         provider,

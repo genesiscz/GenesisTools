@@ -2,22 +2,20 @@
 
 import logger from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { input } from "@app/utils/prompts/clack";
 import { transcriptionManager } from "@ask/audio/TranscriptionManager";
 import { ChatEngine } from "@ask/chat/ChatEngine";
 import type { CommandResult } from "@ask/chat/CommandHandler";
 import { commandHandler } from "@ask/chat/CommandHandler";
-import { ConversationManager, conversationManager } from "@ask/chat/ConversationManager";
+import { conversationManager } from "@ask/chat/ConversationManager";
 import { costPredictor } from "@ask/output/CostPredictor";
 import { costTracker } from "@ask/output/CostTracker";
 import { outputManager } from "@ask/output/OutputManager";
 import { modelSelector } from "@ask/providers/ModelSelector";
-import { providerManager } from "@ask/providers/ProviderManager";
 import { getLanguageModel } from "@ask/types";
 import { webSearchTool } from "@ask/utils/websearch";
-import { ExitPromptError } from "@inquirer/core";
-import { input } from "@inquirer/prompts";
-import type { LanguageModel } from "ai";
-import chalk from "chalk";
+import * as p from "@clack/prompts";
+import pc from "picocolors";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -29,12 +27,10 @@ import {
     createSystemPrompt,
     formatElapsedTime,
     formatError,
-    getConversationsDir,
     getOutputFormat,
     isInteractiveMode,
     parseCLIArguments,
     parseMaxTokens,
-    parseOutputFormat,
     parseTemperature,
     shouldShowHelp,
     shouldShowVersion,
@@ -42,7 +38,7 @@ import {
     showVersion,
     validateOptions,
 } from "@ask/utils/cli";
-import { colorizeProvider, colorizeRole, generateSessionId } from "@ask/utils/helpers";
+import { colorizeProvider, generateSessionId } from "@ask/utils/helpers";
 
 // Initialize conversation manager
 const convManager = conversationManager;
@@ -66,7 +62,6 @@ class ASKTool {
             // Handle models subcommand
             const firstArg = argv._[0]?.toLowerCase();
             if (firstArg === "models" || firstArg === "model") {
-                // Parse models-specific options
                 const modelsOptions: ModelsOptions = {
                     provider: argv.provider,
                     format: argv.format as ModelsOptions["format"],
@@ -105,9 +100,14 @@ class ASKTool {
         }
     }
 
+    private suggestCommand(provider: string, model: string): void {
+        const cmd = `tools ask -p ${provider} -m ${model} "your message"`;
+        p.log.info(pc.dim(`Non-interactive: ${cmd}`));
+    }
+
     private async handleSpeechToText(filePath: string, argv: Args): Promise<void> {
         try {
-            console.log(chalk.blue("<ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ Transcribing audio..."));
+            p.log.step(pc.blue("Transcribing audio..."));
 
             const result = await transcriptionManager.transcribeAudio(filePath);
 
@@ -119,7 +119,7 @@ class ASKTool {
                 processingTime: result.processingTime,
             });
 
-            console.log(chalk.green(`\n Transcription completed in ${formatElapsedTime(result.processingTime)}`));
+            p.log.success(`Transcription completed in ${formatElapsedTime(result.processingTime)}`);
         } catch (error) {
             logger.error(`Speech-to-text failed: ${error}`);
             throw error;
@@ -141,7 +141,7 @@ class ASKTool {
                 process.exit(1);
             }
 
-            console.log(chalk.blue(`> Using ${colorizeProvider(modelChoice.provider.name)}/${modelChoice.model.name}`));
+            p.log.info(`Using ${colorizeProvider(modelChoice.provider.name)}/${modelChoice.model.name}`);
 
             // Create chat config
             const chatConfig = await this.createChatConfig(modelChoice, argv);
@@ -156,13 +156,13 @@ class ASKTool {
                     modelChoice.model.id,
                     message
                 );
-                console.log(chalk.cyan("\n" + costPredictor.formatPrediction(prediction) + "\n"));
+                p.log.info(pc.cyan(costPredictor.formatPrediction(prediction)));
             }
 
             // Set up tools
             const tools = this.getAvailableTools();
 
-            console.log(chalk.yellow("> Thinking..."));
+            p.log.step(pc.yellow("Thinking..."));
 
             // Send message
             const response = await chatEngine.sendMessage(message, tools);
@@ -212,162 +212,160 @@ class ASKTool {
     }
 
     private async startInteractiveChat(argv: Args): Promise<void> {
-        console.log(chalk.green("=ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ Starting interactive chat mode"));
-        console.log(chalk.gray("Type /help for available commands, /quit to exit\n"));
+        if (process.stdout.isTTY) {
+            p.intro(pc.bgCyan(pc.black(" ASK ")));
+        }
 
-        try {
-            // Select initial model
-            const modelChoice = await modelSelector.selectModel();
-            if (!modelChoice) {
-                logger.error("No model selected. Exiting.");
-                process.exit(1);
-            }
+        p.log.info(pc.dim("Type /help for available commands, /quit to exit"));
 
-            console.log(
-                chalk.blue(`> Starting with ${colorizeProvider(modelChoice.provider.name)}/${modelChoice.model.name}`)
-            );
+        // Select initial model
+        const modelChoice = await modelSelector.selectModel();
+        if (!modelChoice) {
+            logger.error("No model selected. Exiting.");
+            process.exit(1);
+        }
 
-            // Create chat config
-            const chatConfig = await this.createChatConfig(modelChoice, argv);
+        p.log.step(
+            `Starting with ${colorizeProvider(modelChoice.provider.name)}/${modelChoice.model.name}`
+        );
 
-            // Create chat engine
-            const chatEngine = new ChatEngine(chatConfig);
+        this.suggestCommand(modelChoice.provider.name, modelChoice.model.id);
 
-            // Create session
-            const sessionId = generateSessionId();
-            const session = convManager.createSession(sessionId, modelChoice.provider.name, modelChoice.model.id);
+        // Create chat config
+        const chatConfig = await this.createChatConfig(modelChoice, argv);
 
-            // Set output format (support both --output and --format)
-            const outputConfig = getOutputFormat(argv);
-            if (outputConfig) {
-                outputManager.setOutputFormat(outputConfig);
-            }
+        // Create chat engine
+        const chatEngine = new ChatEngine(chatConfig);
 
-            let shouldExit = false;
+        // Create session
+        const sessionId = generateSessionId();
+        const session = convManager.createSession(sessionId, modelChoice.provider.name, modelChoice.model.id);
 
-            while (!shouldExit) {
-                try {
-                    // Get user input
-                    const message = await input({
-                        message: chalk.cyan("You:"),
-                        validate: (value: string) => {
-                            if (value.startsWith("/")) {
-                                return (
-                                    commandHandler.isValidCommand(value) ||
-                                    "Unknown command. Type /help for available commands."
-                                );
-                            }
-                            return value.trim().length > 0 || "Please enter a message or command.";
-                        },
-                    });
+        // Set output format (support both --output and --format)
+        const outputConfig = getOutputFormat(argv);
+        if (outputConfig) {
+            outputManager.setOutputFormat(outputConfig);
+        }
 
-                    // Handle special commands
-                    if (message.startsWith("/")) {
-                        const result = await commandHandler.handleCommand(
-                            message,
-                            modelChoice.provider.name,
-                            modelChoice.model.id
-                        );
+        let shouldExit = false;
 
-                        if (result.shouldExit) {
-                            shouldExit = true;
-                            break;
+        while (!shouldExit) {
+            try {
+                // Get user input
+                const message = await input({
+                    message: pc.cyan("You:"),
+                    mode: "light",
+                    validate: (value) => {
+                        if (value.startsWith("/")) {
+                            return commandHandler.isValidCommand(value)
+                                ? undefined
+                                : "Unknown command. Type /help for available commands.";
                         }
+                        return value.trim().length > 0 ? undefined : "Please enter a message or command.";
+                    },
+                });
 
-                        // Handle command results
-                        await this.handleCommandResult(result, chatEngine, modelChoice, chatConfig);
-                        continue;
-                    }
+                if (p.isCancel(message) || typeof message === "symbol") {
+                    // User pressed Ctrl+C — continue loop
+                    logger.info("Operation cancelled by user.");
+                    continue;
+                }
 
-                    // Regular chat message
-                    console.log(chalk.yellow("\nAssistant:"));
+                const msg = message as string;
 
-                    // Set up tools
-                    const tools = this.getAvailableTools();
-
-                    const startTime = Date.now();
-
-                    // Send message
-                    const response = await chatEngine.sendMessage(message, tools);
-
-                    const duration = Date.now() - startTime;
-
-                    // Show timing info
-                    console.log(
-                        chalk.gray(`\nÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½  Response time: ${formatElapsedTime(duration)}`)
+                // Handle special commands
+                if (msg.startsWith("/")) {
+                    const result = await commandHandler.handleCommand(
+                        msg,
+                        modelChoice.provider.name,
+                        modelChoice.model.id
                     );
 
-                    // Track usage
-                    if (response.usage) {
-                        const messageIndex = Math.floor(chatEngine.getConversationLength() / 2); // Approximate message index
-                        await costTracker.trackUsage(
-                            modelChoice.provider.name,
-                            modelChoice.model.id,
-                            response.usage,
-                            sessionId,
-                            messageIndex
-                        );
+                    if (result.shouldExit) {
+                        shouldExit = true;
+                        break;
                     }
 
-                    // Auto-save conversation every 5 messages
-                    if (chatEngine.getConversationLength() % 10 === 0) {
-                        // Every 5 pairs (user + assistant)
-                        session.messages = chatEngine.exportConversation();
-                        await convManager.saveConversation(session);
-                    }
+                    // Handle command results
+                    await this.handleCommandResult(result, chatEngine, modelChoice, chatConfig);
+                    continue;
+                }
 
-                    // Show cost breakdown if significant
-                    if (response.cost && response.cost > 0.001) {
-                        const breakdown = [
-                            {
-                                provider: modelChoice.provider.name,
-                                model: modelChoice.model.id,
-                                inputTokens: response.usage?.inputTokens || 0,
-                                outputTokens: response.usage?.outputTokens || 0,
-                                cachedInputTokens: response.usage?.cachedInputTokens || 0,
-                                totalTokens: response.usage?.totalTokens || 0,
-                                cost: response.cost,
-                                currency: "USD",
-                            },
-                        ];
+                // Regular chat message
+                console.log(pc.yellow("\nAssistant:"));
 
-                        console.log(await outputManager.formatCostBreakdown(breakdown));
-                    }
+                // Set up tools
+                const tools = this.getAvailableTools();
 
-                    console.log(); // Add spacing
-                } catch (error) {
-                    if (error instanceof ExitPromptError) {
-                        logger.info("\nOperation cancelled by user.");
-                        continue;
-                    }
-                    logger.error(`Chat error: ${error}`);
-                    console.log(
-                        chalk.red(
-                            "=ÃƒÆ'Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ Error occurred. Type /quit to exit or continue chatting."
-                        )
+                const startTime = Date.now();
+
+                // Send message
+                const response = await chatEngine.sendMessage(msg, tools);
+
+                const duration = Date.now() - startTime;
+
+                // Show timing info
+                console.log(pc.dim(`\nResponse time: ${formatElapsedTime(duration)}`));
+
+                // Track usage
+                if (response.usage) {
+                    const messageIndex = Math.floor(chatEngine.getConversationLength() / 2);
+                    await costTracker.trackUsage(
+                        modelChoice.provider.name,
+                        modelChoice.model.id,
+                        response.usage,
+                        sessionId,
+                        messageIndex
                     );
                 }
+
+                // Auto-save conversation every 5 messages
+                if (chatEngine.getConversationLength() % 10 === 0) {
+                    session.messages = chatEngine.exportConversation();
+                    await convManager.saveConversation(session);
+                }
+
+                // Show cost breakdown if significant
+                if (response.cost && response.cost > 0.001) {
+                    const breakdown = [
+                        {
+                            provider: modelChoice.provider.name,
+                            model: modelChoice.model.id,
+                            inputTokens: response.usage?.inputTokens || 0,
+                            outputTokens: response.usage?.outputTokens || 0,
+                            cachedInputTokens: response.usage?.cachedInputTokens || 0,
+                            totalTokens: response.usage?.totalTokens || 0,
+                            cost: response.cost,
+                            currency: "USD",
+                        },
+                    ];
+
+                    console.log(await outputManager.formatCostBreakdown(breakdown));
+                }
+
+                console.log(); // Add spacing
+            } catch (error) {
+                logger.error(`Chat error: ${error}`);
+                console.log(pc.red("Error occurred. Type /quit to exit or continue chatting."));
             }
+        }
 
-            // Save conversation before exiting
-            session.messages = chatEngine.exportConversation();
-            session.endTime = new Date().toISOString();
-            await convManager.saveConversation(session);
+        // Save conversation before exiting
+        session.messages = chatEngine.exportConversation();
+        session.endTime = new Date().toISOString();
+        await convManager.saveConversation(session);
 
-            console.log(chalk.green("\n=K Goodbye!"));
+        // Show session summary
+        p.log.info(pc.dim(`Session saved: ${sessionId}`));
+        p.log.info(pc.dim(`Messages: ${session.messages.length}`));
+        p.log.info(
+            pc.dim(`Duration: ${formatElapsedTime(Date.now() - new Date(session.startTime).getTime())}`)
+        );
 
-            // Show session summary
-            console.log(chalk.gray(`Session saved: ${sessionId}`));
-            console.log(chalk.gray(`Messages: ${session.messages.length}`));
-            console.log(
-                chalk.gray(`Duration: ${formatElapsedTime(Date.now() - new Date(session.startTime).getTime())}`)
-            );
-        } catch (error) {
-            if (error instanceof ExitPromptError) {
-                logger.info("\nChat cancelled by user.");
-                process.exit(0);
-            }
-            throw error;
+        if (process.stdout.isTTY) {
+            p.outro(pc.green("Goodbye!"));
+        } else {
+            console.log("Goodbye!");
         }
     }
 
@@ -429,8 +427,6 @@ class ASKTool {
             };
         }
 
-        // Add more tools here as needed
-
         return Object.keys(tools).length > 0 ? tools : undefined;
     }
 
@@ -442,7 +438,6 @@ class ASKTool {
     ): Promise<void> {
         if (result.newModel && result.newProvider) {
             await chatEngine.switchModel(result.newModel, result.newProvider, result.newModelName || "unknown");
-            // Update modelChoice reference
             if (result.newProvider) {
                 modelChoice.provider.name = result.newProvider;
             }
@@ -457,7 +452,7 @@ class ASKTool {
 
         if (result.clearHistory) {
             chatEngine.clearConversation();
-            console.log(chalk.green(" Conversation history cleared"));
+            p.log.success("Conversation history cleared");
         }
 
         if (result.saveConversation) {
@@ -468,21 +463,20 @@ class ASKTool {
                 chatEngine.exportConversation()
             );
             await convManager.saveConversation(session);
-            console.log(chalk.green(` Conversation saved: ${session.id}`));
+            p.log.success(`Conversation saved: ${session.id}`);
         }
 
         if (result.transcriptionFile) {
             try {
-                console.log(chalk.blue("<ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â½ Transcribing audio..."));
+                p.log.step(pc.blue("Transcribing audio..."));
                 const transcriptionResult = await transcriptionManager.transcribeAudio(result.transcriptionFile);
 
-                // Add transcription as a user message
                 await chatEngine.sendMessage(
                     `Transcription of "${result.transcriptionFile}":\n\n${transcriptionResult.text}`
                 );
 
-                console.log(
-                    chalk.green(` Transcription completed in ${formatElapsedTime(transcriptionResult.processingTime)}`)
+                p.log.success(
+                    `Transcription completed in ${formatElapsedTime(transcriptionResult.processingTime)}`
                 );
             } catch (error) {
                 logger.error(`Transcription failed: ${error}`);

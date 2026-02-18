@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { LanguageModelUsage } from "ai";
-import chalk from "chalk";
+import pc from "picocolors";
 import { formatTokens } from "../../utils/format";
 
 // Re-exported shared utilities
@@ -20,21 +20,31 @@ export function generateSessionId(): string {
 export function colorizeRole(role: string): string {
     switch (role.toLowerCase()) {
         case "user":
-            return chalk.blue("User");
+            return pc.blue("User");
         case "assistant":
-            return chalk.green("Assistant");
+            return pc.green("Assistant");
         case "system":
-            return chalk.magenta("System");
+            return pc.magenta("System");
         default:
-            return chalk.gray(role);
+            return pc.dim(role);
     }
 }
 
 export function colorizeProvider(provider: string): string {
-    const colors = [chalk.cyan, chalk.magenta, chalk.yellow, chalk.blue, chalk.green];
+    const colors = [pc.cyan, pc.magenta, pc.yellow, pc.blue, pc.green];
 
     const colorIndex = provider.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0) % colors.length;
     return colors[colorIndex](provider);
+}
+
+/** Colorize text by price tier based on input cost per 1M tokens */
+export function colorizeByPriceTier(text: string, inputPer1M?: number): string {
+    if (inputPer1M == null) return pc.dim(text);
+    if (inputPer1M === 0) return pc.green(text);
+    if (inputPer1M < 1) return pc.green(text);
+    if (inputPer1M < 5) return pc.cyan(text);
+    if (inputPer1M < 15) return pc.yellow(text);
+    return pc.red(text);
 }
 
 export function createProgressBar(current: number, total: number, width: number = 40): string {

@@ -3,7 +3,7 @@ import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { ChatConfig, ChatMessage } from "@ask/types";
 import type { LanguageModel, LanguageModelUsage } from "ai";
 import { generateText, streamText } from "ai";
-import chalk from "chalk";
+
 
 export interface ChatResponse {
     content: string;
