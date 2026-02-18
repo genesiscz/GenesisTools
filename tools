@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 
-import clipboardy from "clipboardy";
 import { search } from "@inquirer/prompts";
 import { ExitPromptError } from "@inquirer/core";
 import { spawnSync } from "node:child_process";
@@ -12,7 +11,6 @@ import logger from "@app/logger";
 const SRC_DIR_NAME = "src";
 const INDEX_FILE_NAMES = ["index.ts", "index.tsx"];
 const SCRIPT_EXTENSIONS = [".ts", ".tsx"];
-const EXECUTABLE_NAME = "tools"; // How this script is invoked
 
 // --- Helper Functions ---
 async function getAvailableTools(srcDir) {
@@ -52,37 +50,7 @@ async function getAvailableTools(srcDir) {
     return tools.sort(); // Return sorted list
 }
 
-async function selectToolAndCopyCommand(tools) {
-    if (tools.length === 0) {
-        logger.info("ℹ️ No tools found in the src directory.");
-        process.exit(0);
-    }
-
-    try {
-        const tool = await search({
-            message: "Select a tool to copy its command:",
-            source: async (term) => {
-                const filtered = tools.filter((t) =>
-                    t.toLowerCase().includes((term || "").toLowerCase())
-                );
-                return filtered.map((t) => ({ value: t, name: t }));
-            },
-        });
-
-        const commandToCopy = `${EXECUTABLE_NAME} ${tool}`;
-        await clipboardy.write(commandToCopy);
-        logger.info(`✔ Command "${commandToCopy}" copied to clipboard!`);
-    } catch (error) {
-        if (error instanceof ExitPromptError) {
-            logger.info("\n✖ Tool selection cancelled.");
-            process.exit(0);
-        }
-        logger.error("\n✖ An error occurred during tool selection:", error);
-        process.exit(1);
-    }
-}
-
-function executeTool(scriptId, scriptArgs) {
+async function executeTool(scriptId, scriptArgs) {
     const workspaceRoot = resolve(__dirname); // Assumes the script is run from the root
     const srcDir = join(workspaceRoot, SRC_DIR_NAME);
 
@@ -117,16 +85,49 @@ function executeTool(scriptId, scriptArgs) {
         }
 
         if (!targetScript) {
-            logger.error(`✖ Error: Could not find a script matching '${scriptId}'.`);
-            logger.error("Looked for:");
-            INDEX_FILE_NAMES.forEach((indexFile) => {
-                logger.error(`  - ${join(srcDir, scriptId, indexFile)}`);
+            const chalk = (await import("chalk")).default;
+            // Fuzzy match: find tools that contain the input or share segments
+            const availableTools = await getAvailableTools(srcDir);
+            const searchTerm = scriptId.toLowerCase().replace(/[-_]+$/, ""); // strip trailing dashes
+            const matches = availableTools.filter(t => {
+                const lower = t.toLowerCase();
+                if (lower.includes(scriptId.toLowerCase())) return true;
+                if (searchTerm && lower.includes(searchTerm)) return true;
+                // Segment match: any dash-separated part starts with search term
+                return lower.split("-").some(seg => seg.startsWith(searchTerm));
             });
-            SCRIPT_EXTENSIONS.forEach((ext) => {
-                logger.error(`  - ${join(srcDir, `${scriptId}${ext}`)}`);
-            });
-            logger.error(`  - ${pathAsIs} (if it ends with ${SCRIPT_EXTENSIONS.join(" or ")})`);
-            process.exit(1);
+
+            if (matches.length === 0) {
+                console.error(
+                    `\n  ${chalk.red("Tool not found:")} ${chalk.bold(scriptId)}\n` +
+                    `  Looked in: ${chalk.dim(srcDir)}\n`
+                );
+                process.exit(1);
+            }
+
+            // Launch interactive selector pre-filtered with matches
+            console.log(`\n  ${chalk.yellow("No exact match for")} ${chalk.bold(scriptId)}${chalk.yellow(". Did you mean?")}\n`);
+
+            try {
+                const tool = await search({
+                    message: "Select a tool:",
+                    source: async (term) => {
+                        const filtered = matches.filter(t =>
+                            t.toLowerCase().includes((term || "").toLowerCase())
+                        );
+                        return filtered.map(t => ({ value: t, name: t }));
+                    },
+                });
+
+                // Re-execute with the selected tool
+                await executeTool(tool, scriptArgs);
+            } catch (error) {
+                if (error instanceof ExitPromptError) {
+                    process.exit(0);
+                }
+                throw error;
+            }
+            return;
         }
     }
 
@@ -147,15 +148,17 @@ async function main() {
     const srcDir = join(workspaceRoot, SRC_DIR_NAME);
 
     if (args.length === 0) {
-        // No arguments: Show interactive tool list
-        logger.info("ℹ️ No tool specified. Listing available tools...");
-        const availableTools = await getAvailableTools(srcDir);
-        await selectToolAndCopyCommand(availableTools);
+        // Launch interactive tool browser
+        const result = spawnSync("bun", ["run", join(srcDir, "tools", "index.ts")], {
+            stdio: "inherit",
+            cwd: process.cwd(),
+        });
+        process.exit(result.status ?? 0);
     } else {
         // Arguments provided: Execute the tool
         const scriptId = args[0];
         const scriptArgs = args.slice(1);
-        executeTool(scriptId, scriptArgs);
+        await executeTool(scriptId, scriptArgs);
     }
 }
 
