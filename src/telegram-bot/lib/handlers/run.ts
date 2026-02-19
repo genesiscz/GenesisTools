@@ -1,11 +1,8 @@
-import { resolve } from "node:path";
 import type { Bot } from "grammy";
 import * as p from "@clack/prompts";
 import { listPresets } from "@app/automate/lib/storage";
-import { stripAnsi } from "../formatting";
-import { truncateForTelegram } from "../formatting";
-
-const TOOLS_PATH = resolve(import.meta.dir, "../../../../tools");
+import { runTool } from "@app/utils/cli/tools";
+import { stripAnsi, truncateForTelegram } from "@app/telegram-bot/lib/formatting";
 
 export function registerRunCommand(bot: Bot): void {
   bot.command("run", async (ctx) => {
@@ -26,18 +23,9 @@ export function registerRunCommand(bot: Bot): void {
 
     const presetName = args.split(/\s+/)[0];
     p.log.step(`/run → executing preset "${presetName}"`);
-    const proc = Bun.spawn(["bun", "run", TOOLS_PATH, "automate", "run", presetName], {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, NO_COLOR: "1" },
-      timeout: 120_000,
-    });
-
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    const exitCode = await proc.exited;
-    const output = stripAnsi(stdout + (stderr ? `\n${stderr}` : "")).trim();
+    const result = await runTool(["automate", "run", presetName], { env: { NO_COLOR: "1" }, timeout: 120_000 });
+    const exitCode = result.exitCode;
+    const output = stripAnsi(result.stdout + (result.stderr ? `\n${result.stderr}` : "")).trim();
 
     const prefix = exitCode === 0
       ? `Preset "${presetName}" completed.`

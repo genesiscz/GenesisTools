@@ -1,9 +1,9 @@
 // src/automate/lib/steps/git.ts
 
 import { createGit } from "@app/utils/git/core";
-import { registerStepHandler, registerStepCatalog } from "../registry";
-import type { StepContext } from "../registry";
-import type { GitStepParams, PresetStep, StepResult } from "../types";
+import { registerStepHandler, registerStepCatalog } from "@app/automate/lib/registry";
+import type { StepContext } from "@app/automate/lib/registry";
+import type { GitStepParams, PresetStep, StepResult } from "@app/automate/lib/types";
 import { makeResult } from "./helpers";
 
 async function gitHandler(step: PresetStep, ctx: StepContext): Promise<StepResult> {

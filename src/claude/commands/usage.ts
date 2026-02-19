@@ -1,9 +1,9 @@
 import type { Command } from "commander";
 import * as p from "@clack/prompts";
-import { loadConfig } from "../lib/config";
-import { fetchUsage, fetchAllAccountsUsage, getKeychainCredentials } from "../lib/usage/api";
-import { renderAccountUsage, renderAllAccounts } from "../lib/usage/display";
-import { watchUsage } from "../lib/usage/watch";
+import { loadConfig } from "@app/claude/lib/config";
+import { fetchUsage, fetchAllAccountsUsage, getKeychainCredentials } from "@app/claude/lib/usage/api";
+import { renderAccountUsage, renderAllAccounts } from "@app/claude/lib/usage/display";
+import { watchUsage } from "@app/claude/lib/usage/watch";
 
 export function registerUsageCommand(program: Command): void {
 	program

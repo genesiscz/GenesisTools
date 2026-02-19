@@ -1,7 +1,7 @@
 import clipboardy from "clipboardy";
-import { registerStepHandler, registerStepCatalog } from "../registry";
-import type { StepContext } from "../registry";
-import type { NotifyStepParams, PresetStep, StepResult } from "../types";
+import { registerStepHandler, registerStepCatalog } from "@app/automate/lib/registry";
+import type { StepContext } from "@app/automate/lib/registry";
+import type { NotifyStepParams, PresetStep, StepResult } from "@app/automate/lib/types";
 import { makeResult } from "./helpers";
 
 async function notifyHandler(step: PresetStep, ctx: StepContext): Promise<StepResult> {

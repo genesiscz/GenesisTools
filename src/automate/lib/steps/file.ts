@@ -3,9 +3,9 @@
 import { existsSync, mkdirSync, unlinkSync, renameSync, copyFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { glob } from "glob";
-import { registerStepHandler, registerStepCatalog } from "../registry";
-import type { StepContext } from "../registry";
-import type { FileStepParams, PresetStep, StepResult } from "../types";
+import { registerStepHandler, registerStepCatalog } from "@app/automate/lib/registry";
+import type { StepContext } from "@app/automate/lib/registry";
+import type { FileStepParams, PresetStep, StepResult } from "@app/automate/lib/types";
 import { makeResult } from "./helpers";
 
 async function fileHandler(step: PresetStep, ctx: StepContext): Promise<StepResult> {

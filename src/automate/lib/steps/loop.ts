@@ -1,8 +1,8 @@
 // src/automate/lib/steps/loop.ts
 
-import { registerStepHandler, registerStepCatalog, resolveStepHandler } from "../registry";
-import type { StepContext } from "../registry";
-import type { ForEachStepParams, PresetStep, StepResult, WhileStepParams } from "../types";
+import { registerStepHandler, registerStepCatalog, resolveStepHandler } from "@app/automate/lib/registry";
+import type { StepContext } from "@app/automate/lib/registry";
+import type { ForEachStepParams, PresetStep, StepResult, WhileStepParams } from "@app/automate/lib/types";
 import { makeResult } from "./helpers";
 
 // --- forEach ---

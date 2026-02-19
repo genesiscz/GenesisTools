@@ -1,5 +1,5 @@
-import type { AccountConfig } from "../config";
-import { loadConfig, saveConfig } from "../config";
+import type { AccountConfig } from "@app/claude/lib/config";
+import { loadConfig, saveConfig } from "@app/claude/lib/config";
 import { refreshOAuthToken } from "@app/utils/claude/auth";
 export type { AccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
 export { getKeychainCredentials } from "@app/utils/claude/auth";

@@ -2,7 +2,7 @@ import { Command } from "commander";
 import pc from "picocolors";
 import { resolve, join } from "node:path";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { discoverTools } from "../tools/lib/discovery";
+import { discoverTools } from "@app/tools/lib/discovery";
 
 const program = new Command()
 	.name("update")

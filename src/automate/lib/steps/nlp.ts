@@ -1,8 +1,8 @@
 // src/automate/lib/steps/nlp.ts
 
-import { registerStepHandler, registerStepCatalog } from "../registry";
-import type { StepContext } from "../registry";
-import type { NlpStepParams, PresetStep, StepResult } from "../types";
+import { registerStepHandler, registerStepCatalog } from "@app/automate/lib/registry";
+import type { StepContext } from "@app/automate/lib/registry";
+import type { NlpStepParams, PresetStep, StepResult } from "@app/automate/lib/types";
 import { makeResult } from "./helpers";
 import {
   analyzeSentiment,

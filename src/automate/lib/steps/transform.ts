@@ -1,8 +1,8 @@
 // src/automate/lib/steps/transform.ts
 
-import { registerStepHandler, registerStepCatalog } from "../registry";
-import type { StepContext } from "../registry";
-import type { ArrayStepParams, JsonStepParams, PresetStep, StepResult, TextStepParams } from "../types";
+import { registerStepHandler, registerStepCatalog } from "@app/automate/lib/registry";
+import type { StepContext } from "@app/automate/lib/registry";
+import type { ArrayStepParams, JsonStepParams, PresetStep, StepResult, TextStepParams } from "@app/automate/lib/types";
 import { makeResult } from "./helpers";
 
 // jsonpath has no TypeScript declarations

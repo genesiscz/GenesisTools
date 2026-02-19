@@ -2,8 +2,8 @@ import type { Command } from "commander";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import clipboard from "clipboardy";
-import { loadConfig, saveConfig, type ClaudeConfig } from "../lib/config";
-import { getKeychainCredentials, fetchUsage } from "../lib/usage/api";
+import { loadConfig, saveConfig, type ClaudeConfig } from "@app/claude/lib/config";
+import { getKeychainCredentials, fetchUsage } from "@app/claude/lib/usage/api";
 import {
 	fetchOAuthProfile,
 	getClaudeJsonAccount,

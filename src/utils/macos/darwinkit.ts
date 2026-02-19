@@ -37,7 +37,32 @@ export class DarwinKitClient {
     return this.startPromise;
   }
 
+  private async _ensureInstalled(): Promise<void> {
+    const which = Bun.spawnSync(["which", this.config.binaryPath]);
+    if (which.exitCode === 0) return;
+
+    logger.info("DarwinKitClient: darwinkit not found, installing via Homebrew...");
+    console.log("  Installing darwinkit via Homebrew...");
+
+    const tap = Bun.spawnSync(["brew", "tap", "0xMassi/darwinkit"], {
+      stdio: ["inherit", "inherit", "inherit"],
+    });
+    if (tap.exitCode !== 0) {
+      throw new Error("Failed to tap 0xMassi/darwinkit. Is Homebrew installed?");
+    }
+
+    const install = Bun.spawnSync(["brew", "install", "darwinkit"], {
+      stdio: ["inherit", "inherit", "inherit"],
+    });
+    if (install.exitCode !== 0) {
+      throw new Error("Failed to install darwinkit via Homebrew");
+    }
+
+    logger.info("DarwinKitClient: darwinkit installed successfully");
+  }
+
   private async _doStart(): Promise<void> {
+    await this._ensureInstalled();
     logger.debug("DarwinKitClient: spawning darwinkit serve");
 
     this.proc = Bun.spawn([this.config.binaryPath, "serve"], {

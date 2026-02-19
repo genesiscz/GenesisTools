@@ -1,8 +1,8 @@
 // src/automate/lib/steps/parallel.ts
 
-import { registerStepHandler, registerStepCatalog, resolveStepHandler } from "../registry";
-import type { StepContext } from "../registry";
-import type { ParallelStepParams, PresetStep, StepResult } from "../types";
+import { registerStepHandler, registerStepCatalog, resolveStepHandler } from "@app/automate/lib/registry";
+import type { StepContext } from "@app/automate/lib/registry";
+import type { ParallelStepParams, PresetStep, StepResult } from "@app/automate/lib/types";
 import { makeResult } from "./helpers";
 
 async function parallelHandler(step: PresetStep, ctx: StepContext): Promise<StepResult> {

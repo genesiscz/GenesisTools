@@ -1,11 +1,11 @@
 // src/automate/lib/step-runner.ts
 
-import { resolve } from "node:path";
 import type { ExecutionContext, ParallelStepParams, PresetStep, StepResult } from "./types.ts";
 import { resolveExpression, resolveParams } from "./expressions.ts";
 import { executeBuiltin, isBuiltinAction } from "./builtins.ts";
 import { resolveStepHandler } from "./registry.ts";
 import type { StepContext } from "./registry.ts";
+import { runTool } from "@app/utils/cli/tools";
 import logger from "@app/logger.ts";
 
 /**
@@ -60,21 +60,11 @@ export async function executeStep(
     logger.debug(`Executing: tools ${args.join(" ")}`);
   }
 
-  // Resolve path to the `tools` executable (3 dirs up from lib/ -> src/automate/lib/)
-  const toolsPath = resolve(import.meta.dir, "../../../tools");
   const start = Date.now();
-
-  const proc = Bun.spawn(["bun", "run", toolsPath, ...args], {
-    cwd: process.cwd(),
-    stdio: step.interactive
-      ? ["inherit", "pipe", "pipe"]
-      : ["ignore", "pipe", "pipe"],
-    env: { ...process.env },
-  });
-
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  const exitCode = await proc.exited;
+  const toolResult = await runTool(args);
+  const stdout = toolResult.stdout;
+  const stderr = toolResult.stderr;
+  const exitCode = toolResult.exitCode;
 
   // Try to parse stdout as JSON for structured access via expressions
   let output: unknown = stdout.trim();

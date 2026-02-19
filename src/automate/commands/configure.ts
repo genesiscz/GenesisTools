@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import * as p from "@clack/prompts";
 import { loadTelegramConfig } from "@app/telegram-bot/lib/config";
+import { runToolInteractive } from "@app/utils/cli/tools";
 
 export function registerConfigureCommand(program: Command): Command {
   const cmd = program.command("configure").description("Setup wizard and credential management");
@@ -27,11 +28,7 @@ export function registerConfigureCommand(program: Command): Command {
     });
     if (p.isCancel(section) || section === "done") { p.outro("Configuration complete"); return; }
     if (section === "telegram") {
-      const toolsPath = new URL("../../../tools", import.meta.url).pathname;
-      const proc = Bun.spawn(["bun", "run", toolsPath, "telegram-bot", "configure"], {
-        stdio: ["inherit", "inherit", "inherit"],
-      });
-      await proc.exited;
+      await runToolInteractive(["telegram-bot", "configure"]);
     }
     p.outro("Configuration complete");
   });

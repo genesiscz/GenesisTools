@@ -1,9 +1,9 @@
 // src/automate/lib/steps/http.ts
 
-import { registerStepHandler, registerStepCatalog } from "../registry";
-import type { StepContext } from "../registry";
-import type { HttpStepParams, PresetStep, StepResult } from "../types";
-import { loadCredential, resolveCredentialHeaders } from "../credentials";
+import { registerStepHandler, registerStepCatalog } from "@app/automate/lib/registry";
+import type { StepContext } from "@app/automate/lib/registry";
+import type { HttpStepParams, PresetStep, StepResult } from "@app/automate/lib/types";
+import { loadCredential, resolveCredentialHeaders } from "@app/automate/lib/credentials";
 import { makeResult } from "./helpers";
 
 async function httpHandler(step: PresetStep, ctx: StepContext): Promise<StepResult> {

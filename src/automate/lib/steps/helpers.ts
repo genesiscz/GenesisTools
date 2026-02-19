@@ -1,6 +1,6 @@
 // src/automate/lib/steps/helpers.ts
 
-import type { StepResult } from "../types";
+import type { StepResult } from "@app/automate/lib/types";
 
 /**
  * Build a StepResult with timing. Used by all step handlers.
