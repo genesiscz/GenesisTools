@@ -1,5 +1,5 @@
 import type { AccountConfig } from "../config";
-export type { OAuthAccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
+export type { AccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
 export { getKeychainCredentials } from "@app/utils/claude/auth";
 
 export interface UsageBucket {

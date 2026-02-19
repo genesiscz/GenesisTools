@@ -3,6 +3,7 @@ import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { loadConfig, saveConfig, type ClaudeConfig } from "../lib/config";
 import { getKeychainCredentials, fetchUsage } from "../lib/usage/api";
+import { fetchOAuthProfile, getClaudeJsonAccount } from "@app/utils/claude/auth";
 
 async function interactiveConfig(): Promise<void> {
 	p.intro(pc.bgCyan(pc.black(" claude config ")));
@@ -31,7 +32,7 @@ async function interactiveConfig(): Promise<void> {
 		} else if (action === "notifications") {
 			await manageNotifications(config);
 		} else if (action === "show") {
-			showConfig(config);
+			await showConfig(config);
 		}
 	}
 }
@@ -53,7 +54,7 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 
 	if (action === "add-keychain") {
 		const spinner = p.spinner();
-		spinner.start("Reading Keychain...");
+		spinner.start("Reading Keychain & fetching profile...");
 		const kc = await getKeychainCredentials();
 		if (!kc) {
 			spinner.stop("No credentials found in Keychain.");
@@ -61,14 +62,15 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 			return;
 		}
 		const planLabel = kc.subscriptionType ?? "unknown plan";
-		const acctName = kc.account?.displayName ?? kc.account?.emailAddress;
-		spinner.stop(`Found: ${pc.cyan(planLabel)}${kc.rateLimitTier ? pc.dim(` (${kc.rateLimitTier})`) : ""}${acctName ? ` — ${pc.green(acctName)}` : ""}`);
-		if (kc.account?.emailAddress) p.log.info(`Email: ${pc.cyan(kc.account.emailAddress)}`);
+		const displayName = kc.account.api?.account.display_name ?? kc.account.claudeJson?.displayName;
+		const email = kc.account.api?.account.email ?? kc.account.claudeJson?.emailAddress;
+		spinner.stop(`Found: ${pc.cyan(planLabel)}${kc.rateLimitTier ? pc.dim(` (${kc.rateLimitTier})`) : ""}${displayName ? ` — ${pc.green(displayName)}` : ""}`);
+		if (email) p.log.info(`Email: ${pc.cyan(email)}`);
 		p.log.info(`Token: ${pc.dim(kc.accessToken.slice(0, 20) + "...")}`);
 
 		const name = await p.text({
 			message: "Name for this account:",
-			placeholder: acctName?.split("@")[0]?.toLowerCase() ?? "personal",
+			placeholder: email?.split("@")[0]?.toLowerCase() ?? "personal",
 			validate: (val) => {
 				if (!val?.trim()) return "Name is required";
 				if (config.accounts[val]) return `Account "${val}" already exists`;
@@ -193,22 +195,54 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
 	p.log.success("Notification settings saved.");
 }
 
-function showConfig(config: ClaudeConfig): void {
+async function showConfig(config: ClaudeConfig): Promise<void> {
 	const accounts = Object.entries(config.accounts);
-	const lines = [
-		pc.bold("Accounts:"),
-		...accounts.map(
-			([name, acc]) =>
-				`  ${name}${config.defaultAccount === name ? pc.green(" (default)") : ""}: ${acc.label ?? pc.dim("no label")} ${pc.dim(acc.accessToken.slice(0, 20) + "...")}`,
-		),
-		accounts.length === 0 ? pc.dim("  (none configured)") : "",
-		"",
-		pc.bold("Notifications:"),
-		`  Session thresholds: ${config.notifications.sessionThresholds.join(", ")}%`,
-		`  Weekly thresholds:  ${config.notifications.weeklyThresholds.join(", ")}%`,
-		`  Watch interval:     ${config.notifications.watchInterval}s`,
-		`  macOS:              ${config.notifications.channels.macos ? pc.green("enabled") : pc.dim("disabled")}`,
-	].filter(Boolean);
+
+	const lines = [pc.bold("Accounts:")];
+
+	if (accounts.length === 0) {
+		lines.push(pc.dim("  (none configured)"));
+	} else {
+		const spinner = p.spinner();
+		spinner.start("Fetching account profiles...");
+
+		const profiles = await Promise.all(
+			accounts.map(async ([, acc]) => fetchOAuthProfile(acc.accessToken)),
+		);
+		const claudeJson = await getClaudeJsonAccount();
+
+		spinner.stop("Done.");
+
+		for (let i = 0; i < accounts.length; i++) {
+			const [name, acc] = accounts[i];
+			const profile = profiles[i];
+			const isDefault = config.defaultAccount === name;
+
+			lines.push(`  ${pc.bold(name)}${isDefault ? pc.green(" (default)") : ""}`);
+
+			if (profile) {
+				lines.push(`    ${pc.dim("API:")} ${profile.account.display_name} <${pc.cyan(profile.account.email)}>`);
+				lines.push(`    ${pc.dim("     ")}${profile.organization.organization_type} — ${profile.organization.billing_type} (${profile.organization.rate_limit_tier})`);
+				lines.push(`    ${pc.dim("     ")}subscription: ${profile.organization.subscription_status}, extra usage: ${profile.organization.has_extra_usage_enabled ? "enabled" : "disabled"}`);
+			} else {
+				lines.push(`    ${pc.dim("API:")} ${pc.yellow("unavailable")}`);
+			}
+
+			if (claudeJson) {
+				lines.push(`    ${pc.dim(".claude.json:")} ${claudeJson.displayName ?? "?"} <${pc.cyan(claudeJson.emailAddress ?? "?")}>`);
+				lines.push(`    ${pc.dim("              ")}${claudeJson.billingType ?? "unknown billing"}`);
+			}
+
+			lines.push(`    ${pc.dim("Label:")} ${acc.label ?? pc.dim("none")}  ${pc.dim("Token:")} ${pc.dim(acc.accessToken.slice(0, 20) + "...")}`);
+			lines.push("");
+		}
+	}
+
+	lines.push(pc.bold("Notifications:"));
+	lines.push(`  Session thresholds: ${config.notifications.sessionThresholds.join(", ")}%`);
+	lines.push(`  Weekly thresholds:  ${config.notifications.weeklyThresholds.join(", ")}%`);
+	lines.push(`  Watch interval:     ${config.notifications.watchInterval}s`);
+	lines.push(`  macOS:              ${config.notifications.channels.macos ? pc.green("enabled") : pc.dim("disabled")}`);
 
 	p.note(lines.join("\n"), "Current Configuration");
 }
@@ -245,7 +279,7 @@ export function registerConfigCommand(program: Command): void {
 				}
 				accessToken = kc.accessToken;
 				label = kc.subscriptionType;
-				const who = kc.account?.displayName ?? kc.account?.emailAddress;
+				const who = kc.account.api?.account.display_name ?? kc.account.claudeJson?.displayName;
 				p.log.info(`Using Keychain credentials: ${pc.cyan(label ?? "unknown plan")}${who ? ` — ${pc.green(who)}` : ""}`);
 			}
 
@@ -277,6 +311,6 @@ export function registerConfigCommand(program: Command): void {
 		.description("Show current configuration")
 		.action(async () => {
 			const config = await loadConfig();
-			showConfig(config);
+			await showConfig(config);
 		});
 }
