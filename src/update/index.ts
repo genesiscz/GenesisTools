@@ -1,6 +1,5 @@
 import { Command } from "commander";
-import chalk from "chalk";
-import { spawnSync } from "node:child_process";
+import pc from "picocolors";
 import { resolve, join } from "node:path";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { discoverTools } from "../tools/lib/discovery";
@@ -9,62 +8,59 @@ const program = new Command()
 	.name("update")
 	.description("Update GenesisTools to the latest version")
 	.action(async () => {
-		const genesisPath = process.env.GENESIS_TOOLS_PATH || resolve(__dirname, "..");
+		const genesisPath = process.env.GENESIS_TOOLS_PATH || resolve(import.meta.dir, "..");
 		const srcDir = join(genesisPath, "src");
 
-		console.log(chalk.cyan("\n  Updating GenesisTools...\n"));
+		console.log(pc.cyan("\n  Updating GenesisTools...\n"));
 
 		// 1. Git pull
-		console.log(chalk.dim("  Pulling latest changes..."));
-		const pull = spawnSync("git", ["pull"], {
+		console.log(pc.dim("  Pulling latest changes..."));
+		const pull = Bun.spawnSync(["git", "pull"], {
 			cwd: genesisPath,
-			stdio: "inherit",
+			stdio: ["inherit", "inherit", "inherit"],
 		});
-		if (pull.status !== 0) {
-			console.error(chalk.red("  Failed to git pull"));
+		if (pull.exitCode !== 0) {
+			console.error(pc.red("  Failed to git pull"));
 			process.exit(1);
 		}
 
 		// 2. Bun install
-		console.log(chalk.dim("\n  Installing dependencies..."));
-		const install = spawnSync("bun", ["install"], {
+		console.log(pc.dim("\n  Installing dependencies..."));
+		const install = Bun.spawnSync(["bun", "install"], {
 			cwd: genesisPath,
-			stdio: "inherit",
+			stdio: ["inherit", "inherit", "inherit"],
 		});
-		if (install.status !== 0) {
-			console.error(chalk.red("  Failed to bun install"));
+		if (install.exitCode !== 0) {
+			console.error(pc.red("  Failed to bun install"));
 			process.exit(1);
 		}
 
 		// 3. Claude Code plugin management (if running in Claude Code)
 		if (process.env.CLAUDE_CODE_SESSION_ID) {
-			console.log(chalk.dim("\n  Updating Claude Code plugin..."));
+			console.log(pc.dim("\n  Updating Claude Code plugin..."));
 
 			// marketplace add (may fail — that's OK)
-			spawnSync(
-				"claude",
-				["plugin", "marketplace", "add", "https://github.com/genesiscz/GenesisTools"],
-				{ stdio: "inherit", timeout: 30_000 },
+			Bun.spawnSync(
+				["claude", "plugin", "marketplace", "add", "https://github.com/genesiscz/GenesisTools"],
+				{ stdio: ["inherit", "inherit", "inherit"] },
 			);
 
 			// plugin install
-			const pluginInstall = spawnSync(
-				"claude",
-				["plugin", "install", "genesis-tools@genesis-tools"],
-				{ stdio: "inherit", timeout: 30_000 },
+			const pluginInstall = Bun.spawnSync(
+				["claude", "plugin", "install", "genesis-tools@genesis-tools"],
+				{ stdio: ["inherit", "inherit", "inherit"] },
 			);
-			if (pluginInstall.status !== 0) {
-				console.log(chalk.yellow("  Plugin install had issues (may already be installed)"));
+			if (pluginInstall.exitCode !== 0) {
+				console.log(pc.yellow("  Plugin install had issues (may already be installed)"));
 			}
 
 			// plugin update
-			const pluginUpdate = spawnSync(
-				"claude",
-				["plugin", "update", "genesis-tools@genesis-tools"],
-				{ stdio: "inherit", timeout: 30_000 },
+			const pluginUpdate = Bun.spawnSync(
+				["claude", "plugin", "update", "genesis-tools@genesis-tools"],
+				{ stdio: ["inherit", "inherit", "inherit"] },
 			);
-			if (pluginUpdate.status !== 0) {
-				console.log(chalk.yellow("  Plugin update had issues"));
+			if (pluginUpdate.exitCode !== 0) {
+				console.log(pc.yellow("  Plugin update had issues"));
 			}
 		}
 
@@ -74,9 +70,9 @@ const program = new Command()
 			const changelog = readFileSync(changelogPath, "utf-8");
 			const latestEntry = extractLatestEntry(changelog);
 			if (latestEntry) {
-				console.log(chalk.cyan("\n  Latest changes:"));
+				console.log(pc.cyan("\n  Latest changes:"));
 				console.log(
-					chalk.dim("  " + latestEntry.split("\n").join("\n  ")),
+					pc.dim("  " + latestEntry.split("\n").join("\n  ")),
 				);
 			}
 		}
@@ -87,9 +83,9 @@ const program = new Command()
 			join(genesisPath, "plugins/genesis-tools/skills"),
 		);
 
-		console.log(chalk.green("\n  GenesisTools updated successfully!\n"));
+		console.log(pc.green("\n  GenesisTools updated successfully!\n"));
 		console.log(
-			chalk.cyan(
+			pc.cyan(
 				"  Did you know we have a lot of Claude tools available? Install with:\n",
 			),
 		);
@@ -100,24 +96,24 @@ const program = new Command()
 			"    claude plugin install genesis-tools@genesis-tools\n",
 		);
 
-		console.log(chalk.cyan("  Available commands:"));
+		console.log(pc.cyan("  Available commands:"));
 		for (const tool of tools.slice(0, 20)) {
 			console.log(
-				`    ${chalk.bold(tool.name)} - ${chalk.dim(tool.description)}`,
+				`    ${pc.bold(tool.name)} - ${pc.dim(tool.description)}`,
 			);
 		}
 		if (tools.length > 20) {
 			console.log(
-				chalk.dim(
+				pc.dim(
 					`    ... and ${tools.length - 20} more. Run 'tools' to see all.`,
 				),
 			);
 		}
 
-		console.log(chalk.cyan("\n  Available skills:"));
+		console.log(pc.cyan("\n  Available skills:"));
 		for (const skill of skills) {
 			console.log(
-				`    ${chalk.bold(`genesis-tools:${skill.name}`)} - ${chalk.dim(skill.description)}`,
+				`    ${pc.bold(`genesis-tools:${skill.name}`)} - ${pc.dim(skill.description)}`,
 			);
 		}
 
