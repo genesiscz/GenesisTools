@@ -157,4 +157,4 @@ tools claude history summarize abc123 --mode short-memory --provider anthropic -
 
 ## Dashboard
 
-For visual exploration, `tools claude history-dashboard` launches a web-based React/Vite interface for browsing and analyzing conversation history.
+For visual exploration, `tools claude history dashboard` launches a web-based React/Vite interface for browsing and analyzing conversation history.

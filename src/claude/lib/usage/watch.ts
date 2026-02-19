@@ -8,6 +8,8 @@ const BUCKET_THRESHOLD_MAP: Record<string, "sessionThresholds" | "weeklyThreshol
 	five_hour: "sessionThresholds",
 	seven_day: "weeklyThresholds",
 	seven_day_opus: "weeklyThresholds",
+	seven_day_sonnet: "weeklyThresholds",
+	seven_day_oauth_apps: "weeklyThresholds",
 };
 
 export async function watchUsage(

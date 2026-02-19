@@ -5,6 +5,11 @@ import { loadConfig, saveConfig, type ClaudeConfig } from "../lib/config";
 import { getKeychainCredentials, fetchUsage } from "../lib/usage/api";
 import { fetchOAuthProfile, getClaudeJsonAccount } from "@app/utils/claude/auth";
 
+function maskToken(token: string): string {
+	if (token.length <= 8) return "****";
+	return `${token.slice(0, 4)}...${token.slice(-4)}`;
+}
+
 async function interactiveConfig(): Promise<void> {
 	p.intro(pc.bgCyan(pc.black(" claude config ")));
 
@@ -78,7 +83,7 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 		if (cj) {
 			infoLines.push(`${pc.dim(".claude.json:")} ${cj.displayName ?? "?"} <${pc.cyan(cj.emailAddress ?? "?")}> — ${cj.billingType ?? "?"}`);
 		}
-		infoLines.push(`${pc.dim("Token:")} ${pc.dim(kc.accessToken.slice(0, 20) + "...")}${kc.subscriptionType ? ` — ${pc.cyan(kc.subscriptionType)}` : ""}${kc.rateLimitTier ? pc.dim(` (${kc.rateLimitTier})`) : ""}`);
+		infoLines.push(`${pc.dim("Token:")} ${pc.dim(maskToken(kc.accessToken))}${kc.subscriptionType ? ` — ${pc.cyan(kc.subscriptionType)}` : ""}${kc.rateLimitTier ? pc.dim(` (${kc.rateLimitTier})`) : ""}`);
 
 		p.note(infoLines.join("\n"), "Found Account");
 
@@ -131,6 +136,20 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 			},
 		});
 		if (p.isCancel(token)) return;
+
+		const validateSpinner = p.spinner();
+		validateSpinner.start("Validating token...");
+		try {
+			await fetchUsage(token as string);
+			validateSpinner.stop("Token is valid.");
+		} catch (err) {
+			validateSpinner.stop(`Token validation failed: ${err}`);
+			const proceed = await p.confirm({
+				message: "Save anyway?",
+				initialValue: false,
+			});
+			if (p.isCancel(proceed) || !proceed) return;
+		}
 
 		const label = await p.text({
 			message: "Label (optional, e.g. 'work', 'max'):",
@@ -197,12 +216,13 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
 	config.notifications.sessionThresholds = (sessionThresholds as string)
 		.split(",")
 		.map((s) => parseInt(s.trim(), 10))
-		.filter((n) => !isNaN(n));
+		.filter((n) => !isNaN(n) && n >= 0 && n <= 100);
 	config.notifications.weeklyThresholds = (weeklyThresholds as string)
 		.split(",")
 		.map((s) => parseInt(s.trim(), 10))
-		.filter((n) => !isNaN(n));
-	config.notifications.watchInterval = parseInt(interval as string, 10) || 60;
+		.filter((n) => !isNaN(n) && n >= 0 && n <= 100);
+	const parsedInterval = parseInt(interval as string, 10);
+	config.notifications.watchInterval = Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 60;
 	config.notifications.channels.macos = macosEnabled as boolean;
 
 	await saveConfig(config);
@@ -247,7 +267,7 @@ async function showConfig(config: ClaudeConfig): Promise<void> {
 				lines.push(`    ${pc.dim("              ")}${claudeJson.billingType ?? "unknown billing"}`);
 			}
 
-			lines.push(`    ${pc.dim("Label:")} ${acc.label ?? pc.dim("none")}  ${pc.dim("Token:")} ${pc.dim(acc.accessToken.slice(0, 20) + "...")}`);
+			lines.push(`    ${pc.dim("Label:")} ${acc.label ?? pc.dim("none")}  ${pc.dim("Token:")} ${pc.dim(maskToken(acc.accessToken))}`);
 			lines.push("");
 		}
 	}

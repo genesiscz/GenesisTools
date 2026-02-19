@@ -56,7 +56,14 @@ export function registerUsageCommand(program: Command): void {
 			// Watch mode
 			if (opts.watch) {
 				const notifConfig = { ...config.notifications };
-				if (opts.interval) notifConfig.watchInterval = parseInt(opts.interval, 10);
+				if (opts.interval) {
+					const parsed = parseInt(opts.interval, 10);
+					if (Number.isFinite(parsed) && parsed > 0) {
+						notifConfig.watchInterval = parsed;
+					} else {
+						p.log.warn(`Invalid --interval "${opts.interval}", using default ${notifConfig.watchInterval}s.`);
+					}
+				}
 				await watchUsage(accounts, notifConfig);
 				return;
 			}
