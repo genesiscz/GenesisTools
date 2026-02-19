@@ -17,6 +17,7 @@ export async function watchUsage(
 	notifications: NotificationConfig,
 ): Promise<never> {
 	const firedThresholds = new Set<string>();
+	const lastResetsAt = new Map<string, string | null>();
 	const intervalMs = (notifications.watchInterval || 60) * 1000;
 
 	while (true) {
@@ -36,6 +37,17 @@ export async function watchUsage(
 				if (!data || typeof data !== "object" || !("utilization" in data)) continue;
 				const thresholdKey = BUCKET_THRESHOLD_MAP[bucket];
 				if (!thresholdKey) continue;
+
+				// Clear fired thresholds when the period resets
+				const resetKey = `${account.accountName}:${bucket}`;
+				const prevReset = lastResetsAt.get(resetKey);
+				if (prevReset !== undefined && prevReset !== data.resets_at) {
+					for (const t of notifications[thresholdKey]) {
+						firedThresholds.delete(`${resetKey}:${t}`);
+					}
+				}
+				lastResetsAt.set(resetKey, data.resets_at);
+
 				const thresholds = notifications[thresholdKey];
 				for (const threshold of thresholds) {
 					const key = `${account.accountName}:${bucket}:${threshold}`;

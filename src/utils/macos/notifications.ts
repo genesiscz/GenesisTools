@@ -14,7 +14,7 @@ export function sendNotification(opts: NotificationOptions): void {
 		`"${escaped(opts.message)}"`,
 		`with title "${escaped(opts.title)}"`,
 		opts.subtitle ? `subtitle "${escaped(opts.subtitle)}"` : "",
-		`sound name "${opts.sound ?? "default"}"`,
+		`sound name "${escaped(opts.sound ?? "default")}"`,
 	]
 		.filter(Boolean)
 		.join(" ");

@@ -26,7 +26,7 @@ export function handleCancel(message = "Operation cancelled"): never {
  */
 export async function withCancel<T>(promptResult: Promise<T | symbol>, cancelMessage?: string): Promise<T> {
     const result = await promptResult;
-    if (p.isCancel(result)) {
+    if (isCancelled(result)) {
         handleCancel(cancelMessage);
     }
     return result as T;

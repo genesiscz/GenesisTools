@@ -20,6 +20,7 @@ function colorForPct(pct: number): (s: string) => string {
 }
 
 function renderBar(pct: number): string {
+	pct = Math.max(0, Math.min(pct, 100));
 	const filled = Math.floor((pct / 100) * BAR_WIDTH);
 	const hasHalf = pct > 0 && filled < BAR_WIDTH && ((pct / 100) * BAR_WIDTH) % 1 >= 0.25;
 	const color = colorForPct(pct);
@@ -86,7 +87,7 @@ function calcProjection(utilization: number, resetsAt: string | null, bucketKey:
 	if (elapsed <= 0) return null;
 
 	const projected = (utilization / elapsed) * periodMs;
-	return Math.min(Math.round(projected), 100);
+	return Math.round(projected);
 }
 
 function renderProjection(projected: number): string {

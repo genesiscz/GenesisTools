@@ -8,7 +8,7 @@ const program = new Command()
 	.name("update")
 	.description("Update GenesisTools to the latest version")
 	.action(async () => {
-		const genesisPath = process.env.GENESIS_TOOLS_PATH || resolve(import.meta.dir, "..");
+		const genesisPath = process.env.GENESIS_TOOLS_PATH || resolve(import.meta.dir, "../..");
 		const srcDir = join(genesisPath, "src");
 
 		console.log(pc.cyan("\n  Updating GenesisTools...\n"));
