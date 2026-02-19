@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
-import { existsSync, copyFileSync, unlinkSync } from "fs";
-import { join } from "path";
-import { tmpdir } from "os";
+import { existsSync, copyFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import logger from "@app/logger";
 import { ENVELOPE_INDEX_PATH, TEMP_DB_PREFIX } from "@app/macos/lib/mail/constants";
 import type {
@@ -39,10 +39,10 @@ export function getDatabase(): Database {
     copyFileSync(ENVELOPE_INDEX_PATH, _tempDbPath);
 
     // Also copy WAL and SHM if they exist (for consistency)
-    const walPath = ENVELOPE_INDEX_PATH + "-wal";
-    const shmPath = ENVELOPE_INDEX_PATH + "-shm";
-    if (existsSync(walPath)) copyFileSync(walPath, _tempDbPath + "-wal");
-    if (existsSync(shmPath)) copyFileSync(shmPath, _tempDbPath + "-shm");
+    const walPath = `${ENVELOPE_INDEX_PATH}-wal`;
+    const shmPath = `${ENVELOPE_INDEX_PATH}-shm`;
+    if (existsSync(walPath)) copyFileSync(walPath, `${_tempDbPath}-wal`);
+    if (existsSync(shmPath)) copyFileSync(shmPath, `${_tempDbPath}-shm`);
 
     _db = new Database(_tempDbPath, { readonly: true });
     return _db;
@@ -56,8 +56,8 @@ export function cleanup(): void {
     }
     if (_tempDbPath) {
         try { unlinkSync(_tempDbPath); } catch {}
-        try { unlinkSync(_tempDbPath + "-wal"); } catch {}
-        try { unlinkSync(_tempDbPath + "-shm"); } catch {}
+        try { unlinkSync(`${_tempDbPath}-wal`); } catch {}
+        try { unlinkSync(`${_tempDbPath}-shm`); } catch {}
         _tempDbPath = null;
     }
 }

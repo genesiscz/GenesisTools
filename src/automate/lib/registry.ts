@@ -1,6 +1,6 @@
 // src/automate/lib/registry.ts
 
-import type { ExecutionContext, PresetStep, StepResult } from "./types";
+import type { PresetStep, StepResult } from "./types";
 
 /**
  * Context passed to each step handler during execution.

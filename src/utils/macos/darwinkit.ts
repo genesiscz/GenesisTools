@@ -179,8 +179,8 @@ export class DarwinKitClient {
         timer,
       });
 
-      const line = JSON.stringify(request) + "\n";
-      this.proc!.stdin.write(line);
+      const line = `${JSON.stringify(request)}\n`;
+      this.proc?.stdin.write(line);
     });
   }
 

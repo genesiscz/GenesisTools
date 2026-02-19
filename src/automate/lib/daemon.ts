@@ -34,7 +34,7 @@ export async function startDaemon(): Promise<void> {
 export function getDaemonPid(): number | null {
   if (!existsSync(PID_FILE)) return null;
   try {
-    const pid = parseInt(readFileSync(PID_FILE, "utf-8").trim());
+    const pid = parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10);
     try { process.kill(pid, 0); return pid; } catch { return null; }
   } catch { return null; }
 }

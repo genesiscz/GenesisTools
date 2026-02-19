@@ -2,7 +2,7 @@ import { loadPreset } from "./storage";
 import { runPreset } from "./engine";
 import { createRunLogger } from "./run-logger";
 import { parseInterval, computeNextRunAt } from "./interval-parser";
-import { type AutomateDatabase, type ScheduleRow } from "./db";
+import type { AutomateDatabase, ScheduleRow } from "./db";
 import logger from "@app/logger";
 
 export async function runSchedulerLoop(db: AutomateDatabase): Promise<void> {

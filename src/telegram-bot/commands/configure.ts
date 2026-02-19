@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import * as p from "@clack/prompts";
 import { Api } from "grammy";
 import { loadTelegramConfig, saveTelegramConfig } from "@app/telegram-bot/lib/config";

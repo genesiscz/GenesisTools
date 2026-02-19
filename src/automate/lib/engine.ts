@@ -10,7 +10,6 @@ import type { RunLogger } from "./run-logger.ts";
 import { executeStep, setStepRunnerMeta, isParallelChild } from "./step-runner.ts";
 import { updatePresetMeta } from "./storage.ts";
 import { formatDuration } from "@app/utils/format.ts";
-import logger from "@app/logger.ts";
 
 export interface EngineResult {
   preset: string;

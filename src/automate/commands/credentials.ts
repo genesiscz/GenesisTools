@@ -2,7 +2,7 @@
 
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { Command } from "commander";
+import type { Command } from "commander";
 import {
   saveCredential,
   loadCredential,

@@ -1,7 +1,7 @@
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
-import { tmpdir } from "os";
-import { join } from "path";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import logger from "@app/logger";
 import {
     searchMessages,

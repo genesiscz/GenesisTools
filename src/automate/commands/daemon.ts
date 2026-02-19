@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { Command } from "commander";
+import type { Command } from "commander";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { startDaemon, getDaemonPid } from "@app/automate/lib/daemon";

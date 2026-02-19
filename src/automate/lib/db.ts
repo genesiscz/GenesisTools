@@ -145,7 +145,7 @@ export class AutomateDatabase {
     durationMs: number,
     error: string | null,
   ): void {
-    const truncatedOutput = output && output.length > 65536 ? output.slice(0, 65536) + "\n... (truncated)" : output;
+    const truncatedOutput = output && output.length > 65536 ? `${output.slice(0, 65536)}\n... (truncated)` : output;
     this.db.prepare(`
       INSERT INTO run_logs (run_id, step_index, step_id, step_name, action, status, output, duration_ms, error)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

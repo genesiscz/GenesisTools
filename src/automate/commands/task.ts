@@ -94,10 +94,10 @@ export function registerTaskCommand(parent: Command): void {
     .description("Show task details (by name) or run details (by numeric ID)")
     .action((arg: string) => {
       const db = getDb();
-      const asNum = parseInt(arg);
+      const asNum = parseInt(arg, 10);
 
       // If it's a number, show run details
-      if (!isNaN(asNum) && String(asNum) === arg) {
+      if (!Number.isNaN(asNum) && String(asNum) === arg) {
         const run = db.getRun(asNum);
         if (!run) { p.log.error(`Run #${asNum} not found`); return; }
 
@@ -230,7 +230,7 @@ export function registerTaskCommand(parent: Command): void {
     .option("-n, --limit <n>", "Number of runs to show", "20")
     .action((opts) => {
       const db = getDb();
-      const runs = db.listRuns(parseInt(opts.limit));
+      const runs = db.listRuns(parseInt(opts.limit, 10));
       if (runs.length === 0) {
         p.log.info("No runs recorded yet.");
         return;

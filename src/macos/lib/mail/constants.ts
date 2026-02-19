@@ -1,5 +1,5 @@
-import { homedir } from "os";
-import { join } from "path";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 /** Path to the Mail.app Envelope Index SQLite database */
 export const ENVELOPE_INDEX_PATH = join(
@@ -35,7 +35,7 @@ export function parseMailboxUrl(url: string): { account: string; mailbox: string
  * "INBOX" -> "Inbox"
  */
 export function normalizeMailboxName(rawName: string): string {
-    let name = rawName.replace(/^\[Gmail\]\//, "");
+    const name = rawName.replace(/^\[Gmail\]\//, "");
     if (name.toUpperCase() === "INBOX") return "Inbox";
     return name;
 }

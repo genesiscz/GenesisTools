@@ -1,8 +1,8 @@
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { basename, join, resolve } from "path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join, resolve } from "node:path";
 import logger from "@app/logger";
 import { getRecipients, cleanup } from "@app/macos/lib/mail/sqlite";
 import { getMessageBody, saveAttachment } from "@app/macos/lib/mail/jxa";
@@ -150,7 +150,7 @@ export function registerDownloadCommand(program: Command): void {
                     // Save attachments if requested
                     if (options.saveAttachments && msg.attachments.length > 0) {
                         for (const att of msg.attachments) {
-                            const safeAttName = basename(att.name).replace(/[^\w.\-]/g, "_");
+                            const safeAttName = basename(att.name).replace(/[^\w.-]/g, "_");
                             const attPath = join(outputDir, "attachments", safeAttName);
                             if (!existsSync(attPath)) {
                                 await saveAttachment(
@@ -178,7 +178,7 @@ export function registerDownloadCommand(program: Command): void {
                 const indexMd = generateIndexMarkdown(messages);
                 if (options.append && existsSync(indexPath)) {
                     const existing = readFileSync(indexPath, "utf-8");
-                    writeFileSync(indexPath, existing + "\n\n---\n\n" + indexMd);
+                    writeFileSync(indexPath, `${existing}\n\n---\n\n${indexMd}`);
                 } else {
                     writeFileSync(indexPath, indexMd);
                 }
