@@ -1,7 +1,4 @@
-import chalk from "chalk";
 import { formatDuration, formatBytes } from "@app/utils/format";
-import { suggestCommand } from "@app/utils/cli/executor";
-import { formatSchema } from "@app/utils/json-schema";
 import type { IndexedLogEntry, SessionStats, OutputFormat } from "@app/debugging-master/types";
 
 const TOOL = "tools debugging-master";
@@ -9,7 +6,7 @@ const TOOL = "tools debugging-master";
 /**
  * Format a single entry as a compact L1 line.
  */
-export function formatEntryLine(entry: IndexedLogEntry, pretty: boolean): string {
+export function formatEntryLine(entry: IndexedLogEntry, _pretty: boolean): string {
 	const idx = `#${entry.index}`.padStart(4);
 	const time = new Date(entry.ts).toLocaleTimeString("en-GB", {
 		hour12: false,
@@ -71,11 +68,10 @@ export function formatL1(
 	sessionName: string,
 	entries: IndexedLogEntry[],
 	stats: SessionStats,
-	pretty: boolean,
+	_pretty: boolean,
 ): string {
 	const lines: string[] = [];
 
-	// Header
 	lines.push(
 		`Session: ${sessionName} (${stats.entryCount} entries, ${formatDuration(stats.spanMs, "ms")} span)`
 	);
@@ -91,7 +87,7 @@ export function formatL1(
 			currentFile = file;
 			lines.push(`File: ${file}`);
 		}
-		lines.push(formatEntryLine(entry, pretty));
+		lines.push(formatEntryLine(entry, _pretty));
 	}
 
 	return lines.join("\n");

@@ -78,5 +78,5 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
 		},
 	});
 
-	return { server, port: server.port };
+	return { server, port: server.port ?? port };
 }
