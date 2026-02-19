@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import { input, search, select } from "@inquirer/prompts";
 import { spawn } from "bun";
 import chalk from "chalk";
+import { existsSync } from "fs";
 import { homedir } from "os";
 import { resolve, sep } from "path";
 import {
@@ -360,8 +361,21 @@ export function registerHistoryCommand(program: Command): void {
 		.option("-p, --port <port>", "Port to run the dashboard on", "3069")
 		.action(async (options) => {
 			const dashboardDir = resolve(import.meta.dir, "../../claude-history-dashboard");
+
+			if (!existsSync(resolve(dashboardDir, "node_modules"))) {
+				console.log(chalk.cyan("Installing dashboard dependencies..."));
+				const install = spawn({
+					cmd: ["bun", "install"],
+					cwd: dashboardDir,
+					stdio: ["inherit", "inherit", "inherit"],
+				});
+				if ((await install.exited) !== 0) {
+					console.error(chalk.red("Failed to install dependencies."));
+					process.exit(1);
+				}
+			}
+
 			console.log(chalk.cyan("Starting Claude History Dashboard..."));
-			console.log(chalk.dim(`   Directory: ${dashboardDir}`));
 			console.log(chalk.dim(`   Port: ${options.port}`));
 			console.log();
 
