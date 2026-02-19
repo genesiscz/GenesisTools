@@ -2,8 +2,8 @@ import { handleReadmeFlag } from "@app/utils/readme";
 import { formatRelativeTime as _formatRelativeTime } from "@app/utils/format";
 import chalk from "chalk";
 import { Command } from "commander";
-import { lstatSync, readdirSync } from "fs";
-import { join, resolve } from "path";
+import { lstatSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -307,7 +307,7 @@ async function getCommittedFiles(numCommits: number, verbose: boolean): Promise<
         } else if (normalizedStatus === "C") {
             normalizedStatus = "C ";
         } else {
-            normalizedStatus = normalizedStatus + " ";
+            normalizedStatus = `${normalizedStatus} `;
         }
 
         files.push({
@@ -339,7 +339,7 @@ async function main() {
 
     const verbose = options.verbose ?? false;
     if (verbose) {
-        log.debug = (msg: string) => console.log(chalk.gray("🔍 " + msg));
+        log.debug = (msg: string) => console.log(chalk.gray(`🔍 ${msg}`));
     }
 
     try {

@@ -17,8 +17,8 @@ import { getTemplate, listTemplates } from "./templates/index.ts";
 import type { TemplateContext, PromptTemplate } from "./templates/index.ts";
 import type { ProviderChoice } from "@ask/types";
 import clipboardy from "clipboardy";
-import { writeFile, mkdir } from "fs/promises";
-import { dirname, resolve } from "path";
+import { writeFile, mkdir } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 
 // =============================================================================
 // Types
@@ -318,7 +318,7 @@ export class SummarizeEngine {
 
         // Phase 1: Summarize each chunk
         const chunkSummaries: string[] = [];
-        let totalUsage: { inputTokens: number; outputTokens: number } = { inputTokens: 0, outputTokens: 0 };
+        const totalUsage: { inputTokens: number; outputTokens: number } = { inputTokens: 0, outputTokens: 0 };
 
         const chunkSystemPrompt =
             "You are summarizing a portion of a Claude Code development session. " +
@@ -399,7 +399,7 @@ export class SummarizeEngine {
 
             // If no output target specified, write to stdout
             if (!this.options.outputPath && !this.options.clipboard) {
-                process.stdout.write(fullPrompt + "\n");
+                process.stdout.write(`${fullPrompt}\n`);
             }
 
             return {
@@ -415,7 +415,7 @@ export class SummarizeEngine {
         const providerChoice = await this.resolveModel();
 
         // Determine streaming preference
-        const streaming = this.options.streaming ?? (process.stdout.isTTY ? true : false);
+        const streaming = this.options.streaming ?? (!!process.stdout.isTTY);
 
         // Step 3b: Call LLM (normal or chunked)
         let llmResult: LLMCallResult;
@@ -440,7 +440,7 @@ export class SummarizeEngine {
 
         // Write to stdout if non-streaming and no other output target
         if (!streaming && !this.options.outputPath && !this.options.clipboard) {
-            process.stdout.write(llmResult.content + "\n");
+            process.stdout.write(`${llmResult.content}\n`);
         }
 
         // Build token usage

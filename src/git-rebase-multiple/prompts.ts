@@ -84,7 +84,7 @@ export const prompts = {
         console.log(chalk.bold("\n📝 Execution Plan:\n"));
 
         for (const step of steps) {
-            console.log(chalk.cyan(`  Step ${step.stepNumber}:`) + ` ${step.description}`);
+            console.log(`${chalk.cyan(`  Step ${step.stepNumber}:`)} ${step.description}`);
             if (step.command) {
                 console.log(chalk.dim(`         ${step.command}`));
             }

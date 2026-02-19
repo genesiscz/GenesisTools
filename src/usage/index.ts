@@ -232,7 +232,7 @@ async function main() {
         const db = new UsageDatabase();
         const days = parseInt(options.days?.toString() || "30", 10);
 
-        if (isNaN(days) || days < 1) {
+        if (Number.isNaN(days) || days < 1) {
             logger.error("Invalid days value. Must be a positive number.");
             process.exit(1);
         }

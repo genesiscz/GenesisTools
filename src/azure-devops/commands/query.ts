@@ -59,7 +59,7 @@ function formatAI(queryId: string, items: WorkItem[], changes: ChangeInfo[], cac
     lines.push("| ID | Title | State | Severity | Changed | Assignee |");
     lines.push("|-----|-------|-------|----------|---------|----------|");
     for (const item of items) {
-        const title = item.title.length > 40 ? item.title.slice(0, 37) + "..." : item.title;
+        const title = item.title.length > 40 ? `${item.title.slice(0, 37)}...` : item.title;
         const changed = item.changed ? new Date(item.changed).toISOString().slice(0, 16).replace("T", " ") : "-";
         lines.push(
             `| ${item.id} | ${title} | ${item.state} | ${item.severity || "-"} | ${changed} | ${item.assignee || "-"} |`
@@ -398,11 +398,11 @@ export function registerQueryCommand(program: Command): void {
             }
             if (options.changesFrom) {
                 const d = new Date(options.changesFrom);
-                if (!isNaN(d.getTime())) filters.changesFrom = d;
+                if (!Number.isNaN(d.getTime())) filters.changesFrom = d;
             }
             if (options.changesTo) {
                 const d = new Date(options.changesTo);
-                if (!isNaN(d.getTime())) filters.changesTo = d;
+                if (!Number.isNaN(d.getTime())) filters.changesTo = d;
             }
 
             await handleQuery(

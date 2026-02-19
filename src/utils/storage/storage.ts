@@ -229,7 +229,7 @@ export class Storage {
      * @param data - Data to cache (will be JSON stringified)
      * @param ttl - TTL string (expiration checked via file mtime)
      */
-    async putCacheFile<T>(relativePath: string, data: T, ttl: TTLString): Promise<void> {
+    async putCacheFile<T>(relativePath: string, data: T, _ttl: TTLString): Promise<void> {
         await this.ensureDirs();
         const filePath = this.getCacheFilePath(relativePath);
 
@@ -453,7 +453,7 @@ export class Storage {
      * @param content - Raw file content (string)
      * @param ttl - TTL string (expiration checked via file mtime)
      */
-    async putRawFile(relativePath: string, content: string, ttl: TTLString): Promise<void> {
+    async putRawFile(relativePath: string, content: string, _ttl: TTLString): Promise<void> {
         await this.ensureDirs();
         const filePath = this.getCacheFilePath(relativePath);
 

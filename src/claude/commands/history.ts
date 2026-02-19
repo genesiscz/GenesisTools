@@ -2,9 +2,9 @@ import type { Command } from "commander";
 import { input, search, select } from "@inquirer/prompts";
 import { spawn } from "bun";
 import chalk from "chalk";
-import { existsSync } from "fs";
-import { homedir } from "os";
-import { resolve, sep } from "path";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve, sep } from "node:path";
 import {
 	type AssistantMessage,
 	type ConversationMessage,
@@ -39,7 +39,7 @@ function formatMessageForMarkdown(msg: ConversationMessage, _excludeThinking: bo
 			content = textBlocks.join("\n");
 		}
 		if (content.length > 500) {
-			content = content.substring(0, 500) + "...";
+			content = `${content.substring(0, 500)}...`;
 		}
 		lines.push(`**[User]** ${content.replace(/\n/g, " ").trim()}`);
 	} else if (msg.type === "assistant") {
@@ -53,7 +53,7 @@ function formatMessageForMarkdown(msg: ConversationMessage, _excludeThinking: bo
 
 		let text = textBlocks.join("\n").trim();
 		if (text.length > 500) {
-			text = text.substring(0, 500) + "...";
+			text = `${text.substring(0, 500)}...`;
 		}
 
 		lines.push(`**[Assistant]** ${text.replace(/\n/g, " ").trim() || "(tool calls only)"}`);

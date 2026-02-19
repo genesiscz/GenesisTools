@@ -93,7 +93,7 @@ const startServer = () => {
                         client.send(JSON.stringify(newMessage));
                     }
                 });
-                log.info("Message sent to clients: " + newMessage.message);
+                log.info(`Message sent to clients: ${newMessage.message}`);
             } else {
                 log.info("Empty message, skipping...");
             }
@@ -104,7 +104,7 @@ const startServer = () => {
             if (error instanceof ExitPromptError) {
                 log.info("\nPrompt cancelled by user. Shutting down Hold-AI server gracefully.");
             } else {
-                log.error("\nError during prompt: " + String(error));
+                log.error(`\nError during prompt: ${String(error)}`);
             }
             // Clean up server resources before exiting due to prompt error/cancellation
             log.info("Closing all client connections before server shutdown...");

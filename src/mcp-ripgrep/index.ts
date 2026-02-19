@@ -15,7 +15,7 @@ handleReadmeFlag(import.meta.url);
  * Process the output based on whether colors are requested.
  * If colors are used, return the original output, otherwise strip ANSI codes.
  */
-function processOutput(output: string, useColors: boolean): string {
+function processOutput(output: string, _useColors: boolean): string {
     if (!output) return output;
     console.error("searchRoot", searchRoot);
     return searchRoot ? output.replaceAll(searchRoot, ".") : output;
@@ -221,7 +221,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 // Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
     const toolName = request.params.name;
 
     if (!["search", "advanced-search", "count-matches", "list-files", "list-file-types"].includes(toolName)) {

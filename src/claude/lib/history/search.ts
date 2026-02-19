@@ -3,16 +3,15 @@
  * Reusable functions for searching and parsing conversation history
  */
 
-import { createHash } from "crypto";
-import { createReadStream, existsSync, readFileSync, readdirSync } from "fs";
-import { stat } from "fs/promises";
+import { createHash } from "node:crypto";
+import { createReadStream, existsSync, readFileSync, readdirSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import logger from "@app/logger";
 import { glob } from "glob";
-import { homedir } from "os";
-import { basename, resolve, sep } from "path";
-import { createInterface } from "readline";
+import { homedir } from "node:os";
+import { basename, resolve, sep } from "node:path";
+import { createInterface } from "node:readline";
 import {
-    getCacheStats as _getCacheStats,
     invalidateToday as _invalidateToday,
     aggregateDailyStats,
     type DailyStats,
@@ -467,7 +466,7 @@ function matchesFilters(message: ConversationMessage, filters: SearchFilters, al
     // Tool filter
     if (filters.tool) {
         const toolUses = extractToolUses(message);
-        const hasMatchingTool = toolUses.some((t) => t.name.toLowerCase().includes(filters.tool!.toLowerCase()));
+        const hasMatchingTool = toolUses.some((t) => t.name.toLowerCase().includes(filters.tool?.toLowerCase()));
         if (!hasMatchingTool) return false;
     }
 
@@ -517,7 +516,7 @@ function searchSessionMetadataCache(filters: SearchFilters): SearchResult[] {
     // First ensure cache is populated for the target scope
     const all = filters.project
         ? getAllSessionMetadata().filter(
-              (s) => s.project?.toLowerCase().includes(filters.project!.toLowerCase())
+              (s) => s.project?.toLowerCase().includes(filters.project?.toLowerCase())
           )
         : getAllSessionMetadata();
 
@@ -666,7 +665,7 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
         // Commit hash search
         if (filters.commitHash) {
             const commitHashes = extractCommitHashes(messages);
-            if (!commitHashes.some((h) => h.toLowerCase().startsWith(filters.commitHash!.toLowerCase()))) {
+            if (!commitHashes.some((h) => h.toLowerCase().startsWith(filters.commitHash?.toLowerCase()))) {
                 continue;
             }
             results.push({
@@ -731,7 +730,7 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
         for (let i = 0; i < messages.length; i++) {
             const msg = messages[i];
             const text = extractTextFromMessage(msg, !!filters.excludeThinking);
-            allText += " " + text;
+            allText += ` ${text}`;
 
             if (matchesFilters(msg, filters, text)) {
                 matchedMessages.push(msg);
@@ -1388,7 +1387,7 @@ export async function rgExtractSnippet(
 
             const start = Math.max(0, idx - 40);
             const end = Math.min(line.length, idx + query.length + 60);
-            return "..." + line.slice(start, end).replace(/\\n/g, " ").trim() + "...";
+            return `...${line.slice(start, end).replace(/\\n/g, " ").trim()}...`;
         }
     } catch {
         return undefined;

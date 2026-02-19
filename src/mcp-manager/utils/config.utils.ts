@@ -86,12 +86,12 @@ export function ensureMetaFromEnabledMcpServers(config: UnifiedMCPConfig): Unifi
             if (!config.mcpServers[serverName]._meta) {
                 config.mcpServers[serverName]._meta = { enabled: {} };
             }
-            if (!config.mcpServers[serverName]._meta!.enabled) {
+            if (!config.mcpServers[serverName]._meta?.enabled) {
                 config.mcpServers[serverName]._meta!.enabled = {};
             }
             // Merge enabled state from enabledMcpServers into _meta.enabled
             config.mcpServers[serverName]._meta!.enabled = {
-                ...config.mcpServers[serverName]._meta!.enabled,
+                ...config.mcpServers[serverName]._meta?.enabled,
                 ...enabledState,
             };
         }

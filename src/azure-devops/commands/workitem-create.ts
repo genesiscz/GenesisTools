@@ -33,7 +33,7 @@ import logger from "@app/logger";
 import { ExitPromptError } from "@inquirer/core";
 import { confirm, editor, input, select } from "@inquirer/prompts";
 import type { Command } from "commander";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync } from "node:fs";
 
 // Common work item types to show first (others available via "Show all...")
 const COMMON_WORK_ITEM_TYPES = ["Bug", "Task", "User Story", "Feature", "Epic", "Incident"];
@@ -354,7 +354,7 @@ async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void
                         validate: (value) => {
                             if (!value) return true;
                             const num = parseInt(value, 10);
-                            return (!isNaN(num) && num > 0) || "Enter a valid work item ID";
+                            return (!Number.isNaN(num) && num > 0) || "Enter a valid work item ID";
                         },
                     });
                     if (parentInput) {
@@ -545,7 +545,7 @@ function templateToOperations(template: WorkItemTemplate): JsonPatchOperation[] 
                 if (hint?.description?.includes("(") && hint?.description?.includes(")")) {
                     // Extract reference name from description like "Pre-filled from source work item (Custom.Application)"
                     const match = hint.description.match(/\(([^)]+)\)/);
-                    if (match && match[1].includes(".")) {
+                    if (match?.[1].includes(".")) {
                         refName = match[1];
                     }
                 }
@@ -767,7 +767,7 @@ Examples:
     }
 
     // Mode 4: Generate template from work item URL
-    if (options.sourceInput && options.sourceInput.match(/workitems?|edit\/\d+/i)) {
+    if (options.sourceInput?.match(/workitems?|edit\/\d+/i)) {
         const ids = extractWorkItemIds(options.sourceInput);
         if (ids.length !== 1) {
             throw new Error("Please specify exactly one work item URL for template generation");

@@ -63,7 +63,7 @@ export class ChatEngine {
         }
     }
 
-    private async sendStreamingMessage(message: string, tools?: Record<string, any>): Promise<ChatResponse> {
+    private async sendStreamingMessage(message: string, _tools?: Record<string, any>): Promise<ChatResponse> {
         // Store usage from onFinish callback - this is the most reliable source
         let finishUsage: LanguageModelUsage | undefined;
         let finishCost: number | undefined;
@@ -124,7 +124,7 @@ export class ChatEngine {
         }
 
         const endTime = Date.now();
-        const duration = endTime - startTime;
+        const _duration = endTime - startTime;
 
         // Add a newline after streaming
         process.stdout.write("\n");
@@ -201,7 +201,7 @@ export class ChatEngine {
         };
     }
 
-    private async sendNonStreamingMessage(message: string, tools?: Record<string, any>): Promise<ChatResponse> {
+    private async sendNonStreamingMessage(message: string, _tools?: Record<string, any>): Promise<ChatResponse> {
         const result = await generateText({
             model: this.config.model,
             prompt: message, // Use prompt instead of messages array
@@ -273,16 +273,6 @@ export class ChatEngine {
                     : []
                 : undefined,
         };
-    }
-
-    private getMessagesForAPI(): Array<{
-        role: "system" | "user" | "assistant";
-        content: string;
-    }> {
-        return this.conversationHistory.map((msg) => ({
-            role: msg.role,
-            content: msg.content,
-        }));
     }
 
     updateConfig(newConfig: Partial<ChatConfig>): void {

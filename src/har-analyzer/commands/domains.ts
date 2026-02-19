@@ -48,7 +48,7 @@ export function registerDomainsCommand(program: Command): void {
 				formatDuration(d.avgTime),
 			]);
 
-			const output = formatTable(rows, headers, { alignRight: [1, 2, 3] }) + `\n\n${domainStats.length} domains`;
+			const output = `${formatTable(rows, headers, { alignRight: [1, 2, 3] })}\n\n${domainStats.length} domains`;
 			await printFormatted(output, parentOpts.format);
 		});
 }
@@ -121,7 +121,7 @@ export function registerDomainCommand(program: Command): void {
 				]);
 			}
 
-			const output = formatTable(rows, headers) + `\n\n${entries.length} entries for ${name}`;
+			const output = `${formatTable(rows, headers)}\n\n${entries.length} entries for ${name}`;
 			await printFormatted(output, parentOpts.format);
 		});
 }

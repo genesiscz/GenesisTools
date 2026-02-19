@@ -152,7 +152,7 @@ export async function activityCommand(options: ActivityCommandOptions): Promise<
         ? "GET /users/{username}/received_events"
         : "GET /users/{username}/events";
 
-    let allEvents: GitHubEvent[] = [];
+    const allEvents: GitHubEvent[] = [];
     let page = 1;
     const limit = options.limit ?? 30;
 

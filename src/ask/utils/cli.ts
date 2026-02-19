@@ -1,4 +1,4 @@
-import logger from "@app/logger";
+
 import type { Args, CLIOptions, OutputFormat } from "@ask/types";
 import { Command } from "commander";
 import { formatDuration as _formatDuration } from "@app/utils/format";
@@ -46,7 +46,7 @@ export function parseCLIArguments(): Args {
         streaming: options.streaming,
         systemPrompt: options.systemPrompt,
         temperature: options.temperature ? parseFloat(options.temperature) : undefined,
-        maxTokens: options.maxTokens ? parseInt(options.maxTokens) : undefined,
+        maxTokens: options.maxTokens ? parseInt(options.maxTokens, 10) : undefined,
         verbose: options.verbose,
         silent: options.silent,
         predictCost: options.predictCost,
@@ -160,15 +160,15 @@ export function validateOptions(options: CLIOptions): { valid: boolean; errors: 
     // Validate temperature
     if (options.temperature !== undefined) {
         const temp = parseFloat(options.temperature.toString());
-        if (isNaN(temp) || temp < 0 || temp > 2) {
+        if (Number.isNaN(temp) || temp < 0 || temp > 2) {
             errors.push("Temperature must be a number between 0 and 2");
         }
     }
 
     // Validate maxTokens
     if (options.maxTokens !== undefined) {
-        const tokens = parseInt(options.maxTokens.toString());
-        if (isNaN(tokens) || tokens < 1 || tokens > 100000) {
+        const tokens = parseInt(options.maxTokens.toString(), 10);
+        if (Number.isNaN(tokens) || tokens < 1 || tokens > 100000) {
             errors.push("Max tokens must be a number between 1 and 100000");
         }
     }
@@ -184,7 +184,7 @@ export function validateOptions(options: CLIOptions): { valid: boolean; errors: 
     }
 
     // Check for conflicting options
-    if (options.sst && (options as Args)._?.length && (options as Args)._!.length > 0) {
+    if (options.sst && (options as Args)._?.length && (options as Args)._?.length > 0) {
         errors.push("Cannot use --sst and provide a message simultaneously");
     }
 
@@ -296,7 +296,7 @@ export function parseTemperature(tempArg?: string | number): number | undefined 
 
     const temp = typeof tempArg === "string" ? parseFloat(tempArg) : tempArg;
 
-    if (isNaN(temp) || temp < 0 || temp > 2) {
+    if (Number.isNaN(temp) || temp < 0 || temp > 2) {
         throw new Error("Temperature must be a number between 0 and 2");
     }
 
@@ -308,9 +308,9 @@ export function parseMaxTokens(tokensArg?: string | number): number | undefined 
         return undefined;
     }
 
-    const tokens = typeof tokensArg === "string" ? parseInt(tokensArg) : tokensArg;
+    const tokens = typeof tokensArg === "string" ? parseInt(tokensArg, 10) : tokensArg;
 
-    if (isNaN(tokens) || tokens < 1 || tokens > 100000) {
+    if (Number.isNaN(tokens) || tokens < 1 || tokens > 100000) {
         throw new Error("Max tokens must be a number between 1 and 100000");
     }
 

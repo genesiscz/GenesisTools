@@ -65,7 +65,7 @@ async function handleList(): Promise<void> {
     lines.push("|-----|-------|-------|--------|------|------|------|");
 
     for (const item of items) {
-        const title = item.title.length > 35 ? item.title.slice(0, 32) + "..." : item.title;
+        const title = item.title.length > 35 ? `${item.title.slice(0, 32)}...` : item.title;
         const age = getRelativeTime(item.fetchedAt);
         lines.push(`| ${item.id} | ${title} | ${item.state} | ${age} | ${item.hasTask ? "✓" : "✗"} | ${item.hasHistory ? "✓" : "✗"} | ${item.hasComments ? "✓" : "✗"} |`);
     }

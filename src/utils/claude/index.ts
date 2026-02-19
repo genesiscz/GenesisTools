@@ -7,10 +7,10 @@
 export * from "./types";
 export * from "./auth";
 
-import { createReadStream, existsSync } from "fs";
-import { homedir } from "os";
-import { basename, resolve, sep } from "path";
-import { createInterface } from "readline";
+import { createReadStream, existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, resolve, sep } from "node:path";
+import { createInterface } from "node:readline";
 
 export const CLAUDE_DIR = resolve(homedir(), ".claude");
 export const PROJECTS_DIR = resolve(CLAUDE_DIR, "projects");

@@ -213,7 +213,7 @@ export class Executor {
         const result = await this.exec(args);
         if (!result.success) {
             throw new Error(
-                errorMsg ?? `Command failed: ${this.prefix ? this.prefix + " " : ""}${args.join(" ")}\n${result.stderr}`
+                errorMsg ?? `Command failed: ${this.prefix ? `${this.prefix} ` : ""}${args.join(" ")}\n${result.stderr}`
             );
         }
         return result;

@@ -202,11 +202,6 @@ export class DynamicPricingManager {
         return await this.fetchOpenRouterPricing(`openai/${modelId}`);
     }
 
-    private async fetchAnthropicPricing(modelId: string): Promise<PricingInfo | null> {
-        // Anthropic doesn't have a public pricing API, fallback to OpenRouter
-        return await this.fetchOpenRouterPricing(`anthropic/${modelId}`);
-    }
-
     private async fetchGooglePricing(modelId: string): Promise<PricingInfo | null> {
         // Google doesn't have a public pricing API, fallback to OpenRouter
         return await this.fetchOpenRouterPricing(`google/${modelId}`);
@@ -220,33 +215,6 @@ export class DynamicPricingManager {
     private async fetchXAIPricing(modelId: string): Promise<PricingInfo | null> {
         // xAI pricing, fallback to OpenRouter
         return await this.fetchOpenRouterPricing(`xai/${modelId}`);
-    }
-
-    // Fallback pricing estimates for common models when API calls fail
-    private getFallbackPricing(provider: string, modelId: string): PricingInfo | null {
-        const fallbackPricing: Record<string, Record<string, PricingInfo>> = {
-            openai: {
-                "gpt-4-turbo": { inputPer1M: 10.0, outputPer1M: 30.0 },
-                "gpt-4": { inputPer1M: 30.0, outputPer1M: 60.0 },
-                "gpt-3.5-turbo": { inputPer1M: 0.5, outputPer1M: 1.5 },
-                "gpt-4o": { inputPer1M: 5.0, outputPer1M: 15.0 },
-                "gpt-4o-mini": { inputPer1M: 0.15, outputPer1M: 0.6, cachedReadPer1M: 0.075, cachedCreatePer1M: 0 },
-            },
-            anthropic: {
-                "claude-3-5-sonnet-20241022": { inputPer1M: 3.0, outputPer1M: 15.0 },
-                "claude-3-opus-20240229": { inputPer1M: 15.0, outputPer1M: 75.0 },
-                "claude-3-sonnet-20240229": { inputPer1M: 3.0, outputPer1M: 15.0 },
-                "claude-3-haiku-20240307": { inputPer1M: 0.25, outputPer1M: 1.25 },
-            },
-            groq: {
-                "llama-3.1-405b-reasoning": { inputPer1M: 9.5, outputPer1M: 9.5 },
-                "llama-3.1-70b-versatile": { inputPer1M: 0.7, outputPer1M: 0.7 },
-                "llama-3.1-8b-instant": { inputPer1M: 0.05, outputPer1M: 0.05 },
-                "mixtral-8x7b-32768": { inputPer1M: 0.5, outputPer1M: 0.5 },
-            },
-        };
-
-        return fallbackPricing[provider]?.[modelId] || null;
     }
 
     async calculateCost(provider: string, model: string, usage: LanguageModelUsage): Promise<number> {

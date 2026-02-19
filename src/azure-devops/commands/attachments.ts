@@ -11,8 +11,8 @@ import { filterAttachments, getTaskFilePath } from "@app/azure-devops/utils";
 import { concurrentMap } from "@app/utils/async";
 import { withQueryParams } from "@app/utils/url";
 import logger, { consoleLog } from "@app/logger";
-import { existsSync, mkdirSync, statSync } from "fs";
-import { basename, dirname, join, resolve } from "path";
+import { existsSync, mkdirSync, statSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 
 /** Extract attachment GUID from Azure DevOps attachment URL */
 function extractAttachmentId(url: string): string {

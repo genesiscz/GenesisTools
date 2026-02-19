@@ -1,9 +1,9 @@
 import logger from "@app/logger";
 import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 import chalk from "chalk";
-import { existsSync } from "fs";
-import { readFile } from "fs/promises";
-import path from "path";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import type { CursorGenericConfig, CursorMCPServerConfig } from "./cursor.types.js";
 import type { MCPServerInfo, UnifiedMCPServerConfig } from "./types.js";
 import { MCPProvider, WriteResult } from "./types.js";

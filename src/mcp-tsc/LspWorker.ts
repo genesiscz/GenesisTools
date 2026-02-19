@@ -1,7 +1,7 @@
 import logger from "@app/logger";
-import { type ChildProcess, spawn } from "child_process";
-import { readFileSync, statSync } from "fs";
-import path from "path";
+import { type ChildProcess, spawn } from "node:child_process";
+import { readFileSync, statSync } from "node:fs";
+import path from "node:path";
 import { JSONRPCEndpoint, LspClient } from "ts-lsp-client";
 
 // ============================================================================
@@ -415,7 +415,7 @@ export class LspWorker {
         const content = readFileSync(file, "utf-8");
         const languageId = file.endsWith(".tsx") || file.endsWith(".jsx") ? "typescriptreact" : "typescript";
 
-        this.client!.didOpen({
+        this.client?.didOpen({
             textDocument: { uri, languageId, version: 1, text: content },
         });
 
@@ -448,7 +448,7 @@ export class LspWorker {
 
         // Send didChange notification
         const newVersion = state.version + 1;
-        this.endpoint!.notify("textDocument/didChange", {
+        this.endpoint?.notify("textDocument/didChange", {
             textDocument: { uri, version: newVersion },
             contentChanges: [{ text: content }],
         });
@@ -570,7 +570,7 @@ export class LspWorker {
         const filesMissingDiagnostics = targetFiles.filter((file) => {
             const uri = `file://${file}`;
             const state = this.getFileState(uri);
-            return state && state.isOpen && state.diagnosticsReceivedAt === null;
+            return state?.isOpen && state.diagnosticsReceivedAt === null;
         });
 
         const filesToWaitFor = [...new Set([...filesToProcess, ...filesMissingDiagnostics])];

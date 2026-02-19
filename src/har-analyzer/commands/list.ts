@@ -62,7 +62,7 @@ export function registerListCommand(program: Command): void {
 				formatDuration(entry.timeMs, "ms", "tiered"),
 			]);
 
-			const output = formatTable(rows, headers, { alignRight: [4, 5] }) + `\n\n${entries.length} entries shown`;
+			const output = `${formatTable(rows, headers, { alignRight: [4, 5] })}\n\n${entries.length} entries shown`;
 			await printFormatted(output, parentOpts.format);
 		});
 }

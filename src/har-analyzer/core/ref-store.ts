@@ -7,7 +7,6 @@ const PREVIEW_LENGTH = 80; // chars - preview length for truncated refs
 const REFS_TTL = "1 day";
 
 export class RefStoreManager {
-	private sessionHash: string;
 	private storage: Storage;
 	private refsPath: string;
 
@@ -37,7 +36,7 @@ export class RefStoreManager {
 		const store = await this.loadRefs();
 		const existing = store.refs[refId];
 
-		if (existing && existing.shown) {
+		if (existing?.shown) {
 			// Already shown once - return compact reference
 			const preview = this.generatePreview(value);
 			return `[ref:${refId}] ${preview} (${value.length} chars)`;
@@ -106,7 +105,7 @@ export class RefStoreManager {
 			cutoff = lastBreak;
 		}
 
-		return value.slice(0, cutoff) + "...";
+		return `${value.slice(0, cutoff)}...`;
 	}
 
 	/**

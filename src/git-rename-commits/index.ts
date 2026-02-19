@@ -148,7 +148,7 @@ async function getCommits(
                     const dateStr = (await new Response(dateProc.stdout).text()).trim();
                     await dateProc.exited;
 
-                    const forkPointDate = parseInt(dateStr) || 0;
+                    const forkPointDate = parseInt(dateStr, 10) || 0;
 
                     // Use the branch with the most recent fork point
                     // (most recent = highest timestamp = most recent divergence)
@@ -489,7 +489,7 @@ function showConfirmation(commits: CommitInfo[]): string {
         lines.push(`  ${chalk.green("NEW:")} ${commit.newMessage}`);
     }
 
-    lines.push(chalk.dim("\n" + "─".repeat(80)));
+    lines.push(chalk.dim(`\n${"─".repeat(80)}`));
     lines.push(chalk.bold("\n⚠️  This will rewrite git history. Make sure you haven't pushed these commits yet!\n"));
 
     return lines.join("\n");
@@ -826,7 +826,7 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
         cwd: repoDir,
         stdio: ["ignore", "pipe", "pipe"],
     });
-    const remoteAheadCount = parseInt((await new Response(remoteAheadProc.stdout).text()).trim() || "0");
+    const remoteAheadCount = parseInt((await new Response(remoteAheadProc.stdout).text()).trim() || "0", 10);
     await remoteAheadProc.exited;
 
     if (remoteAheadCount > 0) {
@@ -836,7 +836,7 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
             cwd: repoDir,
             stdio: ["ignore", "pipe", "pipe"],
         });
-        const localAheadCount = parseInt((await new Response(localAheadProc.stdout).text()).trim() || "0");
+        const localAheadCount = parseInt((await new Response(localAheadProc.stdout).text()).trim() || "0", 10);
         await localAheadProc.exited;
 
         if (localAheadCount === 0) {
@@ -883,7 +883,7 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
         cwd: repoDir,
         stdio: ["ignore", "pipe", "pipe"],
     });
-    const localAheadCount = parseInt((await new Response(localAheadProc.stdout).text()).trim() || "0");
+    const localAheadCount = parseInt((await new Response(localAheadProc.stdout).text()).trim() || "0", 10);
     await localAheadProc.exited;
 
     if (localAheadCount > 0) {

@@ -101,7 +101,7 @@ export default class Table<T extends ScalarDict> extends React.Component<
             const data = this.props.data.map((data) => {
                 const value = data[key];
 
-                if (value == undefined || value == null) return 0;
+                if (value === undefined || value == null) return 0;
                 return String(value).length;
             });
 
@@ -306,7 +306,7 @@ function row<T extends ScalarDict>(config: RowConfig): (props: RowProps<T>) => R
                     // content
                     const value = props.data[column.column];
 
-                    if (value == undefined || value == null) {
+                    if (value === undefined || value == null) {
                         const key = `${props.key}-empty-${column.key}`;
 
                         return (

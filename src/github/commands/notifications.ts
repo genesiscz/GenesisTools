@@ -72,7 +72,7 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
     verbose(options, `Fetching notifications with params: ${JSON.stringify(params)}`);
 
     // Fetch all pages
-    let allNotifications: GitHubNotification[] = [];
+    const allNotifications: GitHubNotification[] = [];
     let page = 1;
 
     while (true) {

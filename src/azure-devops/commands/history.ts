@@ -268,7 +268,7 @@ function printJson(workItemId: number, filtered: FilteredHistory, history: WorkI
 
 async function handleHistoryShow(idStr: string, options: ShowOptions): Promise<void> {
     const id = parseInt(idStr, 10);
-    if (isNaN(id) || id <= 0) {
+    if (Number.isNaN(id) || id <= 0) {
         p.log.error(`Invalid work item ID: ${pc.bold(idStr)}`);
         process.exit(1);
     }

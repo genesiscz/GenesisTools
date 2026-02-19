@@ -25,8 +25,8 @@ handleReadmeFlag(import.meta.url);
 
 import logger from "@app/logger";
 import clipboardy from "clipboardy";
-import { dirname, resolve } from "path";
-import { fileURLToPath } from "url";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Resolve babel-plugin-react-compiler from GenesisTools installation
 const __filename = fileURLToPath(import.meta.url);

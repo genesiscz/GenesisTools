@@ -28,7 +28,7 @@ export function registerTypesSubcommand(parent: Command): void {
 
             // Fetch from API if needed
             if (!types) {
-                const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+                const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog?.functionsKey, user);
                 types = await api.getTimeTypes();
                 await saveTimeTypesCache(config.projectId, types);
             }

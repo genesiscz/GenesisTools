@@ -271,7 +271,7 @@ export async function installServer(
     if (options.provider) {
         // Filter to the specified provider
         const requestedProvider = availableProviders.find(
-            (p) => p.getName().toLowerCase() === options.provider!.toLowerCase()
+            (p) => p.getName().toLowerCase() === options.provider?.toLowerCase()
         );
         if (!requestedProvider) {
             logger.error(
@@ -335,11 +335,11 @@ export async function installServer(
             if (!updatedConfig.mcpServers[finalServerName]._meta) {
                 updatedConfig.mcpServers[finalServerName]._meta = { enabled: {} };
             }
-            if (!updatedConfig.mcpServers[finalServerName]._meta!.enabled) {
+            if (!updatedConfig.mcpServers[finalServerName]._meta?.enabled) {
                 updatedConfig.mcpServers[finalServerName]._meta!.enabled = {};
             }
             for (const providerName of successfulProviders) {
-                (updatedConfig.mcpServers[finalServerName]._meta!.enabled as Record<string, boolean>)[providerName] =
+                (updatedConfig.mcpServers[finalServerName]._meta?.enabled as Record<string, boolean>)[providerName] =
                     true;
             }
             await writeUnifiedConfig(updatedConfig);

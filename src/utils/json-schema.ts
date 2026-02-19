@@ -347,7 +347,7 @@ function formatTypeScriptPretty(schema: SchemaNode): string {
 		lines.push("");
 	}
 
-	return lines.join("\n").trimEnd() + "\n";
+	return `${lines.join("\n").trimEnd()}\n`;
 }
 
 // ─── Shared helpers ──────────────────────────────────────────────────

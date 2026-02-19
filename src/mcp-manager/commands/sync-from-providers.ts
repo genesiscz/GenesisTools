@@ -118,7 +118,7 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
                         if (!serverProjectStates.has(serverInfo.name)) {
                             serverProjectStates.set(serverInfo.name, new Map());
                         }
-                        serverProjectStates.get(serverInfo.name)!.set(projectPath, serverInfo.enabled);
+                        serverProjectStates.get(serverInfo.name)?.set(projectPath, serverInfo.enabled);
                     } else {
                         // Global server
                         const currentState = serverEnabledStates.get(serverInfo.name);
@@ -154,7 +154,7 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
 
                     // Add all per-project states
                     for (const [projectPath, enabled] of Object.entries(projectStates)) {
-                        serverProjectStates.get(serverName)!.set(projectPath, enabled);
+                        serverProjectStates.get(serverName)?.set(projectPath, enabled);
                     }
                 }
             }

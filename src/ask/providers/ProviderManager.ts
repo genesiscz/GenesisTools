@@ -14,7 +14,6 @@ import type {
 } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
 import * as p from "@clack/prompts";
-import type { LanguageModel } from "ai";
 import { generateText } from "ai";
 import pc from "picocolors";
 
@@ -63,7 +62,7 @@ export class ProviderManager {
 
         if (detected.length === 0) {
             logger.warn("No AI providers detected. Please set API keys in environment variables.");
-            logger.info("Supported providers: " + configs.map((c) => c.envKey).join(", "));
+            logger.info(`Supported providers: ${configs.map((c) => c.envKey).join(", ")}`);
         }
 
         return detected;

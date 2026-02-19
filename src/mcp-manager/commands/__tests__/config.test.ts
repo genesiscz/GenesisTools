@@ -19,7 +19,7 @@ describe("openConfig", () => {
         spyOn(logger, "info");
 
         // Mock Bun.spawn
-        const mockSpawn = spyOn(Bun, "spawn").mockImplementation(
+        const _mockSpawn = spyOn(Bun, "spawn").mockImplementation(
             () =>
                 ({
                     exited: Promise.resolve({ exitCode: 0 }),

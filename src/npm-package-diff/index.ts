@@ -2,23 +2,23 @@ import { resolvePathWithTilde } from "@app/utils";
 import { handleReadmeFlag } from "@app/utils/readme";
 import boxen from "boxen";
 import chalk from "chalk";
-import { execSync, spawn } from "child_process";
+import { execSync, spawn } from "node:child_process";
 import chokidar from "chokidar";
 import Table from "cli-table3";
 import { Command } from "commander";
 import * as diff from "diff";
 import { filesize } from "filesize";
-import fs from "fs";
+import fs from "node:fs";
 import { minimatch } from "minimatch";
-import { createRequire } from "module";
+import { createRequire } from "node:module";
 import ora, { type Ora } from "ora";
-import os from "os";
-import path from "path";
+import os from "node:os";
+import path from "node:path";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
-const require = createRequire(import.meta.url);
+const _require = createRequire(import.meta.url);
 
 // Custom logger that respects output redirection
 const createSimpleLogger = () => {
@@ -491,7 +491,6 @@ class EnhancedPackageComparison {
                 installCmd = "yarn";
                 installArgs = ["install", "--no-lockfile"];
                 break;
-            case "npm":
             default:
                 installCmd = "npm";
                 installArgs = ["install", "--no-package-lock"];
@@ -765,10 +764,10 @@ class EnhancedPackageComparison {
 
             // Write buffered output to pager
             this.outputBuffer.forEach((line) => {
-                this.pagerProcess.stdin.write(line + "\n");
+                this.pagerProcess.stdin.write(`${line}\n`);
             });
             this.outputBuffer = [];
-        } catch (e) {
+        } catch (_e) {
             // Fallback to normal output
             this.outputBuffer.forEach((line) => console.log(line));
             this.outputBuffer = [];
@@ -776,7 +775,7 @@ class EnhancedPackageComparison {
     }
 
     private endPager(): void {
-        if (this.pagerProcess && this.pagerProcess.stdin) {
+        if (this.pagerProcess?.stdin) {
             this.pagerProcess.stdin.end();
         }
     }
@@ -798,7 +797,7 @@ class EnhancedPackageComparison {
             this.write(chalk.yellow(`   Status: Modified`));
             this.write(chalk.gray(`   Size: ${filesize(result.oldSize || 0)} → ${filesize(result.newSize || 0)}`));
             this.write(
-                chalk.green(`   +${result.additions} additions`) + " " + chalk.red(`-${result.deletions} deletions`)
+                `${chalk.green(`   +${result.additions} additions`)} ${chalk.red(`-${result.deletions} deletions`)}`
             );
         }
         this.write(chalk.cyan(`${"=".repeat(80)}`));
@@ -931,7 +930,7 @@ class EnhancedPackageComparison {
         let inChange = false;
         let hasOutput = false;
 
-        result.changes?.forEach((change, idx) => {
+        result.changes?.forEach((change, _idx) => {
             const lines = change.value.split("\n");
             if (lines[lines.length - 1] === "" && !change.value.endsWith("\n")) {
                 lines.pop();
@@ -948,7 +947,7 @@ class EnhancedPackageComparison {
                         const line = contextBuffer[i];
                         const truncated = line.substring(0, columnWidth - 2);
                         this.write(
-                            `${chalk.gray("  " + truncated.padEnd(columnWidth - 2))} │ ${chalk.gray("  " + truncated)}`
+                            `${chalk.gray(`  ${truncated.padEnd(columnWidth - 2)}`)} │ ${chalk.gray(`  ${truncated}`)}`
                         );
                         hasOutput = true;
                     }
@@ -959,9 +958,9 @@ class EnhancedPackageComparison {
                 lines.forEach((line) => {
                     const truncatedLine = line.substring(0, columnWidth - 2);
                     if (change.added) {
-                        this.write(`${" ".repeat(columnWidth)} │ ${chalk.green("+ " + truncatedLine)}`);
+                        this.write(`${" ".repeat(columnWidth)} │ ${chalk.green(`+ ${truncatedLine}`)}`);
                     } else if (change.removed) {
-                        this.write(`${chalk.red("- " + truncatedLine.padEnd(columnWidth - 2))} │`);
+                        this.write(`${chalk.red(`- ${truncatedLine.padEnd(columnWidth - 2)}`)} │`);
                     }
                     hasOutput = true;
                 });
@@ -972,7 +971,7 @@ class EnhancedPackageComparison {
                     lines.slice(0, context).forEach((line) => {
                         const truncated = line.substring(0, columnWidth - 2);
                         this.write(
-                            `${chalk.gray("  " + truncated.padEnd(columnWidth - 2))} │ ${chalk.gray("  " + truncated)}`
+                            `${chalk.gray(`  ${truncated.padEnd(columnWidth - 2)}`)} │ ${chalk.gray(`  ${truncated}`)}`
                         );
                         hasOutput = true;
                     });
@@ -1011,7 +1010,7 @@ class EnhancedPackageComparison {
 
             try {
                 execSync(deltaCmd, { stdio: "inherit" });
-            } catch (e) {
+            } catch (_e) {
                 logger.warn("Delta failed, falling back to default output");
                 this.outputTerminalDiff(result);
             } finally {
@@ -1024,7 +1023,7 @@ class EnhancedPackageComparison {
         let unifiedDiff = "";
         this.results.forEach((result) => {
             if (result.patch) {
-                unifiedDiff += result.patch + "\n";
+                unifiedDiff += `${result.patch}\n`;
             }
         });
         return unifiedDiff;
@@ -1239,8 +1238,6 @@ class EnhancedPackageComparison {
             case "json":
                 output = this.generateJsonOutput();
                 break;
-            case "side-by-side":
-            case "terminal":
             default:
                 // Terminal output is handled differently
                 break;
@@ -1339,7 +1336,7 @@ class EnhancedPackageComparison {
                 table.push([result.file, status, String(oldSize), String(newSize), sizeDiff]);
             });
 
-        this.write("\n" + table.toString());
+        this.write(`\n${table.toString()}`);
     }
 
     async cleanup(): Promise<void> {

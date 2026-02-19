@@ -1,4 +1,4 @@
-import { isAbsolute, join as pathJoin, resolve } from "node:path";
+import { join as pathJoin, resolve } from "node:path";
 import logger from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
@@ -46,10 +46,10 @@ async function getTruncatedSha(repoDir: string, refName: string): Promise<string
     if (exitCode !== 0) {
         logger.error(`✖ Failed to get SHA for ref '${refName}'. Exit code: ${exitCode}.`);
         if (stderr.trim()) {
-            logger.error("Git stderr:\n" + stderr.trim());
+            logger.error(`Git stderr:\n${stderr.trim()}`);
         } else if (stdout.trim()) {
             // Some git errors go to stdout
-            logger.error("Git stdout (potential error):\n" + stdout.trim());
+            logger.error(`Git stdout (potential error):\n${stdout.trim()}`);
         }
         return undefined;
     }
@@ -84,10 +84,10 @@ async function getAndSelectCommit(repoDir: string): Promise<string | undefined> 
         logger.error(`
 ✖ 'git log' command failed with exit code ${exitCode}.`);
         if (errorOutput) {
-            logger.error("Git stderr:\n" + errorOutput.trim());
+            logger.error(`Git stderr:\n${errorOutput.trim()}`);
         } else if (logOutput) {
             // Some git errors go to stdout
-            logger.error("Git stdout (potential error):\n" + logOutput.trim());
+            logger.error(`Git stdout (potential error):\n${logOutput.trim()}`);
         }
         return undefined;
     }
@@ -175,7 +175,7 @@ async function main() {
     }
     const repoDir = resolve(repoDirArg);
 
-    const commits = options.commits ? parseInt(options.commits) : undefined;
+    const commits = options.commits ? parseInt(options.commits, 10) : undefined;
     const outputFileArg = options.output; // Renamed for clarity
     const clipboardArg = options.clipboard;
     let diffStartRef: string;
@@ -250,7 +250,7 @@ async function main() {
 
                 const defaultFileName = `commits-${firstSha}-${lastSha}.diff`;
                 const currentDir = process.cwd();
-                const suggestedPath = pathJoin(currentDir, defaultFileName);
+                const _suggestedPath = pathJoin(currentDir, defaultFileName);
 
                 const filePathResponse = await input({
                     message: `Enter filename for the diff (will be created in ${currentDir}):`,

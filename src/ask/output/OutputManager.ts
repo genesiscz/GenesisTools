@@ -92,7 +92,7 @@ export class OutputManager {
         let markdown = "";
 
         if (metadata) {
-            markdown += this.formatMetadata(metadata, "markdown") + "\n\n";
+            markdown += `${this.formatMetadata(metadata, "markdown")}\n\n`;
         }
 
         // Convert content to markdown if it's not already
@@ -108,7 +108,7 @@ export class OutputManager {
             if (metadata) {
                 // Add metadata as comment at the top
                 const metadataText = this.formatMetadata(metadata, "clipboard");
-                clipboardContent = metadataText + "\n\n" + content;
+                clipboardContent = `${metadataText}\n\n${content}`;
             }
 
             await clipboardy.write(clipboardContent);
@@ -145,7 +145,7 @@ export class OutputManager {
                 else if (ext === ".md" || ext === ".markdown") format = "markdown";
 
                 const metadataText = this.formatMetadata(metadata, format);
-                fileContent = metadataText + "\n\n" + content;
+                fileContent = `${metadataText}\n\n${content}`;
             }
 
             await write(filePath, fileContent);
@@ -322,9 +322,9 @@ export class OutputManager {
             return "";
         }
 
-        let output = "\n" + "=".repeat(60) + "\n";
+        let output = `\n${"=".repeat(60)}\n`;
         output += pc.cyan("💰 COST BREAKDOWN\n");
-        output += "=".repeat(60) + "\n\n";
+        output += `${"=".repeat(60)}\n\n`;
 
         for (const breakdown of breakdowns) {
             output += pc.white(`${breakdown.provider}/${breakdown.model}:\n`);
@@ -353,7 +353,7 @@ export class OutputManager {
         }
 
         const totalCost = breakdowns.reduce((sum, bd) => sum + bd.cost, 0);
-        output += "Grand Total: " + pc.bold(pc.green(this.formatCost(totalCost)));
+        output += `Grand Total: ${pc.bold(pc.green(this.formatCost(totalCost)))}`;
         output += "\n";
 
         // Cost alerts
@@ -372,11 +372,11 @@ export class OutputManager {
         console.log(pc.cyan("\n📤 Output Formats:"));
         console.log();
 
-        console.log(pc.white("  text") + pc.dim("        ") + "Plain text output with metadata header");
-        console.log(pc.white("  json") + pc.dim("        ") + "Structured JSON with metadata");
-        console.log(pc.white("  markdown") + pc.dim("    ") + "Markdown formatted with metadata");
-        console.log(pc.white("  clipboard") + pc.dim("   ") + "Copy to system clipboard");
-        console.log(pc.white("  file") + pc.dim("         ") + "Save to file (format based on extension)");
+        console.log(`${pc.white("  text") + pc.dim("        ")}Plain text output with metadata header`);
+        console.log(`${pc.white("  json") + pc.dim("        ")}Structured JSON with metadata`);
+        console.log(`${pc.white("  markdown") + pc.dim("    ")}Markdown formatted with metadata`);
+        console.log(`${pc.white("  clipboard") + pc.dim("   ")}Copy to system clipboard`);
+        console.log(`${pc.white("  file") + pc.dim("         ")}Save to file (format based on extension)`);
         console.log();
 
         console.log(pc.yellow("💡 Examples:"));

@@ -54,7 +54,7 @@ function parseMinTime(raw: string): number {
     // Plain number without unit defaults to minutes
     if (!hourMatch && !minMatch) {
         const num = parseInt(raw, 10);
-        if (!isNaN(num)) total = num;
+        if (!Number.isNaN(num)) total = num;
     }
     return total;
 }

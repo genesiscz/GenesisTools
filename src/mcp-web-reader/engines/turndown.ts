@@ -84,14 +84,14 @@ export class TurndownEngine extends MarkdownEngine {
                 const text = ((node as Element).textContent || "").replace(/\s+/g, " ").trim();
                 if (!text) return "";
                 const safe = text.replace(/`/g, "\u0060");
-                return "`" + safe + "`";
+                return `\`${safe}\``;
             },
         });
     }
 
     private detectLanguage(el: Element | null): string {
         if (!el) return "";
-        const classes = el.className + " " + (el.parentElement?.className || "");
+        const classes = `${el.className} ${el.parentElement?.className || ""}`;
         const patterns = [/language-(\w+)/i, /lang-(\w+)/i, /highlight-(\w+)/i, /brush:\s*(\w+)/i];
         for (const p of patterns) {
             const m = classes.match(p);

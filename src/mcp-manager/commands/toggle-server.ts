@@ -53,7 +53,7 @@ export async function toggleServer(
     if (options.provider) {
         // Filter to the specified provider
         const matchedProvider = availableProviders.find(
-            (p) => p.getName().toLowerCase() === options.provider!.toLowerCase()
+            (p) => p.getName().toLowerCase() === options.provider?.toLowerCase()
         );
         if (!matchedProvider) {
             logger.warn(`Provider '${options.provider}' not found or has no config file.`);
@@ -156,12 +156,12 @@ export async function toggleServer(
                 if (!config.mcpServers[serverName]._meta) {
                     config.mcpServers[serverName]._meta = { enabled: {} };
                 }
-                if (!config.mcpServers[serverName]._meta!.enabled) {
+                if (!config.mcpServers[serverName]._meta?.enabled) {
                     config.mcpServers[serverName]._meta!.enabled = {};
                 }
 
                 // Update enabled state based on project selection
-                const enabledState = config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName];
+                const enabledState = config.mcpServers[serverName]._meta?.enabled[providerName as MCPProviderName];
 
                 // Determine if this is a global enablement (all projects) or per-project
                 const isGlobalEnablement =
@@ -188,19 +188,19 @@ export async function toggleServer(
                             perProjectState[projectPath] = enabled;
                         }
                     }
-                    config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = perProjectState;
+                    config.mcpServers[serverName]._meta?.enabled[providerName as MCPProviderName] = perProjectState;
                 } else if (isGlobalEnablement || projects.length === 0) {
                     // Global enablement (boolean true/false) - applies to all projects
-                    config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = enabled;
+                    config.mcpServers[serverName]._meta?.enabled[providerName as MCPProviderName] = enabled;
                 } else {
                     // Provider doesn't support projects - use boolean
                     if (projectChoices && projectChoices.length > 0) {
                         // If project choices exist but provider doesn't support projects, use boolean
                         // (This shouldn't happen, but handle it gracefully)
-                        config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = enabled;
+                        config.mcpServers[serverName]._meta?.enabled[providerName as MCPProviderName] = enabled;
                     } else {
                         // No projects - global enablement/disablement (boolean)
-                        config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = enabled;
+                        config.mcpServers[serverName]._meta?.enabled[providerName as MCPProviderName] = enabled;
                     }
                 }
             } catch (error: any) {
@@ -227,7 +227,7 @@ export async function toggleServer(
                     if (backup === undefined) {
                         delete config.mcpServers[serverName]._meta?.enabled?.[providerName as MCPProviderName];
                     } else {
-                        config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = backup;
+                        config.mcpServers[serverName]._meta?.enabled[providerName as MCPProviderName] = backup;
                     }
                 }
             };

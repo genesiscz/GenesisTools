@@ -1,7 +1,6 @@
 import { statSync } from "node:fs";
 import type { ProviderV2 } from "@ai-sdk/provider";
 import logger from "@app/logger";
-import { modelSelector } from "@ask/providers/ModelSelector";
 import type { TranscriptionModel } from "ai";
 import { experimental_transcribe as transcribe } from "ai";
 import pc from "picocolors";

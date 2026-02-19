@@ -157,7 +157,7 @@ async function main() {
             choices: choices,
         });
 
-        const chosenMessage = messages[parseInt(chosenIndex)];
+        const chosenMessage = messages[parseInt(chosenIndex, 10)];
 
         // Commit with chosen message
         const commitMessage = chosenMessage.detail

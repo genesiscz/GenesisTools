@@ -316,9 +316,9 @@ export class CostTracker {
         const providerStats = this.getCostByProvider();
         const dailyCost = this.getDailyCost();
 
-        let report = "\n" + "=".repeat(60) + "\n";
+        let report = `\n${"=".repeat(60)}\n`;
         report += "💰 COST ANALYSIS REPORT\n";
-        report += "=".repeat(60) + "\n\n";
+        report += `${"=".repeat(60)}\n\n`;
 
         // Summary
         report += `Session Total: ${dynamicPricingManager.formatCost(totalCost)}\n`;
@@ -372,7 +372,7 @@ export class CostTracker {
             }
         }
 
-        report += "=".repeat(60) + "\n";
+        report += `${"=".repeat(60)}\n`;
 
         return report;
     }

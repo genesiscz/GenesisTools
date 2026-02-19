@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
-import { exec } from "child_process";
+import { exec } from "node:child_process";
 import { Box, render, Text, useApp, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
-import { parseArgs, promisify } from "util";
+import { parseArgs, promisify } from "node:util";
 import Table from "./Table";
 
 const execAsync = promisify(exec);
@@ -78,7 +78,7 @@ Examples:
 const processFilter = values.process || "";
 const cpuLimit = values.cpulimit ? parseFloat(values.cpulimit) : null;
 const memoryLimit = values.memorylimit ? parseFloat(values.memorylimit) : null;
-const filesLimit = values.fileslimit ? parseInt(values.fileslimit) : null;
+const filesLimit = values.fileslimit ? parseInt(values.fileslimit, 10) : null;
 const enableNotify = values.notify || false;
 const enableSay = values.say || false;
 
@@ -394,7 +394,7 @@ const App: React.FC = () => {
                                 // Update the process with new file count
                                 setProcesses((prev) =>
                                     prev.map((p) =>
-                                        p.pid === proc.pid ? { ...p, openFiles: parseInt(res.stdout.trim()) - 1 } : p
+                                        p.pid === proc.pid ? { ...p, openFiles: parseInt(res.stdout.trim(), 10) - 1 } : p
                                     )
                                 );
 
@@ -418,7 +418,7 @@ const App: React.FC = () => {
                 }
             }
         },
-        [lastFilesUpdate, trackCommand, setProcesses]
+        [lastFilesUpdate, trackCommand, addNotification]
     );
 
     // Function to get process information
@@ -454,17 +454,17 @@ const App: React.FC = () => {
                     const parts = line.trim().split(/\s+/);
                     if (parts.length < 11) continue;
 
-                    const pid = parseInt(parts[1]);
+                    const pid = parseInt(parts[1], 10);
                     const cpu = parseFloat(parts[2]);
                     const memory = parseFloat(parts[3]);
-                    const _vsz = parseInt(parts[4]) / 1024; // Convert to MB
-                    const rss = parseInt(parts[5]) / 1024; // Convert to MB
+                    const _vsz = parseInt(parts[4], 10) / 1024; // Convert to MB
+                    const rss = parseInt(parts[5], 10) / 1024; // Convert to MB
                     const command = parts.slice(10).join(" ");
                     const name = parts[10].split("/").pop() || parts[10];
 
                     // Skip if processFilter is a number (PID) and doesn't match
-                    if (processFilter && !isNaN(Number(processFilter))) {
-                        if (pid !== parseInt(processFilter)) continue;
+                    if (processFilter && !Number.isNaN(Number(processFilter))) {
+                        if (pid !== parseInt(processFilter, 10)) continue;
                     }
                     // Skip if processFilter is a string and doesn't match
                     else if (
@@ -513,7 +513,7 @@ const App: React.FC = () => {
                 return [];
             }
         },
-        [processFilter, trackCommand, sortBy]
+        [trackCommand, sortBy, addNotification]
     );
 
     // Function to get open files for a specific process
@@ -632,17 +632,12 @@ const App: React.FC = () => {
             }
         },
         [
-            alertedProcesses,
-            alertedMemoryProcesses,
-            alertedFilesProcesses,
-            cpuLimit,
-            memoryLimit,
-            filesLimit,
-            enableSay,
-            enableNotify,
-            addNotification,
-            sendSystemNotification,
-            lastCpuAlert,
+            alertedProcesses, 
+            alertedMemoryProcesses, 
+            alertedFilesProcesses, 
+            addNotification, 
+            sendSystemNotification, 
+            lastCpuAlert
         ]
     );
 
@@ -680,7 +675,7 @@ const App: React.FC = () => {
         const interval = setInterval(updateProcesses, 5000); // Update every 1 second for better responsiveness
 
         return () => clearInterval(interval);
-    }, [getProcesses, checkAndAlert, updateOpenFilesCount, selectedPid, sortBy]);
+    }, [getProcesses, checkAndAlert, updateOpenFilesCount, selectedPid, addNotification, processes]);
 
     // Load open files when showing files view
     useEffect(() => {

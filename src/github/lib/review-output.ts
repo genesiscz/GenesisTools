@@ -3,8 +3,8 @@
 
 import type { ParsedReviewThread, ReviewData } from "@app/github/types";
 import chalk from "chalk";
-import { mkdirSync, writeFileSync } from "fs";
-import { join } from "path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 // =============================================================================
 // Terminal Formatting (chalk)
@@ -46,7 +46,7 @@ function formatDiffHunk(
 
             const marker = isTarget ? chalk.bold.white("-> ") : "   ";
             if (line.startsWith("+")) return marker + chalk.green(line);
-            if (line.startsWith("-")) return "   " + chalk.red(line);
+            if (line.startsWith("-")) return `   ${chalk.red(line)}`;
             return marker + chalk.dim(line);
         })
         .join("\n");
@@ -57,24 +57,24 @@ function formatSuggestion(suggestion: string | null, diffHunk: string | null): s
 
     const suggestionLines = suggestion.split("\n");
 
-    let output = "\n" + chalk.bold.yellow("Suggested Change:") + "\n";
-    output += chalk.dim("```diff") + "\n";
+    let output = `\n${chalk.bold.yellow("Suggested Change:")}\n`;
+    output += `${chalk.dim("```diff")}\n`;
 
     // If we have a diff hunk, try to find the lines being replaced
     if (diffHunk) {
         const hunkLines = diffHunk.split("\n");
         const removedLines = hunkLines.filter((l) => l.startsWith("-") && !l.startsWith("---"));
         for (const line of removedLines) {
-            output += chalk.red(line) + "\n";
+            output += `${chalk.red(line)}\n`;
         }
     }
 
     // Show the suggestion as added lines
     for (const line of suggestionLines) {
-        output += chalk.green("+" + line) + "\n";
+        output += `${chalk.green(`+${line}`)}\n`;
     }
 
-    output += chalk.dim("```") + "\n";
+    output += `${chalk.dim("```")}\n`;
     return output;
 }
 
@@ -86,12 +86,12 @@ function formatThread(thread: ParsedReviewThread): string {
     const statusText = thread.status === "resolved" ? "RESOLVED" : "UNRESOLVED";
 
     let output = "\n";
-    output += chalk.cyan("=".repeat(90)) + "\n";
+    output += `${chalk.cyan("=".repeat(90))}\n`;
     output +=
         chalk.bold(`[THREAD #${thread.threadNumber} ${thread.threadId}] `) +
         severityColor.bold(severityText) +
         ` - ${thread.title}\n`;
-    output += chalk.cyan("=".repeat(90)) + "\n";
+    output += `${chalk.cyan("=".repeat(90))}\n`;
 
     output += `${chalk.bold("Status:")}   ${statusIcon} ${statusText}`;
     if (thread.replies.length > 0) {
@@ -116,7 +116,7 @@ function formatThread(thread: ParsedReviewThread): string {
     // Show diff context if available
     if (thread.diffHunk) {
         output += `\n${chalk.bold.blue("Code Context:")}\n`;
-        output += formatDiffHunk(thread.diffHunk, thread.line, thread.startLine) + "\n";
+        output += `${formatDiffHunk(thread.diffHunk, thread.line, thread.startLine)}\n`;
     }
 
     // Show suggestion if available
@@ -142,7 +142,7 @@ function formatSummary(data: ReviewData, shownCount: number): string {
     const { stats } = data;
 
     let output = "\n";
-    output += chalk.cyan("+" + "=".repeat(88) + "+") + "\n";
+    output += `${chalk.cyan(`+${"=".repeat(88)}+`)}\n`;
     output +=
         chalk.cyan("|") +
         chalk.bold(`  PR #${data.prNumber}: `) +
@@ -150,15 +150,15 @@ function formatSummary(data: ReviewData, shownCount: number): string {
         chalk.cyan("|") +
         "\n";
     output +=
-        chalk.cyan("|") + `  Repository: ${data.owner}/${data.repo}`.padEnd(87) + chalk.cyan("|") + "\n";
-    output += chalk.cyan("|") + `  Status: ${data.state}`.padEnd(87) + chalk.cyan("|") + "\n";
-    output += chalk.cyan("+" + "=".repeat(88) + "+") + "\n";
+        `${chalk.cyan("|") + `  Repository: ${data.owner}/${data.repo}`.padEnd(87) + chalk.cyan("|")}\n`;
+    output += `${chalk.cyan("|") + `  Status: ${data.state}`.padEnd(87) + chalk.cyan("|")}\n`;
+    output += `${chalk.cyan(`+${"=".repeat(88)}+`)}\n`;
 
     output += "\n";
     const showingText = shownCount !== stats.total ? ` (showing ${shownCount})` : "";
-    output += chalk.bold("Summary: ") + `${stats.total} threads${showingText} (`;
-    output += (stats.unresolved > 0 ? chalk.red : chalk.green)(`${stats.unresolved} unresolved`) + ", ";
-    output += chalk.green(`${stats.resolved} resolved`) + ")\n";
+    output += `${chalk.bold("Summary: ")}${stats.total} threads${showingText} (`;
+    output += `${(stats.unresolved > 0 ? chalk.red : chalk.green)(`${stats.unresolved} unresolved`)}, `;
+    output += `${chalk.green(`${stats.resolved} resolved`)})\n`;
     output += `   HIGH: ${stats.high}  |  MEDIUM: ${stats.medium}  |  LOW: ${stats.low}\n`;
 
     return output;
@@ -185,9 +185,9 @@ export function formatReviewTerminal(data: ReviewData, groupByFile: boolean): st
         }
 
         for (const [file, fileThreads] of byFile) {
-            output += "\n" + chalk.dim("-".repeat(90)) + "\n";
-            output += chalk.bold.cyan(`FILE: ${file}`) + chalk.dim(` (${fileThreads.length} threads)`) + "\n";
-            output += chalk.dim("-".repeat(90)) + "\n";
+            output += `\n${chalk.dim("-".repeat(90))}\n`;
+            output += `${chalk.bold.cyan(`FILE: ${file}`) + chalk.dim(` (${fileThreads.length} threads)`)}\n`;
+            output += `${chalk.dim("-".repeat(90))}\n`;
 
             for (const thread of fileThreads) {
                 output += formatThread(thread);
@@ -241,7 +241,7 @@ function formatMarkdownThread(thread: ParsedReviewThread): string {
     if (thread.suggestedCode) {
         const suggested = thread.suggestedCode.endsWith("\n")
             ? thread.suggestedCode
-            : thread.suggestedCode + "\n";
+            : `${thread.suggestedCode}\n`;
         output += `**Suggested Change:**\n\n\`\`\`suggestion\n${suggested}\`\`\`\n\n`;
     }
 

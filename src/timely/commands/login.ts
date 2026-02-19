@@ -75,7 +75,7 @@ async function loginAction(storage: Storage, client: TimelyApiClient): Promise<v
     authUrl.searchParams.set("redirect_uri", oauth.redirect_uri);
 
     logger.info(chalk.cyan("\nOpen this URL in your browser to authorize:"));
-    logger.info(chalk.white(authUrl.toString()) + "\n");
+    logger.info(`${chalk.white(authUrl.toString())}\n`);
 
     // Try to open browser automatically
     await Browser.open(authUrl.toString());

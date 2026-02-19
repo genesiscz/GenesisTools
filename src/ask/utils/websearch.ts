@@ -100,7 +100,7 @@ export class WebSearchTool {
                 return age;
             }
 
-            const value = parseInt(match[1]);
+            const value = parseInt(match[1], 10);
             const unit = match[2].toLowerCase();
 
             let date: Date;

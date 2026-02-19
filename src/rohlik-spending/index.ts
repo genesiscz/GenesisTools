@@ -121,12 +121,12 @@ function extractCookies(input: string): string | null {
 async function showCookieGuide(): Promise<string | null> {
     p.log.step(pc.bold("How to get your Rohlik cookies:"));
     p.log.message("");
-    p.log.message(pc.cyan("1.") + " Open " + pc.underline("https://www.rohlik.cz") + " and log in");
-    p.log.message(pc.cyan("2.") + " Open DevTools " + pc.dim("(F12 or Cmd+Option+I)"));
-    p.log.message(pc.cyan("3.") + " Go to " + pc.bold("Network") + " tab");
-    p.log.message(pc.cyan("4.") + " Navigate to " + pc.underline("https://www.rohlik.cz/uzivatel/profil"));
-    p.log.message(pc.cyan("5.") + " Find any request to " + pc.bold("api/v3/") + pc.dim(" (e.g., 'orders')"));
-    p.log.message(pc.cyan("6.") + " Right-click the request -> " + pc.bold("Copy") + " -> " + pc.bold("Copy as cURL"));
+    p.log.message(`${pc.cyan("1.")} Open ${pc.underline("https://www.rohlik.cz")} and log in`);
+    p.log.message(`${pc.cyan("2.")} Open DevTools ${pc.dim("(F12 or Cmd+Option+I)")}`);
+    p.log.message(`${pc.cyan("3.")} Go to ${pc.bold("Network")} tab`);
+    p.log.message(`${pc.cyan("4.")} Navigate to ${pc.underline("https://www.rohlik.cz/uzivatel/profil")}`);
+    p.log.message(`${pc.cyan("5.")} Find any request to ${pc.bold("api/v3/")}${pc.dim(" (e.g., 'orders')")}`);
+    p.log.message(`${pc.cyan("6.")} Right-click the request -> ${pc.bold("Copy")} -> ${pc.bold("Copy as cURL")}`);
     p.log.message("");
 
     const input = await multilineText({
@@ -162,7 +162,7 @@ async function ensureCookies(forceNew: boolean = false): Promise<string | null> 
             const age = Date.now() - savedAt.getTime();
             const hoursAgo = Math.floor(age / (1000 * 60 * 60));
 
-            p.log.info(`Using saved cookies ${pc.dim(`(saved ${hoursAgo < 1 ? "recently" : hoursAgo + "h ago"})`)}`);
+            p.log.info(`Using saved cookies ${pc.dim(`(saved ${hoursAgo < 1 ? "recently" : `${hoursAgo}h ago`})`)}`);
 
             // Test if cookies still work
             const spinner = p.spinner();
@@ -207,7 +207,7 @@ async function ensureCookies(forceNew: boolean = false): Promise<string | null> 
         p.log.success(`Cookies saved to ${pc.dim(storage.getConfigPath())}`);
 
         return cookies;
-    } catch (error) {
+    } catch (_error) {
         spinner.stop(pc.red("Cookies don't work"));
         p.log.error("The provided cookies are invalid or expired. Please try again.");
         return null;
@@ -246,7 +246,7 @@ async function main() {
 
             // Handle details for specific order
             if (options.details) {
-                const orderId = parseInt(options.details);
+                const orderId = parseInt(options.details, 10);
                 const spinner = p.spinner();
                 spinner.start(`Fetching order #${orderId}...`);
 
@@ -263,7 +263,7 @@ async function main() {
 
                     for (const item of order.items) {
                         p.log.message(
-                            `  ${pc.cyan(item.quantity + "x")} ${item.name} - ${pc.green(item.totalPrice.amount.toFixed(2) + " Kč")}`
+                            `  ${pc.cyan(`${item.quantity}x`)} ${item.name} - ${pc.green(`${item.totalPrice.amount.toFixed(2)} Kč`)}`
                         );
                     }
 
@@ -317,7 +317,7 @@ async function main() {
                 if (options.verbose) {
                     const date = new Date(order.orderTime).toLocaleDateString("cs-CZ");
                     p.log.message(
-                        `  ${pc.dim(date)} ${pc.dim(`(${order.itemsCount} items)`)} - ${pc.green(price.toFixed(2) + " Kč")} ${pc.dim(`#${order.id}`)}`
+                        `  ${pc.dim(date)} ${pc.dim(`(${order.itemsCount} items)`)} - ${pc.green(`${price.toFixed(2)} Kč`)} ${pc.dim(`#${order.id}`)}`
                     );
                 }
             }
@@ -338,7 +338,7 @@ async function main() {
                 .map((year) => {
                     const data = byYear.get(year)!;
                     const avg = Math.round(data.total / data.count);
-                    return `${pc.bold(year.toString())}: ${pc.green(data.total.toLocaleString("cs-CZ", { minimumFractionDigits: 0 }) + " Kč")} ${pc.dim(`(${data.count} orders, avg ${avg} Kč)`)}`;
+                    return `${pc.bold(year.toString())}: ${pc.green(`${data.total.toLocaleString("cs-CZ", { minimumFractionDigits: 0 })} Kč`)} ${pc.dim(`(${data.count} orders, avg ${avg} Kč)`)}`;
                 })
                 .join("\n");
 
@@ -346,7 +346,7 @@ async function main() {
                 yearSummary +
                     "\n\n" +
                     pc.bold("Total: ") +
-                    pc.green(totalSpending.toLocaleString("cs-CZ", { minimumFractionDigits: 0 }) + " Kč") +
+                    pc.green(`${totalSpending.toLocaleString("cs-CZ", { minimumFractionDigits: 0 })} Kč`) +
                     pc.dim(` from ${allOrders.length} orders`) +
                     "\n" +
                     pc.dim(`Average: ${Math.round(totalSpending / allOrders.length)} Kč/order`),

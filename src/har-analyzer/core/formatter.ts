@@ -4,7 +4,7 @@ import type { IndexedEntry, OutputFormat, SessionStats } from "@app/har-analyzer
 
 export function truncatePath(path: string, maxLen: number): string {
 	if (path.length <= maxLen) return path;
-	return path.slice(0, maxLen - 3) + "...";
+	return `${path.slice(0, maxLen - 3)}...`;
 }
 
 export function formatPercent(count: number, total: number): string {

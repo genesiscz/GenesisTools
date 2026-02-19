@@ -4,8 +4,8 @@ import { ExitPromptError } from "@inquirer/core";
 import { search } from "@inquirer/prompts";
 import { Command } from "commander";
 import * as watchman from "fb-watchman";
-import * as fs from "fs";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -130,7 +130,7 @@ function makeSubscription(
     };
 
     if (relativePath) {
-        subscription["relative_root"] = relativePath;
+        subscription.relative_root = relativePath;
     }
 
     (client as any).command(["subscribe", watch, "mysubscription", subscription], (error: unknown, resp: any) => {
@@ -180,7 +180,7 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
         await new Promise((resolve) => {
             client.capabilityCheck(
                 { optional: [], required: ["relative_root"] },
-                (capabilityError: any, capabilityResp: any) => {
+                (capabilityError: any, _capabilityResp: any) => {
                     if (capabilityError) {
                         logger.error(
                             `Capability check failed (attempt ${attempt + 1}/${maxRetries}):`,

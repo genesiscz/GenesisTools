@@ -110,7 +110,7 @@ function extractEventsFromUpdate(
 /** Convert a Comment into an ActivityEvent */
 function commentToEvent(comment: Comment, workItemId: number, title: string): ActivityEvent {
     const plainText = comment.text.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").trim();
-    const preview = plainText.length > 80 ? plainText.slice(0, 77) + "..." : plainText;
+    const preview = plainText.length > 80 ? `${plainText.slice(0, 77)}...` : plainText;
     return { date: comment.date, workItemId, title, type: "comment", description: preview };
 }
 
@@ -304,7 +304,7 @@ function groupByDay(events: ActivityEvent[]): ActivityDay[] {
     for (const event of sorted) {
         const dayKey = event.date.slice(0, 10);
         if (!dayMap.has(dayKey)) dayMap.set(dayKey, []);
-        dayMap.get(dayKey)!.push(event);
+        dayMap.get(dayKey)?.push(event);
     }
 
     return Array.from(dayMap.entries())
@@ -418,7 +418,7 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
     const fromDate = options.from ? new Date(options.from) : undefined;
     const toDate = options.to ? (() => {
         const d = new Date(options.to!);
-        if (options.to!.length <= 10) d.setHours(23, 59, 59, 999);
+        if (options.to?.length <= 10) d.setHours(23, 59, 59, 999);
         return d;
     })() : undefined;
 

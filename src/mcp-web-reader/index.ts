@@ -61,7 +61,7 @@ async function runCli(opts: CliOptions): Promise<void> {
                 await Bun.write(out, limited.text);
                 log.ok(`Wrote HTML to ${out}`);
             } else {
-                process.stdout.write(limited.text + "\n");
+                process.stdout.write(`${limited.text}\n`);
             }
             return;
         }
@@ -76,7 +76,7 @@ async function runCli(opts: CliOptions): Promise<void> {
                 await Bun.write(out, limited.text);
                 log.ok(`Wrote Jina MD to ${out}`);
             } else {
-                process.stdout.write(limited.text + "\n");
+                process.stdout.write(`${limited.text}\n`);
             }
             return;
         }
@@ -102,7 +102,7 @@ async function runCli(opts: CliOptions): Promise<void> {
                     `Wrote extracted MD to ${out} (engine: ${engineName}, time: ${Math.round(result.metrics.conversionTimeMs)}ms)`
                 );
             } else {
-                process.stdout.write(limited.text + "\n");
+                process.stdout.write(`${limited.text}\n`);
             }
             return;
         }

@@ -124,11 +124,11 @@ async function getCommitsByDate(
                     const ins = parseInt(statParts[0], 10);
                     const del = parseInt(statParts[1], 10);
 
-                    if (!isNaN(ins)) {
+                    if (!Number.isNaN(ins)) {
                         insertions += ins;
                     }
 
-                    if (!isNaN(del)) {
+                    if (!Number.isNaN(del)) {
                         deletions += del;
                     }
 

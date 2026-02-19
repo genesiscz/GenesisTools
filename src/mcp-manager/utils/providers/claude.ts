@@ -1,9 +1,9 @@
 import logger from "@app/logger";
 import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 import chalk from "chalk";
-import { existsSync } from "fs";
-import { readFile } from "fs/promises";
-import path from "path";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import type { ClaudeGenericConfig, ClaudeMCPServerConfig } from "./claude.types.js";
 import type { MCPServerInfo, UnifiedMCPServerConfig } from "./types.js";
 import { MCPProvider, WriteResult } from "./types.js";
@@ -198,7 +198,7 @@ export class ClaudeProvider extends MCPProvider {
                 if (config.projects[projectPath].disabledMcpServers) {
                     config.projects[projectPath].disabledMcpServers = config.projects[
                         projectPath
-                    ].disabledMcpServers!.filter((name) => name !== serverName);
+                    ].disabledMcpServers?.filter((name) => name !== serverName);
                 }
             }
         } else {
@@ -240,8 +240,8 @@ export class ClaudeProvider extends MCPProvider {
                 if (!config.projects[projectPath].disabledMcpServers) {
                     config.projects[projectPath].disabledMcpServers = [];
                 }
-                if (!config.projects[projectPath].disabledMcpServers!.includes(serverName)) {
-                    config.projects[projectPath].disabledMcpServers!.push(serverName);
+                if (!config.projects[projectPath].disabledMcpServers?.includes(serverName)) {
+                    config.projects[projectPath].disabledMcpServers?.push(serverName);
                 }
             }
         } else {
@@ -326,7 +326,7 @@ export class ClaudeProvider extends MCPProvider {
                 if (config.projects?.[projectPath]?.disabledMcpServers) {
                     config.projects[projectPath].disabledMcpServers = config.projects[
                         projectPath
-                    ].disabledMcpServers!.filter((name) => name !== serverName);
+                    ].disabledMcpServers?.filter((name) => name !== serverName);
                 }
             } else {
                 if (config.disabledMcpServers) {
@@ -365,8 +365,8 @@ export class ClaudeProvider extends MCPProvider {
                     if (!config.projects[projectPath].disabledMcpServers) {
                         config.projects[projectPath].disabledMcpServers = [];
                     }
-                    if (!config.projects[projectPath].disabledMcpServers!.includes(serverName)) {
-                        config.projects[projectPath].disabledMcpServers!.push(serverName);
+                    if (!config.projects[projectPath].disabledMcpServers?.includes(serverName)) {
+                        config.projects[projectPath].disabledMcpServers?.push(serverName);
                     }
                 }
             } else {
@@ -442,14 +442,14 @@ export class ClaudeProvider extends MCPProvider {
 
                     if (isEnabledForProject) {
                         projectConfig.disabledMcpServers = projectConfig.disabledMcpServers.filter((n) => n !== name);
-                        if (projectConfig.mcpServers && projectConfig.mcpServers[name]) {
+                        if (projectConfig.mcpServers?.[name]) {
                             projectConfig.mcpServers[name] = this.unifiedToClaude(cleanConfig);
                         }
                     } else {
                         if (!projectConfig.disabledMcpServers.includes(name)) {
                             projectConfig.disabledMcpServers.push(name);
                         }
-                        if (projectConfig.mcpServers && projectConfig.mcpServers[name]) {
+                        if (projectConfig.mcpServers?.[name]) {
                             delete projectConfig.mcpServers[name];
                         }
                     }
@@ -498,7 +498,7 @@ export class ClaudeProvider extends MCPProvider {
             config.mcpServers![name] = this.unifiedToClaude(cleanConfig);
 
             if (!isEnabled) {
-                config.disabledMcpServers!.push(name);
+                config.disabledMcpServers?.push(name);
             }
         }
 

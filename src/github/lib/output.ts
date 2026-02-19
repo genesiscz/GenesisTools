@@ -28,7 +28,6 @@ export function formatIssue(data: IssueData, format: OutputFormat, options: Form
             return JSON.stringify(data, null, 2);
         case "ai":
             return formatIssueSummary(data, options);
-        case "md":
         default:
             return formatIssueMarkdown(data, options);
     }
@@ -43,7 +42,6 @@ export function formatPR(data: PRData, format: OutputFormat, options: FormatOpti
             return JSON.stringify(data, null, 2);
         case "ai":
             return formatPRSummary(data, options);
-        case "md":
         default:
             return formatPRMarkdown(data, options);
     }
@@ -56,8 +54,6 @@ export function formatSearchResults(results: SearchResult[], format: OutputForma
     switch (format) {
         case "json":
             return JSON.stringify(results, null, 2);
-        case "ai":
-        case "md":
         default:
             return formatSearchMarkdown(results);
     }
@@ -70,8 +66,6 @@ export function formatRepoResults(repos: RepoSearchResult[], format: OutputForma
     switch (format) {
         case "json":
             return JSON.stringify(repos, null, 2);
-        case "ai":
-        case "md":
         default:
             return formatRepoMarkdown(repos);
     }
@@ -229,9 +223,9 @@ function formatPRSummary(data: PRData, options: FormatOptions): string {
         const reviewSection = formatReviewTerminal(reviewData, true);
         const fetchedIdx = output.lastIndexOf("_Fetched:");
         if (fetchedIdx > 0) {
-            output = output.slice(0, fetchedIdx) + "\n" + reviewSection + "\n" + output.slice(fetchedIdx);
+            output = `${output.slice(0, fetchedIdx)}\n${reviewSection}\n${output.slice(fetchedIdx)}`;
         } else {
-            output += "\n" + reviewSection;
+            output += `\n${reviewSection}`;
         }
     }
 
@@ -268,7 +262,7 @@ function formatIssueMarkdown(data: IssueData, options: FormatOptions): string {
     }
 
     if (data.issue.assignees.length > 0) {
-        lines.push(`**Assignees:** ${data.issue.assignees.map((a) => "@" + a.login).join(", ")}`);
+        lines.push(`**Assignees:** ${data.issue.assignees.map((a) => `@${a.login}`).join(", ")}`);
     }
 
     if (data.issue.milestone) {
@@ -452,19 +446,19 @@ function formatPRMarkdown(data: PRData, options: FormatOptions): string {
         let reviewMd = formatReviewMarkdown(reviewData, true);
         // Demote H1 to H2 when embedding inside the full PR output
         if (reviewMd.startsWith("# ")) {
-            reviewMd = "#" + reviewMd.slice(1);
+            reviewMd = `#${reviewMd.slice(1)}`;
         }
 
         // Insert before Statistics
         const statsPoint = output.lastIndexOf("\n---\n\n## Statistics");
         if (statsPoint > 0) {
-            output = output.slice(0, statsPoint) + "\n---\n\n" + reviewMd + output.slice(statsPoint);
+            output = `${output.slice(0, statsPoint)}\n---\n\n${reviewMd}${output.slice(statsPoint)}`;
         } else {
             const footerPoint = output.lastIndexOf("\n---\n_Fetched");
             if (footerPoint > 0) {
-                output = output.slice(0, footerPoint) + "\n---\n\n" + reviewMd + output.slice(footerPoint);
+                output = `${output.slice(0, footerPoint)}\n---\n\n${reviewMd}${output.slice(footerPoint)}`;
             } else {
-                output += "\n---\n\n" + reviewMd;
+                output += `\n---\n\n${reviewMd}`;
             }
         }
     }
@@ -711,14 +705,14 @@ function buildIndex(data: IssueData): IndexEntry[] {
 function formatDate(dateStr: string): string {
     if (!dateStr) return "-";
     const date = new Date(dateStr);
-    if (isNaN(date.getTime())) return "-";
+    if (Number.isNaN(date.getTime())) return "-";
     return date.toISOString().replace("T", " ").slice(0, 16);
 }
 
 function formatDateShort(dateStr: string): string {
     if (!dateStr) return "-";
     const date = new Date(dateStr);
-    if (isNaN(date.getTime())) return "-";
+    if (Number.isNaN(date.getTime())) return "-";
     const day = date.getDate().toString().padStart(2, "0");
     const month = (date.getMonth() + 1).toString().padStart(2, "0");
     const year = date.getFullYear();
@@ -754,9 +748,9 @@ function formatReactions(reactions: GitHubReactions): string {
     return parts.join(" · ");
 }
 
-function truncate(text: string, maxLength: number): string {
+function _truncate(text: string, maxLength: number): string {
     if (text.length <= maxLength) return text;
-    return text.slice(0, maxLength - 3) + "...";
+    return `${text.slice(0, maxLength - 3)}...`;
 }
 
 function capitalizeFirst(str: string): string {

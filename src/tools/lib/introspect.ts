@@ -120,7 +120,6 @@ function parseHelpOutput(output: string): ToolHelp {
                     description: match[2].trim(),
                 });
             }
-            continue;
         }
     }
 

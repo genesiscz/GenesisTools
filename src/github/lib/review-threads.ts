@@ -523,7 +523,7 @@ function extractTitle(body: string): string {
             .replace(/\*\*/g, "")
             .replace(/`/g, "")
             .trim();
-        return cleaned.length > 60 ? cleaned.substring(0, 57) + "..." : cleaned;
+        return cleaned.length > 60 ? `${cleaned.substring(0, 57)}...` : cleaned;
     }
 
     return "Review Comment";

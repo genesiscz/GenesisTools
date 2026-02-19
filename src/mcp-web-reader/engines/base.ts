@@ -30,7 +30,7 @@ export abstract class MarkdownEngine {
     // Shared normalization
     normalize(markdown: string): string {
         return (
-            markdown
+            `${markdown
                 // Fix link text whitespace
                 .replace(/\[([^\]]*)\]\(([^)]+)\)/g, (_, text, url) => `[${text.replace(/\s+/g, " ").trim()}](${url})`)
                 // Heading spacing
@@ -43,7 +43,7 @@ export abstract class MarkdownEngine {
                 .split("\n")
                 .map((l) => l.trimEnd())
                 .join("\n")
-                .trimEnd() + "\n"
+                .trimEnd()}\n`
         );
     }
 }

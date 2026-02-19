@@ -15,7 +15,6 @@ import type { SummarizeOptions, SummarizeResult } from "@app/claude/lib/history/
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { parseDate } from "@app/claude/lib/history/search";
-import { listAppleNotesFolders } from "@app/utils/macos/apple-notes";
 
 // =============================================================================
 // Types

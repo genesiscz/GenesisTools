@@ -72,7 +72,7 @@ const program = new Command()
 			if (latestEntry) {
 				console.log(pc.cyan("\n  Latest changes:"));
 				console.log(
-					pc.dim("  " + latestEntry.split("\n").join("\n  ")),
+					pc.dim(`  ${latestEntry.split("\n").join("\n  ")}`),
 				);
 			}
 		}

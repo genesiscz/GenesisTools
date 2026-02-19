@@ -38,8 +38,8 @@ import {
 } from "@app/azure-devops/utils";
 import logger, { consoleLog } from "@app/logger";
 import type { Command } from "commander";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "fs";
-import { dirname } from "path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 // Silent mode for JSON output - suppresses progress messages
 let silentMode = false;

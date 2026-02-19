@@ -1,5 +1,5 @@
 import type { CliArgs, HoverResult, TSServer } from "@app/mcp-tsc/core/interfaces.js";
-import path from "path";
+import path from "node:path";
 import ts from "typescript";
 
 export class HoverCommand {
@@ -29,7 +29,7 @@ export class HoverCommand {
         }
 
         const lineNumber = parseInt(argv.line, 10);
-        if (isNaN(lineNumber) || lineNumber < 1) {
+        if (Number.isNaN(lineNumber) || lineNumber < 1) {
             console.error(`Error: Invalid line number: ${argv.line}`);
             process.exit(1);
         }
@@ -60,7 +60,7 @@ export class HoverCommand {
             character = index + 1;
         } else if (argv.char) {
             character = parseInt(argv.char, 10);
-            if (isNaN(character) || character < 1) {
+            if (Number.isNaN(character) || character < 1) {
                 console.error(`Error: Invalid character position: ${argv.char}`);
                 process.exit(1);
             }

@@ -1,10 +1,10 @@
 // Octokit client setup with authentication
 
 import logger from "@app/logger";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync } from "node:fs";
 import { Octokit } from "octokit";
-import { homedir } from "os";
-import { join } from "path";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 let _octokit: Octokit | null = null;
 

@@ -22,7 +22,7 @@ export function extractContent(html: string, url: string): ExtractionResult {
     const reader = new Readability(doc.cloneNode(true) as Document);
     const article = reader.parse();
 
-    if (article && article.content) {
+    if (article?.content) {
         const quality = calculateQuality(article.content, html);
 
         if (quality >= 0.3) {

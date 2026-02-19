@@ -4,7 +4,7 @@ import { spawn } from "bun";
 import chalk from "chalk";
 import { Command } from "commander";
 import * as fsevents from "fsevents";
-import * as path from "path";
+import * as path from "node:path";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -225,7 +225,7 @@ async function showFseventsWatchers() {
                 if (!watchers.has(command)) {
                     watchers.set(command, { pids: new Set(), command });
                 }
-                watchers.get(command)!.pids.add(pid);
+                watchers.get(command)?.pids.add(pid);
             }
         }
 
@@ -244,7 +244,7 @@ async function showFseventsWatchers() {
         }
 
         // Sort by PID numerically
-        pidList.sort((a, b) => parseInt(a.pid) - parseInt(b.pid));
+        pidList.sort((a, b) => parseInt(a.pid, 10) - parseInt(b.pid, 10));
 
         logger.info(`\nFound ${chalk.cyan(pidList.length.toString())} process(es) watching fsevents:\n`);
 

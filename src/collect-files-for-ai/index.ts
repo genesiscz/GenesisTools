@@ -115,7 +115,7 @@ async function main() {
     // --- Verify Git Repository ---
     try {
         await runGitCommand(["rev-parse", "--is-inside-work-tree"], repoDir);
-    } catch (error) {
+    } catch (_error) {
         logger.error(`✖ Error: '${repoDir}' does not appear to be a valid Git repository.`);
         // error object already logged in runGitCommand
         process.exit(1);
@@ -170,7 +170,7 @@ async function main() {
             process.exit(0);
         }
         logger.info(`✔ Found ${fileList.length} file(s) to copy.`);
-    } catch (error) {
+    } catch (_error) {
         logger.error(`✖ Error getting file list from git.`);
         // Error details should have been logged by runGitCommand
         process.exit(1);
@@ -199,7 +199,7 @@ async function main() {
                 await mkdir(destSubDir, { recursive: true });
             }
             await Bun.write(destPath, sourceFile);
-            logger.info(`  → Copied: ${relativePath} ${flat ? "as " + basename(relativePath) : ""}`);
+            logger.info(`  → Copied: ${relativePath} ${flat ? `as ${basename(relativePath)}` : ""}`);
             copiedCount++;
         } catch (error: unknown) {
             const msg = error instanceof Error ? error.message : String(error);

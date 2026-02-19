@@ -195,7 +195,7 @@ export class Api {
         logger.debug(`[api] ${method} ${shortUrl}${description ? ` (${description})` : ""}`);
         if (body !== undefined) {
             const bodyStr = JSON.stringify(body);
-            const truncated = bodyStr.length > 500 ? bodyStr.slice(0, 500) + `... (${bodyStr.length} chars)` : bodyStr;
+            const truncated = bodyStr.length > 500 ? `${bodyStr.slice(0, 500)}... (${bodyStr.length} chars)` : bodyStr;
             logger.debug(`[api] ${method} body: ${truncated}`);
         }
         const startTime = Date.now();
@@ -798,7 +798,7 @@ export class Api {
             for (const revision of data.values) {
                 if (options.workItemIds && !options.workItemIds.includes(revision.id)) continue;
                 if (!revisionsByItem.has(revision.id)) revisionsByItem.set(revision.id, []);
-                revisionsByItem.get(revision.id)!.push(revision);
+                revisionsByItem.get(revision.id)?.push(revision);
             }
             continuationToken = data.continuationToken;
             options.onProgress?.({ page, matchedItems: revisionsByItem.size, totalRevisions });

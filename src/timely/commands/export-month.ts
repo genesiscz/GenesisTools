@@ -154,7 +154,6 @@ async function exportMonthAction(
         case "detailed-summary":
             await exportAsReport(monthArg, storage, silent, true);
             break;
-        case "table":
         default:
             exportAsTable(events, monthArg);
             break;
@@ -205,7 +204,7 @@ async function exportAsRaw(
         if (!byDay.has(event.day)) {
             byDay.set(event.day, []);
         }
-        byDay.get(event.day)!.push(event);
+        byDay.get(event.day)?.push(event);
     }
 
     // Sort days
@@ -483,7 +482,7 @@ function exportAsTable(events: TimelyEvent[], monthArg: string): void {
         if (!byDay.has(event.day)) {
             byDay.set(event.day, []);
         }
-        byDay.get(event.day)!.push(event);
+        byDay.get(event.day)?.push(event);
     }
 
     // Sort days

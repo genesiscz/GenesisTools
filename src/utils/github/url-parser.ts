@@ -104,7 +104,7 @@ export function parseDate(input: string): Date | null {
 
     // ISO 8601 format
     const date = new Date(input);
-    if (!isNaN(date.getTime())) {
+    if (!Number.isNaN(date.getTime())) {
         return date;
     }
 

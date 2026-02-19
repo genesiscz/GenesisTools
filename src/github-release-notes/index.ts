@@ -2,8 +2,8 @@ import logger from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import axios from "axios";
 import { Command } from "commander";
-import * as fs from "fs";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -199,7 +199,7 @@ function parseCommandLineArgs(): ScriptOptions {
 
     if (opts.limit) {
         const limit = parseInt(opts.limit, 10);
-        if (!isNaN(limit) && limit > 0) {
+        if (!Number.isNaN(limit) && limit > 0) {
             options.limit = limit;
         } else {
             logger.error("Invalid limit value. Must be a positive integer.");

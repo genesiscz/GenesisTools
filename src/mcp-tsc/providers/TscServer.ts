@@ -6,7 +6,7 @@ import type {
     TSServer,
     TsDiagnostic,
 } from "@app/mcp-tsc/core/interfaces.js";
-import path from "path";
+import path from "node:path";
 import ts from "typescript";
 
 export interface TscServerOptions {
@@ -30,7 +30,7 @@ export class TscServer implements TSServer {
     }
 
     async getDiagnostics(files: string[], options?: DiagnosticsOptions): Promise<DiagnosticsResult> {
-        const showWarnings = options?.showWarnings ?? false;
+        const _showWarnings = options?.showWarnings ?? false;
 
         // Find tsconfig.json
         const configPath = ts.findConfigFile(this.cwd, ts.sys.fileExists, "tsconfig.json");
@@ -103,7 +103,7 @@ export class TscServer implements TSServer {
         return { errors, warnings, diagnostics };
     }
 
-    async getHover(file: string, position: HoverPosition): Promise<HoverResult> {
+    async getHover(_file: string, _position: HoverPosition): Promise<HoverResult> {
         // Hover is not efficiently implemented with Compiler API alone
         // Would need to create a LanguageService which is complex
         // For now, we recommend using LspServer for hover functionality

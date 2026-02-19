@@ -47,7 +47,7 @@ const waitForCompletion = async (): Promise<string> => {
                         // Resolve with the combined message
                         resolve(combinedMessages);
                     } else {
-                        logger.info("Instruction: " + message.message);
+                        logger.info(`Instruction: ${message.message}`);
                     }
                 } catch (err) {
                     console.error("Error parsing message:", err);
@@ -55,7 +55,7 @@ const waitForCompletion = async (): Promise<string> => {
             });
 
             // Handle errors
-            ws.on("error", (error) => {
+            ws.on("error", (_error) => {
                 logger.info("Still processing...");
                 setTimeout(connectWebSocket, 3000);
             });

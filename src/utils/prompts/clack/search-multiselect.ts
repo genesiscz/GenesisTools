@@ -6,8 +6,8 @@
  */
 
 import pc from "picocolors";
-import * as readline from "readline";
-import { Writable } from "stream";
+import * as readline from "node:readline";
+import { Writable } from "node:stream";
 
 // Silent writable stream to prevent readline from echoing input
 const silentOutput = new Writable({
@@ -162,7 +162,7 @@ export async function searchMultiselect<T>(options: SearchMultiselectOptions<T>)
                 lines.push(`${S_BAR}  ${pc.strikethrough(pc.dim("Cancelled"))}`);
             }
 
-            process.stdout.write(lines.join("\n") + "\n");
+            process.stdout.write(`${lines.join("\n")}\n`);
             lastRenderHeight = lines.length;
         };
 

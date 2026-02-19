@@ -67,7 +67,7 @@ export class AudioProcessor {
                 stdio: ["ignore", "pipe", "pipe"],
             });
 
-            const stdout = await new Response(proc.stdout).text();
+            const _stdout = await new Response(proc.stdout).text();
             const stderr = await new Response(proc.stderr).text();
             const exitCode = await proc.exited;
 
@@ -130,7 +130,7 @@ export class AudioProcessor {
                 }
             );
 
-            const stdout = await new Response(proc.stdout).text();
+            const _stdout = await new Response(proc.stdout).text();
             const stderr = await new Response(proc.stderr).text();
             const exitCode = await proc.exited;
 
@@ -172,8 +172,8 @@ export class AudioProcessor {
                 return [inputPath]; // File is small enough, no splitting needed
             }
 
-            const baseName = inputPath.split("/").pop()?.split(".")[0] || "audio";
-            const outputFiles: string[] = [];
+            const _baseName = inputPath.split("/").pop()?.split(".")[0] || "audio";
+            const _outputFiles: string[] = [];
 
             // Estimate duration per chunk based on file size
             const bytesPerSecond = fileSize / (audioInfo.duration || 1);
@@ -236,9 +236,9 @@ export class AudioProcessor {
             return {
                 format: audioStream.codec_name || "unknown",
                 duration: parseFloat(String(audioStream.duration || probeData.format?.duration || "0")),
-                bitrate: audioStream.bit_rate ? parseInt(String(audioStream.bit_rate)) : undefined,
-                sampleRate: audioStream.sample_rate ? parseInt(String(audioStream.sample_rate)) : undefined,
-                channels: audioStream.channels ? parseInt(String(audioStream.channels)) : undefined,
+                bitrate: audioStream.bit_rate ? parseInt(String(audioStream.bit_rate), 10) : undefined,
+                sampleRate: audioStream.sample_rate ? parseInt(String(audioStream.sample_rate), 10) : undefined,
+                channels: audioStream.channels ? parseInt(String(audioStream.channels), 10) : undefined,
             };
         } catch (error) {
             logger.warn(`Failed to get audio info for ${filePath}: ${error}`);
@@ -279,7 +279,7 @@ export class AudioProcessor {
                 }
             );
 
-            const stdout = await new Response(proc.stdout).text();
+            const _stdout = await new Response(proc.stdout).text();
             const stderr = await new Response(proc.stderr).text();
             const exitCode = await proc.exited;
 
@@ -312,7 +312,7 @@ export class AudioProcessor {
     isFFmpegAvailable(): boolean {
         try {
             // Try to run ffmpeg to check if it's available
-            const proc = spawn(["ffmpeg", "-version"], {
+            const _proc = spawn(["ffmpeg", "-version"], {
                 stdio: ["ignore", "ignore", "ignore"],
             });
 

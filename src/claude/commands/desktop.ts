@@ -78,7 +78,7 @@ export function registerDesktopCommand(program: Command): void {
 								: s.name;
 							const hint =
 								s.description.length > 70
-									? s.description.slice(0, 70) + "..."
+									? `${s.description.slice(0, 70)}...`
 									: s.description;
 							return {
 								value: s,

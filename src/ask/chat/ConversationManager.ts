@@ -86,7 +86,7 @@ export class ConversationManager {
             for (const file of jsonFiles) {
                 try {
                     const filePath = join(this.conversationsDir, file);
-                    const stats = statSync(filePath);
+                    const _stats = statSync(filePath);
                     const data = readFileSync(filePath, "utf-8");
                     const session = JSON.parse(data) as ChatSession;
 
@@ -256,14 +256,14 @@ export class ConversationManager {
         if (session.totalCost) {
             text += `Cost: ${dynamicPricingManager.formatCost(session.totalCost)}\n`;
         }
-        text += "\n" + "=".repeat(50) + "\n\n";
+        text += `\n${"=".repeat(50)}\n\n`;
 
         for (const msg of session.messages) {
             const role = msg.role.toUpperCase();
             const timestamp = new Date(msg.timestamp).toLocaleString();
             text += `[${timestamp}] ${role}:\n`;
             text += `${msg.content}\n\n`;
-            text += "-".repeat(30) + "\n\n";
+            text += `${"-".repeat(30)}\n\n`;
         }
 
         return text;

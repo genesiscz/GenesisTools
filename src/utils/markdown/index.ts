@@ -88,7 +88,7 @@ const NO_LINE_NUMBER_LANGS = new Set([
  * - Code blocks (ts, js, python, etc.) show line numbers
  */
 function createFencePlugin(md: MarkdownIt): void {
-    const defaultFence = md.renderer.rules.fence!.bind(md.renderer.rules);
+    const defaultFence = md.renderer.rules.fence?.bind(md.renderer.rules);
 
     md.renderer.rules.fence = (tokens, idx, options, env, slf) => {
         const token = tokens[idx];
@@ -260,7 +260,7 @@ function renderAsciiTable(data: TableData): string {
     const p = currentPalette;
 
     // Top border
-    const topBorder = "┌" + colWidths.map((w) => "─".repeat(w + 2)).join("┬") + "┐";
+    const topBorder = `┌${colWidths.map((w) => "─".repeat(w + 2)).join("┬")}┐`;
     lines.push(p.tableBorder(topBorder));
 
     // Header row
@@ -268,7 +268,7 @@ function renderAsciiTable(data: TableData): string {
     lines.push(p.tableBorder("│ ") + p.tableHeader(headerCells.join(p.tableBorder(" │ "))) + p.tableBorder(" │"));
 
     // Header separator
-    const headerSep = "├" + colWidths.map((w) => "─".repeat(w + 2)).join("┼") + "┤";
+    const headerSep = `├${colWidths.map((w) => "─".repeat(w + 2)).join("┼")}┤`;
     lines.push(p.tableBorder(headerSep));
 
     // Data rows
@@ -278,11 +278,11 @@ function renderAsciiTable(data: TableData): string {
     }
 
     // Bottom border
-    const bottomBorder = "└" + colWidths.map((w) => "─".repeat(w + 2)).join("┴") + "┘";
+    const bottomBorder = `└${colWidths.map((w) => "─".repeat(w + 2)).join("┴")}┘`;
     lines.push(p.tableBorder(bottomBorder));
 
     // Wrap in <pre> to prevent cli-html from wrapping the table
-    return "\n<pre>" + lines.join("\n") + "</pre>\n";
+    return `\n<pre>${lines.join("\n")}</pre>\n`;
 }
 
 function createTablePlugin(md: MarkdownIt): void {
@@ -390,7 +390,7 @@ function wrapToWidth(str: string, width: number): string {
                     i++;
                 }
             }
-            return line.slice(0, i) + "\x1b[0m";
+            return `${line.slice(0, i)}\x1b[0m`;
         })
         .join("\n");
 }

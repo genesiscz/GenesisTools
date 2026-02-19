@@ -55,7 +55,7 @@ async function handleToolAction(tool: ToolInfo, srcDir: string): Promise<void> {
     if (action === "readme") {
         const readme = getReadme(srcDir, tool.name);
         if (readme) {
-            console.log("\n" + renderMarkdownToCli(readme) + "\n");
+            console.log(`\n${renderMarkdownToCli(readme)}\n`);
         } else {
             p.log.warn("No README.md found for this tool.");
         }

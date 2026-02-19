@@ -4,7 +4,7 @@ import { buildUrl } from "@app/utils/url";
 import * as p from "@clack/prompts";
 import { $ } from "bun";
 import type { Command } from "commander";
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import pc from "picocolors";
 
 // Common work item types in Azure DevOps

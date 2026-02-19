@@ -109,7 +109,7 @@ Or use interactive mode:
 
                 const workItemId = parseInt(options.workitem, 10);
 
-                if (isNaN(workItemId)) {
+                if (Number.isNaN(workItemId)) {
                     console.error("Invalid work item ID");
                     process.exit(1);
                 }
@@ -127,7 +127,7 @@ Or use interactive mode:
                     process.exit(1);
                 }
 
-                const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+                const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog?.functionsKey, user);
 
                 // Validate time type exists
                 const validType = await api.validateTimeType(options.type);
@@ -149,12 +149,12 @@ ${types.map((t) => `  - ${t.description}`).join("\n")}
                 // Precheck work item type
                 let effectiveWorkItemId = workItemId;
 
-                const allowedTypeConfig: AllowedTypeConfig | undefined = config.timelog!.allowedWorkItemTypes?.length
+                const allowedTypeConfig: AllowedTypeConfig | undefined = config.timelog?.allowedWorkItemTypes?.length
                     ? {
-                          allowedWorkItemTypes: config.timelog!.allowedWorkItemTypes,
-                          allowedStatesPerType: config.timelog!.allowedStatesPerType,
-                          deprioritizedStates: config.timelog!.deprioritizedStates,
-                          defaultUserName: config.timelog!.defaultUser?.userName,
+                          allowedWorkItemTypes: config.timelog?.allowedWorkItemTypes,
+                          allowedStatesPerType: config.timelog?.allowedStatesPerType,
+                          deprioritizedStates: config.timelog?.deprioritizedStates,
+                          defaultUserName: config.timelog?.defaultUser?.userName,
                       }
                     : undefined;
 

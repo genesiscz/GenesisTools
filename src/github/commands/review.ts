@@ -119,7 +119,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
 
     // JSON output
     if (options.json) {
-        process.stdout.write(formatReviewJSON(reviewData) + "\n");
+        process.stdout.write(`${formatReviewJSON(reviewData)}\n`);
         return;
     }
 

@@ -33,7 +33,7 @@ export function registerListSubcommand(parent: Command): void {
             }) => {
                 const config = requireTimeLogConfig();
                 const user = requireTimeLogUser(config);
-                const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+                const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog?.functionsKey, user);
 
                 // Resolve --from/--to with --since/--upto as hidden aliases
                 const resolvedFrom = options.day || options.from || options.since;
@@ -58,7 +58,7 @@ export function registerListSubcommand(parent: Command): void {
                     // Backward compat: single work item query
                     const workItemId = parseInt(options.workitem!, 10);
 
-                    if (isNaN(workItemId)) {
+                    if (Number.isNaN(workItemId)) {
                         console.error("Invalid work item ID");
                         process.exit(1);
                     }

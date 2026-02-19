@@ -12,7 +12,7 @@ export function registerDeleteSubcommand(parent: Command): void {
         .action(async (timeLogIdArg: string | undefined, options: { workitem?: string }) => {
             const config = requireTimeLogConfig();
             const user = requireTimeLogUser(config);
-            const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+            const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog?.functionsKey, user);
 
             let timeLogId = timeLogIdArg;
 
@@ -28,7 +28,7 @@ export function registerDeleteSubcommand(parent: Command): void {
 
                 const workItemId = parseInt(options.workitem, 10);
 
-                if (isNaN(workItemId)) {
+                if (Number.isNaN(workItemId)) {
                     console.error("Invalid work item ID");
                     process.exit(1);
                 }

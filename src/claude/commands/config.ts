@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { loadConfig, saveConfig, type ClaudeConfig } from "../lib/config";
@@ -216,11 +216,11 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
 	config.notifications.sessionThresholds = (sessionThresholds as string)
 		.split(",")
 		.map((s) => parseInt(s.trim(), 10))
-		.filter((n) => !isNaN(n) && n >= 0 && n <= 100);
+		.filter((n) => !Number.isNaN(n) && n >= 0 && n <= 100);
 	config.notifications.weeklyThresholds = (weeklyThresholds as string)
 		.split(",")
 		.map((s) => parseInt(s.trim(), 10))
-		.filter((n) => !isNaN(n) && n >= 0 && n <= 100);
+		.filter((n) => !Number.isNaN(n) && n >= 0 && n <= 100);
 	const parsedInterval = parseInt(interval as string, 10);
 	config.notifications.watchInterval = Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 60;
 	config.notifications.channels.macos = macosEnabled as boolean;

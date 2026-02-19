@@ -29,8 +29,8 @@ import {
 } from "@app/utils/github/utils";
 import chalk from "chalk";
 import { Command } from "commander";
-import { existsSync, mkdirSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 interface CommentsCommandOptions {
     repo?: string;
@@ -68,7 +68,7 @@ const KNOWN_BOTS = [
 
 function formatCacheDate(dateStr: string): string {
     const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
+    if (Number.isNaN(d.getTime())) return dateStr;
     return d.toISOString().replace("T", " ").slice(0, 16);
 }
 
@@ -373,7 +373,7 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
         }
 
         if (options.author) {
-            comments = comments.filter((c) => c.author.toLowerCase() === options.author!.toLowerCase());
+            comments = comments.filter((c) => c.author.toLowerCase() === options.author?.toLowerCase());
         }
     }
 

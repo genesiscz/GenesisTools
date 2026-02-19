@@ -195,7 +195,7 @@ async function main() {
     };
 
     // Write JSON directly to stdout (not console.log which might buffer)
-    process.stdout.write(JSON.stringify(output, null, 2) + "\n");
+    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
 
     // Exit with the overall exit code
     process.exit(overallExitCode);

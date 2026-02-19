@@ -59,7 +59,7 @@ function formatHeaderValue(info: HeaderInfo): string {
 	if (info.values.size === 1) {
 		const value = [...info.values][0];
 		if (value.length > 80) {
-			return value.slice(0, 77) + "...";
+			return `${value.slice(0, 77)}...`;
 		}
 		return value;
 	}

@@ -1,9 +1,9 @@
 import logger, { consoleLog } from "@app/logger";
 import chalk from "chalk";
-import { spawn } from "child_process";
-import { unlink, writeFile } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
+import { spawn } from "node:child_process";
+import { unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // Use consoleLog for clean diff output (no timestamps, no level for info)
 const diffLogger = consoleLog;
@@ -125,13 +125,13 @@ export class DiffUtil {
             } else if (line.startsWith("+++")) {
                 formatted += chalk.green(`+++ ${newLabel}\n`);
             } else if (line.startsWith("-")) {
-                formatted += chalk.red(line) + "\n";
+                formatted += `${chalk.red(line)}\n`;
             } else if (line.startsWith("+")) {
-                formatted += chalk.green(line) + "\n";
+                formatted += `${chalk.green(line)}\n`;
             } else if (line.startsWith("@")) {
-                formatted += chalk.cyan(line) + "\n";
+                formatted += `${chalk.cyan(line)}\n`;
             } else {
-                formatted += line + "\n";
+                formatted += `${line}\n`;
             }
         }
 

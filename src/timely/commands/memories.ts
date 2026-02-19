@@ -100,7 +100,7 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
     for (const entry of allEntries) {
         const day = entry.date || dates[0];
         if (!byDay.has(day)) byDay.set(day, []);
-        byDay.get(day)!.push(entry);
+        byDay.get(day)?.push(entry);
     }
 
     const sortedDays = Array.from(byDay.keys()).sort();

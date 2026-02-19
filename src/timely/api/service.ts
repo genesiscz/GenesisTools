@@ -3,7 +3,6 @@ import type {
     CreateEventInput,
     TimelyAccount,
     TimelyEntry,
-    TimelyEntryResponse,
     TimelyEvent,
     TimelyProject,
     TimelyUser,

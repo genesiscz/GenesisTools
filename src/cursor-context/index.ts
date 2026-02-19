@@ -3,11 +3,10 @@
 import logger from "@app/logger";
 import { ExitPromptError } from "@inquirer/core";
 import { checkbox, confirm, input } from "@inquirer/prompts";
-import chalk from "chalk";
 import clipboardy from "clipboardy";
 import { Command } from "commander";
-import { readFileSync, writeFileSync } from "fs";
-import { resolve } from "path";
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 interface ToolUseBlock {
     toolName: string;

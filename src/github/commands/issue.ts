@@ -41,8 +41,8 @@ import {
 } from "@app/utils/github/utils";
 import chalk from "chalk";
 import { Command } from "commander";
-import { existsSync, mkdirSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 // Known bots
 const KNOWN_BOTS = [
@@ -382,16 +382,16 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
     } else {
         // Use cached data
         issue = {
-            id: cachedIssue!.id,
-            node_id: String(cachedIssue!.id),
-            number: cachedIssue!.number,
-            title: cachedIssue!.title,
-            body: cachedIssue!.body,
-            state: cachedIssue!.state,
-            user: { login: cachedIssue!.author, id: 0, type: "User" },
-            created_at: cachedIssue!.created_at,
-            updated_at: cachedIssue!.updated_at,
-            closed_at: cachedIssue!.closed_at,
+            id: cachedIssue?.id,
+            node_id: String(cachedIssue?.id),
+            number: cachedIssue?.number,
+            title: cachedIssue?.title,
+            body: cachedIssue?.body,
+            state: cachedIssue?.state,
+            user: { login: cachedIssue?.author, id: 0, type: "User" },
+            created_at: cachedIssue?.created_at,
+            updated_at: cachedIssue?.updated_at,
+            closed_at: cachedIssue?.closed_at,
             labels: [],
             assignees: [],
             milestone: null,
@@ -526,7 +526,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
         }
 
         if (options.author) {
-            comments = comments.filter((c) => c.author.toLowerCase() === options.author!.toLowerCase());
+            comments = comments.filter((c) => c.author.toLowerCase() === options.author?.toLowerCase());
         }
 
         // Apply first/last/limit

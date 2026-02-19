@@ -30,7 +30,7 @@ export async function listServers(providers: MCPProvider[]): Promise<void> {
         if (!serversByName.has(server.name)) {
             serversByName.set(server.name, []);
         }
-        serversByName.get(server.name)!.push(server);
+        serversByName.get(server.name)?.push(server);
     }
 
     // Display

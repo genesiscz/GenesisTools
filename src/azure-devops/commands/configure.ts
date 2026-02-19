@@ -13,8 +13,8 @@ import { getLocalConfigDir, parseAzureDevOpsUrl } from "@app/azure-devops/utils"
 import logger from "@app/logger";
 import { $ } from "bun";
 import type { Command } from "commander";
-import { existsSync, mkdirSync, writeFileSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 /**
  * Handle the configure command - parse URL, fetch project ID, and save config

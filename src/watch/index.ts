@@ -3,11 +3,11 @@ import { handleReadmeFlag } from "@app/utils/readme";
 import chalk from "chalk";
 import chokidar from "chokidar";
 import { Command } from "commander";
-import type { WatchEventType, WatchOptions } from "fs";
-import fs from "fs";
+import type { WatchEventType, WatchOptions } from "node:fs";
+import fs from "node:fs";
 import { glob } from "glob";
-import os from "os";
-import path from "path";
+import os from "node:os";
+import path from "node:path";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -73,7 +73,7 @@ if (options.verbose) {
 const log = {
     info: (message: string) => logger.info(chalk.blue("ℹ️ ") + message),
     debug: (message: string) => (options.verbose ? logger.info(chalk.gray("🔍 ") + message) : null),
-    error: (message: string, err?: any) => logger.error(chalk.red("❌ ") + message + (err ? ": " + err : "")),
+    error: (message: string, err?: any) => logger.error(chalk.red("❌ ") + message + (err ? `: ${err}` : "")),
     warn: (message: string) => logger.info(chalk.yellow("⚠️ ") + message),
     file: {
         new: (filepath: string) => logger.info(chalk.green(`\n📄 NEW FILE: ${filepath}`)),
@@ -82,7 +82,7 @@ const log = {
         remove: (filepath: string) => logger.info(chalk.red(`\n🗑️  REMOVED: ${filepath}`)),
         content: (content: string) => {
             // Use a box with a distinct color for file content
-            logger.info(chalk.cyan("┌" + "─".repeat(78) + "┐"));
+            logger.info(chalk.cyan(`┌${"─".repeat(78)}┐`));
 
             // Split by lines and add a prefix to each line
             const lines = content.split("\n");
@@ -90,7 +90,7 @@ const log = {
                 logger.info(chalk.cyan("│ ") + line);
             }
 
-            logger.info(chalk.cyan("└" + "─".repeat(78) + "┘"));
+            logger.info(chalk.cyan(`└${"─".repeat(78)}┘`));
         },
     },
     summary: {
@@ -254,7 +254,7 @@ function tailFile({ filepath, follow = false, isInitialDisplay = false }: TailFi
                 startPosition,
                 fileSize,
                 fd,
-                isNewFile || isInitialDisplay ? parseInt(options.lines.toString()) : 0
+                isNewFile || isInitialDisplay ? parseInt(options.lines.toString(), 10) : 0
             );
 
             // Format the last modified time
@@ -653,7 +653,7 @@ async function startWatcher() {
         } catch (err) {
             log.error(`Error during rescan`, err);
         }
-    }, parseInt(options.seconds) * 1000);
+    }, parseInt(options.seconds, 10) * 1000);
 
     // Handle process termination
     process.on("SIGINT", () => {

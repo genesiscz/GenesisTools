@@ -12,8 +12,8 @@ import { requireConfig } from "@app/azure-devops/utils";
 
 import logger from "@app/logger";
 import * as p from "@clack/prompts";
-import { readdirSync, readFileSync } from "fs";
-import { join } from "path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import pc from "picocolors";
 
 interface SyncOptions {
@@ -117,7 +117,7 @@ export async function handleHistorySync(options: SyncOptions): Promise<void> {
     const titleMap = new Map(itemsToSync.map((item) => [item.id, item.title]));
     const shortTitle = (id: number) => {
         const t = titleMap.get(id) ?? `#${id}`;
-        return t.length > 40 ? t.slice(0, 37) + "..." : t;
+        return t.length > 40 ? `${t.slice(0, 37)}...` : t;
     };
 
     // Step 3: Dry run - just list what would be synced

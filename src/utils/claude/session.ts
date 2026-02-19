@@ -12,10 +12,10 @@
  * ```
  */
 
-import { existsSync, readdirSync } from "fs";
-import { stat } from "fs/promises";
+import { existsSync, readdirSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { glob } from "glob";
-import { basename, resolve, sep } from "path";
+import { basename, resolve, sep } from "node:path";
 import { estimateTokens } from "@app/utils/tokens";
 import { parseJsonlTranscript, PROJECTS_DIR, encodedProjectDir } from "./index";
 import type {

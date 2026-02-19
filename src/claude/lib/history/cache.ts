@@ -5,10 +5,10 @@
 
 import { Database } from "bun:sqlite";
 import logger from "@app/logger";
-import { existsSync, mkdirSync, rmSync } from "fs";
-import { stat } from "fs/promises";
-import { homedir } from "os";
-import { join, sep } from "path";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join, sep } from "node:path";
 
 const DEFAULT_CACHE_DIR = join(homedir(), ".genesis-tools", "claude-history");
 const DB_NAME = "index.db";

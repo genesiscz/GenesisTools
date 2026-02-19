@@ -30,8 +30,8 @@ import type {
     WorkItemType,
     WorkItemTypeDefinition,
 } from "@app/azure-devops/types";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { formatRelativeTime } from "@app/utils/format";
 import { htmlToMarkdown } from "@app/utils/markdown/html-to-md";
 import { slugify } from "@app/utils/string";
@@ -441,9 +441,9 @@ export function parseAttachments(relations: Relation[]): AttachmentInfo[] {
         .filter((r) => r.rel === "AttachedFile" && r.attributes?.name)
         .map((r) => ({
             id: extractAttachmentId(r.url),
-            filename: r.attributes!.name!,
-            size: r.attributes!.resourceSize ?? 0,
-            createdDate: r.attributes!.resourceCreatedDate ?? "",
+            filename: r.attributes?.name!,
+            size: r.attributes?.resourceSize ?? 0,
+            createdDate: r.attributes?.resourceCreatedDate ?? "",
         }));
 }
 
@@ -457,8 +457,8 @@ export function filterAttachments(relations: Relation[], filter: AttachmentFilte
                 return false;
             if (filter.to && (!attrs.resourceCreatedDate || new Date(attrs.resourceCreatedDate) > filter.to))
                 return false;
-            if (filter.prefix && !attrs.name!.startsWith(filter.prefix)) return false;
-            if (filter.suffix && !attrs.name!.endsWith(filter.suffix)) return false;
+            if (filter.prefix && !attrs.name?.startsWith(filter.prefix)) return false;
+            if (filter.suffix && !attrs.name?.endsWith(filter.suffix)) return false;
             return true;
         });
 }
@@ -763,8 +763,8 @@ function transformHintsForTemplate(
     }
 
     // Always add title hint
-    if (!templateHints["title"]) {
-        templateHints["title"] = {
+    if (!templateHints.title) {
+        templateHints.title = {
             description: "Brief title for the work item",
             required: true,
         };
@@ -1044,7 +1044,7 @@ export function generateTemplateFromWorkItem(
 
     // Ensure parent hint is set
     if (parsed.parent) {
-        hints["parent"] = {
+        hints.parent = {
             description: "Same parent as source work item",
             usedValues: [`${parsed.parent}`],
         };

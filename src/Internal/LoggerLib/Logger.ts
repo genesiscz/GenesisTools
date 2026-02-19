@@ -103,7 +103,7 @@ function stringify(data: unknown): string {
     try {
         return JSON.stringify(
             data,
-            (key, value) => {
+            (_key, value) => {
                 if (value && typeof value === "object") {
                     return Object.getOwnPropertyNames(value).reduce((acc: Record<string, unknown>, prop) => {
                         acc[prop] = value[prop];
@@ -114,7 +114,7 @@ function stringify(data: unknown): string {
             },
             2
         );
-    } catch (e) {
+    } catch (_e) {
         return "[Object]";
     }
 }
@@ -505,7 +505,7 @@ export class Logger implements ILogger {
      * @returns Dot notation path
      */
     private _buildPath(): LoggerPath {
-        if (this._parent && this._parent._path && this._namespace) {
+        if (this._parent?._path && this._namespace) {
             // If parent has a path, combine with namespace
             return `${this._parent._path}.${this._namespace}`;
         }

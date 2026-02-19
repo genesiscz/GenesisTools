@@ -118,7 +118,6 @@ export function registerSearchCommand(program: Command): void {
 					const ctx = searchInHeaders(har, entry, query);
 					if (ctx) {
 						matches.push({ entry, context: ctx, scope: "header" });
-						continue;
 					}
 				}
 			}

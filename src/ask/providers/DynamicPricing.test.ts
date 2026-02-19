@@ -262,8 +262,8 @@ describe("DynamicPricingManager", () => {
             const pricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing!);
 
             // Verify conversion (per token to per million)
-            expect(pricingInfo.inputPer1M).toBeCloseTo((liteLLMPricing!.input_cost_per_token ?? 0) * 1_000_000, 2);
-            expect(pricingInfo.outputPer1M).toBeCloseTo((liteLLMPricing!.output_cost_per_token ?? 0) * 1_000_000, 2);
+            expect(pricingInfo.inputPer1M).toBeCloseTo((liteLLMPricing?.input_cost_per_token ?? 0) * 1_000_000, 2);
+            expect(pricingInfo.outputPer1M).toBeCloseTo((liteLLMPricing?.output_cost_per_token ?? 0) * 1_000_000, 2);
         });
 
         it("should handle LiteLLM fetch failures gracefully with fallback", async () => {
@@ -375,7 +375,7 @@ describe("DynamicPricingManager", () => {
 
             const results = await Promise.all(models.map((model) => pricingManager.getPricing("openrouter", model)));
 
-            results.forEach((pricing, index) => {
+            results.forEach((pricing, _index) => {
                 expect(pricing).not.toBeNull();
                 expect(pricing?.inputPer1M).toBeGreaterThan(0);
                 expect(pricing?.outputPer1M).toBeGreaterThan(0);
@@ -474,7 +474,7 @@ describe("DynamicPricingManager", () => {
                 const cost = await pricingManager.calculateCost("anthropic", "claude-3-5-sonnet-20241022", usage);
 
                 expect(cost).toBeGreaterThanOrEqual(0);
-                expect(isNaN(cost)).toBe(false);
+                expect(Number.isNaN(cost)).toBe(false);
             }
         });
     });
@@ -583,8 +583,8 @@ describe("DynamicPricingManager", () => {
             expect(directOpenAIPricing).not.toBeNull();
 
             // OpenRouter should be cheaper (or at least not more expensive)
-            expect(openRouterPricing!.inputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.inputPer1M);
-            expect(openRouterPricing!.outputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.outputPer1M);
+            expect(openRouterPricing?.inputPer1M).toBeLessThanOrEqual(directOpenAIPricing?.inputPer1M);
+            expect(openRouterPricing?.outputPer1M).toBeLessThanOrEqual(directOpenAIPricing?.outputPer1M);
         });
 
         it("should verify Claude tiered pricing structure for 1M context models", async () => {
@@ -636,15 +636,15 @@ describe("DynamicPricingManager", () => {
                 const convertedPricing = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing!);
 
                 // Verify conversion: per-token * 1M = per-million
-                if (liteLLMPricing!.input_cost_per_token) {
+                if (liteLLMPricing?.input_cost_per_token) {
                     expect(convertedPricing.inputPer1M).toBeCloseTo(
-                        liteLLMPricing!.input_cost_per_token * 1_000_000,
+                        liteLLMPricing?.input_cost_per_token * 1_000_000,
                         2
                     );
                 }
-                if (liteLLMPricing!.output_cost_per_token) {
+                if (liteLLMPricing?.output_cost_per_token) {
                     expect(convertedPricing.outputPer1M).toBeCloseTo(
-                        liteLLMPricing!.output_cost_per_token * 1_000_000,
+                        liteLLMPricing?.output_cost_per_token * 1_000_000,
                         2
                     );
                 }
@@ -669,18 +669,18 @@ describe("DynamicPricingManager", () => {
             expect(directOpenAIPricing).not.toBeNull();
 
             // OpenRouter should be cheaper or equal (it's a reseller, shouldn't be more expensive)
-            expect(openRouterPricing!.inputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.inputPer1M * 1.5); // Allow 50% markup max
-            expect(openRouterPricing!.outputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.outputPer1M * 1.5);
+            expect(openRouterPricing?.inputPer1M).toBeLessThanOrEqual(directOpenAIPricing?.inputPer1M * 1.5); // Allow 50% markup max
+            expect(openRouterPricing?.outputPer1M).toBeLessThanOrEqual(directOpenAIPricing?.outputPer1M * 1.5);
         });
 
         it("should verify Claude models have reasonable pricing (input < $20, output < $100)", async () => {
             const claudePricing = await pricingManager.getPricing("anthropic", "claude-3-5-sonnet-20241022");
 
             expect(claudePricing).not.toBeNull();
-            expect(claudePricing!.inputPer1M).toBeLessThan(20); // Should be under $20 per million input
-            expect(claudePricing!.outputPer1M).toBeLessThan(100); // Should be under $100 per million output
-            expect(claudePricing!.inputPer1M).toBeGreaterThan(0);
-            expect(claudePricing!.outputPer1M).toBeGreaterThan(0);
+            expect(claudePricing?.inputPer1M).toBeLessThan(20); // Should be under $20 per million input
+            expect(claudePricing?.outputPer1M).toBeLessThan(100); // Should be under $100 per million output
+            expect(claudePricing?.inputPer1M).toBeGreaterThan(0);
+            expect(claudePricing?.outputPer1M).toBeGreaterThan(0);
         });
 
         it("should verify GPT-4o-mini pricing is cheaper than GPT-4o", async () => {
@@ -691,8 +691,8 @@ describe("DynamicPricingManager", () => {
             expect(gpt4oMiniPricing).not.toBeNull();
 
             // Mini should be significantly cheaper
-            expect(gpt4oMiniPricing!.inputPer1M).toBeLessThan(gpt4oPricing!.inputPer1M);
-            expect(gpt4oMiniPricing!.outputPer1M).toBeLessThan(gpt4oPricing!.outputPer1M);
+            expect(gpt4oMiniPricing?.inputPer1M).toBeLessThan(gpt4oPricing?.inputPer1M);
+            expect(gpt4oMiniPricing?.outputPer1M).toBeLessThan(gpt4oPricing?.outputPer1M);
         });
 
         it("should verify OpenRouter Claude pricing is reasonable compared to direct", async () => {
@@ -723,10 +723,10 @@ describe("DynamicPricingManager", () => {
             for (const { provider, model } of models) {
                 const pricing = await pricingManager.getPricing(provider, model);
                 expect(pricing).not.toBeNull();
-                expect(pricing!.inputPer1M).toBeGreaterThan(0);
-                expect(pricing!.outputPer1M).toBeGreaterThan(0);
-                expect(pricing!.inputPer1M).not.toBeNaN();
-                expect(pricing!.outputPer1M).not.toBeNaN();
+                expect(pricing?.inputPer1M).toBeGreaterThan(0);
+                expect(pricing?.outputPer1M).toBeGreaterThan(0);
+                expect(pricing?.inputPer1M).not.toBeNaN();
+                expect(pricing?.outputPer1M).not.toBeNaN();
             }
         });
 
@@ -734,13 +734,13 @@ describe("DynamicPricingManager", () => {
             const gpt4oPricing = await pricingManager.getPricing("openai", "gpt-4o");
 
             expect(gpt4oPricing).not.toBeNull();
-            if (gpt4oPricing!.cachedReadPer1M) {
+            if (gpt4oPricing?.cachedReadPer1M) {
                 // Cached reads should be cheaper than regular input
-                expect(gpt4oPricing!.cachedReadPer1M).toBeLessThanOrEqual(gpt4oPricing!.inputPer1M);
+                expect(gpt4oPricing?.cachedReadPer1M).toBeLessThanOrEqual(gpt4oPricing?.inputPer1M);
             }
-            if (gpt4oPricing!.cachedCreatePer1M) {
+            if (gpt4oPricing?.cachedCreatePer1M) {
                 // Cache creation might be similar or slightly more expensive, but not 10x
-                expect(gpt4oPricing!.cachedCreatePer1M).toBeLessThan(gpt4oPricing!.inputPer1M * 10);
+                expect(gpt4oPricing?.cachedCreatePer1M).toBeLessThan(gpt4oPricing?.inputPer1M * 10);
             }
         });
 
@@ -749,12 +749,12 @@ describe("DynamicPricingManager", () => {
 
             expect(miniPricing).not.toBeNull();
             // Cached read should be half of input price (0.075 vs 0.15)
-            if (miniPricing!.cachedReadPer1M) {
-                expect(miniPricing!.cachedReadPer1M).toBeCloseTo(miniPricing!.inputPer1M / 2, 1);
+            if (miniPricing?.cachedReadPer1M) {
+                expect(miniPricing?.cachedReadPer1M).toBeCloseTo(miniPricing?.inputPer1M / 2, 1);
             }
             // Cache creation should be free (0)
-            if (miniPricing!.cachedCreatePer1M !== undefined) {
-                expect(miniPricing!.cachedCreatePer1M).toBe(0);
+            if (miniPricing?.cachedCreatePer1M !== undefined) {
+                expect(miniPricing?.cachedCreatePer1M).toBe(0);
             }
         });
 
@@ -763,9 +763,9 @@ describe("DynamicPricingManager", () => {
 
             expect(claudePricing).not.toBeNull();
             // Note: This model doesn't have tiered pricing (200k context), but if it did:
-            if (claudePricing!.inputPer1MAbove200k && claudePricing!.outputPer1MAbove200k) {
-                expect(claudePricing!.inputPer1MAbove200k).toBeGreaterThan(claudePricing!.inputPer1M);
-                expect(claudePricing!.outputPer1MAbove200k).toBeGreaterThan(claudePricing!.outputPer1M);
+            if (claudePricing?.inputPer1MAbove200k && claudePricing?.outputPer1MAbove200k) {
+                expect(claudePricing?.inputPer1MAbove200k).toBeGreaterThan(claudePricing?.inputPer1M);
+                expect(claudePricing?.outputPer1MAbove200k).toBeGreaterThan(claudePricing?.outputPer1M);
             }
         });
 
@@ -776,10 +776,10 @@ describe("DynamicPricingManager", () => {
                 const pricing = await pricingManager.getPricing("openrouter", model);
                 expect(pricing).not.toBeNull();
                 // Should have both input and output pricing
-                expect(pricing!.inputPer1M).toBeGreaterThan(0);
-                expect(pricing!.outputPer1M).toBeGreaterThan(0);
+                expect(pricing?.inputPer1M).toBeGreaterThan(0);
+                expect(pricing?.outputPer1M).toBeGreaterThan(0);
                 // Output should generally be more expensive than input
-                expect(pricing!.outputPer1M).toBeGreaterThanOrEqual(pricing!.inputPer1M);
+                expect(pricing?.outputPer1M).toBeGreaterThanOrEqual(pricing?.inputPer1M);
             }
         });
 
@@ -902,7 +902,7 @@ describe("DynamicPricingManager", () => {
             const openRouterProvider = providers.find((p) => p.name === "openrouter");
             expect(openRouterProvider).not.toBeUndefined();
 
-            const gpt4oModel = openRouterProvider!.models.find(
+            const gpt4oModel = openRouterProvider?.models.find(
                 (m) => m.id.includes("gpt-4o") && !m.id.includes("mini") && !m.id.includes("turbo")
             );
 
@@ -924,8 +924,8 @@ describe("DynamicPricingManager", () => {
             const liteLLMPricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
 
             // Compare pricing (allow 5% difference due to cache/timing differences)
-            const inputDiff = Math.abs(providerManagerPricing!.inputPer1M - liteLLMPricingInfo.inputPer1M);
-            const outputDiff = Math.abs(providerManagerPricing!.outputPer1M - liteLLMPricingInfo.outputPer1M);
+            const inputDiff = Math.abs(providerManagerPricing?.inputPer1M - liteLLMPricingInfo.inputPer1M);
+            const outputDiff = Math.abs(providerManagerPricing?.outputPer1M - liteLLMPricingInfo.outputPer1M);
             const maxInputDiff = liteLLMPricingInfo.inputPer1M * 0.05;
             const maxOutputDiff = liteLLMPricingInfo.outputPer1M * 0.05;
 
@@ -946,7 +946,7 @@ describe("DynamicPricingManager", () => {
             const openRouterProvider = providers.find((p) => p.name === "openrouter");
             expect(openRouterProvider).not.toBeUndefined();
 
-            const claudeModel = openRouterProvider!.models.find(
+            const claudeModel = openRouterProvider?.models.find(
                 (m) => m.id.includes("claude") && m.id.includes("sonnet")
             );
 
@@ -966,8 +966,8 @@ describe("DynamicPricingManager", () => {
 
             const liteLLMPricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
 
-            const inputDiff = Math.abs(providerManagerPricing!.inputPer1M - liteLLMPricingInfo.inputPer1M);
-            const outputDiff = Math.abs(providerManagerPricing!.outputPer1M - liteLLMPricingInfo.outputPer1M);
+            const inputDiff = Math.abs(providerManagerPricing?.inputPer1M - liteLLMPricingInfo.inputPer1M);
+            const outputDiff = Math.abs(providerManagerPricing?.outputPer1M - liteLLMPricingInfo.outputPer1M);
             const maxInputDiff = Math.max(liteLLMPricingInfo.inputPer1M * 0.05, 0.1); // At least $0.10 tolerance
             const maxOutputDiff = Math.max(liteLLMPricingInfo.outputPer1M * 0.05, 0.5); // At least $0.50 tolerance
 
@@ -998,18 +998,18 @@ describe("DynamicPricingManager", () => {
             ];
 
             let matchedCount = 0;
-            let skippedCount = 0;
+            let _skippedCount = 0;
 
             for (const modelId of popularModelIds) {
-                const model = openRouterProvider!.models.find((m) => m.id === modelId);
+                const model = openRouterProvider?.models.find((m) => m.id === modelId);
                 if (!model || !model.pricing) {
-                    skippedCount++;
+                    _skippedCount++;
                     continue;
                 }
 
                 const liteLLMPricing = await liteLLMPricingFetcher.getModelPricing(`openrouter/${modelId}`);
                 if (!liteLLMPricing) {
-                    skippedCount++;
+                    _skippedCount++;
                     continue;
                 }
 
@@ -1048,7 +1048,7 @@ describe("DynamicPricingManager", () => {
             expect(openRouterProvider).not.toBeUndefined();
 
             // Sample 10 random models with pricing
-            const modelsWithPricing = openRouterProvider!.models.filter((m) => m.pricing).slice(0, 10);
+            const modelsWithPricing = openRouterProvider?.models.filter((m) => m.pricing).slice(0, 10);
 
             if (modelsWithPricing.length === 0) {
                 console.log("Skipping test: No models with pricing found");
@@ -1066,13 +1066,13 @@ describe("DynamicPricingManager", () => {
                 const liteLLMPricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
 
                 // Check if both have pricing (structure consistency)
-                const bothHaveInput = model.pricing!.inputPer1M > 0 && liteLLMPricingInfo.inputPer1M > 0;
-                const bothHaveOutput = model.pricing!.outputPer1M > 0 && liteLLMPricingInfo.outputPer1M > 0;
+                const bothHaveInput = model.pricing?.inputPer1M > 0 && liteLLMPricingInfo.inputPer1M > 0;
+                const bothHaveOutput = model.pricing?.outputPer1M > 0 && liteLLMPricingInfo.outputPer1M > 0;
 
                 if (bothHaveInput && bothHaveOutput) {
                     // Check if prices are within 5% tolerance (accounting for cache/stale data differences)
-                    const inputDiff = Math.abs(model.pricing!.inputPer1M - liteLLMPricingInfo.inputPer1M);
-                    const outputDiff = Math.abs(model.pricing!.outputPer1M - liteLLMPricingInfo.outputPer1M);
+                    const inputDiff = Math.abs(model.pricing?.inputPer1M - liteLLMPricingInfo.inputPer1M);
+                    const outputDiff = Math.abs(model.pricing?.outputPer1M - liteLLMPricingInfo.outputPer1M);
                     const maxInputDiff = liteLLMPricingInfo.inputPer1M * 0.05;
                     const maxOutputDiff = liteLLMPricingInfo.outputPer1M * 0.05;
 
@@ -1102,13 +1102,13 @@ describe("DynamicPricingManager", () => {
             expect(openRouterProvider).not.toBeUndefined();
 
             // Check that models with pricing have valid values
-            const modelsWithPricing = openRouterProvider!.models.filter((m) => m.pricing);
+            const modelsWithPricing = openRouterProvider?.models.filter((m) => m.pricing);
 
             for (const model of modelsWithPricing.slice(0, 20)) {
                 // Verify pricing structure is valid
                 expect(model.pricing).toBeDefined();
-                expect(model.pricing!.inputPer1M).toBeGreaterThanOrEqual(0);
-                expect(model.pricing!.outputPer1M).toBeGreaterThanOrEqual(0);
+                expect(model.pricing?.inputPer1M).toBeGreaterThanOrEqual(0);
+                expect(model.pricing?.outputPer1M).toBeGreaterThanOrEqual(0);
 
                 // Compare with LiteLLM if available
                 const liteLLMPricing = await liteLLMPricingFetcher.getModelPricing(`openrouter/${model.id}`);
@@ -1116,7 +1116,7 @@ describe("DynamicPricingManager", () => {
                     const liteLLMPricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
 
                     // Both should have non-zero pricing or both should be zero
-                    const providerHasPricing = model.pricing!.inputPer1M > 0 || model.pricing!.outputPer1M > 0;
+                    const providerHasPricing = model.pricing?.inputPer1M > 0 || model.pricing?.outputPer1M > 0;
                     const liteLLMHasPricing = liteLLMPricingInfo.inputPer1M > 0 || liteLLMPricingInfo.outputPer1M > 0;
 
                     // If one has pricing, both should (allowing for cache issues)

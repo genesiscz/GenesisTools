@@ -1,5 +1,5 @@
-import os from "os";
-import pathUtils from "path";
+import os from "node:os";
+import pathUtils from "node:path";
 
 /**
  * Replaces the home directory with a tilde.

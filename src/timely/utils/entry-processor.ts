@@ -249,7 +249,7 @@ function extractDetailedContext(entry: any): ProcessedEntry {
         const files = new Set<string>();
 
         // From main note
-        if (entry.note && entry.note.includes("—")) {
+        if (entry.note?.includes("—")) {
             const fileMatch = entry.note.match(/—\s*([^—]+?)(?:\s*—|$)/g);
             if (fileMatch) {
                 fileMatch.forEach((match: string) => {
@@ -267,7 +267,7 @@ function extractDetailedContext(entry: any): ProcessedEntry {
         // From entries array
         if (entry.entries && Array.isArray(entry.entries)) {
             entry.entries.forEach((e: TimelyEntry) => {
-                if (e.note && e.note.includes("—")) {
+                if (e.note?.includes("—")) {
                     const parts = e.note
                         .split("—")
                         .map((p: string) => p.trim())
@@ -281,7 +281,7 @@ function extractDetailedContext(entry: any): ProcessedEntry {
 
                 if (e.sub_entries && Array.isArray(e.sub_entries)) {
                     e.sub_entries.forEach((sub) => {
-                        if (sub.note && sub.note.includes("—")) {
+                        if (sub.note?.includes("—")) {
                             const parts = sub.note
                                 .split("—")
                                 .map((p: string) => p.trim())
@@ -519,7 +519,7 @@ async function processDay(
  * Format date for display (DD. MM. YYYY)
  */
 function formatDateForDisplay(date: string, year: number, month: number): string {
-    const dayNum = parseInt(date.split("-")[2]);
+    const dayNum = parseInt(date.split("-")[2], 10);
     return `${dayNum}. ${month}. ${year}`;
 }
 

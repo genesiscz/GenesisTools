@@ -15,7 +15,7 @@ export async function runInteractiveAddInquirer(
     console.log("\n📝 TimeLog - Add Entry\n");
 
     try {
-        const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+        const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog?.functionsKey, user);
 
         // Fetch time types
         console.log("Loading time types...");
@@ -31,7 +31,7 @@ export async function runInteractiveAddInquirer(
                 message: "Work Item ID:",
                 validate: (value) => {
                     if (!value) return "Work item ID is required";
-                    if (isNaN(parseInt(value, 10))) return "Must be a number";
+                    if (Number.isNaN(parseInt(value, 10))) return "Must be a number";
                     return true;
                 },
             });
@@ -56,7 +56,7 @@ export async function runInteractiveAddInquirer(
             validate: (value) => {
                 if (!value) return "Hours is required (use 0 for minutes only)";
                 const num = parseFloat(value);
-                if (isNaN(num) || num < 0) return "Must be a non-negative number";
+                if (Number.isNaN(num) || num < 0) return "Must be a non-negative number";
                 return true;
             },
         });
@@ -92,7 +92,7 @@ export async function runInteractiveAddInquirer(
         });
 
         // Confirm
-        console.log("\n" + "─".repeat(40));
+        console.log(`\n${"─".repeat(40)}`);
         console.log(`Work Item: #${workItemId}`);
         console.log(`Time: ${formatMinutes(totalMinutes)}`);
         console.log(`Type: ${selectedType}`);

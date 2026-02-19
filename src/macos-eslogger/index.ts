@@ -3,7 +3,7 @@ import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
 import { checkbox, select } from "@inquirer/prompts";
 import chalk from "chalk";
-import { type ChildProcess, spawn } from "child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)
@@ -812,7 +812,7 @@ function monitorWithESF(
         }
 
         console.log(chalk.yellow("\n⌨️  Press Ctrl+C to stop."));
-        console.log("─".repeat(80) + "\n");
+        console.log(`${"─".repeat(80)}\n`);
     }
 
     const args = ["eslogger", ...eventTypes];
@@ -853,7 +853,7 @@ function monitorWithESF(
                     const formatted = formatEvent(event);
 
                     if (outputPath) {
-                        outputBuffer += formatted + "\n";
+                        outputBuffer += `${formatted}\n`;
                     } else {
                         console.log(formatted);
                     }
@@ -896,7 +896,7 @@ function monitorWithESF(
         }
 
         if (!silent) {
-            consoleLog.info("\n" + "─".repeat(80));
+            consoleLog.info(`\n${"─".repeat(80)}`);
             consoleLog.info(`📈 Total events captured: ${eventCount}`);
             if (code !== 0) {
                 logger.warn(`⚠️  Monitor process exited with code ${code}.`);

@@ -2,8 +2,8 @@ import logger from "@app/logger";
 import type { ServerInfo } from "@app/mcp-tsc/core/interfaces.js";
 import { LspServer } from "@app/mcp-tsc/providers/LspServer.js";
 import { ensureServersDir, getServerInfoPath, SERVERS_DIR } from "@app/mcp-tsc/utils/helpers.js";
-import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
-import path from "path";
+import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 // Global map to store persistent LSP servers
 const persistentServers = new Map<string, LspServer>();
@@ -245,7 +245,7 @@ export async function killAllServers(): Promise<number> {
 
             unlinkSync(infoPath);
             killed++;
-        } catch (error) {
+        } catch (_error) {
             // Ignore errors for stale files
         }
     }
@@ -265,7 +265,7 @@ export function listServers(): ServerInfo[] {
         try {
             const info: ServerInfo = JSON.parse(readFileSync(path.join(SERVERS_DIR, file), "utf-8"));
             servers.push(info);
-        } catch (error) {
+        } catch (_error) {
             // Ignore errors for corrupt files
         }
     }

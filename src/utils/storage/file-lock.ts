@@ -26,7 +26,7 @@ async function tryAcquireLock(lockPath: string): Promise<boolean> {
             const content = await Bun.file(lockPath).text();
             const lockPid = parseInt(content.trim(), 10);
 
-            if (!isNaN(lockPid) && isProcessAlive(lockPid)) {
+            if (!Number.isNaN(lockPid) && isProcessAlive(lockPid)) {
                 return false;
             }
 

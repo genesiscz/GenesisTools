@@ -149,15 +149,15 @@ function shouldIgnore(path: string, gitignoreRules: string[]): boolean {
     try {
         if (statSync(path).isDirectory()) {
             // Check negation rules for directories
-            if (negationRules.some((rule) => minimatch(baseFile + "/", rule, { dot: true }))) {
+            if (negationRules.some((rule) => minimatch(`${baseFile}/`, rule, { dot: true }))) {
                 return false; // Explicitly un-ignored
             }
             // Check regular rules for directories
-            if (regularRules.some((rule) => minimatch(baseFile + "/", rule, { dot: true }))) {
+            if (regularRules.some((rule) => minimatch(`${baseFile}/`, rule, { dot: true }))) {
                 return true;
             }
         }
-    } catch (e) {
+    } catch (_e) {
         // ignore stat errors if path disappears?
     }
     return false;
@@ -330,7 +330,7 @@ async function processPath(
                     // Read file content to estimate tokens
                     const content = await readFile(path, { encoding: "utf-8" });
                     statistics.totalTokens += estimateTokens(content);
-                } catch (e) {
+                } catch (_e) {
                     // ignore errors
                 }
                 return;
@@ -486,7 +486,7 @@ async function processPath(
                             // Read file content to estimate tokens
                             const content = await readFile(entryPath, { encoding: "utf-8" });
                             statistics.totalTokens += estimateTokens(content);
-                        } catch (e) {
+                        } catch (_e) {
                             // ignore errors
                         }
                         continue;
@@ -576,7 +576,7 @@ function groupIgnoredFilesByDirectory(ignoredFiles: IgnoredFile[], basePath?: st
         if (!grouped.has(key)) {
             grouped.set(key, []);
         }
-        grouped.get(key)!.push(file);
+        grouped.get(key)?.push(file);
     }
 
     return grouped;
@@ -622,13 +622,13 @@ function formatFileList<T extends string | IgnoredFile>(
                 groupKey = pathMeta.relPath;
             } else {
                 // Group by directory at target depth
-                groupKey = parts.slice(0, targetDepth).join("/") + "/";
+                groupKey = `${parts.slice(0, targetDepth).join("/")}/`;
             }
 
             if (!groups.has(groupKey)) {
                 groups.set(groupKey, []);
             }
-            groups.get(groupKey)!.push(pathMeta);
+            groups.get(groupKey)?.push(pathMeta);
         }
 
         return groups;
@@ -689,7 +689,7 @@ function formatFileList<T extends string | IgnoredFile>(
 
 function printStatistics(stats: Statistics): void {
     // Use console.log to avoid timestamps in console output
-    console.log("\n" + "=".repeat(60));
+    console.log(`\n${"=".repeat(60)}`);
     console.log("DRY RUN STATISTICS");
     console.log("=".repeat(60));
     console.log(`\nFiles to process: ${stats.fileCount}`);
@@ -698,7 +698,7 @@ function printStatistics(stats: Statistics): void {
     console.log(`Estimated tokens: ${formatTokens(stats.totalTokens)}`);
 
     // Group ignored files by directory
-    const ignoredByDir = groupIgnoredFilesByDirectory(stats.ignoredFiles, stats.basePath);
+    const _ignoredByDir = groupIgnoredFilesByDirectory(stats.ignoredFiles, stats.basePath);
 
     if (stats.ignoredFiles.length > 0) {
         console.log(`\nIgnored files: ${stats.ignoredFiles.length}`);
@@ -744,7 +744,7 @@ function printStatistics(stats: Statistics): void {
         console.log(items.join("\n"));
     }
 
-    console.log("\n" + "=".repeat(60) + "\n");
+    console.log(`\n${"=".repeat(60)}\n`);
 }
 
 function showHelp(): void {
@@ -872,7 +872,7 @@ async function main(): Promise<void> {
         };
 
         let writer: WriterFunc = (s: string) => {
-            process.stdout.write(s + "\n");
+            process.stdout.write(`${s}\n`);
         };
         let fileSink: FileSink | null = null;
 
@@ -884,7 +884,7 @@ async function main(): Promise<void> {
                 }
                 fileSink = Bun.file(outputFile).writer();
                 writer = (s: string) => {
-                    (fileSink as FileSink).write(s + "\n");
+                    (fileSink as FileSink).write(`${s}\n`);
                 };
             } catch (error: any) {
                 logger.error(`Error setting up output file ${outputFile}: ${error.message}`);
@@ -923,7 +923,7 @@ async function main(): Promise<void> {
                 if (!stats.isDirectory()) {
                     commonBasePath = dirname(commonBasePath);
                 }
-            } catch (error) {
+            } catch (_error) {
                 commonBasePath = dirname(commonBasePath);
             }
 
@@ -935,7 +935,7 @@ async function main(): Promise<void> {
                     if (!stats.isDirectory()) {
                         currentPath = dirname(currentPath);
                     }
-                } catch (error) {
+                } catch (_error) {
                     currentPath = dirname(currentPath);
                 }
 

@@ -1,7 +1,7 @@
-import { createHash } from "crypto";
-import { existsSync, mkdirSync } from "fs";
-import { tmpdir } from "os";
-import path from "path";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 export const SERVERS_DIR = path.join(tmpdir(), ".mcp-tsc-servers");
 

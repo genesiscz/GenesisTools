@@ -12,8 +12,8 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { writeFileSync } from "fs";
-import path from "path";
+import { writeFileSync } from "node:fs";
+import path from "node:path";
 
 // Configuration
 const CONFIG = {
@@ -289,7 +289,7 @@ export function testFunction(input: TestInterface): string {
 
             for (let i = 0; i < CONFIG.fileModificationTests; i++) {
                 // Modify the file while making a request
-                const modifiedContent = originalContent + `\n// Modification ${i + 1}\n`;
+                const modifiedContent = `${originalContent}\n// Modification ${i + 1}\n`;
                 writeFileSync(testFilePath, modifiedContent);
 
                 // Immediately request diagnostics
@@ -299,7 +299,7 @@ export function testFunction(input: TestInterface): string {
             }
 
             // Add an error to the file
-            const errorContent = originalContent + `\nconst err: number = "string"; // Type error\n`;
+            const errorContent = `${originalContent}\nconst err: number = "string"; // Type error\n`;
             writeFileSync(testFilePath, errorContent);
 
             result = await this.callDiagnostics([testFilePath]);
@@ -309,7 +309,7 @@ export function testFunction(input: TestInterface): string {
         } finally {
             // Cleanup
             try {
-                const fs = await import("fs");
+                const fs = await import("node:fs");
                 fs.unlinkSync(testFilePath);
                 console.error("  Cleaned up test file");
             } catch {
@@ -370,7 +370,7 @@ export function testFunction(input: TestInterface): string {
     }
 
     printReport(): void {
-        console.error("\n" + "=".repeat(60));
+        console.error(`\n${"=".repeat(60)}`);
         console.error("STRESS TEST REPORT");
         console.error("=".repeat(60));
 
@@ -398,7 +398,7 @@ export function testFunction(input: TestInterface): string {
             });
         }
 
-        console.error("\n" + "=".repeat(60));
+        console.error(`\n${"=".repeat(60)}`);
     }
 
     async run(): Promise<number> {

@@ -328,7 +328,7 @@ function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay
     const byDay = new Map<string, TimelyEvent[]>();
     for (const event of events) {
         if (!byDay.has(event.day)) byDay.set(event.day, []);
-        byDay.get(event.day)!.push(event);
+        byDay.get(event.day)?.push(event);
     }
 
     const sortedDays = Array.from(byDay.keys()).sort();
@@ -366,7 +366,7 @@ function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay
                             for (const sub of subs) {
                                 if (sub.note) {
                                     const shortNote =
-                                        sub.note.length > 60 ? sub.note.substring(0, 58) + ".." : sub.note;
+                                        sub.note.length > 60 ? `${sub.note.substring(0, 58)}..` : sub.note;
                                     console.log(
                                         `  ${" ".repeat(5)} ${" ".repeat(maxProjectLen)} ${chalk.dim(`${sub.duration.formatted} ${shortNote}`)}`
                                     );
@@ -397,7 +397,7 @@ function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay
                     if (subs.length > 0) {
                         for (const sub of subs) {
                             if (sub.note) {
-                                const shortNote = sub.note.length > 60 ? sub.note.substring(0, 58) + ".." : sub.note;
+                                const shortNote = sub.note.length > 60 ? `${sub.note.substring(0, 58)}..` : sub.note;
                                 console.log(
                                     `  ${" ".repeat(5)} ${" ".repeat(maxProjectLen)} ${chalk.dim(`${sub.duration.formatted} ${shortNote}`)}`
                                 );

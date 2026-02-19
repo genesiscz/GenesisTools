@@ -75,7 +75,7 @@ async function projectsAction(storage: Storage, service: TimelyService, options:
         if (!byClient.has(clientName)) {
             byClient.set(clientName, []);
         }
-        byClient.get(clientName)!.push(project);
+        byClient.get(clientName)?.push(project);
     }
 
     for (const [clientName, clientProjects] of byClient) {

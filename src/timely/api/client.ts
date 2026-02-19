@@ -197,7 +197,7 @@ export class TimelyApiClient {
         // Add authorization header unless skipped
         if (!options.skipAuth) {
             const token = await this.getAccessToken();
-            headers["Authorization"] = `Bearer ${token}`;
+            headers.Authorization = `Bearer ${token}`;
         }
 
         logger.debug(`${method} ${url.toString()}`);

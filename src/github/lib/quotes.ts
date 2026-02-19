@@ -55,7 +55,7 @@ export function truncateQuote(quote: string, maxLines: number = MAX_QUOTE_LINES)
         return quote;
     }
 
-    return lines.slice(0, maxLines).join("\n") + "\n...";
+    return `${lines.slice(0, maxLines).join("\n")}\n...`;
 }
 
 /**

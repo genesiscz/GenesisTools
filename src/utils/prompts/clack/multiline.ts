@@ -77,7 +77,7 @@ export async function multilineText(options: MultilineOptions): Promise<string |
                     for (let i = 0; i < lines.length; i++) {
                         let display = lines[i];
                         if (display.length > 70) {
-                            display = display.slice(0, 67) + "...";
+                            display = `${display.slice(0, 67)}...`;
                         }
 
                         // Show cursor on the correct line
@@ -92,7 +92,7 @@ export async function multilineText(options: MultilineOptions): Promise<string |
                 } else {
                     // Show first 3 and last 3
                     for (let i = 0; i < 3; i++) {
-                        let display = lines[i].length > 70 ? lines[i].slice(0, 67) + "..." : lines[i];
+                        let display = lines[i].length > 70 ? `${lines[i].slice(0, 67)}...` : lines[i];
                         if (i === cursorLine) {
                             const before = display.slice(0, Math.min(cursorCol, display.length));
                             const after = display.slice(Math.min(cursorCol, display.length));
@@ -102,7 +102,7 @@ export async function multilineText(options: MultilineOptions): Promise<string |
                     }
                     outputLines.push(`${S_BAR}  ${pc.dim(`... ${lines.length - 6} more lines ...`)}`);
                     for (let i = lines.length - 3; i < lines.length; i++) {
-                        let display = lines[i].length > 70 ? lines[i].slice(0, 67) + "..." : lines[i];
+                        let display = lines[i].length > 70 ? `${lines[i].slice(0, 67)}...` : lines[i];
                         if (i === cursorLine) {
                             const before = display.slice(0, Math.min(cursorCol, display.length));
                             const after = display.slice(Math.min(cursorCol, display.length));
@@ -120,7 +120,7 @@ export async function multilineText(options: MultilineOptions): Promise<string |
                 outputLines.push(`${S_BAR}  ${pc.strikethrough(pc.dim("Cancelled"))}`);
             }
 
-            process.stdout.write(outputLines.join("\n") + "\n");
+            process.stdout.write(`${outputLines.join("\n")}\n`);
             renderLineCount = outputLines.length;
         };
 

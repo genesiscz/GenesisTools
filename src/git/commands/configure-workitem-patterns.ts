@@ -152,7 +152,7 @@ async function handleRemove(storage: Storage, indexStr: string): Promise<void> {
     const index = parseInt(indexStr, 10);
     const currentPatterns = (await storage.getConfigValue<WorkitemPattern[]>("workitemPatterns")) ?? [];
 
-    if (isNaN(index) || index < 0 || index >= currentPatterns.length) {
+    if (Number.isNaN(index) || index < 0 || index >= currentPatterns.length) {
         console.log(chalk.red(`Invalid index: ${indexStr}. Valid range: 0-${currentPatterns.length - 1}`));
         process.exit(1);
     }

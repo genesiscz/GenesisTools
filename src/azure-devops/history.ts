@@ -21,7 +21,7 @@ import { removeDiacritics } from "@app/utils/string";
  * and replaces Czech/French/German diacritics with ASCII equivalents.
  */
 export function normalizeUserName(name: string): string {
-    let normalized = name
+    const normalized = name
         .toLowerCase()
         .replace(/\s*\([^)]*\)\s*/g, " ")
         .trim();

@@ -14,7 +14,7 @@ export async function runInteractiveAddClack(
 ): Promise<void> {
     p.intro(pc.bgCyan(pc.black(" TimeLog - Add Entry ")));
 
-    const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+    const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog?.functionsKey, user);
 
     // Fetch time types
     const spinner = p.spinner();
@@ -33,7 +33,7 @@ export async function runInteractiveAddClack(
             placeholder: "268935",
             validate: (value) => {
                 if (!value) return "Work item ID is required";
-                if (isNaN(parseInt(value, 10))) return "Must be a number";
+                if (Number.isNaN(parseInt(value, 10))) return "Must be a number";
                 return undefined;
             },
         });
@@ -68,7 +68,7 @@ export async function runInteractiveAddClack(
         validate: (value) => {
             if (!value) return "Hours is required (use 0 for minutes only)";
             const num = parseFloat(value);
-            if (isNaN(num) || num < 0) return "Must be a non-negative number";
+            if (Number.isNaN(num) || num < 0) return "Must be a non-negative number";
             return undefined;
         },
     });

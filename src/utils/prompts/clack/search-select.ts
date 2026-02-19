@@ -6,8 +6,8 @@
  */
 
 import pc from "picocolors";
-import * as readline from "readline";
-import { Writable } from "stream";
+import * as readline from "node:readline";
+import { Writable } from "node:stream";
 
 import type { SearchItem } from "./search-multiselect.js";
 export type { SearchItem };
@@ -151,7 +151,7 @@ export async function searchSelect<T>(options: SearchSelectOptions<T>): Promise<
                 lines.push(`${S_BAR}  ${pc.strikethrough(pc.dim("Cancelled"))}`);
             }
 
-            process.stdout.write(lines.join("\n") + "\n");
+            process.stdout.write(`${lines.join("\n")}\n`);
             lastRenderHeight = lines.length;
         };
 

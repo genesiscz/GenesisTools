@@ -17,7 +17,7 @@ program
     .option("--no-color", "Strip ANSI color codes from output")
     .action((file?: string, opts?: { watch?: boolean; width?: number; theme?: string; color?: boolean }) => {
         const renderOpts: MarkdownRenderOptions = {
-            width: opts?.width && !isNaN(opts.width) ? opts.width : undefined,
+            width: opts?.width && !Number.isNaN(opts.width) ? opts.width : undefined,
             theme: (opts?.theme as MarkdownRenderOptions["theme"]) || "dark",
             color: opts?.color !== false,
         };

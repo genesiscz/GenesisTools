@@ -5,8 +5,8 @@ import { normalizeFilePaths } from "@app/utils.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { readFileSync } from "fs";
-import path from "path";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import ts from "typescript";
 
 export interface McpAdapterOptions {
@@ -244,7 +244,7 @@ Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get 
                 }
             }
 
-            const diagnosticsText = formattedLines.length > 0 ? "\n\n" + formattedLines.join("\n") : "";
+            const diagnosticsText = formattedLines.length > 0 ? `\n\n${formattedLines.join("\n")}` : "";
 
             return {
                 content: [

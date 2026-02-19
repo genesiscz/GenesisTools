@@ -72,7 +72,7 @@ function extractDescription(toolDir: string): string {
             if (trimmed.startsWith("---")) continue;
             if (trimmed.startsWith("![")) continue;
             if (trimmed.startsWith("[![")) continue;
-            return trimmed.length > 80 ? trimmed.slice(0, 77) + "..." : trimmed;
+            return trimmed.length > 80 ? `${trimmed.slice(0, 77)}...` : trimmed;
         }
     }
 

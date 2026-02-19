@@ -20,8 +20,8 @@ import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser"
 import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
 import chalk from "chalk";
 import { Command } from "commander";
-import { existsSync, mkdirSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 // Known bots
 const KNOWN_BOTS = [
