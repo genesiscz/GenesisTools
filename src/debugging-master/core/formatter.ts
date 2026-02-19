@@ -1,4 +1,6 @@
+import chalk from "chalk";
 import { formatDuration, formatBytes } from "@app/utils/format";
+import { suggestCommand } from "@app/utils/cli/executor";
 import type { IndexedLogEntry, SessionStats, OutputFormat } from "@app/debugging-master/types";
 
 const TOOL = "tools debugging-master";
@@ -6,7 +8,7 @@ const TOOL = "tools debugging-master";
 /**
  * Format a single entry as a compact L1 line.
  */
-export function formatEntryLine(entry: IndexedLogEntry, _pretty: boolean): string {
+export function formatEntryLine(entry: IndexedLogEntry, pretty: boolean): string {
 	const idx = `#${entry.index}`.padStart(4);
 	const time = new Date(entry.ts).toLocaleTimeString("en-GB", {
 		hour12: false,
@@ -29,9 +31,50 @@ export function formatEntryLine(entry: IndexedLogEntry, _pretty: boolean): strin
 		suffix = entry.passed ? "PASS" : "FAIL";
 	}
 
+	if (pretty) {
+		const coloredIdx = chalk.dim(idx);
+		const coloredTime = chalk.dim(time);
+		const coloredLevel = colorizeLevel(entry.level, level, entry.passed);
+		const coloredSuffix = colorizeSuffix(entry, suffix);
+		const line = `  ${coloredIdx}  ${coloredTime}  ${coloredLevel} ${label}`;
+		if (!coloredSuffix) return line;
+		return `${line.padEnd(60)} ${coloredSuffix}`;
+	}
+
 	const line = `  ${idx}  ${time}  ${level} ${label}`;
 	if (!suffix) return line;
 	return `${line.padEnd(60)} ${suffix}`;
+}
+
+function colorizeLevel(type: string, text: string, passed?: boolean): string {
+	switch (type) {
+		case "dump": return chalk.cyan(text);
+		case "info": return chalk.blue(text);
+		case "warn": return chalk.yellow(text);
+		case "error": return chalk.red(text);
+		case "timer-start":
+		case "timer-end": return chalk.magenta(text);
+		case "checkpoint": return chalk.green(text);
+		case "assert": return passed ? chalk.green(text) : chalk.red(text);
+		case "snapshot": return chalk.cyan(text);
+		case "trace": return chalk.gray(text);
+		case "raw": return chalk.dim(text);
+		default: return text;
+	}
+}
+
+function colorizeSuffix(entry: IndexedLogEntry, suffix: string): string {
+	if (!suffix) return "";
+	if (entry.level === "assert") {
+		return entry.passed ? chalk.green(suffix) : chalk.red(suffix);
+	}
+	if (entry.level === "timer-end" && entry.durationMs != null) {
+		return chalk.magenta(suffix);
+	}
+	if (entry.refId) {
+		return chalk.dim(suffix);
+	}
+	return suffix;
 }
 
 /**
@@ -68,26 +111,25 @@ export function formatL1(
 	sessionName: string,
 	entries: IndexedLogEntry[],
 	stats: SessionStats,
-	_pretty: boolean,
+	pretty: boolean,
 ): string {
 	const lines: string[] = [];
 
-	lines.push(
-		`Session: ${sessionName} (${stats.entryCount} entries, ${formatDuration(stats.spanMs, "ms")} span)`
-	);
+	const header = `Session: ${sessionName} (${stats.entryCount} entries, ${formatDuration(stats.spanMs, "ms")} span)`;
+	lines.push(pretty ? chalk.bold(header) : header);
 	lines.push("");
 	lines.push(formatSummary(stats));
 	lines.push("");
 
-	// Entries with file headers on change
 	let currentFile = "";
 	for (const entry of entries) {
 		const file = entry.file ?? "unknown";
 		if (file !== currentFile) {
 			currentFile = file;
-			lines.push(`File: ${file}`);
+			const fileHeader = `File: ${file}`;
+			lines.push(pretty ? chalk.dim(fileHeader) : fileHeader);
 		}
-		lines.push(formatEntryLine(entry, _pretty));
+		lines.push(formatEntryLine(entry, pretty));
 	}
 
 	return lines.join("\n");
@@ -99,7 +141,8 @@ export function formatL1(
 export function formatTip(entries: IndexedLogEntry[]): string {
 	const refEntry = entries.find((e) => e.refId);
 	if (refEntry) {
-		return `\nTip: Expand a ref → ${TOOL} expand ${refEntry.refId}`;
+		const cmd = suggestCommand(TOOL, { add: ["expand", refEntry.refId] });
+		return `\nTip: Expand a ref → ${cmd}`;
 	}
 	return "";
 }
