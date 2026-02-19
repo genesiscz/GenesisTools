@@ -58,7 +58,7 @@ cd GenesisTools
 | **Command** | `setup` | Interactive setup guide for installing GenesisTools globally |
 | **Command** | `claude-history` | Search Claude Code conversation history by keywords, files, or time |
 | **Command** | `claude-resume` | Resume Claude Code sessions by short ID, name, or content search |
-| **Command** | `cc` | Alias for `claude-resume` |
+| **Command** | `cc` | Alias for `claude resume` |
 | **Command** | `github-pr` | Fetch PR review comments, select fixes, implement and commit |
 | **Skill** | `azure-devops` | Fetch and manage Azure DevOps work items, queries, and time logging |
 | **Skill** | `react-compiler-debug` | Debug and inspect React Compiler output for memoization issues |

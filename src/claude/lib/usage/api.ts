@@ -1,7 +1,5 @@
 import type { AccountConfig } from "../config";
 
-// --- Types ---
-
 export interface UsageBucket {
 	utilization: number;
 	resets_at: string | null;
@@ -21,8 +19,6 @@ export interface AccountUsage {
 	usage?: UsageResponse;
 	error?: string;
 }
-
-// --- Keychain ---
 
 export interface KeychainCredentials {
 	accessToken: string;
@@ -51,8 +47,6 @@ export async function getKeychainCredentials(): Promise<KeychainCredentials | nu
 		return null;
 	}
 }
-
-// --- API ---
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 

@@ -11,44 +11,44 @@ Search through Claude Code conversation history to find past interactions.
 
 ```bash
 # Basic search
-tools claude-history "keyword"
+tools claude history "keyword"
 
 # Search with filters
-tools claude-history "query" --tool Edit --since "7 days ago"
+tools claude history "query" --tool Edit --since "7 days ago"
 
 # Interactive mode
-tools claude-history -i
+tools claude history -i
 ```
 
 ## Common Use Cases
 
 ### Find by Keywords
 ```bash
-tools claude-history "backup mcp-manager refactor"
-tools claude-history "authentication bug" --exact
+tools claude history "backup mcp-manager refactor"
+tools claude history "authentication bug" --exact
 ```
 
 ### Find by File Modified
 ```bash
-tools claude-history --file "config/api.php"
-tools claude-history --file "*.tsx" --tool Edit
+tools claude history --file "config/api.php"
+tools claude history --file "*.tsx" --tool Edit
 ```
 
 ### Find by Tool Usage
 ```bash
-tools claude-history --tool Edit --since "7 days ago"
-tools claude-history --tool Task --limit 50
+tools claude history --tool Edit --since "7 days ago"
+tools claude history --tool Task --limit 50
 ```
 
 ### Find by Project
 ```bash
-tools claude-history "timer" --project GenesisTools
-tools claude-history "migration" --all  # Search all projects
+tools claude history "timer" --project GenesisTools
+tools claude history "migration" --all  # Search all projects
 ```
 
 ### Show Context
 ```bash
-tools claude-history "timer" --context 10  # 10 messages before/after
+tools claude history "timer" --context 10  # 10 messages before/after
 ```
 
 ## CLI Options
@@ -86,16 +86,16 @@ Summarize Claude Code sessions using LLM-powered templates. Extracts key informa
 
 ```bash
 # Interactive mode — guided session & mode selection
-tools claude-history summarize -i
+tools claude history summarize -i
 
 # Summarize a specific session
-tools claude-history summarize <session-id> --mode documentation
+tools claude history summarize <session-id> --mode documentation
 
 # Summarize current session (inside Claude Code)
-tools claude-history summarize --current --mode short-memory
+tools claude history summarize --current --mode short-memory
 
 # Output prompt only (no LLM call)
-tools claude-history summarize <session-id> --prompt-only --mode changelog
+tools claude history summarize <session-id> --prompt-only --mode changelog
 ```
 
 ### Summarization Modes
@@ -137,24 +137,24 @@ tools claude-history summarize <session-id> --prompt-only --mode changelog
 
 ```bash
 # Generate onboarding docs from a session
-tools claude-history summarize abc123 --mode onboarding -o docs/onboarding.md
+tools claude history summarize abc123 --mode onboarding -o docs/onboarding.md
 
 # Extract debug learnings
-tools claude-history summarize abc123 --mode debug-postmortem --clipboard
+tools claude history summarize abc123 --mode debug-postmortem --clipboard
 
 # Memorization with topic files
-tools claude-history summarize abc123 --mode memorization --memory-dir ./memory/
+tools claude history summarize abc123 --mode memorization --memory-dir ./memory/
 
 # Large session with chunked processing
-tools claude-history summarize abc123 --mode documentation --thorough
+tools claude history summarize abc123 --mode documentation --thorough
 
 # Custom analysis
-tools claude-history summarize abc123 --mode custom --custom-prompt "List all API endpoints discussed"
+tools claude history summarize abc123 --mode custom --custom-prompt "List all API endpoints discussed"
 
 # Use specific model
-tools claude-history summarize abc123 --mode short-memory --provider anthropic --model claude-sonnet-4-5-20250929
+tools claude history summarize abc123 --mode short-memory --provider anthropic --model claude-sonnet-4-5-20250929
 ```
 
 ## Dashboard
 
-For visual exploration, `tools claude-history-dashboard` launches a web-based React/Vite interface for browsing and analyzing conversation history.
+For visual exploration, `tools claude history-dashboard` launches a web-based React/Vite interface for browsing and analyzing conversation history.

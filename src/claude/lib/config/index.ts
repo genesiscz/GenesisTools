@@ -1,7 +1,5 @@
 import { Storage } from "@app/utils/storage/storage";
 
-// --- Types ---
-
 export interface AccountConfig {
 	accessToken: string;
 	email?: string;
@@ -27,8 +25,6 @@ export interface ClaudeConfig {
 	notifications: NotificationConfig;
 }
 
-// --- Defaults ---
-
 const DEFAULT_NOTIFICATIONS: NotificationConfig = {
 	sessionThresholds: [80],
 	weeklyThresholds: [20, 40, 60, 80],
@@ -40,8 +36,6 @@ const DEFAULT_CONFIG: ClaudeConfig = {
 	accounts: {},
 	notifications: DEFAULT_NOTIFICATIONS,
 };
-
-// --- Storage ---
 
 const storage = new Storage("claude");
 

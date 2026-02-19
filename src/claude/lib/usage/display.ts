@@ -5,15 +5,11 @@ const BAR_WIDTH = 40;
 const BLOCK_FULL = "\u2588"; // █
 const BLOCK_HALF = "\u258C"; // ▌
 
-// --- Color logic ---
-
 function colorForPct(pct: number): (s: string) => string {
 	if (pct >= 80) return pc.red;
 	if (pct >= 50) return pc.yellow;
 	return pc.green;
 }
-
-// --- Progress bar ---
 
 function renderBar(pct: number): string {
 	const filled = Math.floor((pct / 100) * BAR_WIDTH);
@@ -23,8 +19,6 @@ function renderBar(pct: number): string {
 	const empty = " ".repeat(BAR_WIDTH - filled - (hasHalf ? 1 : 0));
 	return `${bar}${empty}  ${Math.round(pct)}% used`;
 }
-
-// --- Bucket labels ---
 
 const BUCKET_LABELS: Record<string, string> = {
 	five_hour: "Current session",
@@ -36,8 +30,6 @@ const BUCKET_LABELS: Record<string, string> = {
 function bucketLabel(key: string): string {
 	return BUCKET_LABELS[key] ?? key.replace(/_/g, " ");
 }
-
-// --- Reset time formatting ---
 
 function formatResetTime(resetsAt: string | null): string {
 	if (!resetsAt) return "";
@@ -51,8 +43,6 @@ function formatResetTime(resetsAt: string | null): string {
 	});
 	return `Resets ${timeFmt.format(d)}`;
 }
-
-// --- Render account usage ---
 
 export function renderAccountUsage(account: AccountUsage): string {
 	const lines: string[] = [];

@@ -4,8 +4,6 @@ import pc from "picocolors";
 import { loadConfig, saveConfig, type ClaudeConfig } from "../lib/config";
 import { getKeychainCredentials, fetchUsage } from "../lib/usage/api";
 
-// --- Interactive config ---
-
 async function interactiveConfig(): Promise<void> {
 	p.intro(pc.bgCyan(pc.black(" claude config ")));
 
@@ -37,8 +35,6 @@ async function interactiveConfig(): Promise<void> {
 		}
 	}
 }
-
-// --- Account management ---
 
 async function manageAccounts(config: ClaudeConfig): Promise<void> {
 	const action = await p.select({
@@ -155,8 +151,6 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 	}
 }
 
-// --- Notification settings ---
-
 async function manageNotifications(config: ClaudeConfig): Promise<void> {
 	const sessionThresholds = await p.text({
 		message: "Session thresholds (comma-separated %):",
@@ -197,8 +191,6 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
 	p.log.success("Notification settings saved.");
 }
 
-// --- Show config ---
-
 function showConfig(config: ClaudeConfig): void {
 	const accounts = Object.entries(config.accounts);
 	const lines = [
@@ -218,8 +210,6 @@ function showConfig(config: ClaudeConfig): void {
 
 	p.note(lines.join("\n"), "Current Configuration");
 }
-
-// --- Command registration ---
 
 export function registerConfigCommand(program: Command): void {
 	const configCmd = program
