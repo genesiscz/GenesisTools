@@ -49,6 +49,7 @@
         "@gitbeaker/rest": "^43.5.0",
         "@iarna/toml": "^2.2.5",
         "@inquirer/prompts": "^8.2.0",
+        "@jmespath-community/jmespath": "^1.3.0",
         "@mdit/plugin-alert": "^0.22.4",
         "@modelcontextprotocol/sdk": "^1.25.2",
         "@modelcontextprotocol/server-github": "^2025.4.8",
