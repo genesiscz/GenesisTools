@@ -19,8 +19,8 @@ export async function watchUsage(
 	accounts: Record<string, AccountConfig>,
 	notifications: NotificationConfig,
 ): Promise<never> {
-	// Track the last utilization we notified about for each bucket
-	const lastNotifiedUtilization = new Map<string, number>();
+	// Track which buckets we've already notified about (to avoid repeat notifications)
+	const notifiedBuckets = new Set<string>();
 	const lastResetsAt = new Map<string, string | null>();
 	const intervalMs = (notifications.watchInterval || 60) * 1000;
 	let isFirstPoll = true;
@@ -53,7 +53,7 @@ export async function watchUsage(
 				// Clear state when the period resets
 				const prevReset = lastResetsAt.get(bucketKey);
 				if (prevReset !== undefined && prevReset !== data.resets_at) {
-					lastNotifiedUtilization.delete(bucketKey);
+					notifiedBuckets.delete(bucketKey);
 				}
 				lastResetsAt.set(bucketKey, data.resets_at);
 
@@ -63,31 +63,22 @@ export async function watchUsage(
 					.filter((t) => utilization >= t)
 					.sort((a, b) => b - a)[0];
 
+				// No threshold crossed? Skip
 				if (crossedThreshold === undefined) continue;
 
-				// Check if we should notify
-				const lastNotified = lastNotifiedUtilization.get(bucketKey);
-				const bucketLabel = bucket === "five_hour" ? "Session" : bucket.replace(/_/g, " ");
+				// Already notified about this bucket? Skip (until period resets)
+				if (notifiedBuckets.has(bucketKey)) continue;
 
-				if (isFirstPoll) {
-					// On first poll, notify about all crossed thresholds, then set baseline
-					if (crossedThreshold !== undefined && notifications.channels.macos) {
-						pendingNotifications.push({
-							title: "Claude Usage Alert",
-							message: `${account.accountName}: ${bucketLabel} ${Math.round(utilization)}%`,
-						});
-					}
-					lastNotifiedUtilization.set(bucketKey, utilization);
-				} else {
-					// Subsequent polls: only notify if utilization increased by at least 5%
-					const baseline = lastNotified ?? 0;
-					if (utilization >= baseline + MIN_NOTIFICATION_GAP && notifications.channels.macos) {
-						lastNotifiedUtilization.set(bucketKey, utilization);
-						pendingNotifications.push({
-							title: "Claude Usage Alert",
-							message: `${account.accountName}: ${bucketLabel} ${Math.round(utilization)}%`,
-						});
-					}
+				// Mark as notified
+				notifiedBuckets.add(bucketKey);
+
+				// Queue notification
+				if (notifications.channels.macos) {
+					const bucketLabel = bucket === "five_hour" ? "Session" : bucket.replace(/_/g, " ");
+					pendingNotifications.push({
+						title: "Claude Usage Alert",
+						message: `${account.accountName}: ${bucketLabel} ${Math.round(utilization)}%`,
+					});
 				}
 			}
 		}
@@ -97,7 +88,6 @@ export async function watchUsage(
 		// Send notifications asynchronously (don't await, fire and forget)
 		if (pendingNotifications.length > 0) {
 			// Send all as one batch — don't spam with multiple notifications
-			// Just send the first one (highest priority) to avoid notification spam
 			const notification = pendingNotifications[0];
 			sendNotification({
 				title: notification.title,
