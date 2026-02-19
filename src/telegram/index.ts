@@ -3,6 +3,7 @@ import { handleReadmeFlag } from "@app/utils/readme";
 import { registerConfigureCommand } from "./commands/configure";
 import { registerListenCommand } from "./commands/listen";
 import { registerContactsCommand } from "./commands/contacts";
+import { registerHistoryCommand } from "./commands/history";
 
 handleReadmeFlag(import.meta.url);
 
@@ -16,5 +17,6 @@ program
 registerConfigureCommand(program);
 registerListenCommand(program);
 registerContactsCommand(program);
+registerHistoryCommand(program);
 
 program.parseAsync();
