@@ -84,16 +84,16 @@ export async function getClaudeJsonAccount(): Promise<ClaudeJsonAccount | undefi
 }
 
 export async function getKeychainCredentials(): Promise<KeychainCredentials | null> {
-	const proc = Bun.spawn({
-		cmd: ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	const text = await new Response(proc.stdout).text();
-	const exitCode = await proc.exited;
-	if (exitCode !== 0 || !text.trim()) return null;
-
 	try {
+		const proc = Bun.spawn({
+			cmd: ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const text = await new Response(proc.stdout).text();
+		const exitCode = await proc.exited;
+		if (exitCode !== 0 || !text.trim()) return null;
+
 		const data = JSON.parse(text.trim());
 		const oauth = data.claudeAiOauth;
 		if (!oauth?.accessToken) return null;

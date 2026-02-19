@@ -240,8 +240,11 @@ async function showConfig(config: ClaudeConfig): Promise<void> {
 		const spinner = p.spinner();
 		spinner.start("Fetching account profiles...");
 
-		const profiles = await Promise.all(
+		const profileResults = await Promise.allSettled(
 			accounts.map(async ([, acc]) => fetchOAuthProfile(acc.accessToken)),
+		);
+		const profiles = profileResults.map((r) =>
+			r.status === "fulfilled" ? r.value : undefined,
 		);
 		const claudeJson = await getClaudeJsonAccount();
 
