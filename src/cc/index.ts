@@ -1,11 +1,8 @@
-// Alias for claude-resume — pass all args through
+#!/usr/bin/env bun
 import { resolve } from "node:path";
-
-const claudeResume = resolve(import.meta.dir, "../claude-resume/index.ts");
+const claude = resolve(import.meta.dir, "../claude/index.ts");
 const proc = Bun.spawn({
-	cmd: ["bun", "run", claudeResume, ...process.argv.slice(2)],
+	cmd: ["bun", "run", claude, "resume", ...process.argv.slice(2)],
 	stdio: ["inherit", "inherit", "inherit"],
 });
-
-const exitCode = await proc.exited;
-process.exit(exitCode);
+process.exit(await proc.exited);

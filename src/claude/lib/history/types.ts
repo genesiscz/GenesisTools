@@ -6,13 +6,13 @@
  */
 
 // Re-export all shared types for backward compatibility
-export * from "../utils/claude/types";
+export * from "@app/utils/claude/types";
 
 // =============================================================================
 // Search & Filter Types (specific to claude-history tool)
 // =============================================================================
 
-import type { ConversationMessage } from "../utils/claude/types";
+import type { ConversationMessage } from "@app/utils/claude/types";
 
 export interface SearchFilters {
     query?: string;

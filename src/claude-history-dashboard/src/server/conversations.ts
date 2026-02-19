@@ -14,7 +14,7 @@ import {
 	getStatsForDateRange,
 	type SearchFilters,
 	searchConversations,
-} from "@app/claude-history/lib";
+} from "@app/claude/lib/history/search";
 import { createServerFn } from "@tanstack/react-start";
 
 // Serializable types for client/server communication

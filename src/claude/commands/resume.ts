@@ -1,18 +1,17 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { basename } from "node:path";
 import { formatRelativeTime } from "@app/utils/format";
 import { detectCurrentProject, findClaudeCommand } from "@app/utils/claude";
-import logger from "@app/logger";
-import { getSessionMetadata } from "@app/claude-history/cache";
+import { getSessionMetadata } from "../lib/history/cache";
 import {
 	getSessionListing,
 	rgExtractSnippet,
 	rgSearchFiles,
 	searchConversations,
 	type SessionMetadataRecord,
-} from "@app/claude-history/lib";
+} from "../lib/history/search";
 
 // --- Constants ---
 
@@ -34,7 +33,7 @@ interface DisplaySession {
 	matchSnippet?: string;
 }
 
-interface Options {
+interface ResumeOptions {
 	list?: boolean;
 	allProjects?: boolean;
 	limit: string;
@@ -161,11 +160,12 @@ interface ContentSearchResult {
 	overlap: number;
 }
 
-async function searchByContent(query: string, spinner: Spinner, project?: string): Promise<ContentSearchResult> {
-	// Run both phases in parallel — rg is fast and catches content
-	// that metadata misses (assistant messages, text past 5000-char cap)
+async function searchByContent(
+	query: string,
+	spinner: Spinner,
+	project?: string,
+): Promise<ContentSearchResult> {
 	const [metaResults, matchingFiles] = await Promise.all([
-		// Phase 1: SQLite metadata search (title, summary, firstPrompt, allUserText)
 		searchConversations({
 			query,
 			project,
@@ -173,7 +173,6 @@ async function searchByContent(query: string, spinner: Spinner, project?: string
 			limit: 20,
 			summaryOnly: true,
 		}),
-		// Phase 2: ripgrep full-content search (everything in JSONL)
 		rgSearchFiles(query, { project, limit: 30 }),
 	]);
 
@@ -188,10 +187,8 @@ async function searchByContent(query: string, spinner: Spinner, project?: string
 		}),
 	);
 
-	// Build set of session IDs already found by metadata search
 	const metaSessionIds = new Set(metaSessions.map((s) => s.sessionId));
 
-	// Add rg-only results (not already in metadata results) with snippets
 	const rgOnlyFiles = matchingFiles.filter((filePath) => {
 		const cached = getSessionMetadata(filePath);
 		const sid = cached?.sessionId || basename(filePath, ".jsonl");
@@ -208,9 +205,8 @@ async function searchByContent(query: string, spinner: Spinner, project?: string
 		const cached = getSessionMetadata(filePath);
 		const snippet = await rgExtractSnippet(query, filePath);
 
-		rgSessions.push(toDisplay(
-			cached?.sessionId || basename(filePath, ".jsonl"),
-			{
+		rgSessions.push(
+			toDisplay(cached?.sessionId || basename(filePath, ".jsonl"), {
 				title: cached?.customTitle,
 				summary: cached?.summary,
 				firstPrompt: cached?.firstPrompt,
@@ -219,8 +215,8 @@ async function searchByContent(query: string, spinner: Spinner, project?: string
 				timestamp: cached?.firstTimestamp || new Date(0).toISOString(),
 				source: "search",
 				matchSnippet: snippet,
-			},
-		));
+			}),
+		);
 	}
 
 	const overlap = matchingFiles.length - rgOnlyFiles.length;
@@ -238,21 +234,15 @@ async function searchByContent(query: string, spinner: Spinner, project?: string
 
 const EXCERPT_MAX_LEN = 120;
 
-/**
- * Build a conversation excerpt line that adds context beyond the session name.
- * Priority: matchSnippet > summary (if name isn't summary) > firstPrompt (if name isn't firstPrompt).
- */
 function buildExcerpt(s: DisplaySession): string | undefined {
 	if (s.matchSnippet) return s.matchSnippet;
 
 	const nameNorm = s.name.toLowerCase().trim();
 
-	// If name came from custom title → show summary or first prompt
 	if (s.summary && s.summary.toLowerCase().trim() !== nameNorm) {
 		return s.summary;
 	}
 
-	// If name came from summary → show first prompt
 	const promptPreview = s.firstPrompt.slice(0, PROMPT_PREVIEW_LEN);
 	if (s.firstPrompt && promptPreview.toLowerCase().trim() !== nameNorm) {
 		return s.firstPrompt;
@@ -306,7 +296,6 @@ async function selectSession(candidates: DisplaySession[]): Promise<DisplaySessi
 }
 
 async function resumeSession(session: DisplaySession): Promise<never> {
-	// Validate sessionId to prevent shell injection
 	if (!/^[\w-]+$/.test(session.sessionId)) {
 		throw new Error(`Invalid session ID: ${session.sessionId}`);
 	}
@@ -324,16 +313,17 @@ async function resumeSession(session: DisplaySession): Promise<never> {
 	process.exit(exitCode);
 }
 
-// --- Main ---
+// --- Main logic ---
 
-async function main(query: string | undefined, opts: Options) {
-	p.intro(pc.bgCyan(pc.black(" claude-resume ")));
+async function main(query: string | undefined, opts: ResumeOptions) {
+	p.intro(pc.bgCyan(pc.black(" claude resume ")));
 	const limit = parseInt(opts.limit, 10) || 20;
 
 	const spinner = p.spinner();
 	spinner.start("Loading sessions...");
 	const loadResult = await loadSessions(opts.allProjects ?? false, spinner);
-	const { sessions, subagents, project, indexed, staleRemoved, reindexed, projectCount, scope } = loadResult;
+	const { sessions, subagents, project, indexed, staleRemoved, reindexed, projectCount, scope } =
+		loadResult;
 
 	const statsParts = [
 		`${sessions.length} sessions`,
@@ -348,9 +338,10 @@ async function main(query: string | undefined, opts: Options) {
 		staleRemoved > 0 ? `${staleRemoved} stale removed` : "",
 	].filter(Boolean);
 
-	const statsLine = indexParts.length > 0
-		? `${statsParts.join(", ")} ${pc.dim("(")}${indexParts.join(", ")}${pc.dim(")")}`
-		: statsParts.join(", ");
+	const statsLine =
+		indexParts.length > 0
+			? `${statsParts.join(", ")} ${pc.dim("(")}${indexParts.join(", ")}${pc.dim(")")}`
+			: statsParts.join(", ");
 	spinner.stop(statsLine);
 
 	if (sessions.length === 0) {
@@ -367,8 +358,9 @@ async function main(query: string | undefined, opts: Options) {
 
 		if (candidates.length > 0) {
 			p.log.info(
-				pc.dim(`index: ${candidates.length} match${candidates.length !== 1 ? "es" : ""} `) +
-				pc.dim(`(name/branch/project/prompt)`),
+				pc.dim(
+					`index: ${candidates.length} match${candidates.length !== 1 ? "es" : ""} `,
+				) + pc.dim(`(name/branch/project/prompt)`),
 			);
 		} else {
 			p.log.info(pc.dim(`index: 0 matches for "${query}", searching content...`));
@@ -382,7 +374,9 @@ async function main(query: string | undefined, opts: Options) {
 				result.overlap > 0 ? `${result.overlap} overlap` : "",
 				result.rgUniqueHits > 0 ? `${pc.yellow(`${result.rgUniqueHits}`)} rg-only` : "",
 			].filter(Boolean);
-			searchSpinner.stop(`${result.sessions.length} matches ${pc.dim(`(${searchStatsParts.join(", ")})`)}`);
+			searchSpinner.stop(
+				`${result.sessions.length} matches ${pc.dim(`(${searchStatsParts.join(", ")})`)}`,
+			);
 
 			if (result.sessions.length > 0) {
 				candidates = dedup(
@@ -406,28 +400,27 @@ async function main(query: string | undefined, opts: Options) {
 	await resumeSession(selected);
 }
 
-// --- CLI ---
+// --- Command Registration ---
 
-const program = new Command();
-
-program
-	.name("claude-resume")
-	.description("Resume a Claude Code session by short ID, name, or content search")
-	.argument("[query]", "Session ID prefix, name, or search term")
-	.option("-l, --list", "List recent sessions")
-	.option("-a, --all-projects", "Search all projects (default: current project only)")
-	.option("-n, --limit <n>", "Number of sessions to show", "20")
-	.action(async (query: string | undefined, opts: Options) => {
-		try {
-			await main(query, opts);
-		} catch (error) {
-			if (error instanceof Error && (error.name === "ExitPromptError" || error.message === "Cancelled")) {
-				process.exit(0);
+export function registerResumeCommand(program: Command): void {
+	program
+		.command("resume")
+		.description("Resume a Claude Code session by short ID, name, or content search")
+		.argument("[query]", "Session ID prefix, name, or search term")
+		.option("-l, --list", "List recent sessions")
+		.option("-a, --all-projects", "Search all projects (default: current project only)")
+		.option("-n, --limit <n>", "Number of sessions to show", "20")
+		.action(async (query: string | undefined, opts: ResumeOptions) => {
+			try {
+				await main(query, opts);
+			} catch (error) {
+				if (
+					error instanceof Error &&
+					(error.name === "ExitPromptError" || error.message === "Cancelled")
+				) {
+					process.exit(0);
+				}
+				throw error;
 			}
-			logger.error(`claude-resume error: ${error}`);
-			p.log.error(String(error));
-			process.exit(1);
-		}
-	});
-
-program.parse();
+		});
+}
