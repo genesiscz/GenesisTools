@@ -1,10 +1,12 @@
 import type { Bot } from "grammy";
+import * as p from "@clack/prompts";
 import { getDaemonPid } from "@app/automate/lib/daemon";
 import { getDaemonStatus } from "@app/automate/lib/launchd";
 import { getDb } from "@app/automate/lib/db";
 
 export function registerStatusCommand(bot: Bot): void {
   bot.command("status", async (ctx) => {
+    p.log.step("/status → fetching daemon status + schedules");
     const daemonStatus = await getDaemonStatus();
     const fgPid = getDaemonPid();
     const db = getDb();
@@ -29,5 +31,6 @@ export function registerStatusCommand(bot: Bot): void {
     }
 
     await ctx.reply(lines.join("\n"));
+    p.log.success(`/status → replied (${lines.length} lines)`);
   });
 }

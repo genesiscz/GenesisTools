@@ -22,8 +22,14 @@ export function registerStartCommand(program: Command): void {
 
       await bot.api.setMyCommands(COMMANDS);
 
+      let pollCount = 0;
+      const timeout = 30;
       await bot.start({
-        onStart: () => p.log.info("Polling started"),
+        timeout,
+        onStart: () => {
+          pollCount++;
+          p.log.info(`Polling started (long-polling, ${timeout}s timeout, run #${pollCount})`);
+        },
       });
     });
 }

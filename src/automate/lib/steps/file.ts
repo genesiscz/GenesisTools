@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, unlinkSync, renameSync, copyFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { glob } from "glob";
-import { registerStepHandler } from "../registry";
+import { registerStepHandler, registerStepCatalog } from "../registry";
 import type { StepContext } from "../registry";
 import type { FileStepParams, PresetStep, StepResult } from "../types";
 import { makeResult } from "./helpers";
@@ -117,3 +117,37 @@ async function fileHandler(step: PresetStep, ctx: StepContext): Promise<StepResu
 }
 
 registerStepHandler("file", fileHandler);
+registerStepCatalog({
+  prefix: "file",
+  description: "File system operations",
+  actions: [
+    { action: "file.read", description: "Read file contents", params: [
+      { name: "path", required: true, description: "File path" },
+    ]},
+    { action: "file.write", description: "Write content to file", params: [
+      { name: "path", required: true, description: "File path" },
+      { name: "content", required: true, description: "Content to write" },
+    ]},
+    { action: "file.copy", description: "Copy a file", params: [
+      { name: "source", required: true, description: "Source path" },
+      { name: "destination", required: true, description: "Destination path" },
+    ]},
+    { action: "file.move", description: "Move/rename a file", params: [
+      { name: "source", required: true, description: "Source path" },
+      { name: "destination", required: true, description: "Destination path" },
+    ]},
+    { action: "file.delete", description: "Delete a file", params: [
+      { name: "path", required: true, description: "File path" },
+    ]},
+    { action: "file.glob", description: "Find files by glob pattern", params: [
+      { name: "pattern", required: true, description: "Glob pattern" },
+      { name: "cwd", description: "Working directory" },
+    ]},
+    { action: "file.template", description: "Render a template", params: [
+      { name: "templatePath", description: "Path to template file" },
+      { name: "content", description: "Inline template string" },
+      { name: "variables", description: "Template variables" },
+      { name: "path", description: "Output file path (if omitted, returns content)" },
+    ]},
+  ],
+});

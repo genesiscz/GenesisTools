@@ -1,6 +1,6 @@
 // src/automate/lib/steps/nlp.ts
 
-import { registerStepHandler } from "../registry";
+import { registerStepHandler, registerStepCatalog } from "../registry";
 import type { StepContext } from "../registry";
 import type { NlpStepParams, PresetStep, StepResult } from "../types";
 import { makeResult } from "./helpers";
@@ -80,3 +80,29 @@ async function nlpHandler(step: PresetStep, ctx: StepContext): Promise<StepResul
 }
 
 registerStepHandler("nlp", nlpHandler);
+registerStepCatalog({
+  prefix: "nlp",
+  description: "Natural language processing (macOS NaturalLanguage)",
+  actions: [
+    { action: "nlp.sentiment", description: "Analyze text sentiment (-1 to 1)", params: [
+      { name: "text", required: true, description: "Text to analyze" },
+    ]},
+    { action: "nlp.language", description: "Detect text language", params: [
+      { name: "text", required: true, description: "Text to analyze" },
+    ]},
+    { action: "nlp.tag", description: "Tag text (POS, named entities, etc.)", params: [
+      { name: "text", required: true, description: "Text to tag" },
+      { name: "schemes", description: "Tag schemes (default: ['lexicalClass'])" },
+      { name: "language", description: "BCP-47 code (default: 'en')" },
+    ]},
+    { action: "nlp.distance", description: "Semantic distance between two texts", params: [
+      { name: "text", required: true, description: "First text" },
+      { name: "text2", required: true, description: "Second text" },
+      { name: "type", description: "'word' or 'sentence' (default: 'sentence')" },
+    ]},
+    { action: "nlp.embed", description: "Get text embedding vector", params: [
+      { name: "text", required: true, description: "Text to embed" },
+      { name: "type", description: "'word' or 'sentence' (default: 'sentence')" },
+    ]},
+  ],
+});

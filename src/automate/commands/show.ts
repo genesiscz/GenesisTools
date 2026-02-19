@@ -3,16 +3,27 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import type { Command } from "commander";
-import { getPresetMeta, loadPreset } from "@app/automate/lib/storage.ts";
+import { getPresetMeta, listPresets, loadPreset } from "@app/automate/lib/storage.ts";
 import { isBuiltinAction } from "@app/automate/lib/builtins.ts";
 import { formatRelativeTime } from "@app/utils/format.ts";
 
 export function registerShowCommand(program: Command): void {
   program
-    .command("show <preset>")
+    .command("show [preset]")
     .description("Show preset details (variables, steps, metadata)")
-    .action(async (presetArg: string) => {
+    .action(async (presetArg?: string) => {
       p.intro(pc.bgCyan(pc.black(" automate show ")));
+
+      if (!presetArg) {
+        const presets = await listPresets();
+        if (presets.length === 0) { p.log.warn("No presets found."); p.outro(""); return; }
+        p.log.step(pc.underline("Available presets:"));
+        for (const pr of presets) {
+          p.log.info(`  ${pc.cyan(pr.fileName.replace(".json", ""))} — ${pr.description ?? pc.dim("(no description)")}`);
+        }
+        p.outro("");
+        return;
+      }
 
       let preset;
       try {

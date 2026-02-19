@@ -1,6 +1,6 @@
 // src/automate/lib/steps/http.ts
 
-import { registerStepHandler } from "../registry";
+import { registerStepHandler, registerStepCatalog } from "../registry";
 import type { StepContext } from "../registry";
 import type { HttpStepParams, PresetStep, StepResult } from "../types";
 import { loadCredential, resolveCredentialHeaders } from "../credentials";
@@ -112,3 +112,34 @@ async function httpHandler(step: PresetStep, ctx: StepContext): Promise<StepResu
 }
 
 registerStepHandler("http", httpHandler);
+registerStepCatalog({
+  prefix: "http",
+  description: "HTTP requests",
+  actions: [
+    { action: "http.get", description: "GET request", params: [
+      { name: "url", required: true, description: "Target URL" },
+      { name: "headers", description: "Custom headers" },
+      { name: "query", description: "Query parameters" },
+      { name: "credential", description: "Stored credential name" },
+      { name: "timeout", description: "Timeout in ms (default: 30000)" },
+      { name: "validateStatus", description: "Expression to validate status code" },
+    ]},
+    { action: "http.post", description: "POST request", params: [
+      { name: "url", required: true, description: "Target URL" },
+      { name: "body", description: "Request body (JSON or string)" },
+      { name: "headers", description: "Custom headers" },
+      { name: "credential", description: "Stored credential name" },
+    ]},
+    { action: "http.put", description: "PUT request", params: [
+      { name: "url", required: true, description: "Target URL" },
+      { name: "body", description: "Request body" },
+    ]},
+    { action: "http.patch", description: "PATCH request", params: [
+      { name: "url", required: true, description: "Target URL" },
+      { name: "body", description: "Request body" },
+    ]},
+    { action: "http.delete", description: "DELETE request", params: [
+      { name: "url", required: true, description: "Target URL" },
+    ]},
+  ],
+});

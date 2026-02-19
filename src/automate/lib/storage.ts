@@ -1,6 +1,6 @@
 // src/automate/lib/storage.ts
 
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Storage } from "@app/utils/storage/storage.ts";
 import type { Preset, PresetMeta } from "./types.ts";
@@ -8,13 +8,25 @@ import { validatePreset, validateStepGraph } from "./schema.ts";
 
 const storage = new Storage("automate");
 const PRESETS_DIR = "presets";
+const BUNDLED_PRESETS_DIR = resolve(import.meta.dir, "../presets");
 
-/** Ensure storage directories exist */
 export async function ensureStorage(): Promise<void> {
   await storage.ensureDirs();
   const presetsDir = join(storage.getBaseDir(), PRESETS_DIR);
   if (!existsSync(presetsDir)) {
     mkdirSync(presetsDir, { recursive: true });
+  }
+  seedBundledPresets(presetsDir);
+}
+
+function seedBundledPresets(presetsDir: string): void {
+  if (!existsSync(BUNDLED_PRESETS_DIR)) return;
+  const bundled = readdirSync(BUNDLED_PRESETS_DIR).filter(f => f.endsWith(".json"));
+  for (const file of bundled) {
+    const dest = join(presetsDir, file);
+    if (!existsSync(dest)) {
+      copyFileSync(join(BUNDLED_PRESETS_DIR, file), dest);
+    }
   }
 }
 

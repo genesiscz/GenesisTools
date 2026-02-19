@@ -1,7 +1,7 @@
 // src/automate/lib/steps/git.ts
 
 import { createGit } from "@app/utils/git/core";
-import { registerStepHandler } from "../registry";
+import { registerStepHandler, registerStepCatalog } from "../registry";
 import type { StepContext } from "../registry";
 import type { GitStepParams, PresetStep, StepResult } from "../types";
 import { makeResult } from "./helpers";
@@ -98,3 +98,30 @@ async function gitHandler(step: PresetStep, ctx: StepContext): Promise<StepResul
 }
 
 registerStepHandler("git", gitHandler);
+registerStepCatalog({
+  prefix: "git",
+  description: "Git operations",
+  actions: [
+    { action: "git.status", description: "Get repo status (branch, changed files)", params: [
+      { name: "cwd", description: "Repository path" },
+    ]},
+    { action: "git.commit", description: "Stage and commit changes", params: [
+      { name: "message", description: "Commit message (default: 'Automated commit')" },
+      { name: "files", description: "Files to stage (default: all)" },
+      { name: "cwd", description: "Repository path" },
+    ]},
+    { action: "git.branch", description: "Create a new branch", params: [
+      { name: "branch", required: true, description: "Branch name" },
+      { name: "from", description: "Base ref" },
+    ]},
+    { action: "git.diff", description: "Get diff between refs", params: [
+      { name: "from", description: "From ref (default: HEAD~1)" },
+      { name: "to", description: "To ref (default: HEAD)" },
+    ]},
+    { action: "git.log", description: "Get commit log", params: [
+      { name: "limit", description: "Max commits (default: 10)" },
+      { name: "from", description: "From ref" },
+      { name: "to", description: "To ref (default: HEAD)" },
+    ]},
+  ],
+});

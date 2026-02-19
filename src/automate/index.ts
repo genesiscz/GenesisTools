@@ -9,10 +9,10 @@ import { registerListCommand } from "@app/automate/commands/list.ts";
 import { registerShowCommand } from "@app/automate/commands/show.ts";
 import { registerCreateCommand } from "@app/automate/commands/create.ts";
 import { registerCredentialsCommand } from "@app/automate/commands/credentials.ts";
-import { registerScheduleCommand } from "@app/automate/commands/schedule.ts";
-import { registerTasksCommand } from "@app/automate/commands/tasks.ts";
+import { registerTaskCommand } from "@app/automate/commands/task.ts";
 import { registerDaemonCommand } from "@app/automate/commands/daemon.ts";
 import { registerConfigureCommand } from "@app/automate/commands/configure.ts";
+import { registerStepCommands } from "@app/automate/commands/steps.ts";
 import logger from "@app/logger.ts";
 
 // Handle --readme flag early (before Commander parses)
@@ -26,15 +26,27 @@ program
   .version("1.0.0")
   .showHelpAfterError(true);
 
-registerRunCommand(program);
-registerListCommand(program);
-registerShowCommand(program);
-registerCreateCommand(program);
-registerCredentialsCommand(program);
-registerScheduleCommand(program);
-registerTasksCommand(program);
+// preset run|list|show|create
+const preset = program.command("preset").description("Manage automation presets");
+registerRunCommand(preset);
+registerListCommand(preset);
+registerShowCommand(preset);
+registerCreateCommand(preset);
+
+// step list|show
+const step = program.command("step").description("Browse available step types");
+registerStepCommands(step);
+
+// task list|create|show|enable|disable|delete|run|history
+const task = program.command("task").description("Manage scheduled tasks and view run history");
+registerTaskCommand(task);
+
+// daemon start|status|tail|install|uninstall
 registerDaemonCommand(program);
-registerConfigureCommand(program);
+
+// configure (wizard + credentials subgroup)
+const configure = registerConfigureCommand(program);
+registerCredentialsCommand(configure);
 
 async function main(): Promise<void> {
   await ensureStorage();

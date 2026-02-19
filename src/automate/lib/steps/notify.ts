@@ -1,5 +1,5 @@
 import clipboardy from "clipboardy";
-import { registerStepHandler } from "../registry";
+import { registerStepHandler, registerStepCatalog } from "../registry";
 import type { StepContext } from "../registry";
 import type { NotifyStepParams, PresetStep, StepResult } from "../types";
 import { makeResult } from "./helpers";
@@ -73,3 +73,23 @@ async function notifyHandler(step: PresetStep, ctx: StepContext): Promise<StepRe
 }
 
 registerStepHandler("notify", notifyHandler);
+registerStepCatalog({
+  prefix: "notify",
+  description: "Notifications",
+  actions: [
+    { action: "notify.desktop", description: "macOS desktop notification", params: [
+      { name: "title", description: "Notification title" },
+      { name: "message", description: "Notification body" },
+    ]},
+    { action: "notify.clipboard", description: "Copy to clipboard", params: [
+      { name: "content", description: "Content to copy (or use 'message')" },
+    ]},
+    { action: "notify.sound", description: "Play system sound", params: [
+      { name: "sound", description: "Sound name (default: 'Glass')" },
+    ]},
+    { action: "notify.telegram", description: "Send Telegram message", params: [
+      { name: "message", required: true, description: "Message text" },
+      { name: "parse_mode", description: "'MarkdownV2' or 'HTML'" },
+    ]},
+  ],
+});

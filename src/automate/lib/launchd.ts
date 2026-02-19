@@ -5,6 +5,10 @@ import { dirname, join, resolve } from "node:path";
 const PLIST_PATH = join(homedir(), "Library", "LaunchAgents", "com.genesis-tools.automate.plist");
 const LABEL = "com.genesis-tools.automate";
 
+export const DAEMON_LOG_DIR = join(homedir(), ".genesis-tools", "automate", "logs");
+export const DAEMON_STDOUT_LOG = join(DAEMON_LOG_DIR, "daemon-stdout.log");
+export const DAEMON_STDERR_LOG = join(DAEMON_LOG_DIR, "daemon-stderr.log");
+
 export function generatePlist(): string {
   const home = homedir();
   const daemonScript = resolve(import.meta.dir, "daemon.ts");

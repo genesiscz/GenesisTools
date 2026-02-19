@@ -1,17 +1,22 @@
 import { Bot, type CommandContext, type Context } from "grammy";
-import { checkRateLimit } from "./security";
+import * as p from "@clack/prompts";
 import { registerStatusCommand } from "./handlers/status";
 import { registerTasksCommand } from "./handlers/tasks";
 import { registerRunCommand } from "./handlers/run";
 import { registerToolsCommand } from "./handlers/tools";
 import { registerHelpCommand } from "./handlers/help";
-import logger from "@app/logger";
 
 export function createBot(token: string, authorizedChatId: number): Bot {
   const bot = new Bot(token);
 
   bot.use(async (ctx, next) => {
-    if (ctx.chat?.id !== authorizedChatId) return;
+    const chatId = ctx.chat?.id;
+    const text = ctx.message?.text;
+    p.log.info(`Incoming: chat=${chatId} text="${text ?? "(none)"}"`);
+    if (chatId !== authorizedChatId) {
+      p.log.warn(`Rejected: chat ${chatId} !== authorized ${authorizedChatId}`);
+      return;
+    }
     await next();
   });
 
@@ -20,16 +25,12 @@ export function createBot(token: string, authorizedChatId: number): Bot {
     if (!text?.startsWith("/")) { await next(); return; }
 
     const command = text.slice(1).split(/\s+/)[0].toLowerCase().replace(/@\w+$/, "");
-    const rateCheck = checkRateLimit(command);
-    if (!rateCheck.allowed) {
-      await ctx.reply(`Rate limited. Try again in ${Math.ceil((rateCheck.retryAfterMs ?? 0) / 1000)}s.`);
-      return;
-    }
+    p.log.step(`Command: /${command}`);
     await next();
   });
 
   bot.catch((err) => {
-    logger.error({ err: err.error }, "Bot error");
+    p.log.error(`Bot error: ${err.error instanceof Error ? err.error.message : String(err.error)}`);
   });
 
   registerStatusCommand(bot);

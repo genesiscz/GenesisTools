@@ -19,7 +19,7 @@ export function registerListCommand(program: Command): void {
 
       if (presets.length === 0) {
         p.log.warn("No presets found.");
-        p.log.info(`Create one with: ${pc.cyan("tools automate create")}`);
+        p.log.info(`Create one with: ${pc.cyan("tools automate preset create")}`);
         p.log.info(`Or save a JSON file to: ${pc.dim("~/.genesis-tools/automate/presets/")}`);
         p.outro("");
         return;

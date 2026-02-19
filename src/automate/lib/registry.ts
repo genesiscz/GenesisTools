@@ -27,24 +27,30 @@ export type StepHandler = (
   ctx: StepContext,
 ) => Promise<StepResult>;
 
-/** Internal registry: action prefix -> handler */
-const handlers = new Map<string, StepHandler>();
+export interface StepActionInfo {
+  action: string;
+  description: string;
+  params: Array<{ name: string; required?: boolean; description: string }>;
+  example?: Record<string, unknown>;
+}
 
-/**
- * Register a step handler for a given action prefix.
- *
- * @example
- *   registerStepHandler("http", httpHandler)   // matches http.get, http.post, ...
- *   registerStepHandler("parallel", handler)   // matches exactly "parallel"
- */
+export interface StepCatalogEntry {
+  prefix: string;
+  description: string;
+  actions: StepActionInfo[];
+}
+
+const handlers = new Map<string, StepHandler>();
+const catalog = new Map<string, StepCatalogEntry>();
+
 export function registerStepHandler(prefix: string, handler: StepHandler): void {
   handlers.set(prefix, handler);
 }
 
-/**
- * Resolve the handler for a given step action.
- * Tries exact match first, then prefix match (substring before first dot).
- */
+export function registerStepCatalog(entry: StepCatalogEntry): void {
+  catalog.set(entry.prefix, entry);
+}
+
 export function resolveStepHandler(action: string): StepHandler | undefined {
   if (handlers.has(action)) return handlers.get(action);
 
@@ -57,7 +63,10 @@ export function resolveStepHandler(action: string): StepHandler | undefined {
   return undefined;
 }
 
-/** List all registered handler prefixes (for help/validation) */
 export function getRegisteredActions(): string[] {
   return Array.from(handlers.keys()).sort();
+}
+
+export function getStepCatalog(): StepCatalogEntry[] {
+  return Array.from(catalog.values()).sort((a, b) => a.prefix.localeCompare(b.prefix));
 }

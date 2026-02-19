@@ -1,0 +1,32 @@
+{
+  "$schema": "genesis-tools-preset-v1",
+  "name": "Claude Usage Report",
+  "description": "Fetch Claude API usage stats and send a formatted report via Telegram",
+  "trigger": { "type": "manual" },
+  "steps": [
+    {
+      "id": "get-usage",
+      "name": "Fetch Claude usage data",
+      "action": "shell",
+      "params": {
+        "command": "tools claude usage --json"
+      }
+    },
+    {
+      "id": "format-report",
+      "name": "Format usage report",
+      "action": "text.template",
+      "params": {
+        "template": "Claude Usage Report\n==================\n\n{{ steps['get-usage'].output.map(a => [a.accountName + (a.label ? ' (' + a.label + ')' : ''), a.usage ? ['  5h:  ' + Math.round(a.usage.five_hour.utilization * 100) + '%' + (a.usage.five_hour.resets_at ? ' (resets ' + a.usage.five_hour.resets_at + ')' : ''), '  7d:  ' + Math.round(a.usage.seven_day.utilization * 100) + '%' + (a.usage.seven_day.resets_at ? ' (resets ' + a.usage.seven_day.resets_at + ')' : ''), a.usage.seven_day_opus ? '  7d Opus:   ' + Math.round(a.usage.seven_day_opus.utilization * 100) + '%' + (a.usage.seven_day_opus.resets_at ? ' (resets ' + a.usage.seven_day_opus.resets_at + ')' : '') : null, a.usage.seven_day_sonnet ? '  7d Sonnet: ' + Math.round(a.usage.seven_day_sonnet.utilization * 100) + '%' + (a.usage.seven_day_sonnet.resets_at ? ' (resets ' + a.usage.seven_day_sonnet.resets_at + ')' : '') : null].filter(Boolean).join('\\n') : '  No usage data'].join('\\n')).join('\\n\\n') }}"
+      }
+    },
+    {
+      "id": "send-telegram",
+      "name": "Send Telegram notification",
+      "action": "notify.telegram",
+      "params": {
+        "message": "{{ steps['format-report'].output }}"
+      }
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 // src/automate/lib/steps/transform.ts
 
-import { registerStepHandler } from "../registry";
+import { registerStepHandler, registerStepCatalog } from "../registry";
 import type { StepContext } from "../registry";
 import type { ArrayStepParams, JsonStepParams, PresetStep, StepResult, TextStepParams } from "../types";
 import { makeResult } from "./helpers";
@@ -161,3 +161,68 @@ async function arrayHandler(step: PresetStep, ctx: StepContext): Promise<StepRes
 registerStepHandler("json", jsonHandler);
 registerStepHandler("text", textHandler);
 registerStepHandler("array", arrayHandler);
+
+registerStepCatalog({
+  prefix: "json",
+  description: "JSON operations",
+  actions: [
+    { action: "json.parse", description: "Parse JSON string", params: [
+      { name: "input", required: true, description: "JSON string to parse" },
+    ]},
+    { action: "json.stringify", description: "Stringify to JSON", params: [
+      { name: "input", required: true, description: "Expression to stringify" },
+      { name: "indent", description: "Indentation (default: 2)" },
+    ]},
+    { action: "json.query", description: "JSONPath query", params: [
+      { name: "input", required: true, description: "Object expression to query" },
+      { name: "query", required: true, description: "JSONPath expression (e.g. $.items[*].name)" },
+    ]},
+  ],
+});
+
+registerStepCatalog({
+  prefix: "text",
+  description: "Text operations",
+  actions: [
+    { action: "text.regex", description: "Regex match or replace", params: [
+      { name: "input", required: true, description: "Input string" },
+      { name: "pattern", required: true, description: "Regex pattern" },
+      { name: "replacement", description: "Replacement string (omit for match-only)" },
+      { name: "flags", description: "Regex flags (default: 'g')" },
+    ]},
+    { action: "text.template", description: "Interpolate a template string", params: [
+      { name: "template", required: true, description: "Template with {{ expressions }}" },
+    ]},
+    { action: "text.split", description: "Split string into array", params: [
+      { name: "input", required: true, description: "Input string" },
+      { name: "separator", description: "Separator (default: newline)" },
+    ]},
+    { action: "text.join", description: "Join array into string", params: [
+      { name: "input", required: true, description: "Array expression" },
+      { name: "separator", description: "Separator (default: newline)" },
+    ]},
+  ],
+});
+
+registerStepCatalog({
+  prefix: "array",
+  description: "Array operations",
+  actions: [
+    { action: "array.filter", description: "Filter items by expression", params: [
+      { name: "input", required: true, description: "Array expression" },
+      { name: "expression", required: true, description: "JS expression (item, index available)" },
+    ]},
+    { action: "array.map", description: "Transform each item", params: [
+      { name: "input", required: true, description: "Array expression" },
+      { name: "expression", required: true, description: "JS expression (item, index available)" },
+    ]},
+    { action: "array.sort", description: "Sort array", params: [
+      { name: "input", required: true, description: "Array expression" },
+      { name: "key", description: "Object key to sort by" },
+      { name: "order", description: "'asc' or 'desc' (default: 'asc')" },
+    ]},
+    { action: "array.flatten", description: "Flatten nested arrays", params: [
+      { name: "input", required: true, description: "Array expression" },
+    ]},
+  ],
+});

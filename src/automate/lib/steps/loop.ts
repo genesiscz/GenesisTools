@@ -1,6 +1,6 @@
 // src/automate/lib/steps/loop.ts
 
-import { registerStepHandler, resolveStepHandler } from "../registry";
+import { registerStepHandler, registerStepCatalog, resolveStepHandler } from "../registry";
 import type { StepContext } from "../registry";
 import type { ForEachStepParams, PresetStep, StepResult, WhileStepParams } from "../types";
 import { makeResult } from "./helpers";
@@ -157,3 +157,29 @@ async function whileHandler(step: PresetStep, ctx: StepContext): Promise<StepRes
 
 registerStepHandler("forEach", forEachHandler);
 registerStepHandler("while", whileHandler);
+
+registerStepCatalog({
+  prefix: "forEach",
+  description: "Iterate over array items",
+  actions: [
+    { action: "forEach", description: "Execute a step for each item in an array", params: [
+      { name: "items", required: true, description: "Expression resolving to an array" },
+      { name: "step", required: true, description: "Step definition to run per item" },
+      { name: "concurrency", description: "Parallel concurrency (default: 1 = sequential)" },
+      { name: "as", description: "Variable name for current item (default: 'item')" },
+      { name: "indexAs", description: "Variable name for index (default: 'index')" },
+    ]},
+  ],
+});
+
+registerStepCatalog({
+  prefix: "while",
+  description: "Loop while condition is true",
+  actions: [
+    { action: "while", description: "Repeat a step while condition holds", params: [
+      { name: "condition", required: true, description: "Expression evaluated each iteration" },
+      { name: "step", required: true, description: "Step definition to run" },
+      { name: "maxIterations", description: "Safety limit (default: 100)" },
+    ]},
+  ],
+});

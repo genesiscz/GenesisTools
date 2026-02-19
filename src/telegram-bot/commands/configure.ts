@@ -1,11 +1,18 @@
 import { Command } from "commander";
 import * as p from "@clack/prompts";
 import { Api } from "grammy";
-import { saveTelegramConfig } from "@app/telegram-bot/lib/config";
+import { loadTelegramConfig, saveTelegramConfig } from "@app/telegram-bot/lib/config";
 
 export function registerConfigureCommand(program: Command): void {
   program.command("configure").description("Set up Telegram Bot for notifications").action(async () => {
     p.intro("telegram-bot configure");
+
+    const existing = await loadTelegramConfig();
+    if (existing) {
+      p.log.info(`Already configured: @${existing.botUsername ?? "bot"} (chat ${existing.chatId})`);
+      const overwrite = await p.confirm({ message: "Are you sure you want to overwrite the current configuration?" });
+      if (p.isCancel(overwrite) || !overwrite) { p.outro("Keeping existing configuration."); return; }
+    }
 
     p.note(
       "1. Open Telegram and search for @BotFather\n" +
@@ -34,6 +41,16 @@ export function registerConfigureCommand(program: Command): void {
       return;
     }
 
+    await api.deleteWebhook();
+
+    // Flush stale updates so we only detect fresh messages
+    let nextOffset: number | undefined;
+    for (;;) {
+      const stale = await api.getUpdates({ offset: nextOffset ?? -1, timeout: 0 });
+      if (stale.length === 0) break;
+      nextOffset = stale[stale.length - 1].update_id + 1;
+    }
+
     p.log.step("Now send any message to your bot in Telegram...");
     const spinner = p.spinner();
     spinner.start("Waiting for your message...");
@@ -41,12 +58,14 @@ export function registerConfigureCommand(program: Command): void {
     let chatId: number | null = null;
     for (let attempt = 0; attempt < 6; attempt++) {
       try {
-        const updates = await api.getUpdates({ timeout: 30, allowed_updates: ["message"] });
+        const updates = await api.getUpdates({ offset: nextOffset, timeout: 30, allowed_updates: ["message"] });
         if (updates.length > 0) {
           chatId = updates[updates.length - 1].message?.chat.id ?? null;
           break;
         }
-      } catch { /* retry */ }
+      } catch {
+        // Retry on poll errors
+      }
     }
 
     if (!chatId) {

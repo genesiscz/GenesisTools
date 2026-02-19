@@ -1,6 +1,6 @@
 // src/automate/lib/steps/parallel.ts
 
-import { registerStepHandler, resolveStepHandler } from "../registry";
+import { registerStepHandler, registerStepCatalog, resolveStepHandler } from "../registry";
 import type { StepContext } from "../registry";
 import type { ParallelStepParams, PresetStep, StepResult } from "../types";
 import { makeResult } from "./helpers";
@@ -72,3 +72,13 @@ async function parallelHandler(step: PresetStep, ctx: StepContext): Promise<Step
 }
 
 registerStepHandler("parallel", parallelHandler);
+registerStepCatalog({
+  prefix: "parallel",
+  description: "Run steps in parallel",
+  actions: [
+    { action: "parallel", description: "Execute multiple steps concurrently", params: [
+      { name: "steps", required: true, description: "Array of step IDs to run in parallel" },
+      { name: "onError", description: "'stop' or 'continue' (default: 'stop')" },
+    ]},
+  ],
+});

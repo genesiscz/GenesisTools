@@ -1,4 +1,5 @@
 import type { Bot } from "grammy";
+import * as p from "@clack/prompts";
 
 const COMMANDS = [
   { command: "status", description: "Daemon status and active schedules" },
@@ -10,12 +11,14 @@ const COMMANDS = [
 
 export function registerHelpCommand(bot: Bot): void {
   bot.command("help", async (ctx) => {
+    p.log.step("/help → sending command list");
     const lines = [
       "Available commands:",
       "",
       ...COMMANDS.map(c => `/${c.command} — ${c.description}`),
     ];
     await ctx.reply(lines.join("\n"));
+    p.log.success("/help → replied");
   });
 }
 
