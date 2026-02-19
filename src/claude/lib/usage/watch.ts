@@ -12,9 +12,6 @@ const BUCKET_THRESHOLD_MAP: Record<string, "sessionThresholds" | "weeklyThreshol
 	seven_day_oauth_apps: "weeklyThresholds",
 };
 
-// Minimum utilization increase (in %) before sending another notification for same bucket
-const MIN_NOTIFICATION_GAP = 5;
-
 export async function watchUsage(
 	accounts: Record<string, AccountConfig>,
 	notifications: NotificationConfig,
@@ -23,7 +20,6 @@ export async function watchUsage(
 	const notifiedBuckets = new Set<string>();
 	const lastResetsAt = new Map<string, string | null>();
 	const intervalMs = (notifications.watchInterval || 60) * 1000;
-	let isFirstPoll = true;
 
 	while (true) {
 		// Clear screen
@@ -82,8 +78,6 @@ export async function watchUsage(
 				}
 			}
 		}
-
-		isFirstPoll = false;
 
 		// Send notifications asynchronously (don't await, fire and forget)
 		if (pendingNotifications.length > 0) {
