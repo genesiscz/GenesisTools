@@ -61,12 +61,26 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 			p.log.warn("Make sure you're logged into Claude Code first.");
 			return;
 		}
-		const planLabel = kc.subscriptionType ?? "unknown plan";
-		const displayName = kc.account.api?.account.display_name ?? kc.account.claudeJson?.displayName;
-		const email = kc.account.api?.account.email ?? kc.account.claudeJson?.emailAddress;
-		spinner.stop(`Found: ${pc.cyan(planLabel)}${kc.rateLimitTier ? pc.dim(` (${kc.rateLimitTier})`) : ""}${displayName ? ` — ${pc.green(displayName)}` : ""}`);
-		if (email) p.log.info(`Email: ${pc.cyan(email)}`);
-		p.log.info(`Token: ${pc.dim(kc.accessToken.slice(0, 20) + "...")}`);
+		spinner.stop("Credentials found.");
+
+		const api = kc.account.api;
+		const cj = kc.account.claudeJson;
+		const email = api?.account.email ?? cj?.emailAddress;
+
+		const infoLines: string[] = [];
+		if (api) {
+			const a = api.account;
+			const o = api.organization;
+			infoLines.push(`${pc.dim("API:")} ${pc.green(a.display_name)} <${pc.cyan(a.email)}>`);
+			infoLines.push(`     ${o.organization_type} — ${o.billing_type} (${o.rate_limit_tier})`);
+			infoLines.push(`     subscription: ${o.subscription_status}, extra usage: ${o.has_extra_usage_enabled ? "enabled" : "disabled"}`);
+		}
+		if (cj) {
+			infoLines.push(`${pc.dim(".claude.json:")} ${cj.displayName ?? "?"} <${pc.cyan(cj.emailAddress ?? "?")}> — ${cj.billingType ?? "?"}`);
+		}
+		infoLines.push(`${pc.dim("Token:")} ${pc.dim(kc.accessToken.slice(0, 20) + "...")}${kc.subscriptionType ? ` — ${pc.cyan(kc.subscriptionType)}` : ""}${kc.rateLimitTier ? pc.dim(` (${kc.rateLimitTier})`) : ""}`);
+
+		p.note(infoLines.join("\n"), "Found Account");
 
 		const name = await p.text({
 			message: "Name for this account:",
