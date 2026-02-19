@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
+import clipboard from "clipboardy";
 import { loadConfig, saveConfig, type ClaudeConfig } from "../lib/config";
 import { getKeychainCredentials, fetchUsage } from "../lib/usage/api";
 import {
@@ -42,8 +43,13 @@ async function addAccountViaOAuth(config: ClaudeConfig): Promise<void> {
 		message: "Open URL in browser?",
 		initialValue: true,
 	});
-	if (!p.isCancel(openBrowser) && openBrowser) {
+	if (p.isCancel(openBrowser)) return;
+	if (openBrowser) {
 		Bun.spawn(["open", authUrl], { stdio: ["ignore", "ignore", "ignore"] });
+	} else {
+		// Copy to clipboard instead
+		await clipboard.write(authUrl);
+		p.log.info("URL copied to clipboard.");
 	}
 
 	// Get code from user
