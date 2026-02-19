@@ -139,10 +139,11 @@ export class ClaudeOAuthClient {
 		}
 
 		const data = await res.json();
+		const expiresIn = typeof data.expires_in === "number" ? data.expires_in : 3600;
 		return {
 			accessToken: data.access_token,
 			refreshToken: data.refresh_token,
-			expiresAt: Date.now() + data.expires_in * 1000,
+			expiresAt: Date.now() + expiresIn * 1000,
 			scopes: (data.scope ?? "").split(" ").filter(Boolean),
 			account: data.account ? { uuid: data.account.uuid, email: data.account.email_address } : undefined,
 			organization: data.organization ? { uuid: data.organization.uuid, name: data.organization.name } : undefined,
@@ -170,10 +171,11 @@ export class ClaudeOAuthClient {
 		}
 
 		const data = await res.json();
+		const expiresIn = typeof data.expires_in === "number" ? data.expires_in : 3600;
 		return {
 			accessToken: data.access_token,
 			refreshToken: data.refresh_token,
-			expiresAt: Date.now() + data.expires_in * 1000,
+			expiresAt: Date.now() + expiresIn * 1000,
 			scopes: (data.scope ?? "").split(" ").filter(Boolean),
 		};
 	}
@@ -194,7 +196,11 @@ export class ClaudeOAuthClient {
 		const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(verifier));
 		const challenge = this.base64UrlEncode(new Uint8Array(hashBuffer));
 
-		return { verifier, challenge, state: verifier };
+		const stateBytes = new Uint8Array(32);
+		crypto.getRandomValues(stateBytes);
+		const state = this.base64UrlEncode(stateBytes);
+
+		return { verifier, challenge, state };
 	}
 
 	private base64UrlEncode(bytes: Uint8Array): string {

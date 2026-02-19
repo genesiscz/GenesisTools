@@ -578,9 +578,14 @@ export function registerConfigCommand(program: Command): void {
 			// Read code from stdin
 			process.stdout.write("Paste authorization code: ");
 			const reader = Bun.stdin.stream().getReader();
-			const { value } = await reader.read();
-			reader.releaseLock();
-			const code = new TextDecoder().decode(value).trim();
+			let value: Uint8Array | undefined;
+			try {
+				const result = await reader.read();
+				value = result.value;
+			} finally {
+				reader.releaseLock();
+			}
+			const code = new TextDecoder().decode(value ?? new Uint8Array()).trim();
 
 			if (!code) {
 				console.error(pc.red("No code provided."));
@@ -610,6 +615,7 @@ export function registerConfigCommand(program: Command): void {
 				const tier = profile.organization.rate_limit_tier;
 				if (tier.includes("max")) label = "max";
 				else if (tier.includes("pro")) label = "pro";
+				else label = profile.organization.billing_type;
 			}
 
 			// Save

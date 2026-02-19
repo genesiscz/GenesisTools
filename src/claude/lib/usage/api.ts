@@ -50,7 +50,6 @@ export async function fetchUsage(accessToken: string): Promise<UsageResponse> {
  * Returns the (possibly updated) access token.
  */
 async function ensureValidToken(
-	accountName: string,
 	account: AccountConfig,
 ): Promise<{ accessToken: string; refreshed: boolean }> {
 	// No refresh token? Can't auto-refresh
@@ -73,15 +72,6 @@ async function ensureValidToken(
 	account.refreshToken = refreshed.refreshToken;
 	account.expiresAt = refreshed.expiresAt;
 
-	// Also persist to disk for restarts
-	const config = await loadConfig();
-	if (config.accounts[accountName]) {
-		config.accounts[accountName].accessToken = refreshed.accessToken;
-		config.accounts[accountName].refreshToken = refreshed.refreshToken;
-		config.accounts[accountName].expiresAt = refreshed.expiresAt;
-		await saveConfig(config);
-	}
-
 	return { accessToken: refreshed.accessToken, refreshed: true };
 }
 
@@ -94,11 +84,27 @@ export async function fetchAllAccountsUsage(
 	const results = await Promise.allSettled(
 		entries.map(async ([name, account]) => {
 			// Auto-refresh expired tokens
-			const { accessToken } = await ensureValidToken(name, account);
+			const { accessToken } = await ensureValidToken(account);
 			const usage = await fetchUsage(accessToken);
 			return { accountName: name, label: account.label, usage } satisfies AccountUsage;
 		}),
 	);
+
+	// Persist any refreshed tokens to disk in a single write (avoids race conditions)
+	const config = await loadConfig();
+	let dirty = false;
+	for (const [name, account] of entries) {
+		if (account.refreshToken && config.accounts[name]) {
+			const stored = config.accounts[name];
+			if (stored.accessToken !== account.accessToken) {
+				stored.accessToken = account.accessToken;
+				stored.refreshToken = account.refreshToken;
+				stored.expiresAt = account.expiresAt;
+				dirty = true;
+			}
+		}
+	}
+	if (dirty) await saveConfig(config);
 
 	return results.map((r, i) =>
 		r.status === "fulfilled"

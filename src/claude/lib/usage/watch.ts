@@ -79,8 +79,9 @@ class BucketTracker {
 
 	private normalizeResetTime(t: string | null): string | null {
 		if (!t) return null;
-		// Round to nearest hour - API returns jittery timestamps (17:59:59 vs 18:00:00)
 		const d = new Date(t);
+		if (Number.isNaN(d.getTime())) return t; // fallback to raw string
+		// Round to nearest hour - API returns jittery timestamps (17:59:59 vs 18:00:00)
 		if (d.getMinutes() >= 30) {
 			d.setHours(d.getHours() + 1);
 		}
