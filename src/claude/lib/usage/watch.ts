@@ -16,7 +16,6 @@ export async function watchUsage(
 	accounts: Record<string, AccountConfig>,
 	notifications: NotificationConfig,
 ): Promise<never> {
-	// Track which buckets we've already notified about (to avoid repeat notifications)
 	const notifiedBuckets = new Set<string>();
 	const lastResetsAt = new Map<string, string | null>();
 	const intervalMs = (notifications.watchInterval || 60) * 1000;
@@ -46,9 +45,12 @@ export async function watchUsage(
 				const bucketKey = `${account.accountName}:${bucket}`;
 				const utilization = data.utilization;
 
-				// Clear state when the period resets
+				// Clear state when the period resets (compare only up to minutes, ignore seconds/ms)
+				const normalizeResetTime = (t: string | null) => t?.slice(0, 16) ?? null; // "2026-02-19T19:00"
 				const prevReset = lastResetsAt.get(bucketKey);
-				if (prevReset !== undefined && prevReset !== data.resets_at) {
+				const currReset = normalizeResetTime(data.resets_at);
+				const prevResetNorm = normalizeResetTime(prevReset ?? null);
+				if (prevResetNorm !== null && prevResetNorm !== currReset) {
 					notifiedBuckets.delete(bucketKey);
 				}
 				lastResetsAt.set(bucketKey, data.resets_at);
