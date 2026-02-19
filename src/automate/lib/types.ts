@@ -11,10 +11,10 @@ export interface PresetVariable {
 /** Error handling strategy */
 export type OnError = "stop" | "continue" | "skip";
 
-/** Trigger type -- manual only for v1, extensible later */
-export interface PresetTrigger {
-  type: "manual";
-}
+/** Trigger configuration — determines how a preset is invoked */
+export type PresetTrigger =
+  | { type: "manual" }
+  | { type: "schedule"; interval: string };
 
 /** A single step in the preset */
 export interface PresetStep {
@@ -102,7 +102,7 @@ export type GitAction = "status" | "commit" | "branch" | "diff" | "log";
 export type JsonAction = "parse" | "stringify" | "query";
 export type TextAction = "regex" | "template" | "split" | "join";
 export type ArrayAction = "filter" | "map" | "sort" | "flatten";
-export type NotifyAction = "desktop" | "clipboard" | "sound";
+export type NotifyAction = "desktop" | "clipboard" | "sound" | "telegram";
 export type NlpAction = "sentiment" | "language" | "tag" | "distance" | "embed";
 
 // ---------------------------------------------------------------------------
@@ -169,6 +169,7 @@ export interface NotifyStepParams {
   message?: string;
   content?: string;
   sound?: string;
+  parse_mode?: string;
 }
 
 export interface NlpStepParams {

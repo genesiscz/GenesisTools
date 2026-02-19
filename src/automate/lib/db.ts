@@ -1,5 +1,3 @@
-// src/automate/lib/db.ts
-
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";

@@ -1,5 +1,3 @@
-// src/automate/lib/interval-parser.ts
-
 export interface ParsedInterval {
   intervalMs: number;
   atHour?: number;

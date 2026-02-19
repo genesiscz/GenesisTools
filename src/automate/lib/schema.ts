@@ -26,9 +26,13 @@ export const presetSchema = z.object({
   $schema: z.string(),
   name: z.string().min(1, "Preset name is required"),
   description: z.string().optional(),
-  trigger: z.object({
-    type: z.literal("manual"),
-  }),
+  trigger: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("manual") }),
+    z.object({
+      type: z.literal("schedule"),
+      interval: z.string().min(1, "Schedule interval is required"),
+    }),
+  ]),
   vars: z.record(presetVariableSchema).optional(),
   steps: z.array(presetStepSchema).min(1, "At least one step is required"),
 });

@@ -6,6 +6,7 @@ import "./steps/index";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import type { ExecutionContext, ParallelStepParams, Preset, RunOptions, StepResult } from "./types.ts";
+import type { RunLogger } from "./run-logger.ts";
 import { executeStep, setStepRunnerMeta, isParallelChild } from "./step-runner.ts";
 import { updatePresetMeta } from "./storage.ts";
 import { formatDuration } from "@app/utils/format.ts";
@@ -30,7 +31,11 @@ export interface EngineResult {
  * 4. Handle conditional jumps, error strategies, and output capture
  * 5. Update run metadata
  */
-export async function runPreset(preset: Preset, options: RunOptions = {}): Promise<EngineResult> {
+export async function runPreset(
+  preset: Preset,
+  options: RunOptions = {},
+  runLogger?: RunLogger,
+): Promise<EngineResult> {
   const totalStart = Date.now();
 
   // Build initial context
@@ -104,6 +109,9 @@ export async function runPreset(preset: Preset, options: RunOptions = {}): Promi
 
       results.push({ id: step.id, name: step.name, result });
 
+      // Log step to SQLite
+      runLogger?.logStep(i, step.id, step.name, step.action, result);
+
       if (result.status === "success") {
         spinner.stop(pc.green(`${stepLabel} (${formatDuration(result.duration)})`));
       } else if (result.status === "error") {
@@ -146,6 +154,8 @@ export async function runPreset(preset: Preset, options: RunOptions = {}): Promi
       ctx.steps[step.id] = exceptionResult;
       results.push({ id: step.id, name: step.name, result: exceptionResult });
 
+      runLogger?.logStep(i, step.id, step.name, step.action, exceptionResult);
+
       const errorStrategy = step.onError ?? "stop";
       if (errorStrategy === "stop") break;
     }
@@ -157,6 +167,9 @@ export async function runPreset(preset: Preset, options: RunOptions = {}): Promi
   const allSuccess = results.every(
     (r) => r.result.status === "success" || r.result.status === "skipped",
   );
+
+  // Finish run logging
+  runLogger?.finishRun(allSuccess, results.length, totalDuration, allSuccess ? undefined : results.find(r => r.result.status === "error")?.result.error);
 
   // Update run metadata (skip for dry runs)
   if (!options.dryRun) {

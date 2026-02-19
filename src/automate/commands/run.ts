@@ -5,6 +5,7 @@ import pc from "picocolors";
 import type { Command } from "commander";
 import { loadPreset } from "@app/automate/lib/storage.ts";
 import { runPreset } from "@app/automate/lib/engine.ts";
+import { createRunLogger } from "@app/automate/lib/run-logger.ts";
 import { formatDuration } from "@app/utils/format.ts";
 
 export function registerRunCommand(program: Command): void {
@@ -35,12 +36,15 @@ export function registerRunCommand(program: Command): void {
         p.log.info(pc.dim(preset.description));
       }
 
+      // Create run logger for SQLite tracking (skip for dry runs)
+      const runLogger = opts.dryRun ? undefined : createRunLogger(preset.name, null, "manual");
+
       // Execute the preset
       const result = await runPreset(preset, {
         dryRun: opts.dryRun,
         vars: opts.var,
         verbose: opts.verbose,
-      });
+      }, runLogger);
 
       // Summary
       const successCount = result.steps.filter((s) => s.result.status === "success").length;

@@ -1,5 +1,3 @@
-// src/automate/lib/run-logger.ts
-
 import type { StepResult } from "./types";
 import { getDb, type AutomateDatabase } from "./db";
 
