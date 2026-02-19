@@ -4,43 +4,35 @@ import pc from "picocolors";
 import logger from "@app/logger";
 import { TelegramToolConfig } from "../lib/TelegramToolConfig";
 import { TGClient } from "../lib/TGClient";
-import { TelegramMessage } from "../lib/TelegramMessage";
+import { TelegramHistoryStore } from "../lib/TelegramHistoryStore";
 import { registerHandler } from "../lib/handler";
 import { DEFAULTS } from "../lib/types";
 import type { ContactConfig } from "../lib/types";
 
-async function fetchConversationHistory(
-	client: TGClient,
+function loadHistoryFromStore(
+	store: TelegramHistoryStore,
 	contacts: ContactConfig[],
 	myName: string,
-): Promise<Map<string, string[]>> {
+): Map<string, string[]> {
 	const historyMap = new Map<string, string[]>();
 
 	for (const contact of contacts) {
-		try {
-			const lines: string[] = [];
+		const messages = store.getByDateRange(contact.userId, undefined, undefined, DEFAULTS.historyFetchLimit);
+		const lines: string[] = [];
 
-			for await (const rawMsg of client.getMessages(contact.userId, { limit: DEFAULTS.historyFetchLimit })) {
-				const msg = new TelegramMessage(rawMsg);
-				const content = msg.contentForLLM;
+		for (const msg of messages) {
+			const content = msg.text || msg.media_desc;
 
-				if (!content) {
-					continue;
-				}
-
-				const name = msg.isOutgoing ? myName : contact.displayName;
-				lines.push(`${name}: ${content}`);
+			if (!content) {
+				continue;
 			}
 
-			// Messages arrive newest-first, reverse for chronological order
-			lines.reverse();
-
-			historyMap.set(contact.userId, lines);
-			logger.info(`  ${pc.cyan(contact.displayName)}: ${lines.length} messages loaded`);
-		} catch (err) {
-			logger.warn(`  ${pc.cyan(contact.displayName)}: failed to fetch history: ${err}`);
-			historyMap.set(contact.userId, []);
+			const name = msg.is_outgoing ? myName : contact.displayName;
+			lines.push(`${name}: ${content}`);
 		}
+
+		historyMap.set(contact.userId, lines);
+		logger.info(`  ${pc.cyan(contact.displayName)}: ${lines.length} messages from history DB`);
 	}
 
 	return historyMap;
@@ -80,11 +72,14 @@ export function registerListenCommand(program: Command): void {
 			const myName = me.firstName || "Me";
 			spinner.stop(`Connected as ${myName}`);
 
-			// Fetch recent conversation history for context
+			// Open history store for reading context + persisting new messages
+			const store = new TelegramHistoryStore();
+			store.open();
+
 			const historySpinner = p.spinner();
 			historySpinner.start("Loading conversation history...");
 
-			const initialHistory = await fetchConversationHistory(client, data.contacts, myName);
+			const initialHistory = loadHistoryFromStore(store, data.contacts, myName);
 
 			historySpinner.stop("Conversation history loaded");
 
@@ -98,11 +93,13 @@ export function registerListenCommand(program: Command): void {
 				contacts: data.contacts,
 				myName,
 				initialHistory,
+				store,
 			});
 			logger.info(`Press ${pc.dim("Ctrl+C")} to stop.`);
 
 			const shutdown = async () => {
 				logger.info("Shutting down...");
+				store.close();
 
 				try {
 					await client.disconnect();
