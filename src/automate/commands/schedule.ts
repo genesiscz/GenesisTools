@@ -55,7 +55,7 @@ export function registerScheduleCommand(program: Command): void {
         message: "Schedule name (unique identifier):",
         placeholder: `${presetName}-daily`,
         validate: (val) => {
-          if (!/^[a-zA-Z0-9_-]+$/.test(val)) return "Only alphanumeric, hyphens, underscores";
+          if (!val || !/^[a-zA-Z0-9_-]+$/.test(val)) return "Only alphanumeric, hyphens, underscores";
           const db = getDb();
           if (db.getSchedule(val)) return "Schedule name already exists";
         },
@@ -66,6 +66,7 @@ export function registerScheduleCommand(program: Command): void {
         message: "Run interval:",
         placeholder: "every 5 minutes",
         validate: (val) => {
+          if (!val) return "Interval is required";
           try { parseInterval(val); } catch (e) { return (e as Error).message; }
         },
       });
