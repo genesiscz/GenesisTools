@@ -67,7 +67,13 @@ async function ensureValidToken(
 	// Token expired or expiring soon — refresh it
 	const refreshed = await refreshOAuthToken(account.refreshToken);
 
-	// Update config with new tokens
+	// Update in-memory account so subsequent polls use fresh tokens
+	// (Critical: refresh tokens are single-use, old RT is now invalid)
+	account.accessToken = refreshed.accessToken;
+	account.refreshToken = refreshed.refreshToken;
+	account.expiresAt = refreshed.expiresAt;
+
+	// Also persist to disk for restarts
 	const config = await loadConfig();
 	if (config.accounts[accountName]) {
 		config.accounts[accountName].accessToken = refreshed.accessToken;
