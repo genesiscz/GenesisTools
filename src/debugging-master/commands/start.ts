@@ -3,7 +3,6 @@ import { existsSync, copyFileSync } from "node:fs";
 import { resolve, join, relative, basename } from "node:path";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { ConfigManager } from "@app/debugging-master/core/config-manager";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import { startServer } from "@app/debugging-master/core/http-server";
 import { suggestCommand } from "@app/utils/cli/executor";
@@ -58,8 +57,8 @@ export function registerStartCommand(program: Command): void {
 				const nameResult = await p.text({
 					message: "Session name",
 					placeholder: basename(projectPath),
-					validate: (v) => {
-						if (!v.trim()) return "Session name is required";
+					validate(v: string | undefined) {
+						if (!v?.trim()) return "Session name is required";
 						if (/[^a-zA-Z0-9_-]/.test(v)) return "Use only alphanumeric, hyphens, underscores";
 					},
 				});

@@ -3,7 +3,6 @@ import { search } from "@jmespath-community/jmespath";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import { indexEntries } from "@app/debugging-master/core/log-parser";
 import { formatSchema } from "@app/utils/json-schema";
-import type { OutputFormat } from "@app/debugging-master/types";
 
 const TOOL = "tools debugging-master";
 
@@ -44,7 +43,8 @@ export function registerExpandCommand(program: Command): void {
 			let output: string;
 
 			if (opts.query) {
-				const result = search(data, opts.query);
+				// biome-ignore lint: JMESPath accepts any JSON-like value
+				const result = search(data as never, opts.query);
 				output = JSON.stringify(result, null, 2);
 			} else if (opts.full) {
 				output = JSON.stringify(data, null, 2);
