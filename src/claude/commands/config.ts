@@ -6,8 +6,8 @@ import { getKeychainCredentials, fetchUsage } from "../lib/usage/api";
 import { fetchOAuthProfile, getClaudeJsonAccount } from "@app/utils/claude/auth";
 
 function maskToken(token: string): string {
-	if (token.length <= 8) return "****";
-	return `${token.slice(0, 4)}...${token.slice(-4)}`;
+	if (token.length < 32) return "****";
+	return `${token.slice(0, 20)}...`;
 }
 
 async function interactiveConfig(): Promise<void> {
