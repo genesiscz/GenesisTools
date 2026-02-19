@@ -1,6 +1,11 @@
 import type { AccountConfig } from "../config";
+import { loadConfig, saveConfig } from "../config";
+import { refreshOAuthToken } from "@app/utils/claude/auth";
 export type { AccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
 export { getKeychainCredentials } from "@app/utils/claude/auth";
+
+// Refresh tokens 5 minutes before expiry to avoid edge cases
+const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
 export interface UsageBucket {
 	utilization: number;
@@ -40,6 +45,40 @@ export async function fetchUsage(accessToken: string): Promise<UsageResponse> {
 	return res.json() as Promise<UsageResponse>;
 }
 
+/**
+ * Check if an account's token needs refresh and refresh if possible.
+ * Returns the (possibly updated) access token.
+ */
+async function ensureValidToken(
+	accountName: string,
+	account: AccountConfig,
+): Promise<{ accessToken: string; refreshed: boolean }> {
+	// No refresh token? Can't auto-refresh
+	if (!account.refreshToken) {
+		return { accessToken: account.accessToken, refreshed: false };
+	}
+
+	// Token still valid? No refresh needed
+	const now = Date.now();
+	if (account.expiresAt && account.expiresAt > now + EXPIRY_BUFFER_MS) {
+		return { accessToken: account.accessToken, refreshed: false };
+	}
+
+	// Token expired or expiring soon — refresh it
+	const refreshed = await refreshOAuthToken(account.refreshToken);
+
+	// Update config with new tokens
+	const config = await loadConfig();
+	if (config.accounts[accountName]) {
+		config.accounts[accountName].accessToken = refreshed.accessToken;
+		config.accounts[accountName].refreshToken = refreshed.refreshToken;
+		config.accounts[accountName].expiresAt = refreshed.expiresAt;
+		await saveConfig(config);
+	}
+
+	return { accessToken: refreshed.accessToken, refreshed: true };
+}
+
 export async function fetchAllAccountsUsage(
 	accounts: Record<string, AccountConfig>,
 ): Promise<AccountUsage[]> {
@@ -48,7 +87,9 @@ export async function fetchAllAccountsUsage(
 
 	const results = await Promise.allSettled(
 		entries.map(async ([name, account]) => {
-			const usage = await fetchUsage(account.accessToken);
+			// Auto-refresh expired tokens
+			const { accessToken } = await ensureValidToken(name, account);
+			const usage = await fetchUsage(accessToken);
 			return { accountName: name, label: account.label, usage } satisfies AccountUsage;
 		}),
 	);
