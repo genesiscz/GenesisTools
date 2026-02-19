@@ -4,6 +4,7 @@ import { Command } from "commander";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { registerConfigureCommand } from "./commands/configure";
 import { registerSendCommand } from "./commands/send";
+import { registerStartCommand } from "./commands/start";
 
 handleReadmeFlag(import.meta.url);
 
@@ -16,5 +17,6 @@ program
 
 registerConfigureCommand(program);
 registerSendCommand(program);
+registerStartCommand(program);
 
 program.parse();

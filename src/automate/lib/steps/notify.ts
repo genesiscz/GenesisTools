@@ -47,6 +47,29 @@ async function notifyHandler(step: PresetStep, ctx: StepContext): Promise<StepRe
         return makeResult("success", { sound }, start);
       }
 
+      case "telegram": {
+        const { loadTelegramConfig } = await import("@app/telegram-bot/lib/config");
+        const { createTelegramApi } = await import("@app/telegram-bot/lib/api");
+
+        const config = await loadTelegramConfig();
+        if (!config) {
+          ctx.log("warn", "Telegram not configured. Run: tools telegram-bot configure");
+          return makeResult("skipped", { reason: "not_configured" }, start);
+        }
+
+        const api = createTelegramApi(config.botToken);
+        const message = ctx.interpolate(params.message ?? "");
+        const parseMode = params.parse_mode;
+
+        const sent = await api.sendMessage({
+          chat_id: config.chatId,
+          text: message,
+          parse_mode: parseMode as "MarkdownV2" | "HTML" | undefined,
+        });
+
+        return makeResult("success", { messageId: sent.message_id, chatId: config.chatId }, start);
+      }
+
       default:
         return makeResult("error", null, start, `Unknown notify action: ${subAction}`);
     }

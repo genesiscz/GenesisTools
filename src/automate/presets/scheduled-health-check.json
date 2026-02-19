@@ -1,0 +1,26 @@
+{
+  "$schema": "genesis-tools-preset-v1",
+  "name": "Scheduled Health Check",
+  "description": "Check API endpoints periodically, notify via Telegram on completion",
+  "trigger": { "type": "schedule", "interval": "every 5 minutes" },
+  "vars": {
+    "url": { "type": "string", "description": "URL to check", "default": "https://httpstat.us/200" }
+  },
+  "steps": [
+    {
+      "id": "check",
+      "name": "Check endpoint",
+      "action": "http.get",
+      "params": { "url": "{{ vars.url }}", "timeout": 10000 },
+      "onError": "continue"
+    },
+    {
+      "id": "notify",
+      "name": "Send Telegram notification",
+      "action": "notify.telegram",
+      "params": {
+        "message": "Health check: {{ vars.url }} — {{ steps.check.status }}"
+      }
+    }
+  ]
+}
