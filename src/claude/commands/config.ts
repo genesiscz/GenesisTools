@@ -95,15 +95,33 @@ async function addAccountViaOAuth(config: ClaudeConfig): Promise<void> {
 
 	// Get account name
 	const suggestedName = tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "personal";
-	const name = await p.text({
+	let name = await p.text({
 		message: "Name for this account:",
 		placeholder: suggestedName,
 		validate: (val) => {
 			if (!val?.trim()) return "Name is required";
-			if (config.accounts[val]) return `Account "${val}" already exists`;
 		},
 	});
 	if (p.isCancel(name)) return;
+
+	// Check if account exists and ask to overwrite
+	if (config.accounts[name as string]) {
+		const overwrite = await p.confirm({
+			message: `Account "${name}" already exists. Overwrite?`,
+			initialValue: false,
+		});
+		if (p.isCancel(overwrite) || !overwrite) {
+			// Ask for a different name
+			name = await p.text({
+				message: "Enter a different name:",
+				validate: (val) => {
+					if (!val?.trim()) return "Name is required";
+					if (config.accounts[val]) return `Account "${val}" already exists`;
+				},
+			});
+			if (p.isCancel(name)) return;
+		}
+	}
 
 	// Determine label
 	let label: string | undefined;
