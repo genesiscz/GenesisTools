@@ -12,11 +12,15 @@ const BUCKET_THRESHOLD_MAP: Record<string, "sessionThresholds" | "weeklyThreshol
 	seven_day_oauth_apps: "weeklyThresholds",
 };
 
+// Minimum utilization increase (in %) before sending another notification for same bucket
+const MIN_NOTIFICATION_GAP = 5;
+
 export async function watchUsage(
 	accounts: Record<string, AccountConfig>,
 	notifications: NotificationConfig,
 ): Promise<never> {
-	const firedThresholds = new Set<string>();
+	// Track the last utilization we notified about for each bucket
+	const lastNotifiedUtilization = new Map<string, number>();
 	const lastResetsAt = new Map<string, string | null>();
 	const intervalMs = (notifications.watchInterval || 60) * 1000;
 
@@ -30,7 +34,9 @@ export async function watchUsage(
 			`\n${new Date().toLocaleTimeString()} — refreshing every ${notifications.watchInterval}s (Ctrl+C to stop)`,
 		);
 
-		// Check thresholds
+		// Check thresholds and queue notifications
+		const pendingNotifications: Array<{ title: string; message: string }> = [];
+
 		for (const account of results) {
 			if (!account.usage) continue;
 			for (const [bucket, data] of Object.entries(account.usage)) {
@@ -38,31 +44,52 @@ export async function watchUsage(
 				const thresholdKey = BUCKET_THRESHOLD_MAP[bucket];
 				if (!thresholdKey) continue;
 
-				// Clear fired thresholds when the period resets
-				const resetKey = `${account.accountName}:${bucket}`;
-				const prevReset = lastResetsAt.get(resetKey);
-				if (prevReset !== undefined && prevReset !== data.resets_at) {
-					for (const t of notifications[thresholdKey]) {
-						firedThresholds.delete(`${resetKey}:${t}`);
-					}
-				}
-				lastResetsAt.set(resetKey, data.resets_at);
+				const bucketKey = `${account.accountName}:${bucket}`;
+				const utilization = data.utilization;
 
+				// Clear state when the period resets
+				const prevReset = lastResetsAt.get(bucketKey);
+				if (prevReset !== undefined && prevReset !== data.resets_at) {
+					lastNotifiedUtilization.delete(bucketKey);
+				}
+				lastResetsAt.set(bucketKey, data.resets_at);
+
+				// Find the highest threshold that's been crossed
 				const thresholds = notifications[thresholdKey];
-				for (const threshold of thresholds) {
-					const key = `${account.accountName}:${bucket}:${threshold}`;
-					if (data.utilization >= threshold && !firedThresholds.has(key)) {
-						firedThresholds.add(key);
-						if (notifications.channels.macos) {
-							sendNotification({
-								title: `Claude Usage: ${account.accountName}`,
-								message: `${bucket.replace(/_/g, " ")} at ${Math.round(data.utilization)}% (threshold: ${threshold}%)`,
-								sound: "Purr",
-							});
-						}
-					}
+				const crossedThreshold = thresholds
+					.filter((t) => utilization >= t)
+					.sort((a, b) => b - a)[0];
+
+				if (crossedThreshold === undefined) continue;
+
+				// Check if we should notify
+				const lastNotified = lastNotifiedUtilization.get(bucketKey);
+				const shouldNotify =
+					lastNotified === undefined || // First notification for this bucket
+					utilization >= lastNotified + MIN_NOTIFICATION_GAP; // Increased by at least 5%
+
+				if (shouldNotify && notifications.channels.macos) {
+					lastNotifiedUtilization.set(bucketKey, utilization);
+					pendingNotifications.push({
+						title: `Claude Usage: ${account.accountName}`,
+						message: `${bucket.replace(/_/g, " ")} at ${Math.round(utilization)}%`,
+					});
 				}
 			}
+		}
+
+		// Send notifications asynchronously (don't await, fire and forget)
+		if (pendingNotifications.length > 0) {
+			// Send all as one batch — don't spam with multiple notifications
+			// Just send the first one (highest priority) to avoid notification spam
+			const notification = pendingNotifications[0];
+			sendNotification({
+				title: notification.title,
+				message: pendingNotifications.length > 1
+					? `${notification.message} (+${pendingNotifications.length - 1} more)`
+					: notification.message,
+				sound: "Purr",
+			}); // No await — async fire and forget
 		}
 
 		await Bun.sleep(intervalMs);
