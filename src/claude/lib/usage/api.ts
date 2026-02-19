@@ -1,4 +1,6 @@
 import type { AccountConfig } from "../config";
+export type { OAuthAccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
+export { getKeychainCredentials } from "@app/utils/claude/auth";
 
 export interface UsageBucket {
 	utilization: number;
@@ -9,6 +11,7 @@ export interface UsageResponse {
 	five_hour: UsageBucket;
 	seven_day: UsageBucket;
 	seven_day_opus?: UsageBucket | null;
+	seven_day_sonnet?: UsageBucket | null;
 	seven_day_oauth_apps?: UsageBucket | null;
 	[key: string]: UsageBucket | null | undefined;
 }
@@ -18,36 +21,6 @@ export interface AccountUsage {
 	label?: string;
 	usage?: UsageResponse;
 	error?: string;
-}
-
-export interface KeychainCredentials {
-	accessToken: string;
-	subscriptionType?: string;
-	rateLimitTier?: string;
-}
-
-export async function getKeychainCredentials(): Promise<KeychainCredentials | null> {
-	const proc = Bun.spawn({
-		cmd: ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	const text = await new Response(proc.stdout).text();
-	const exitCode = await proc.exited;
-	if (exitCode !== 0 || !text.trim()) return null;
-
-	try {
-		const data = JSON.parse(text.trim());
-		const oauth = data.claudeAiOauth;
-		if (!oauth?.accessToken) return null;
-		return {
-			accessToken: oauth.accessToken,
-			subscriptionType: oauth.subscriptionType,
-			rateLimitTier: oauth.rateLimitTier,
-		};
-	} catch {
-		return null;
-	}
 }
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";

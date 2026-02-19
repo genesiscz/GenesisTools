@@ -61,12 +61,14 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 			return;
 		}
 		const planLabel = kc.subscriptionType ?? "unknown plan";
-		spinner.stop(`Found: ${pc.cyan(planLabel)}${kc.rateLimitTier ? pc.dim(` (${kc.rateLimitTier})`) : ""}`);
+		const acctName = kc.account?.displayName ?? kc.account?.emailAddress;
+		spinner.stop(`Found: ${pc.cyan(planLabel)}${kc.rateLimitTier ? pc.dim(` (${kc.rateLimitTier})`) : ""}${acctName ? ` — ${pc.green(acctName)}` : ""}`);
+		if (kc.account?.emailAddress) p.log.info(`Email: ${pc.cyan(kc.account.emailAddress)}`);
 		p.log.info(`Token: ${pc.dim(kc.accessToken.slice(0, 20) + "...")}`);
 
 		const name = await p.text({
 			message: "Name for this account:",
-			placeholder: "personal",
+			placeholder: acctName?.split("@")[0]?.toLowerCase() ?? "personal",
 			validate: (val) => {
 				if (!val?.trim()) return "Name is required";
 				if (config.accounts[val]) return `Account "${val}" already exists`;
@@ -243,7 +245,8 @@ export function registerConfigCommand(program: Command): void {
 				}
 				accessToken = kc.accessToken;
 				label = kc.subscriptionType;
-				p.log.info(`Using Keychain credentials: ${pc.cyan(label ?? "unknown plan")}`);
+				const who = kc.account?.displayName ?? kc.account?.emailAddress;
+				p.log.info(`Using Keychain credentials: ${pc.cyan(label ?? "unknown plan")}${who ? ` — ${pc.green(who)}` : ""}`);
 			}
 
 			config.accounts[name] = { accessToken, label };
