@@ -24,6 +24,7 @@ const BUCKET_LABELS: Record<string, string> = {
 	five_hour: "Current session",
 	seven_day: "Current week (all models)",
 	seven_day_opus: "Current week (Opus only)",
+	seven_day_sonnet: "Current week (Sonnet only)",
 	seven_day_oauth_apps: "Current week (OAuth apps)",
 };
 
@@ -46,8 +47,8 @@ function formatResetTime(resetsAt: string | null): string {
 
 export function renderAccountUsage(account: AccountUsage): string {
 	const lines: string[] = [];
-	const header = account.email
-		? `${account.accountName} (${account.email})`
+	const header = account.label
+		? `${account.accountName} (${account.label})`
 		: account.accountName;
 	lines.push(pc.bold(`── ${header} ${"─".repeat(Math.max(0, 40 - header.length))}`));
 

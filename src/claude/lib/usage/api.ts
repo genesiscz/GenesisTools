@@ -15,14 +15,15 @@ export interface UsageResponse {
 
 export interface AccountUsage {
 	accountName: string;
-	email?: string;
+	label?: string;
 	usage?: UsageResponse;
 	error?: string;
 }
 
 export interface KeychainCredentials {
 	accessToken: string;
-	email?: string;
+	subscriptionType?: string;
+	rateLimitTier?: string;
 }
 
 export async function getKeychainCredentials(): Promise<KeychainCredentials | null> {
@@ -41,7 +42,8 @@ export async function getKeychainCredentials(): Promise<KeychainCredentials | nu
 		if (!oauth?.accessToken) return null;
 		return {
 			accessToken: oauth.accessToken,
-			email: data.email ?? oauth.email,
+			subscriptionType: oauth.subscriptionType,
+			rateLimitTier: oauth.rateLimitTier,
 		};
 	} catch {
 		return null;
@@ -74,13 +76,13 @@ export async function fetchAllAccountsUsage(
 	const results = await Promise.allSettled(
 		entries.map(async ([name, account]) => {
 			const usage = await fetchUsage(account.accessToken);
-			return { accountName: name, email: account.email, usage } satisfies AccountUsage;
+			return { accountName: name, label: account.label, usage } satisfies AccountUsage;
 		}),
 	);
 
 	return results.map((r, i) =>
 		r.status === "fulfilled"
 			? r.value
-			: { accountName: entries[i][0], email: entries[i][1].email, error: String(r.reason) },
+			: { accountName: entries[i][0], label: entries[i][1].label, error: String(r.reason) },
 	);
 }

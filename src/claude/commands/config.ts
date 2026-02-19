@@ -60,12 +60,13 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 			p.log.warn("Make sure you're logged into Claude Code first.");
 			return;
 		}
-		spinner.stop(`Found: ${pc.cyan(kc.email ?? "unknown email")}`);
+		const planLabel = kc.subscriptionType ?? "unknown plan";
+		spinner.stop(`Found: ${pc.cyan(planLabel)}${kc.rateLimitTier ? pc.dim(` (${kc.rateLimitTier})`) : ""}`);
 		p.log.info(`Token: ${pc.dim(kc.accessToken.slice(0, 20) + "...")}`);
 
 		const name = await p.text({
 			message: "Name for this account:",
-			placeholder: kc.email?.split("@")[0] ?? "personal",
+			placeholder: "personal",
 			validate: (val) => {
 				if (!val?.trim()) return "Name is required";
 				if (config.accounts[val]) return `Account "${val}" already exists`;
@@ -73,7 +74,6 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 		});
 		if (p.isCancel(name)) return;
 
-		// Validate token
 		const validateSpinner = p.spinner();
 		validateSpinner.start("Validating token...");
 		try {
@@ -90,7 +90,7 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 
 		config.accounts[name as string] = {
 			accessToken: kc.accessToken,
-			email: kc.email,
+			label: kc.subscriptionType,
 		};
 		if (!config.defaultAccount) config.defaultAccount = name as string;
 		await saveConfig(config);
@@ -114,14 +114,14 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 		});
 		if (p.isCancel(token)) return;
 
-		const email = await p.text({
-			message: "Email (optional):",
-			placeholder: "user@example.com",
+		const label = await p.text({
+			message: "Label (optional, e.g. 'work', 'max'):",
+			placeholder: "max",
 		});
 
 		config.accounts[name as string] = {
 			accessToken: token as string,
-			email: p.isCancel(email) ? undefined : (email as string) || undefined,
+			label: p.isCancel(label) ? undefined : (label as string) || undefined,
 		};
 		if (!config.defaultAccount) config.defaultAccount = name as string;
 		await saveConfig(config);
@@ -132,7 +132,7 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 			message: "Remove which account?",
 			options: accounts.map((a) => ({
 				value: a,
-				label: `${a}${config.accounts[a].email ? ` (${config.accounts[a].email})` : ""}`,
+				label: `${a}${config.accounts[a].label ? ` (${config.accounts[a].label})` : ""}`,
 			})),
 		});
 		if (p.isCancel(toRemove)) return;
@@ -197,7 +197,7 @@ function showConfig(config: ClaudeConfig): void {
 		pc.bold("Accounts:"),
 		...accounts.map(
 			([name, acc]) =>
-				`  ${name}${config.defaultAccount === name ? pc.green(" (default)") : ""}: ${acc.email ?? pc.dim("no email")} ${pc.dim(acc.accessToken.slice(0, 20) + "...")}`,
+				`  ${name}${config.defaultAccount === name ? pc.green(" (default)") : ""}: ${acc.label ?? pc.dim("no label")} ${pc.dim(acc.accessToken.slice(0, 20) + "...")}`,
 		),
 		accounts.length === 0 ? pc.dim("  (none configured)") : "",
 		"",
@@ -231,7 +231,7 @@ export function registerConfigCommand(program: Command): void {
 			}
 
 			let accessToken: string;
-			let email: string | undefined;
+			let label: string | undefined;
 
 			if (opts.token) {
 				accessToken = opts.token;
@@ -242,11 +242,11 @@ export function registerConfigCommand(program: Command): void {
 					process.exit(1);
 				}
 				accessToken = kc.accessToken;
-				email = kc.email;
-				p.log.info(`Using Keychain credentials: ${pc.cyan(email ?? "unknown")}`);
+				label = kc.subscriptionType;
+				p.log.info(`Using Keychain credentials: ${pc.cyan(label ?? "unknown plan")}`);
 			}
 
-			config.accounts[name] = { accessToken, email };
+			config.accounts[name] = { accessToken, label };
 			if (!config.defaultAccount) config.defaultAccount = name;
 			await saveConfig(config);
 			p.log.success(`Account "${name}" added.`);

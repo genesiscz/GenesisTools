@@ -35,7 +35,7 @@ export function registerUsageCommand(program: Command): void {
 				// Try keychain auto-detect
 				const kc = await getKeychainCredentials();
 				if (kc) {
-					accounts = { default: { accessToken: kc.accessToken, email: kc.email } };
+					accounts = { default: { accessToken: kc.accessToken, label: kc.subscriptionType } };
 				} else {
 					p.log.warn("No accounts configured. Run: tools claude config");
 					process.exit(1);
