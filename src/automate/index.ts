@@ -1,7 +1,5 @@
 #!/usr/bin/env bun
 
-// src/automate/index.ts
-
 import { Command } from "commander";
 import * as p from "@clack/prompts";
 import { handleReadmeFlag } from "@app/utils/readme.ts";
@@ -11,6 +9,10 @@ import { registerListCommand } from "@app/automate/commands/list.ts";
 import { registerShowCommand } from "@app/automate/commands/show.ts";
 import { registerCreateCommand } from "@app/automate/commands/create.ts";
 import { registerCredentialsCommand } from "@app/automate/commands/credentials.ts";
+import { registerScheduleCommand } from "@app/automate/commands/schedule.ts";
+import { registerTasksCommand } from "@app/automate/commands/tasks.ts";
+import { registerDaemonCommand } from "@app/automate/commands/daemon.ts";
+import { registerConfigureCommand } from "@app/automate/commands/configure.ts";
 import logger from "@app/logger.ts";
 
 // Handle --readme flag early (before Commander parses)
@@ -29,6 +31,10 @@ registerListCommand(program);
 registerShowCommand(program);
 registerCreateCommand(program);
 registerCredentialsCommand(program);
+registerScheduleCommand(program);
+registerTasksCommand(program);
+registerDaemonCommand(program);
+registerConfigureCommand(program);
 
 async function main(): Promise<void> {
   await ensureStorage();
