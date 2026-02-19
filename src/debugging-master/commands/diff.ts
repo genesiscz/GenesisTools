@@ -42,8 +42,11 @@ export function registerDiffCommand(program: Command): void {
 			const globalOpts = program.opts();
 			const sm = new SessionManager();
 
+			const recentBefore = await sm.getConfig().getRecentSession();
 			const name1 = await sm.resolveSession(globalOpts.session);
 			const name2 = await sm.resolveSession(opts.against);
+			// Restore recent session — diff shouldn't change it
+			if (recentBefore) await sm.getConfig().setRecentSession(recentBefore);
 
 			const raw1 = await sm.readEntries(name1);
 			const raw2 = await sm.readEntries(name2);

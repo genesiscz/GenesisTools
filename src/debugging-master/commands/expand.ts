@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import { search } from "@jmespath-community/jmespath";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import { indexEntries } from "@app/debugging-master/core/log-parser";
@@ -34,7 +34,7 @@ export function registerExpandCommand(program: Command): void {
 				process.exit(1);
 			}
 
-			const data = prefix === "s" ? entry.vars : entry.data;
+			const data = prefix === "s" ? entry.vars : (entry.data ?? entry.stack);
 			if (data === undefined) {
 				console.error(`Entry #${entryIndex} has no data to expand`);
 				process.exit(1);

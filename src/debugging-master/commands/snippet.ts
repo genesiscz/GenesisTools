@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import { resolve } from "node:path";
 import { ConfigManager } from "@app/debugging-master/core/config-manager";
 

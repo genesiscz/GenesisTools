@@ -88,7 +88,7 @@ export const dbg = {
 		const entry: Record<string, unknown> = { level: "error", msg };
 		if (err instanceof Error) {
 			entry.stack = err.stack;
-			entry.data = { message: err.message, name: err.name };
+			entry.data = { message: err.message, class: err.name, code: (err as { code?: unknown }).code };
 		} else if (err !== undefined) {
 			entry.data = err;
 		}
@@ -103,9 +103,12 @@ export const dbg = {
 
 	timerEnd(label: string): void {
 		const start = timers[label];
-		const durationMs = start !== undefined ? Date.now() - start : -1;
-		if (start !== undefined) delete timers[label];
-		write({ level: "timer-end", label, durationMs });
+		const entry: Record<string, unknown> = { level: "timer-end", label };
+		if (start !== undefined) {
+			entry.durationMs = Date.now() - start;
+			delete timers[label];
+		}
+		write(entry);
 	},
 
 	checkpoint(label: string): void {

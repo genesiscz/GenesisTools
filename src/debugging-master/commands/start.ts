@@ -140,7 +140,7 @@ export function registerStartCommand(program: Command): void {
 			console.log("");
 			console.log(pc.dim("Next steps:"));
 			console.log(`  ${suggestCommand(TOOL_NAME, { add: ["tail", "--session", sessionName] })}`);
-			console.log(`  ${suggestCommand(TOOL_NAME, { add: ["show", "--session", sessionName] })}`);
+			console.log(`  ${suggestCommand(TOOL_NAME, { add: ["get", "--session", sessionName] })}`);
 			console.log("");
 
 			// --- Optionally start HTTP server ---

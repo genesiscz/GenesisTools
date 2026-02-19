@@ -12,13 +12,19 @@ function ensureDir(): void {
 /**
  * Parse and normalize an incoming log entry. Never throws.
  */
+const VALID_LEVELS = new Set([
+	"dump", "info", "warn", "error", "timer-start", "timer-end",
+	"checkpoint", "assert", "snapshot", "trace",
+]);
+
 function normalizeEntry(body: string): LogEntry {
 	try {
 		const parsed = JSON.parse(body);
+		const level = VALID_LEVELS.has(parsed.level) ? parsed.level : "raw";
 		return {
-			level: parsed.level ?? "info",
-			ts: parsed.ts ?? Date.now(),
 			...parsed,
+			level,
+			ts: parsed.ts ?? Date.now(),
 		} as LogEntry;
 	} catch {
 		return {

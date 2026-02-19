@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import {
 	indexEntries,
@@ -37,7 +37,7 @@ export function registerGetCommand(program: Command): void {
 		.description("Read debug log entries")
 		.option("-l, --level <levels>", "Filter by level(s), comma-separated")
 		.option("--last <n>", "Show only last N entries", parseInt)
-		.option("--h <tag>", "Filter by hypothesis tag")
+		.option("--hypothesis <tag>", "Filter by hypothesis tag")
 		.action(async (opts) => {
 			const globalOpts = program.opts();
 			const sessionManager = new SessionManager();
@@ -55,8 +55,8 @@ export function registerGetCommand(program: Command): void {
 				}
 			}
 
-			if (opts.h) {
-				entries = filterByHypothesis(entries, opts.h);
+			if (opts.hypothesis) {
+				entries = filterByHypothesis(entries, opts.hypothesis);
 			}
 
 			if (opts.last) {
