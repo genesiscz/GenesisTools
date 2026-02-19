@@ -23,6 +23,7 @@ export async function watchUsage(
 	const lastNotifiedUtilization = new Map<string, number>();
 	const lastResetsAt = new Map<string, string | null>();
 	const intervalMs = (notifications.watchInterval || 60) * 1000;
+	let isFirstPoll = true;
 
 	while (true) {
 		// Clear screen
@@ -62,21 +63,26 @@ export async function watchUsage(
 
 				if (crossedThreshold === undefined) continue;
 
-				// Check if we should notify
-				const lastNotified = lastNotifiedUtilization.get(bucketKey);
-				const shouldNotify =
-					lastNotified === undefined || // First notification for this bucket
-					utilization >= lastNotified + MIN_NOTIFICATION_GAP; // Increased by at least 5%
-
-				if (shouldNotify && notifications.channels.macos) {
+				// On first poll, just initialize state without notifying
+				if (isFirstPoll) {
 					lastNotifiedUtilization.set(bucketKey, utilization);
+					continue;
+				}
+
+				// Check if we should notify (utilization increased by at least 5%)
+				const lastNotified = lastNotifiedUtilization.get(bucketKey) ?? 0;
+				if (utilization >= lastNotified + MIN_NOTIFICATION_GAP && notifications.channels.macos) {
+					lastNotifiedUtilization.set(bucketKey, utilization);
+					const bucketLabel = bucket === "five_hour" ? "Session" : bucket.replace(/_/g, " ");
 					pendingNotifications.push({
-						title: `Claude Usage: ${account.accountName}`,
-						message: `${bucket.replace(/_/g, " ")} at ${Math.round(utilization)}%`,
+						title: "Claude Usage Alert",
+						message: `${account.accountName}: ${bucketLabel} ${Math.round(utilization)}%`,
 					});
 				}
 			}
 		}
+
+		isFirstPoll = false;
 
 		// Send notifications asynchronously (don't await, fire and forget)
 		if (pendingNotifications.length > 0) {
