@@ -165,11 +165,15 @@ After committing, reply to each thread on GitHub explaining what happened.
 
 Use markdown link format in the reply: `[short-sha](full-url)`.
 
-**Author tagging:** Only tag review bots that respond to mentions:
-- For `@coderabbitai` threads: prefix reply with `@coderabbitai`
-- For `@gemini-code-assist` threads: prefix reply with `/gemini`
-- For Copilot, GitHub Actions, and other bots: **do NOT tag** — they don't respond to mentions
-- For human reviewers: tag with `@<username>` only if they asked a question requiring a response
+**Author tagging — CHECK EVERY THREAD'S AUTHOR:** For each reply command, look at the **Author** field from the review markdown for that specific thread and apply the correct prefix. Do NOT copy-paste replies without verifying the author per thread.
+
+| Thread Author | Reply prefix | Example |
+|---------------|-------------|---------|
+| `@coderabbitai` | `@coderabbitai ` | `@coderabbitai Fixed in ...` |
+| `@gemini-code-assist` | `/gemini ` | `/gemini Fixed in ...` |
+| `@copilot-pull-request-reviewer` | _(none)_ | `Fixed in ...` |
+| Other bots / GitHub Actions | _(none)_ | `Fixed in ...` |
+| Human reviewer | `@<username> ` only if they asked a question | `@alice Fixed in ...` |
 
 **For fixed threads** — explain what was fixed, how, and link the commit:
 ```bash
