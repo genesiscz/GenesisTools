@@ -44,6 +44,8 @@ export async function watchUsage(
 				if (!data || typeof data !== "object" || !("utilization" in data)) continue;
 				const thresholdKey = BUCKET_THRESHOLD_MAP[bucket];
 				if (!thresholdKey) continue;
+				// Skip null/undefined buckets (e.g. seven_day_opus when not using opus)
+				if (data.utilization === null || data.utilization === undefined) continue;
 
 				const bucketKey = `${account.accountName}:${bucket}`;
 				const utilization = data.utilization;
