@@ -7,6 +7,7 @@ const PREVIEW_LENGTH = 80; // chars - preview length for truncated refs
 const REFS_TTL = "1 day";
 
 export class RefStoreManager {
+	sessionHash: string;
 	private storage: Storage;
 	private refsPath: string;
 

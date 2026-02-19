@@ -466,7 +466,7 @@ function matchesFilters(message: ConversationMessage, filters: SearchFilters, al
     // Tool filter
     if (filters.tool) {
         const toolUses = extractToolUses(message);
-        const hasMatchingTool = toolUses.some((t) => t.name.toLowerCase().includes(filters.tool?.toLowerCase()));
+        const hasMatchingTool = toolUses.some((t) => t.name.toLowerCase().includes(filters.tool!.toLowerCase()));
         if (!hasMatchingTool) return false;
     }
 
@@ -516,7 +516,7 @@ function searchSessionMetadataCache(filters: SearchFilters): SearchResult[] {
     // First ensure cache is populated for the target scope
     const all = filters.project
         ? getAllSessionMetadata().filter(
-              (s) => s.project?.toLowerCase().includes(filters.project?.toLowerCase())
+              (s) => s.project?.toLowerCase().includes(filters.project!.toLowerCase())
           )
         : getAllSessionMetadata();
 
@@ -665,7 +665,7 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
         // Commit hash search
         if (filters.commitHash) {
             const commitHashes = extractCommitHashes(messages);
-            if (!commitHashes.some((h) => h.toLowerCase().startsWith(filters.commitHash?.toLowerCase()))) {
+            if (!commitHashes.some((h) => h.toLowerCase().startsWith(filters.commitHash!.toLowerCase()))) {
                 continue;
             }
             results.push({

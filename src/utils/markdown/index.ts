@@ -117,7 +117,7 @@ function createFencePlugin(md: MarkdownIt): void {
             return `<pre><code ${langClass}data-cli-numbers-enabled="false">${escaped}</code></pre>\n`;
         }
 
-        return defaultFence(tokens, idx, options, env, slf);
+        return defaultFence?.(tokens, idx, options, env, slf) ?? "";
     };
 }
 

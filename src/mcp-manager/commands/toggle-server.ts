@@ -188,19 +188,19 @@ export async function toggleServer(
                             perProjectState[projectPath] = enabled;
                         }
                     }
-                    config.mcpServers[serverName]._meta?.enabled[providerName as MCPProviderName] = perProjectState;
+                    config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = perProjectState;
                 } else if (isGlobalEnablement || projects.length === 0) {
                     // Global enablement (boolean true/false) - applies to all projects
-                    config.mcpServers[serverName]._meta?.enabled[providerName as MCPProviderName] = enabled;
+                    config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = enabled;
                 } else {
                     // Provider doesn't support projects - use boolean
                     if (projectChoices && projectChoices.length > 0) {
                         // If project choices exist but provider doesn't support projects, use boolean
                         // (This shouldn't happen, but handle it gracefully)
-                        config.mcpServers[serverName]._meta?.enabled[providerName as MCPProviderName] = enabled;
+                        config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = enabled;
                     } else {
                         // No projects - global enablement/disablement (boolean)
-                        config.mcpServers[serverName]._meta?.enabled[providerName as MCPProviderName] = enabled;
+                        config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = enabled;
                     }
                 }
             } catch (error: any) {
@@ -223,11 +223,13 @@ export async function toggleServer(
 
             const restoreBackup = () => {
                 for (const serverName of serversToToggle) {
+                    const meta = config.mcpServers[serverName]._meta;
+                    if (!meta) continue;
                     const backup = metaBackup.get(serverName);
                     if (backup === undefined) {
-                        delete config.mcpServers[serverName]._meta?.enabled?.[providerName as MCPProviderName];
+                        delete meta.enabled[providerName as MCPProviderName];
                     } else {
-                        config.mcpServers[serverName]._meta?.enabled[providerName as MCPProviderName] = backup;
+                        meta.enabled[providerName as MCPProviderName] = backup;
                     }
                 }
             };

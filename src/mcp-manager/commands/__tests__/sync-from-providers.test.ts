@@ -127,7 +127,7 @@ describe("syncFromProviders", () => {
     it("should merge enabled state when resolving conflicts", async () => {
         const mockConfig = createMockUnifiedConfig();
         const existingServer = createMockServerConfig("test-server");
-        existingServer._meta?.enabled!.gemini = true;
+        existingServer._meta!.enabled.gemini = true;
         mockConfig.mcpServers["test-server"] = existingServer;
 
         const conflictingServer: MCPServerInfo = {
