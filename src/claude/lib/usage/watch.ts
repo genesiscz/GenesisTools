@@ -63,21 +63,29 @@ export async function watchUsage(
 
 				if (crossedThreshold === undefined) continue;
 
-				// On first poll, just initialize state without notifying
-				if (isFirstPoll) {
-					lastNotifiedUtilization.set(bucketKey, utilization);
-					continue;
-				}
+				// Check if we should notify
+				const lastNotified = lastNotifiedUtilization.get(bucketKey);
+				const bucketLabel = bucket === "five_hour" ? "Session" : bucket.replace(/_/g, " ");
 
-				// Check if we should notify (utilization increased by at least 5%)
-				const lastNotified = lastNotifiedUtilization.get(bucketKey) ?? 0;
-				if (utilization >= lastNotified + MIN_NOTIFICATION_GAP && notifications.channels.macos) {
+				if (isFirstPoll) {
+					// On first poll, notify about all crossed thresholds, then set baseline
+					if (crossedThreshold !== undefined && notifications.channels.macos) {
+						pendingNotifications.push({
+							title: "Claude Usage Alert",
+							message: `${account.accountName}: ${bucketLabel} ${Math.round(utilization)}%`,
+						});
+					}
 					lastNotifiedUtilization.set(bucketKey, utilization);
-					const bucketLabel = bucket === "five_hour" ? "Session" : bucket.replace(/_/g, " ");
-					pendingNotifications.push({
-						title: "Claude Usage Alert",
-						message: `${account.accountName}: ${bucketLabel} ${Math.round(utilization)}%`,
-					});
+				} else {
+					// Subsequent polls: only notify if utilization increased by at least 5%
+					const baseline = lastNotified ?? 0;
+					if (utilization >= baseline + MIN_NOTIFICATION_GAP && notifications.channels.macos) {
+						lastNotifiedUtilization.set(bucketKey, utilization);
+						pendingNotifications.push({
+							title: "Claude Usage Alert",
+							message: `${account.accountName}: ${bucketLabel} ${Math.round(utilization)}%`,
+						});
+					}
 				}
 			}
 		}
