@@ -40,7 +40,7 @@ export async function input(options: InputOptions): Promise<string | symbol> {
             message: options.message,
             placeholder: options.placeholder,
             validate: options.validate
-                ? (value) => (value !== undefined ? options.validate!(value) : "Value is required")
+                ? (value) => options.validate!(value ?? "")
                 : undefined,
         });
     }

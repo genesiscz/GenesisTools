@@ -8,7 +8,8 @@ export interface NotificationOptions {
 }
 
 export function sendNotification(opts: NotificationOptions): void {
-	const escaped = (s: string) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+	const escaped = (s: string) =>
+		s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r");
 	const params = [
 		`"${escaped(opts.message)}"`,
 		`with title "${escaped(opts.title)}"`,

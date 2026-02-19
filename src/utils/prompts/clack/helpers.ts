@@ -3,12 +3,14 @@
  */
 import * as p from "@clack/prompts";
 import pc from "picocolors";
+import { inputCancelSymbol } from "./input";
 
 /**
- * Check if a value is a cancel symbol (user pressed Escape/Ctrl+C)
+ * Check if a value is a cancel symbol (user pressed Escape/Ctrl+C).
+ * Detects both clack's internal cancel symbol and the light-mode inputCancelSymbol.
  */
 export function isCancelled(value: unknown): value is symbol {
-    return p.isCancel(value);
+    return p.isCancel(value) || value === inputCancelSymbol;
 }
 
 /**
