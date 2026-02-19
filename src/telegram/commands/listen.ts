@@ -4,7 +4,47 @@ import pc from "picocolors";
 import logger from "@app/logger";
 import { TelegramToolConfig } from "../lib/TelegramToolConfig";
 import { TGClient } from "../lib/TGClient";
+import { TelegramMessage } from "../lib/TelegramMessage";
 import { registerHandler } from "../lib/handler";
+import { DEFAULTS } from "../lib/types";
+import type { ContactConfig } from "../lib/types";
+
+async function fetchConversationHistory(
+	client: TGClient,
+	contacts: ContactConfig[],
+	myName: string,
+): Promise<Map<string, string[]>> {
+	const historyMap = new Map<string, string[]>();
+
+	for (const contact of contacts) {
+		try {
+			const lines: string[] = [];
+
+			for await (const rawMsg of client.getMessages(contact.userId, { limit: DEFAULTS.historyFetchLimit })) {
+				const msg = new TelegramMessage(rawMsg);
+				const content = msg.contentForLLM;
+
+				if (!content) {
+					continue;
+				}
+
+				const name = msg.isOutgoing ? myName : contact.displayName;
+				lines.push(`${name}: ${content}`);
+			}
+
+			// Messages arrive newest-first, reverse for chronological order
+			lines.reverse();
+
+			historyMap.set(contact.userId, lines);
+			logger.info(`  ${pc.cyan(contact.displayName)}: ${lines.length} messages loaded`);
+		} catch (err) {
+			logger.warn(`  ${pc.cyan(contact.displayName)}: failed to fetch history: ${err}`);
+			historyMap.set(contact.userId, []);
+		}
+	}
+
+	return historyMap;
+}
 
 export function registerListenCommand(program: Command): void {
 	program
@@ -37,7 +77,16 @@ export function registerListenCommand(program: Command): void {
 			}
 
 			const me = await client.getMe();
-			spinner.stop(`Connected as ${me.firstName || "user"}`);
+			const myName = me.firstName || "Me";
+			spinner.stop(`Connected as ${myName}`);
+
+			// Fetch recent conversation history for context
+			const historySpinner = p.spinner();
+			historySpinner.start("Loading conversation history...");
+
+			const initialHistory = await fetchConversationHistory(client, data.contacts, myName);
+
+			historySpinner.stop("Conversation history loaded");
 
 			for (const c of data.contacts) {
 				logger.info(
@@ -45,7 +94,11 @@ export function registerListenCommand(program: Command): void {
 				);
 			}
 
-			registerHandler(client, data.contacts);
+			registerHandler(client, {
+				contacts: data.contacts,
+				myName,
+				initialHistory,
+			});
 			logger.info(`Press ${pc.dim("Ctrl+C")} to stop.`);
 
 			const shutdown = async () => {

@@ -33,6 +33,7 @@ export type ActionHandler = (
 	message: import("./TelegramMessage").TelegramMessage,
 	contact: import("./TelegramContact").TelegramContact,
 	client: import("./TGClient").TGClient,
+	conversationHistory?: string,
 ) => Promise<ActionResult>;
 
 export const DEFAULTS = {
@@ -41,11 +42,13 @@ export const DEFAULTS = {
 	replyDelayMin: 2000,
 	replyDelayMax: 5000,
 	askSystemPrompt:
-		"You're chatting casually on Telegram. Reply naturally and briefly (1-2 sentences). Match the language of the incoming message.",
+		"You're chatting casually on Telegram. Reply naturally and briefly (1-2 sentences). Match the language of the incoming message. You may receive recent conversation history for context — reply only to the latest message.",
 	connectionRetries: 5,
 	maxProcessedMessages: 500,
 	typingIntervalMs: 4000,
 	askTimeoutMs: 60_000,
 	askProvider: "openai",
 	askModel: "gpt-4o-mini",
+	maxContextMessages: 30,
+	historyFetchLimit: 100,
 } as const;

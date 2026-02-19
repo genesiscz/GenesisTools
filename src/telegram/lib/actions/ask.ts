@@ -2,13 +2,22 @@ import { runTool } from "@app/utils/cli/tools";
 import type { ActionHandler } from "../types";
 import { DEFAULTS } from "../types";
 
-export const handleAsk: ActionHandler = async (message, contact, client) => {
+export const handleAsk: ActionHandler = async (message, contact, client, conversationHistory) => {
 	const start = performance.now();
 	const typing = client.startTypingLoop(contact.userId);
 
 	try {
 		const systemPrompt = contact.askSystemPrompt;
-		const promptText = message.contentForLLM;
+
+		let promptText: string;
+
+		if (conversationHistory) {
+			promptText =
+				`[Recent conversation]\n${conversationHistory}\n\n` +
+				`[New message from ${contact.displayName}]\n${message.contentForLLM}`;
+		} else {
+			promptText = message.contentForLLM;
+		}
 
 		const result = await runTool(
 			[

@@ -30,12 +30,52 @@ function trackMessage(id: number): boolean {
 	return true;
 }
 
-export function registerHandler(client: TGClient, contacts: ContactConfig[]): void {
-	const contactMap = new Map<string, TelegramContact>();
+/**
+ * Per-contact conversation context buffer.
+ * Stores formatted "Name: message" lines for LLM context.
+ */
+class ConversationContext {
+	private lines: string[] = [];
 
-	for (const config of contacts) {
+	constructor(initialLines?: string[]) {
+		if (initialLines) {
+			this.lines = initialLines.slice(-DEFAULTS.maxContextMessages);
+		}
+	}
+
+	append(name: string, content: string): void {
+		this.lines.push(`${name}: ${content}`);
+
+		while (this.lines.length > DEFAULTS.maxContextMessages) {
+			this.lines.shift();
+		}
+	}
+
+	toString(): string {
+		return this.lines.join("\n");
+	}
+
+	get isEmpty(): boolean {
+		return this.lines.length === 0;
+	}
+}
+
+export interface HandlerOptions {
+	contacts: ContactConfig[];
+	myName: string;
+	initialHistory?: Map<string, string[]>;
+}
+
+export function registerHandler(client: TGClient, options: HandlerOptions): void {
+	const contactMap = new Map<string, TelegramContact>();
+	const contexts = new Map<string, ConversationContext>();
+
+	for (const config of options.contacts) {
 		const contact = TelegramContact.fromConfig(config);
 		contactMap.set(config.userId, contact);
+
+		const initial = options.initialHistory?.get(config.userId);
+		contexts.set(config.userId, new ConversationContext(initial));
 	}
 
 	client.onNewMessage(async (event: NewMessageEvent) => {
@@ -66,9 +106,17 @@ export function registerHandler(client: TGClient, contacts: ContactConfig[]): vo
 				return;
 			}
 
+			// Append incoming message to conversation context
+			const ctx = contexts.get(senderId);
+
+			if (ctx) {
+				ctx.append(contact.displayName, msg.contentForLLM);
+			}
+
 			logger.info(`${pc.bold(pc.cyan(contact.displayName))}: ${msg.preview}`);
 
-			const results = await executeActions(contact, msg, client);
+			const history = ctx && !ctx.isEmpty ? ctx.toString() : undefined;
+			const results = await executeActions(contact, msg, client, history);
 
 			for (const r of results) {
 				if (r.success) {
@@ -76,6 +124,11 @@ export function registerHandler(client: TGClient, contacts: ContactConfig[]): vo
 						? ` "${r.reply.slice(0, 60)}${r.reply.length > 60 ? "..." : ""}"`
 						: "";
 					logger.info(`  ${pc.green(`[${r.action}]`)} OK${pc.dim(extra)}`);
+
+					// Append our reply to the conversation context
+					if (r.action === "ask" && r.reply && ctx) {
+						ctx.append(options.myName, r.reply);
+					}
 				} else {
 					logger.warn(`  ${pc.red(`[${r.action}]`)} FAILED: ${r.error}`);
 				}
@@ -85,6 +138,6 @@ export function registerHandler(client: TGClient, contacts: ContactConfig[]): vo
 		}
 	});
 
-	const names = contacts.map((c) => pc.cyan(c.displayName)).join(", ");
-	logger.info(`Listening for messages from ${contacts.length} contact(s): ${names}`);
+	const names = options.contacts.map((c) => pc.cyan(c.displayName)).join(", ");
+	logger.info(`Listening for messages from ${options.contacts.length} contact(s): ${names}`);
 }
