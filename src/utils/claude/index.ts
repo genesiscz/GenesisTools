@@ -5,6 +5,7 @@
 
 // Re-export shared types
 export * from "./types";
+export * from "./auth";
 
 import { createReadStream, existsSync } from "fs";
 import { homedir } from "os";

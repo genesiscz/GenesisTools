@@ -57,14 +57,14 @@ import type {
 export * from "./types";
 
 /**
- * Auto-derived metadata version — hash of lib.ts + cache.ts source.
+ * Auto-derived metadata version — hash of search.ts + cache.ts source.
  * When ANY extraction/cache logic changes, this hash changes, forcing re-index.
  * Falls back to "v1" in bundled environments where source files aren't on disk.
  */
 function getMetadataVersion(): string {
     try {
         return createHash("md5")
-            .update(readFileSync(new URL("./lib.ts", import.meta.url), "utf-8"))
+            .update(readFileSync(new URL("./search.ts", import.meta.url), "utf-8"))
             .update(readFileSync(new URL("./cache.ts", import.meta.url), "utf-8"))
             .digest("hex")
             .slice(0, 8);

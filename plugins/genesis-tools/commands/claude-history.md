@@ -7,7 +7,7 @@ argument-hint: "[query] [--options]"
 
 To exclude the current conversation, use `--exclude-session` with your session ID from the SessionStart message above (look for `$CLAUDE_CODE_SESSION_ID=<id>`):
 ```bash
-tools claude-history $ARGUMENTS --exclude-session "<session-id>"
+tools claude history $ARGUMENTS --exclude-session "<session-id>"
 ```
 
 ## Key Options
@@ -37,20 +37,20 @@ tools claude-history $ARGUMENTS --exclude-session "<session-id>"
 
 ```bash
 # Find by topic (fast) - replace <session-id> with your actual session ID
-tools claude-history "mcp-manager refactor" --summary-only --exclude-session "<session-id>"
+tools claude history "mcp-manager refactor" --summary-only --exclude-session "<session-id>"
 
 # Find by commit hash
-tools claude-history --commit "27a6fa9"
+tools claude history --commit "27a6fa9"
 
 # Find by commit message
-tools claude-history --commit-msg "safe config writing"
+tools claude history --commit-msg "safe config writing"
 
 # Find recent work on a file
-tools claude-history --file "backup.ts" --since "3 days ago" --exclude-session "<session-id>"
+tools claude history --file "backup.ts" --since "3 days ago" --exclude-session "<session-id>"
 
 # List all conversation topics from last week
-tools claude-history --list-summaries --since "7 days ago"
+tools claude history --list-summaries --since "7 days ago"
 
 # Search with relevance ranking
-tools claude-history "backup mechanism" --sort-relevance --exclude-session "<session-id>" -c 3
+tools claude history "backup mechanism" --sort-relevance --exclude-session "<session-id>" -c 3
 ```
