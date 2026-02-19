@@ -54,16 +54,61 @@ export function buildCommand(base: string, args: Record<string, string | boolean
 }
 
 /**
- * Build a modified version of the current CLI command by adding/removing flags.
+ * Build a modified version of the current CLI command by adding/removing/replacing flags.
  * Uses process.argv to reconstruct the original command.
  *
  * @param toolName - The tool prefix (e.g., "tools azure-devops")
- * @param modifications - Flags to add or remove
+ * @param modifications - Flags to add, remove, or replace
  * @returns The modified command string with proper quoting
  */
-export function suggestCommand(toolName: string, modifications: { add?: string[]; remove?: string[] } = {}): string {
+export function suggestCommand(
+    toolName: string,
+    modifications: {
+        add?: string[];
+        remove?: string[];
+        /** Replace the subcommand and its options, keeping global options */
+        replaceCommand?: string[];
+        /** Flag names to preserve from original argv when using replaceCommand (e.g., ["--session"]) */
+        keepFlags?: string[];
+    } = {},
+): string {
     // process.argv = [bun, script, ...args]
     let args = process.argv.slice(2);
+
+    // Replace subcommand: keep global options (flags before the command name),
+    // then replace everything from the command name onward with new args
+    if (modifications.replaceCommand) {
+        const originalArgs = args;
+        const globalArgs: string[] = [];
+        let i = 0;
+        while (i < args.length) {
+            if (args[i].startsWith("-")) {
+                globalArgs.push(args[i]);
+                // If next arg doesn't start with -, it's the flag's value
+                if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
+                    globalArgs.push(args[i + 1]);
+                    i += 2;
+                } else {
+                    i++;
+                }
+            } else {
+                break; // Found the subcommand
+            }
+        }
+        // Also preserve keepFlags from anywhere in the original args
+        if (modifications.keepFlags?.length) {
+            const keepSet = new Set(modifications.keepFlags);
+            for (let j = i; j < originalArgs.length; j++) {
+                if (keepSet.has(originalArgs[j])) {
+                    globalArgs.push(originalArgs[j]);
+                    if (j + 1 < originalArgs.length && !originalArgs[j + 1].startsWith("-")) {
+                        globalArgs.push(originalArgs[j + 1]);
+                    }
+                }
+            }
+        }
+        args = [...globalArgs, ...modifications.replaceCommand];
+    }
 
     // Remove specified flags (and their values if they have one)
     if (modifications.remove?.length) {

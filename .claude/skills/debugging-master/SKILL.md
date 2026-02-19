@@ -99,7 +99,7 @@ dbg.dump('session', session, { h: 'H2' });
 // #endregion @dbg
 ```
 
-Then filter: `tools debugging-master get --h H1`
+Then filter: `tools debugging-master get --hypothesis H1`
 
 ### Instrumentation Example
 
@@ -176,7 +176,7 @@ Values >200 chars get a `[ref:XX]`. Use filtering to narrow down:
 ```bash
 tools debugging-master get -l dump,error     # Only dumps and errors
 tools debugging-master get --last 5          # Last 5 entries
-tools debugging-master get --h H1            # Only hypothesis H1
+tools debugging-master get --hypothesis H1            # Only hypothesis H1
 ```
 
 ### L2: Schema View (`expand`, default)
@@ -434,5 +434,5 @@ What cleanup does NOT do:
 3. **Use `expand` before `expand --full`** — check schema/shape first
 4. **Use `--query` with JMESPath** — extract only the fields you need
 5. **Use `--format json`** for machine processing (pipe to `tools json`)
-6. **Use `--h <hypothesis>`** — filter to specific hypothesis when multiple are tagged
+6. **Use `--hypothesis <tag>`** — filter to specific hypothesis when multiple are tagged
 7. **Use `get -l timer`** for performance work — skip everything except timing data

@@ -12,8 +12,8 @@ import { resolve, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { glob } from "glob";
 import pc from "picocolors";
-import { SessionManager } from "@app/debugging-master/core/session-manager";
 import { suggestCommand } from "@app/utils/cli/executor";
+import { SessionManager } from "@app/debugging-master/core/session-manager";
 
 const TOOL = "tools debugging-master";
 const REGION_START = /\/\/\s*#region\s+@dbg/;
@@ -173,7 +173,7 @@ export function registerCleanupCommand(program: Command): void {
 							console.log(`  ${pc.dim(relative(projectPath, file))}`);
 						}
 						console.log(
-							`\n${pc.dim("Tip:")} ${suggestCommand(TOOL, { add: ["cleanup", "--repair-formatting"] })}`,
+							`\n${pc.dim("Tip:")} ${suggestCommand(TOOL, { add: ["--repair-formatting"] })}`,
 						);
 					}
 				}
@@ -221,7 +221,7 @@ export function registerCleanupCommand(program: Command): void {
 					console.log(`\n${pc.green("Logs archived to:")} ${archivePath}`);
 					if (!opts.keepLogs) {
 						console.log(
-							`${pc.dim("Tip: Keep logs permanently →")} ${suggestCommand(TOOL, { add: ["cleanup", "--keep-logs", "./debug-logs/"] })}`,
+							`${pc.dim("Tip: Keep logs permanently →")} ${suggestCommand(TOOL, { add: ["--keep-logs", "./debug-logs/"] })}`,
 						);
 					}
 				} else {

@@ -47,7 +47,7 @@ export function registerStartCommand(program: Command): void {
 				if (!process.stdout.isTTY) {
 					console.error(
 						`Error: --session <name> is required in non-interactive mode.\n` +
-						`  ${suggestCommand(TOOL_NAME, { add: ["start", "--session", "<name>"] })}`,
+						`  ${suggestCommand(TOOL_NAME, { add: ["--session", "<name>"] })}`,
 					);
 					process.exit(1);
 				}
@@ -139,8 +139,8 @@ export function registerStartCommand(program: Command): void {
 
 			console.log("");
 			console.log(pc.dim("Next steps:"));
-			console.log(`  ${suggestCommand(TOOL_NAME, { add: ["tail", "--session", sessionName] })}`);
-			console.log(`  ${suggestCommand(TOOL_NAME, { add: ["get", "--session", sessionName] })}`);
+			console.log(`  ${suggestCommand(TOOL_NAME, { replaceCommand: ["tail", "--session", sessionName] })}`);
+			console.log(`  ${suggestCommand(TOOL_NAME, { replaceCommand: ["get", "--session", sessionName] })}`);
 			console.log("");
 
 			// --- Optionally start HTTP server ---

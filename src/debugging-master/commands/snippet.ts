@@ -29,10 +29,16 @@ function tsImportSnippet(type: SnippetType, label: string): string {
 		].join("\n");
 	}
 
-	const dataArg = type === "assert" ? `'${label}', condition` : `'${label}', data`;
+	if (type === "assert") {
+		return [
+			"// #region @dbg",
+			`dbg.assert(condition, '${label}');`,
+			"// #endregion @dbg",
+		].join("\n");
+	}
 	return [
 		"// #region @dbg",
-		`dbg.${type}(${dataArg});`,
+		`dbg.${type}('${label}', data);`,
 		"// #endregion @dbg",
 	].join("\n");
 }
@@ -50,10 +56,16 @@ function phpImportSnippet(type: SnippetType, label: string): string {
 		].join("\n");
 	}
 
-	const dataArg = type === "assert" ? `'${label}', $condition` : `'${label}', $data`;
+	if (type === "assert") {
+		return [
+			"// #region @dbg",
+			`${cls}::assert($condition, '${label}');`,
+			"// #endregion @dbg",
+		].join("\n");
+	}
 	return [
 		"// #region @dbg",
-		`${cls}::${type}(${dataArg});`,
+		`${cls}::${type}('${label}', $data);`,
 		"// #endregion @dbg",
 	].join("\n");
 }
@@ -79,13 +91,20 @@ function tsHttpSnippet(type: SnippetType, label: string, session: string): strin
 		].join("\n");
 	}
 
-	const level = type;
+	let payload: string;
+	if (type === "assert") {
+		payload = `{level: 'assert', label: '${label}', passed: condition}`;
+	} else if (type === "snapshot") {
+		payload = `{level: 'snapshot', label: '${label}', vars}`;
+	} else {
+		payload = `{level: '${type}', label: '${label}', data}`;
+	}
 	return [
 		"// #region @dbg",
 		`fetch('${url}', {`,
 		`  method: 'POST',`,
 		`  headers: {'Content-Type': 'application/json'},`,
-		`  body: JSON.stringify({level: '${level}', label: '${label}', data})`,
+		`  body: JSON.stringify(${payload})`,
 		`});`,
 		"// #endregion @dbg",
 	].join("\n");
@@ -108,10 +127,18 @@ function phpHttpGuzzleSnippet(type: SnippetType, label: string, session: string)
 		].join("\n");
 	}
 
+	let jsonContent: string;
+	if (type === "assert") {
+		jsonContent = `'level' => 'assert', 'label' => '${label}', 'passed' => $condition`;
+	} else if (type === "snapshot") {
+		jsonContent = `'level' => 'snapshot', 'label' => '${label}', 'vars' => $vars`;
+	} else {
+		jsonContent = `'level' => '${type}', 'label' => '${label}', 'data' => $data`;
+	}
 	return [
 		"// #region @dbg",
 		`(new \\GuzzleHttp\\Client())->post('${url}', [`,
-		`  'json' => ['level' => '${type}', 'label' => '${label}', 'data' => $data]`,
+		`  'json' => [${jsonContent}]`,
 		`]);`,
 		"// #endregion @dbg",
 	].join("\n");
@@ -136,11 +163,19 @@ function phpHttpNativeSnippet(type: SnippetType, label: string, session: string)
 		].join("\n");
 	}
 
+	let jsonContent: string;
+	if (type === "assert") {
+		jsonContent = `'level' => 'assert', 'label' => '${label}', 'passed' => $condition`;
+	} else if (type === "snapshot") {
+		jsonContent = `'level' => 'snapshot', 'label' => '${label}', 'vars' => $vars`;
+	} else {
+		jsonContent = `'level' => '${type}', 'label' => '${label}', 'data' => $data`;
+	}
 	return [
 		"// #region @dbg",
 		`file_get_contents('${url}', false, stream_context_create([`,
 		`  'http' => ['method' => 'POST', 'header' => 'Content-Type: application/json',`,
-		`    'content' => json_encode(['level' => '${type}', 'label' => '${label}', 'data' => $data])]`,
+		`    'content' => json_encode([${jsonContent}])]`,
 		`]));`,
 		"// #endregion @dbg",
 	].join("\n");

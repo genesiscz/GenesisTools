@@ -141,7 +141,10 @@ export function formatL1(
 export function formatTip(entries: IndexedLogEntry[]): string {
 	const refEntry = entries.find((e) => e.refId);
 	if (refEntry) {
-		const cmd = suggestCommand(TOOL, { add: ["expand", refEntry.refId!] });
+		const cmd = suggestCommand(TOOL, {
+			replaceCommand: ["expand", refEntry.refId!],
+			keepFlags: ["--session"],
+		});
 		return `\nTip: Expand a ref → ${cmd}`;
 	}
 	return "";

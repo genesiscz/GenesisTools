@@ -80,8 +80,12 @@ export function registerDiffCommand(program: Command): void {
 					} else if (!e1 && e2) {
 						matches.push(`  ${label.padEnd(20)} ${name1}: missing  ${name2}: #${e2.index} ${formatTime(e2.ts)}`);
 					} else if (e1 && e2) {
-						const d1 = JSON.stringify(e1.data ?? e1.vars ?? "");
-						const d2 = JSON.stringify(e2.data ?? e2.vars ?? "");
+						const extractComparable = (e: IndexedLogEntry) => {
+							if (e.level === "assert") return { passed: e.passed, ctx: e.ctx };
+							return e.data ?? e.vars ?? "";
+						};
+						const d1 = JSON.stringify(extractComparable(e1));
+						const d2 = JSON.stringify(extractComparable(e2));
 						if (d1 === d2) {
 							matches.push(`  ${label.padEnd(20)} Both present, data identical`);
 						} else {

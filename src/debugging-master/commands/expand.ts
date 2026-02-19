@@ -34,7 +34,14 @@ export function registerExpandCommand(program: Command): void {
 				process.exit(1);
 			}
 
-			const data = prefix === "s" ? entry.vars : (entry.data ?? entry.stack);
+			let data: unknown;
+			if (prefix === "s") {
+				data = entry.vars;
+			} else if (prefix === "e" && entry.data && entry.stack) {
+				data = { ...entry.data as Record<string, unknown>, _stack: entry.stack };
+			} else {
+				data = entry.data ?? entry.stack;
+			}
 			if (data === undefined) {
 				console.error(`Entry #${entryIndex} has no data to expand`);
 				process.exit(1);

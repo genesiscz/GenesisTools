@@ -48,11 +48,15 @@ export function registerGetCommand(program: Command): void {
 
 			if (opts.level) {
 				const levels = opts.level.split(",").map((l: string) => l.trim());
-				if (levels.includes("timer")) {
+				const hasTimer = levels.includes("timer");
+				if (hasTimer) {
 					entries = mergeTimerEntries(entries);
-				} else {
-					entries = filterByLevel(entries, levels);
 				}
+				// Filter by all requested levels (merged timer-end entries pass as "timer-end")
+				const filterLevels = levels.flatMap((l: string) =>
+					l === "timer" ? ["timer-start", "timer-end"] : [l],
+				);
+				entries = filterByLevel(entries, filterLevels);
 			}
 
 			if (opts.hypothesis) {
