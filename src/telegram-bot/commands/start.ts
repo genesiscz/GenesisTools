@@ -1,10 +1,8 @@
 import { Command } from "commander";
 import * as p from "@clack/prompts";
-import { createTelegramApi } from "@app/telegram-bot/lib/api";
 import { loadTelegramConfig } from "@app/telegram-bot/lib/config";
-import { startPolling } from "@app/telegram-bot/lib/poller";
-
-import "@app/telegram-bot/lib/handlers";
+import { createBot } from "@app/telegram-bot/lib/bot";
+import { COMMANDS } from "@app/telegram-bot/lib/handlers/help";
 
 export function registerStartCommand(program: Command): void {
   program
@@ -17,10 +15,15 @@ export function registerStartCommand(program: Command): void {
         process.exit(1);
       }
 
-      const api = createTelegramApi(config.botToken);
-      const me = await api.getMe();
+      const bot = createBot(config.botToken, config.chatId);
+
+      const me = await bot.api.getMe();
       p.log.success(`Starting bot @${me.username ?? me.first_name} (Ctrl+C to stop)`);
 
-      await startPolling(api, config.chatId);
+      await bot.api.setMyCommands(COMMANDS);
+
+      await bot.start({
+        onStart: () => p.log.info("Polling started"),
+      });
     });
 }

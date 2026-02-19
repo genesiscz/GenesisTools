@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import * as p from "@clack/prompts";
-import { createTelegramApi } from "@app/telegram-bot/lib/api";
+import { Api } from "grammy";
 import { saveTelegramConfig } from "@app/telegram-bot/lib/config";
 
 export function registerConfigureCommand(program: Command): void {
@@ -23,7 +23,7 @@ export function registerConfigureCommand(program: Command): void {
     });
     if (p.isCancel(token)) return;
 
-    const api = createTelegramApi(token as string);
+    const api = new Api(token as string);
     let botUsername: string;
     try {
       const me = await api.getMe();
@@ -41,7 +41,7 @@ export function registerConfigureCommand(program: Command): void {
     let chatId: number | null = null;
     for (let attempt = 0; attempt < 6; attempt++) {
       try {
-        const updates = await api.getUpdates(undefined, 30);
+        const updates = await api.getUpdates({ timeout: 30, allowed_updates: ["message"] });
         if (updates.length > 0) {
           chatId = updates[updates.length - 1].message?.chat.id ?? null;
           break;
@@ -65,7 +65,7 @@ export function registerConfigureCommand(program: Command): void {
     });
 
     try {
-      await api.sendMessage({ chat_id: chatId, text: "GenesisTools telegram-bot configured successfully!" });
+      await api.sendMessage(chatId, "GenesisTools telegram-bot configured successfully!");
       p.log.success("Test message sent");
     } catch (err) {
       p.log.warn(`Could not send test message: ${(err as Error).message}`);

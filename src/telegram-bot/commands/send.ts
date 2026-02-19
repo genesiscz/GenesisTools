@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import * as p from "@clack/prompts";
-import { createTelegramApi } from "@app/telegram-bot/lib/api";
+import { Api } from "grammy";
 import { loadTelegramConfig } from "@app/telegram-bot/lib/config";
 import type { ParseMode } from "@app/telegram-bot/lib/types";
 
@@ -17,9 +17,11 @@ export function registerSendCommand(program: Command): void {
       let text = message;
       if (opts.stdin) text = await new Response(Bun.stdin.stream()).text();
 
-      const api = createTelegramApi(config.botToken);
+      const api = new Api(config.botToken);
       try {
-        await api.sendMessage({ chat_id: config.chatId, text, parse_mode: opts.parseMode as ParseMode | undefined });
+        await api.sendMessage(config.chatId, text, {
+          parse_mode: opts.parseMode as ParseMode | undefined,
+        });
         p.log.success("Message sent");
       } catch (err) {
         p.log.error(`Failed: ${(err as Error).message}`);

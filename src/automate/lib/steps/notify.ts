@@ -1,5 +1,3 @@
-// src/automate/lib/steps/notify.ts
-
 import clipboardy from "clipboardy";
 import { registerStepHandler } from "../registry";
 import type { StepContext } from "../registry";
@@ -49,7 +47,7 @@ async function notifyHandler(step: PresetStep, ctx: StepContext): Promise<StepRe
 
       case "telegram": {
         const { loadTelegramConfig } = await import("@app/telegram-bot/lib/config");
-        const { createTelegramApi } = await import("@app/telegram-bot/lib/api");
+        const { createApi, sendMessage } = await import("@app/telegram-bot/lib/api");
 
         const config = await loadTelegramConfig();
         if (!config) {
@@ -57,15 +55,11 @@ async function notifyHandler(step: PresetStep, ctx: StepContext): Promise<StepRe
           return makeResult("skipped", { reason: "not_configured" }, start);
         }
 
-        const api = createTelegramApi(config.botToken);
+        const api = createApi(config.botToken);
         const message = ctx.interpolate(params.message ?? "");
         const parseMode = params.parse_mode;
 
-        const sent = await api.sendMessage({
-          chat_id: config.chatId,
-          text: message,
-          parse_mode: parseMode as "MarkdownV2" | "HTML" | undefined,
-        });
+        const sent = await sendMessage(api, config.chatId, message, parseMode as "MarkdownV2" | "HTML" | undefined);
 
         return makeResult("success", { messageId: sent.message_id, chatId: config.chatId }, start);
       }
