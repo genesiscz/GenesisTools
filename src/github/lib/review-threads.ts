@@ -292,29 +292,15 @@ const RESOLVE_THREAD_MUTATION = `
 
 /**
  * Mark a review thread as resolved.
- * Fine-grained PATs may lack pull_requests:write — if the primary token
- * fails with a permission error, automatically retries with the gh CLI token
- * (classic OAuth with repo scope) which always has the needed permissions.
+ * Prefers the gh CLI token (classic OAuth with repo scope) since fine-grained
+ * PATs don't support the resolveReviewThread GraphQL mutation.
+ * Falls back to the primary token if gh CLI is unavailable.
  */
 export async function markThreadResolved(threadId: string): Promise<boolean> {
-    try {
-        await getOctokit().graphql(RESOLVE_THREAD_MUTATION, { threadId });
-        return true;
-    } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (!msg.includes("Resource not accessible by personal access token")) {
-            throw err;
-        }
-        // Fine-grained PAT lacks pull_requests:write — fall back to gh CLI token
-        const ghToken = getGhCliToken();
-        if (!ghToken) throw err;
-        console.warn(
-            `[markThreadResolved] Primary GitHub token lacked permissions to resolve review thread ${threadId}; ` +
-                `retrying with gh CLI token. Original error: ${msg}`
-        );
-        await new Octokit({ auth: ghToken }).graphql(RESOLVE_THREAD_MUTATION, { threadId });
-        return true;
-    }
+    const ghToken = getGhCliToken();
+    const octokit = ghToken ? new Octokit({ auth: ghToken }) : getOctokit();
+    await octokit.graphql(RESOLVE_THREAD_MUTATION, { threadId });
+    return true;
 }
 
 /**
