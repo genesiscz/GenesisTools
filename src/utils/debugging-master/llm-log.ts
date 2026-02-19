@@ -28,17 +28,6 @@ interface LogOpts {
 	h?: string;
 }
 
-interface LogEntry {
-	ts: number;
-	type: string;
-	file: string;
-	line: number;
-	label: string;
-	data?: unknown;
-	h?: string;
-	[key: string]: unknown;
-}
-
 const SESSIONS_DIR = join(homedir(), ".genesis-tools", "debugging-master", "sessions");
 const timers: Record<string, number> = {};
 let currentSession = "default";
@@ -69,17 +58,11 @@ function getCallerLocation(): { file: string; line: number } {
 	return { file: "unknown", line: 0 };
 }
 
-function write(entry: LogEntry): void {
+function write(entry: Record<string, unknown>): void {
 	ensureDir();
-	appendFileSync(sessionPath, JSON.stringify(entry) + "\n");
-}
-
-function buildEntry(type: string, label: string, data?: unknown, opts?: LogOpts): LogEntry {
 	const { file, line } = getCallerLocation();
-	const entry: LogEntry = { ts: Date.now(), type, file, line, label };
-	if (data !== undefined) entry.data = data;
-	if (opts?.h) entry.h = opts.h;
-	return entry;
+	const full = { ...entry, ts: Date.now(), file, line };
+	appendFileSync(sessionPath, JSON.stringify(full) + "\n");
 }
 
 export const dbg = {
@@ -90,60 +73,54 @@ export const dbg = {
 	},
 
 	dump(label: string, data: unknown, opts?: LogOpts): void {
-		write(buildEntry("dump", label, data, opts));
+		write({ level: "dump", label, data, ...opts && { h: opts.h } });
 	},
 
 	info(msg: string, data?: unknown, opts?: LogOpts): void {
-		write(buildEntry("info", msg, data, opts));
+		write({ level: "info", msg, ...(data !== undefined && { data }), ...opts && { h: opts.h } });
 	},
 
 	warn(msg: string, data?: unknown, opts?: LogOpts): void {
-		write(buildEntry("warn", msg, data, opts));
+		write({ level: "warn", msg, ...(data !== undefined && { data }), ...opts && { h: opts.h } });
 	},
 
 	error(msg: string, err?: Error | unknown, opts?: LogOpts): void {
-		const entry = buildEntry("error", msg, undefined, opts);
+		const entry: Record<string, unknown> = { level: "error", msg };
 		if (err instanceof Error) {
-			entry.data = {
-				message: err.message,
-				name: err.name,
-				stack: err.stack,
-			};
+			entry.stack = err.stack;
+			entry.data = { message: err.message, name: err.name };
 		} else if (err !== undefined) {
 			entry.data = err;
 		}
+		if (opts?.h) entry.h = opts.h;
 		write(entry);
 	},
 
 	timerStart(label: string): void {
 		timers[label] = Date.now();
-		write(buildEntry("timer_start", label));
+		write({ level: "timer-start", label });
 	},
 
 	timerEnd(label: string): void {
 		const start = timers[label];
-		const entry = buildEntry("timer_end", label);
-		if (start !== undefined) {
-			entry.duration_ms = Date.now() - start;
-			delete timers[label];
-		}
-		write(entry);
+		const durationMs = start !== undefined ? Date.now() - start : -1;
+		if (start !== undefined) delete timers[label];
+		write({ level: "timer-end", label, durationMs });
 	},
 
 	checkpoint(label: string): void {
-		write(buildEntry("checkpoint", label));
+		write({ level: "checkpoint", label });
 	},
 
 	assert(condition: boolean, label: string, ctx?: unknown): void {
-		if (condition) return;
-		write(buildEntry("assert_fail", label, ctx));
+		write({ level: "assert", label, passed: condition, ...(ctx !== undefined && { ctx }) });
 	},
 
 	snapshot(label: string, vars: Record<string, unknown>, opts?: LogOpts): void {
-		write(buildEntry("snapshot", label, vars, opts));
+		write({ level: "snapshot", label, vars, ...opts && { h: opts.h } });
 	},
 
 	trace(label: string, data?: unknown, opts?: LogOpts): void {
-		write(buildEntry("trace", label, data, opts));
+		write({ level: "trace", label, ...(data !== undefined && { data }), ...opts && { h: opts.h } });
 	},
 };
