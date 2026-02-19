@@ -4,35 +4,59 @@ import pc from "picocolors";
 import logger from "@app/logger";
 import { TelegramToolConfig } from "../lib/TelegramToolConfig";
 import { TGClient } from "../lib/TGClient";
+import { TelegramMessage } from "../lib/TelegramMessage";
 import { TelegramHistoryStore } from "../lib/TelegramHistoryStore";
 import { registerHandler } from "../lib/handler";
 import { DEFAULTS } from "../lib/types";
 import type { ContactConfig } from "../lib/types";
 
-function loadHistoryFromStore(
+async function syncAndLoadHistory(
+	client: TGClient,
 	store: TelegramHistoryStore,
 	contacts: ContactConfig[],
 	myName: string,
-): Map<string, string[]> {
+): Promise<Map<string, string[]>> {
 	const historyMap = new Map<string, string[]>();
 
 	for (const contact of contacts) {
-		const messages = store.getByDateRange(contact.userId, undefined, undefined, DEFAULTS.historyFetchLimit);
-		const lines: string[] = [];
+		try {
+			// Fetch recent messages from Telegram API and persist to DB
+			const fetched = [];
 
-		for (const msg of messages) {
-			const content = msg.text || msg.media_desc;
-
-			if (!content) {
-				continue;
+			for await (const rawMsg of client.getMessages(contact.userId, { limit: DEFAULTS.historyFetchLimit })) {
+				fetched.push(new TelegramMessage(rawMsg));
 			}
 
-			const name = msg.is_outgoing ? myName : contact.displayName;
-			lines.push(`${name}: ${content}`);
-		}
+			if (fetched.length > 0) {
+				const serialized = fetched.map((m) => m.toJSON());
+				const inserted = store.insertMessages(contact.userId, serialized);
 
-		historyMap.set(contact.userId, lines);
-		logger.info(`  ${pc.cyan(contact.displayName)}: ${lines.length} messages from history DB`);
+				if (inserted > 0) {
+					logger.info(`  ${pc.cyan(contact.displayName)}: ${inserted} new messages stored`);
+				}
+			}
+
+			// Read back from DB for context (chronological order, last N)
+			const messages = store.getByDateRange(contact.userId, undefined, undefined, DEFAULTS.historyFetchLimit);
+			const lines: string[] = [];
+
+			for (const msg of messages) {
+				const content = msg.text || msg.media_desc;
+
+				if (!content) {
+					continue;
+				}
+
+				const name = msg.is_outgoing ? myName : contact.displayName;
+				lines.push(`${name}: ${content}`);
+			}
+
+			historyMap.set(contact.userId, lines);
+			logger.info(`  ${pc.cyan(contact.displayName)}: ${lines.length} messages loaded for context`);
+		} catch (err) {
+			logger.warn(`  ${pc.cyan(contact.displayName)}: failed to sync history: ${err}`);
+			historyMap.set(contact.userId, []);
+		}
 	}
 
 	return historyMap;
@@ -72,16 +96,15 @@ export function registerListenCommand(program: Command): void {
 			const myName = me.firstName || "Me";
 			spinner.stop(`Connected as ${myName}`);
 
-			// Open history store for reading context + persisting new messages
 			const store = new TelegramHistoryStore();
 			store.open();
 
 			const historySpinner = p.spinner();
-			historySpinner.start("Loading conversation history...");
+			historySpinner.start("Syncing conversation history...");
 
-			const initialHistory = loadHistoryFromStore(store, data.contacts, myName);
+			const initialHistory = await syncAndLoadHistory(client, store, data.contacts, myName);
 
-			historySpinner.stop("Conversation history loaded");
+			historySpinner.stop("Conversation history synced");
 
 			for (const c of data.contacts) {
 				logger.info(
