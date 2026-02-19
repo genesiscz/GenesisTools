@@ -110,6 +110,12 @@ Most tools follow these common patterns:
 
 See `.claude/docs/tool-template.md` for complete templates (@inquirer + @clack/prompts), common patterns, and best practices.
 
+## Code Style Rules
+
+- **No file-path comments**: Never add `// src/path/to/file.ts` as first line of files
+- **No obvious comments**: Don't add comments that restate what the code already says (e.g. `// Build initial context` before `buildContext()`)
+- **Concise commit messages**: Just a title line, no per-file breakdown in the body. Keep it short and focused on the "why"
+
 ## Important Notes
 
 -   **Runtime**: This project requires Bun as it uses Bun-specific APIs (e.g., `Bun.spawn`)
