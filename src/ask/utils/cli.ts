@@ -1,7 +1,7 @@
 import logger from "@app/logger";
 import type { Args, CLIOptions, OutputFormat } from "@ask/types";
 import { Command } from "commander";
-import { formatDuration as _formatDuration } from "../../utils/format";
+import { formatDuration as _formatDuration } from "@app/utils/format";
 
 export function parseCLIArguments(): Args {
     const program = new Command()
@@ -326,7 +326,7 @@ export function formatElapsedTime(milliseconds: number): string {
     return _formatDuration(milliseconds, "ms", "hms");
 }
 
-export { formatBytes } from "../../utils/format";
+export { formatBytes } from "@app/utils/format";
 
 export function sanitizeFilename(filename: string): string {
     // Remove invalid characters and ensure it's a valid filename

@@ -5,7 +5,7 @@ import MarkdownIt from "markdown-it";
 import type Token from "markdown-it/lib/token.mjs";
 // @ts-expect-error - no types available for markdown-it-task-lists
 import taskLists from "markdown-it-task-lists";
-import { stripAnsi } from "../string.js";
+import { stripAnsi } from "@app/utils/string.js";
 
 // ── Theme palette system ──────────────────────────────────────────────
 

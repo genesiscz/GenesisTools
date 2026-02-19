@@ -248,6 +248,7 @@ class ASKTool {
         }
 
         let shouldExit = false;
+        let lastCancelTime = 0;
 
         while (!shouldExit) {
             try {
@@ -266,8 +267,13 @@ class ASKTool {
                 });
 
                 if (p.isCancel(message) || typeof message === "symbol") {
-                    // User pressed Ctrl+C — continue loop
-                    logger.info("Operation cancelled by user.");
+                    const now = Date.now();
+                    if (now - lastCancelTime < 2000) {
+                        shouldExit = true;
+                        break;
+                    }
+                    lastCancelTime = now;
+                    p.log.warn(pc.dim("Press Ctrl+C again to quit."));
                     continue;
                 }
 

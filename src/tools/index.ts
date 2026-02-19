@@ -9,11 +9,11 @@ import pc from "picocolors";
 
 import { discoverTools, getReadme, type ToolInfo } from "./lib/discovery.js";
 import { introspectTool } from "./lib/introspect.js";
-import { renderMarkdownToCli } from "../utils/markdown/index.js";
+import { renderMarkdownToCli } from "@app/utils/markdown/index.js";
 import {
     searchSelect,
     searchSelectCancelSymbol,
-} from "../utils/prompts/clack/search-select.js";
+} from "@app/utils/prompts/clack/search-select.js";
 
 const LOGO = pc.cyan(`
   ╔═══════════════════════════════════╗

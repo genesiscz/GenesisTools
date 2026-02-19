@@ -23,4 +23,4 @@ export function getServerInfoPath(cwd: string): string {
     return path.join(SERVERS_DIR, `server-${hash}.json`);
 }
 
-export { wrapArray } from "../../utils/array";
+export { wrapArray } from "@app/utils/array";

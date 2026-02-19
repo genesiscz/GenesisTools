@@ -16,7 +16,7 @@ import { existsSync, readdirSync } from "fs";
 import { stat } from "fs/promises";
 import { glob } from "glob";
 import { basename, resolve, sep } from "path";
-import { estimateTokens } from "../tokens";
+import { estimateTokens } from "@app/utils/tokens";
 import { parseJsonlTranscript, PROJECTS_DIR, encodedProjectDir } from "./index";
 import type {
     AssistantMessage,

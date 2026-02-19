@@ -13,8 +13,10 @@ import type {
     ProviderConfig,
 } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
+import * as p from "@clack/prompts";
 import type { LanguageModel } from "ai";
 import { generateText } from "ai";
+import pc from "picocolors";
 
 export class ProviderManager {
     private detectedProviders: Map<string, DetectedProvider> = new Map();
@@ -50,7 +52,7 @@ export class ProviderManager {
                     detected.push(detectedProvider);
                     this.detectedProviders.set(config.name, detectedProvider);
 
-                    logger.info(`Detected ${config.name} provider with ${models.length} models`);
+                    p.log.step(pc.dim(`Detected ${pc.cyan(config.name)} provider with ${models.length} models`));
                 }
             } catch (error) {
                 logger.warn(`Failed to initialize ${config.name} provider: ${error}`);

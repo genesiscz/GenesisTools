@@ -38,4 +38,4 @@ export const styled = {
 };
 
 // Re-export shared format utilities for backward compatibility
-export { formatBytes, formatDuration, formatList } from "../format";
+export { formatBytes, formatDuration, formatList } from "@app/utils/format";

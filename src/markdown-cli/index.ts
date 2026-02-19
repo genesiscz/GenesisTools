@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Command, Option } from "commander";
 import chokidar from "chokidar";
-import { renderMarkdownToCli, type MarkdownRenderOptions } from "../utils/markdown/index.js";
+import { renderMarkdownToCli, type MarkdownRenderOptions } from "@app/utils/markdown/index.js";
 
 const program = new Command();
 

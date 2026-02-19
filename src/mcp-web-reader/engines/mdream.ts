@@ -1,5 +1,5 @@
 import { htmlToMarkdown } from "mdream";
-import { extractContent } from "../utils/extraction.js";
+import { extractContent } from "@app/mcp-web-reader/utils/extraction.js";
 import { MarkdownEngine } from "./base.js";
 import type { ConversionOptions, ConversionResult, EngineName } from "./types.js";
 

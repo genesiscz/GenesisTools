@@ -4,14 +4,14 @@ import pc from "picocolors";
 import { basename } from "node:path";
 import { formatRelativeTime } from "@app/utils/format";
 import { detectCurrentProject, findClaudeCommand } from "@app/utils/claude";
-import { getSessionMetadata } from "../lib/history/cache";
+import { getSessionMetadata } from "@app/claude/lib/history/cache";
 import {
 	getSessionListing,
 	rgExtractSnippet,
 	rgSearchFiles,
 	searchConversations,
 	type SessionMetadataRecord,
-} from "../lib/history/search";
+} from "@app/claude/lib/history/search";
 
 // --- Constants ---
 

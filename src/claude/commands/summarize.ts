@@ -10,11 +10,12 @@ import type { Command } from "commander";
 import chalk from "chalk";
 import * as p from "@clack/prompts";
 import { ClaudeSession } from "@app/utils/claude/session";
-import { SummarizeEngine, listTemplates } from "../lib/history/summarize/engine.ts";
-import type { SummarizeOptions, SummarizeResult } from "../lib/history/summarize/engine.ts";
+import { SummarizeEngine, listTemplates } from "@app/claude/lib/history/summarize/engine.ts";
+import type { SummarizeOptions, SummarizeResult } from "@app/claude/lib/history/summarize/engine.ts";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { modelSelector } from "@ask/providers/ModelSelector";
-import { parseDate } from "../lib/history/search";
+import { parseDate } from "@app/claude/lib/history/search";
+import { listAppleNotesFolders } from "@app/utils/macos/apple-notes";
 
 // =============================================================================
 // Types

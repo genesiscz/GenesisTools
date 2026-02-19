@@ -1,5 +1,7 @@
 import logger from "@app/logger";
 import type { PricingInfo } from "@ask/types/provider";
+import * as p from "@clack/prompts";
+import pc from "picocolors";
 import { z } from "zod";
 
 export const LITELLM_PRICING_URL =
@@ -402,7 +404,7 @@ export class LiteLLMPricingFetcher {
     }
 }
 
-// Singleton instance
+// Singleton instance — uses clack for user-facing info, pino for debug/warn/error
 export const liteLLMPricingFetcher = new LiteLLMPricingFetcher({
     logger: {
         debug: (msg: unknown, ...args: unknown[]) => {
@@ -419,12 +421,13 @@ export const liteLLMPricingFetcher = new LiteLLMPricingFetcher({
                 logger.error({ msg: String(msg) }, args[0] as string | undefined);
             }
         },
-        info: (msg: unknown, ...args: unknown[]) => {
-            if (typeof msg === "object" && msg !== null) {
-                logger.info(msg as object, args[0] as string | undefined);
-            } else {
-                logger.info({ msg: String(msg) }, args[0] as string | undefined);
-            }
+        info: (msg: unknown) => {
+            // logInfo wraps strings as { msg }, so unwrap them
+            const text =
+                typeof msg === "object" && msg !== null && "msg" in (msg as Record<string, unknown>)
+                    ? String((msg as Record<string, unknown>).msg)
+                    : String(msg);
+            p.log.step(pc.dim(text));
         },
         warn: (msg: unknown, ...args: unknown[]) => {
             if (typeof msg === "object" && msg !== null) {

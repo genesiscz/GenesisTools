@@ -1,7 +1,7 @@
 import { gfm } from "@truto/turndown-plugin-gfm";
 import TurndownService from "turndown";
-import { extractContent } from "../utils/extraction.js";
-import { resolveUrl } from "../utils/urls.js";
+import { extractContent } from "@app/mcp-web-reader/utils/extraction.js";
+import { resolveUrl } from "@app/mcp-web-reader/utils/urls.js";
 import { MarkdownEngine } from "./base.js";
 import type { ConversionOptions, ConversionResult, EngineName } from "./types.js";
 
