@@ -14,6 +14,7 @@ import type {
 } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
 import * as p from "@clack/prompts";
+import type { LanguageModel } from "ai";
 import { generateText } from "ai";
 import pc from "picocolors";
 
