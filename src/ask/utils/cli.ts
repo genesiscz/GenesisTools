@@ -23,6 +23,7 @@ export function parseCLIArguments(): Args {
         .option("-v, --verbose", "Enable verbose logging")
         .option("--silent", "Silent mode")
         .option("--predict-cost", "Show cost prediction before sending")
+        .option("--raw", "Output only the raw response content (no metadata, no cost)")
         .option("-?, --help-full", "Show detailed help message")
         .option("-V, --version", "Show version information")
         .argument("[prompt...]", "Initial prompt")
@@ -50,6 +51,7 @@ export function parseCLIArguments(): Args {
         verbose: options.verbose,
         silent: options.silent,
         predictCost: options.predictCost,
+        raw: options.raw,
         help: options.helpFull,
         version: options.version,
     };
@@ -85,6 +87,7 @@ Options:
   --systemPrompt <text>   Set system prompt
   --streaming             Enable streaming responses (default: true)
   --no-streaming          Disable streaming responses
+  --raw                   Output only the raw response (no metadata, cost, or formatting)
   -v, --verbose            Enable verbose logging
   --silent                Silent mode
   -h, --help              Show this help message

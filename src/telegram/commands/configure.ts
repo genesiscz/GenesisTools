@@ -181,6 +181,8 @@ async function configureContactActions(
 
 	const typedActions = actions as ActionType[];
 	let askSystemPrompt: string | undefined;
+	let askProvider: string | undefined;
+	let askModel: string | undefined;
 
 	if (typedActions.includes("ask")) {
 		const prompt = await p.text({
@@ -193,6 +195,28 @@ async function configureContactActions(
 		}
 
 		askSystemPrompt = prompt as string;
+
+		const provider = await p.text({
+			message: "LLM provider:",
+			initialValue: existing?.askProvider || DEFAULTS.askProvider,
+		});
+
+		if (p.isCancel(provider)) {
+			return null;
+		}
+
+		askProvider = provider as string;
+
+		const model = await p.text({
+			message: "LLM model:",
+			initialValue: existing?.askModel || DEFAULTS.askModel,
+		});
+
+		if (p.isCancel(model)) {
+			return null;
+		}
+
+		askModel = model as string;
 	}
 
 	return {
@@ -201,6 +225,8 @@ async function configureContactActions(
 		username: opt.user.username ?? undefined,
 		actions: typedActions,
 		askSystemPrompt,
+		askProvider,
+		askModel,
 		replyDelayMin: existing?.replyDelayMin ?? DEFAULTS.replyDelayMin,
 		replyDelayMax: existing?.replyDelayMax ?? DEFAULTS.replyDelayMax,
 	};

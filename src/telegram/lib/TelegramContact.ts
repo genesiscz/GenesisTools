@@ -22,6 +22,14 @@ export class TelegramContact {
 		return this.config.askSystemPrompt ?? DEFAULTS.askSystemPrompt;
 	}
 
+	get askProvider(): string {
+		return this.config.askProvider ?? DEFAULTS.askProvider;
+	}
+
+	get askModel(): string {
+		return this.config.askModel ?? DEFAULTS.askModel;
+	}
+
 	get replyDelayMin(): number {
 		return this.config.replyDelayMin ?? DEFAULTS.replyDelayMin;
 	}

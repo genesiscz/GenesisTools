@@ -11,7 +11,15 @@ export const handleAsk: ActionHandler = async (message, contact, client) => {
 		const promptText = message.contentForLLM;
 
 		const result = await runTool(
-			["ask", "--system-prompt", systemPrompt, "--format", "text", "--", promptText],
+			[
+				"ask",
+				"-p", contact.askProvider,
+				"-m", contact.askModel,
+				"--system-prompt", systemPrompt,
+				"--no-streaming",
+				"--raw",
+				"--", promptText,
+			],
 			{ timeout: DEFAULTS.askTimeoutMs },
 		);
 

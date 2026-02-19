@@ -6,6 +6,8 @@ export interface ContactConfig {
 	username?: string;
 	actions: ActionType[];
 	askSystemPrompt?: string;
+	askProvider?: string;
+	askModel?: string;
 	replyDelayMin: number;
 	replyDelayMax: number;
 }
@@ -44,4 +46,6 @@ export const DEFAULTS = {
 	maxProcessedMessages: 500,
 	typingIntervalMs: 4000,
 	askTimeoutMs: 60_000,
+	askProvider: "openai",
+	askModel: "gpt-4o-mini",
 } as const;
