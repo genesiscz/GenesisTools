@@ -1,5 +1,3 @@
-// src/automate/commands/credentials.ts
-
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import type { Command } from "commander";
@@ -32,7 +30,13 @@ export function registerCredentialsCommand(program: Command): void {
           { value: "custom" as const, label: "Custom headers" },
         ],
       });
-      if (p.isCancel(type)) { p.cancel("Cancelled"); process.exit(0); }
+      if (p.isCancel(type)) {
+
+        p.cancel("Cancelled");
+
+        process.exit(0);
+
+      }
 
       const credential: StoredCredential = { name, type: type as CredentialType };
 
@@ -42,15 +46,33 @@ export function registerCredentialsCommand(program: Command): void {
             message: "Token (or {{ env.VAR }} expression):",
             placeholder: "{{ env.GITHUB_TOKEN }}",
           });
-          if (p.isCancel(token)) { p.cancel("Cancelled"); process.exit(0); }
+          if (p.isCancel(token)) {
+
+            p.cancel("Cancelled");
+
+            process.exit(0);
+
+          }
           credential.token = token;
           break;
         }
         case "basic": {
           const username = await p.text({ message: "Username:" });
-          if (p.isCancel(username)) { p.cancel("Cancelled"); process.exit(0); }
+          if (p.isCancel(username)) {
+
+            p.cancel("Cancelled");
+
+            process.exit(0);
+
+          }
           const password = await p.text({ message: "Password (or {{ env.VAR }}):" });
-          if (p.isCancel(password)) { p.cancel("Cancelled"); process.exit(0); }
+          if (p.isCancel(password)) {
+
+            p.cancel("Cancelled");
+
+            process.exit(0);
+
+          }
           credential.username = username;
           credential.password = password;
           break;
@@ -61,9 +83,21 @@ export function registerCredentialsCommand(program: Command): void {
             placeholder: "X-API-Key",
             defaultValue: "X-API-Key",
           });
-          if (p.isCancel(headerName)) { p.cancel("Cancelled"); process.exit(0); }
+          if (p.isCancel(headerName)) {
+
+            p.cancel("Cancelled");
+
+            process.exit(0);
+
+          }
           const key = await p.text({ message: "Key value (or {{ env.VAR }}):" });
-          if (p.isCancel(key)) { p.cancel("Cancelled"); process.exit(0); }
+          if (p.isCancel(key)) {
+
+            p.cancel("Cancelled");
+
+            process.exit(0);
+
+          }
           credential.headerName = headerName;
           credential.key = key;
           break;
@@ -77,14 +111,26 @@ export function registerCredentialsCommand(program: Command): void {
               message: "Header (key=value):",
               placeholder: "X-Custom-Header={{ env.MY_SECRET }}",
             });
-            if (p.isCancel(header)) { p.cancel("Cancelled"); process.exit(0); }
+            if (p.isCancel(header)) {
+
+              p.cancel("Cancelled");
+
+              process.exit(0);
+
+            }
             if (!header) break;
             const eqIdx = header.indexOf("=");
             if (eqIdx > 0) {
               headers[header.substring(0, eqIdx)] = header.substring(eqIdx + 1);
             }
             const cont = await p.confirm({ message: "Add another header?", initialValue: false });
-            if (p.isCancel(cont)) { p.cancel("Cancelled"); process.exit(0); }
+            if (p.isCancel(cont)) {
+
+              p.cancel("Cancelled");
+
+              process.exit(0);
+
+            }
             addMore = cont;
           }
           credential.headers = headers;
@@ -123,9 +169,9 @@ export function registerCredentialsCommand(program: Command): void {
       }
       console.log(`  ${pc.bold("Name:")} ${cred.name}`);
       console.log(`  ${pc.bold("Type:")} ${cred.type}`);
-      // Mask sensitive values
       for (const [key, value] of Object.entries(cred)) {
         if (key === "name" || key === "type") continue;
+
         if (typeof value === "string") {
           const masked = value.startsWith("{{")
             ? value
@@ -133,6 +179,16 @@ export function registerCredentialsCommand(program: Command): void {
               ? "*".repeat(value.length)
               : `${value.substring(0, 4)}${"*".repeat(value.length - 4)}`;
           console.log(`  ${pc.bold(`${key}:`)} ${pc.dim(masked)}`);
+        } else if (typeof value === "object" && value !== null) {
+          console.log(`  ${pc.bold(`${key}:`)}`);
+          for (const [hk, hv] of Object.entries(value as Record<string, string>)) {
+            const masked = hv.startsWith("{{")
+              ? hv
+              : hv.length <= 4
+                ? "*".repeat(hv.length)
+                : `${hv.substring(0, 4)}${"*".repeat(hv.length - 4)}`;
+            console.log(`    ${pc.cyan(hk)}: ${pc.dim(masked)}`);
+          }
         }
       }
     });

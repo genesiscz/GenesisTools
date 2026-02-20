@@ -26,7 +26,10 @@ export function registerConfigureCommand(program: Command): Command {
         { value: "done", label: "Done", hint: "Exit configuration" },
       ],
     });
-    if (p.isCancel(section) || section === "done") { p.outro("Configuration complete"); return; }
+    if (p.isCancel(section) || section === "done") {
+      p.outro("Configuration complete");
+      return;
+    }
     if (section === "telegram") {
       await runToolInteractive(["telegram-bot", "configure"]);
     }

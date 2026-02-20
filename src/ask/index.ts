@@ -136,6 +136,16 @@ class ASKTool {
         try {
             // In raw mode, suppress all stdout noise during model selection
             const origStdoutWrite = argv.raw ? process.stdout.write : null;
+            const restoreStdout = () => {
+                if (origStdoutWrite) {
+                    Object.defineProperty(process.stdout, "write", {
+                        value: origStdoutWrite,
+                        writable: true,
+                        configurable: true,
+                    });
+                }
+            };
+
             if (origStdoutWrite) {
                 Object.defineProperty(process.stdout, "write", {
                     value: () => true,
@@ -145,56 +155,47 @@ class ASKTool {
             }
 
             // Determine provider and model
-            const modelChoice = await modelSelector.selectModelByName(argv.provider, argv.model);
-            if (!modelChoice) {
-                if (origStdoutWrite) {
-                    Object.defineProperty(process.stdout, "write", {
-                        value: origStdoutWrite,
-                        writable: true,
-                        configurable: true,
-                    });
+            let modelChoice: Awaited<ReturnType<typeof modelSelector.selectModelByName>>;
+            let response: Awaited<ReturnType<InstanceType<typeof ChatEngine>["sendMessage"]>>;
+
+            try {
+                modelChoice = await modelSelector.selectModelByName(argv.provider, argv.model);
+                if (!modelChoice) {
+                    logger.error("Failed to select model");
+                    process.exit(1);
                 }
-                logger.error("Failed to select model");
-                process.exit(1);
-            }
 
-            if (!argv.raw) {
-                p.log.info(`Using ${colorizeProvider(modelChoice.provider.name)}/${modelChoice.model.name}`);
-            }
+                if (!argv.raw) {
+                    p.log.info(`Using ${colorizeProvider(modelChoice.provider.name)}/${modelChoice.model.name}`);
+                }
 
-            // Create chat config
-            const chatConfig = await this.createChatConfig(modelChoice, argv);
+                // Create chat config
+                const chatConfig = await this.createChatConfig(modelChoice, argv);
 
-            // Create chat engine
-            const chatEngine = new ChatEngine(chatConfig);
+                // Create chat engine
+                const chatEngine = new ChatEngine(chatConfig);
 
-            // Optional: Show cost prediction if --predict-cost flag is set
-            if (!argv.raw && argv.predictCost) {
-                const prediction = await costPredictor.predictCost(
-                    modelChoice.provider.name,
-                    modelChoice.model.id,
-                    message
-                );
-                p.log.info(pc.cyan(costPredictor.formatPrediction(prediction)));
-            }
+                // Optional: Show cost prediction if --predict-cost flag is set
+                if (!argv.raw && argv.predictCost) {
+                    const prediction = await costPredictor.predictCost(
+                        modelChoice.provider.name,
+                        modelChoice.model.id,
+                        message
+                    );
+                    p.log.info(pc.cyan(costPredictor.formatPrediction(prediction)));
+                }
 
-            // Set up tools
-            const tools = this.getAvailableTools();
+                // Set up tools
+                const tools = this.getAvailableTools();
 
-            if (!argv.raw) {
-                p.log.step(pc.yellow("Thinking..."));
-            }
+                if (!argv.raw) {
+                    p.log.step(pc.yellow("Thinking..."));
+                }
 
-            // Send message
-            const response = await chatEngine.sendMessage(message, tools);
-
-            // Restore stdout before writing response
-            if (origStdoutWrite) {
-                Object.defineProperty(process.stdout, "write", {
-                    value: origStdoutWrite,
-                    writable: true,
-                    configurable: true,
-                });
+                // Send message
+                response = await chatEngine.sendMessage(message, tools);
+            } finally {
+                restoreStdout();
             }
 
             // Raw mode: output only the response content

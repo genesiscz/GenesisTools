@@ -173,7 +173,7 @@ function registerDownloadCommand(history: Command): void {
 						const embedSpinner = p.spinner();
 						embedSpinner.start(`Embedding ${contact.displayName}...`);
 
-						const { embedded, skipped } = await embedMessages(
+						const { embedded, skipped, unsupportedLangs } = await embedMessages(
 							store,
 							contact.userId,
 							contact.displayName,
@@ -182,6 +182,15 @@ function registerDownloadCommand(history: Command): void {
 						embedSpinner.stop(
 							`${pc.green(String(embedded))} embeddings generated, ${skipped} skipped`,
 						);
+
+						if (unsupportedLangs.size > 0) {
+							const langs = [...unsupportedLangs].join(", ");
+							p.log.warn(
+								`Some messages were in unsupported languages (${langs}). ` +
+								`Semantic search only works for: ${[...EMBEDDING_LANGUAGES].join(", ")}. ` +
+								`Keyword search still works for all languages.`,
+							);
+						}
 					}
 				}
 			} finally {
@@ -325,9 +334,10 @@ async function embedMessages(
 	store: TelegramHistoryStore,
 	chatId: string,
 	_displayName: string,
-): Promise<{ embedded: number; skipped: number }> {
+): Promise<{ embedded: number; skipped: number; unsupportedLangs: Set<string> }> {
 	let embedded = 0;
 	let skipped = 0;
+	const unsupportedLangs = new Set<string>();
 	const BATCH_SIZE = 50;
 
 	while (true) {
@@ -347,6 +357,7 @@ async function embedMessages(
 				const langResult = await detectLanguage(msg.text);
 
 				if (!EMBEDDING_LANGUAGES.has(langResult.language)) {
+					unsupportedLangs.add(langResult.language);
 					skipped++;
 					continue;
 				}
@@ -362,7 +373,7 @@ async function embedMessages(
 		}
 	}
 
-	return { embedded, skipped };
+	return { embedded, skipped, unsupportedLangs };
 }
 
 function registerEmbedCommand(history: Command): void {
@@ -442,7 +453,7 @@ function registerEmbedCommand(history: Command): void {
 					const spinner = p.spinner();
 					spinner.start("Generating embeddings...");
 
-					const { embedded, skipped } = await embedMessages(
+					const { embedded, skipped, unsupportedLangs } = await embedMessages(
 						store,
 						contact.userId,
 						contact.displayName,
@@ -453,6 +464,15 @@ function registerEmbedCommand(history: Command): void {
 					spinner.stop(
 						`${pc.green(String(embedded))} new embeddings, ${skipped} skipped (${formatNumber(total)} total embedded)`,
 					);
+
+					if (unsupportedLangs.size > 0) {
+						const langs = [...unsupportedLangs].join(", ");
+						p.log.warn(
+							`Some messages were in unsupported languages (${langs}). ` +
+							`Semantic search only works for: ${[...EMBEDDING_LANGUAGES].join(", ")}. ` +
+							`Keyword search still works for all languages.`,
+						);
+					}
 				}
 			} finally {
 				store.close();
@@ -564,6 +584,15 @@ function registerSearchCommand(history: Command): void {
 						const lang = EMBEDDING_LANGUAGES.has(langResult.language)
 							? langResult.language
 							: "en";
+
+						if (!EMBEDDING_LANGUAGES.has(langResult.language)) {
+							p.log.warn(
+								`Query language "${langResult.language}" is not supported for semantic search. ` +
+								`Supported: ${[...EMBEDDING_LANGUAGES].join(", ")}. ` +
+								`Results may be less accurate. Use keyword search for best results with this language.`,
+							);
+						}
+
 						const embedResult = await embedText(query, lang, "sentence");
 						queryEmbedding = new Float32Array(embedResult.vector);
 						spinner.stop("Query embedded");
