@@ -16,14 +16,23 @@ function maskToken(token: string): string {
 	return `${token.slice(0, 20)}...`;
 }
 
-async function addAccountViaOAuth(config: ClaudeConfig): Promise<void> {
-	// Generate auth URL
+function determineAccountLabel(profile: Awaited<ReturnType<typeof fetchOAuthProfile>>): string | undefined {
+	if (!profile) return undefined;
+	const tier = profile.organization.rate_limit_tier;
+	if (tier.includes("max")) return "max";
+	if (tier.includes("pro")) return "pro";
+	return profile.organization.billing_type;
+}
+
+async function generateAuthUrl(): Promise<string> {
 	const spinner = p.spinner();
 	spinner.start("Generating authorization URL...");
 	const authUrl = await claudeOAuth.startLogin();
 	spinner.stop("Authorization URL ready.");
+	return authUrl;
+}
 
-	// Show URL to user
+async function presentAuthUrl(authUrl: string): Promise<void> {
 	p.note(
 		[
 			"1. Open this URL in your browser:",
@@ -38,21 +47,22 @@ async function addAccountViaOAuth(config: ClaudeConfig): Promise<void> {
 		"OAuth Login",
 	);
 
-	// Try to open browser automatically
 	const openBrowser = await p.confirm({
 		message: "Open URL in browser?",
 		initialValue: true,
 	});
+
 	if (p.isCancel(openBrowser)) return;
+
 	if (openBrowser) {
 		Bun.spawn(["open", authUrl], { stdio: ["ignore", "ignore", "ignore"] });
 	} else {
-		// Copy to clipboard instead
 		await clipboard.write(authUrl);
 		p.log.info("URL copied to clipboard.");
 	}
+}
 
-	// Get code from user
+async function promptAndExchangeCode(): Promise<Awaited<ReturnType<typeof claudeOAuth.exchangeCode>> | null> {
 	const code = await p.text({
 		message: "Paste the authorization code:",
 		placeholder: "code#state",
@@ -60,47 +70,52 @@ async function addAccountViaOAuth(config: ClaudeConfig): Promise<void> {
 			if (!val?.trim()) return "Code is required";
 		},
 	});
-	if (p.isCancel(code)) return;
 
-	// Exchange code for tokens
-	const exchangeSpinner = p.spinner();
-	exchangeSpinner.start("Exchanging code for tokens...");
-	let tokens;
+	if (p.isCancel(code)) return null;
+
+	const spinner = p.spinner();
+	spinner.start("Exchanging code for tokens...");
 	try {
-		tokens = await claudeOAuth.exchangeCode(code as string);
-		exchangeSpinner.stop("Tokens received.");
+		const tokens = await claudeOAuth.exchangeCode(code as string);
+		spinner.stop("Tokens received.");
+		return tokens;
 	} catch (err) {
-		exchangeSpinner.stop(`Token exchange failed: ${err}`);
-		return;
+		spinner.stop(`Token exchange failed: ${err}`);
+		return null;
 	}
+}
 
-	// Fetch profile to show account info
-	const profileSpinner = p.spinner();
-	profileSpinner.start("Fetching account profile...");
+async function fetchAndDisplayProfile(tokens: Awaited<ReturnType<typeof claudeOAuth.exchangeCode>>): Promise<Awaited<ReturnType<typeof fetchOAuthProfile>>> {
+	const spinner = p.spinner();
+	spinner.start("Fetching account profile...");
 	const profile = await fetchOAuthProfile(tokens.accessToken);
-	profileSpinner.stop("Profile fetched.");
+	spinner.stop("Profile fetched.");
 
-	// Show account info
 	const infoLines: string[] = [];
+
 	if (tokens.account) {
 		infoLines.push(`${pc.dim("Account:")} ${pc.cyan(tokens.account.email)}`);
 	}
+
 	if (tokens.organization) {
 		infoLines.push(`${pc.dim("Organization:")} ${tokens.organization.name}`);
 	}
+
 	if (profile) {
 		const sub = profile.organization.subscription_status;
 		const tier = profile.organization.rate_limit_tier;
 		infoLines.push(`${pc.dim("Subscription:")} ${sub} (${tier})`);
 	}
+
 	infoLines.push(`${pc.dim("Scopes:")} ${tokens.scopes.join(", ")}`);
 	infoLines.push(`${pc.dim("Expires:")} ${new Date(tokens.expiresAt).toLocaleString()}`);
 	infoLines.push(`${pc.dim("Refresh:")} ${pc.green("available")} — token will auto-refresh`);
 
 	p.note(infoLines.join("\n"), "Account Authorized");
+	return profile;
+}
 
-	// Get account name
-	const suggestedName = tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "personal";
+async function promptAccountName(config: ClaudeConfig, suggestedName: string): Promise<string | null> {
 	let name = await p.text({
 		message: "Name for this account:",
 		placeholder: suggestedName,
@@ -108,16 +123,16 @@ async function addAccountViaOAuth(config: ClaudeConfig): Promise<void> {
 			if (!val?.trim()) return "Name is required";
 		},
 	});
-	if (p.isCancel(name)) return;
 
-	// Check if account exists and ask to overwrite
+	if (p.isCancel(name)) return null;
+
 	if (config.accounts[name as string]) {
 		const overwrite = await p.confirm({
 			message: `Account "${name}" already exists. Overwrite?`,
 			initialValue: false,
 		});
+
 		if (p.isCancel(overwrite) || !overwrite) {
-			// Ask for a different name
 			name = await p.text({
 				message: "Enter a different name:",
 				validate: (val) => {
@@ -125,27 +140,38 @@ async function addAccountViaOAuth(config: ClaudeConfig): Promise<void> {
 					if (config.accounts[val]) return `Account "${val}" already exists`;
 				},
 			});
-			if (p.isCancel(name)) return;
+
+			if (p.isCancel(name)) return null;
 		}
 	}
 
-	// Determine label
-	let label: string | undefined;
-	if (profile) {
-		const tier = profile.organization.rate_limit_tier;
-		if (tier.includes("max")) label = "max";
-		else if (tier.includes("pro")) label = "pro";
-		else label = profile.organization.billing_type;
-	}
+	return name as string;
+}
 
-	// Save account
-	config.accounts[name as string] = {
+async function addAccountViaOAuth(config: ClaudeConfig): Promise<void> {
+	const authUrl = await generateAuthUrl();
+	await presentAuthUrl(authUrl);
+
+	const tokens = await promptAndExchangeCode();
+	if (!tokens) return;
+
+	const profile = await fetchAndDisplayProfile(tokens);
+
+	const suggestedName = tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "personal";
+	const name = await promptAccountName(config, suggestedName);
+	if (!name) return;
+
+	config.accounts[name] = {
 		accessToken: tokens.accessToken,
 		refreshToken: tokens.refreshToken,
 		expiresAt: tokens.expiresAt,
-		label,
+		label: determineAccountLabel(profile),
 	};
-	if (!config.defaultAccount) config.defaultAccount = name as string;
+
+	if (!config.defaultAccount) {
+		config.defaultAccount = name;
+	}
+
 	await saveConfig(config);
 	p.log.success(`Account "${name}" saved with auto-refresh support.`);
 }
@@ -610,13 +636,7 @@ export function registerConfigCommand(program: Command): void {
 
 			// Fetch profile for label
 			const profile = await fetchOAuthProfile(tokens.accessToken);
-			let label: string | undefined;
-			if (profile) {
-				const tier = profile.organization.rate_limit_tier;
-				if (tier.includes("max")) label = "max";
-				else if (tier.includes("pro")) label = "pro";
-				else label = profile.organization.billing_type;
-			}
+			const label = determineAccountLabel(profile);
 
 			// Save
 			config.accounts[accountName] = {
