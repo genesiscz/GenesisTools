@@ -99,11 +99,20 @@ export function suggestCommand(
         if (modifications.keepFlags?.length) {
             const keepSet = new Set(modifications.keepFlags);
             for (let j = i; j < originalArgs.length; j++) {
-                if (keepSet.has(originalArgs[j])) {
-                    globalArgs.push(originalArgs[j]);
-                    if (j + 1 < originalArgs.length && !originalArgs[j + 1].startsWith("-")) {
-                        globalArgs.push(originalArgs[j + 1]);
-                        j++;
+                const arg = originalArgs[j];
+                // Handle --flag=value syntax
+                const eqIdx = arg.indexOf("=");
+                const flagName = eqIdx > 0 ? arg.slice(0, eqIdx) : arg;
+                if (keepSet.has(flagName)) {
+                    if (eqIdx > 0) {
+                        // Combined form: --flag=value
+                        globalArgs.push(arg);
+                    } else {
+                        globalArgs.push(arg);
+                        if (j + 1 < originalArgs.length && !originalArgs[j + 1].startsWith("-")) {
+                            globalArgs.push(originalArgs[j + 1]);
+                            j++;
+                        }
                     }
                 }
             }

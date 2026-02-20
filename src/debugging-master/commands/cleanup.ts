@@ -69,7 +69,11 @@ async function checkGitDiff(filePath: string): Promise<{ hasOnlyWhitespace: bool
 		stderr: "pipe",
 	});
 	const diff = await new Response(proc.stdout).text();
-	await proc.exited;
+	const exitCode = await proc.exited;
+	if (exitCode !== 0) {
+		const stderr = await new Response(proc.stderr).text();
+		throw new Error(`git diff failed (exit ${exitCode}): ${stderr.trim()}`);
+	}
 
 	if (!diff.trim()) return { hasOnlyWhitespace: true, diff: "" };
 
@@ -91,7 +95,11 @@ async function repairFile(filePath: string): Promise<void> {
 		stdout: "pipe",
 		stderr: "pipe",
 	});
-	await proc.exited;
+	const exitCode = await proc.exited;
+	if (exitCode !== 0) {
+		const stderr = await new Response(proc.stderr).text();
+		throw new Error(`git checkout failed (exit ${exitCode}): ${stderr.trim()}`);
+	}
 }
 
 export function registerCleanupCommand(program: Command): void {

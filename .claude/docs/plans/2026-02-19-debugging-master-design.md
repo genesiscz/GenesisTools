@@ -132,7 +132,7 @@ tools debugging-master start --session <name> [--serve] [--path <dir>] [--port <
 2. **Always copies/overwrites** the snippet file to the configured path (ensures latest version)
 3. Creates empty session JSONL file
 4. Sets `recentSession` in config
-5. If `--serve`: starts HTTP ingest server on `localhost:7243` (or `--port`)
+5. If `--serve`: starts HTTP ingest server on `127.0.0.1:7243` (or `--port`)
 6. Outputs session info + snippet import path for the LLM
 
 ## 6. Instrumentation Snippets
