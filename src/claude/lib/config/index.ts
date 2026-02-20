@@ -2,6 +2,8 @@ import { Storage } from "@app/utils/storage/storage";
 
 export interface AccountConfig {
 	accessToken: string;
+	refreshToken?: string;
+	expiresAt?: number; // Unix timestamp in ms
 	label?: string;
 }
 

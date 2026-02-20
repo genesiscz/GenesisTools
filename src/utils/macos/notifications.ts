@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-
 export interface NotificationOptions {
 	title: string;
 	message: string;
@@ -7,6 +5,9 @@ export interface NotificationOptions {
 	sound?: string;
 }
 
+/**
+ * Send a macOS notification asynchronously (fire and forget).
+ */
 export function sendNotification(opts: NotificationOptions): void {
 	const escaped = (s: string) =>
 		s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r");
@@ -19,5 +20,9 @@ export function sendNotification(opts: NotificationOptions): void {
 		.filter(Boolean)
 		.join(" ");
 
-	spawnSync("osascript", ["-e", `display notification ${params}`]);
+	// Fire and forget — don't block
+	Bun.spawn(["osascript", "-e", `display notification ${params}`], {
+		stdout: "ignore",
+		stderr: "ignore",
+	});
 }

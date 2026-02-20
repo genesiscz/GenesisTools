@@ -1,13 +1,179 @@
 import type { Command } from "commander";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
+import clipboard from "clipboardy";
 import { loadConfig, saveConfig, type ClaudeConfig } from "../lib/config";
 import { getKeychainCredentials, fetchUsage } from "../lib/usage/api";
-import { fetchOAuthProfile, getClaudeJsonAccount } from "@app/utils/claude/auth";
+import {
+	fetchOAuthProfile,
+	getClaudeJsonAccount,
+	refreshOAuthToken,
+	claudeOAuth,
+} from "@app/utils/claude/auth";
 
 function maskToken(token: string): string {
 	if (token.length < 32) return "****";
 	return `${token.slice(0, 20)}...`;
+}
+
+function determineAccountLabel(profile: Awaited<ReturnType<typeof fetchOAuthProfile>>): string | undefined {
+	if (!profile) return undefined;
+	const tier = profile.organization.rate_limit_tier;
+	if (tier.includes("max")) return "max";
+	if (tier.includes("pro")) return "pro";
+	return profile.organization.billing_type;
+}
+
+async function generateAuthUrl(): Promise<string> {
+	const spinner = p.spinner();
+	spinner.start("Generating authorization URL...");
+	const authUrl = await claudeOAuth.startLogin();
+	spinner.stop("Authorization URL ready.");
+	return authUrl;
+}
+
+async function presentAuthUrl(authUrl: string): Promise<void> {
+	p.note(
+		[
+			"1. Open this URL in your browser:",
+			"",
+			pc.cyan(authUrl),
+			"",
+			"2. Log in with your Claude account (if needed)",
+			"3. Click 'Authorize' to grant access",
+			"4. Copy the code shown on the callback page",
+			"   (format: code#state or just the code part)",
+		].join("\n"),
+		"OAuth Login",
+	);
+
+	const openBrowser = await p.confirm({
+		message: "Open URL in browser?",
+		initialValue: true,
+	});
+
+	if (p.isCancel(openBrowser)) return;
+
+	if (openBrowser) {
+		Bun.spawn(["open", authUrl], { stdio: ["ignore", "ignore", "ignore"] });
+	} else {
+		await clipboard.write(authUrl);
+		p.log.info("URL copied to clipboard.");
+	}
+}
+
+async function promptAndExchangeCode(): Promise<Awaited<ReturnType<typeof claudeOAuth.exchangeCode>> | null> {
+	const code = await p.text({
+		message: "Paste the authorization code:",
+		placeholder: "code#state",
+		validate: (val) => {
+			if (!val?.trim()) return "Code is required";
+		},
+	});
+
+	if (p.isCancel(code)) return null;
+
+	const spinner = p.spinner();
+	spinner.start("Exchanging code for tokens...");
+	try {
+		const tokens = await claudeOAuth.exchangeCode(code as string);
+		spinner.stop("Tokens received.");
+		return tokens;
+	} catch (err) {
+		spinner.stop(`Token exchange failed: ${err}`);
+		return null;
+	}
+}
+
+async function fetchAndDisplayProfile(tokens: Awaited<ReturnType<typeof claudeOAuth.exchangeCode>>): Promise<Awaited<ReturnType<typeof fetchOAuthProfile>>> {
+	const spinner = p.spinner();
+	spinner.start("Fetching account profile...");
+	const profile = await fetchOAuthProfile(tokens.accessToken);
+	spinner.stop("Profile fetched.");
+
+	const infoLines: string[] = [];
+
+	if (tokens.account) {
+		infoLines.push(`${pc.dim("Account:")} ${pc.cyan(tokens.account.email)}`);
+	}
+
+	if (tokens.organization) {
+		infoLines.push(`${pc.dim("Organization:")} ${tokens.organization.name}`);
+	}
+
+	if (profile) {
+		const sub = profile.organization.subscription_status;
+		const tier = profile.organization.rate_limit_tier;
+		infoLines.push(`${pc.dim("Subscription:")} ${sub} (${tier})`);
+	}
+
+	infoLines.push(`${pc.dim("Scopes:")} ${tokens.scopes.join(", ")}`);
+	infoLines.push(`${pc.dim("Expires:")} ${new Date(tokens.expiresAt).toLocaleString()}`);
+	infoLines.push(`${pc.dim("Refresh:")} ${pc.green("available")} — token will auto-refresh`);
+
+	p.note(infoLines.join("\n"), "Account Authorized");
+	return profile;
+}
+
+async function promptAccountName(config: ClaudeConfig, suggestedName: string): Promise<string | null> {
+	let name = await p.text({
+		message: "Name for this account:",
+		placeholder: suggestedName,
+		validate: (val) => {
+			if (!val?.trim()) return "Name is required";
+		},
+	});
+
+	if (p.isCancel(name)) return null;
+
+	if (config.accounts[name as string]) {
+		const overwrite = await p.confirm({
+			message: `Account "${name}" already exists. Overwrite?`,
+			initialValue: false,
+		});
+
+		if (p.isCancel(overwrite) || !overwrite) {
+			name = await p.text({
+				message: "Enter a different name:",
+				validate: (val) => {
+					if (!val?.trim()) return "Name is required";
+					if (config.accounts[val]) return `Account "${val}" already exists`;
+				},
+			});
+
+			if (p.isCancel(name)) return null;
+		}
+	}
+
+	return name as string;
+}
+
+async function addAccountViaOAuth(config: ClaudeConfig): Promise<void> {
+	const authUrl = await generateAuthUrl();
+	await presentAuthUrl(authUrl);
+
+	const tokens = await promptAndExchangeCode();
+	if (!tokens) return;
+
+	const profile = await fetchAndDisplayProfile(tokens);
+
+	const suggestedName = tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "personal";
+	const name = await promptAccountName(config, suggestedName);
+	if (!name) return;
+
+	config.accounts[name] = {
+		accessToken: tokens.accessToken,
+		refreshToken: tokens.refreshToken,
+		expiresAt: tokens.expiresAt,
+		label: determineAccountLabel(profile),
+	};
+
+	if (!config.defaultAccount) {
+		config.defaultAccount = name;
+	}
+
+	await saveConfig(config);
+	p.log.success(`Account "${name}" saved with auto-refresh support.`);
 }
 
 async function interactiveConfig(): Promise<void> {
@@ -46,7 +212,8 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 	const action = await p.select({
 		message: "Account action:",
 		options: [
-			{ value: "add-keychain", label: "Add from Keychain (auto-detect)" },
+			{ value: "add-oauth", label: "Login with OAuth (recommended)" },
+			{ value: "add-keychain", label: "Add from Keychain (forks Claude Code's token)" },
 			{ value: "add-manual", label: "Add with manual token" },
 			...(Object.keys(config.accounts).length > 0
 				? [{ value: "remove", label: "Remove an account" }]
@@ -57,7 +224,9 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 
 	if (p.isCancel(action) || action === "back") return;
 
-	if (action === "add-keychain") {
+	if (action === "add-oauth") {
+		await addAccountViaOAuth(config);
+	} else if (action === "add-keychain") {
 		const spinner = p.spinner();
 		spinner.start("Reading Keychain & fetching profile...");
 		const kc = await getKeychainCredentials();
@@ -84,6 +253,11 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 			infoLines.push(`${pc.dim(".claude.json:")} ${cj.displayName ?? "?"} <${pc.cyan(cj.emailAddress ?? "?")}> — ${cj.billingType ?? "?"}`);
 		}
 		infoLines.push(`${pc.dim("Token:")} ${pc.dim(maskToken(kc.accessToken))}${kc.subscriptionType ? ` — ${pc.cyan(kc.subscriptionType)}` : ""}${kc.rateLimitTier ? pc.dim(` (${kc.rateLimitTier})`) : ""}`);
+		if (kc.refreshToken) {
+			infoLines.push(`${pc.dim("Refresh:")} ${pc.green("available")} — token can be auto-refreshed`);
+		} else {
+			infoLines.push(`${pc.dim("Refresh:")} ${pc.yellow("not available")} — token cannot be refreshed after expiry`);
+		}
 
 		p.note(infoLines.join("\n"), "Found Account");
 
@@ -97,10 +271,32 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 		});
 		if (p.isCancel(name)) return;
 
+		// If refresh token available, "fork" it so we have our own copy
+		// This prevents conflicts with Claude Code's token management
+		let accessToken = kc.accessToken;
+		let refreshToken = kc.refreshToken;
+		let expiresAt = kc.expiresAt;
+
+		if (kc.refreshToken) {
+			const forkSpinner = p.spinner();
+			forkSpinner.start("Forking token (creating independent copy for this tool)...");
+			try {
+				const forked = await refreshOAuthToken(kc.refreshToken);
+				accessToken = forked.accessToken;
+				refreshToken = forked.refreshToken;
+				expiresAt = forked.expiresAt;
+				forkSpinner.stop("Token forked — this account has its own refresh token.");
+				p.log.info(pc.dim("Note: Claude Code will need to re-login (its token was used to create this fork)."));
+			} catch (err) {
+				forkSpinner.stop(`Token fork failed: ${err}`);
+				p.log.warn("Saving without refresh capability. Token will expire and require manual update.");
+			}
+		}
+
 		const validateSpinner = p.spinner();
 		validateSpinner.start("Validating token...");
 		try {
-			await fetchUsage(kc.accessToken);
+			await fetchUsage(accessToken);
 			validateSpinner.stop("Token is valid.");
 		} catch (err) {
 			validateSpinner.stop(`Token validation failed: ${err}`);
@@ -112,12 +308,14 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 		}
 
 		config.accounts[name as string] = {
-			accessToken: kc.accessToken,
+			accessToken,
+			refreshToken,
+			expiresAt,
 			label: kc.subscriptionType,
 		};
 		if (!config.defaultAccount) config.defaultAccount = name as string;
 		await saveConfig(config);
-		p.log.success(`Account "${name}" saved.`);
+		p.log.success(`Account "${name}" saved${refreshToken ? " with auto-refresh support" : ""}.`);
 	} else if (action === "add-manual") {
 		const name = await p.text({
 			message: "Name for this account:",
@@ -296,6 +494,7 @@ export function registerConfigCommand(program: Command): void {
 		.command("add <name>")
 		.description("Add an account (reads from Keychain by default)")
 		.option("--token <token>", "OAuth access token (instead of Keychain)")
+		.option("--no-fork", "Don't fork the token (keeps Claude Code's token valid)")
 		.action(async (name: string, opts) => {
 			const config = await loadConfig();
 			if (config.accounts[name]) {
@@ -304,6 +503,8 @@ export function registerConfigCommand(program: Command): void {
 			}
 
 			let accessToken: string;
+			let refreshToken: string | undefined;
+			let expiresAt: number | undefined;
 			let label: string | undefined;
 
 			if (opts.token) {
@@ -315,15 +516,35 @@ export function registerConfigCommand(program: Command): void {
 					process.exit(1);
 				}
 				accessToken = kc.accessToken;
+				refreshToken = kc.refreshToken;
+				expiresAt = kc.expiresAt;
 				label = kc.subscriptionType;
 				const who = kc.account.api?.account.display_name ?? kc.account.claudeJson?.displayName;
 				p.log.info(`Using Keychain credentials: ${pc.cyan(label ?? "unknown plan")}${who ? ` — ${pc.green(who)}` : ""}`);
+
+				// Fork the token unless --no-fork is specified
+				if (opts.fork !== false && kc.refreshToken) {
+					p.log.step("Forking token (creating independent copy)...");
+					try {
+						const forked = await refreshOAuthToken(kc.refreshToken);
+						accessToken = forked.accessToken;
+						refreshToken = forked.refreshToken;
+						expiresAt = forked.expiresAt;
+						p.log.success("Token forked — account has its own refresh token.");
+						p.log.warn("Claude Code will need to re-login.");
+					} catch (err) {
+						p.log.error(`Token fork failed: ${err}`);
+						p.log.warn("Saving without refresh capability.");
+						refreshToken = undefined;
+						expiresAt = undefined;
+					}
+				}
 			}
 
-			config.accounts[name] = { accessToken, label };
+			config.accounts[name] = { accessToken, refreshToken, expiresAt, label };
 			if (!config.defaultAccount) config.defaultAccount = name;
 			await saveConfig(config);
-			p.log.success(`Account "${name}" added.`);
+			p.log.success(`Account "${name}" added${refreshToken ? " with auto-refresh" : ""}.`);
 		});
 
 	configCmd
@@ -349,5 +570,91 @@ export function registerConfigCommand(program: Command): void {
 		.action(async () => {
 			const config = await loadConfig();
 			await showConfig(config);
+		});
+
+	// OAuth login command (top-level, not under config)
+	program
+		.command("login [name]")
+		.description("Login with OAuth to add an account (with auto-refresh)")
+		.action(async (name?: string) => {
+			const config = await loadConfig();
+
+			// Generate auth URL
+			console.log(pc.dim("Generating authorization URL..."));
+			const authUrl = await claudeOAuth.startLogin();
+
+			console.log();
+			console.log(pc.bold("OAuth Login"));
+			console.log(pc.dim("─".repeat(50)));
+			console.log();
+			console.log("1. Open this URL in your browser:");
+			console.log();
+			console.log(`   ${pc.cyan(authUrl)}`);
+			console.log();
+			console.log("2. Log in and click 'Authorize'");
+			console.log("3. Copy the code from the callback page");
+			console.log();
+			console.log(pc.dim("─".repeat(50)));
+
+			// Open browser
+			Bun.spawn(["open", authUrl], { stdio: ["ignore", "ignore", "ignore"] });
+			console.log(pc.dim("(Opening browser...)"));
+			console.log();
+
+			// Read code from stdin
+			process.stdout.write("Paste authorization code: ");
+			const reader = Bun.stdin.stream().getReader();
+			let value: Uint8Array | undefined;
+			try {
+				const result = await reader.read();
+				value = result.value;
+			} finally {
+				reader.releaseLock();
+			}
+			const code = new TextDecoder().decode(value ?? new Uint8Array()).trim();
+
+			if (!code) {
+				console.error(pc.red("No code provided."));
+				process.exit(1);
+			}
+
+			// Exchange code
+			console.log(pc.dim("Exchanging code for tokens..."));
+			let tokens;
+			try {
+				tokens = await claudeOAuth.exchangeCode(code);
+			} catch (err) {
+				console.error(pc.red(`Token exchange failed: ${err}`));
+				process.exit(1);
+			}
+
+			// Determine account name
+			const accountName = name ?? tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "personal";
+			if (config.accounts[accountName]) {
+				console.log(pc.yellow(`Updating existing account "${accountName}"...`));
+			}
+
+			// Fetch profile for label
+			const profile = await fetchOAuthProfile(tokens.accessToken);
+			const label = determineAccountLabel(profile);
+
+			// Save
+			config.accounts[accountName] = {
+				accessToken: tokens.accessToken,
+				refreshToken: tokens.refreshToken,
+				expiresAt: tokens.expiresAt,
+				label,
+			};
+			if (!config.defaultAccount) config.defaultAccount = accountName;
+			await saveConfig(config);
+
+			console.log();
+			console.log(pc.green(`✓ Account "${accountName}" saved with auto-refresh.`));
+			if (tokens.account) {
+				console.log(pc.dim(`  Email: ${tokens.account.email}`));
+			}
+			if (label) {
+				console.log(pc.dim(`  Plan: ${label}`));
+			}
 		});
 }
