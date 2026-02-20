@@ -4,7 +4,7 @@ import logger from "@app/logger";
 import type { OutputConfig, OutputFormat } from "@ask/types";
 import { write } from "bun";
 import pc from "picocolors";
-import clipboardy from "clipboardy";
+import { copyToClipboard } from "@app/utils/clipboard";
 
 export interface FormattedResponse {
     content: string;
@@ -111,7 +111,7 @@ export class OutputManager {
                 clipboardContent = `${metadataText}\n\n${content}`;
             }
 
-            await clipboardy.write(clipboardContent);
+            await copyToClipboard(clipboardContent, { silent: true });
             console.log(pc.green("✓ Content copied to clipboard"));
 
             if (metadata) {

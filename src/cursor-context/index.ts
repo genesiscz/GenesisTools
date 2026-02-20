@@ -3,7 +3,7 @@
 import logger from "@app/logger";
 import { ExitPromptError } from "@inquirer/core";
 import { checkbox, confirm, input } from "@inquirer/prompts";
-import clipboardy from "clipboardy";
+import { copyToClipboard } from "@app/utils/clipboard";
 import { Command } from "commander";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -342,7 +342,7 @@ Statistics:
 `);
 
         // Copy to clipboard
-        await clipboardy.write(cleaned);
+        await copyToClipboard(cleaned, { silent: true });
         logger.info("✔ Copied cleaned content to clipboard!");
 
         // Save to output file if specified

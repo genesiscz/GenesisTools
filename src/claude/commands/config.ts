@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import clipboard from "clipboardy";
+import { copyToClipboard } from "@app/utils/clipboard";
 import { loadConfig, saveConfig, type ClaudeConfig } from "@app/claude/lib/config";
 import { getKeychainCredentials, fetchUsage } from "@app/claude/lib/usage/api";
 import {
@@ -57,7 +57,7 @@ async function presentAuthUrl(authUrl: string): Promise<void> {
 	if (openBrowser) {
 		Bun.spawn(["open", authUrl], { stdio: ["ignore", "ignore", "ignore"] });
 	} else {
-		await clipboard.write(authUrl);
+		await copyToClipboard(authUrl, { silent: true });
 		p.log.info("URL copied to clipboard.");
 	}
 }

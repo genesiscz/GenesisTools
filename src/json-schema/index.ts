@@ -1,6 +1,6 @@
 import { Command, Option } from "commander";
 import { formatSchema, type OutputMode } from "@app/utils/json-schema";
-import clipboardy from "clipboardy";
+import { copyToClipboard } from "@app/utils/clipboard";
 
 interface Options {
 	mode: OutputMode;
@@ -46,8 +46,7 @@ program
 		const output = formatSchema(value, options.mode, { pretty: options.pretty });
 
 		if (options.clipboard) {
-			await clipboardy.write(output);
-			console.error(`Schema copied to clipboard (${options.mode} mode)`);
+			await copyToClipboard(output, { label: `${options.mode} mode` });
 		} else {
 			console.log(output);
 		}

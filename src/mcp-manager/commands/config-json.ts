@@ -1,7 +1,7 @@
 import logger from "@app/logger";
 import { readUnifiedConfig, stripMetaFromServers } from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
-import clipboardy from "clipboardy";
+import { copyToClipboard } from "@app/utils/clipboard";
 
 export interface ConfigJsonOptions {
     client?: "standard" | "cursor" | "claude";
@@ -59,7 +59,7 @@ export async function configJson(options: ConfigJsonOptions = {}): Promise<void>
         .map((s) => s.trim())
         .filter(Boolean);
     const bare = options.bare || false;
-    const copyToClipboard = options.clipboard || false;
+    const shouldCopyToClipboard = options.clipboard || false;
 
     // Read unified config
     const config = await readUnifiedConfig();
@@ -124,8 +124,8 @@ export async function configJson(options: ConfigJsonOptions = {}): Promise<void>
 
     const jsonOutput = JSON.stringify(output, null, 2);
 
-    if (copyToClipboard) {
-        await clipboardy.write(jsonOutput);
+    if (shouldCopyToClipboard) {
+        await copyToClipboard(jsonOutput, { silent: true });
         logger.info("✔ Configuration copied to clipboard");
     } else {
         console.log(jsonOutput);

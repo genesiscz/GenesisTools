@@ -1,4 +1,4 @@
-import clipboardy from "clipboardy";
+import { copyToClipboard } from "@app/utils/clipboard";
 import { registerStepHandler, registerStepCatalog } from "@app/automate/lib/registry";
 import type { StepContext } from "@app/automate/lib/registry";
 import type { NotifyStepParams, PresetStep, StepResult } from "@app/automate/lib/types";
@@ -30,7 +30,7 @@ async function notifyHandler(step: PresetStep, ctx: StepContext): Promise<StepRe
 
       case "clipboard": {
         const content = ctx.interpolate(params.content ?? params.message ?? "");
-        await clipboardy.write(content);
+        await copyToClipboard(content, { silent: true });
         return makeResult("success", { copied: true, length: content.length }, start);
       }
 
