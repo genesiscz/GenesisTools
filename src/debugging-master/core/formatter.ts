@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import { formatDuration, formatBytes } from "@app/utils/format";
 import { suggestCommand } from "@app/utils/cli/executor";
+import { stripAnsi } from "@app/utils/string";
 import type { IndexedLogEntry, SessionStats, OutputFormat } from "@app/debugging-master/types";
 
 const TOOL = "tools debugging-master";
@@ -38,7 +39,9 @@ export function formatEntryLine(entry: IndexedLogEntry, pretty: boolean): string
 		const coloredSuffix = colorizeSuffix(entry, suffix);
 		const line = `  ${coloredIdx}  ${coloredTime}  ${coloredLevel} ${label}`;
 		if (!coloredSuffix) return line;
-		return `${line.padEnd(60)} ${coloredSuffix}`;
+		const visibleLen = stripAnsi(line).length;
+		const padded = line + " ".repeat(Math.max(0, 60 - visibleLen));
+		return `${padded} ${coloredSuffix}`;
 	}
 
 	const line = `  ${idx}  ${time}  ${level} ${label}`;

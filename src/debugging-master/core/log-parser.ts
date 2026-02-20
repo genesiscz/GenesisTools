@@ -65,8 +65,12 @@ export function computeStats(entries: IndexedLogEntry[]): SessionStats {
 			: 0;
 
 	const timestamps = entries.filter((e) => e.ts).map((e) => e.ts);
-	const startTime = Math.min(...timestamps);
-	const endTime = Math.max(...timestamps);
+	let startTime = 0;
+	let endTime = 0;
+	if (timestamps.length > 0) {
+		startTime = Math.min(...timestamps);
+		endTime = Math.max(...timestamps);
+	}
 
 	return {
 		entryCount: entries.length,

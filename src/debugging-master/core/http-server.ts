@@ -41,8 +41,11 @@ function normalizeEntry(body: string): LogEntry {
 export function startServer(port: number = 7243): { server: ReturnType<typeof Bun.serve>; port: number } {
 	ensureDir();
 
+	const SAFE_SESSION_NAME = /^[a-zA-Z0-9_-]+$/;
+
 	const server = Bun.serve({
 		port,
+		hostname: "127.0.0.1",
 		fetch(req) {
 			const url = new URL(req.url);
 
@@ -56,8 +59,8 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
 			// Log ingestion: POST /log/<session-name>
 			if (req.method === "POST" && url.pathname.startsWith("/log/")) {
 				const sessionName = url.pathname.slice(5);
-				if (!sessionName) {
-					return new Response("Missing session name", { status: 400 });
+				if (!sessionName || !SAFE_SESSION_NAME.test(sessionName)) {
+					return new Response("Invalid session name", { status: 400 });
 				}
 
 				return req.text().then((body) => {
@@ -71,6 +74,9 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
 			// Clear session: DELETE /log/<session-name>
 			if (req.method === "DELETE" && url.pathname.startsWith("/log/")) {
 				const sessionName = url.pathname.slice(5);
+				if (!sessionName || !SAFE_SESSION_NAME.test(sessionName)) {
+					return new Response("Invalid session name", { status: 400 });
+				}
 				const path = join(SESSIONS_DIR, `${sessionName}.jsonl`);
 				try {
 					Bun.write(path, "");

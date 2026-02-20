@@ -53,6 +53,9 @@ export function registerTailCommand(program: Command): void {
 			const processNewData = () => {
 				try {
 					const currentSize = statSync(filePath).size;
+					if (currentSize < offset) {
+						offset = 0;
+					}
 					if (currentSize <= offset) return;
 
 					const buffer = readFileSync(filePath);

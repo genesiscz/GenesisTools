@@ -39,6 +39,10 @@ export function registerStartCommand(program: Command): void {
 			const globalOpts = program.opts<{ session?: string }>();
 			const projectPath = process.cwd();
 			const port = Number.parseInt(opts.port, 10);
+			if (Number.isNaN(port) || port < 1 || port > 65535) {
+				console.error(`Invalid port: ${opts.port}`);
+				process.exit(1);
+			}
 
 			// --- Resolve session name ---
 			let sessionName = globalOpts.session;
@@ -90,6 +94,11 @@ export function registerStartCommand(program: Command): void {
 			const snippetDest = join(snippetDir, snippetFilename);
 
 			// --- Copy snippet ---
+			if (!existsSync(snippetDir)) {
+				console.error(`Snippet destination directory does not exist: ${snippetDir}`);
+				process.exit(1);
+			}
+
 			const snippetSrc = resolveSnippetSource(language);
 
 			if (!existsSync(snippetSrc)) {
@@ -134,7 +143,7 @@ export function registerStartCommand(program: Command): void {
 			} else {
 				console.log(pc.dim("Add to your code:"));
 				console.log(`  require_once __DIR__ . '/${relSnippet}';`);
-				console.log(`  dbg_session('${sessionName}');`);
+				console.log(`  LlmLog::session('${sessionName}');`);
 			}
 
 			console.log("");

@@ -72,9 +72,18 @@ class LlmLog
 		$entry['ts'] = (int)(microtime(true) * 1000);
 		$entry['file'] = $caller['file'];
 		$entry['line'] = $caller['line'];
+		try {
+			$json = json_encode($entry, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+		} catch (\Throwable $e) {
+			$json = json_encode([
+				'level' => $entry['level'] ?? 'unknown',
+				'ts' => $entry['ts'] ?? 0,
+				'error' => 'serialize_failed: ' . $e->getMessage(),
+			]);
+		}
 		file_put_contents(
 			self::getSessionPath(),
-			json_encode($entry, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n",
+			$json . "\n",
 			FILE_APPEND | LOCK_EX
 		);
 	}

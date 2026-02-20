@@ -103,6 +103,7 @@ export function suggestCommand(
                     globalArgs.push(originalArgs[j]);
                     if (j + 1 < originalArgs.length && !originalArgs[j + 1].startsWith("-")) {
                         globalArgs.push(originalArgs[j + 1]);
+                        j++;
                     }
                 }
             }

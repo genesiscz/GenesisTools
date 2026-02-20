@@ -24,21 +24,30 @@ interface BlockRange {
 	end: number;
 }
 
-function findBlocks(content: string): BlockRange[] {
+function findBlocks(content: string): { blocks: BlockRange[]; warnings: string[] } {
 	const lines = content.split("\n");
 	const blocks: BlockRange[] = [];
-	let blockStart = -1;
+	const warnings: string[] = [];
+	const startStack: number[] = [];
 
 	for (let i = 0; i < lines.length; i++) {
 		if (REGION_START.test(lines[i])) {
-			blockStart = i;
-		} else if (REGION_END.test(lines[i]) && blockStart >= 0) {
-			blocks.push({ start: blockStart, end: i });
-			blockStart = -1;
+			startStack.push(i);
+		} else if (REGION_END.test(lines[i])) {
+			const blockStart = startStack.pop();
+			if (blockStart !== undefined) {
+				blocks.push({ start: blockStart, end: i });
+			} else {
+				warnings.push(`'#endregion @dbg' at line ${i + 1} without a matching '#region @dbg'`);
+			}
 		}
 	}
 
-	return blocks;
+	for (const unmatchedStart of startStack) {
+		warnings.push(`'#region @dbg' at line ${unmatchedStart + 1} without a matching '#endregion @dbg'`);
+	}
+
+	return { blocks, warnings };
 }
 
 function removeBlocks(content: string, blocks: BlockRange[]): string {
@@ -104,14 +113,28 @@ export function registerCleanupCommand(program: Command): void {
 
 			const fileBlockMap = new Map<string, BlockRange[]>();
 			let totalBlocks = 0;
+			const allWarnings: { file: string; warning: string }[] = [];
 
 			for (const file of files) {
 				const content = readFileSync(file, "utf-8");
-				const blocks = findBlocks(content);
+				const { blocks, warnings } = findBlocks(content);
+
+				for (const w of warnings) {
+					allWarnings.push({ file, warning: w });
+				}
+
 				if (blocks.length === 0) continue;
 
 				fileBlockMap.set(file, blocks);
 				totalBlocks += blocks.length;
+			}
+
+			if (allWarnings.length > 0) {
+				console.log(pc.yellow(`\n${allWarnings.length} unclosed/orphan @dbg region(s) found:`));
+				for (const { file, warning } of allWarnings) {
+					console.log(`  ${pc.dim(relative(projectPath, file))}: ${warning}`);
+				}
+				console.log(pc.dim("\nThese regions were skipped. Fix the markers manually, then re-run cleanup."));
 			}
 
 			// --- B. Remove blocks ---
@@ -208,6 +231,7 @@ export function registerCleanupCommand(program: Command): void {
 						}
 						archivePath = join(keepDir, `${timestamp}-llmlog-${sessionName}.jsonl`);
 						copyFileSync(sessionPath, archivePath);
+						unlinkSync(sessionPath);
 					} else {
 						archivePath = join(
 							tmpdir(),

@@ -210,6 +210,8 @@ export function registerSnippetCommand(program: Command): void {
 			}
 
 			const snippetType = type as SnippetType;
+			// Escape single quotes to prevent syntax errors in generated code
+			label = label.replace(/'/g, "\\'");
 			const configManager = new ConfigManager();
 
 			let language: "typescript" | "php" = "typescript";

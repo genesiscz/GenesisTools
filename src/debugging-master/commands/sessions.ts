@@ -1,13 +1,12 @@
 import type { Command } from "commander";
 import { basename } from "node:path";
 import pc from "picocolors";
-import { SessionManager } from "@app/debugging-master/core/session-manager";
+import { SessionManager, ACTIVE_THRESHOLD_MS } from "@app/debugging-master/core/session-manager";
 import { formatDuration, formatRelativeTime } from "@app/utils/format";
 import { formatTable } from "@app/utils/table";
 import { suggestCommand } from "@app/utils/cli/executor";
 
 const TOOL = "tools debugging-master";
-const ACTIVE_THRESHOLD_MS = 60 * 60 * 1000;
 
 export function registerSessionsCommand(program: Command): void {
 	program

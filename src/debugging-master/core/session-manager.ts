@@ -5,7 +5,7 @@ import { fuzzyFind } from "@app/utils/string";
 import { suggestCommand } from "@app/utils/cli/executor";
 import type { SessionMeta, LogEntry } from "@app/debugging-master/types";
 
-const ACTIVE_THRESHOLD_MS = 60 * 60 * 1000;
+export const ACTIVE_THRESHOLD_MS = 60 * 60 * 1000;
 const TOOL_NAME = "tools debugging-master";
 
 export class SessionManager {

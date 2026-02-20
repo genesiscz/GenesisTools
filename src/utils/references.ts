@@ -61,7 +61,7 @@ export function formatValueWithRef(
 		return { formatted: value, updated: false };
 	}
 
-	if (value.length < REF_THRESHOLD) {
+	if (value.length <= REF_THRESHOLD) {
 		return { formatted: value, updated: false };
 	}
 
