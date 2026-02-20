@@ -1,5 +1,6 @@
 import { lstatSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { Executor } from "@app/utils/cli";
 import { formatRelativeTime as _formatRelativeTime } from "@app/utils/format";
 import { handleReadmeFlag } from "@app/utils/readme";
 import chalk from "chalk";
@@ -168,18 +169,8 @@ function getFilesInDirectory(dirPath: string, basePath: string): FileChange[] {
 }
 
 async function getUncommittedFiles(verbose: boolean): Promise<FileChange[]> {
-    const proc = Bun.spawn({
-        cmd: ["git", "status", "--porcelain"],
-        stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0) {
-        throw new Error(`git status failed: ${stderr || stdout}`);
-    }
+    const git = new Executor({ prefix: "git" });
+    const { stdout } = await git.execOrThrow(["status", "--porcelain"], "git status failed");
 
     const lines = stdout.split("\n").filter((line) => line.trim().length > 0);
 
@@ -249,20 +240,13 @@ async function getUncommittedFiles(verbose: boolean): Promise<FileChange[]> {
 async function getCommittedFiles(numCommits: number, verbose: boolean): Promise<FileChange[]> {
     // Get commit info and file changes
     // Format: --format="%H|%ct" outputs commit hash and timestamp, --name-status outputs file changes
-    const logProc = Bun.spawn({
-        cmd: ["git", "log", `-n`, `${numCommits}`, `--format=%H|%ct`, "--name-status"],
-        stdio: ["pipe", "pipe", "pipe"],
-    });
+    const git = new Executor({ prefix: "git" });
+    const { stdout } = await git.execOrThrow(
+        ["log", `-n`, `${numCommits}`, `--format=%H|%ct`, "--name-status"],
+        "git log failed",
+    );
 
-    const logStdout = await new Response(logProc.stdout).text();
-    const logStderr = await new Response(logProc.stderr).text();
-    const logExitCode = await logProc.exited;
-
-    if (logExitCode !== 0) {
-        throw new Error(`git log failed: ${logStderr || logStdout}`);
-    }
-
-    const lines = logStdout.split("\n");
+    const lines = stdout.split("\n");
     const files: FileChange[] = [];
     let currentCommitDate: Date | null = null;
 

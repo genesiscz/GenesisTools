@@ -1,4 +1,5 @@
 import logger from "@app/logger";
+import { Executor } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
 import { confirm, select } from "@inquirer/prompts";
@@ -10,20 +11,8 @@ import { z } from "zod";
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
-async function getGitDiff(): Promise<string> {
-    const proc = Bun.spawn({
-        cmd: ["git", "diff", "--cached"],
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0) {
-        throw new Error(`Git diff failed: ${stderr}`);
-    }
-
+async function getGitDiff(git: Executor): Promise<string> {
+    const { stdout } = await git.execOrThrow(["diff", "--cached"], "Git diff failed");
     return stdout;
 }
 
@@ -98,26 +87,18 @@ async function main() {
         .parse();
 
     const options = program.opts();
+    const git = new Executor({ prefix: "git" });
 
     try {
         // Stage all changes if requested
         if (options.stage) {
             logger.info("📦 Staging all changes...");
-            const addProc = Bun.spawn({
-                cmd: ["git", "add", "."],
-                stdio: ["ignore", "pipe", "pipe"],
-            });
-
-            const addExitCode = await addProc.exited;
-            if (addExitCode !== 0) {
-                const stderr = await new Response(addProc.stderr).text();
-                throw new Error(`Git add failed: ${stderr}`);
-            }
+            await git.execOrThrow(["add", "."], "Git add failed");
         }
 
         // Get the diff of staged changes
         logger.info("📊 Getting diff of staged changes...");
-        const diff = await getGitDiff();
+        const diff = await getGitDiff(git);
 
         if (!diff.trim()) {
             logger.info("✨ No staged changes to commit!");
@@ -165,18 +146,7 @@ async function main() {
             : chosenMessage.summary;
 
         logger.info(`💾 Committing with message: "${chosenMessage.summary}"`);
-
-        const commitProc = Bun.spawn({
-            cmd: ["git", "commit", "-m", commitMessage],
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-
-        const commitExitCode = await commitProc.exited;
-        if (commitExitCode !== 0) {
-            const stderr = await new Response(commitProc.stderr).text();
-            throw new Error(`Git commit failed: ${stderr}`);
-        }
-
+        await git.execOrThrow(["commit", "-m", commitMessage], "Git commit failed");
         logger.info("✅ Commit successful!");
 
         // Ask if user wants to push
@@ -187,17 +157,7 @@ async function main() {
 
         if (shouldPush) {
             logger.info("🚀 Pushing changes...");
-            const pushProc = Bun.spawn({
-                cmd: ["git", "push"],
-                stdio: ["ignore", "pipe", "pipe"],
-            });
-
-            const pushExitCode = await pushProc.exited;
-            if (pushExitCode !== 0) {
-                const stderr = await new Response(pushProc.stderr).text();
-                throw new Error(`Git push failed: ${stderr}`);
-            }
-
+            await git.execOrThrow(["push"], "Git push failed");
             logger.info("✅ Push successful!");
         }
     } catch (error) {

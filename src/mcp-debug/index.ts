@@ -1,3 +1,4 @@
+import { Executor } from "@app/utils/cli";
 import { Command } from "commander";
 
 function showHelp() {
@@ -38,44 +39,42 @@ function debugLog(message: string) {
     process.stderr.write(`[MCP-DEBUG] ${message}\n`);
 }
 
-async function executeCommand(commandString: string): Promise<any> {
+interface CommandResult {
+    success: boolean;
+    exitCode: number;
+    command: string;
+    stdout: string;
+    stderr: string;
+    error?: string;
+}
+
+const exec = new Executor();
+
+async function executeCommand(commandString: string): Promise<CommandResult> {
     // Parse command string - handle quoted arguments
     const parts = commandString.trim().split(/\s+/);
     if (parts.length === 0 || !parts[0]) {
         throw new Error(`Invalid command: "${commandString}"`);
     }
 
-    const [command, ...args] = parts;
-
-    debugLog(`Executing command: ${command} ${args.join(" ")}`);
+    debugLog(`Executing command: ${parts.join(" ")}`);
 
     try {
-        // Execute the command
-        const proc = Bun.spawn({
-            cmd: [command, ...args],
-            cwd: process.cwd(),
-            env: process.env,
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-
-        // Capture stdout and stderr
-        const stdout = await new Response(proc.stdout).text();
-        const stderr = await new Response(proc.stderr).text();
-        const exitCode = await proc.exited;
+        const { success, stdout, stderr, exitCode } = await exec.exec(parts);
 
         // Log to stderr for debugging
         debugLog(`Exit code: ${exitCode}`);
-        debugLog(`stdout: ${stdout.trim()}`);
-        if (stderr.trim()) {
-            debugLog(`stderr: ${stderr.trim()}`);
+        debugLog(`stdout: ${stdout}`);
+        if (stderr) {
+            debugLog(`stderr: ${stderr}`);
         }
 
         return {
-            success: exitCode === 0,
+            success,
             exitCode,
             command: commandString.trim(),
-            stdout: stdout.trim(),
-            stderr: stderr.trim(),
+            stdout,
+            stderr,
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -156,14 +155,7 @@ async function main() {
     debugLog(`Will execute ${commandsToExecute.length} command(s)`);
 
     // Execute all commands
-    const results: Array<{
-        success: boolean;
-        exitCode: number;
-        command: string;
-        stdout: string;
-        stderr: string;
-        error?: string;
-    }> = [];
+    const results: CommandResult[] = [];
     let overallSuccess = true;
     let overallExitCode = 0;
 

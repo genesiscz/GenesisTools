@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { basename, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import logger from "@app/logger";
+import { Executor } from "@app/utils/cli";
 import { glob } from "glob";
 import {
     invalidateToday as _invalidateToday,
@@ -1295,24 +1296,20 @@ export async function rgSearchFiles(
     options: { project?: string; limit?: number } = {}
 ): Promise<string[]> {
     const searchDir = options.project ? resolveProjectDir(options.project) || PROJECTS_DIR : PROJECTS_DIR;
+    const rg = new Executor({ prefix: "rg" });
 
     try {
-        const proc = Bun.spawn({
-            cmd: ["rg", "-l", "--glob", "*.jsonl", "-i", "-F", "--max-count", "1", "--", query, searchDir],
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-
-        const output = await new Response(proc.stdout).text();
-        const exitCode = await proc.exited;
+        const { stdout, stderr, exitCode } = await rg.exec([
+            "-l", "--glob", "*.jsonl", "-i", "-F", "--max-count", "1", "--", query, searchDir,
+        ]);
 
         // rg exit 1 = no matches (OK), 2+ = actual error
         if (exitCode > 1) {
-            const stderr = await new Response(proc.stderr).text();
-            logger.warn(`rgSearchFiles failed (exit ${exitCode}): ${stderr.trim()}`);
+            logger.warn(`rgSearchFiles failed (exit ${exitCode}): ${stderr}`);
             return [];
         }
 
-        let files = output.trim().split("\n").filter(Boolean);
+        let files = stdout.split("\n").filter(Boolean);
 
         if (options.limit && files.length > options.limit) {
             files = files.slice(0, options.limit);
@@ -1330,17 +1327,14 @@ export async function rgSearchFiles(
  */
 export async function rgExtractSnippet(query: string, filePath: string): Promise<string | undefined> {
     try {
-        const proc = Bun.spawn({
-            cmd: ["rg", "-i", "-F", "-m", "1", "--no-filename", "--no-line-number", "--", query, filePath],
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-
-        const output = await new Response(proc.stdout).text();
-        const exitCode = await proc.exited;
+        const rg = new Executor({ prefix: "rg" });
+        const { stdout, exitCode } = await rg.exec([
+            "-i", "-F", "-m", "1", "--no-filename", "--no-line-number", "--", query, filePath,
+        ]);
 
         if (exitCode > 1) return undefined;
 
-        const line = output.trim();
+        const line = stdout;
         if (!line) return undefined;
 
         // Try to extract readable text from the JSON line
