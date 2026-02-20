@@ -19,4 +19,7 @@ registerListenCommand(program);
 registerContactsCommand(program);
 registerHistoryCommand(program);
 
-program.parseAsync();
+program.parseAsync().catch((err) => {
+	console.error(err);
+	process.exit(1);
+});

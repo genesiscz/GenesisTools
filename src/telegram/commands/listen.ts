@@ -37,7 +37,7 @@ async function syncAndLoadHistory(
 			}
 
 			// Read back from DB for context (chronological order, last N)
-			const messages = store.getByDateRange(contact.userId, undefined, undefined, DEFAULTS.historyFetchLimit);
+			const messages = store.getByDateRange(contact.userId).slice(-DEFAULTS.historyFetchLimit);
 			const lines: string[] = [];
 
 			for (const msg of messages) {

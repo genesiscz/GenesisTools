@@ -198,7 +198,7 @@ export class TelegramHistoryStore {
 
 		db.run(
 			"INSERT OR REPLACE INTO embeddings (message_rowid, embedding) VALUES (?, ?)",
-			[row.rowid, Buffer.from(embedding.buffer)],
+			[row.rowid, Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength)],
 		);
 	}
 

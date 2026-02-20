@@ -89,7 +89,7 @@ async function runAuthFlow(client: TGClient): Promise<boolean> {
 				return code as string;
 			},
 			password: async () => {
-				const pass = await p.text({
+				const pass = await p.password({
 					message: "2FA password (if enabled):",
 				});
 
@@ -264,6 +264,9 @@ export function registerConfigureCommand(program: Command): void {
 				}
 			}
 
+			let effectiveApiId = toolConfig.getApiId();
+			let effectiveApiHash = toolConfig.getApiHash();
+
 			if (!client) {
 				const creds = await promptCredentials(existing);
 
@@ -271,6 +274,8 @@ export function registerConfigureCommand(program: Command): void {
 					return;
 				}
 
+				effectiveApiId = creds.apiId;
+				effectiveApiHash = creds.apiHash;
 				client = new TGClient(creds.apiId, creds.apiHash);
 
 				const ok = await runAuthFlow(client);
@@ -289,8 +294,8 @@ export function registerConfigureCommand(program: Command): void {
 			if (contactOptions.length === 0) {
 				p.log.warn("No contacts found in recent chats.");
 				await toolConfig.save({
-					apiId: toolConfig.getApiId(),
-					apiHash: toolConfig.getApiHash(),
+					apiId: effectiveApiId,
+					apiHash: effectiveApiHash,
 					session,
 					me: {
 						firstName: me.firstName || "",
@@ -333,8 +338,8 @@ export function registerConfigureCommand(program: Command): void {
 			}
 
 			await toolConfig.save({
-				apiId: toolConfig.getApiId(),
-				apiHash: toolConfig.getApiHash(),
+				apiId: effectiveApiId,
+				apiHash: effectiveApiHash,
 				session,
 				me: {
 					firstName: me.firstName || "",

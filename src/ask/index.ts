@@ -134,7 +134,7 @@ class ASKTool {
         }
 
         try {
-            // In raw mode, suppress all stdout noise during model selection
+            // In raw mode, suppress all stdout noise (model selection UI, streaming chunks)
             const origStdoutWrite = argv.raw ? process.stdout.write : null;
             const restoreStdout = () => {
                 if (origStdoutWrite) {
@@ -200,7 +200,7 @@ class ASKTool {
 
             // Raw mode: output only the response content
             if (argv.raw) {
-                process.stdout.write(response.content);
+                process.stdout.write(response.content.endsWith("\n") ? response.content : response.content + "\n");
                 return;
             }
 

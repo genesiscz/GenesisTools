@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { resolve } from "node:path";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { parseDate } from "@app/utils/date";
@@ -407,7 +408,7 @@ function registerSearchCommand(history: Command): void {
 				store.close();
 			}
 
-			p.outro(`${results!.length} result(s) found.`);
+			p.outro(`${results?.length ?? 0} result(s) found.`);
 		});
 }
 
@@ -469,8 +470,9 @@ function registerExportCommand(history: Command): void {
 			const output = formatMessages(messages, opts.format as ExportFormat, contact.displayName);
 
 			if (opts.output) {
-				await Bun.write(opts.output, output);
-				p.log.success(`Exported ${formatNumber(messages.length)} messages to ${opts.output}`);
+				const outputPath = resolve(opts.output);
+				await Bun.write(outputPath, output);
+				p.log.success(`Exported ${formatNumber(messages.length)} messages to ${outputPath}`);
 			} else {
 				console.log(output);
 			}

@@ -181,7 +181,11 @@ export function registerCredentialsCommand(program: Command): void {
           console.log(`  ${pc.bold(`${key}:`)} ${pc.dim(masked)}`);
         } else if (typeof value === "object" && value !== null) {
           console.log(`  ${pc.bold(`${key}:`)}`);
-          for (const [hk, hv] of Object.entries(value as Record<string, string>)) {
+          for (const [hk, hv] of Object.entries(value as Record<string, unknown>)) {
+            if (typeof hv !== "string") {
+              continue;
+            }
+
             const masked = hv.startsWith("{{")
               ? hv
               : hv.length <= 4

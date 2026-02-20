@@ -144,6 +144,7 @@ export async function embedMessages(
 	let embedded = 0;
 	let skipped = 0;
 	const unsupportedLangs = new Set<string>();
+	const seenIds = new Set<number>();
 	const BATCH_SIZE = 50;
 
 	while (true) {
@@ -153,7 +154,15 @@ export async function embedMessages(
 			break;
 		}
 
-		for (const msg of unembedded) {
+		const freshMessages = unembedded.filter((msg) => !seenIds.has(msg.id));
+
+		if (freshMessages.length === 0) {
+			break;
+		}
+
+		for (const msg of freshMessages) {
+			seenIds.add(msg.id);
+
 			if (!msg.text || msg.text.trim().length < 3) {
 				skipped++;
 				continue;
