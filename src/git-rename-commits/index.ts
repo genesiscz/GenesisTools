@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { Executor } from "@app/utils/cli";
 import { isPromptCancelled } from "@app/utils/prompt-helpers.js";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { confirm, input, number } from "@inquirer/prompts";
@@ -53,16 +54,10 @@ Examples:
 }
 
 async function getCurrentRepoDir(): Promise<string> {
-    const proc = Bun.spawn({
-        cmd: ["git", "rev-parse", "--show-toplevel"],
-        stdio: ["ignore", "pipe", "pipe"],
-    });
+    const git = new Executor({ prefix: "git" });
+    const { stdout, stderr, success } = await git.exec(["rev-parse", "--show-toplevel"]);
 
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0) {
+    if (!success) {
         throw new Error(`Not in a git repository: ${stderr.trim()}`);
     }
 
@@ -70,16 +65,10 @@ async function getCurrentRepoDir(): Promise<string> {
 }
 
 async function getCurrentBranch(repoDir: string): Promise<string> {
-    const proc = Bun.spawn({
-        cmd: ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        cwd: repoDir,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
+    const git = new Executor({ prefix: "git", cwd: repoDir });
+    const { stdout, success } = await git.exec(["rev-parse", "--abbrev-ref", "HEAD"]);
 
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0) {
+    if (!success) {
         return "unknown";
     }
 
@@ -92,6 +81,8 @@ async function getCommits(
     currentBranchOnly: boolean = true
 ): Promise<{ commits: CommitInfo[]; detectionMethod?: string; baseBranchName?: string }> {
     logger.debug(`⏳ Fetching last ${count} commits from ${repoDir}...`);
+
+    const git = new Executor({ prefix: "git", cwd: repoDir });
 
     // Build git log command
     let gitArgs: string[] = [];
@@ -109,13 +100,7 @@ async function getCommits(
         // Strategy: Check all local branches, find the one with the most recent fork point
 
         // Get all local branches
-        const branchesProc = Bun.spawn({
-            cmd: ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads/"],
-            cwd: repoDir,
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-        const branchesOutput = await new Response(branchesProc.stdout).text();
-        await branchesProc.exited;
+        const { stdout: branchesOutput } = await git.exec(["for-each-ref", "--format=%(refname:short)", "refs/heads/"]);
 
         const allBranches = branchesOutput
             .trim()
@@ -130,31 +115,24 @@ async function getCommits(
         for (const branch of allBranches) {
             try {
                 // Use --fork-point to find where current branch diverged from this branch
-                const forkPointProc = Bun.spawn({
-                    cmd: ["git", "merge-base", "--fork-point", branch, "HEAD"],
-                    cwd: repoDir,
-                    stdio: ["ignore", "pipe", "pipe"],
-                });
-                const forkPointHash = (await new Response(forkPointProc.stdout).text()).trim();
-                const forkPointExitCode = await forkPointProc.exited;
+                const { stdout: forkPointHash, success: forkPointSuccess } = await git.exec([
+                    "merge-base",
+                    "--fork-point",
+                    branch,
+                    "HEAD",
+                ]);
 
-                if (forkPointExitCode === 0 && forkPointHash) {
+                if (forkPointSuccess && forkPointHash.trim()) {
                     // Get the commit date of the fork point to find the most recent one
-                    const dateProc = Bun.spawn({
-                        cmd: ["git", "log", "-1", "--format=%ct", forkPointHash],
-                        cwd: repoDir,
-                        stdio: ["ignore", "pipe", "pipe"],
-                    });
-                    const dateStr = (await new Response(dateProc.stdout).text()).trim();
-                    await dateProc.exited;
+                    const { stdout: dateStr } = await git.exec(["log", "-1", "--format=%ct", forkPointHash.trim()]);
 
-                    const forkPointDate = parseInt(dateStr, 10) || 0;
+                    const forkPointDate = parseInt(dateStr.trim(), 10) || 0;
 
                     // Use the branch with the most recent fork point
                     // (most recent = highest timestamp = most recent divergence)
                     if (forkPointDate > bestForkPointDate) {
                         sourceBranch = branch;
-                        bestForkPoint = forkPointHash;
+                        bestForkPoint = forkPointHash.trim();
                         bestForkPointDate = forkPointDate;
                     }
                 }
@@ -165,23 +143,14 @@ async function getCommits(
         if (!sourceBranch) {
             // Try common base branches as fallback
             for (const branch of ["main", "master", "develop"]) {
-                const checkProc = Bun.spawn({
-                    cmd: ["git", "rev-parse", "--verify", branch],
-                    cwd: repoDir,
-                    stdio: ["ignore", "pipe", "pipe"],
-                });
-                const checkExitCode = await checkProc.exited;
-                if (checkExitCode === 0) {
-                    const mergeBaseProc = Bun.spawn({
-                        cmd: ["git", "merge-base", "HEAD", branch],
-                        cwd: repoDir,
-                        stdio: ["ignore", "pipe", "pipe"],
-                    });
-                    const mergeBase = (await new Response(mergeBaseProc.stdout).text()).trim();
-                    await mergeBaseProc.exited;
-                    if (mergeBase) {
+                const { success } = await git.exec(["rev-parse", "--verify", branch]);
+
+                if (success) {
+                    const { stdout: mergeBase } = await git.exec(["merge-base", "HEAD", branch]);
+
+                    if (mergeBase.trim()) {
                         sourceBranch = branch;
-                        bestForkPoint = mergeBase;
+                        bestForkPoint = mergeBase.trim();
                         break;
                     }
                 }
@@ -196,16 +165,13 @@ async function getCommits(
             logger.debug(`Found fork-point from branch ${sourceBranch}: ${baseRef.substring(0, 7)}`);
         } else if (sourceBranch) {
             // Fallback: calculate merge-base if fork-point wasn't available
-            const mergeBaseProc = Bun.spawn({
-                cmd: ["git", "merge-base", "HEAD", sourceBranch],
-                cwd: repoDir,
-                stdio: ["ignore", "pipe", "pipe"],
-            });
-            const [mergeBase, mergeBaseExitCode] = await Promise.all([
-                new Response(mergeBaseProc.stdout).text(),
-                mergeBaseProc.exited,
+            const { stdout: mergeBase, success: mergeBaseSuccess } = await git.exec([
+                "merge-base",
+                "HEAD",
+                sourceBranch,
             ]);
-            if (mergeBaseExitCode === 0 && mergeBase.trim()) {
+
+            if (mergeBaseSuccess && mergeBase.trim()) {
                 baseRef = mergeBase.trim();
                 baseBranchName = sourceBranch;
                 detectionMethod = "merge-base";
@@ -215,15 +181,13 @@ async function getCommits(
 
         // Step 3: If no source branch found, try all local branches to find the closest ancestor
         if (!baseRef) {
-            const branchesProc = Bun.spawn({
-                cmd: ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads/"],
-                cwd: repoDir,
-                stdio: ["ignore", "pipe", "pipe"],
-            });
-            const branchesOutput = await new Response(branchesProc.stdout).text();
-            await branchesProc.exited;
+            const { stdout: branchesOutput2 } = await git.exec([
+                "for-each-ref",
+                "--format=%(refname:short)",
+                "refs/heads/",
+            ]);
 
-            const branches = branchesOutput
+            const branches = branchesOutput2
                 .trim()
                 .split("\n")
                 .filter((b) => b && b !== currentBranch);
@@ -232,29 +196,23 @@ async function getCommits(
             let bestBranch = "";
             let bestMergeBase = "";
             for (const branch of branches) {
-                const mergeBaseProc = Bun.spawn({
-                    cmd: ["git", "merge-base", "HEAD", branch],
-                    cwd: repoDir,
-                    stdio: ["ignore", "pipe", "pipe"],
-                });
-                const [mergeBase, mergeBaseExitCode] = await Promise.all([
-                    new Response(mergeBaseProc.stdout).text(),
-                    mergeBaseProc.exited,
-                ]);
-                if (mergeBaseExitCode === 0 && mergeBase.trim()) {
+                const { stdout: mergeBase, success: mergeBaseSuccess } = await git.exec(["merge-base", "HEAD", branch]);
+
+                if (mergeBaseSuccess && mergeBase.trim()) {
                     const mergeBaseHash = mergeBase.trim();
                     // Check if this merge-base is more recent (closer to HEAD) than the current best
                     if (!bestMergeBase || mergeBaseHash !== bestMergeBase) {
                         // Check if this merge-base is an ancestor of the current best (meaning it's more recent)
-                        const compareProc = Bun.spawn({
-                            cmd: ["git", "merge-base", "--is-ancestor", mergeBaseHash, bestMergeBase || "HEAD"],
-                            cwd: repoDir,
-                            stdio: ["ignore", "pipe", "pipe"],
-                        });
-                        const compareExitCode = await compareProc.exited;
+                        const { success: isAncestor } = await git.exec([
+                            "merge-base",
+                            "--is-ancestor",
+                            mergeBaseHash,
+                            bestMergeBase || "HEAD",
+                        ]);
+
                         // If merge-base is ancestor of bestMergeBase, it's older, so skip
                         // If bestMergeBase is empty or merge-base is not ancestor of bestMergeBase, use this one
-                        if (!bestMergeBase || compareExitCode !== 0) {
+                        if (!bestMergeBase || !isAncestor) {
                             bestMergeBase = mergeBaseHash;
                             bestBranch = branch;
                         }
@@ -273,23 +231,16 @@ async function getCommits(
         // Step 4: Fallback to common base branches
         if (!baseRef) {
             for (const branch of ["master", "main", "develop"]) {
-                const checkProc = Bun.spawn({
-                    cmd: ["git", "rev-parse", "--verify", branch],
-                    cwd: repoDir,
-                    stdio: ["ignore", "pipe", "pipe"],
-                });
-                const checkExitCode = await checkProc.exited;
-                if (checkExitCode === 0) {
-                    const mergeBaseProc = Bun.spawn({
-                        cmd: ["git", "merge-base", "HEAD", branch],
-                        cwd: repoDir,
-                        stdio: ["ignore", "pipe", "pipe"],
-                    });
-                    const [mergeBase, mergeBaseExitCode] = await Promise.all([
-                        new Response(mergeBaseProc.stdout).text(),
-                        mergeBaseProc.exited,
+                const { success } = await git.exec(["rev-parse", "--verify", branch]);
+
+                if (success) {
+                    const { stdout: mergeBase, success: mergeBaseSuccess } = await git.exec([
+                        "merge-base",
+                        "HEAD",
+                        branch,
                     ]);
-                    if (mergeBaseExitCode === 0 && mergeBase.trim()) {
+
+                    if (mergeBaseSuccess && mergeBase.trim()) {
                         baseRef = mergeBase.trim();
                         baseBranchName = branch;
                         detectionMethod = `common base branch (${branch})`;
@@ -316,17 +267,7 @@ async function getCommits(
         detectionMethod = "all commits";
     }
 
-    const proc = Bun.spawn({
-        cmd: ["git", ...gitArgs],
-        cwd: repoDir,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
+    const { stdout, stderr, exitCode } = await git.exec(gitArgs);
 
     if (exitCode !== 0) {
         logger.debug(`Git command failed: git ${gitArgs.join(" ")}`);
@@ -351,6 +292,7 @@ async function getCommits(
 
     for (const line of lines) {
         const parts = line.split("|");
+
         if (parts.length >= 3) {
             commits.push({
                 hash: parts[0],
@@ -373,10 +315,12 @@ function suggestCommitName(commit: CommitInfo, allCommits: CommitInfo[], default
 
     // Find most common scope from all commits, or use provided defaultScope
     let mostCommonScope: string | undefined = defaultScope || undefined;
+
     if (!mostCommonScope) {
         const scopeCounts = new Map<string, number>();
         for (const c of allCommits) {
             const match = c.message.match(/^\w+\(([^)]+)\):/);
+
             if (match) {
                 const scope = match[1].toLowerCase();
                 scopeCounts.set(scope, (scopeCounts.get(scope) || 0) + 1);
@@ -413,6 +357,7 @@ function suggestCommitName(commit: CommitInfo, allCommits: CommitInfo[], default
     } else {
         // Not conventional - determine type and add scope
         let suggestedType = "feat";
+
         if (message.match(/\b(fix|fixes|fixed|bug|error|issue)\b/)) {
             suggestedType = "fix";
         } else if (message.match(/\b(refactor|refactoring|refactored|cleanup|clean|standardize)\b/)) {
@@ -450,6 +395,7 @@ async function promptForNewMessage(
     // Show current message clearly before the prompt
     const suggestion = suggestCommitName(commit, allCommits, defaultScope);
     console.log(chalk.dim(`\n  Current message: ${chalk.reset(commit.message)}`));
+
     if (suggestion !== commit.message) {
         console.log(chalk.dim(`  💡 Suggestion: ${chalk.green(suggestion)}`));
     }
@@ -467,6 +413,7 @@ async function promptForNewMessage(
     // We want "feat(scope): message" not "feat(scope): feat: message"
     let suggestionMessage = suggestion;
     const suggestionMatch = suggestion.match(/^\w+(?:\([^)]+\))?:\s*(.+)$/);
+
     if (suggestionMatch) {
         suggestionMessage = suggestionMatch[1]; // Just the message part after "type: "
     }
@@ -499,6 +446,7 @@ async function checkAndCleanupLock(repoDir: string): Promise<void> {
     const lockFile = `${repoDir}/.git/index.lock`;
     try {
         const stat = await Bun.file(lockFile).exists();
+
         if (stat) {
             logger.warn("⚠️  Found stale git lock file, removing it...");
             await Bun.spawn({ cmd: ["rm", "-f", lockFile], cwd: repoDir }).exited;
@@ -512,6 +460,7 @@ async function checkAndCleanupLock(repoDir: string): Promise<void> {
 }
 
 async function performRebase(repoDir: string, commits: CommitInfo[]): Promise<void> {
+    const git = new Executor({ prefix: "git", cwd: repoDir });
     const count = commits.length;
     logger.info(`🔄 Starting interactive rebase for ${count} commit(s)...`);
 
@@ -579,21 +528,13 @@ fi
 
     logger.info("🔄 Executing git rebase...");
 
-    const rebaseProc = Bun.spawn({
-        cmd: ["git", "rebase", "-i", `HEAD~${count}`],
-        cwd: repoDir,
-        env,
-        stdio: ["inherit", "inherit", "inherit"],
-    });
-
-    const exitCode = await rebaseProc.exited;
+    const { exitCode } = await git.execInteractive(["rebase", "-i", `HEAD~${count}`], { env });
 
     // Cleanup temporary files
     try {
-        const cleanupProc = Bun.spawn({
+        await Bun.spawn({
             cmd: ["rm", "-rf", messagesDir, indexFilePath, editorScriptPath],
-        });
-        await cleanupProc.exited;
+        }).exited;
     } catch (e) {
         // Ignore cleanup errors
         logger.debug(`Cleanup warning: ${e}`);
@@ -612,13 +553,7 @@ fi
 
         if (isInRebase) {
             // We're still in a rebase - check status
-            const statusProc = Bun.spawn({
-                cmd: ["git", "status", "--short"],
-                cwd: repoDir,
-                stdio: ["ignore", "pipe", "pipe"],
-            });
-            const statusOutput = await new Response(statusProc.stdout).text();
-            await statusProc.exited;
+            const { stdout: statusOutput } = await git.exec(["status", "--short"]);
 
             if (statusOutput.trim()) {
                 throw new Error(
@@ -654,21 +589,22 @@ fi
 async function verifyRebaseIntegrity(repoDir: string): Promise<void> {
     logger.info("🔍 Verifying rebase integrity (checking for file differences)...");
 
+    const git = new Executor({ prefix: "git", cwd: repoDir });
+
     // Get current branch
     const currentBranch = await getCurrentBranch(repoDir);
 
     // Try to find the upstream/remote branch
     let upstreamBranch: string | null = null;
     try {
-        const upstreamProc = Bun.spawn({
-            cmd: ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-            cwd: repoDir,
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-        const upstreamOutput = await new Response(upstreamProc.stdout).text();
-        const upstreamExitCode = await upstreamProc.exited;
+        const { stdout: upstreamOutput, success: upstreamSuccess } = await git.exec([
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{u}",
+        ]);
 
-        if (upstreamExitCode === 0 && upstreamOutput.trim()) {
+        if (upstreamSuccess && upstreamOutput.trim()) {
             upstreamBranch = upstreamOutput.trim();
         }
     } catch {
@@ -680,13 +616,9 @@ async function verifyRebaseIntegrity(repoDir: string): Promise<void> {
         const remotes = ["origin", "upstream"];
         for (const remote of remotes) {
             const remoteBranch = `${remote}/${currentBranch}`;
-            const checkProc = Bun.spawn({
-                cmd: ["git", "rev-parse", "--verify", remoteBranch],
-                cwd: repoDir,
-                stdio: ["ignore", "pipe", "pipe"],
-            });
-            const checkExitCode = await checkProc.exited;
-            if (checkExitCode === 0) {
+            const { success } = await git.exec(["rev-parse", "--verify", remoteBranch]);
+
+            if (success) {
                 upstreamBranch = remoteBranch;
                 break;
             }
@@ -699,13 +631,12 @@ async function verifyRebaseIntegrity(repoDir: string): Promise<void> {
     }
 
     // Check for file differences
-    const diffProc = Bun.spawn({
-        cmd: ["git", "diff", upstreamBranch, "HEAD", "--name-only"],
-        cwd: repoDir,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const [diffOutput, diffExitCode] = await Promise.all([new Response(diffProc.stdout).text(), diffProc.exited]);
+    const { stdout: diffOutput, exitCode: diffExitCode } = await git.exec([
+        "diff",
+        upstreamBranch,
+        "HEAD",
+        "--name-only",
+    ]);
 
     if (diffExitCode !== 0) {
         logger.warn(`⚠️  Could not compare with ${upstreamBranch}. Skipping integrity check.`);
@@ -725,9 +656,11 @@ async function verifyRebaseIntegrity(repoDir: string): Promise<void> {
         changedFiles.slice(0, 10).forEach((file) => {
             logger.warn(`   - ${file}`);
         });
+
         if (changedFiles.length > 10) {
             logger.warn(`   ... and ${changedFiles.length - 10} more file(s)`);
         }
+
         logger.warn("   This might indicate that the rebase changed file contents unexpectedly.");
     }
 }
@@ -735,16 +668,12 @@ async function verifyRebaseIntegrity(repoDir: string): Promise<void> {
 async function checkCommitsArePushed(repoDir: string, currentBranch: string): Promise<boolean> {
     logger.info("🔍 Checking if current commits are pushed to origin...");
 
-    // Get current HEAD commit hash
-    const headProc = Bun.spawn({
-        cmd: ["git", "rev-parse", "HEAD"],
-        cwd: repoDir,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-    const headHash = (await new Response(headProc.stdout).text()).trim();
-    await headProc.exited;
+    const git = new Executor({ prefix: "git", cwd: repoDir });
 
-    if (!headHash) {
+    // Get current HEAD commit hash
+    const { stdout: headHash } = await git.exec(["rev-parse", "HEAD"]);
+
+    if (!headHash.trim()) {
         logger.warn("⚠️  Could not determine current HEAD commit.");
         return false;
     }
@@ -752,15 +681,14 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
     // Try to find upstream/remote branch
     let upstreamBranch: string | null = null;
     try {
-        const upstreamProc = Bun.spawn({
-            cmd: ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-            cwd: repoDir,
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-        const upstreamOutput = await new Response(upstreamProc.stdout).text();
-        const upstreamExitCode = await upstreamProc.exited;
+        const { stdout: upstreamOutput, success: upstreamSuccess } = await git.exec([
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{u}",
+        ]);
 
-        if (upstreamExitCode === 0 && upstreamOutput.trim()) {
+        if (upstreamSuccess && upstreamOutput.trim()) {
             upstreamBranch = upstreamOutput.trim();
         }
     } catch {
@@ -772,13 +700,9 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
         const remotes = ["origin", "upstream"];
         for (const remote of remotes) {
             const remoteBranch = `${remote}/${currentBranch}`;
-            const checkProc = Bun.spawn({
-                cmd: ["git", "rev-parse", "--verify", remoteBranch],
-                cwd: repoDir,
-                stdio: ["ignore", "pipe", "pipe"],
-            });
-            const checkExitCode = await checkProc.exited;
-            if (checkExitCode === 0) {
+            const { success } = await git.exec(["rev-parse", "--verify", remoteBranch]);
+
+            if (success) {
                 upstreamBranch = remoteBranch;
                 break;
             }
@@ -792,52 +716,39 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
     }
 
     // Get remote HEAD hash
-    const remoteHeadProc = Bun.spawn({
-        cmd: ["git", "rev-parse", upstreamBranch],
-        cwd: repoDir,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-    const remoteHeadHash = (await new Response(remoteHeadProc.stdout).text()).trim();
-    await remoteHeadProc.exited;
+    const { stdout: remoteHeadHash } = await git.exec(["rev-parse", upstreamBranch]);
 
-    if (headHash === remoteHeadHash) {
+    if (headHash.trim() === remoteHeadHash.trim()) {
         // HEAD matches remote exactly - safe to proceed
         logger.info(`✅ Current commit matches ${upstreamBranch}`);
         return true;
     }
 
     // Check if HEAD is an ancestor of remote (meaning remote has all our commits)
-    const mergeBaseProc = Bun.spawn({
-        cmd: ["git", "merge-base", "--is-ancestor", headHash, upstreamBranch],
-        cwd: repoDir,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-    const mergeBaseExitCode = await mergeBaseProc.exited;
+    const { success: isAncestor } = await git.exec(["merge-base", "--is-ancestor", headHash.trim(), upstreamBranch]);
 
-    if (mergeBaseExitCode === 0) {
+    if (isAncestor) {
         // HEAD is an ancestor of upstream, meaning all commits are pushed
         logger.info(`✅ Current commit is pushed to ${upstreamBranch}`);
         return true;
     }
 
     // Check if remote is ahead (local is behind) - this is okay, remote has our commits
-    const remoteAheadProc = Bun.spawn({
-        cmd: ["git", "rev-list", "--count", `${headHash}..${upstreamBranch}`],
-        cwd: repoDir,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-    const remoteAheadCount = parseInt((await new Response(remoteAheadProc.stdout).text()).trim() || "0", 10);
-    await remoteAheadProc.exited;
+    const { stdout: remoteAheadCountStr } = await git.exec([
+        "rev-list",
+        "--count",
+        `${headHash.trim()}..${upstreamBranch}`,
+    ]);
+    const remoteAheadCount = parseInt(remoteAheadCountStr.trim() || "0", 10);
 
     if (remoteAheadCount > 0) {
         // Remote is ahead - check if our commits are still on remote
-        const localAheadProc = Bun.spawn({
-            cmd: ["git", "rev-list", "--count", `${remoteHeadHash}..${headHash}`],
-            cwd: repoDir,
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-        const localAheadCount = parseInt((await new Response(localAheadProc.stdout).text()).trim() || "0", 10);
-        await localAheadProc.exited;
+        const { stdout: localAheadCountStr } = await git.exec([
+            "rev-list",
+            "--count",
+            `${remoteHeadHash.trim()}..${headHash.trim()}`,
+        ]);
+        const localAheadCount = parseInt(localAheadCountStr.trim() || "0", 10);
 
         if (localAheadCount === 0) {
             // Local has no commits that remote doesn't have - safe (remote is just ahead)
@@ -847,13 +758,12 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
             return true;
         } else {
             // Local has commits not on remote - check if file contents match (might be rebase)
-            const fileDiffProc = Bun.spawn({
-                cmd: ["git", "diff", "--name-only", remoteHeadHash, headHash],
-                cwd: repoDir,
-                stdio: ["ignore", "pipe", "pipe"],
-            });
-            const fileDiffOutput = await new Response(fileDiffProc.stdout).text();
-            await fileDiffProc.exited;
+            const { stdout: fileDiffOutput } = await git.exec([
+                "diff",
+                "--name-only",
+                remoteHeadHash.trim(),
+                headHash.trim(),
+            ]);
 
             const changedFiles = fileDiffOutput
                 .trim()
@@ -878,23 +788,21 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
 
     // Local is ahead or diverged - check if file contents are the same
     // (This handles the case where a rebase changed commit hashes but not file contents)
-    const localAheadProc = Bun.spawn({
-        cmd: ["git", "rev-list", "--count", `${remoteHeadHash}..${headHash}`],
-        cwd: repoDir,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-    const localAheadCount = parseInt((await new Response(localAheadProc.stdout).text()).trim() || "0", 10);
-    await localAheadProc.exited;
+    const { stdout: localAheadCountStr } = await git.exec([
+        "rev-list",
+        "--count",
+        `${remoteHeadHash.trim()}..${headHash.trim()}`,
+    ]);
+    const localAheadCount = parseInt(localAheadCountStr.trim() || "0", 10);
 
     if (localAheadCount > 0) {
         // Check if file contents are the same (might be a rebase)
-        const fileDiffProc = Bun.spawn({
-            cmd: ["git", "diff", "--name-only", remoteHeadHash, headHash],
-            cwd: repoDir,
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-        const fileDiffOutput = await new Response(fileDiffProc.stdout).text();
-        await fileDiffProc.exited;
+        const { stdout: fileDiffOutput } = await git.exec([
+            "diff",
+            "--name-only",
+            remoteHeadHash.trim(),
+            headHash.trim(),
+        ]);
 
         const changedFiles = fileDiffOutput
             .trim()
@@ -910,20 +818,14 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
             return true;
         } else {
             // File contents differ - commits not pushed
-            logger.warn(`⚠️  Current commit (${headHash.substring(0, 7)}) is not pushed to ${upstreamBranch}`);
+            logger.warn(`⚠️  Current commit (${headHash.trim().substring(0, 7)}) is not pushed to ${upstreamBranch}`);
             logger.warn(`   Local is ${localAheadCount} commit(s) ahead with ${changedFiles.length} file change(s).`);
             return false;
         }
     }
 
     // Branches have diverged but local is not ahead - check file contents
-    const fileDiffProc = Bun.spawn({
-        cmd: ["git", "diff", "--name-only", remoteHeadHash, headHash],
-        cwd: repoDir,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-    const fileDiffOutput = await new Response(fileDiffProc.stdout).text();
-    await fileDiffProc.exited;
+    const { stdout: fileDiffOutput } = await git.exec(["diff", "--name-only", remoteHeadHash.trim(), headHash.trim()]);
 
     const changedFiles = fileDiffOutput
         .trim()
@@ -971,6 +873,7 @@ async function main() {
         // Safety check: ensure commits are pushed before rewriting
         if (!opts.force) {
             const commitsArePushed = await checkCommitsArePushed(repoDir, currentBranch);
+
             if (!commitsArePushed) {
                 logger.error("\n✖ Safety check failed: Current commits are not pushed to origin.");
                 logger.error("   Rewriting unpushed commits can be dangerous if something goes wrong.");
@@ -1035,6 +938,7 @@ async function main() {
         }
 
         const numCommits = Number(commitCount);
+
         if (!Number.isInteger(numCommits) || numCommits < 1) {
             logger.error("✖ Error: Number of commits must be a positive integer.");
             showHelpFull();
@@ -1074,6 +978,7 @@ async function main() {
         const scopeCounts = new Map<string, number>();
         for (const c of commits) {
             const match = c.message.match(/^\w+\(([^)]+)\):/);
+
             if (match) {
                 const scope = match[1].toLowerCase();
                 scopeCounts.set(scope, (scopeCounts.get(scope) || 0) + 1);
@@ -1121,11 +1026,14 @@ async function main() {
             logger.info("\n🚫 Operation cancelled by user.");
             process.exit(0);
         }
+
         const err = error as Error;
         logger.error(`\n✖ Error: ${err.message}`);
+
         if (err.stack) {
             logger.debug(err.stack);
         }
+
         process.exit(1);
     }
 }
