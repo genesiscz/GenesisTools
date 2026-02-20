@@ -65,7 +65,7 @@ export interface HandlerOptions {
 	contacts: ContactConfig[];
 	myName: string;
 	initialHistory?: Map<string, string[]>;
-	store?: TelegramHistoryStore;
+	store: TelegramHistoryStore;
 }
 
 export function registerHandler(client: TGClient, options: HandlerOptions): void {
@@ -109,12 +109,10 @@ export function registerHandler(client: TGClient, options: HandlerOptions): void
 			}
 
 			// Persist incoming message to history store
-			if (options.store) {
-				try {
-					options.store.insertMessages(senderId, [msg.toJSON()]);
-				} catch (err) {
-					logger.debug(`Failed to persist message: ${err}`);
-				}
+			try {
+				options.store.insertMessages(senderId, [msg.toJSON()]);
+			} catch (err) {
+				logger.debug(`Failed to persist message: ${err}`);
 			}
 
 			// Append incoming message to conversation context
@@ -141,20 +139,18 @@ export function registerHandler(client: TGClient, options: HandlerOptions): void
 						ctx.append(options.myName, r.reply);
 
 						// Persist outgoing reply to history store
-						if (options.store) {
-							try {
-								options.store.insertMessages(senderId, [{
-									id: Date.now(),
-									senderId: undefined,
-									text: r.reply,
-									mediaDescription: undefined,
-									isOutgoing: true,
-									date: new Date().toISOString(),
-									dateUnix: Math.floor(Date.now() / 1000),
-								}]);
-							} catch (err) {
-								logger.debug(`Failed to persist reply: ${err}`);
-							}
+						try {
+							options.store.insertMessages(senderId, [{
+								id: Date.now(),
+								senderId: undefined,
+								text: r.reply,
+								mediaDescription: undefined,
+								isOutgoing: true,
+								date: new Date().toISOString(),
+								dateUnix: Math.floor(Date.now() / 1000),
+							}]);
+						} catch (err) {
+							logger.debug(`Failed to persist reply: ${err}`);
 						}
 					}
 				} else {

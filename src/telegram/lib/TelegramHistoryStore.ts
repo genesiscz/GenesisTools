@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import logger from "@app/logger";
+import { cosineDistance } from "@app/utils/math";
 import type {
 	MessageRow,
 	SyncStateRow,
@@ -515,26 +516,4 @@ export class TelegramHistoryStore {
 		const row = db.query("SELECT COUNT(*) AS cnt FROM messages").get() as { cnt: number };
 		return row.cnt;
 	}
-}
-
-// ── Cosine Distance ──────────────────────────────────────────────────
-
-function cosineDistance(a: Float32Array, b: Float32Array): number {
-	let dot = 0;
-	let normA = 0;
-	let normB = 0;
-
-	for (let i = 0; i < a.length; i++) {
-		dot += a[i] * b[i];
-		normA += a[i] * a[i];
-		normB += b[i] * b[i];
-	}
-
-	const denom = Math.sqrt(normA) * Math.sqrt(normB);
-
-	if (denom === 0) {
-		return 2;
-	}
-
-	return 1 - dot / denom;
 }
