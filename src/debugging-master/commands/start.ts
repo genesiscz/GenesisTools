@@ -47,6 +47,11 @@ export function registerStartCommand(program: Command): void {
 			// --- Resolve session name ---
 			let sessionName = globalOpts.session;
 
+			if (sessionName && /[^a-zA-Z0-9_-]/.test(sessionName)) {
+				console.error("Invalid session name. Use only alphanumeric characters, hyphens, and underscores.");
+				process.exit(1);
+			}
+
 			if (!sessionName) {
 				if (!process.stdout.isTTY) {
 					console.error(
@@ -154,7 +159,13 @@ export function registerStartCommand(program: Command): void {
 
 			// --- Optionally start HTTP server ---
 			if (opts.serve) {
-				const { port: actualPort } = startServer(port);
+				let actualPort: number;
+				try {
+					({ port: actualPort } = startServer(port));
+				} catch (err) {
+					console.error(`Failed to start HTTP server on port ${port}: ${(err as Error).message}`);
+					process.exit(1);
+				}
 				console.log(pc.green(`HTTP server listening on port ${actualPort}`));
 				console.log(pc.dim(`POST http://localhost:${actualPort}/log/${sessionName}`));
 				console.log("");

@@ -68,8 +68,8 @@ export function computeStats(entries: IndexedLogEntry[]): SessionStats {
 	let startTime = 0;
 	let endTime = 0;
 	if (timestamps.length > 0) {
-		startTime = Math.min(...timestamps);
-		endTime = Math.max(...timestamps);
+		startTime = timestamps.reduce((a, b) => (a < b ? a : b));
+		endTime = timestamps.reduce((a, b) => (a > b ? a : b));
 	}
 
 	return {

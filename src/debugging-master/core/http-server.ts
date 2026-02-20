@@ -46,7 +46,7 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
 	const server = Bun.serve({
 		port,
 		hostname: "127.0.0.1",
-		fetch(req) {
+		async fetch(req) {
 			const url = new URL(req.url);
 
 			// Health check
@@ -79,7 +79,7 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
 				}
 				const path = join(SESSIONS_DIR, `${sessionName}.jsonl`);
 				try {
-					Bun.write(path, "");
+					await Bun.write(path, "");
 					return new Response("cleared", { status: 200 });
 				} catch {
 					return new Response("session not found", { status: 404 });

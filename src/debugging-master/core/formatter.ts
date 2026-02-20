@@ -159,7 +159,7 @@ export function formatTip(entries: IndexedLogEntry[]): string {
 export function wrapOutput(content: string, format: OutputFormat, tip?: string): string {
 	switch (format) {
 		case "json":
-			return JSON.stringify({ output: content });
+			return JSON.stringify({ output: stripAnsi(content) });
 		case "md":
 			return content + (tip ?? "");
 		case "ai":

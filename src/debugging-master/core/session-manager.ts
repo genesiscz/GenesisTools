@@ -36,6 +36,12 @@ export class SessionManager {
 		const jsonlPath = join(dir, `${name}.jsonl`);
 		const metaPath = join(dir, `${name}.meta.json`);
 
+		if (existsSync(jsonlPath)) {
+			throw new Error(
+				`Session "${name}" already exists. Use a different name or remove it first.`,
+			);
+		}
+
 		const now = Date.now();
 		const meta: SessionMeta = {
 			name,
