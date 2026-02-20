@@ -1,5 +1,6 @@
 import { join as pathJoin, resolve } from "node:path";
 import logger from "@app/logger";
+import { Executor } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
@@ -30,74 +31,54 @@ Options:
 `);
 }
 
-async function getTruncatedSha(repoDir: string, refName: string): Promise<string | undefined> {
-    logger.debug(`⏳ Fetching SHA for ref '${refName}' in ${repoDir}...`);
-    const proc = Bun.spawn({
-        cmd: ["git", "rev-parse", "--short", refName],
-        cwd: repoDir,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-    const stdoutPromise = new Response(proc.stdout).text();
-    const stderrPromise = new Response(proc.stderr).text();
+async function getTruncatedSha(git: Executor, refName: string): Promise<string | undefined> {
+    logger.debug(`⏳ Fetching SHA for ref '${refName}'...`);
+    const { success, stdout, stderr, exitCode } = await git.exec(["rev-parse", "--short", refName]);
 
-    const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0) {
+    if (!success) {
         logger.error(`✖ Failed to get SHA for ref '${refName}'. Exit code: ${exitCode}.`);
-        if (stderr.trim()) {
-            logger.error(`Git stderr:\n${stderr.trim()}`);
-        } else if (stdout.trim()) {
+        if (stderr) {
+            logger.error(`Git stderr:\n${stderr}`);
+        } else if (stdout) {
             // Some git errors go to stdout
-            logger.error(`Git stdout (potential error):\n${stdout.trim()}`);
+            logger.error(`Git stdout (potential error):\n${stdout}`);
         }
         return undefined;
     }
-    const trimmedStdout = stdout.trim();
-    if (!trimmedStdout) {
+
+    if (!stdout) {
         logger.warn(`ℹ No SHA returned for ref '${refName}'.`);
         return undefined;
     }
-    logger.debug(`✔ Got SHA for '${refName}': ${trimmedStdout}`);
-    return trimmedStdout;
+
+    logger.debug(`✔ Got SHA for '${refName}': ${stdout}`);
+    return stdout;
 }
 
-async function getAndSelectCommit(repoDir: string): Promise<string | undefined> {
-    const gitLogArgs = ["log", "--pretty=format:%h %s", "-n", "200"];
-    logger.debug(`⏳ Fetching last 200 commits from ${repoDir}...`);
+async function getAndSelectCommit(git: Executor): Promise<string | undefined> {
+    logger.debug(`⏳ Fetching last 200 commits...`);
 
-    const proc = Bun.spawn({
-        cmd: ["git", ...gitLogArgs],
-        cwd: repoDir,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
+    const { success, stdout, stderr, exitCode } = await git.exec([
+        "log", "--pretty=format:%h %s", "-n", "200",
+    ]);
 
-    let logOutput = "";
-    let errorOutput = "";
-    const stdoutPromise = new Response(proc.stdout).text().then((text) => (logOutput = text));
-    const stderrPromise = new Response(proc.stderr).text().then((text) => (errorOutput = text));
-
-    await Promise.all([stdoutPromise, stderrPromise]);
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0) {
-        logger.error(`
-✖ 'git log' command failed with exit code ${exitCode}.`);
-        if (errorOutput) {
-            logger.error(`Git stderr:\n${errorOutput.trim()}`);
-        } else if (logOutput) {
+    if (!success) {
+        logger.error(`\n✖ 'git log' command failed with exit code ${exitCode}.`);
+        if (stderr) {
+            logger.error(`Git stderr:\n${stderr}`);
+        } else if (stdout) {
             // Some git errors go to stdout
-            logger.error(`Git stdout (potential error):\n${logOutput.trim()}`);
+            logger.error(`Git stdout (potential error):\n${stdout}`);
         }
         return undefined;
     }
 
-    if (!logOutput.trim()) {
+    if (!stdout) {
         logger.warn("ℹ No commits found in the repository or the current branch.");
         return undefined;
     }
 
-    const commitsRaw = logOutput.trim().split("\n");
+    const commitsRaw = stdout.split("\n");
     const choices = commitsRaw
         .map((line) => {
             const match = line.match(/^([a-f0-9]+)\s+(.*)$/);
@@ -174,6 +155,7 @@ async function main() {
         process.exit(1);
     }
     const repoDir = resolve(repoDirArg);
+    const git = new Executor({ prefix: "git", cwd: repoDir });
 
     const commits = options.commits ? parseInt(options.commits, 10) : undefined;
     const outputFileArg = options.output; // Renamed for clarity
@@ -191,7 +173,7 @@ async function main() {
         logger.info(`ℹ Will diff the last ${numCommits} commit(s) (HEAD~${numCommits}..HEAD).`);
     } else {
         logger.info("ℹ --commits flag not provided. Attempting to list recent commits for selection.");
-        const selectedCommitHash = await getAndSelectCommit(repoDir);
+        const selectedCommitHash = await getAndSelectCommit(git);
 
         if (!selectedCommitHash) {
             logger.info("✖ Commit selection aborted or failed. Exiting.");
@@ -240,8 +222,8 @@ async function main() {
             });
 
             if (outputAction === "file") {
-                const firstShaRaw = await getTruncatedSha(repoDir, diffStartRef);
-                const lastShaRaw = await getTruncatedSha(repoDir, "HEAD");
+                const firstShaRaw = await getTruncatedSha(git, diffStartRef);
+                const lastShaRaw = await getTruncatedSha(git, "HEAD");
 
                 // Handle potentially undefined SHAs for filename
                 const firstSha =
@@ -279,8 +261,6 @@ async function main() {
         }
     }
 
-    const gitExecutablePath = "git";
-
     const gitArgs = [
         "diff",
         diffStartRef,
@@ -291,38 +271,26 @@ async function main() {
         "--no-color",
     ];
 
-    logger.debug(`⏳ Running: ${gitExecutablePath} ${gitArgs.join(" ")} in ${repoDir}`);
+    logger.debug(`⏳ Running: git ${gitArgs.join(" ")} in ${repoDir}`);
 
-    const proc = Bun.spawn({
-        cmd: [gitExecutablePath, ...gitArgs],
-        cwd: repoDir,
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"], // pipe stdout and stderr
-    });
+    const diffResult = await git.exec(gitArgs);
 
-    let diffOutput = "";
-    let errorOutput = "";
-
-    const stdoutPromise = new Response(proc.stdout).text().then((text) => (diffOutput = text));
-    const stderrPromise = new Response(proc.stderr).text().then((text) => (errorOutput = text));
-
-    await Promise.all([stdoutPromise, stderrPromise]);
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0) {
-        logger.error(`\n✖ git diff exited with code ${exitCode}`);
-        if (errorOutput) {
+    if (!diffResult.success) {
+        logger.error(`\n✖ git diff exited with code ${diffResult.exitCode}`);
+        if (diffResult.stderr) {
             logger.error("Git stderr:");
-            logger.error(errorOutput.trim());
+            logger.error(diffResult.stderr);
         }
 
         // Sometimes git diff writes errors to stdout (e.g., bad revision)
-        if (diffOutput && !errorOutput && exitCode !== 0) {
+        if (diffResult.stdout && !diffResult.stderr) {
             logger.error("Git output (potential error):");
-            logger.error(diffOutput.trim());
+            logger.error(diffResult.stdout);
         }
-        process.exit(exitCode ?? 1);
+        process.exit(diffResult.exitCode || 1);
     }
+
+    const diffOutput = diffResult.stdout;
 
     // Perform the output action
     try {

@@ -1,5 +1,6 @@
 // GitHub URL parsing utilities
 
+import { Executor } from "@app/utils/cli";
 import type { GitHubFileUrl, GitHubUrl } from "@app/github/types";
 
 /**
@@ -148,20 +149,15 @@ export function parseRepo(input: string): { owner: string; repo: string } | null
  */
 export async function detectRepoFromGit(): Promise<string | null> {
     try {
-        const proc = Bun.spawn({
-            cmd: ["git", "remote", "get-url", "origin"],
-            stdio: ["ignore", "pipe", "pipe"],
-        });
+        const git = new Executor({ prefix: "git" });
+        const { success, stdout } = await git.exec(["remote", "get-url", "origin"]);
 
-        const stdout = await new Response(proc.stdout).text();
-        const exitCode = await proc.exited;
-
-        if (exitCode !== 0) {
+        if (!success) {
             return null;
         }
 
         // Parse git remote URL
-        const url = stdout.trim();
+        const url = stdout;
 
         // SSH format: git@github.com:owner/repo.git
         const sshMatch = url.match(/git@github\.com:([^/]+)\/([^.]+)(?:\.git)?/);

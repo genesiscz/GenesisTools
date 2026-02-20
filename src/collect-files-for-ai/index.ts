@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises"; // Using fs.promises for async operations - Bun implements this
 import { basename, dirname, join, resolve } from "node:path";
 import logger from "@app/logger";
+import { Executor } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 
@@ -28,34 +29,10 @@ function getTimestampDirName(): string {
     return `${year}-${month}-${day}-${hours}.${minutes}`;
 }
 
-async function runGitCommand(args: string[], cwd: string): Promise<string> {
-    logger.debug(` M Running: git ${args.join(" ")} in ${cwd}`);
-    const proc = Bun.spawn({
-        cmd: ["git", ...args],
-        cwd: cwd,
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0) {
-        logger.error(`\n✖ git command failed with code ${exitCode}`);
-        if (stderr) {
-            logger.error("Git stderr:");
-            logger.error(stderr.trim());
-        }
-        // Sometimes errors go to stdout
-        if (stdout && !stderr) {
-            logger.error("Git stdout (potential error):");
-            logger.error(stdout.trim());
-        }
-        throw new Error(`Git command failed: git ${args.join(" ")}`);
-    }
+async function runGitCommand(git: Executor, args: string[]): Promise<string> {
+    const { stdout } = await git.execOrThrow(args);
     logger.debug(` ✔ Git command successful.`);
-    return stdout.trim();
+    return stdout;
 }
 
 // --- Main Function ---
@@ -76,6 +53,7 @@ async function main() {
         .parse();
 
     const repoDir = resolve(program.args[0]);
+    const git = new Executor({ prefix: "git", cwd: repoDir });
     const options: Options = program.opts();
 
     logger.debug(`ℹ️ Repository directory: ${repoDir}`);
@@ -114,7 +92,7 @@ async function main() {
 
     // --- Verify Git Repository ---
     try {
-        await runGitCommand(["rev-parse", "--is-inside-work-tree"], repoDir);
+        await runGitCommand(git, ["rev-parse", "--is-inside-work-tree"]);
     } catch (_error) {
         logger.error(`✖ Error: '${repoDir}' does not appear to be a valid Git repository.`);
         // error object already logged in runGitCommand
@@ -153,19 +131,19 @@ async function main() {
         let gitOutput = "";
         if (mode === "commits") {
             gitOutput = await runGitCommand(
+                git,
                 ["diff", "--name-only", "--diff-filter=d", `HEAD~${commits}`, "HEAD"],
-                repoDir
             );
         } else if (mode === "staged") {
-            gitOutput = await runGitCommand(["diff", "--name-only", "--diff-filter=d", "--cached"], repoDir);
+            gitOutput = await runGitCommand(git, ["diff", "--name-only", "--diff-filter=d", "--cached"]);
         } else if (mode === "unstaged") {
             // This includes untracked files if they aren't ignored.
             // Consider using status porcelain if only modified/deleted tracked files are needed.
             // For now, diff covers modified/deleted tracked files.
-            gitOutput = await runGitCommand(["diff", "--name-only", "--diff-filter=d"], repoDir);
+            gitOutput = await runGitCommand(git, ["diff", "--name-only", "--diff-filter=d"]);
         } else {
             // mode === 'all'
-            const combined = (await runGitCommand(["diff", "--name-only", "--diff-filter=d", "HEAD"], repoDir)).split(
+            const combined = (await runGitCommand(git, ["diff", "--name-only", "--diff-filter=d", "HEAD"])).split(
                 "\n"
             );
             gitOutput = Array.from(combined)

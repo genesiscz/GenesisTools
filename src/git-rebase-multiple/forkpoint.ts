@@ -1,7 +1,9 @@
+import { Executor } from "@app/utils/cli";
 import { git } from "./git";
 import type { ForkPointInfo } from "./types";
 
 const FORK_TAG_PREFIX = "fork";
+const gitExec = new Executor({ prefix: "git" });
 
 /**
  * Fork point manager for tracking merge-base between parent and children
@@ -78,13 +80,7 @@ export const forkPointManager = {
      */
     async cleanup(): Promise<void> {
         // List all tags with fork/ prefix
-        const proc = Bun.spawn({
-            cmd: ["git", "tag", "-l", `${FORK_TAG_PREFIX}/*`],
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-
-        const stdout = await new Response(proc.stdout).text();
-        await proc.exited;
+        const { stdout } = await gitExec.exec(["tag", "-l", `${FORK_TAG_PREFIX}/*`]);
 
         const tags = stdout.split("\n").filter((t) => t.trim());
         for (const tag of tags) {
@@ -96,13 +92,7 @@ export const forkPointManager = {
      * List all existing fork point tags
      */
     async list(): Promise<ForkPointInfo[]> {
-        const proc = Bun.spawn({
-            cmd: ["git", "tag", "-l", `${FORK_TAG_PREFIX}/*`],
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-
-        const stdout = await new Response(proc.stdout).text();
-        await proc.exited;
+        const { stdout } = await gitExec.exec(["tag", "-l", `${FORK_TAG_PREFIX}/*`]);
 
         const tags = stdout.split("\n").filter((t) => t.trim());
         const forkPoints: ForkPointInfo[] = [];
