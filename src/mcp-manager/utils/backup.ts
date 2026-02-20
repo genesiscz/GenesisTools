@@ -1,11 +1,11 @@
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { copyFile } from "node:fs/promises";
+import path from "node:path";
 import logger, { consoleLog } from "@app/logger";
 import { DiffUtil } from "@app/utils/diff";
 import { ExitPromptError } from "@inquirer/core";
 import { confirm } from "@inquirer/prompts";
 import chalk from "chalk";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { copyFile } from "node:fs/promises";
-import path from "node:path";
 import { getGlobalOptions } from "./config.utils.js";
 
 /**

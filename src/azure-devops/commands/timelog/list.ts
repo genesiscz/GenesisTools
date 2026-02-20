@@ -97,7 +97,9 @@ export function registerListSubcommand(parent: Command): void {
                     const resolvedUsers = options.user.map((u) => {
                         if (u === "@me") {
                             if (!defaultUserName) {
-                                console.error('Cannot resolve "@me": no defaultUser configured in timelog config. Pass an explicit --user name or set timelog.defaultUser.userName in config.');
+                                console.error(
+                                    'Cannot resolve "@me": no defaultUser configured in timelog config. Pass an explicit --user name or set timelog.defaultUser.userName in config.'
+                                );
                                 process.exit(1);
                             }
                             return defaultUserName;

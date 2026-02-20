@@ -1,11 +1,11 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import logger from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
 import { search } from "@inquirer/prompts";
 import { Command } from "commander";
 import * as watchman from "fb-watchman";
-import * as fs from "node:fs";
-import * as path from "node:path";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -101,7 +101,9 @@ async function getDirOfInterest(): Promise<string> {
         const selected = await search({
             message: "Select a directory to watch:",
             source: async (term) => {
-                if (!term) return allChoices;
+                if (!term) {
+                    return allChoices;
+                }
                 return allChoices.filter((c) => c.value.toLowerCase().includes(term.toLowerCase()));
             },
         });
@@ -151,7 +153,9 @@ function makeSubscription(
     // Remove any previous listeners to avoid duplicates
     client.removeAllListeners("subscription");
     client.on("subscription", (resp: any) => {
-        if (resp.subscription !== "mysubscription") return;
+        if (resp.subscription !== "mysubscription") {
+            return;
+        }
         if (!resp.files || !Array.isArray(resp.files)) {
             // No files in the response, nothing to do
             return;

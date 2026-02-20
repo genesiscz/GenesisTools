@@ -5,9 +5,9 @@
  * Based on vercel-skills implementation.
  */
 
-import pc from "picocolors";
 import * as readline from "node:readline";
 import { Writable } from "node:stream";
+import pc from "picocolors";
 
 // Silent writable stream to prevent readline from echoing input
 const silentOutput = new Writable({

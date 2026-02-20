@@ -1,139 +1,140 @@
-import type { Command } from "commander";
+import { printFormatted, truncatePath } from "@app/har-analyzer/core/formatter";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
-import { truncatePath, printFormatted } from "@app/har-analyzer/core/formatter";
 import type { IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
+import type { Command } from "commander";
 
 function urlMatches(fullUrl: string, target: string): boolean {
-	if (fullUrl === target) return true;
-	try {
-		const a = new URL(fullUrl);
-		const b = new URL(target, fullUrl); // resolve relative target against fullUrl
-		return a.origin === b.origin && a.pathname === b.pathname;
-	} catch {
-		return fullUrl.endsWith(target);
-	}
+    if (fullUrl === target) return true;
+    try {
+        const a = new URL(fullUrl);
+        const b = new URL(target, fullUrl); // resolve relative target against fullUrl
+        return a.origin === b.origin && a.pathname === b.pathname;
+    } catch {
+        return fullUrl.endsWith(target);
+    }
 }
 
 interface RedirectChain {
-	entries: IndexedEntry[];
-	finalStatus: number;
+    entries: IndexedEntry[];
+    finalStatus: number;
 }
 
 function buildRedirectChains(entries: IndexedEntry[]): RedirectChain[] {
-	const chains: RedirectChain[] = [];
-	const visited = new Set<number>();
+    const chains: RedirectChain[] = [];
+    const visited = new Set<number>();
 
-	for (const entry of entries) {
-		// Skip if already part of a chain or not a redirect
-		if (visited.has(entry.index) || !entry.isRedirect) continue;
+    for (const entry of entries) {
+        // Skip if already part of a chain or not a redirect
+        if (visited.has(entry.index) || !entry.isRedirect) continue;
 
-		// Check if this entry is the target of another redirect (i.e., not a chain start)
-		const isTarget = entries.some(
-			(e) => e.isRedirect && e.redirectURL && urlMatches(entry.url, e.redirectURL),
-		);
-		if (isTarget) continue;
+        // Check if this entry is the target of another redirect (i.e., not a chain start)
+        const isTarget = entries.some((e) => e.isRedirect && e.redirectURL && urlMatches(entry.url, e.redirectURL));
+        if (isTarget) continue;
 
-		// Build chain starting from this entry
-		const chain: IndexedEntry[] = [entry];
-		visited.add(entry.index);
+        // Build chain starting from this entry
+        const chain: IndexedEntry[] = [entry];
+        visited.add(entry.index);
 
-		let current = entry;
-		while (current.isRedirect && current.redirectURL) {
-			const redirectTarget = current.redirectURL;
-			// Find the next entry whose URL matches the redirect target
-			const candidates = findNextEntry(entries, redirectTarget, current.index, visited);
-			if (!candidates) break;
+        let current = entry;
+        while (current.isRedirect && current.redirectURL) {
+            const redirectTarget = current.redirectURL;
+            // Find the next entry whose URL matches the redirect target
+            const candidates = findNextEntry(entries, redirectTarget, current.index, visited);
+            if (!candidates) break;
 
-			chain.push(candidates);
-			visited.add(candidates.index);
-			current = candidates;
-		}
+            chain.push(candidates);
+            visited.add(candidates.index);
+            current = candidates;
+        }
 
-		if (chain.length > 1) {
-			chains.push({
-				entries: chain,
-				finalStatus: chain[chain.length - 1].status,
-			});
-		}
-	}
+        if (chain.length > 1) {
+            chains.push({
+                entries: chain,
+                finalStatus: chain[chain.length - 1].status,
+            });
+        }
+    }
 
-	return chains;
+    return chains;
 }
 
 function findNextEntry(
-	entries: IndexedEntry[],
-	redirectUrl: string,
-	afterIndex: number,
-	visited: Set<number>,
+    entries: IndexedEntry[],
+    redirectUrl: string,
+    afterIndex: number,
+    visited: Set<number>
 ): IndexedEntry | null {
-	// Try exact URL match first, then partial match on path
-	for (const entry of entries) {
-		if (entry.index <= afterIndex || visited.has(entry.index)) continue;
+    // Try exact URL match first, then partial match on path
+    for (const entry of entries) {
+        if (entry.index <= afterIndex || visited.has(entry.index)) continue;
 
-		if (entry.url === redirectUrl || entry.url.endsWith(redirectUrl)) {
-			return entry;
-		}
-	}
+        if (entry.url === redirectUrl || entry.url.endsWith(redirectUrl)) {
+            return entry;
+        }
+    }
 
-	// Also try matching just the path portion
-	for (const entry of entries) {
-		if (entry.index <= afterIndex || visited.has(entry.index)) continue;
+    // Also try matching just the path portion
+    for (const entry of entries) {
+        if (entry.index <= afterIndex || visited.has(entry.index)) continue;
 
-		try {
-			const parsedUrl = new URL(entry.url);
-			if (parsedUrl.pathname === redirectUrl || parsedUrl.pathname + parsedUrl.search === redirectUrl) {
-				return entry;
-			}
-		} catch {
-			// Skip entries with unparseable URLs
-		}
-	}
+        try {
+            const parsedUrl = new URL(entry.url);
+            if (parsedUrl.pathname === redirectUrl || parsedUrl.pathname + parsedUrl.search === redirectUrl) {
+                return entry;
+            }
+        } catch {
+            // Skip entries with unparseable URLs
+        }
+    }
 
-	return null;
+    return null;
 }
 
 function formatChain(chain: RedirectChain, chainIndex: number): string {
-	const lines: string[] = [];
-	const hops = chain.entries.length - 1;
-	lines.push(`Chain ${chainIndex} (${hops} hop${hops !== 1 ? "s" : ""}):`);
+    const lines: string[] = [];
+    const hops = chain.entries.length - 1;
+    lines.push(`Chain ${chainIndex} (${hops} hop${hops !== 1 ? "s" : ""}):`);
 
-	for (let i = 0; i < chain.entries.length; i++) {
-		const entry = chain.entries[i];
-		const id = `e${entry.index}`;
-		const method = entry.method;
-		const path = truncatePath(entry.path, 30);
-		const isFinal = i === chain.entries.length - 1;
+    for (let i = 0; i < chain.entries.length; i++) {
+        const entry = chain.entries[i];
+        const id = `e${entry.index}`;
+        const method = entry.method;
+        const path = truncatePath(entry.path, 30);
+        const isFinal = i === chain.entries.length - 1;
 
-		if (isFinal) {
-			lines.push(`  ${id}  ${method} ${path}  -> ${entry.status} (final)`);
-		} else {
-			const nextEntry = chain.entries[i + 1];
-			const nextPath = truncatePath(nextEntry.path, 30);
-			lines.push(`  ${id}  ${method} ${path}  -> ${entry.status} -> ${nextEntry ? `e${nextEntry.index}` : ""}  ${nextPath}`);
-		}
-	}
+        if (isFinal) {
+            lines.push(`  ${id}  ${method} ${path}  -> ${entry.status} (final)`);
+        } else {
+            const nextEntry = chain.entries[i + 1];
+            const nextPath = truncatePath(nextEntry.path, 30);
+            lines.push(
+                `  ${id}  ${method} ${path}  -> ${entry.status} -> ${nextEntry ? `e${nextEntry.index}` : ""}  ${nextPath}`
+            );
+        }
+    }
 
-	return lines.join("\n");
+    return lines.join("\n");
 }
 
 export function registerRedirectsCommand(program: Command): void {
-	program
-		.command("redirects")
-		.description("Show redirect chains")
-		.action(async () => {
-			const parentOpts = program.opts<OutputOptions>();
-			const sm = new SessionManager();
-			const session = await sm.requireSession(parentOpts.session);
+    program
+        .command("redirects")
+        .description("Show redirect chains")
+        .action(async () => {
+            const parentOpts = program.opts<OutputOptions>();
+            const sm = new SessionManager();
+            const session = await sm.requireSession(parentOpts.session);
 
-			const chains = buildRedirectChains(session.entries);
+            const chains = buildRedirectChains(session.entries);
 
-			if (chains.length === 0) {
-				console.log("No redirect chains found.");
-				return;
-			}
+            if (chains.length === 0) {
+                console.log("No redirect chains found.");
+                return;
+            }
 
-			const output = chains.map((chain, i) => formatChain(chain, i + 1)).join("\n\n")
-				+ `\n\n${chains.length} redirect chain${chains.length !== 1 ? "s" : ""} found`;
-			await printFormatted(output, parentOpts.format);
-		});
+            const output =
+                chains.map((chain, i) => formatChain(chain, i + 1)).join("\n\n") +
+                `\n\n${chains.length} redirect chain${chains.length !== 1 ? "s" : ""} found`;
+            await printFormatted(output, parentOpts.format);
+        });
 }

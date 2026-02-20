@@ -14,10 +14,10 @@
 
 import { existsSync, readdirSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { glob } from "glob";
 import { basename, resolve, sep } from "node:path";
 import { estimateTokens } from "@app/utils/tokens";
-import { parseJsonlTranscript, PROJECTS_DIR, encodedProjectDir } from "./index";
+import { glob } from "glob";
+import { encodedProjectDir, PROJECTS_DIR, parseJsonlTranscript } from "./index";
 import type {
     AssistantMessage,
     AssistantMessageContent,
@@ -205,7 +205,8 @@ function extractUserText(content: string | ContentBlock[]): string {
                 for (const inner of tr.content) {
                     if (inner.type === "text") parts.push((inner as TextBlock).text);
                     else if (inner.type === "image") parts.push(`[Image: ${(inner as ImageBlock).source.media_type}]`);
-                    else if (inner.type === "tool_reference") parts.push(`[Tool Reference: ${(inner as ToolReferenceBlock).tool_name}]`);
+                    else if (inner.type === "tool_reference")
+                        parts.push(`[Tool Reference: ${(inner as ToolReferenceBlock).tool_name}]`);
                 }
             }
         } else if (block.type === "image") {
@@ -304,9 +305,7 @@ export class ClaudeSession {
      * @throws {Error} If no matching session file is found.
      */
     static async fromSessionId(sessionId: string, projectDir?: string): Promise<ClaudeSession> {
-        const dir = projectDir
-            ? resolve(PROJECTS_DIR, projectDir)
-            : resolve(PROJECTS_DIR, encodedProjectDir());
+        const dir = projectDir ? resolve(PROJECTS_DIR, projectDir) : resolve(PROJECTS_DIR, encodedProjectDir());
 
         if (!existsSync(dir)) {
             throw new Error(`Project directory does not exist: ${dir}`);
@@ -852,9 +851,7 @@ export class ClaudeSession {
      * @returns Array of URL strings in chronological order.
      */
     extractPrLinks(): string[] {
-        return this._messages
-            .filter((m): m is PrLinkMessage => m.type === "pr-link")
-            .map((m) => m.url);
+        return this._messages.filter((m): m is PrLinkMessage => m.type === "pr-link").map((m) => m.url);
     }
 
     // =========================================================================
@@ -898,7 +895,7 @@ export class ClaudeSession {
                 const userMsg = msg as UserMessage;
                 if (Array.isArray(userMsg.message.content)) {
                     const hasResult = userMsg.message.content.some(
-                        (b) => b.type === "tool_result" && matchingToolUseIds.has((b as ToolResultBlock).tool_use_id),
+                        (b) => b.type === "tool_result" && matchingToolUseIds.has((b as ToolResultBlock).tool_use_id)
                     );
                     if (hasResult) {
                         filtered.push(msg);
@@ -1069,8 +1066,7 @@ export class ClaudeSession {
             }
         }
 
-        const duration =
-            firstTimestamp && lastTimestamp ? lastTimestamp.getTime() - firstTimestamp.getTime() : 0;
+        const duration = firstTimestamp && lastTimestamp ? lastTimestamp.getTime() - firstTimestamp.getTime() : 0;
 
         this._stats = {
             messageCount: this._messages.length,
@@ -1133,9 +1129,10 @@ export class ClaudeSession {
 
             if (msg.type === "user") {
                 const userMsg = msg as UserMessage;
-                const text = typeof userMsg.message.content === "string"
-                    ? userMsg.message.content
-                    : this._extractUserTextBlocks(userMsg.message.content, includeToolResults);
+                const text =
+                    typeof userMsg.message.content === "string"
+                        ? userMsg.message.content
+                        : this._extractUserTextBlocks(userMsg.message.content, includeToolResults);
                 if (text.trim()) {
                     lines.push(`${timestamp}[User]: ${text.trim()}`);
                 }
@@ -1162,9 +1159,10 @@ export class ClaudeSession {
                 const sub = msg as SubagentMessage;
                 if (sub.role === "user") {
                     const content = (sub.message as UserMessageContent).content;
-                    const text = typeof content === "string"
-                        ? content
-                        : this._extractUserTextBlocks(content, includeToolResults);
+                    const text =
+                        typeof content === "string"
+                            ? content
+                            : this._extractUserTextBlocks(content, includeToolResults);
                     if (text.trim()) {
                         lines.push(`${timestamp}[Subagent User]: ${text.trim()}`);
                     }
@@ -1309,8 +1307,10 @@ export class ClaudeSession {
                 } else if (Array.isArray(tr.content)) {
                     for (const inner of tr.content) {
                         if (inner.type === "text") parts.push((inner as TextBlock).text);
-                        else if (inner.type === "image") parts.push(`[Image: ${(inner as ImageBlock).source.media_type}]`);
-                        else if (inner.type === "tool_reference") parts.push(`[Tool Reference: ${(inner as ToolReferenceBlock).tool_name}]`);
+                        else if (inner.type === "image")
+                            parts.push(`[Image: ${(inner as ImageBlock).source.media_type}]`);
+                        else if (inner.type === "tool_reference")
+                            parts.push(`[Tool Reference: ${(inner as ToolReferenceBlock).tool_name}]`);
                     }
                 }
             }

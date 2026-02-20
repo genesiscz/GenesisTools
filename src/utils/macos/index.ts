@@ -1,82 +1,77 @@
 // Client
-export { DarwinKitClient, getDarwinKit, closeDarwinKit } from "./darwinkit";
-
-// NLP
-export {
-  detectLanguage,
-  analyzeSentiment,
-  tagText,
-  extractEntities,
-  embedText,
-  textDistance,
-  areSimilar,
-  findNeighbors,
-  lemmatize,
-  getKeywords,
-  scoreRelevance,
-} from "./nlp";
-
-// OCR
-export {
-  recognizeText,
-  recognizeTextFromBuffer,
-  extractText,
-} from "./ocr";
-export type { OcrOptions } from "./ocr";
-
-// Text Analysis (higher-level)
-export {
-  rankBySimilarity,
-  batchSentiment,
-  groupByLanguage,
-  extractEntitiesBatch,
-  deduplicateTexts,
-  clusterBySimilarity,
-} from "./text-analysis";
-export type {
-  RankOptions,
-  BatchSentimentOptions,
-  GroupByLanguageOptions,
-  TextEntities,
-  DeduplicateOptions,
-  ClusterOptions,
-} from "./text-analysis";
 
 // Classification
-export { classifyText, classifyBatch, groupByCategory } from "./classification";
-
-// TTS
-export { speak, listVoices } from "./tts";
-export type { SpeakOptions } from "./tts";
-
+export { classifyBatch, classifyText, groupByCategory } from "./classification";
+export { closeDarwinKit, DarwinKitClient, getDarwinKit } from "./darwinkit";
+// NLP
+export {
+    analyzeSentiment,
+    areSimilar,
+    detectLanguage,
+    embedText,
+    extractEntities,
+    findNeighbors,
+    getKeywords,
+    lemmatize,
+    scoreRelevance,
+    tagText,
+    textDistance,
+} from "./nlp";
+export type { NotificationOptions } from "./notifications";
 // Notifications
 export { sendNotification } from "./notifications";
-export type { NotificationOptions } from "./notifications";
+export type { OcrOptions } from "./ocr";
+// OCR
+export {
+    extractText,
+    recognizeText,
+    recognizeTextFromBuffer,
+} from "./ocr";
+export type {
+    BatchSentimentOptions,
+    ClusterOptions,
+    DeduplicateOptions,
+    GroupByLanguageOptions,
+    RankOptions,
+    TextEntities,
+} from "./text-analysis";
+// Text Analysis (higher-level)
+export {
+    batchSentiment,
+    clusterBySimilarity,
+    deduplicateTexts,
+    extractEntitiesBatch,
+    groupByLanguage,
+    rankBySimilarity,
+} from "./text-analysis";
+export type { SpeakOptions } from "./tts";
+// TTS
+export { listVoices, speak } from "./tts";
 
 // Types
 export type {
-  DarwinKitConfig,
-  LanguageResult,
-  SentimentResult,
-  TagResult,
-  TaggedToken,
-  EmbedResult,
-  DistanceResult,
-  NeighborsResult,
-  NlpScheme,
-  EmbedType,
-  OcrBlock,
-  OcrBounds,
-  OcrResult,
-  OcrLevel,
-  CapabilitiesResult,
-  ScoredItem,
-  TextItem,
-  SentimentItem,
-  LanguageItem,
-  NamedEntity,
-  Keyword,
-  ClassificationResult,
-  ClassificationItem,
-  Cluster,
+    CapabilitiesResult,
+    ClassificationItem,
+    ClassificationResult,
+    Cluster,
+    DarwinKitConfig,
+    DistanceResult,
+    EmbedResult,
+    EmbedType,
+    Keyword,
+    LanguageItem,
+    LanguageResult,
+    NamedEntity,
+    NeighborsResult,
+    NlpScheme,
+    OcrBlock,
+    OcrBounds,
+    OcrLevel,
+    OcrResult,
+    ScoredItem,
+    SentimentItem,
+    SentimentResult,
+    TaggedToken,
+    TagResult,
+    TextItem,
 } from "./types";

@@ -3,7 +3,7 @@ import pc from "picocolors";
 
 export async function copyToClipboard(
     content: string,
-    options: { silent?: boolean; label?: string } = {},
+    options: { silent?: boolean; label?: string } = {}
 ): Promise<void> {
     await clipboardy.write(content);
 

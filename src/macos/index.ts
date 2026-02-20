@@ -16,8 +16,8 @@
  */
 
 import logger from "@app/logger";
-import { Command } from "commander";
 import { registerMailCommand } from "@app/macos/commands/mail/index";
+import { Command } from "commander";
 
 const program = new Command();
 

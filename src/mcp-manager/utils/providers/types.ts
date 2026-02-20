@@ -1,5 +1,5 @@
-import type { EnabledMcpServers, MCPServerMeta } from "@app/mcp-manager/utils/types.js";
 import { writeFile } from "node:fs/promises";
+import type { EnabledMcpServers, MCPServerMeta } from "@app/mcp-manager/utils/types.js";
 
 /**
  * Result of a write operation to a provider config.

@@ -5,7 +5,6 @@
  * interactions, including authentication, querying, and data retrieval.
  */
 
-import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/cache";
 import type {
     CommentsResponse,
     Dashboard,
@@ -16,7 +15,7 @@ import type {
     TeamMembersResponse,
     TeamsListResponse,
 } from "@app/azure-devops/api.types";
-import { concurrentMap } from "@app/utils/async";
+import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/cache";
 import type {
     AzureConfig,
     AzWorkItemRaw,
@@ -34,6 +33,7 @@ import type {
     WorkItemUpdate,
 } from "@app/azure-devops/types";
 import logger from "@app/logger";
+import { concurrentMap } from "@app/utils/async";
 import { buildUrl } from "@app/utils/url";
 import { $ } from "bun";
 
@@ -77,7 +77,11 @@ export class Api {
     /**
      * Project-scoped WIT API URL: `{org}/{project}/_apis/wit/{path}?api-version=7.1`
      */
-    static witUrl(config: AzureConfig, path: string | string[], queryParams?: Record<string, string | undefined>): string {
+    static witUrl(
+        config: AzureConfig,
+        path: string | string[],
+        queryParams?: Record<string, string | undefined>
+    ): string {
         const segments = Array.isArray(path) ? path : [path];
         return buildUrl({
             base: config.org,
@@ -90,7 +94,12 @@ export class Api {
      * Project-scoped WIT API URL with preview version.
      * Default: `7.1-preview.3` (used for comments endpoint).
      */
-    static witUrlPreview(config: AzureConfig, path: string | string[], queryParams?: Record<string, string | undefined>, version = "7.1-preview.3"): string {
+    static witUrlPreview(
+        config: AzureConfig,
+        path: string | string[],
+        queryParams?: Record<string, string | undefined>,
+        version = "7.1-preview.3"
+    ): string {
         const segments = Array.isArray(path) ? path : [path];
         return buildUrl({
             base: config.org,
@@ -103,7 +112,12 @@ export class Api {
      * Project-scoped non-WIT API URL (dashboard, etc.).
      * `{org}/{project}/_apis/{resource}/{path}?api-version=...`
      */
-    static projectApiUrl(config: AzureConfig, path: string[], queryParams?: Record<string, string | undefined>, apiVersion = "7.1"): string {
+    static projectApiUrl(
+        config: AzureConfig,
+        path: string[],
+        queryParams?: Record<string, string | undefined>,
+        apiVersion = "7.1"
+    ): string {
         return buildUrl({
             base: config.org,
             segments: [encodeURIComponent(config.project), "_apis", ...path],
@@ -411,7 +425,7 @@ export class Api {
             const batchIds = ids.slice(i, i + batchSize);
             const url = Api.orgUrl(this.config, ["wit", "workitems"], {
                 ids: batchIds.join(","),
-                "$expand": "all",
+                $expand: "all",
             });
             const response = await this.get<{ value: AzWorkItemRaw[] }>(
                 url,
@@ -428,13 +442,9 @@ export class Api {
         const fetchComments = options.comments !== false;
         const fetchUpdates = options.updates === true;
 
-        const commentsMap = fetchComments
-            ? await this.fetchComments(ids)
-            : new Map<number, Comment[]>();
+        const commentsMap = fetchComments ? await this.fetchComments(ids) : new Map<number, Comment[]>();
 
-        const updatesMap = fetchUpdates
-            ? await this.fetchUpdates(ids)
-            : new Map<number, WorkItemUpdate[]>();
+        const updatesMap = fetchUpdates ? await this.fetchUpdates(ids) : new Map<number, WorkItemUpdate[]>();
 
         // Phase 3: Assemble results
         const result = new Map<number, WorkItemFull>();
@@ -490,7 +500,7 @@ export class Api {
             const batchIds = ids.slice(i, i + batchSize);
             const url = Api.orgUrl(this.config, ["wit", "workitems"], {
                 ids: batchIds.join(","),
-                "$expand": "all",
+                $expand: "all",
             });
             const response = await this.get<{ value: AzWorkItemRaw[] }>(
                 url,
@@ -534,7 +544,12 @@ export class Api {
             const promises = batch.map(async (id) => {
                 const commentsUrl = Api.witUrlPreview(this.config, ["workItems", String(id), "comments"]);
                 const commentsData = await this.get<{
-                    comments: Array<{ id: number; createdBy: { displayName: string }; createdDate: string; text: string }>;
+                    comments: Array<{
+                        id: number;
+                        createdBy: { displayName: string };
+                        createdDate: string;
+                        text: string;
+                    }>;
                 }>(commentsUrl, `comments for #${id}`);
 
                 const comments: Comment[] = (commentsData.comments || []).map((c) => ({
@@ -659,7 +674,7 @@ export class Api {
         const queries: QueryInfo[] = [];
 
         // Azure DevOps Queries API - get root level queries
-        const rootUrl = Api.witUrl(this.config, "queries", { "$depth": "2" });
+        const rootUrl = Api.witUrl(this.config, "queries", { $depth: "2" });
         const rootData = await this.get<{ value: QueryNode[] }>(rootUrl, "root queries");
 
         // Recursively process query tree
@@ -681,7 +696,7 @@ export class Api {
                     }
                 } else if (node.hasChildren) {
                     // Need to fetch children
-                    const childUrl = Api.witUrl(this.config, ["queries", node.id], { "$depth": "2" });
+                    const childUrl = Api.witUrl(this.config, ["queries", node.id], { $depth: "2" });
                     try {
                         const childData = await this.get<QueryNode>(childUrl);
                         if (childData.children) {
@@ -715,7 +730,7 @@ export class Api {
     // ============= History & Reporting Methods =============
 
     async runWiql(wiql: string, options?: { top?: number }): Promise<WiqlResponse> {
-        const url = Api.witUrl(this.config, "wiql", { "$top": options?.top ? String(options.top) : undefined });
+        const url = Api.witUrl(this.config, "wiql", { $top: options?.top ? String(options.top) : undefined });
         return this.post<WiqlResponse>(url, { query: wiql }, "application/json", "WIQL query");
     }
 
@@ -739,7 +754,10 @@ export class Api {
         let skip = 0;
         const top = 200;
         while (true) {
-            const url = Api.witUrl(this.config, ["workItems", String(id), "updates"], { "$top": String(top), "$skip": String(skip) });
+            const url = Api.witUrl(this.config, ["workItems", String(id), "updates"], {
+                $top: String(top),
+                $skip: String(skip),
+            });
             const data = await this.get<{ count: number; value: WorkItemUpdate[] }>(
                 url,
                 `updates for #${id} (skip=${skip})`
@@ -784,7 +802,7 @@ export class Api {
         do {
             page++;
             const url = Api.witUrl(this.config, ["reporting", "workitemrevisions"], {
-                "$maxPageSize": String(maxPageSize),
+                $maxPageSize: String(maxPageSize),
                 startDateTime: options.startDateTime?.toISOString(),
                 continuationToken,
             });
@@ -806,7 +824,9 @@ export class Api {
             // Azure DevOps sometimes returns continuation tokens on final/empty pages.
             // Stop if: explicit last batch flag, empty page, or no continuation token.
             if (data.isLastBatch || data.values.length === 0) {
-                logger.debug(`[api] Reporting API: stopping pagination (isLastBatch=${data.isLastBatch}, pageSize=${data.values.length})`);
+                logger.debug(
+                    `[api] Reporting API: stopping pagination (isLastBatch=${data.isLastBatch}, pageSize=${data.values.length})`
+                );
                 break;
             }
         } while (continuationToken);
@@ -824,8 +844,8 @@ export class Api {
         options?: { top?: number; expand?: string }
     ): Promise<Array<{ rev: number; fields: Record<string, unknown> }>> {
         const url = Api.witUrl(this.config, ["workItems", String(id), "revisions"], {
-            "$top": options?.top ? String(options.top) : undefined,
-            "$expand": options?.expand,
+            $top: options?.top ? String(options.top) : undefined,
+            $expand: options?.expand,
         });
         const data = await this.get<{ value: Array<{ rev: number; fields: Record<string, unknown> }> }>(
             url,
@@ -848,7 +868,13 @@ export class Api {
         const seen = new Set<string>();
 
         for (const team of teams.value) {
-            const membersUrl = Api.orgUrl(this.config, ["projects", this.config.projectId, "teams", team.id, "members"]);
+            const membersUrl = Api.orgUrl(this.config, [
+                "projects",
+                this.config.projectId,
+                "teams",
+                team.id,
+                "members",
+            ]);
             const data = await this.get<TeamMembersResponse>(membersUrl, `members of ${team.name}`);
             for (const m of data.value) {
                 const key = m.identity.uniqueName || m.identity.displayName;

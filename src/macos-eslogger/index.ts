@@ -1,9 +1,9 @@
+import { type ChildProcess, spawn } from "node:child_process";
 import logger, { consoleLog } from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
 import { checkbox, select } from "@inquirer/prompts";
 import chalk from "chalk";
-import { type ChildProcess, spawn } from "node:child_process";
 import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)

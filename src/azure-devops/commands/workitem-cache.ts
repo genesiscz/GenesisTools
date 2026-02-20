@@ -32,8 +32,13 @@ async function handleList(): Promise<void> {
     }
 
     const items: Array<{
-        id: number; title: string; state: string; fetchedAt: Date;
-        hasTask: boolean; hasHistory: boolean; hasComments: boolean;
+        id: number;
+        title: string;
+        state: string;
+        fetchedAt: Date;
+        hasTask: boolean;
+        hasHistory: boolean;
+        hasComments: boolean;
     }> = [];
 
     for (const file of workitemFiles) {
@@ -67,7 +72,9 @@ async function handleList(): Promise<void> {
     for (const item of items) {
         const title = item.title.length > 35 ? `${item.title.slice(0, 32)}...` : item.title;
         const age = getRelativeTime(item.fetchedAt);
-        lines.push(`| ${item.id} | ${title} | ${item.state} | ${age} | ${item.hasTask ? "✓" : "✗"} | ${item.hasHistory ? "✓" : "✗"} | ${item.hasComments ? "✓" : "✗"} |`);
+        lines.push(
+            `| ${item.id} | ${title} | ${item.state} | ${age} | ${item.hasTask ? "✓" : "✗"} | ${item.hasHistory ? "✓" : "✗"} | ${item.hasComments ? "✓" : "✗"} |`
+        );
     }
 
     lines.push("");

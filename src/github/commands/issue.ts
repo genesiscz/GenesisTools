@@ -1,5 +1,7 @@
 // Issue command implementation
 
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import {
     getComments as getCachedComments,
     getCommentCount,
@@ -41,8 +43,6 @@ import {
 } from "@app/utils/github/utils";
 import chalk from "chalk";
 import { Command } from "commander";
-import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
 
 // Known bots
 const KNOWN_BOTS = [

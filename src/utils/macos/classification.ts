@@ -1,13 +1,13 @@
 // src/utils/macos/classification.ts
 
 import { textDistance } from "./nlp";
-import type { ClassificationResult, ClassificationItem, TextItem } from "./types";
+import type { ClassificationItem, ClassificationResult, TextItem } from "./types";
 
 export interface ClassifyOptions {
-  /** BCP-47 language code. Default: "en" */
-  language?: string;
-  /** Concurrency limit for batch operations. Default: 5 */
-  concurrency?: number;
+    /** BCP-47 language code. Default: "en" */
+    language?: string;
+    /** Concurrency limit for batch operations. Default: 5 */
+    concurrency?: number;
 }
 
 /**
@@ -28,33 +28,33 @@ export interface ClassifyOptions {
  * // → { category: "bug fix", confidence: 0.82, scores: [...] }
  */
 export async function classifyText(
-  text: string,
-  categories: string[],
-  options: ClassifyOptions = {},
+    text: string,
+    categories: string[],
+    options: ClassifyOptions = {}
 ): Promise<ClassificationResult> {
-  if (categories.length === 0) throw new Error("classifyText: categories must be non-empty");
+    if (categories.length === 0) throw new Error("classifyText: categories must be non-empty");
 
-  const language = options.language ?? "en";
+    const language = options.language ?? "en";
 
-  const scored = await Promise.all(
-    categories.map(async (category) => {
-      try {
-        const { distance } = await textDistance(text, category, language, "sentence");
-        return { category, score: Math.max(0, 1 - distance / 2) };
-      } catch {
-        return { category, score: 0 };
-      }
-    }),
-  );
+    const scored = await Promise.all(
+        categories.map(async (category) => {
+            try {
+                const { distance } = await textDistance(text, category, language, "sentence");
+                return { category, score: Math.max(0, 1 - distance / 2) };
+            } catch {
+                return { category, score: 0 };
+            }
+        })
+    );
 
-  // Sort descending by score (highest confidence first)
-  scored.sort((a, b) => b.score - a.score);
+    // Sort descending by score (highest confidence first)
+    scored.sort((a, b) => b.score - a.score);
 
-  return {
-    category: scored[0].category,
-    confidence: scored[0].score,
-    scores: scored,
-  };
+    return {
+        category: scored[0].category,
+        confidence: scored[0].score,
+        scores: scored,
+    };
 }
 
 /**
@@ -75,36 +75,36 @@ export async function classifyText(
  * //   ]
  */
 export async function classifyBatch<IdType = string>(
-  items: TextItem<IdType>[],
-  categories: string[],
-  options: ClassifyOptions = {},
+    items: TextItem<IdType>[],
+    categories: string[],
+    options: ClassifyOptions = {}
 ): Promise<Array<ClassificationItem<IdType>>> {
-  if (categories.length === 0) throw new Error("classifyBatch: categories must be non-empty");
+    if (categories.length === 0) throw new Error("classifyBatch: categories must be non-empty");
 
-  const concurrency = options.concurrency ?? 5;
-  const results: Array<ClassificationItem<IdType>> = [];
+    const concurrency = options.concurrency ?? 5;
+    const results: Array<ClassificationItem<IdType>> = [];
 
-  for (let i = 0; i < items.length; i += concurrency) {
-    const chunk = items.slice(i, i + concurrency);
-    const chunkResults = await Promise.all(
-      chunk.map(async (item) => {
-        try {
-          const classification = await classifyText(item.text, categories, options);
-          return { id: item.id, ...classification };
-        } catch {
-          return {
-            id: item.id,
-            category: categories[0],
-            confidence: 0,
-            scores: categories.map((c) => ({ category: c, score: 0 })),
-          };
-        }
-      }),
-    );
-    results.push(...chunkResults);
-  }
+    for (let i = 0; i < items.length; i += concurrency) {
+        const chunk = items.slice(i, i + concurrency);
+        const chunkResults = await Promise.all(
+            chunk.map(async (item) => {
+                try {
+                    const classification = await classifyText(item.text, categories, options);
+                    return { id: item.id, ...classification };
+                } catch {
+                    return {
+                        id: item.id,
+                        category: categories[0],
+                        confidence: 0,
+                        scores: categories.map((c) => ({ category: c, score: 0 })),
+                    };
+                }
+            })
+        );
+        results.push(...chunkResults);
+    }
 
-  return results;
+    return results;
 }
 
 /**
@@ -116,31 +116,31 @@ export async function classifyBatch<IdType = string>(
  * // → { "bug fix": [...], "new feature": [...], "docs": [...] }
  */
 export async function groupByCategory<T extends { text: string }>(
-  items: T[],
-  categories: string[],
-  options: ClassifyOptions = {},
+    items: T[],
+    categories: string[],
+    options: ClassifyOptions = {}
 ): Promise<Record<string, T[]>> {
-  const concurrency = options.concurrency ?? 5;
-  const groups: Record<string, T[]> = {};
-  for (const cat of categories) groups[cat] = [];
+    const concurrency = options.concurrency ?? 5;
+    const groups: Record<string, T[]> = {};
+    for (const cat of categories) groups[cat] = [];
 
-  for (let i = 0; i < items.length; i += concurrency) {
-    const chunk = items.slice(i, i + concurrency);
-    const chunkResults = await Promise.all(
-      chunk.map(async (item) => {
-        try {
-          const { category } = await classifyText(item.text, categories, options);
-          return { item, category };
-        } catch {
-          return { item, category: categories[0] };
+    for (let i = 0; i < items.length; i += concurrency) {
+        const chunk = items.slice(i, i + concurrency);
+        const chunkResults = await Promise.all(
+            chunk.map(async (item) => {
+                try {
+                    const { category } = await classifyText(item.text, categories, options);
+                    return { item, category };
+                } catch {
+                    return { item, category: categories[0] };
+                }
+            })
+        );
+        for (const { item, category } of chunkResults) {
+            if (!groups[category]) groups[category] = [];
+            groups[category].push(item);
         }
-      }),
-    );
-    for (const { item, category } of chunkResults) {
-      if (!groups[category]) groups[category] = [];
-      groups[category].push(item);
     }
-  }
 
-  return groups;
+    return groups;
 }

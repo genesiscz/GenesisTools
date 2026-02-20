@@ -1,3 +1,4 @@
+import { stripAnsi } from "@app/utils/string.js";
 import { alert } from "@mdit/plugin-alert";
 import chalk, { type ChalkInstance } from "chalk";
 import cliHtml from "cli-html";
@@ -5,7 +6,6 @@ import MarkdownIt from "markdown-it";
 import type Token from "markdown-it/lib/token.mjs";
 // @ts-expect-error - no types available for markdown-it-task-lists
 import taskLists from "markdown-it-task-lists";
-import { stripAnsi } from "@app/utils/string.js";
 
 // ── Theme palette system ──────────────────────────────────────────────
 
@@ -40,7 +40,13 @@ const themes: Record<ThemeName, ThemePalette> = {
         mermaidContent: chalk.gray,
         tableBorder: chalk.gray,
         tableHeader: chalk.bold,
-        alertColors: { important: "redBright", note: "blueBright", tip: "greenBright", warning: "yellowBright", caution: "magentaBright" },
+        alertColors: {
+            important: "redBright",
+            note: "blueBright",
+            tip: "greenBright",
+            warning: "yellowBright",
+            caution: "magentaBright",
+        },
         dim: chalk.gray,
     },
     minimal: {

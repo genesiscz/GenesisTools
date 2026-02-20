@@ -36,7 +36,12 @@ export class Browser {
     private static storage = new Storage("genesis-tools");
 
     static readonly SUPPORTED: readonly BrowserName[] = [
-        "brave", "safari", "chrome", "firefox", "edge", "arc",
+        "brave",
+        "safari",
+        "chrome",
+        "firefox",
+        "edge",
+        "arc",
     ] as const;
 
     static async getPreferred(): Promise<BrowserName | undefined> {

@@ -5,15 +5,20 @@
  * or per-item updates API.
  */
 
-import { Api } from "@app/azure-devops/api";
-import { isHistoryFresh, loadWorkItemCache, migrateHistoryCache, storage, updateWorkItemCacheSection } from "@app/azure-devops/cache";
-import { buildHistoryFromRevisions, buildWorkItemHistory } from "@app/azure-devops/history";
-import { requireConfig } from "@app/azure-devops/utils";
-
-import logger from "@app/logger";
-import * as p from "@clack/prompts";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { Api } from "@app/azure-devops/api";
+import {
+    isHistoryFresh,
+    loadWorkItemCache,
+    migrateHistoryCache,
+    storage,
+    updateWorkItemCacheSection,
+} from "@app/azure-devops/cache";
+import { buildHistoryFromRevisions, buildWorkItemHistory } from "@app/azure-devops/history";
+import { requireConfig } from "@app/azure-devops/utils";
+import logger from "@app/logger";
+import * as p from "@clack/prompts";
 import pc from "picocolors";
 
 interface SyncOptions {
@@ -189,7 +194,7 @@ export async function handleHistorySync(options: SyncOptions): Promise<void> {
             const built = buildHistoryFromRevisions(revisions);
             await updateWorkItemCacheSection(id, {
                 history: {
-                    updates: [],  // reporting revisions don't give us deltas
+                    updates: [], // reporting revisions don't give us deltas
                     assignmentPeriods: built.assignmentPeriods,
                     statePeriods: built.statePeriods,
                 },

@@ -5,20 +5,20 @@
  * Supports streaming, chunked (thorough) mode, and multiple output targets.
  */
 
-import { generateText, streamText } from "ai";
-import type { LanguageModelUsage } from "ai";
-import { providerManager } from "@ask/providers/ProviderManager";
-import { modelSelector } from "@ask/providers/ModelSelector";
-import { getLanguageModel } from "@ask/types/provider";
-import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
-import { estimateTokens } from "@app/utils/tokens";
-import type { ClaudeSession, PreparedContent } from "@app/utils/claude/session";
-import { getTemplate, listTemplates } from "./templates/index.ts";
-import type { TemplateContext, PromptTemplate } from "./templates/index.ts";
-import type { ProviderChoice } from "@ask/types";
-import { copyToClipboard } from "@app/utils/clipboard";
-import { writeFile, mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import type { ClaudeSession, PreparedContent } from "@app/utils/claude/session";
+import { copyToClipboard } from "@app/utils/clipboard";
+import { estimateTokens } from "@app/utils/tokens";
+import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
+import { modelSelector } from "@ask/providers/ModelSelector";
+import { providerManager } from "@ask/providers/ProviderManager";
+import type { ProviderChoice } from "@ask/types";
+import { getLanguageModel } from "@ask/types/provider";
+import type { LanguageModelUsage } from "ai";
+import { generateText, streamText } from "ai";
+import type { PromptTemplate, TemplateContext } from "./templates/index.ts";
+import { getTemplate, listTemplates } from "./templates/index.ts";
 
 // =============================================================================
 // Types
@@ -86,7 +86,13 @@ export class SummarizeEngine {
     // =========================================================================
 
     private extractContent(): PreparedContent {
-        const { session, tokenBudget = 128_000, includeToolResults, includeThinking, priority = "balanced" } = this.options;
+        const {
+            session,
+            tokenBudget = 128_000,
+            includeToolResults,
+            includeThinking,
+            priority = "balanced",
+        } = this.options;
 
         return session.toPromptContent({
             tokenBudget,
@@ -166,7 +172,7 @@ export class SummarizeEngine {
         systemPrompt: string,
         userPrompt: string,
         providerChoice: ProviderChoice,
-        streaming: boolean,
+        streaming: boolean
     ): Promise<LLMCallResult> {
         const model = getLanguageModel(providerChoice.provider.provider, providerChoice.model.id);
 
@@ -321,7 +327,7 @@ export class SummarizeEngine {
     private async runChunkedSummarization(
         prepared: PreparedContent,
         providerChoice: ProviderChoice,
-        streaming: boolean,
+        streaming: boolean
     ): Promise<LLMCallResult> {
         const chunkSize = this.options.chunkSize ?? 100_000;
         const chunks = this.splitIntoChunks(prepared.content, chunkSize);
@@ -431,7 +437,7 @@ export class SummarizeEngine {
         const providerChoice = await this.resolveModel();
 
         // Determine streaming preference
-        const streaming = this.options.streaming ?? (!!process.stdout.isTTY);
+        const streaming = this.options.streaming ?? !!process.stdout.isTTY;
 
         // Step 3b: Call LLM (normal or chunked)
         let llmResult: LLMCallResult;
@@ -447,7 +453,7 @@ export class SummarizeEngine {
             cost = await dynamicPricingManager.calculateCost(
                 providerChoice.provider.name,
                 providerChoice.model.id,
-                llmResult.usage,
+                llmResult.usage
             );
         }
 

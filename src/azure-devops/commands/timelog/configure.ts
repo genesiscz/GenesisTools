@@ -1,10 +1,10 @@
+import { readFileSync, writeFileSync } from "node:fs";
 import type { AzureConfigWithTimeLog, TimeLogConfig } from "@app/azure-devops/types";
 import { findConfigPath, loadConfig } from "@app/azure-devops/utils";
 import { buildUrl } from "@app/utils/url";
 import * as p from "@clack/prompts";
 import { $ } from "bun";
 import type { Command } from "commander";
-import { readFileSync, writeFileSync } from "node:fs";
 import pc from "picocolors";
 
 // Common work item types in Azure DevOps
@@ -65,12 +65,25 @@ function extractOrgName(config: AzureConfigWithTimeLog): string {
 }
 
 async function fetchFunctionsKey(orgName: string): Promise<string> {
-    const result =
-        await $`az rest --method GET --resource "499b84ac-1321-427f-aa17-267ca6975798" --uri "${buildUrl({
-            base: "https://extmgmt.dev.azure.com",
-            segments: [orgName, "_apis", "ExtensionManagement", "InstalledExtensions", "TimeLog", "time-logging", "Data", "Scopes", "Default", "Current", "Collections", "%24settings", "Documents"],
-            queryParams: { "api-version": "7.1-preview" },
-        })}"`.quiet();
+    const result = await $`az rest --method GET --resource "499b84ac-1321-427f-aa17-267ca6975798" --uri "${buildUrl({
+        base: "https://extmgmt.dev.azure.com",
+        segments: [
+            orgName,
+            "_apis",
+            "ExtensionManagement",
+            "InstalledExtensions",
+            "TimeLog",
+            "time-logging",
+            "Data",
+            "Scopes",
+            "Default",
+            "Current",
+            "Collections",
+            "%24settings",
+            "Documents",
+        ],
+        queryParams: { "api-version": "7.1-preview" },
+    })}"`.quiet();
 
     const data = JSON.parse(result.text());
     const configDoc = data.find((d: { id: string }) => d.id === "Config");

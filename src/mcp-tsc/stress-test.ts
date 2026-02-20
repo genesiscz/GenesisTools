@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 /**
  * Comprehensive stress test for MCP TypeScript LSP server
  * Tests:
@@ -10,10 +11,10 @@
  * - Queue behavior under load
  */
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 // Configuration
 const CONFIG = {

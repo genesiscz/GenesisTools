@@ -2,12 +2,7 @@
  * Azure DevOps CLI - Work item relation and attachment utilities
  */
 
-import type {
-    AttachmentFilter,
-    AttachmentInfo,
-    ParsedRelations,
-    Relation,
-} from "@app/azure-devops/types";
+import type { AttachmentFilter, AttachmentInfo, ParsedRelations, Relation } from "@app/azure-devops/types";
 
 export function parseRelations(relations: Relation[]): ParsedRelations {
     const result: ParsedRelations = { children: [], related: [], other: [] };

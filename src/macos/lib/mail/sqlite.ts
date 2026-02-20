@@ -1,12 +1,12 @@
 import { Database } from "bun:sqlite";
-import { existsSync, copyFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import logger from "@app/logger";
 import { ENVELOPE_INDEX_PATH, TEMP_DB_PREFIX } from "@app/macos/lib/mail/constants";
 import type {
-    MailMessageRow,
     MailAttachment,
+    MailMessageRow,
     MailRecipient,
     ReceiverInfo,
     SearchOptions,
@@ -30,7 +30,7 @@ export function getDatabase(): Database {
     if (!existsSync(ENVELOPE_INDEX_PATH)) {
         throw new Error(
             `Mail database not found at: ${ENVELOPE_INDEX_PATH}\n` +
-            "Make sure Mail.app is configured and has downloaded messages."
+                "Make sure Mail.app is configured and has downloaded messages."
         );
     }
 
@@ -55,9 +55,15 @@ export function cleanup(): void {
         _db = null;
     }
     if (_tempDbPath) {
-        try { unlinkSync(_tempDbPath); } catch {}
-        try { unlinkSync(`${_tempDbPath}-wal`); } catch {}
-        try { unlinkSync(`${_tempDbPath}-shm`); } catch {}
+        try {
+            unlinkSync(_tempDbPath);
+        } catch {}
+        try {
+            unlinkSync(`${_tempDbPath}-wal`);
+        } catch {}
+        try {
+            unlinkSync(`${_tempDbPath}-shm`);
+        } catch {}
         _tempDbPath = null;
     }
 }

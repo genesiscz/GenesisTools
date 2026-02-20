@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { AzureDevOpsCacheManager } from "@app/azure-devops/cache-manager";
 import { convertToMinutes, formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { AllowedTypeConfig, TimeLogImportFile } from "@app/azure-devops/types";
@@ -5,7 +6,6 @@ import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/util
 import { precheckWorkItem } from "@app/azure-devops/workitem-precheck";
 import logger from "@app/logger";
 import type { Command } from "commander";
-import { existsSync, readFileSync } from "node:fs";
 import pc from "picocolors";
 
 export function registerImportSubcommand(parent: Command): void {
@@ -230,7 +230,9 @@ export function registerImportSubcommand(parent: Command): void {
                 for (const e of precheckPassed) {
                     const title = workitemTitles.get(e.workItemId);
                     const titlePart = title ? ` ${title}` : "";
-                    console.log(`  #${e.workItemId}${titlePart}: ${formatMinutes(e.minutes)} ${e.timeType} on ${e.date}`);
+                    console.log(
+                        `  #${e.workItemId}${titlePart}: ${formatMinutes(e.minutes)} ${e.timeType} on ${e.date}`
+                    );
                 }
 
                 return;

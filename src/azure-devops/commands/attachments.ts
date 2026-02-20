@@ -5,14 +5,20 @@
  * and filename prefix/suffix. Used by the workitem command.
  */
 
-import type { Api } from "@app/azure-devops/api";
-import type { AttachmentFilter, AttachmentInfo, Relation, WorkItemFull, WorkItemSettings } from "@app/azure-devops/types";
-import { filterAttachments, getTaskFilePath } from "@app/azure-devops/utils";
-import { concurrentMap } from "@app/utils/async";
-import { withQueryParams } from "@app/utils/url";
-import logger, { consoleLog } from "@app/logger";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import type { Api } from "@app/azure-devops/api";
+import type {
+    AttachmentFilter,
+    AttachmentInfo,
+    Relation,
+    WorkItemFull,
+    WorkItemSettings,
+} from "@app/azure-devops/types";
+import { filterAttachments, getTaskFilePath } from "@app/azure-devops/utils";
+import logger, { consoleLog } from "@app/logger";
+import { concurrentMap } from "@app/utils/async";
+import { withQueryParams } from "@app/utils/url";
 
 /** Extract attachment GUID from Azure DevOps attachment URL */
 function extractAttachmentId(url: string): string {
@@ -21,12 +27,7 @@ function extractAttachmentId(url: string): string {
 }
 
 /** Resolve the output directory for a work item's attachments */
-function resolveOutputDir(
-    workItemId: number,
-    title: string,
-    settings: WorkItemSettings,
-    override?: string,
-): string {
+function resolveOutputDir(workItemId: number, title: string, settings: WorkItemSettings, override?: string): string {
     if (override) return resolve(override);
     // Default: same directory as the task .md file
     const taskPath = getTaskFilePath(workItemId, title, "md", settings.category, settings.taskFolder);
@@ -38,7 +39,7 @@ async function downloadSingleAttachment(
     api: Api,
     relation: Relation,
     workItemId: number,
-    outputDir: string,
+    outputDir: string
 ): Promise<AttachmentInfo> {
     const attrs = relation.attributes;
     if (!attrs?.name) {
@@ -91,7 +92,7 @@ async function downloadWorkItemAttachments(
     api: Api,
     item: WorkItemFull,
     settings: WorkItemSettings,
-    filter: AttachmentFilter,
+    filter: AttachmentFilter
 ): Promise<AttachmentInfo[]> {
     if (!item.relations?.length) return [];
 
@@ -123,7 +124,7 @@ export async function downloadAttachments(
     api: Api,
     items: Map<number, WorkItemFull>,
     settingsMap: Map<number, WorkItemSettings>,
-    filter: AttachmentFilter,
+    filter: AttachmentFilter
 ): Promise<Map<number, AttachmentInfo[]>> {
     const result = new Map<number, AttachmentInfo[]>();
 

@@ -6,13 +6,13 @@
  * Parse a date string (e.g. "YYYY-MM-DD") and throw on invalid input.
  */
 export function parseDate(value: string): Date {
-	const d = new Date(value);
+    const d = new Date(value);
 
-	if (Number.isNaN(d.getTime())) {
-		throw new Error(`Invalid date: ${value}`);
-	}
+    if (Number.isNaN(d.getTime())) {
+        throw new Error(`Invalid date: ${value}`);
+    }
 
-	return d;
+    return d;
 }
 
 /**

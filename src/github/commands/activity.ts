@@ -20,13 +20,14 @@ function summarizeEvent(event: GitHubEvent): { summary: string; url: string | nu
     switch (event.type) {
         case "PushEvent": {
             const commits = (payload.commits as Array<{ message: string }>) || [];
-            const count = payload.size as number ?? commits.length;
+            const count = (payload.size as number) ?? commits.length;
             const ref = (payload.ref as string)?.replace("refs/heads/", "") || "unknown";
             const before = (payload.before as string)?.slice(0, 7);
             const head = (payload.head as string)?.slice(0, 7);
-            const url = before && head
-                ? `https://github.com/${repo}/compare/${before}...${head}`
-                : `https://github.com/${repo}`;
+            const url =
+                before && head
+                    ? `https://github.com/${repo}/compare/${before}...${head}`
+                    : `https://github.com/${repo}`;
             return {
                 summary: `Pushed ${count} commit(s) to ${ref}`,
                 url,
@@ -138,19 +139,14 @@ export async function activityCommand(options: ActivityCommandOptions): Promise<
     let user = options.user;
     if (!user) {
         // Get authenticated user
-        const { data } = await withRetry(
-            () => octokit.rest.users.getAuthenticated(),
-            { label: "GET /user" },
-        );
+        const { data } = await withRetry(() => octokit.rest.users.getAuthenticated(), { label: "GET /user" });
         user = data.login;
     }
 
     verbose(options, `Fetching activity for @${user} (received=${options.received ?? false})`);
 
     // Fetch events
-    const endpoint = options.received
-        ? "GET /users/{username}/received_events"
-        : "GET /users/{username}/events";
+    const endpoint = options.received ? "GET /users/{username}/received_events" : "GET /users/{username}/events";
 
     const allEvents: GitHubEvent[] = [];
     let page = 1;
@@ -164,7 +160,7 @@ export async function activityCommand(options: ActivityCommandOptions): Promise<
                     per_page: Math.min(100, limit),
                     page,
                 }),
-            { label: `${endpoint.split(" ")[1]}?page=${page}` },
+            { label: `${endpoint.split(" ")[1]}?page=${page}` }
         );
 
         const events = data as GitHubEvent[];

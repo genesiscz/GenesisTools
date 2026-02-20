@@ -10,7 +10,8 @@ import { buildMetadataBlock, type PromptTemplate, type TemplateContext } from ".
 
 export class MemorizationTemplate implements PromptTemplate {
     name = "memorization";
-    description = "Deep knowledge extraction organized by topic tags — architecture, debugging, patterns, gotchas, configs, APIs";
+    description =
+        "Deep knowledge extraction organized by topic tags — architecture, debugging, patterns, gotchas, configs, APIs";
 
     systemPrompt = `You are a knowledge extraction specialist performing deep analysis of a Claude Code development session.
 

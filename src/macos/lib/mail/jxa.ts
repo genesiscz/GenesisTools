@@ -21,14 +21,10 @@ async function runJxa(script: string, timeoutMs = 30_000): Promise<JxaResult> {
         }, timeoutMs)
     );
 
-    const [stdout, stderr, exitCode] = await Promise.race([
-        Promise.all([
-            new Response(proc.stdout).text(),
-            new Response(proc.stderr).text(),
-            proc.exited,
-        ]),
+    const [stdout, stderr, exitCode] = (await Promise.race([
+        Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]),
         timeoutPromise,
-    ]) as [string, string, number];
+    ])) as [string, string, number];
 
     return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
 }
@@ -37,11 +33,7 @@ async function runJxa(script: string, timeoutMs = 30_000): Promise<JxaResult> {
  * Escape a string for embedding in a JXA double-quoted string literal.
  */
 function escapeJxa(s: string): string {
-    return s
-        .replace(/\\/g, "\\\\")
-        .replace(/"/g, '\\"')
-        .replace(/\n/g, "\\n")
-        .replace(/\r/g, "\\r");
+    return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r");
 }
 
 /**
@@ -56,7 +48,7 @@ function escapeJxa(s: string): string {
  */
 export async function searchBodies(
     messageIdentifiers: Array<{ rowid: number; subject: string; mailbox: string }>,
-    query: string,
+    query: string
 ): Promise<Set<number>> {
     if (messageIdentifiers.length === 0) return new Set();
 
@@ -65,9 +57,7 @@ export async function searchBodies(
 
     for (let i = 0; i < messageIdentifiers.length; i += batchSize) {
         const batch = messageIdentifiers.slice(i, i + batchSize);
-        const subjectList = JSON.stringify(
-            batch.map(m => ({ rowid: m.rowid, subject: m.subject }))
-        );
+        const subjectList = JSON.stringify(batch.map((m) => ({ rowid: m.rowid, subject: m.subject })));
         const escapedQuery = escapeJxa(query);
 
         const script = `
@@ -123,11 +113,7 @@ export async function searchBodies(
  * Get the full body content of a single message by subject + sender.
  * Returns plain text body or null if not found.
  */
-export async function getMessageBody(
-    subject: string,
-    _dateSent: Date,
-    senderAddress: string,
-): Promise<string | null> {
+export async function getMessageBody(subject: string, _dateSent: Date, senderAddress: string): Promise<string | null> {
     const escapedSubject = escapeJxa(subject);
     const escapedSender = escapeJxa(senderAddress);
 
@@ -181,7 +167,7 @@ export async function saveAttachment(
     subject: string,
     senderAddress: string,
     attachmentName: string,
-    savePath: string,
+    savePath: string
 ): Promise<boolean> {
     const escapedSubject = escapeJxa(subject);
     const escapedSender = escapeJxa(senderAddress);

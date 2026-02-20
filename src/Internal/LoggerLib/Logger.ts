@@ -86,11 +86,19 @@ export interface ILogger {
 
 // Helper function to stringify objects, errors, etc.
 function stringify(data: unknown): string {
-    if (data === null) return "null";
-    if (data === undefined) return "undefined";
+    if (data === null) {
+        return "null";
+    }
+    if (data === undefined) {
+        return "undefined";
+    }
 
-    if (typeof data === "string") return data;
-    if (typeof data === "number" || typeof data === "boolean") return String(data);
+    if (typeof data === "string") {
+        return data;
+    }
+    if (typeof data === "number" || typeof data === "boolean") {
+        return String(data);
+    }
 
     if (data instanceof Error) {
         return `${data.name}: ${data.message}\n${data.stack || ""}`;
@@ -134,7 +142,9 @@ export const defaultFormatter: IFormatter = {
 
         // Format message parts
         const messageParts = data.map((item) => {
-            if (typeof item === "string") return item;
+            if (typeof item === "string") {
+                return item;
+            }
             return stringify(item);
         });
 

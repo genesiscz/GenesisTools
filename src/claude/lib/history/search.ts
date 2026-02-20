@@ -4,13 +4,13 @@
  */
 
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, readFileSync, readdirSync } from "node:fs";
+import { createReadStream, existsSync, readdirSync, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import logger from "@app/logger";
-import { glob } from "glob";
 import { homedir } from "node:os";
 import { basename, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
+import logger from "@app/logger";
+import { glob } from "glob";
 import {
     invalidateToday as _invalidateToday,
     aggregateDailyStats,
@@ -19,19 +19,19 @@ import {
     getAllSessionMetadata,
     getAllSessionMetadataFilePaths,
     getCachedDates,
-    getCacheMeta,
-    getSessionMetadataByDir,
     getCachedTotals,
+    getCacheMeta,
     getDailyStats,
     getDailyStatsInRange,
     getDatabase,
     getFileIndex,
     getSessionMetadata,
+    getSessionMetadataByDir,
     invalidateDateRange,
     removeSessionMetadataBatch,
     resetDatabase,
-    setCacheMeta,
     type SessionMetadataRecord,
+    setCacheMeta,
     type TokenUsage,
     updateCachedTotals,
     upsertDailyStats,
@@ -515,9 +515,7 @@ function matchesFilters(message: ConversationMessage, filters: SearchFilters, al
 function searchSessionMetadataCache(filters: SearchFilters): SearchResult[] {
     // First ensure cache is populated for the target scope
     const all = filters.project
-        ? getAllSessionMetadata().filter(
-              (s) => s.project?.toLowerCase().includes(filters.project!.toLowerCase())
-          )
+        ? getAllSessionMetadata().filter((s) => s.project?.toLowerCase().includes(filters.project!.toLowerCase()))
         : getAllSessionMetadata();
 
     const results: SearchResult[] = [];
@@ -1052,9 +1050,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
 
     // Resolve project to exact encoded dir path for precise scoping
     const projectDir = options.project ? resolveProjectDir(options.project) : undefined;
-    const scope = projectDir
-        ? options.project || projectDir.split(sep).pop() || "unknown"
-        : "all projects";
+    const scope = projectDir ? options.project || projectDir.split(sep).pop() || "unknown" : "all projects";
 
     // 1. Discover JSONL files (scoped to project dir if available)
     const files = projectDir
@@ -1098,9 +1094,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
     }
 
     // 3. Query cached metadata (scoped to the same files we just indexed)
-    const all = projectDir
-        ? getSessionMetadataByDir(projectDir)
-        : getAllSessionMetadata();
+    const all = projectDir ? getSessionMetadataByDir(projectDir) : getAllSessionMetadata();
 
     const subagentCount = all.filter((s) => s.isSubagent).length;
     const sessions = excludeSubagents ? all.filter((s) => !s.isSubagent) : all;
@@ -1152,18 +1146,14 @@ function resolveProjectDir(project: string): string | undefined {
 async function findConversationFilesInDir(projectDir: string, excludeSubagents: boolean): Promise<string[]> {
     try {
         const entries = readdirSync(projectDir);
-        let files = entries
-            .filter((e) => e.endsWith(".jsonl"))
-            .map((e) => resolve(projectDir, e));
+        let files = entries.filter((e) => e.endsWith(".jsonl")).map((e) => resolve(projectDir, e));
 
         // Also scan subagents/ subdirectory for .jsonl files
         if (!excludeSubagents) {
             const subagentsDir = resolve(projectDir, "subagents");
             try {
                 const subEntries = readdirSync(subagentsDir);
-                const subFiles = subEntries
-                    .filter((e) => e.endsWith(".jsonl"))
-                    .map((e) => resolve(subagentsDir, e));
+                const subFiles = subEntries.filter((e) => e.endsWith(".jsonl")).map((e) => resolve(subagentsDir, e));
                 files = files.concat(subFiles);
             } catch {
                 // subagents/ doesn't exist or isn't readable — skip
@@ -1184,10 +1174,7 @@ async function findConversationFilesInDir(projectDir: string, excludeSubagents: 
  * Captures: summary, custom-title, sessionId, gitBranch, cwd,
  * full first prompt, and all user message text (capped at 5000 chars).
  */
-async function extractSessionMetadataFromFile(
-    filePath: string,
-    mtime: number
-): Promise<SessionMetadataRecord | null> {
+async function extractSessionMetadataFromFile(filePath: string, mtime: number): Promise<SessionMetadataRecord | null> {
     const project = extractProjectName(filePath);
     const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
 
@@ -1242,9 +1229,7 @@ async function extractSessionMetadataFromFile(
                     if (typeof obj.message?.content === "string") {
                         text = obj.message.content;
                     } else if (Array.isArray(obj.message?.content)) {
-                        const textBlock = obj.message.content.find(
-                            (b: { type: string }) => b.type === "text"
-                        );
+                        const textBlock = obj.message.content.find((b: { type: string }) => b.type === "text");
                         if (textBlock?.text) text = textBlock.text;
                     }
                     if (text) {
@@ -1256,7 +1241,15 @@ async function extractSessionMetadataFromFile(
                 }
 
                 // Early exit: all metadata found and user text cap reached
-                if (summary && customTitle && sessionId && gitBranch && cwd && firstTimestamp && userTextLen >= USER_TEXT_CAP) {
+                if (
+                    summary &&
+                    customTitle &&
+                    sessionId &&
+                    gitBranch &&
+                    cwd &&
+                    firstTimestamp &&
+                    userTextLen >= USER_TEXT_CAP
+                ) {
                     fileStream.destroy();
                     break;
                 }
@@ -1301,19 +1294,11 @@ export async function rgSearchFiles(
     query: string,
     options: { project?: string; limit?: number } = {}
 ): Promise<string[]> {
-    const searchDir = options.project
-        ? resolveProjectDir(options.project) || PROJECTS_DIR
-        : PROJECTS_DIR;
+    const searchDir = options.project ? resolveProjectDir(options.project) || PROJECTS_DIR : PROJECTS_DIR;
 
     try {
         const proc = Bun.spawn({
-            cmd: [
-                "rg", "-l", "--glob", "*.jsonl",
-                "-i", "-F",
-                "--max-count", "1",
-                "--", query,
-                searchDir,
-            ],
+            cmd: ["rg", "-l", "--glob", "*.jsonl", "-i", "-F", "--max-count", "1", "--", query, searchDir],
             stdio: ["ignore", "pipe", "pipe"],
         });
 
@@ -1343,10 +1328,7 @@ export async function rgSearchFiles(
 /**
  * Use ripgrep to extract a snippet around the first match in a file.
  */
-export async function rgExtractSnippet(
-    query: string,
-    filePath: string,
-): Promise<string | undefined> {
+export async function rgExtractSnippet(query: string, filePath: string): Promise<string | undefined> {
     try {
         const proc = Bun.spawn({
             cmd: ["rg", "-i", "-F", "-m", "1", "--no-filename", "--no-line-number", "--", query, filePath],
@@ -1375,9 +1357,11 @@ export async function rgExtractSnippet(
 
             const start = Math.max(0, idx - 40);
             const end = Math.min(text.length, idx + query.length + 60);
-            return (start > 0 ? "..." : "") +
+            return (
+                (start > 0 ? "..." : "") +
                 text.slice(start, end).replace(/\n/g, " ").trim() +
-                (end < text.length ? "..." : "");
+                (end < text.length ? "..." : "")
+            );
         } catch {
             // If JSON parsing fails, try to extract from raw text
             const lowerLine = line.toLowerCase();

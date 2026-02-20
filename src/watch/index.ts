@@ -1,13 +1,13 @@
+import type { WatchEventType, WatchOptions } from "node:fs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { consoleLog as logger } from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import chalk from "chalk";
 import chokidar from "chokidar";
 import { Command } from "commander";
-import type { WatchEventType, WatchOptions } from "node:fs";
-import fs from "node:fs";
 import { glob } from "glob";
-import os from "node:os";
-import path from "node:path";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);

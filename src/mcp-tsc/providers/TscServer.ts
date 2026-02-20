@@ -1,3 +1,4 @@
+import path from "node:path";
 import type {
     DiagnosticsOptions,
     DiagnosticsResult,
@@ -6,7 +7,6 @@ import type {
     TSServer,
     TsDiagnostic,
 } from "@app/mcp-tsc/core/interfaces.js";
-import path from "node:path";
 import ts from "typescript";
 
 export interface TscServerOptions {

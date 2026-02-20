@@ -5,9 +5,9 @@
 
 import { join } from "node:path";
 import type { TimelyEntry } from "@app/timely/types/api";
+import { formatDuration as _formatDuration } from "@app/utils/format";
 import type { Storage } from "@app/utils/storage";
 import { getDatesInMonth } from "./date";
-import { formatDuration as _formatDuration } from "@app/utils/format";
 
 export interface ProcessedEntry {
     title: string;

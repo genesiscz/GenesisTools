@@ -77,8 +77,11 @@ export class CostPredictor {
         const outputTokensStr = dynamicPricingManager.formatTokens(prediction.estimatedOutputTokens);
 
         let confidenceEmoji = "⚠️";
-        if (prediction.confidence === "high") confidenceEmoji = "✅";
-        else if (prediction.confidence === "medium") confidenceEmoji = "⚡";
+        if (prediction.confidence === "high") {
+            confidenceEmoji = "✅";
+        } else if (prediction.confidence === "medium") {
+            confidenceEmoji = "⚡";
+        }
 
         return `${confidenceEmoji} Estimated cost: ${costStr} (${inputTokensStr} input + ${outputTokensStr} output tokens)\n   ${prediction.reasoning}`;
     }

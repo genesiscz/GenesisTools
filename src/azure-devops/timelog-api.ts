@@ -34,7 +34,12 @@ export class TimeLogApi {
     /**
      * Make an HTTP request to the TimeLog API
      */
-    private async request<T>(method: "GET" | "POST" | "PUT" | "DELETE", endpoint: string, body?: unknown, queryParams?: QueryParams): Promise<T> {
+    private async request<T>(
+        method: "GET" | "POST" | "PUT" | "DELETE",
+        endpoint: string,
+        body?: unknown,
+        queryParams?: QueryParams
+    ): Promise<T> {
         const url = buildUrl({ base: this.baseUrl, segments: [endpoint], queryParams });
         const shortUrl = endpoint.slice(0, 60);
 

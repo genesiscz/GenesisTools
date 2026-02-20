@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import logger from "@app/logger";
+import { copyToClipboard } from "@app/utils/clipboard";
 import type { OutputConfig, OutputFormat } from "@ask/types";
 import { write } from "bun";
 import pc from "picocolors";
-import { copyToClipboard } from "@app/utils/clipboard";
 
 export interface FormattedResponse {
     content: string;

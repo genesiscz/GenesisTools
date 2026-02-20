@@ -1,7 +1,7 @@
-import logger from "@app/logger";
 import { type ChildProcess, spawn } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import logger from "@app/logger";
 import { JSONRPCEndpoint, LspClient } from "ts-lsp-client";
 
 // ============================================================================

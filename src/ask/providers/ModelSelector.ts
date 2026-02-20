@@ -1,7 +1,7 @@
 import type { ProviderV2 } from "@ai-sdk/provider";
 import logger from "@app/logger";
-import { searchSelect, searchSelectCancelSymbol } from "@app/utils/prompts/clack";
 import type { SearchItem } from "@app/utils/prompts/clack";
+import { searchSelect, searchSelectCancelSymbol } from "@app/utils/prompts/clack";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { DetectedProvider, ModelInfo, ProviderChoice } from "@ask/types";
 import { colorizeByPriceTier } from "@ask/utils/helpers";
@@ -84,9 +84,7 @@ export class ModelSelector {
         if (model.pricing) {
             const costStr =
                 model.pricing.inputPer1M != null && model.pricing.outputPer1M != null
-                    ? pc.dim(
-                          `$${model.pricing.inputPer1M.toFixed(2)}/$${model.pricing.outputPer1M.toFixed(2)} /1M`
-                      )
+                    ? pc.dim(`$${model.pricing.inputPer1M.toFixed(2)}/$${model.pricing.outputPer1M.toFixed(2)} /1M`)
                     : pc.dim("pricing unknown");
             parts.push(costStr);
         }

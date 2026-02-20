@@ -4,7 +4,7 @@
  */
 import { formatDuration as _formatDuration } from "@app/utils/format";
 
-export { getMonthDateRange, getDatesInMonth } from "@app/utils/date";
+export { getDatesInMonth, getMonthDateRange } from "@app/utils/date";
 
 /**
  * Format total seconds as "Xh Ym"

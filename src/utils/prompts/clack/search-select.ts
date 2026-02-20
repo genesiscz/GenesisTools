@@ -5,9 +5,9 @@
  * Based on search-multiselect.ts but for single selection.
  */
 
-import pc from "picocolors";
 import * as readline from "node:readline";
 import { Writable } from "node:stream";
+import pc from "picocolors";
 
 import type { SearchItem } from "./search-multiselect.js";
 export type { SearchItem };

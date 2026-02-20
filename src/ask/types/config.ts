@@ -1,5 +1,3 @@
-
-
 export interface CLIOptions {
     sst?: string; // Speech-to-text file
     model?: string; // Specific model

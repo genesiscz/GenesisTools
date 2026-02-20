@@ -291,7 +291,9 @@ export async function toggleServer(
                     }
                 }
             } catch (error) {
-                logger.error(`✗ Failed to ${action} servers in ${providerName}: ${error instanceof Error ? error.message : String(error)}`);
+                logger.error(
+                    `✗ Failed to ${action} servers in ${providerName}: ${error instanceof Error ? error.message : String(error)}`
+                );
             }
         }
     }

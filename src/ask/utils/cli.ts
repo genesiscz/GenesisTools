@@ -1,7 +1,6 @@
-
+import { formatDuration as _formatDuration } from "@app/utils/format";
 import type { Args, CLIOptions, OutputFormat } from "@ask/types";
 import { Command } from "commander";
-import { formatDuration as _formatDuration } from "@app/utils/format";
 
 export function parseCLIArguments(): Args {
     const program = new Command()

@@ -2,17 +2,12 @@
  * Azure DevOps CLI - Template generation and management
  */
 
-import type {
-    WorkItem,
-    WorkItemFull,
-    WorkItemTemplate,
-    WorkItemType,
-} from "@app/azure-devops/types";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { WorkItem, WorkItemFull, WorkItemTemplate, WorkItemType } from "@app/azure-devops/types";
 import { htmlToMarkdown } from "@app/utils/markdown/html-to-md";
-import { parseRelations } from "./relations";
 import { extractUsedValues } from "./field-schema";
+import { parseRelations } from "./relations";
 
 /**
  * Transform API hints to template hint format

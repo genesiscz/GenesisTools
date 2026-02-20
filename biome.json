@@ -17,11 +17,12 @@
         "rules": {
             "recommended": true,
             "correctness": {
-                "noUnusedVariables": "warn",
-                "noUnusedImports": "warn"
+                "noUnusedVariables": "error",
+                "noUnusedImports": "error"
             },
             "style": {
-                "useConst": "error"
+                "useConst": "error",
+                "useBlockStatements": "error"
             },
             "suspicious": {
                 "noExplicitAny": "warn"

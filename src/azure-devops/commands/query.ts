@@ -5,13 +5,7 @@
  */
 
 import { Api } from "@app/azure-devops/api";
-import {
-    CACHE_TTL,
-    formatJSON,
-    loadGlobalCache,
-    saveGlobalCache,
-    storage,
-} from "@app/azure-devops/cache";
+import { CACHE_TTL, formatJSON, loadGlobalCache, saveGlobalCache, storage } from "@app/azure-devops/cache";
 import type {
     AzureConfig,
     ChangeInfo,
@@ -358,7 +352,9 @@ export async function handleQuery(
         );
         const ids = items.map((item) => item.id).join(",");
         // Pass queryMetadata for smart comparison (ignores forceRefresh when metadata available)
-        await workItemHandler(ids, format, false, effectiveCategory, effectiveTaskFolders, queryMetadata, { comments: true });
+        await workItemHandler(ids, format, false, effectiveCategory, effectiveTaskFolders, queryMetadata, {
+            comments: true,
+        });
     }
 }
 
