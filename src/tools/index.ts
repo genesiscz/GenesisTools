@@ -4,8 +4,9 @@ import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
 import * as p from "@clack/prompts";
-import clipboardy from "clipboardy";
 import pc from "picocolors";
+
+import { copyToClipboard } from "@app/utils/clipboard";
 
 import { discoverTools, getReadme, type ToolInfo } from "./lib/discovery.js";
 import { introspectTool } from "./lib/introspect.js";
@@ -89,7 +90,7 @@ async function handleToolAction(tool: ToolInfo, srcDir: string): Promise<void> {
 
             if (!p.isCancel(cmd) && cmd !== "__back__") {
                 const command = `tools ${tool.name} ${cmd}`;
-                await clipboardy.write(command);
+                await copyToClipboard(command, { silent: true });
                 p.log.success(`Copied: ${pc.bold(command)}`);
             }
         }
@@ -108,7 +109,7 @@ async function handleToolAction(tool: ToolInfo, srcDir: string): Promise<void> {
 
     if (action === "copy") {
         const command = `tools ${tool.name}`;
-        await clipboardy.write(command);
+        await copyToClipboard(command, { silent: true });
         p.log.success(`Copied: ${pc.bold(command)}`);
     }
 }

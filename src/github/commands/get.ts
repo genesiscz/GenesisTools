@@ -6,7 +6,7 @@ import { withRetry } from "@app/utils/github/rate-limit";
 import { buildRawGitHubUrl, parseGitHubFileUrl } from "@app/utils/github/url-parser";
 import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
 import chalk from "chalk";
-import clipboardy from "clipboardy";
+import { copyToClipboard } from "@app/utils/clipboard";
 import { Command } from "commander";
 
 interface GetOptions {
@@ -164,7 +164,7 @@ export async function getCommand(input: string, options: GetOptions): Promise<vo
 
         // Output
         if (options.clipboard) {
-            await clipboardy.write(content);
+            await copyToClipboard(content, { silent: true });
             console.log(chalk.green(`✔ Copied ${file.path} to clipboard`));
             if (lineStart) {
                 console.log(chalk.dim(`  Lines: ${lineStart}${lineEnd ? `-${lineEnd}` : ""}`));

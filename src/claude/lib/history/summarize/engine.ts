@@ -16,7 +16,7 @@ import type { ClaudeSession, PreparedContent } from "@app/utils/claude/session";
 import { getTemplate, listTemplates } from "./templates/index.ts";
 import type { TemplateContext, PromptTemplate } from "./templates/index.ts";
 import type { ProviderChoice } from "@ask/types";
-import clipboardy from "clipboardy";
+import { copyToClipboard } from "@app/utils/clipboard";
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
@@ -216,7 +216,7 @@ export class SummarizeEngine {
 
         // Copy to clipboard
         if (clipboard) {
-            await clipboardy.write(content);
+            await copyToClipboard(content, { silent: true });
         }
 
         // Save to Apple Notes

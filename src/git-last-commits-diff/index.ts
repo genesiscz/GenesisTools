@@ -3,7 +3,7 @@ import logger from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
 import { input, search, select } from "@inquirer/prompts";
-import clipboardy from "clipboardy";
+import { copyToClipboard } from "@app/utils/clipboard";
 import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)
@@ -330,7 +330,7 @@ async function main() {
             await Bun.write(targetPath, diffOutput);
             logger.info(`✔ Diff successfully written to ${targetPath}`);
             try {
-                await clipboardy.write(targetPath);
+                await copyToClipboard(targetPath, { silent: true });
                 logger.info(`✔ Absolute path "${targetPath}" copied to clipboard.`);
             } catch (clipError) {
                 logger.error(`✖ Failed to copy file path to clipboard: ${clipError}`);
@@ -340,7 +340,7 @@ async function main() {
             if (diffOutput.trim().length === 0) {
                 logger.info("ℹ Diff output is empty. Nothing to copy to clipboard.");
             } else {
-                await clipboardy.write(diffOutput);
+                await copyToClipboard(diffOutput, { silent: true });
                 logger.info(`✔ Diff successfully copied to clipboard.`);
             }
         } else {

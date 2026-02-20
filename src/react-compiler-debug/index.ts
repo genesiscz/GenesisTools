@@ -24,7 +24,7 @@ import { Command } from "commander";
 handleReadmeFlag(import.meta.url);
 
 import logger from "@app/logger";
-import clipboardy from "clipboardy";
+import { copyToClipboard } from "@app/utils/clipboard";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -467,7 +467,7 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
     if (options.clipboard) {
         // Strip ANSI codes for clipboard
         const plainText = outputText.replace(/\x1B\[[0-9;]*m/g, "");
-        await clipboardy.write(plainText);
+        await copyToClipboard(plainText, { silent: true });
         console.log(chalk.green("Output copied to clipboard!"));
         console.log(outputText);
     } else {
