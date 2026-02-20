@@ -9,7 +9,7 @@ import {
 	installSkill,
 	readManifest,
 	writeManifest,
-} from "../lib/desktop";
+} from "@app/claude/lib/desktop";
 
 export function registerDesktopCommand(program: Command): void {
 	program

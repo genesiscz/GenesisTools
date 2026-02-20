@@ -17,7 +17,7 @@ import {
 	type TextBlock,
 	type ToolUseBlock,
 	type UserMessage,
-} from "../lib/history/search";
+} from "@app/claude/lib/history/search";
 import { registerSummarizeCommand } from "./summarize";
 
 // =============================================================================

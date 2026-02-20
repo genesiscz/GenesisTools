@@ -1,0 +1,51 @@
+{
+  "$schema": "genesis-tools-preset-v1",
+  "name": "API Health Check",
+  "description": "Check multiple API endpoints and notify on results",
+  "trigger": { "type": "manual" },
+  "vars": {
+    "endpoints": {
+      "type": "string",
+      "description": "Comma-separated list of URLs to check",
+      "default": "https://httpstat.us/200,https://httpstat.us/500"
+    }
+  },
+  "steps": [
+    {
+      "id": "split-urls",
+      "name": "Parse endpoint list",
+      "action": "text.split",
+      "params": {
+        "input": "{{ vars.endpoints }}",
+        "separator": ","
+      }
+    },
+    {
+      "id": "check-all",
+      "name": "Check all endpoints",
+      "action": "forEach",
+      "params": {
+        "items": "{{ steps.split-urls.output }}",
+        "concurrency": 5,
+        "step": {
+          "id": "check",
+          "name": "Check endpoint",
+          "action": "http.get",
+          "params": {
+            "url": "{{ item }}",
+            "timeout": 10000
+          }
+        }
+      }
+    },
+    {
+      "id": "notify",
+      "name": "Report results",
+      "action": "notify.desktop",
+      "params": {
+        "title": "API Health Check",
+        "message": "Checked {{ steps.check-all.output.count }} endpoints, {{ steps.check-all.output.failures }} failures"
+      }
+    }
+  ]
+}

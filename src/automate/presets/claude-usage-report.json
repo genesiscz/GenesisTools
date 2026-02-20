@@ -1,0 +1,32 @@
+{
+  "$schema": "genesis-tools-preset-v1",
+  "name": "Claude Usage Report",
+  "description": "Fetch Claude API usage stats and send a formatted report via Telegram",
+  "trigger": { "type": "manual" },
+  "steps": [
+    {
+      "id": "get-usage",
+      "name": "Fetch Claude usage data",
+      "action": "shell",
+      "params": {
+        "command": "tools claude usage --json"
+      }
+    },
+    {
+      "id": "format-report",
+      "name": "Format usage report",
+      "action": "text.template",
+      "params": {
+        "template": "{{ steps['get-usage'].output.map(a => { if (!a.usage) return a.accountName + (a.label ? ' (' + a.label + ')' : '') + '\\n  No usage data'; const lines = [a.accountName + (a.label ? ' (' + a.label + ')' : '')]; const u = a.usage; lines.push('  Session (5h): ' + u.five_hour.utilization + '%'); lines.push('  Week (all):   ' + u.seven_day.utilization + '%'); if (u.seven_day_opus) lines.push('  Week (Opus):  ' + u.seven_day_opus.utilization + '%'); if (u.seven_day_sonnet) lines.push('  Week (Sonnet):' + u.seven_day_sonnet.utilization + '%'); if (u.extra_usage && u.extra_usage.is_enabled) lines.push('  Extra usage:  ' + (u.extra_usage.utilization ?? 0) + '% ($' + (u.extra_usage.used_credits ?? 0) + '/' + (u.extra_usage.monthly_limit ?? '?') + ')'); return lines.join('\\n'); }).join('\\n\\n') }}"
+      }
+    },
+    {
+      "id": "send-telegram",
+      "name": "Send Telegram notification",
+      "action": "notify.telegram",
+      "params": {
+        "message": "{{ steps['format-report'].output }}"
+      }
+    }
+  ]
+}

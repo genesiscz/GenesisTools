@@ -1,0 +1,51 @@
+{
+  "$schema": "https://genesis-tools/automate/preset.schema.json",
+  "name": "Email Sentiment Check",
+  "description": "Analyze the sentiment and language of a given text (e.g. email subject or body). Demonstrates the nlp.* step handlers.",
+  "trigger": { "type": "manual" },
+  "vars": {
+    "text": {
+      "type": "string",
+      "description": "The text to analyze",
+      "required": true
+    }
+  },
+  "steps": [
+    {
+      "id": "detect-language",
+      "name": "Detect language",
+      "action": "nlp.language",
+      "params": {
+        "text": "{{ vars.text }}"
+      },
+      "output": "languageResult"
+    },
+    {
+      "id": "analyze-sentiment",
+      "name": "Analyze sentiment",
+      "action": "nlp.sentiment",
+      "params": {
+        "text": "{{ vars.text }}"
+      },
+      "output": "sentimentResult"
+    },
+    {
+      "id": "extract-entities",
+      "name": "Tag named entities",
+      "action": "nlp.tag",
+      "params": {
+        "text": "{{ vars.text }}",
+        "schemes": ["nameType"]
+      },
+      "output": "tagResult"
+    },
+    {
+      "id": "report",
+      "name": "Log results",
+      "action": "log",
+      "params": {
+        "message": "Language: {{ steps.languageResult.output.language }} ({{ steps.languageResult.output.confidence }})\nSentiment: {{ steps.sentimentResult.output.label }} ({{ steps.sentimentResult.output.score }})\nEntities found: {{ steps.tagResult.output.tokens.length }}"
+      }
+    }
+  ]
+}

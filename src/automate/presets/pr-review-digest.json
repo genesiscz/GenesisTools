@@ -1,0 +1,59 @@
+{
+  "$schema": "genesis-tools-preset-v1",
+  "name": "PR Review Digest",
+  "description": "Fetch open PRs needing review and create a markdown digest",
+  "trigger": { "type": "manual" },
+  "vars": {
+    "owner": { "type": "string", "description": "GitHub org/owner", "required": true },
+    "repo": { "type": "string", "description": "GitHub repository name", "required": true }
+  },
+  "steps": [
+    {
+      "id": "fetch-prs",
+      "name": "Fetch open PRs",
+      "action": "http.get",
+      "params": {
+        "url": "https://api.github.com/repos/{{ vars.owner }}/{{ vars.repo }}/pulls",
+        "query": { "state": "open", "sort": "updated", "direction": "desc" },
+        "headers": {
+          "Accept": "application/vnd.github.v3+json",
+          "Authorization": "Bearer {{ env.GITHUB_TOKEN }}"
+        }
+      }
+    },
+    {
+      "id": "extract",
+      "name": "Extract PR summaries",
+      "action": "json.query",
+      "params": {
+        "input": "{{ steps.fetch-prs.output.body }}",
+        "query": "$[*].{title: title, number: number, author: user.login, url: html_url}"
+      }
+    },
+    {
+      "id": "format",
+      "name": "Format as markdown",
+      "action": "text.template",
+      "params": {
+        "template": "# PR Review Digest\n\n_{{ vars.owner }}/{{ vars.repo }}_\n\n{{ steps.extract.output }}"
+      }
+    },
+    {
+      "id": "save",
+      "name": "Save digest to file",
+      "action": "file.write",
+      "params": {
+        "path": "./pr-digest.md",
+        "content": "{{ steps.format.output }}"
+      }
+    },
+    {
+      "id": "copy",
+      "name": "Copy to clipboard",
+      "action": "notify.clipboard",
+      "params": {
+        "content": "{{ steps.format.output }}"
+      }
+    }
+  ]
+}

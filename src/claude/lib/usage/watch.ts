@@ -1,5 +1,5 @@
-import type { AccountConfig } from "../config";
-import type { NotificationConfig } from "../config";
+import type { AccountConfig } from "@app/claude/lib/config";
+import type { NotificationConfig } from "@app/claude/lib/config";
 import { fetchAllAccountsUsage, type AccountUsage } from "./api";
 import { renderAllAccounts } from "./display";
 import { sendNotification } from "@app/utils/macos/notifications";
