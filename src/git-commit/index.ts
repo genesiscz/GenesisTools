@@ -200,12 +200,12 @@ async function main() {
 
             logger.info("✅ Push successful!");
         }
-    } catch (error: any) {
+    } catch (error) {
         if (error instanceof ExitPromptError) {
             logger.info("\n🚫 Operation cancelled by user.");
             process.exit(0);
         }
-        logger.error(`✖ Error: ${error.message}`);
+        logger.error(`✖ Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
     }
 }

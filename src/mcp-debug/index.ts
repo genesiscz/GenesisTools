@@ -77,13 +77,14 @@ async function executeCommand(commandString: string): Promise<any> {
             stdout: stdout.trim(),
             stderr: stderr.trim(),
         };
-    } catch (error: any) {
-        debugLog(`Error executing command "${commandString}": ${error.message || String(error)}`);
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        debugLog(`Error executing command "${commandString}": ${errorMessage}`);
         return {
             success: false,
             exitCode: 1,
             command: commandString.trim(),
-            error: error.message || String(error),
+            error: errorMessage,
             stdout: "",
             stderr: "",
         };

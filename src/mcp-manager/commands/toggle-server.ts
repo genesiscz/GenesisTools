@@ -203,9 +203,9 @@ export async function toggleServer(
                         config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = enabled;
                     }
                 }
-            } catch (error: any) {
+            } catch (error) {
                 logger.error(
-                    `✗ Failed to prepare '${serverName}' for ${actionGerund} in ${providerName}: ${error.message}`
+                    `✗ Failed to prepare '${serverName}' for ${actionGerund} in ${providerName}: ${error instanceof Error ? error.message : String(error)}`
                 );
             }
         }
@@ -290,8 +290,8 @@ export async function toggleServer(
                         );
                     }
                 }
-            } catch (error: any) {
-                logger.error(`✗ Failed to ${action} servers in ${providerName}: ${error.message}`);
+            } catch (error) {
+                logger.error(`✗ Failed to ${action} servers in ${providerName}: ${error instanceof Error ? error.message : String(error)}`);
             }
         }
     }

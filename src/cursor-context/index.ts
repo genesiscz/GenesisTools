@@ -368,7 +368,7 @@ Statistics:
                     writeFileSync(resolvedOutputPath, cleaned, "utf-8");
                     logger.info(`✔ Saved cleaned content to: ${resolvedOutputPath}`);
                 }
-            } catch (error: any) {
+            } catch (error) {
                 if (error instanceof ExitPromptError) {
                     // User cancelled, that's fine
                     return;
@@ -376,13 +376,14 @@ Statistics:
                 throw error;
             }
         }
-    } catch (error: any) {
+    } catch (error) {
         if (error instanceof ExitPromptError) {
             logger.info("\nOperation cancelled by user.");
             process.exit(0);
         }
-        logger.error(`\n✖ Error: ${error.message}`);
-        if (error.stack) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`\n✖ Error: ${message}`);
+        if (error instanceof Error && error.stack) {
             logger.error(error.stack);
         }
         process.exit(1);

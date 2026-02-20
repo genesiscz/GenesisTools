@@ -582,9 +582,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
                     content: [{ type: "text", text: `Unknown tool: ${toolName}` }],
                 };
         }
-    } catch (error: any) {
+    } catch (error) {
+        // The exec() function assigns { code, stdout, stderr } onto the Error object
+        const execError = error as Error & { code?: number; stderr?: string };
+
         // If the command exits with code 1, it means no matches were found for ripgrep
-        if (error.code === 1 && !error.stderr) {
+        if (execError.code === 1 && !execError.stderr) {
             return {
                 content: [
                     {
@@ -601,7 +604,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, _extra) => {
             content: [
                 {
                     type: "text",
-                    text: stripAnsi(`Error: ${error.message}\n${error.stderr || ""}`),
+                    text: stripAnsi(`Error: ${execError.message}\n${execError.stderr || ""}`),
                 },
             ],
         };

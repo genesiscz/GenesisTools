@@ -205,10 +205,11 @@ export class McpAdapter {
                     showWarnings,
                     maxWaitMs: timeoutMs,
                 });
-            } catch (error: any) {
+            } catch (error) {
                 // Handle timeout errors by instructing client to retry with lower timeout
-                if (error?.isTimeout && error?.missingFiles) {
-                    const missingFilesList = error.missingFiles.map((f: string) => `  - ${f}`).join("\n");
+                const timeoutError = error as Error & { isTimeout?: boolean; missingFiles?: string[] };
+                if (timeoutError?.isTimeout && timeoutError?.missingFiles) {
+                    const missingFilesList = timeoutError.missingFiles.map((f: string) => `  - ${f}`).join("\n");
                     const retryTimeoutSeconds = 5;
                     return {
                         isError: true,

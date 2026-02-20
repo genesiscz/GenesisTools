@@ -137,8 +137,8 @@ async function main() {
     try {
         await mkdir(targetDir, { recursive: true });
         logger.debug(`✔ Created target directory: ${targetDir}`);
-    } catch (error: any) {
-        logger.error(`✖ Error creating target directory '${targetDir}':`, error.message);
+    } catch (error) {
+        logger.error("✖ Error creating target directory '%s': %s", targetDir, error instanceof Error ? error.message : String(error));
         process.exit(1);
     }
 
