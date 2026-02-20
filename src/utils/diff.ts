@@ -97,10 +97,10 @@ export class DiffUtil {
                     });
                 });
             });
-        } catch (error: any) {
+        } catch (error) {
             // Clean up temp files on error
             await Promise.all([unlink(oldFile).catch(() => {}), unlink(newFile).catch(() => {})]);
-            logger.error(chalk.red(`Failed to create diff: ${error.message}`));
+            logger.error(chalk.red(`Failed to create diff: ${error instanceof Error ? error.message : String(error)}`));
             // Fallback: show a simple comparison
             logger.warn(chalk.yellow("Could not generate diff. Showing content comparison:"));
             diffLogger.info(chalk.red(`--- ${oldLabel}`));

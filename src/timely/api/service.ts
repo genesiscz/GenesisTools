@@ -180,8 +180,8 @@ export class TimelyService {
                                 }
                                 return [];
                             }
-                        } catch (error: any) {
-                            logger.debug(`[entry] Failed to fetch from ${url}: ${error.message}`);
+                        } catch (error) {
+                            logger.debug(`[entry] Failed to fetch from ${url}: ${error instanceof Error ? error.message : String(error)}`);
                         }
                     }
 
@@ -194,8 +194,8 @@ export class TimelyService {
 
             // Storage.getFileOrPut always returns unwrapped data (array of TimelyEntry)
             return entries;
-        } catch (error: any) {
-            logger.debug(`[entry] Error fetching entry ${entryId}: ${error.message}`);
+        } catch (error) {
+            logger.debug(`[entry] Error fetching entry ${entryId}: ${error instanceof Error ? error.message : String(error)}`);
             return null;
         }
     }

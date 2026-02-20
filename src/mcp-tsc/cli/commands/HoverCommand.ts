@@ -114,8 +114,8 @@ export class HoverCommand {
                     console.log("No hover information available at this location");
                 }
             }
-        } catch (error: any) {
-            console.error(`Error getting hover information: ${error.message}`);
+        } catch (error) {
+            console.error(`Error getting hover information: ${error instanceof Error ? error.message : String(error)}`);
             process.exit(1);
         }
     }

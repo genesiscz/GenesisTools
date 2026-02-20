@@ -144,8 +144,8 @@ export class BackupManager {
                 .reverse(); // Most recent first
 
             return backupFiles;
-        } catch (error: any) {
-            logger.error(`Failed to list backups: ${error.message}`);
+        } catch (error) {
+            logger.error(`Failed to list backups: ${error instanceof Error ? error.message : String(error)}`);
             return [];
         }
     }

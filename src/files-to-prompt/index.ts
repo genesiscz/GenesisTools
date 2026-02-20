@@ -369,8 +369,8 @@ async function processPath(
             }
             await processDirectory(path, gitignoreRules, dry, statistics);
         }
-    } catch (error: any) {
-        logger.error(`Error accessing path ${path}: ${error.message}`);
+    } catch (error) {
+        logger.error(`Error accessing path ${path}: ${error instanceof Error ? error.message : String(error)}`);
         return;
     }
 
@@ -514,8 +514,8 @@ async function processPath(
                     }
                 }
             }
-        } catch (error: any) {
-            logger.error(`Error reading directory ${dirPath}: ${error.message}`);
+        } catch (error) {
+            logger.error(`Error reading directory ${dirPath}: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 }
@@ -886,8 +886,8 @@ async function main(): Promise<void> {
                 writer = (s: string) => {
                     (fileSink as FileSink).write(`${s}\n`);
                 };
-            } catch (error: any) {
-                logger.error(`Error setting up output file ${outputFile}: ${error.message}`);
+            } catch (error) {
+                logger.error(`Error setting up output file ${outputFile}: ${error instanceof Error ? error.message : String(error)}`);
                 process.exit(1);
             }
         } else if (flatFolder && outputFile) {
@@ -899,8 +899,8 @@ async function main(): Promise<void> {
                     logger.error(`Error: Output path ${outputFile} exists but is not a directory.`);
                     process.exit(1);
                 }
-            } catch (error: any) {
-                logger.error(`Error setting up output directory ${outputFile}: ${error.message}`);
+            } catch (error) {
+                logger.error(`Error setting up output directory ${outputFile}: ${error instanceof Error ? error.message : String(error)}`);
                 process.exit(1);
             }
         }
@@ -1004,9 +1004,9 @@ async function main(): Promise<void> {
         if (fileSink) {
             await fileSink.end();
         }
-    } catch (error: any) {
+    } catch (error) {
         // Catch errors in main
-        logger.error(`An unexpected error occurred: ${error.message}`);
+        logger.error(`An unexpected error occurred: ${error instanceof Error ? error.message : String(error)}`);
         // Optionally log stack trace for debugging
         // console.error(error.stack);
         process.exit(1);

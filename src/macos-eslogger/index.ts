@@ -867,10 +867,10 @@ function monitorWithESF(
                         }
                     }
                 }
-            } catch (err: any) {
+            } catch (err) {
                 // JSON parsing error
                 if (!silent) {
-                    consoleLog.warn(`[JSON_PARSE_ERROR] ${err.message}`);
+                    consoleLog.warn(`[JSON_PARSE_ERROR] ${err instanceof Error ? err.message : String(err)}`);
                     consoleLog.warn(`Line: ${line.substring(0, 1000)}...`);
                 }
             }
@@ -1030,7 +1030,7 @@ async function main() {
         // Interactive mode
         try {
             eventTypes = await getEventTypesInteractively();
-        } catch (error: any) {
+        } catch (error) {
             if (error instanceof ExitPromptError) {
                 logger.info("\nOperation cancelled by user.");
                 process.exit(0);

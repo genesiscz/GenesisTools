@@ -225,7 +225,7 @@ async function getUncommittedFiles(verbose: boolean): Promise<FileChange[]> {
                     mtime: stats.mtime,
                 });
             }
-        } catch (error: any) {
+        } catch (error) {
             if (status.includes("D")) {
                 files.push({
                     file: filePath,
@@ -234,7 +234,7 @@ async function getUncommittedFiles(verbose: boolean): Promise<FileChange[]> {
                 });
             } else {
                 if (verbose) {
-                    log.debug(`Skipping file "${filePath}": ${error.message}`);
+                    log.debug(`Skipping file "${filePath}": ${error instanceof Error ? error.message : String(error)}`);
                 }
             }
         }
@@ -396,9 +396,10 @@ async function main() {
         }
 
         log.info("");
-    } catch (error: any) {
-        log.err(`Error: ${error.message}`);
-        if (error.stack && verbose) {
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log.err(`Error: ${message}`);
+        if (error instanceof Error && error.stack && verbose) {
             log.err(error.stack);
         }
         process.exit(1);

@@ -223,8 +223,8 @@ async function main(): Promise<void> {
 
                 // Return TOON (as requested) but log comparison
                 console.log(toonOutput);
-            } catch (error: any) {
-                console.error(`Error converting to TOON: ${error.message}`);
+            } catch (error) {
+                console.error(`Error converting to TOON: ${error instanceof Error ? error.message : String(error)}`);
                 process.exit(1);
             }
         } else if (forceToJson) {
@@ -239,8 +239,8 @@ async function main(): Promise<void> {
                     }
 
                     console.log(jsonOutput);
-                } catch (error: any) {
-                    console.error(`Error converting to JSON: ${error.message}`);
+                } catch (error) {
+                    console.error(`Error converting to JSON: ${error instanceof Error ? error.message : String(error)}`);
                     process.exit(1);
                 }
             } else {
@@ -255,8 +255,8 @@ async function main(): Promise<void> {
                     }
 
                     console.log(jsonOutput);
-                } catch (error: any) {
-                    console.error(`Error converting to JSON: ${error.message}`);
+                } catch (error) {
+                    console.error(`Error converting to JSON: ${error instanceof Error ? error.message : String(error)}`);
                     process.exit(1);
                 }
             }
@@ -298,8 +298,8 @@ async function main(): Promise<void> {
                         }
                         console.log(compactJson);
                     }
-                } catch (error: any) {
-                    console.error(`Error processing JSON: ${error.message}`);
+                } catch (error) {
+                    console.error(`Error processing JSON: ${error instanceof Error ? error.message : String(error)}`);
                     process.exit(1);
                 }
             } else {
@@ -314,15 +314,16 @@ async function main(): Promise<void> {
                     }
 
                     console.log(jsonOutput);
-                } catch (error: any) {
-                    console.error(`Error processing TOON: ${error.message}`);
+                } catch (error) {
+                    console.error(`Error processing TOON: ${error instanceof Error ? error.message : String(error)}`);
                     process.exit(1);
                 }
             }
         }
-    } catch (error: any) {
-        console.error(`Error: ${error.message}`);
-        if (verbose) {
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        if (verbose && error instanceof Error) {
             console.error(error.stack);
         }
         process.exit(1);
