@@ -9,7 +9,7 @@ handleReadmeFlag(import.meta.url);
 
 type Format = "json" | "jsonl" | "toon" | "unknown";
 
-function parseJSONL(input: string): any[] | null {
+function parseJSONL(input: string): unknown[] | null {
     const trimmed = input.trim();
     if (!trimmed) return null;
 
@@ -23,7 +23,7 @@ function parseJSONL(input: string): any[] | null {
 
     // Try to parse as JSONL - multiple JSON objects separated by newlines
     // Handle both single-line and multi-line JSON objects
-    const objects: any[] = [];
+    const objects: unknown[] = [];
     let currentObject = "";
     let depth = 0;
     let inString = false;
@@ -121,6 +121,65 @@ function calculateSavings(original: number, compressed: number): { percentage: n
     return { percentage, bytes };
 }
 
+/**
+ * Compare TOON vs compact JSON sizes, log to stderr if verbose, return the winner.
+ */
+function logSizeComparison(toonOutput: string, jsonData: unknown, verbose: boolean): "toon" | "json" {
+    const compactJson = JSON.stringify(jsonData);
+    const toonSize = calculateSize(toonOutput);
+    const jsonSize = calculateSize(compactJson);
+    const toonWins = toonSize < jsonSize;
+
+    if (verbose) {
+        console.error(`Compact JSON size: ${jsonSize} bytes`);
+        console.error(`TOON size: ${toonSize} bytes`);
+
+        if (toonWins) {
+            const savings = calculateSavings(jsonSize, toonSize);
+            console.error(
+                `✓ TOON is ${savings.percentage.toFixed(1)}% smaller (${savings.bytes} bytes saved)`
+            );
+        } else {
+            const savings = calculateSavings(toonSize, jsonSize);
+            console.error(
+                `⚠ Compact JSON is ${savings.percentage.toFixed(1)}% smaller (${savings.bytes} bytes saved)`
+            );
+        }
+    }
+
+    return toonWins ? "toon" : "json";
+}
+
+/**
+ * Convert JSON data to the smallest format (TOON or compact JSON) and output it.
+ */
+function outputSmallestFormat(jsonData: unknown, verbose: boolean): void {
+    const toonOutput = encode(jsonData);
+    const winner = logSizeComparison(toonOutput, jsonData, verbose);
+
+    if (winner === "toon") {
+        if (verbose) {
+            console.error(`Returning TOON format`);
+        }
+
+        console.log(toonOutput);
+    } else {
+        if (verbose) {
+            console.error(`Returning compact JSON format`);
+        }
+
+        console.log(JSON.stringify(jsonData));
+    }
+}
+
+/**
+ * Decode TOON input and return pretty-printed JSON.
+ */
+function toonToJson(input: string): string {
+    const decoded = decode(input);
+    return JSON.stringify(decoded, null, 2);
+}
+
 async function main(): Promise<void> {
     const program = new Command()
         .name("json")
@@ -174,19 +233,24 @@ async function main(): Promise<void> {
         }
 
         // Normalize JSONL to JSON array for processing
-        let jsonData: any;
+        let jsonData: unknown;
+
         if (detectedFormat === "jsonl") {
             const jsonlData = parseJSONL(input);
+
             if (!jsonlData) {
                 console.error("Error: Failed to parse JSONL input.");
                 process.exit(1);
             }
+
             jsonData = jsonlData;
         } else if (detectedFormat === "json") {
             jsonData = JSON.parse(input);
         }
 
-        // Handle forced conversion
+        const formatLabel = detectedFormat === "jsonl" ? "JSONL" : detectedFormat === "toon" ? "TOON" : "JSON";
+
+        // Handle forced conversion to TOON
         if (forceToToon) {
             if (detectedFormat === "toon") {
                 console.error(
@@ -194,138 +258,63 @@ async function main(): Promise<void> {
                 );
                 process.exit(1);
             }
-            // Convert JSON/JSONL to TOON
-            try {
-                const toonOutput = encode(jsonData);
-                const compactJson = JSON.stringify(jsonData);
-                const toonSize = calculateSize(toonOutput);
-                const jsonSize = calculateSize(compactJson);
 
-                if (verbose) {
-                    console.error(`Input format: ${detectedFormat === "jsonl" ? "JSONL" : "JSON"}`);
-                    console.error(`Output format: TOON`);
-                    console.error(`Compact JSON size: ${jsonSize} bytes`);
-                    console.error(`TOON size: ${toonSize} bytes`);
+            const toonOutput = encode(jsonData);
 
-                    if (toonSize < jsonSize) {
-                        const savings = calculateSavings(jsonSize, toonSize);
-                        console.error(
-                            `✓ TOON is ${savings.percentage.toFixed(1)}% smaller (${savings.bytes} bytes saved)`
-                        );
-                    } else {
-                        const savings = calculateSavings(toonSize, jsonSize);
-                        console.error(
-                            `⚠ Compact JSON is ${savings.percentage.toFixed(1)}% smaller (${savings.bytes} bytes saved)`
-                        );
-                        console.error(`Returning TOON format as requested by --to-toon flag`);
-                    }
-                }
-
-                // Return TOON (as requested) but log comparison
-                console.log(toonOutput);
-            } catch (error) {
-                console.error(`Error converting to TOON: ${error instanceof Error ? error.message : String(error)}`);
-                process.exit(1);
+            if (verbose) {
+                console.error(`Input format: ${formatLabel}`);
+                console.error(`Output format: TOON`);
             }
-        } else if (forceToJson) {
-            if (detectedFormat === "json" || detectedFormat === "jsonl") {
-                // Convert JSON/JSONL to formatted JSON array
-                try {
-                    const jsonOutput = JSON.stringify(jsonData, null, 2);
 
-                    if (verbose) {
-                        console.error(`Input format: ${detectedFormat === "jsonl" ? "JSONL" : "JSON"}`);
-                        console.error(`Output format: JSON`);
-                    }
+            const winner = logSizeComparison(toonOutput, jsonData, verbose);
 
-                    console.log(jsonOutput);
-                } catch (error) {
-                    console.error(`Error converting to JSON: ${error instanceof Error ? error.message : String(error)}`);
-                    process.exit(1);
-                }
+            if (verbose && winner === "json") {
+                console.error(`Returning TOON format as requested by --to-toon flag`);
+            }
+
+            console.log(toonOutput);
+            return;
+        }
+
+        // Handle forced conversion to JSON
+        if (forceToJson) {
+            if (verbose) {
+                console.error(`Input format: ${formatLabel}`);
+                console.error(`Output format: JSON`);
+            }
+
+            if (detectedFormat === "toon") {
+                console.log(toonToJson(input));
             } else {
-                // Convert TOON to JSON
-                try {
-                    const jsonData = decode(input);
-                    const jsonOutput = JSON.stringify(jsonData, null, 2);
-
-                    if (verbose) {
-                        console.error(`Input format: TOON`);
-                        console.error(`Output format: JSON`);
-                    }
-
-                    console.log(jsonOutput);
-                } catch (error) {
-                    console.error(`Error converting to JSON: ${error instanceof Error ? error.message : String(error)}`);
-                    process.exit(1);
-                }
+                console.log(JSON.stringify(jsonData, null, 2));
             }
+
+            return;
+        }
+
+        // Auto-detect: TOON input → JSON, JSON/JSONL input → smallest format
+        if (detectedFormat === "toon") {
+            if (verbose) {
+                console.error(`Detected format: TOON`);
+                console.error(`Output format: JSON`);
+            }
+
+            console.log(toonToJson(input));
         } else {
-            // Auto-detect and convert
-            if (detectedFormat === "json" || detectedFormat === "jsonl") {
-                // Convert JSON/JSONL to TOON and compare with compact JSON
-                try {
-                    const toonOutput = encode(jsonData);
-                    const compactJson = JSON.stringify(jsonData);
-                    const toonSize = calculateSize(toonOutput);
-                    const jsonSize = calculateSize(compactJson);
-
-                    if (verbose) {
-                        console.error(`Detected format: ${detectedFormat === "jsonl" ? "JSONL" : "JSON"}`);
-                        console.error(`Compact JSON size: ${jsonSize} bytes`);
-                        console.error(`TOON size: ${toonSize} bytes`);
-                    }
-
-                    // Return the smaller format
-                    if (toonSize < jsonSize) {
-                        if (verbose) {
-                            const savings = calculateSavings(jsonSize, toonSize);
-                            console.error(
-                                `✓ TOON is ${savings.percentage.toFixed(1)}% smaller (${savings.bytes} bytes saved)`
-                            );
-                            console.error(`Returning TOON format`);
-                        }
-                        console.log(toonOutput);
-                    } else {
-                        if (verbose) {
-                            const savings = calculateSavings(toonSize, jsonSize);
-                            console.error(
-                                `⚠ Compact JSON is ${savings.percentage.toFixed(1)}% smaller (${
-                                    savings.bytes
-                                } bytes saved)`
-                            );
-                            console.error(`Returning compact JSON format`);
-                        }
-                        console.log(compactJson);
-                    }
-                } catch (error) {
-                    console.error(`Error processing JSON: ${error instanceof Error ? error.message : String(error)}`);
-                    process.exit(1);
-                }
-            } else {
-                // Convert TOON to JSON
-                try {
-                    const jsonData = decode(input);
-                    const jsonOutput = JSON.stringify(jsonData, null, 2);
-
-                    if (verbose) {
-                        console.error(`Detected format: TOON`);
-                        console.error(`Output format: JSON`);
-                    }
-
-                    console.log(jsonOutput);
-                } catch (error) {
-                    console.error(`Error processing TOON: ${error instanceof Error ? error.message : String(error)}`);
-                    process.exit(1);
-                }
+            if (verbose) {
+                console.error(`Detected format: ${formatLabel}`);
             }
+
+            outputSmallestFormat(jsonData, verbose);
         }
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);
+
         if (verbose && error instanceof Error) {
             console.error(error.stack);
         }
+
         process.exit(1);
     }
 }
