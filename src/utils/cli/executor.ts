@@ -159,6 +159,8 @@ export interface ExecutorOptions {
     prefix?: string;
     /** Working directory for all commands */
     cwd?: string;
+    /** Environment variables (merged on top of process.env) */
+    env?: Record<string, string | undefined>;
     /** Enable verbose logging of commands (default: false) */
     verbose?: boolean;
     /** Enable debug logging of stdout/stderr (default: false) */
@@ -167,9 +169,19 @@ export interface ExecutorOptions {
     label?: string;
 }
 
+export interface ExecCallOptions {
+    /** Override working directory for this call */
+    cwd?: string;
+    /** Override/extend environment variables for this call */
+    env?: Record<string, string | undefined>;
+    /** Timeout in milliseconds. Process is killed and promise rejects on expiry. */
+    timeout?: number;
+}
+
 export class Executor {
     private prefix: string | undefined;
     private cwd: string;
+    private env: Record<string, string | undefined> | undefined;
     verbose: boolean;
     debug: boolean;
     private label: string;
@@ -177,6 +189,7 @@ export class Executor {
     constructor(options: ExecutorOptions = {}) {
         this.prefix = options.prefix;
         this.cwd = options.cwd ?? process.cwd();
+        this.env = options.env;
         this.verbose = options.verbose ?? false;
         this.debug = options.debug ?? false;
         this.label = options.label ?? options.prefix ?? "exec";
@@ -193,13 +206,29 @@ export class Executor {
     }
 
     /**
+     * Build the merged environment for a spawn call.
+     * Per-call env overrides constructor env, both layered on top of process.env.
+     * Returns undefined when no custom env is configured (inherits process.env automatically).
+     */
+    private buildEnv(callEnv?: Record<string, string | undefined>): Record<string, string | undefined> | undefined {
+        if (!this.env && !callEnv) return undefined;
+
+        return {
+            ...process.env,
+            ...this.env,
+            ...callEnv,
+        };
+    }
+
+    /**
      * Execute a command and capture output.
      * If prefix is set, args are prepended with it.
      * e.g., new Executor({ prefix: "git" }).exec(["status"]) → runs "git status"
      */
-    async exec(args: string[], options?: { cwd?: string }): Promise<ExecResult> {
+    async exec(args: string[], options?: ExecCallOptions): Promise<ExecResult> {
         const cmd = this.prefix ? [this.prefix, ...args] : args;
         const cwd = options?.cwd ?? this.cwd;
+        const env = this.buildEnv(options?.env);
 
         if (this.verbose) {
             console.log(pc.gray(`  $ ${cmd.join(" ")}`));
@@ -208,14 +237,42 @@ export class Executor {
         const proc = Bun.spawn({
             cmd,
             cwd,
+            env,
             stdio: ["ignore", "pipe", "pipe"],
         });
 
-        const [stdout, stderr, exitCode] = await Promise.all([
+        const collectOutput = Promise.all([
             new Response(proc.stdout).text(),
             new Response(proc.stderr).text(),
             proc.exited,
         ]);
+
+        let stdout: string;
+        let stderr: string;
+        let exitCode: number;
+
+        if (options?.timeout) {
+            const timeoutMs = options.timeout;
+
+            const timeoutResult = await Promise.race([
+                collectOutput.then((r) => ({ type: "done" as const, value: r })),
+                new Promise<{ type: "timeout" }>((resolve) =>
+                    setTimeout(() => resolve({ type: "timeout" }), timeoutMs)
+                ),
+            ]);
+
+            if (timeoutResult.type === "timeout") {
+                proc.kill();
+                await proc.exited;
+                throw new Error(
+                    `Command timed out after ${timeoutMs}ms: ${cmd.join(" ")}`
+                );
+            }
+
+            [stdout, stderr, exitCode] = timeoutResult.value;
+        } else {
+            [stdout, stderr, exitCode] = await collectOutput;
+        }
 
         const result: ExecResult = {
             success: exitCode === 0,
@@ -237,9 +294,10 @@ export class Executor {
      * Execute a command with inherited stdio (interactive).
      * User sees the command's output directly.
      */
-    async execInteractive(args: string[], options?: { cwd?: string }): Promise<ExecResult> {
+    async execInteractive(args: string[], options?: Pick<ExecCallOptions, "cwd" | "env">): Promise<ExecResult> {
         const cmd = this.prefix ? [this.prefix, ...args] : args;
         const cwd = options?.cwd ?? this.cwd;
+        const env = this.buildEnv(options?.env);
 
         if (this.verbose) {
             console.log(pc.cyan(`  $ ${cmd.join(" ")}`));
@@ -248,6 +306,7 @@ export class Executor {
         const proc = Bun.spawn({
             cmd,
             cwd,
+            env,
             stdio: ["inherit", "inherit", "inherit"],
         });
 
