@@ -1,5 +1,3 @@
-// src/automate/lib/step-runner.ts
-
 import type { ExecutionContext, PresetStep, StepResult } from "./types.ts";
 import { resolveExpression, resolveParams } from "./expressions.ts";
 import { executeBuiltin, isBuiltinAction } from "./builtins.ts";

@@ -45,6 +45,10 @@ export type {
 // Classification
 export { classifyText, classifyBatch, groupByCategory } from "./classification";
 
+// TTS
+export { speak, listVoices } from "./tts";
+export type { SpeakOptions } from "./tts";
+
 // Notifications
 export { sendNotification } from "./notifications";
 export type { NotificationOptions } from "./notifications";

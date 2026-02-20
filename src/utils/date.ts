@@ -3,6 +3,19 @@
  */
 
 /**
+ * Parse a date string (e.g. "YYYY-MM-DD") and throw on invalid input.
+ */
+export function parseDate(value: string): Date {
+	const d = new Date(value);
+
+	if (Number.isNaN(d.getTime())) {
+		throw new Error(`Invalid date: ${value}`);
+	}
+
+	return d;
+}
+
+/**
  * Get the date range for a given month.
  * @param month - Month in "YYYY-MM" format
  * @returns Object with `since` (first day) and `upto` (last day) in "YYYY-MM-DD" format

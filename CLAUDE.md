@@ -116,6 +116,28 @@ See `.claude/docs/tool-template.md` for complete templates (@inquirer + @clack/p
 - **No obvious comments**: Don't add comments that restate what the code already says (e.g. `// Build initial context` before `buildContext()`)
 - **Concise commit messages**: Just a title line, no per-file breakdown in the body. Keep it short and focused on the "why"
 
+## Code Style: Conditionals & Spacing
+
+- **No one-line `if` statements** — even for early returns. Always use block form with braces.
+- **Empty line before `if`** — unless the preceding line is a variable declaration used by that `if`.
+- **Empty line after closing `}`** — unless followed by `else`, `catch`, `finally`, or another `}`.
+- Example:
+
+  ```typescript
+  const value = getValue();
+  if (!value) {
+      return;
+  }
+
+  doSomething(value);
+  ```
+
+## Code Style: Type Safety
+
+- **No `as any`** — use proper type narrowing, type guards, or explicit interfaces.
+- When working with union types, use discriminant checks (e.g. `entity.className === "User"`).
+- Prefer `error: err` over `error: err instanceof Error ? err.message : String(err)` when the error field accepts unknown.
+
 ## Important Notes
 
 -   **Runtime**: This project requires Bun as it uses Bun-specific APIs (e.g., `Bun.spawn`)

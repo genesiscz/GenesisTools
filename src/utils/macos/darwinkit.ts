@@ -41,24 +41,46 @@ export class DarwinKitClient {
     const which = Bun.spawnSync(["which", this.config.binaryPath]);
     if (which.exitCode === 0) return;
 
-    logger.info("DarwinKitClient: darwinkit not found, installing via Homebrew...");
-    console.log("  Installing darwinkit via Homebrew...");
+    logger.info("DarwinKitClient: darwinkit not found, installing...");
+    console.log("  Installing darwinkit...");
 
+    const downloadUrl =
+      "https://github.com/0xMassi/darwinkit/releases/latest/download/darwinkit-macos-universal.tar.gz";
+    const installDir = `${process.env.HOME}/.local/bin`;
+
+    // Try direct binary download first (no sudo needed)
+    const download = Bun.spawnSync(
+      ["bash", "-c", `mkdir -p "${installDir}" && curl -fsSL "${downloadUrl}" | tar xz -C "${installDir}"`],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+
+    if (download.exitCode === 0) {
+      logger.info(`DarwinKitClient: installed to ${installDir}/darwinkit`);
+      this.config.binaryPath = `${installDir}/darwinkit`;
+      return;
+    }
+
+    // Fallback: try Homebrew tap
     const tap = Bun.spawnSync(["brew", "tap", "0xMassi/darwinkit"], {
-      stdio: ["inherit", "inherit", "inherit"],
+      stdio: ["ignore", "pipe", "pipe"],
     });
-    if (tap.exitCode !== 0) {
-      throw new Error("Failed to tap 0xMassi/darwinkit. Is Homebrew installed?");
+
+    if (tap.exitCode === 0) {
+      const install = Bun.spawnSync(["brew", "install", "darwinkit"], {
+        stdio: ["inherit", "inherit", "inherit"],
+      });
+
+      if (install.exitCode === 0) {
+        logger.info("DarwinKitClient: darwinkit installed via Homebrew");
+        return;
+      }
     }
 
-    const install = Bun.spawnSync(["brew", "install", "darwinkit"], {
-      stdio: ["inherit", "inherit", "inherit"],
-    });
-    if (install.exitCode !== 0) {
-      throw new Error("Failed to install darwinkit via Homebrew");
-    }
-
-    logger.info("DarwinKitClient: darwinkit installed successfully");
+    throw new Error(
+      "Failed to install darwinkit. Install manually:\n" +
+      `  curl -fsSL ${downloadUrl} | tar xz\n` +
+      "  mv darwinkit ~/.local/bin/ && export PATH=\"$HOME/.local/bin:$PATH\"",
+    );
   }
 
   private async _doStart(): Promise<void> {

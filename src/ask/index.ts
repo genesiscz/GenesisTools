@@ -134,38 +134,75 @@ class ASKTool {
         }
 
         try {
+            // In raw mode, suppress all stdout noise during model selection
+            const origStdoutWrite = argv.raw ? process.stdout.write : null;
+            const restoreStdout = () => {
+                if (origStdoutWrite) {
+                    Object.defineProperty(process.stdout, "write", {
+                        value: origStdoutWrite,
+                        writable: true,
+                        configurable: true,
+                    });
+                }
+            };
+
+            if (origStdoutWrite) {
+                Object.defineProperty(process.stdout, "write", {
+                    value: () => true,
+                    writable: true,
+                    configurable: true,
+                });
+            }
+
             // Determine provider and model
-            const modelChoice = await modelSelector.selectModelByName(argv.provider, argv.model);
-            if (!modelChoice) {
-                logger.error("Failed to select model");
-                process.exit(1);
+            let modelChoice: Awaited<ReturnType<typeof modelSelector.selectModelByName>>;
+            let response: Awaited<ReturnType<InstanceType<typeof ChatEngine>["sendMessage"]>>;
+
+            try {
+                modelChoice = await modelSelector.selectModelByName(argv.provider, argv.model);
+                if (!modelChoice) {
+                    logger.error("Failed to select model");
+                    process.exit(1);
+                }
+
+                if (!argv.raw) {
+                    p.log.info(`Using ${colorizeProvider(modelChoice.provider.name)}/${modelChoice.model.name}`);
+                }
+
+                // Create chat config
+                const chatConfig = await this.createChatConfig(modelChoice, argv);
+
+                // Create chat engine
+                const chatEngine = new ChatEngine(chatConfig);
+
+                // Optional: Show cost prediction if --predict-cost flag is set
+                if (!argv.raw && argv.predictCost) {
+                    const prediction = await costPredictor.predictCost(
+                        modelChoice.provider.name,
+                        modelChoice.model.id,
+                        message
+                    );
+                    p.log.info(pc.cyan(costPredictor.formatPrediction(prediction)));
+                }
+
+                // Set up tools
+                const tools = this.getAvailableTools();
+
+                if (!argv.raw) {
+                    p.log.step(pc.yellow("Thinking..."));
+                }
+
+                // Send message
+                response = await chatEngine.sendMessage(message, tools);
+            } finally {
+                restoreStdout();
             }
 
-            p.log.info(`Using ${colorizeProvider(modelChoice.provider.name)}/${modelChoice.model.name}`);
-
-            // Create chat config
-            const chatConfig = await this.createChatConfig(modelChoice, argv);
-
-            // Create chat engine
-            const chatEngine = new ChatEngine(chatConfig);
-
-            // Optional: Show cost prediction if --predict-cost flag is set
-            if (argv.predictCost) {
-                const prediction = await costPredictor.predictCost(
-                    modelChoice.provider.name,
-                    modelChoice.model.id,
-                    message
-                );
-                p.log.info(pc.cyan(costPredictor.formatPrediction(prediction)));
+            // Raw mode: output only the response content
+            if (argv.raw) {
+                process.stdout.write(response.content);
+                return;
             }
-
-            // Set up tools
-            const tools = this.getAvailableTools();
-
-            p.log.step(pc.yellow("Thinking..."));
-
-            // Send message
-            const response = await chatEngine.sendMessage(message, tools);
 
             // Track usage for single message mode
             if (response.usage) {
