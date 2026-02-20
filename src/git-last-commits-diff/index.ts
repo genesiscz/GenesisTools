@@ -1,4 +1,4 @@
-import { join as pathJoin, resolve } from "node:path";
+import { resolve } from "node:path";
 import logger from "@app/logger";
 import { Executor } from "@app/utils/cli";
 import { copyToClipboard } from "@app/utils/clipboard";
@@ -58,9 +58,7 @@ async function getTruncatedSha(git: Executor, refName: string): Promise<string |
 async function getAndSelectCommit(git: Executor): Promise<string | undefined> {
     logger.debug(`⏳ Fetching last 200 commits...`);
 
-    const { success, stdout, stderr, exitCode } = await git.exec([
-        "log", "--pretty=format:%h %s", "-n", "200",
-    ]);
+    const { success, stdout, stderr, exitCode } = await git.exec(["log", "--pretty=format:%h %s", "-n", "200"]);
 
     if (!success) {
         logger.error(`\n✖ 'git log' command failed with exit code ${exitCode}.`);
@@ -232,7 +230,6 @@ async function main() {
 
                 const defaultFileName = `commits-${firstSha}-${lastSha}.diff`;
                 const currentDir = process.cwd();
-                const _suggestedPath = pathJoin(currentDir, defaultFileName);
 
                 const filePathResponse = await input({
                     message: `Enter filename for the diff (will be created in ${currentDir}):`,

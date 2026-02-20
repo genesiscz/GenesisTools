@@ -130,10 +130,7 @@ async function main() {
         logger.debug("⏳ Fetching list of changed files...");
         let gitOutput = "";
         if (mode === "commits") {
-            gitOutput = await runGitCommand(
-                git,
-                ["diff", "--name-only", "--diff-filter=d", `HEAD~${commits}`, "HEAD"],
-            );
+            gitOutput = await runGitCommand(git, ["diff", "--name-only", "--diff-filter=d", `HEAD~${commits}`, "HEAD"]);
         } else if (mode === "staged") {
             gitOutput = await runGitCommand(git, ["diff", "--name-only", "--diff-filter=d", "--cached"]);
         } else if (mode === "unstaged") {
@@ -143,9 +140,7 @@ async function main() {
             gitOutput = await runGitCommand(git, ["diff", "--name-only", "--diff-filter=d"]);
         } else {
             // mode === 'all'
-            const combined = (await runGitCommand(git, ["diff", "--name-only", "--diff-filter=d", "HEAD"])).split(
-                "\n"
-            );
+            const combined = (await runGitCommand(git, ["diff", "--name-only", "--diff-filter=d", "HEAD"])).split("\n");
             gitOutput = Array.from(combined)
                 .filter((f) => f)
                 .join("\n"); // Filter out empty lines

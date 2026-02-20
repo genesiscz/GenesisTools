@@ -243,7 +243,7 @@ async function getCommittedFiles(numCommits: number, verbose: boolean): Promise<
     const git = new Executor({ prefix: "git" });
     const { stdout } = await git.execOrThrow(
         ["log", `-n`, `${numCommits}`, `--format=%H|%ct`, "--name-status"],
-        "git log failed",
+        "git log failed"
     );
 
     const lines = stdout.split("\n");

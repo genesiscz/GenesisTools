@@ -1,7 +1,7 @@
 // GitHub URL parsing utilities
 
-import { Executor } from "@app/utils/cli";
 import type { GitHubFileUrl, GitHubUrl } from "@app/github/types";
+import { Executor } from "@app/utils/cli";
 
 /**
  * Parse a GitHub URL into its components

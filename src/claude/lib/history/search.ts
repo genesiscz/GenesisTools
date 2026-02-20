@@ -1300,7 +1300,16 @@ export async function rgSearchFiles(
 
     try {
         const { stdout, stderr, exitCode } = await rg.exec([
-            "-l", "--glob", "*.jsonl", "-i", "-F", "--max-count", "1", "--", query, searchDir,
+            "-l",
+            "--glob",
+            "*.jsonl",
+            "-i",
+            "-F",
+            "--max-count",
+            "1",
+            "--",
+            query,
+            searchDir,
         ]);
 
         // rg exit 1 = no matches (OK), 2+ = actual error
@@ -1329,7 +1338,15 @@ export async function rgExtractSnippet(query: string, filePath: string): Promise
     try {
         const rg = new Executor({ prefix: "rg" });
         const { stdout, exitCode } = await rg.exec([
-            "-i", "-F", "-m", "1", "--no-filename", "--no-line-number", "--", query, filePath,
+            "-i",
+            "-F",
+            "-m",
+            "1",
+            "--no-filename",
+            "--no-line-number",
+            "--",
+            query,
+            filePath,
         ]);
 
         if (exitCode > 1) return undefined;
