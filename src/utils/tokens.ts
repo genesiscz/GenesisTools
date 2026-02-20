@@ -32,10 +32,7 @@ export function countTokens(text: string): number {
  *
  * Requires `gpt-3-encoder` package for accurate truncation.
  */
-export function limitToTokens(
-    text: string,
-    maxTokens?: number,
-): { text: string; tokens: number; truncated: boolean } {
+export function limitToTokens(text: string, maxTokens?: number): { text: string; tokens: number; truncated: boolean } {
     const tokens = countTokens(text);
 
     if (maxTokens == null || tokens <= maxTokens) {

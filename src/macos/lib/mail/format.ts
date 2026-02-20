@@ -1,6 +1,6 @@
-import { formatTable } from "@app/utils/table";
-import { formatRelativeTime, formatBytes } from "@app/utils/format";
 import type { MailMessage } from "@app/macos/lib/mail/types";
+import { formatBytes, formatRelativeTime } from "@app/utils/format";
+import { formatTable } from "@app/utils/table";
 import chalk from "chalk";
 
 /**
@@ -14,7 +14,7 @@ export function formatResultsTable(
     if (options?.showBodyMatch) headers.push("Body");
     if (options?.showSemanticScore) headers.push("Relevance");
 
-    const rows = messages.map(msg => {
+    const rows = messages.map((msg) => {
         const row = [
             formatRelativeTime(msg.dateSent, { compact: true }),
             formatSender(msg),
@@ -25,11 +25,7 @@ export function formatResultsTable(
             row.push(msg.bodyMatchesQuery ? chalk.green("yes") : "");
         }
         if (options?.showSemanticScore) {
-            row.push(
-                msg.semanticScore !== undefined
-                    ? chalk.cyan((1 - msg.semanticScore / 2).toFixed(2))
-                    : ""
-            );
+            row.push(msg.semanticScore !== undefined ? chalk.cyan((1 - msg.semanticScore / 2).toFixed(2)) : "");
         }
         return row;
     });
@@ -60,11 +56,11 @@ export function generateEmailMarkdown(msg: MailMessage): string {
 
     if (msg.recipients && msg.recipients.length > 0) {
         const toRecipients = msg.recipients
-            .filter(r => r.type === "to")
-            .map(r => r.name ? `${r.name} <${r.address}>` : r.address);
+            .filter((r) => r.type === "to")
+            .map((r) => (r.name ? `${r.name} <${r.address}>` : r.address));
         const ccRecipients = msg.recipients
-            .filter(r => r.type === "cc")
-            .map(r => r.name ? `${r.name} <${r.address}>` : r.address);
+            .filter((r) => r.type === "cc")
+            .map((r) => (r.name ? `${r.name} <${r.address}>` : r.address));
 
         if (toRecipients.length > 0) {
             lines.push(`| To | ${toRecipients.join(", ")} |`);
@@ -102,10 +98,7 @@ export function generateEmailMarkdown(msg: MailMessage): string {
 /**
  * Generate the index.md summary table for downloaded emails.
  */
-export function generateIndexMarkdown(
-    messages: MailMessage[],
-    query?: string,
-): string {
+export function generateIndexMarkdown(messages: MailMessage[], query?: string): string {
     const lines: string[] = [];
 
     lines.push("# Email Export");

@@ -1,13 +1,9 @@
-import * as p from "@clack/prompts";
-import type { Command } from "commander";
-import {
-    listMessages,
-    getAttachments,
-    cleanup,
-} from "@app/macos/lib/mail/sqlite";
 import { formatResultsTable } from "@app/macos/lib/mail/format";
+import { cleanup, getAttachments, listMessages } from "@app/macos/lib/mail/sqlite";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import type { MailMessage } from "@app/macos/lib/mail/types";
+import * as p from "@clack/prompts";
+import type { Command } from "commander";
 
 export function registerListCommand(program: Command): void {
     program
@@ -31,9 +27,9 @@ export function registerListCommand(program: Command): void {
                 }
 
                 // Enrich with attachments
-                const rowids = rows.map(r => r.rowid);
+                const rowids = rows.map((r) => r.rowid);
                 const attachmentsMap = getAttachments(rowids);
-                const messages: MailMessage[] = rows.map(row => {
+                const messages: MailMessage[] = rows.map((row) => {
                     const msg = rowToMessage(row);
                     msg.attachments = attachmentsMap.get(row.rowid) ?? [];
                     return msg;
@@ -43,11 +39,8 @@ export function registerListCommand(program: Command): void {
 
                 console.log("");
                 console.log(formatResultsTable(messages));
-
             } catch (error) {
-                p.log.error(
-                    error instanceof Error ? error.message : String(error)
-                );
+                p.log.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);
             } finally {
                 cleanup();

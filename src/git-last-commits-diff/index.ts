@@ -1,9 +1,9 @@
 import { join as pathJoin, resolve } from "node:path";
 import logger from "@app/logger";
+import { copyToClipboard } from "@app/utils/clipboard";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
 import { input, search, select } from "@inquirer/prompts";
-import { copyToClipboard } from "@app/utils/clipboard";
 import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)

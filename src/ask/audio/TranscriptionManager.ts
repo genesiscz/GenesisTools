@@ -163,19 +163,25 @@ export class TranscriptionManager {
             // Try AssemblyAI first (supports large files, high quality)
             if (process.env.ASSEMBLYAI_API_KEY) {
                 const model = await this.getSpecificTranscriptionModel("assemblyai", "best");
-                if (model) return model;
+                if (model) {
+                    return model;
+                }
             }
 
             // Try Deepgram (supports large files, fast)
             if (process.env.DEEPGRAM_API_KEY) {
                 const model = await this.getSpecificTranscriptionModel("deepgram", "nova-3");
-                if (model) return model;
+                if (model) {
+                    return model;
+                }
             }
 
             // Try Gladia (supports large files)
             if (process.env.GLADIA_API_KEY) {
                 const model = await this.getSpecificTranscriptionModel("gladia", "default");
-                if (model) return model;
+                if (model) {
+                    return model;
+                }
             }
         }
 
@@ -204,7 +210,9 @@ export class TranscriptionManager {
         try {
             switch (providerName) {
                 case "groq": {
-                    if (!process.env.GROQ_API_KEY) return null;
+                    if (!process.env.GROQ_API_KEY) {
+                        return null;
+                    }
                     const { groq } = await import("@ai-sdk/groq");
                     return {
                         provider: "groq",
@@ -214,7 +222,9 @@ export class TranscriptionManager {
                 }
 
                 case "openrouter": {
-                    if (!process.env.OPENROUTER_API_KEY) return null;
+                    if (!process.env.OPENROUTER_API_KEY) {
+                        return null;
+                    }
                     const { createOpenAI } = await import("@ai-sdk/openai");
                     const openrouter = createOpenAI({
                         apiKey: process.env.OPENROUTER_API_KEY,
@@ -228,7 +238,9 @@ export class TranscriptionManager {
                 }
 
                 case "openai": {
-                    if (!process.env.OPENAI_API_KEY) return null;
+                    if (!process.env.OPENAI_API_KEY) {
+                        return null;
+                    }
                     const { openai } = await import("@ai-sdk/openai");
                     return {
                         provider: "openai",
@@ -238,7 +250,9 @@ export class TranscriptionManager {
                 }
 
                 case "assemblyai": {
-                    if (!process.env.ASSEMBLYAI_API_KEY) return null;
+                    if (!process.env.ASSEMBLYAI_API_KEY) {
+                        return null;
+                    }
                     // @ts-expect-error - Optional dependency, may not be installed
                     const { assemblyai } = await import("@ai-sdk/assemblyai");
                     return {
@@ -249,7 +263,9 @@ export class TranscriptionManager {
                 }
 
                 case "deepgram": {
-                    if (!process.env.DEEPGRAM_API_KEY) return null;
+                    if (!process.env.DEEPGRAM_API_KEY) {
+                        return null;
+                    }
                     // @ts-expect-error - Optional dependency, may not be installed
                     const { deepgram } = await import("@ai-sdk/deepgram");
                     return {
@@ -260,7 +276,9 @@ export class TranscriptionManager {
                 }
 
                 case "gladia": {
-                    if (!process.env.GLADIA_API_KEY) return null;
+                    if (!process.env.GLADIA_API_KEY) {
+                        return null;
+                    }
                     // @ts-expect-error - Optional dependency, may not be installed
                     const { gladia } = await import("@ai-sdk/gladia");
                     return {
@@ -344,12 +362,24 @@ export class TranscriptionManager {
     getAvailableProviders(): string[] {
         const providers: string[] = [];
 
-        if (process.env.GROQ_API_KEY) providers.push("groq");
-        if (process.env.OPENROUTER_API_KEY) providers.push("openrouter");
-        if (process.env.OPENAI_API_KEY) providers.push("openai");
-        if (process.env.ASSEMBLYAI_API_KEY) providers.push("assemblyai");
-        if (process.env.DEEPGRAM_API_KEY) providers.push("deepgram");
-        if (process.env.GLADIA_API_KEY) providers.push("gladia");
+        if (process.env.GROQ_API_KEY) {
+            providers.push("groq");
+        }
+        if (process.env.OPENROUTER_API_KEY) {
+            providers.push("openrouter");
+        }
+        if (process.env.OPENAI_API_KEY) {
+            providers.push("openai");
+        }
+        if (process.env.ASSEMBLYAI_API_KEY) {
+            providers.push("assemblyai");
+        }
+        if (process.env.DEEPGRAM_API_KEY) {
+            providers.push("deepgram");
+        }
+        if (process.env.GLADIA_API_KEY) {
+            providers.push("gladia");
+        }
 
         return providers;
     }

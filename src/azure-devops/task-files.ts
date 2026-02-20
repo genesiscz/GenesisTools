@@ -2,9 +2,9 @@
  * Azure DevOps CLI - Task file path utilities
  */
 
-import type { FoundTaskFile } from "@app/azure-devops/types";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import type { FoundTaskFile } from "@app/azure-devops/types";
 import { slugify } from "@app/utils/string";
 
 /**

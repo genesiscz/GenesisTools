@@ -4,7 +4,6 @@ import type { ChatConfig, ChatMessage } from "@ask/types";
 import type { LanguageModel, LanguageModelUsage } from "ai";
 import { generateText, streamText } from "ai";
 
-
 export interface ChatResponse {
     content: string;
     usage?: LanguageModelUsage;

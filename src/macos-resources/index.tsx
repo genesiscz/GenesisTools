@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
 import { exec } from "node:child_process";
+import { parseArgs, promisify } from "node:util";
 import { Box, render, Text, useApp, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
-import { parseArgs, promisify } from "node:util";
 import Table from "./Table";
 
 const execAsync = promisify(exec);
@@ -394,7 +394,9 @@ const App: React.FC = () => {
                                 // Update the process with new file count
                                 setProcesses((prev) =>
                                     prev.map((p) =>
-                                        p.pid === proc.pid ? { ...p, openFiles: parseInt(res.stdout.trim(), 10) - 1 } : p
+                                        p.pid === proc.pid
+                                            ? { ...p, openFiles: parseInt(res.stdout.trim(), 10) - 1 }
+                                            : p
                                     )
                                 );
 
@@ -632,12 +634,12 @@ const App: React.FC = () => {
             }
         },
         [
-            alertedProcesses, 
-            alertedMemoryProcesses, 
-            alertedFilesProcesses, 
-            addNotification, 
-            sendSystemNotification, 
-            lastCpuAlert
+            alertedProcesses,
+            alertedMemoryProcesses,
+            alertedFilesProcesses,
+            addNotification,
+            sendSystemNotification,
+            lastCpuAlert,
         ]
     );
 

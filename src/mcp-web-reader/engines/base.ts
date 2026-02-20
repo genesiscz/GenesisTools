@@ -29,21 +29,19 @@ export abstract class MarkdownEngine {
 
     // Shared normalization
     normalize(markdown: string): string {
-        return (
-            `${markdown
-                // Fix link text whitespace
-                .replace(/\[([^\]]*)\]\(([^)]+)\)/g, (_, text, url) => `[${text.replace(/\s+/g, " ").trim()}](${url})`)
-                // Heading spacing
-                .replace(/([^\n])\n(#{1,6} )/g, "$1\n\n$2")
-                // List spacing
-                .replace(/([^\n])\n([-*] |\d+\. )/g, "$1\n\n$2")
-                // Collapse newlines
-                .replace(/\n{3,}/g, "\n\n")
-                // Trim lines
-                .split("\n")
-                .map((l) => l.trimEnd())
-                .join("\n")
-                .trimEnd()}\n`
-        );
+        return `${markdown
+            // Fix link text whitespace
+            .replace(/\[([^\]]*)\]\(([^)]+)\)/g, (_, text, url) => `[${text.replace(/\s+/g, " ").trim()}](${url})`)
+            // Heading spacing
+            .replace(/([^\n])\n(#{1,6} )/g, "$1\n\n$2")
+            // List spacing
+            .replace(/([^\n])\n([-*] |\d+\. )/g, "$1\n\n$2")
+            // Collapse newlines
+            .replace(/\n{3,}/g, "\n\n")
+            // Trim lines
+            .split("\n")
+            .map((l) => l.trimEnd())
+            .join("\n")
+            .trimEnd()}\n`;
     }
 }

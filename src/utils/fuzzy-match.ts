@@ -29,11 +29,7 @@ export function levenshteinDistance(a: string, b: string): number {
     for (let i = 1; i <= bLower.length; i++) {
         for (let j = 1; j <= aLower.length; j++) {
             const cost = bLower[i - 1] === aLower[j - 1] ? 0 : 1;
-            matrix[i][j] = Math.min(
-                matrix[i - 1][j] + 1,
-                matrix[i][j - 1] + 1,
-                matrix[i - 1][j - 1] + cost,
-            );
+            matrix[i][j] = Math.min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + cost);
         }
     }
 

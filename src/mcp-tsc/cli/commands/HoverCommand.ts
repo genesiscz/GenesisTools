@@ -1,5 +1,5 @@
-import type { CliArgs, HoverResult, TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import path from "node:path";
+import type { CliArgs, HoverResult, TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import ts from "typescript";
 
 export class HoverCommand {

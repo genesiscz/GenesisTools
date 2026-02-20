@@ -1,19 +1,19 @@
+import { execSync, spawn } from "node:child_process";
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
 import { resolvePathWithTilde } from "@app/utils";
 import { handleReadmeFlag } from "@app/utils/readme";
 import boxen from "boxen";
 import chalk from "chalk";
-import { execSync, spawn } from "node:child_process";
 import chokidar from "chokidar";
 import Table from "cli-table3";
 import { Command } from "commander";
 import * as diff from "diff";
 import { filesize } from "filesize";
-import fs from "node:fs";
 import { minimatch } from "minimatch";
-import { createRequire } from "node:module";
 import ora, { type Ora } from "ora";
-import os from "node:os";
-import path from "node:path";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);

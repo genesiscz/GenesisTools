@@ -1,9 +1,9 @@
-import logger, { consoleLog } from "@app/logger";
-import chalk from "chalk";
 import { spawn } from "node:child_process";
 import { unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import logger, { consoleLog } from "@app/logger";
+import chalk from "chalk";
 
 // Use consoleLog for clean diff output (no timestamps, no level for info)
 const diffLogger = consoleLog;

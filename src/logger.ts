@@ -1,8 +1,8 @@
-import chalk from "chalk";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import chalk from "chalk";
 import pino from "pino";
 import PinoPretty from "pino-pretty";
-import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

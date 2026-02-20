@@ -1,5 +1,7 @@
 // Comments command - shorthand for fetching just comments
 
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import {
     getComments as getCachedComments,
     getDatabase,
@@ -29,8 +31,6 @@ import {
 } from "@app/utils/github/utils";
 import chalk from "chalk";
 import { Command } from "commander";
-import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
 
 interface CommentsCommandOptions {
     repo?: string;

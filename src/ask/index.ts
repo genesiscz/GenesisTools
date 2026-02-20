@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
 import logger from "@app/logger";
-import { handleReadmeFlag } from "@app/utils/readme";
 import { input } from "@app/utils/prompts/clack";
+import { handleReadmeFlag } from "@app/utils/readme";
 import { transcriptionManager } from "@ask/audio/TranscriptionManager";
 import { ChatEngine } from "@ask/chat/ChatEngine";
 import type { CommandResult } from "@ask/chat/CommandHandler";
@@ -262,9 +262,7 @@ class ASKTool {
             process.exit(1);
         }
 
-        p.log.step(
-            `Starting with ${colorizeProvider(modelChoice.provider.name)}/${modelChoice.model.name}`
-        );
+        p.log.step(`Starting with ${colorizeProvider(modelChoice.provider.name)}/${modelChoice.model.name}`);
 
         this.suggestCommand(modelChoice.provider.name, modelChoice.model.id);
 
@@ -401,9 +399,7 @@ class ASKTool {
         // Show session summary
         p.log.info(pc.dim(`Session saved: ${sessionId}`));
         p.log.info(pc.dim(`Messages: ${session.messages.length}`));
-        p.log.info(
-            pc.dim(`Duration: ${formatElapsedTime(Date.now() - new Date(session.startTime).getTime())}`)
-        );
+        p.log.info(pc.dim(`Duration: ${formatElapsedTime(Date.now() - new Date(session.startTime).getTime())}`));
 
         if (process.stdout.isTTY) {
             p.outro(pc.green("Goodbye!"));
@@ -518,9 +514,7 @@ class ASKTool {
                     `Transcription of "${result.transcriptionFile}":\n\n${transcriptionResult.text}`
                 );
 
-                p.log.success(
-                    `Transcription completed in ${formatElapsedTime(transcriptionResult.processingTime)}`
-                );
+                p.log.success(`Transcription completed in ${formatElapsedTime(transcriptionResult.processingTime)}`);
             } catch (error) {
                 logger.error(`Transcription failed: ${error}`);
             }

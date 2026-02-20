@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 
-import logger from "@app/logger";
-import { ExitPromptError } from "@inquirer/core";
-import { checkbox, confirm, input } from "@inquirer/prompts";
-import { copyToClipboard } from "@app/utils/clipboard";
-import { Command } from "commander";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import logger from "@app/logger";
+import { copyToClipboard } from "@app/utils/clipboard";
+import { ExitPromptError } from "@inquirer/core";
+import { checkbox, confirm, input } from "@inquirer/prompts";
+import { Command } from "commander";
 
 interface ToolUseBlock {
     toolName: string;

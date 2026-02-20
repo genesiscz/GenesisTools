@@ -119,7 +119,9 @@ export class CommandHandler {
                 },
             });
 
-            if (p.isCancel(file)) return {};
+            if (p.isCancel(file)) {
+                return {};
+            }
             return { transcriptionFile: file };
         }
 
@@ -184,7 +186,9 @@ export class CommandHandler {
             message,
             initialValue: false,
         });
-        if (p.isCancel(result)) return false;
+        if (p.isCancel(result)) {
+            return false;
+        }
         return result;
     }
 
@@ -194,7 +198,9 @@ export class CommandHandler {
             : await p.text({
                   message: prompt,
                   validate: (value) => {
-                      if (!value?.trim()) return "This field is required.";
+                      if (!value?.trim()) {
+                          return "This field is required.";
+                      }
                       return undefined;
                   },
               });
@@ -213,7 +219,9 @@ export class CommandHandler {
                 label: choice,
             })),
         });
-        if (p.isCancel(result)) return null;
+        if (p.isCancel(result)) {
+            return null;
+        }
         return result;
     }
 

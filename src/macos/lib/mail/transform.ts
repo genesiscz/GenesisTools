@@ -1,4 +1,4 @@
-import { parseMailboxUrl, normalizeMailboxName } from "@app/macos/lib/mail/constants";
+import { normalizeMailboxName, parseMailboxUrl } from "@app/macos/lib/mail/constants";
 import type { MailMessage, MailMessageRow } from "@app/macos/lib/mail/types";
 
 /**

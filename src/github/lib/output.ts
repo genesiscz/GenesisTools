@@ -1,7 +1,18 @@
 // Output formatters for GitHub data
 
 import { formatReviewMarkdown, formatReviewTerminal } from "@app/github/lib/review-output";
-import type { ActivityItem, CommentData, CommentStats, GitHubReactions, IssueData, NotificationItem, PRData, RepoSearchResult, ReviewData, SearchResult } from "@app/github/types";
+import type {
+    ActivityItem,
+    CommentData,
+    CommentStats,
+    GitHubReactions,
+    IssueData,
+    NotificationItem,
+    PRData,
+    RepoSearchResult,
+    ReviewData,
+    SearchResult,
+} from "@app/github/types";
 import { sumReactions } from "@app/utils/github/utils";
 
 type OutputFormat = "ai" | "md" | "json";
@@ -554,10 +565,7 @@ function formatSearchMarkdown(results: SearchResult[]): string {
 
 // Notification and Activity formatters
 
-export function formatNotifications(
-    items: NotificationItem[],
-    format: "ai" | "md" | "json",
-): string {
+export function formatNotifications(items: NotificationItem[], format: "ai" | "md" | "json"): string {
     if (format === "json") return JSON.stringify(items, null, 2);
 
     const lines: string[] = [];
@@ -568,7 +576,7 @@ export function formatNotifications(
         return lines.join("\n");
     }
 
-    const unreadCount = items.filter(i => i.unread).length;
+    const unreadCount = items.filter((i) => i.unread).length;
     const byReason = new Map<string, number>();
     for (const item of items) {
         byReason.set(item.reason, (byReason.get(item.reason) ?? 0) + 1);
@@ -592,10 +600,7 @@ export function formatNotifications(
     return lines.join("\n");
 }
 
-export function formatActivity(
-    items: ActivityItem[],
-    format: "ai" | "md" | "json",
-): string {
+export function formatActivity(items: ActivityItem[], format: "ai" | "md" | "json"): string {
     if (format === "json") return JSON.stringify(items, null, 2);
 
     const lines: string[] = [];

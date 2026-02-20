@@ -2,8 +2,8 @@ import logger from "@app/logger";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { ModelsOptions } from "@ask/types/cli";
-import pc from "picocolors";
 import Table from "cli-table3";
+import pc from "picocolors";
 
 // Re-export for backward compatibility
 export type { ModelsOptions as PricingOptions } from "@ask/types/cli";
@@ -101,11 +101,13 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
     // Group models by provider
     for (const provider of filteredProviders) {
         console.log(
-            pc.bold(pc.blue(
-                `\n${provider.name.toUpperCase()} (${provider.models.length} model${
-                    provider.models.length !== 1 ? "s" : ""
-                })`
-            ))
+            pc.bold(
+                pc.blue(
+                    `\n${provider.name.toUpperCase()} (${provider.models.length} model${
+                        provider.models.length !== 1 ? "s" : ""
+                    })`
+                )
+            )
         );
         if (provider.config.description) {
             console.log(pc.dim(`  ${provider.config.description}\n`));

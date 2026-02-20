@@ -175,11 +175,7 @@ async function fetchAdditionalComments(threadId: string, startCursor: string): P
 /**
  * Fetch PR review threads via GraphQL with full pagination
  */
-export async function fetchPRReviewThreads(
-    owner: string,
-    repo: string,
-    prNumber: number
-): Promise<PRReviewInfo> {
+export async function fetchPRReviewThreads(owner: string, repo: string, prNumber: number): Promise<PRReviewInfo> {
     const octokit = getOctokit();
     const allThreads: ReviewThread[] = [];
     let cursor: string | null = null;
@@ -547,9 +543,7 @@ function extractSuggestion(body: string): string | null {
 
 function extractIssue(body: string): string {
     // Only remove severity badges like ![high](url) but KEEP code examples
-    return body
-        .replace(/!\[(high|medium|low)\]\([^)]*\)/gi, "")
-        .trim();
+    return body.replace(/!\[(high|medium|low)\]\([^)]*\)/gi, "").trim();
 }
 
 /**

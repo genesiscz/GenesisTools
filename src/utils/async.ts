@@ -21,22 +21,11 @@ interface RetryOptions {
 /**
  * Retry an async operation with configurable backoff.
  */
-export function retry<T>(
-    operation: () => Promise<T>,
-    options?: RetryOptions | number,
-): Promise<T> {
+export function retry<T>(operation: () => Promise<T>, options?: RetryOptions | number): Promise<T> {
     // Support legacy (maxAttempts, delay) positional call style
-    const opts: RetryOptions = typeof options === "number"
-        ? { maxAttempts: options }
-        : (options ?? {});
+    const opts: RetryOptions = typeof options === "number" ? { maxAttempts: options } : (options ?? {});
 
-    const {
-        maxAttempts = 3,
-        delay = 1000,
-        backoff = "exponential",
-        shouldRetry,
-        onRetry,
-    } = opts;
+    const { maxAttempts = 3, delay = 1000, backoff = "exponential", shouldRetry, onRetry } = opts;
 
     return new Promise((resolve, reject) => {
         let attempt = 0;
@@ -79,10 +68,7 @@ export function retry<T>(
  * Create a debounced version of a function that delays invocation
  * until after `wait` milliseconds have elapsed since the last call.
  */
-export function debounce<T extends (...args: any[]) => void>(
-    func: T,
-    wait: number,
-): (...args: Parameters<T>) => void {
+export function debounce<T extends (...args: any[]) => void>(func: T, wait: number): (...args: Parameters<T>) => void {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     return (...args: Parameters<T>) => {
         if (timeout !== undefined) clearTimeout(timeout);
@@ -96,10 +82,7 @@ export function debounce<T extends (...args: any[]) => void>(
  * Create a throttled version of a function that only invokes
  * once per `limit` milliseconds.
  */
-export function throttle<T extends (...args: any[]) => void>(
-    func: T,
-    limit: number,
-): (...args: Parameters<T>) => void {
+export function throttle<T extends (...args: any[]) => void>(func: T, limit: number): (...args: Parameters<T>) => void {
     let inThrottle = false;
     return (...args: Parameters<T>) => {
         if (!inThrottle) {
@@ -116,11 +99,7 @@ export function throttle<T extends (...args: any[]) => void>(
  * Race a promise against a timeout. Rejects with `timeoutError` (or a default error)
  * if the promise doesn't resolve within `timeoutMs`.
  */
-export function withTimeout<T>(
-    promise: Promise<T>,
-    timeoutMs: number,
-    timeoutError?: Error,
-): Promise<T> {
+export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutError?: Error): Promise<T> {
     let timer: ReturnType<typeof setTimeout>;
     const timeoutPromise = new Promise<never>((_, reject) => {
         timer = setTimeout(() => {

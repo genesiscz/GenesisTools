@@ -11,15 +11,15 @@ import type { StepResult } from "@app/automate/lib/types";
  * @param error - Optional error message
  */
 export function makeResult(
-  status: "success" | "error" | "skipped",
-  output: unknown,
-  startMs: number,
-  error?: string,
+    status: "success" | "error" | "skipped",
+    output: unknown,
+    startMs: number,
+    error?: string
 ): StepResult {
-  return {
-    status,
-    output,
-    duration: performance.now() - startMs,
-    error,
-  };
+    return {
+        status,
+        output,
+        duration: performance.now() - startMs,
+        error,
+    };
 }

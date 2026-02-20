@@ -3,9 +3,9 @@
  * Provides path resolution, JSONL transcript parsing, and shared types.
  */
 
+export * from "./auth";
 // Re-export shared types
 export * from "./types";
-export * from "./auth";
 
 import { createReadStream, existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -26,9 +26,7 @@ export function getClaudeProjectsDir(): string {
  * Parse a JSONL transcript file into an array of message objects.
  * Skips invalid JSON lines silently.
  */
-export async function parseJsonlTranscript<T = Record<string, unknown>>(
-    filePath: string,
-): Promise<T[]> {
+export async function parseJsonlTranscript<T = Record<string, unknown>>(filePath: string): Promise<T[]> {
     if (!existsSync(filePath)) return [];
 
     const messages: T[] = [];
@@ -69,9 +67,7 @@ export async function findClaudeCommand(): Promise<string> {
             });
             const stdout = await Promise.race([
                 new Response(proc.stdout).text(),
-                new Promise<string>((_, reject) =>
-                    setTimeout(() => reject(new Error("timeout")), 3000),
-                ),
+                new Promise<string>((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),
             ]);
             await proc.exited;
 

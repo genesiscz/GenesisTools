@@ -6,16 +6,16 @@
  * and multiple output targets (stdout, file, clipboard, memory dir).
  */
 
-import type { Command } from "commander";
-import chalk from "chalk";
-import * as p from "@clack/prompts";
-import { ClaudeSession } from "@app/utils/claude/session";
-import { SummarizeEngine, listTemplates } from "@app/claude/lib/history/summarize/engine.ts";
+import { parseDate } from "@app/claude/lib/history/search";
 import type { SummarizeOptions, SummarizeResult } from "@app/claude/lib/history/summarize/engine.ts";
+import { listTemplates, SummarizeEngine } from "@app/claude/lib/history/summarize/engine.ts";
+import { ClaudeSession } from "@app/utils/claude/session";
+import { listAppleNotesFolders } from "@app/utils/macos/apple-notes";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { modelSelector } from "@ask/providers/ModelSelector";
-import { parseDate } from "@app/claude/lib/history/search";
-import { listAppleNotesFolders } from "@app/utils/macos/apple-notes";
+import * as p from "@clack/prompts";
+import chalk from "chalk";
+import type { Command } from "commander";
 
 // =============================================================================
 // Types
@@ -49,7 +49,7 @@ interface SummarizeCommandOptions {
 
 async function resolveSessionIds(
     positionalId: string | undefined,
-    opts: SummarizeCommandOptions,
+    opts: SummarizeCommandOptions
 ): Promise<ClaudeSession[]> {
     // 1. Positional argument
     if (positionalId) {
@@ -72,7 +72,7 @@ async function resolveSessionIds(
         if (!envId) {
             throw new Error(
                 "CLAUDE_CODE_SESSION_ID environment variable is not set. " +
-                    "Use --current only when running inside a Claude Code session.",
+                    "Use --current only when running inside a Claude Code session."
             );
         }
         const session = await ClaudeSession.fromSessionId(envId);
@@ -102,7 +102,7 @@ async function resolveSessionIds(
     // 6. Non-interactive without session = error
     throw new Error(
         "No session specified. Use a positional argument, --session, --current, or --since/--until. " +
-            "Run with -i for interactive mode.",
+            "Run with -i for interactive mode."
     );
 }
 
@@ -183,10 +183,7 @@ async function pickAppleNotesFolder(): Promise<string> {
 // Interactive Flow
 // =============================================================================
 
-async function runInteractiveFlow(
-    session: ClaudeSession,
-    opts: SummarizeCommandOptions,
-): Promise<SummarizeOptions> {
+async function runInteractiveFlow(session: ClaudeSession, opts: SummarizeCommandOptions): Promise<SummarizeOptions> {
     p.intro(chalk.cyan("Claude History Summarizer"));
 
     // Mode picker
@@ -266,7 +263,7 @@ async function runInteractiveFlow(
         ]
             .filter(Boolean)
             .join("\n"),
-        "Summary Preview",
+        "Summary Preview"
     );
 
     // Confirm
@@ -311,16 +308,13 @@ async function runInteractiveFlow(
 // Non-Interactive Flow
 // =============================================================================
 
-function buildNonInteractiveOptions(
-    session: ClaudeSession,
-    opts: SummarizeCommandOptions,
-): SummarizeOptions {
+function buildNonInteractiveOptions(session: ClaudeSession, opts: SummarizeCommandOptions): SummarizeOptions {
     const mode = opts.mode ?? "documentation";
     const tokenBudget = opts.maxTokens ? parseInt(opts.maxTokens, 10) : 128_000;
 
     if (mode === "custom" && !opts.customPrompt) {
         throw new Error(
-            "Custom mode requires --custom-prompt. Provide a prompt string or use -i for interactive mode.",
+            "Custom mode requires --custom-prompt. Provide a prompt string or use -i for interactive mode."
         );
     }
 
@@ -356,8 +350,8 @@ function displayResult(result: SummarizeResult): void {
     if (result.tokenUsage) {
         parts.push(
             chalk.dim(
-                `Tokens: ${result.tokenUsage.input.toLocaleString()} in / ${result.tokenUsage.output.toLocaleString()} out`,
-            ),
+                `Tokens: ${result.tokenUsage.input.toLocaleString()} in / ${result.tokenUsage.output.toLocaleString()} out`
+            )
         );
     }
 
@@ -384,10 +378,15 @@ export function registerSummarizeCommand(program: Command): void {
     program
         .command("summarize [session-id]")
         .description("Summarize a Claude Code session using LLM-powered templates")
-        .option("-s, --session <id>", "Session ID (repeatable)", (val: string, prev: string[]) => {
-            prev.push(val);
-            return prev;
-        }, [] as string[])
+        .option(
+            "-s, --session <id>",
+            "Session ID (repeatable)",
+            (val: string, prev: string[]) => {
+                prev.push(val);
+                return prev;
+            },
+            [] as string[]
+        )
         .option("--current", "Use current session ($CLAUDE_CODE_SESSION_ID)")
         .option("--since <date>", "Sessions since date")
         .option("--until <date>", "Sessions until date")
@@ -409,7 +408,13 @@ export function registerSummarizeCommand(program: Command): void {
         .action(async (sessionId: string | undefined, cmdOpts: SummarizeCommandOptions) => {
             try {
                 const sessions = await resolveSessionIds(sessionId, cmdOpts);
-                const isInteractive = cmdOpts.interactive || (process.stdout.isTTY && !sessionId && !cmdOpts.session?.length && !cmdOpts.current && !cmdOpts.since);
+                const isInteractive =
+                    cmdOpts.interactive ||
+                    (process.stdout.isTTY &&
+                        !sessionId &&
+                        !cmdOpts.session?.length &&
+                        !cmdOpts.current &&
+                        !cmdOpts.since);
 
                 for (const session of sessions) {
                     let engineOptions: SummarizeOptions;

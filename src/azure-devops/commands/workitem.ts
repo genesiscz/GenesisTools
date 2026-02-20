@@ -5,13 +5,10 @@
  * Exports handleWorkItem for use by other commands (e.g., query --download-workitems).
  */
 
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { Api } from "@app/azure-devops/api";
-import {
-    formatJSON,
-    loadWorkItemCache,
-    saveWorkItemCache,
-    WORKITEM_FRESHNESS_MINUTES,
-} from "@app/azure-devops/cache";
+import { formatJSON, loadWorkItemCache, saveWorkItemCache, WORKITEM_FRESHNESS_MINUTES } from "@app/azure-devops/cache";
 import { downloadAttachments } from "@app/azure-devops/commands/attachments";
 import type {
     AttachmentFilter,
@@ -38,8 +35,6 @@ import {
 } from "@app/azure-devops/utils";
 import logger, { consoleLog } from "@app/logger";
 import type { Command } from "commander";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 
 // Silent mode for JSON output - suppresses progress messages
 let silentMode = false;
@@ -53,7 +48,7 @@ function formatWorkItemAI(
     item: WorkItemFull,
     taskPath: string,
     cacheTime?: Date,
-    downloadedAttachments?: AttachmentInfo[],
+    downloadedAttachments?: AttachmentInfo[]
 ): string {
     const lines: string[] = [];
 
@@ -231,7 +226,7 @@ export async function handleWorkItem(
     taskFoldersArg?: boolean,
     queryMetadata?: Map<number, QueryItemMetadata>,
     fetchOptions?: { comments?: boolean; updates?: boolean },
-    attachmentFilter?: AttachmentFilter,
+    attachmentFilter?: AttachmentFilter
 ): Promise<void> {
     silentMode = format === "json";
     logger.debug(
@@ -257,7 +252,9 @@ export async function handleWorkItem(
     for (const id of ids) {
         logger.debug(`[workitem] Processing work item #${id}`);
         const cache = await loadWorkItemCache(id);
-        logger.debug(`[workitem] #${id} cache: ${cache ? `found (fetched ${cache.cache?.fieldsFetchedAt})` : "not found"}`);
+        logger.debug(
+            `[workitem] #${id} cache: ${cache ? `found (fetched ${cache.cache?.fieldsFetchedAt})` : "not found"}`
+        );
 
         const existingFile = findTaskFileAnywhere(id, "json");
         logger.debug(`[workitem] #${id} existing file: ${existingFile ? existingFile.path : "none"}`);
@@ -343,7 +340,6 @@ export async function handleWorkItem(
             attachmentsMap = await downloadAttachments(api, allItems, settingsMap, attachmentFilter);
         }
     }
-
 
     // Phase 3: Save fetched items to disk + update cache
     for (const [id, item] of fetchedItems) {
@@ -478,11 +474,13 @@ export function registerWorkitemCommand(program: Command): void {
                     attachmentsPrefix?: string;
                     attachmentsSuffix?: string;
                     outputDir?: string;
-                },
+                }
             ) => {
                 const hasAttachmentFilter =
-                    options.attachmentsFrom || options.attachmentsTo ||
-                    options.attachmentsPrefix || options.attachmentsSuffix ||
+                    options.attachmentsFrom ||
+                    options.attachmentsTo ||
+                    options.attachmentsPrefix ||
+                    options.attachmentsSuffix ||
                     options.outputDir;
 
                 const parseDate = (s: string | undefined): Date | undefined => {
@@ -510,7 +508,7 @@ export function registerWorkitemCommand(program: Command): void {
                     options.taskFolders,
                     undefined,
                     undefined,
-                    attachmentFilter,
+                    attachmentFilter
                 );
             }
         );

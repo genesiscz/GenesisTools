@@ -2,11 +2,7 @@
  * Azure DevOps CLI - Work item change detection
  */
 
-import type {
-    CacheEntry,
-    ChangeInfo,
-    WorkItem,
-} from "@app/azure-devops/types";
+import type { CacheEntry, ChangeInfo, WorkItem } from "@app/azure-devops/types";
 
 export function detectChanges(oldItems: CacheEntry[], newItems: WorkItem[]): ChangeInfo[] {
     const changes: ChangeInfo[] = [];

@@ -2,6 +2,8 @@
  * Shared cache utilities for Azure DevOps CLI
  */
 
+import { readdirSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import type {
     AssignmentPeriod,
     Comment,
@@ -14,8 +16,6 @@ import type {
 } from "@app/azure-devops/types";
 import { WORKITEM_CACHE_VERSION } from "@app/azure-devops/types";
 import logger from "@app/logger";
-import { readdirSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
 import { Storage } from "@app/utils/storage";
 
 // Shared storage instance
@@ -118,7 +118,7 @@ export async function updateWorkItemCacheSection(
     update: {
         history?: WorkItemHistorySection;
         comments?: Comment[];
-    },
+    }
 ): Promise<void> {
     await storage.ensureDirs();
     const now = new Date().toISOString();
@@ -137,7 +137,8 @@ export async function updateWorkItemCacheSection(
         base.version = WORKITEM_CACHE_VERSION;
         if (!base.cache) {
             // Handle pre-migration entries that have fetchedAt at top level
-            const legacyFetchedAt = "fetchedAt" in base ? String((base as unknown as { fetchedAt: string }).fetchedAt) : now;
+            const legacyFetchedAt =
+                "fetchedAt" in base ? String((base as unknown as { fetchedAt: string }).fetchedAt) : now;
             base.cache = { fieldsFetchedAt: legacyFetchedAt };
         }
 
@@ -158,14 +159,14 @@ export async function updateWorkItemCacheSection(
 export function isHistoryFresh(cache: WorkItemCache): boolean {
     const fetchedAt = cache.cache?.historyFetchedAt;
     if (!fetchedAt) return false;
-    return (Date.now() - new Date(fetchedAt).getTime()) < SECTION_TTL_MS;
+    return Date.now() - new Date(fetchedAt).getTime() < SECTION_TTL_MS;
 }
 
 /** Check if a workitem's comments section is fresh (within 7-day TTL). */
 export function isCommentsFresh(cache: WorkItemCache): boolean {
     const fetchedAt = cache.cache?.commentsFetchedAt;
     if (!fetchedAt) return false;
-    return (Date.now() - new Date(fetchedAt).getTime()) < SECTION_TTL_MS;
+    return Date.now() - new Date(fetchedAt).getTime() < SECTION_TTL_MS;
 }
 
 /**

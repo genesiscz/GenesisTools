@@ -136,14 +136,10 @@ function logSizeComparison(toonOutput: string, jsonData: unknown, verbose: boole
 
         if (toonWins) {
             const savings = calculateSavings(jsonSize, toonSize);
-            console.error(
-                `✓ TOON is ${savings.percentage.toFixed(1)}% smaller (${savings.bytes} bytes saved)`
-            );
+            console.error(`✓ TOON is ${savings.percentage.toFixed(1)}% smaller (${savings.bytes} bytes saved)`);
         } else {
             const savings = calculateSavings(toonSize, jsonSize);
-            console.error(
-                `⚠ Compact JSON is ${savings.percentage.toFixed(1)}% smaller (${savings.bytes} bytes saved)`
-            );
+            console.error(`⚠ Compact JSON is ${savings.percentage.toFixed(1)}% smaller (${savings.bytes} bytes saved)`);
         }
     }
 

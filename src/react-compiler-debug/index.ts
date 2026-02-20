@@ -23,10 +23,10 @@ import { Command } from "commander";
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
-import logger from "@app/logger";
-import { copyToClipboard } from "@app/utils/clipboard";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import logger from "@app/logger";
+import { copyToClipboard } from "@app/utils/clipboard";
 
 // Resolve babel-plugin-react-compiler from GenesisTools installation
 const __filename = fileURLToPath(import.meta.url);

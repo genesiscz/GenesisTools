@@ -439,13 +439,7 @@ export type NotificationReason =
     | "subscribed"
     | "team_mention";
 
-export type NotificationSubjectType =
-    | "Issue"
-    | "PullRequest"
-    | "Release"
-    | "Discussion"
-    | "CheckSuite"
-    | "Commit";
+export type NotificationSubjectType = "Issue" | "PullRequest" | "Release" | "Discussion" | "CheckSuite" | "Commit";
 
 export interface GitHubNotification {
     id: string;

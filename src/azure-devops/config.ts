@@ -2,13 +2,9 @@
  * Azure DevOps CLI - Configuration loading and management
  */
 
-import type {
-    AzureConfig,
-    AzureConfigWithTimeLog,
-    TimeLogUser,
-} from "@app/azure-devops/types";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { AzureConfig, AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import { formatRelativeTime } from "@app/utils/format";
 
 export function getRelativeTime(date: Date): string {

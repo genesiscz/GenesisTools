@@ -2,12 +2,7 @@
  * Azure DevOps CLI - Field schema and used values extraction
  */
 
-import type {
-    UsedValuesCache,
-    WorkItem,
-    WorkItemFull,
-    WorkItemTypeDefinition,
-} from "@app/azure-devops/types";
+import type { UsedValuesCache, WorkItem, WorkItemFull, WorkItemTypeDefinition } from "@app/azure-devops/types";
 import { parseRelations } from "./relations";
 
 // Standard Azure DevOps field values (the API doesn't return these in type definition)

@@ -9,6 +9,7 @@
  * - Quick non-interactive creation
  */
 
+import { existsSync, readFileSync } from "node:fs";
 import { Api } from "@app/azure-devops/api";
 import { CACHE_TTL, storage } from "@app/azure-devops/cache";
 import type {
@@ -33,7 +34,6 @@ import logger from "@app/logger";
 import { ExitPromptError } from "@inquirer/core";
 import { confirm, editor, input, select } from "@inquirer/prompts";
 import type { Command } from "commander";
-import { existsSync, readFileSync } from "node:fs";
 
 // Common work item types to show first (others available via "Show all...")
 const COMMON_WORK_ITEM_TYPES = ["Bug", "Task", "User Story", "Feature", "Epic", "Incident"];

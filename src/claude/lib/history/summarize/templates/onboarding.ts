@@ -10,7 +10,8 @@ import { buildMetadataBlock, type PromptTemplate, type TemplateContext } from ".
 
 export class OnboardingTemplate implements PromptTemplate {
     name = "onboarding";
-    description = "Beginner-friendly codebase documentation with architecture overview, file roles, data flow, and practical recipes";
+    description =
+        "Beginner-friendly codebase documentation with architecture overview, file roles, data flow, and practical recipes";
 
     systemPrompt = `You are a technical writer creating onboarding documentation from a Claude Code development session transcript.
 

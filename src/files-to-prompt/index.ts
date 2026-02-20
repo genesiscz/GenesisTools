@@ -2,8 +2,8 @@ import { existsSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import logger from "@app/logger";
-import { handleReadmeFlag } from "@app/utils/readme";
 import { formatBytes as _formatBytes } from "@app/utils/format";
+import { handleReadmeFlag } from "@app/utils/readme";
 import { estimateTokens, formatTokens } from "@ask/utils/helpers";
 import type { FileSink } from "bun";
 import { Command } from "commander";
@@ -515,7 +515,9 @@ async function processPath(
                 }
             }
         } catch (error) {
-            logger.error(`Error reading directory ${dirPath}: ${error instanceof Error ? error.message : String(error)}`);
+            logger.error(
+                `Error reading directory ${dirPath}: ${error instanceof Error ? error.message : String(error)}`
+            );
         }
     }
 }
@@ -887,7 +889,9 @@ async function main(): Promise<void> {
                     (fileSink as FileSink).write(`${s}\n`);
                 };
             } catch (error) {
-                logger.error(`Error setting up output file ${outputFile}: ${error instanceof Error ? error.message : String(error)}`);
+                logger.error(
+                    `Error setting up output file ${outputFile}: ${error instanceof Error ? error.message : String(error)}`
+                );
                 process.exit(1);
             }
         } else if (flatFolder && outputFile) {
@@ -900,7 +904,9 @@ async function main(): Promise<void> {
                     process.exit(1);
                 }
             } catch (error) {
-                logger.error(`Error setting up output directory ${outputFile}: ${error instanceof Error ? error.message : String(error)}`);
+                logger.error(
+                    `Error setting up output directory ${outputFile}: ${error instanceof Error ? error.message : String(error)}`
+                );
                 process.exit(1);
             }
         }

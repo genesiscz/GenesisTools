@@ -17,9 +17,9 @@ import {
     updateWorkItemCacheSection,
 } from "@app/azure-devops/cache";
 import { buildWorkItemHistory, resolveUser, userMatches } from "@app/azure-devops/history";
-import { escapeWiqlValue } from "@app/azure-devops/wiql-builder";
 import type { Comment, IdentityRef, WorkItemUpdate } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
+import { escapeWiqlValue } from "@app/azure-devops/wiql-builder";
 import { suggestCommand } from "@app/utils/cli";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
@@ -55,17 +55,18 @@ interface ActivityDay {
 // ============= Event Extraction =============
 
 const NOISE_FIELDS = new Set([
-    "System.Rev", "System.AuthorizedDate", "System.RevisedDate",
-    "System.ChangedDate", "System.ChangedBy", "System.AuthorizedAs",
-    "System.PersonId", "System.Watermark",
+    "System.Rev",
+    "System.AuthorizedDate",
+    "System.RevisedDate",
+    "System.ChangedDate",
+    "System.ChangedBy",
+    "System.AuthorizedAs",
+    "System.PersonId",
+    "System.Watermark",
 ]);
 
 /** Convert a WorkItemUpdate into ActivityEvent(s) */
-function extractEventsFromUpdate(
-    update: WorkItemUpdate,
-    workItemId: number,
-    title: string,
-): ActivityEvent[] {
+function extractEventsFromUpdate(update: WorkItemUpdate, workItemId: number, title: string): ActivityEvent[] {
     const events: ActivityEvent[] = [];
     const fields = update.fields ?? {};
     const date = update.revisedDate;
@@ -82,7 +83,10 @@ function extractEventsFromUpdate(
         const newVal = fields["System.State"].newValue as string | undefined;
         if (newVal) {
             events.push({
-                date, workItemId, title, type: "state_change",
+                date,
+                workItemId,
+                title,
+                type: "state_change",
                 description: oldVal ? `${oldVal} → ${newVal}` : `→ ${newVal}`,
             });
         }
@@ -109,7 +113,10 @@ function extractEventsFromUpdate(
 
 /** Convert a Comment into an ActivityEvent */
 function commentToEvent(comment: Comment, workItemId: number, title: string): ActivityEvent {
-    const plainText = comment.text.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").trim();
+    const plainText = comment.text
+        .replace(/<[^>]+>/g, "")
+        .replace(/&nbsp;/g, " ")
+        .trim();
     const preview = plainText.length > 80 ? `${plainText.slice(0, 77)}...` : plainText;
     return { date: comment.date, workItemId, title, type: "comment", description: preview };
 }
@@ -121,8 +128,14 @@ async function scanCachedActivity(
     userName: string,
     fromDate?: Date,
     toDate?: Date,
-    includeComments = true,
-): Promise<{ events: ActivityEvent[]; scannedCount: number; totalCached: number; withoutHistory: number; matchedItems: Set<number> }> {
+    includeComments = true
+): Promise<{
+    events: ActivityEvent[];
+    scannedCount: number;
+    totalCached: number;
+    withoutHistory: number;
+    matchedItems: Set<number>;
+}> {
     const cacheFiles = await storage.listCacheFiles(false);
     const workitemFiles = cacheFiles.filter((f) => f.startsWith("workitem-") && f.endsWith(".json"));
 
@@ -151,9 +164,8 @@ async function scanCachedActivity(
 
         // Scan updates
         for (const update of updates) {
-            const revisedByName = typeof update.revisedBy === "string"
-                ? update.revisedBy
-                : update.revisedBy?.displayName;
+            const revisedByName =
+                typeof update.revisedBy === "string" ? update.revisedBy : update.revisedBy?.displayName;
             if (!revisedByName || !userMatches(revisedByName, userName)) continue;
 
             const updateDate = new Date(update.revisedDate);
@@ -188,12 +200,7 @@ async function scanCachedActivity(
 // ============= Discovery =============
 
 /** Discover work items changed by user but not in cache, sync their history + comments */
-async function discoverAndSync(
-    api: Api,
-    userName: string,
-    fromDate?: Date,
-    toDate?: Date,
-): Promise<number[]> {
+async function discoverAndSync(api: Api, userName: string, fromDate?: Date, toDate?: Date): Promise<number[]> {
     // Find existing cached IDs
     const cacheFiles = await storage.listCacheFiles(false);
     const cachedIds = new Set<number>();
@@ -258,10 +265,7 @@ async function discoverAndSync(
 // ============= Fetch Missing Comments =============
 
 /** Fetch comments for items that have history but no cached comments */
-async function fetchMissingComments(
-    api: Api,
-    matchedItemIds: number[],
-): Promise<number> {
+async function fetchMissingComments(api: Api, matchedItemIds: number[]): Promise<number> {
     const needComments: number[] = [];
     for (const id of matchedItemIds) {
         const cached = await loadWorkItemCache(id);
@@ -313,13 +317,19 @@ function groupByDay(events: ActivityEvent[]): ActivityDay[] {
 }
 
 const TYPE_ICONS: Record<ActivityEvent["type"], string> = {
-    created: "[+]", state_change: "[S]", assignment_change: "[A]",
-    field_edit: "[E]", comment: "[C]",
+    created: "[+]",
+    state_change: "[S]",
+    assignment_change: "[A]",
+    field_edit: "[E]",
+    comment: "[C]",
 };
 
 const TYPE_COLORS: Record<ActivityEvent["type"], (s: string) => string> = {
-    created: pc.green, state_change: pc.magenta, assignment_change: pc.blue,
-    field_edit: pc.yellow, comment: pc.cyan,
+    created: pc.green,
+    state_change: pc.magenta,
+    assignment_change: pc.blue,
+    field_edit: pc.yellow,
+    comment: pc.cyan,
 };
 
 function printTimeline(days: ActivityDay[]): void {
@@ -348,7 +358,10 @@ function printTimeline(days: ActivityDay[]): void {
 }
 
 function printSummary(days: ActivityDay[]): void {
-    if (days.length === 0) { p.log.warn("No activity found."); return; }
+    if (days.length === 0) {
+        p.log.warn("No activity found.");
+        return;
+    }
 
     p.log.step(pc.bold("Activity Summary"));
     for (const day of days) {
@@ -364,7 +377,7 @@ function printSummary(days: ActivityDay[]): void {
 
         const uniqueItems = new Set(day.events.map((e) => e.workItemId));
         console.log(
-            `  ${pc.bold(day.date)} (${day.dayName}): ${day.events.length} actions across ${uniqueItems.size} items — ${parts.join(", ")}`,
+            `  ${pc.bold(day.date)} (${day.dayName}): ${day.events.length} actions across ${uniqueItems.size} items — ${parts.join(", ")}`
         );
     }
 
@@ -416,11 +429,13 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
 
     // Parse date range
     const fromDate = options.from ? new Date(options.from) : undefined;
-    const toDate = options.to ? (() => {
-        const d = new Date(options.to!);
-        if (options.to?.length <= 10) d.setHours(23, 59, 59, 999);
-        return d;
-    })() : undefined;
+    const toDate = options.to
+        ? (() => {
+              const d = new Date(options.to!);
+              if (options.to?.length <= 10) d.setHours(23, 59, 59, 999);
+              return d;
+          })()
+        : undefined;
 
     const dateRangeStr = [
         fromDate ? fromDate.toISOString().slice(0, 10) : "beginning",
@@ -437,16 +452,21 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
         const spinner = p.spinner();
         spinner.start("Discovering work items changed by user...");
         const newIds = await discoverAndSync(api, userName, fromDate, toDate);
-        spinner.stop(newIds.length > 0
-            ? `Discovered and synced ${newIds.length} new work items`
-            : "No new work items to discover");
+        spinner.stop(
+            newIds.length > 0
+                ? `Discovered and synced ${newIds.length} new work items`
+                : "No new work items to discover"
+        );
     }
 
     // Step 2: Scan cached data (updates + cached comments)
     const spinner = p.spinner();
     spinner.start("Scanning cached work items...");
     const { events, scannedCount, totalCached, withoutHistory, matchedItems } = await scanCachedActivity(
-        resolvedUserName, fromDate, toDate, includeComments,
+        resolvedUserName,
+        fromDate,
+        toDate,
+        includeComments
     );
     spinner.stop(`Scanned ${scannedCount} items, found ${events.length} actions across ${matchedItems.size} items`);
 
@@ -460,7 +480,8 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
             // Re-scan to include newly fetched comments
             const rescan = await scanCachedActivity(resolvedUserName, fromDate, toDate, true);
             // Only add NEW comment events (avoid duplicates from first scan)
-            const makeKey = (e: ActivityEvent) => `${e.date}-${e.workItemId}-${e.type}${e.type === "comment" ? `-${e.description}` : ""}`;
+            const makeKey = (e: ActivityEvent) =>
+                `${e.date}-${e.workItemId}-${e.type}${e.type === "comment" ? `-${e.description}` : ""}`;
             const existingKeys = new Set(events.map(makeKey));
             for (const e of rescan.events) {
                 const key = makeKey(e);
@@ -477,9 +498,15 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
     const days = groupByDay(events);
 
     switch (output) {
-        case "timeline": printTimeline(days); break;
-        case "summary": printSummary(days); break;
-        case "json": printJson(days); break;
+        case "timeline":
+            printTimeline(days);
+            break;
+        case "summary":
+            printSummary(days);
+            break;
+        case "json":
+            printJson(days);
+            break;
     }
 
     // Suggest --discover if not used
@@ -492,8 +519,11 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
             add: ["--discover", ...(fromDate ? [] : ["--from", "2026-01-01"])],
         });
         p.log.message(
-            pc.dim(`Only locally cached items were scanned (${stats.join(", ")}). To query Azure DevOps for all items you changed:`)
-            + "\n" + pc.cyan(`  ${cmd}`),
+            pc.dim(
+                `Only locally cached items were scanned (${stats.join(", ")}). To query Azure DevOps for all items you changed:`
+            ) +
+                "\n" +
+                pc.cyan(`  ${cmd}`)
         );
     }
 }

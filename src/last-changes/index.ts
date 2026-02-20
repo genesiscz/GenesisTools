@@ -1,9 +1,9 @@
-import { handleReadmeFlag } from "@app/utils/readme";
-import { formatRelativeTime as _formatRelativeTime } from "@app/utils/format";
-import chalk from "chalk";
-import { Command } from "commander";
 import { lstatSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { formatRelativeTime as _formatRelativeTime } from "@app/utils/format";
+import { handleReadmeFlag } from "@app/utils/readme";
+import chalk from "chalk";
+import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -30,12 +30,13 @@ interface TimeGroup {
 function formatRelativeTime(date: Date): string {
     return _formatRelativeTime(date, {
         maxDays: 7,
-        fallbackFormat: (d) => d.toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-        }),
+        fallbackFormat: (d) =>
+            d.toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+            }),
     });
 }
 

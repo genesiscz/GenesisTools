@@ -1,7 +1,19 @@
 // Review command - fetch, display, reply to, and resolve PR review threads
 
-import { formatReviewJSON, formatReviewMarkdown, formatReviewTerminal, saveReviewMarkdown } from "@app/github/lib/review-output";
-import { batchReply, batchReplyAndResolve, batchResolveThreads, calculateReviewStats, fetchPRReviewThreads, parseThreads } from "@app/github/lib/review-threads";
+import {
+    formatReviewJSON,
+    formatReviewMarkdown,
+    formatReviewTerminal,
+    saveReviewMarkdown,
+} from "@app/github/lib/review-output";
+import {
+    batchReply,
+    batchReplyAndResolve,
+    batchResolveThreads,
+    calculateReviewStats,
+    fetchPRReviewThreads,
+    parseThreads,
+} from "@app/github/lib/review-threads";
 import type { ReviewCommandOptions, ReviewData } from "@app/github/types";
 import logger from "@app/logger";
 import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
@@ -32,15 +44,18 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
     const resolveThreadOpt = options.resolveThread || options.resolve;
     if ((options.respond || resolveThreadOpt) && !options.threadId) {
         throw new Error(
-            '--thread-id is required when using --respond or --resolve-thread\n' +
-            'Usage: tools github review <pr> --respond "message" -t <thread-id>\n' +
-            '       tools github review <pr> --resolve-thread -t <thread-id>'
+            "--thread-id is required when using --respond or --resolve-thread\n" +
+                'Usage: tools github review <pr> --respond "message" -t <thread-id>\n' +
+                "       tools github review <pr> --resolve-thread -t <thread-id>"
         );
     }
 
     // Handle respond and/or resolve operations (supports comma-separated thread IDs)
     if ((options.respond || resolveThreadOpt) && options.threadId) {
-        const threadIds = options.threadId.split(",").map((s) => s.trim()).filter(Boolean);
+        const threadIds = options.threadId
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
         if (threadIds.length === 0) {
             throw new Error("No valid thread IDs provided. Check your --thread-id value.");
         }
@@ -53,7 +68,9 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                     : undefined,
             });
             if (result.replied === 0 && result.failed.length > 0) {
-                throw new Error(`Failed to reply to or resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`);
+                throw new Error(
+                    `Failed to reply to or resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`
+                );
             }
             console.log(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
             if (result.failed.length) {
@@ -66,7 +83,9 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                     : undefined,
             });
             if (result.resolved === 0 && result.failed.length > 0) {
-                throw new Error(`Failed to resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`);
+                throw new Error(
+                    `Failed to resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`
+                );
             }
             console.log(chalk.green(`Resolved ${result.resolved} thread(s)`));
             if (result.failed.length) {
@@ -79,7 +98,9 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                     : undefined,
             });
             if (result.replied === 0 && result.failed.length > 0) {
-                throw new Error(`Failed to reply to any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`);
+                throw new Error(
+                    `Failed to reply to any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`
+                );
             }
             console.log(chalk.green(`Replied to ${result.replied} thread(s)`));
             if (result.failed.length) {
@@ -102,9 +123,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
     const stats = calculateReviewStats(allThreads);
 
     // Filter if requested
-    const displayThreads = options.unresolvedOnly
-        ? allThreads.filter((t) => t.status === "unresolved")
-        : allThreads;
+    const displayThreads = options.unresolvedOnly ? allThreads.filter((t) => t.status === "unresolved") : allThreads;
 
     // Build review data
     const reviewData: ReviewData = {

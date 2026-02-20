@@ -1,16 +1,16 @@
 // src/utils/macos/ocr.ts
 
-import { writeFileSync, unlinkSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { getDarwinKit } from "./darwinkit";
-import type { OcrResult, OcrLevel } from "./types";
+import type { OcrLevel, OcrResult } from "./types";
 
 export interface OcrOptions {
-  /** BCP-47 language codes to use for recognition. Default: ["en-US"] */
-  languages?: string[];
-  /** "fast" for speed, "accurate" for quality. Default: "accurate" */
-  level?: OcrLevel;
+    /** BCP-47 language codes to use for recognition. Default: ["en-US"] */
+    languages?: string[];
+    /** "fast" for speed, "accurate" for quality. Default: "accurate" */
+    level?: OcrLevel;
 }
 
 /**
@@ -19,15 +19,12 @@ export interface OcrOptions {
  *
  * @param imagePath - Absolute path to the image file (JPEG, PNG, TIFF, HEIC, PDF)
  */
-export async function recognizeText(
-  imagePath: string,
-  options: OcrOptions = {},
-): Promise<OcrResult> {
-  return getDarwinKit().call<OcrResult>("vision.ocr", {
-    path: imagePath,
-    languages: options.languages ?? ["en-US"],
-    level: options.level ?? "accurate",
-  });
+export async function recognizeText(imagePath: string, options: OcrOptions = {}): Promise<OcrResult> {
+    return getDarwinKit().call<OcrResult>("vision.ocr", {
+        path: imagePath,
+        languages: options.languages ?? ["en-US"],
+        level: options.level ?? "accurate",
+    });
 }
 
 /**
@@ -38,28 +35,27 @@ export async function recognizeText(
  * @param extension - File extension hint, e.g. "png", "jpg". Default: "png"
  */
 export async function recognizeTextFromBuffer(
-  buffer: Buffer | Uint8Array,
-  extension = "png",
-  options: OcrOptions = {},
+    buffer: Buffer | Uint8Array,
+    extension = "png",
+    options: OcrOptions = {}
 ): Promise<OcrResult> {
-  const tempPath = join(tmpdir(), `darwin-ocr-${Date.now()}.${extension}`);
-  try {
-    writeFileSync(tempPath, buffer);
-    return await recognizeText(tempPath, options);
-  } finally {
-    if (existsSync(tempPath)) {
-      try { unlinkSync(tempPath); } catch {}
+    const tempPath = join(tmpdir(), `darwin-ocr-${Date.now()}.${extension}`);
+    try {
+        writeFileSync(tempPath, buffer);
+        return await recognizeText(tempPath, options);
+    } finally {
+        if (existsSync(tempPath)) {
+            try {
+                unlinkSync(tempPath);
+            } catch {}
+        }
     }
-  }
 }
 
 /**
  * Extract only the plain text string from an image file (no bounding boxes).
  */
-export async function extractText(
-  imagePath: string,
-  options: OcrOptions = {},
-): Promise<string> {
-  const result = await recognizeText(imagePath, options);
-  return result.text;
+export async function extractText(imagePath: string, options: OcrOptions = {}): Promise<string> {
+    const result = await recognizeText(imagePath, options);
+    return result.text;
 }

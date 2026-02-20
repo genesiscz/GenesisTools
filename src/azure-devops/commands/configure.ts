@@ -5,16 +5,15 @@
  * and project configuration from any Azure DevOps URL.
  */
 
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Api, AZURE_DEVOPS_RESOURCE_ID } from "@app/azure-devops/api";
 import { exitWithAuthGuide } from "@app/azure-devops/cli.utils";
 import type { AzureConfig } from "@app/azure-devops/types";
 import { getLocalConfigDir, parseAzureDevOpsUrl } from "@app/azure-devops/utils";
-
 import logger from "@app/logger";
 import { $ } from "bun";
 import type { Command } from "commander";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 
 /**
  * Handle the configure command - parse URL, fetch project ID, and save config

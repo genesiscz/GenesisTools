@@ -4,10 +4,10 @@
  * - "light": Minimal readline-based REPL input (inline, no box/frame)
  */
 
-import * as p from "@clack/prompts";
-import pc from "picocolors";
 import * as readline from "node:readline";
 import { Writable } from "node:stream";
+import * as p from "@clack/prompts";
+import pc from "picocolors";
 
 export interface InputOptions {
     message: string;
@@ -39,9 +39,7 @@ export async function input(options: InputOptions): Promise<string | symbol> {
         return p.text({
             message: options.message,
             placeholder: options.placeholder,
-            validate: options.validate
-                ? (value) => options.validate?.(value ?? "")
-                : undefined,
+            validate: options.validate ? (value) => options.validate?.(value ?? "") : undefined,
         });
     }
 

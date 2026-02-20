@@ -4,11 +4,11 @@
  */
 
 import { Database } from "bun:sqlite";
-import logger from "@app/logger";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
+import logger from "@app/logger";
 
 const DEFAULT_CACHE_DIR = join(homedir(), ".genesis-tools", "claude-history");
 const DB_NAME = "index.db";
@@ -657,7 +657,9 @@ function rowToSessionMetadataRecord(row: SessionMetadataRow): SessionMetadataRec
 
 export function getSessionMetadata(filePath: string): SessionMetadataRecord | null {
     const db = getDatabase();
-    const row = db.query("SELECT * FROM session_metadata WHERE file_path = ?").get(filePath) as SessionMetadataRow | null;
+    const row = db
+        .query("SELECT * FROM session_metadata WHERE file_path = ?")
+        .get(filePath) as SessionMetadataRow | null;
     return row ? rowToSessionMetadataRecord(row) : null;
 }
 
@@ -685,9 +687,9 @@ export function upsertSessionMetadata(record: SessionMetadataRecord): void {
 
 export function getAllSessionMetadata(): SessionMetadataRecord[] {
     const db = getDatabase();
-    const rows = db.query(
-        "SELECT * FROM session_metadata ORDER BY COALESCE(first_timestamp, '') DESC"
-    ).all() as SessionMetadataRow[];
+    const rows = db
+        .query("SELECT * FROM session_metadata ORDER BY COALESCE(first_timestamp, '') DESC")
+        .all() as SessionMetadataRow[];
     return rows.map(rowToSessionMetadataRecord);
 }
 

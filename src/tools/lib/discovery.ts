@@ -24,7 +24,7 @@ export function discoverTools(srcDir: string): ToolInfo[] {
         try {
             const stats = statSync(entryPath);
             if (stats.isDirectory()) {
-                const indexFile = INDEX_FILE_NAMES.find(f => existsSync(join(entryPath, f)));
+                const indexFile = INDEX_FILE_NAMES.find((f) => existsSync(join(entryPath, f)));
                 if (indexFile) {
                     tools.push({
                         name: entry,
@@ -35,10 +35,10 @@ export function discoverTools(srcDir: string): ToolInfo[] {
                 }
             } else if (
                 stats.isFile() &&
-                SCRIPT_EXTENSIONS.some(ext => entry.endsWith(ext)) &&
+                SCRIPT_EXTENSIONS.some((ext) => entry.endsWith(ext)) &&
                 !INDEX_FILE_NAMES.includes(entry)
             ) {
-                const ext = SCRIPT_EXTENSIONS.find(e => entry.endsWith(e))!;
+                const ext = SCRIPT_EXTENSIONS.find((e) => entry.endsWith(e))!;
                 const name = basename(entry, ext);
                 const toolDir = join(srcDir, name);
                 tools.push({
@@ -78,7 +78,7 @@ function extractDescription(toolDir: string): string {
 
     // Fallback: humanize the directory/tool name
     const name = basename(toolDir) || "Unknown";
-    return name.replace(/[-_]/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    return name.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /**

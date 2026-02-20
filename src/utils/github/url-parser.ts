@@ -257,12 +257,7 @@ export function parseGitHubFileUrl(input: string): GitHubFileUrl | null {
  * Without prNumber: https://github.com/owner/repo/commit/SHA
  * With prNumber: https://github.com/owner/repo/pull/N/commits/SHA
  */
-export function buildGitHubCommitUrl(
-    owner: string,
-    repo: string,
-    sha: string,
-    prNumber?: number
-): string {
+export function buildGitHubCommitUrl(owner: string, repo: string, sha: string, prNumber?: number): string {
     if (prNumber) {
         return `https://github.com/${owner}/${repo}/pull/${prNumber}/commits/${sha}`;
     }
@@ -283,15 +278,10 @@ export function buildRawGitHubUrl(owner: string, repo: string, ref: string, path
  * API: https://api.github.com/repos/owner/repo/pulls/456  -> https://github.com/owner/repo/pull/456
  * API: https://api.github.com/repos/owner/repo/commits/sha -> https://github.com/owner/repo/commit/sha
  */
-export function apiUrlToWebUrl(
-    apiUrl: string | null,
-    repoHtmlUrl: string,
-): string {
+export function apiUrlToWebUrl(apiUrl: string | null, repoHtmlUrl: string): string {
     if (!apiUrl) return repoHtmlUrl;
 
-    const match = apiUrl.match(
-        /api\.github\.com\/repos\/([^/]+\/[^/]+)\/(issues|pulls|releases|commits)\/(.+)/,
-    );
+    const match = apiUrl.match(/api\.github\.com\/repos\/([^/]+\/[^/]+)\/(issues|pulls|releases|commits)\/(.+)/);
     if (!match) return repoHtmlUrl;
 
     const [, repoPath, resource, identifier] = match;

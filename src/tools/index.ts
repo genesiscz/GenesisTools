@@ -2,19 +2,13 @@
 
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
-
+import { copyToClipboard } from "@app/utils/clipboard";
+import { renderMarkdownToCli } from "@app/utils/markdown/index.js";
+import { searchSelect, searchSelectCancelSymbol } from "@app/utils/prompts/clack/search-select.js";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-
-import { copyToClipboard } from "@app/utils/clipboard";
-
 import { discoverTools, getReadme, type ToolInfo } from "./lib/discovery.js";
 import { introspectTool } from "./lib/introspect.js";
-import { renderMarkdownToCli } from "@app/utils/markdown/index.js";
-import {
-    searchSelect,
-    searchSelectCancelSymbol,
-} from "@app/utils/prompts/clack/search-select.js";
 
 const LOGO = pc.cyan(`
   ╔═══════════════════════════════════╗
@@ -34,7 +28,7 @@ async function handleToolAction(tool: ToolInfo, srcDir: string): Promise<void> {
     options.push(
         { value: "help", label: "Explore subcommands", hint: "--help" },
         { value: "copy", label: "Copy command to clipboard" },
-        { value: "back", label: "Back to list" },
+        { value: "back", label: "Back to list" }
     );
 
     const action = await p.select({
@@ -127,9 +121,7 @@ async function main(): Promise<void> {
         process.exit(0);
     }
 
-    p.log.info(
-        `${pc.bold(String(tools.length))} tools available. Type to search.`,
-    );
+    p.log.info(`${pc.bold(String(tools.length))} tools available. Type to search.`);
 
     // Main loop
     while (true) {
@@ -143,10 +135,7 @@ async function main(): Promise<void> {
             maxVisible: 12,
         });
 
-        if (
-            selected === searchSelectCancelSymbol ||
-            selected === undefined
-        ) {
+        if (selected === searchSelectCancelSymbol || selected === undefined) {
             p.outro(pc.dim("Bye!"));
             break;
         }

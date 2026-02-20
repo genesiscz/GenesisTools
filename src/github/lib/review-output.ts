@@ -1,10 +1,10 @@
 // Review thread output formatting - terminal (chalk), markdown, JSON
 // Extracted from src/github-pr/index.ts, adapted to use chalk
 
-import type { ParsedReviewThread, ReviewData } from "@app/github/types";
-import chalk from "chalk";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ParsedReviewThread, ReviewData } from "@app/github/types";
+import chalk from "chalk";
 
 // =============================================================================
 // Terminal Formatting (chalk)
@@ -149,8 +149,7 @@ function formatSummary(data: ReviewData, shownCount: number): string {
         data.title.substring(0, 70).padEnd(78) +
         chalk.cyan("|") +
         "\n";
-    output +=
-        `${chalk.cyan("|") + `  Repository: ${data.owner}/${data.repo}`.padEnd(87) + chalk.cyan("|")}\n`;
+    output += `${chalk.cyan("|") + `  Repository: ${data.owner}/${data.repo}`.padEnd(87) + chalk.cyan("|")}\n`;
     output += `${chalk.cyan("|") + `  Status: ${data.state}`.padEnd(87) + chalk.cyan("|")}\n`;
     output += `${chalk.cyan(`+${"=".repeat(88)}+`)}\n`;
 
@@ -216,9 +215,12 @@ function formatMarkdownThread(thread: ParsedReviewThread): string {
     output += `|----------|-------|\n`;
     output += `| **Status** | ${statusEmoji} ${thread.status.toUpperCase()} |\n`;
     output += `| **Severity** | ${severityEmoji} ${thread.severity.toUpperCase()} |\n`;
-    const lineRef = thread.startLine && thread.startLine !== thread.line
-        ? `:${thread.startLine}-${thread.line}`
-        : thread.line ? `:${thread.line}` : "";
+    const lineRef =
+        thread.startLine && thread.startLine !== thread.line
+            ? `:${thread.startLine}-${thread.line}`
+            : thread.line
+              ? `:${thread.line}`
+              : "";
     output += `| **File** | \`${thread.file}${lineRef}\` |\n`;
     output += `| **Author** | @${thread.author} |\n`;
     output += `| **Thread ID** | #${thread.threadNumber} (\`${thread.threadId}\`) |\n`;
@@ -231,17 +233,18 @@ function formatMarkdownThread(thread: ParsedReviewThread): string {
     output += `**Issue:**\n\n${thread.issue}\n\n`;
 
     if (thread.diffHunk) {
-        const mdLineRef = thread.startLine && thread.startLine !== thread.line
-            ? `lines ${thread.startLine}-${thread.line}`
-            : thread.line ? `line ${thread.line}` : null;
+        const mdLineRef =
+            thread.startLine && thread.startLine !== thread.line
+                ? `lines ${thread.startLine}-${thread.line}`
+                : thread.line
+                  ? `line ${thread.line}`
+                  : null;
         const lineNote = mdLineRef ? `> Comment targets **${mdLineRef}**\n\n` : "";
         output += `<details>\n<summary>Code Context</summary>\n\n${lineNote}\`\`\`diff\n${thread.diffHunk}\n\`\`\`\n\n</details>\n\n`;
     }
 
     if (thread.suggestedCode) {
-        const suggested = thread.suggestedCode.endsWith("\n")
-            ? thread.suggestedCode
-            : `${thread.suggestedCode}\n`;
+        const suggested = thread.suggestedCode.endsWith("\n") ? thread.suggestedCode : `${thread.suggestedCode}\n`;
         output += `**Suggested Change:**\n\n\`\`\`suggestion\n${suggested}\`\`\`\n\n`;
     }
 

@@ -138,7 +138,11 @@ async function main() {
         await mkdir(targetDir, { recursive: true });
         logger.debug(`✔ Created target directory: ${targetDir}`);
     } catch (error) {
-        logger.error("✖ Error creating target directory '%s': %s", targetDir, error instanceof Error ? error.message : String(error));
+        logger.error(
+            "✖ Error creating target directory '%s': %s",
+            targetDir,
+            error instanceof Error ? error.message : String(error)
+        );
         process.exit(1);
     }
 
@@ -148,7 +152,10 @@ async function main() {
         logger.debug("⏳ Fetching list of changed files...");
         let gitOutput = "";
         if (mode === "commits") {
-            gitOutput = await runGitCommand(["diff", "--name-only", "--diff-filter=d", `HEAD~${commits}`, "HEAD"], repoDir);
+            gitOutput = await runGitCommand(
+                ["diff", "--name-only", "--diff-filter=d", `HEAD~${commits}`, "HEAD"],
+                repoDir
+            );
         } else if (mode === "staged") {
             gitOutput = await runGitCommand(["diff", "--name-only", "--diff-filter=d", "--cached"], repoDir);
         } else if (mode === "unstaged") {
@@ -158,7 +165,9 @@ async function main() {
             gitOutput = await runGitCommand(["diff", "--name-only", "--diff-filter=d"], repoDir);
         } else {
             // mode === 'all'
-            const combined = (await runGitCommand(["diff", "--name-only", "--diff-filter=d", "HEAD"], repoDir)).split("\n");
+            const combined = (await runGitCommand(["diff", "--name-only", "--diff-filter=d", "HEAD"], repoDir)).split(
+                "\n"
+            );
             gitOutput = Array.from(combined)
                 .filter((f) => f)
                 .join("\n"); // Filter out empty lines

@@ -70,7 +70,7 @@ export function suggestCommand(
         replaceCommand?: string[];
         /** Flag names to preserve from original argv when using replaceCommand (e.g., ["--session"]) */
         keepFlags?: string[];
-    } = {},
+    } = {}
 ): string {
     // process.argv = [bun, script, ...args]
     let args = process.argv.slice(2);
@@ -264,9 +264,7 @@ export class Executor {
             if (timeoutResult.type === "timeout") {
                 proc.kill();
                 await proc.exited;
-                throw new Error(
-                    `Command timed out after ${timeoutMs}ms: ${cmd.join(" ")}`
-                );
+                throw new Error(`Command timed out after ${timeoutMs}ms: ${cmd.join(" ")}`);
             }
 
             [stdout, stderr, exitCode] = timeoutResult.value;

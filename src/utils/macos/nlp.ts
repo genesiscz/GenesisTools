@@ -2,17 +2,17 @@
 
 import { getDarwinKit } from "./darwinkit";
 import type {
-  LanguageResult,
-  SentimentResult,
-  TagResult,
-  EmbedResult,
-  DistanceResult,
-  NeighborsResult,
-  NlpScheme,
-  EmbedType,
-  NamedEntity,
-  TaggedToken,
-  Keyword,
+    DistanceResult,
+    EmbedResult,
+    EmbedType,
+    Keyword,
+    LanguageResult,
+    NamedEntity,
+    NeighborsResult,
+    NlpScheme,
+    SentimentResult,
+    TaggedToken,
+    TagResult,
 } from "./types";
 
 /**
@@ -22,7 +22,7 @@ import type {
  * // → { language: "fr", confidence: 0.999 }
  */
 export async function detectLanguage(text: string): Promise<LanguageResult> {
-  return getDarwinKit().call<LanguageResult>("nlp.language", { text });
+    return getDarwinKit().call<LanguageResult>("nlp.language", { text });
 }
 
 /**
@@ -33,7 +33,7 @@ export async function detectLanguage(text: string): Promise<LanguageResult> {
  * // → { score: 1.0, label: "positive" }
  */
 export async function analyzeSentiment(text: string): Promise<SentimentResult> {
-  return getDarwinKit().call<SentimentResult>("nlp.sentiment", { text });
+    return getDarwinKit().call<SentimentResult>("nlp.sentiment", { text });
 }
 
 /**
@@ -46,15 +46,15 @@ export async function analyzeSentiment(text: string): Promise<SentimentResult> {
  *   - "language"       → Per-token language
  */
 export async function tagText(
-  text: string,
-  schemes: NlpScheme[] = ["lexicalClass"],
-  language?: string,
+    text: string,
+    schemes: NlpScheme[] = ["lexicalClass"],
+    language?: string
 ): Promise<TagResult> {
-  return getDarwinKit().call<TagResult>("nlp.tag", {
-    text,
-    schemes,
-    ...(language ? { language } : {}),
-  });
+    return getDarwinKit().call<TagResult>("nlp.tag", {
+        text,
+        schemes,
+        ...(language ? { language } : {}),
+    });
 }
 
 /**
@@ -62,18 +62,18 @@ export async function tagText(
  * Convenience wrapper around tagText with the "nameType" scheme.
  */
 export async function extractEntities(text: string): Promise<NamedEntity[]> {
-  const result = await tagText(text, ["nameType"]);
-  const nameTypeMap: Record<string, NamedEntity["type"]> = {
-    PersonalName: "person",
-    OrganizationName: "organization",
-    PlaceName: "place",
-  };
-  return result.tokens
-    .filter((t: TaggedToken) => t.tag in nameTypeMap)
-    .map((t: TaggedToken) => ({
-      text: t.text,
-      type: nameTypeMap[t.tag] ?? "other",
-    }));
+    const result = await tagText(text, ["nameType"]);
+    const nameTypeMap: Record<string, NamedEntity["type"]> = {
+        PersonalName: "person",
+        OrganizationName: "organization",
+        PlaceName: "place",
+    };
+    return result.tokens
+        .filter((t: TaggedToken) => t.tag in nameTypeMap)
+        .map((t: TaggedToken) => ({
+            text: t.text,
+            type: nameTypeMap[t.tag] ?? "other",
+        }));
 }
 
 /**
@@ -81,12 +81,8 @@ export async function extractEntities(text: string): Promise<NamedEntity[]> {
  * @param language - BCP-47 language code. Default: "en"
  * @param type     - "word" or "sentence". Default: "sentence"
  */
-export async function embedText(
-  text: string,
-  language = "en",
-  type: EmbedType = "sentence",
-): Promise<EmbedResult> {
-  return getDarwinKit().call<EmbedResult>("nlp.embed", { text, language, type });
+export async function embedText(text: string, language = "en", type: EmbedType = "sentence"): Promise<EmbedResult> {
+    return getDarwinKit().call<EmbedResult>("nlp.embed", { text, language, type });
 }
 
 /**
@@ -94,26 +90,21 @@ export async function embedText(
  * Returns 0 for identical texts, up to 2 for maximally different.
  */
 export async function textDistance(
-  text1: string,
-  text2: string,
-  language = "en",
-  type: EmbedType = "sentence",
+    text1: string,
+    text2: string,
+    language = "en",
+    type: EmbedType = "sentence"
 ): Promise<DistanceResult> {
-  return getDarwinKit().call<DistanceResult>("nlp.distance", { text1, text2, language, type });
+    return getDarwinKit().call<DistanceResult>("nlp.distance", { text1, text2, language, type });
 }
 
 /**
  * Quick boolean similarity check.
  * @param threshold - Cosine distance threshold. Default: 0.5
  */
-export async function areSimilar(
-  text1: string,
-  text2: string,
-  threshold = 0.5,
-  language = "en",
-): Promise<boolean> {
-  const result = await textDistance(text1, text2, language);
-  return result.distance < threshold;
+export async function areSimilar(text1: string, text2: string, threshold = 0.5, language = "en"): Promise<boolean> {
+    const result = await textDistance(text1, text2, language);
+    return result.distance < threshold;
 }
 
 /**
@@ -123,12 +114,12 @@ export async function areSimilar(
  * @param type     - "word" or "sentence". Default: "word"
  */
 export async function findNeighbors(
-  text: string,
-  count = 5,
-  language = "en",
-  type: EmbedType = "word",
+    text: string,
+    count = 5,
+    language = "en",
+    type: EmbedType = "word"
 ): Promise<NeighborsResult> {
-  return getDarwinKit().call<NeighborsResult>("nlp.neighbors", { text, language, type, count });
+    return getDarwinKit().call<NeighborsResult>("nlp.neighbors", { text, language, type, count });
 }
 
 /**
@@ -140,10 +131,8 @@ export async function findNeighbors(
  * // → ["the", "cat", "be", "run", "quickly"]
  */
 export async function lemmatize(text: string, language?: string): Promise<string[]> {
-  const result = await tagText(text, ["lemma"], language);
-  return result.tokens
-    .filter(t => t.scheme === "lemma" && t.tag)
-    .map(t => t.tag);
+    const result = await tagText(text, ["lemma"], language);
+    return result.tokens.filter((t) => t.scheme === "lemma" && t.tag).map((t) => t.tag);
 }
 
 const CONTENT_CLASSES = new Set(["Noun", "Verb", "Adjective"]);
@@ -158,34 +147,30 @@ const CONTENT_CLASSES = new Set(["Noun", "Verb", "Adjective"]);
  * const kw = await getKeywords("Apple released a revolutionary new iPhone today");
  * // → [{ word: "Apple", lemma: "apple", lexicalClass: "Noun" }, ...]
  */
-export async function getKeywords(
-  text: string,
-  maxKeywords = 10,
-  language?: string,
-): Promise<Keyword[]> {
-  const result = await tagText(text, ["lexicalClass", "lemma"], language);
+export async function getKeywords(text: string, maxKeywords = 10, language?: string): Promise<Keyword[]> {
+    const result = await tagText(text, ["lexicalClass", "lemma"], language);
 
-  // Merge multi-scheme tokens by word text
-  const wordMap = new Map<string, { lexicalClass?: string; lemma?: string }>();
-  for (const token of result.tokens) {
-    const entry = wordMap.get(token.text) ?? {};
-    if (token.scheme === "lexicalClass") entry.lexicalClass = token.tag;
-    if (token.scheme === "lemma") entry.lemma = token.tag;
-    wordMap.set(token.text, entry);
-  }
-
-  const keywords: Keyword[] = [];
-  for (const [word, info] of wordMap) {
-    if (info.lexicalClass && CONTENT_CLASSES.has(info.lexicalClass)) {
-      keywords.push({
-        word,
-        lemma: info.lemma ?? word.toLowerCase(),
-        lexicalClass: info.lexicalClass as Keyword["lexicalClass"],
-      });
+    // Merge multi-scheme tokens by word text
+    const wordMap = new Map<string, { lexicalClass?: string; lemma?: string }>();
+    for (const token of result.tokens) {
+        const entry = wordMap.get(token.text) ?? {};
+        if (token.scheme === "lexicalClass") entry.lexicalClass = token.tag;
+        if (token.scheme === "lemma") entry.lemma = token.tag;
+        wordMap.set(token.text, entry);
     }
-  }
 
-  return keywords.slice(0, maxKeywords);
+    const keywords: Keyword[] = [];
+    for (const [word, info] of wordMap) {
+        if (info.lexicalClass && CONTENT_CLASSES.has(info.lexicalClass)) {
+            keywords.push({
+                word,
+                lemma: info.lemma ?? word.toLowerCase(),
+                lexicalClass: info.lexicalClass as Keyword["lexicalClass"],
+            });
+        }
+    }
+
+    return keywords.slice(0, maxKeywords);
 }
 
 /**
@@ -198,11 +183,7 @@ export async function getKeywords(
  * const score = await scoreRelevance("budget planning", "Q4 financial review");
  * // → 0.72  (highly relevant)
  */
-export async function scoreRelevance(
-  query: string,
-  text: string,
-  language = "en",
-): Promise<number> {
-  const { distance } = await textDistance(query, text, language, "sentence");
-  return Math.max(0, 1 - distance / 2);
+export async function scoreRelevance(query: string, text: string, language = "en"): Promise<number> {
+    const { distance } = await textDistance(query, text, language, "sentence");
+    return Math.max(0, 1 - distance / 2);
 }

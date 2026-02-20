@@ -1,7 +1,16 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
+import {
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    renameSync,
+    statSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 interface HookInput {
     session_id: string;
@@ -33,13 +42,17 @@ function ensureDir() {
 }
 
 function cleanupOldSessions() {
-    if (!existsSync(STORAGE_DIR)) return;
+    if (!existsSync(STORAGE_DIR)) {
+        return;
+    }
 
     const cutoff = Date.now() - CLEANUP_DAYS * 24 * 60 * 60 * 1000;
     const files = readdirSync(STORAGE_DIR);
 
     for (const file of files) {
-        if (!file.endsWith(".json")) continue;
+        if (!file.endsWith(".json")) {
+            continue;
+        }
         const filePath = join(STORAGE_DIR, file);
         try {
             const stats = statSync(filePath);
@@ -70,7 +83,7 @@ function trackFile(sessionId: string, filePath: string) {
     if (existsSync(sessionFile)) {
         try {
             sessionData = JSON.parse(readFileSync(sessionFile, "utf-8"));
-        } catch (err) {
+        } catch (_err) {
             // Corrupted JSON - backup and recreate
             console.warn(`[track-session-files] Corrupted session file, recreating: ${sessionFile}`);
             try {
@@ -125,10 +138,14 @@ async function main() {
         }
 
         const filePath = tool_input?.file_path || tool_response?.filePath;
-        if (!filePath) process.exit(0);
+        if (!filePath) {
+            process.exit(0);
+        }
 
         // Skip if write failed
-        if (tool_response && tool_response.success === false) process.exit(0);
+        if (tool_response && tool_response.success === false) {
+            process.exit(0);
+        }
 
         trackFile(session_id, filePath);
     }

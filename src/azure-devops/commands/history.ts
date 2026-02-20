@@ -5,18 +5,18 @@
  * The `show` handler is implemented inline; search and sync are imported.
  */
 
-import { formatDuration as _formatDuration } from "@app/utils/format";
 import { Api } from "@app/azure-devops/api";
 import { formatJSON, isHistoryFresh, loadWorkItemCache, updateWorkItemCacheSection } from "@app/azure-devops/cache";
 import { buildWorkItemHistory, calculateTimeInState, userMatches } from "@app/azure-devops/history";
 import type { AssignmentPeriod, StatePeriod, WorkItemHistorySection } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
 import logger from "@app/logger";
+import { formatDuration as _formatDuration } from "@app/utils/format";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 
-import { handleHistoryActivity, type ActivityOptions } from "./history-activity";
+import { type ActivityOptions, handleHistoryActivity } from "./history-activity";
 import { handleHistorySearch, type SearchOptions } from "./history-search";
 import { handleHistorySync } from "./history-sync";
 

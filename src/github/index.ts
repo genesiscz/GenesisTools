@@ -1,6 +1,6 @@
 // GitHub CLI Tool - Main Entry Point
 
-import { createActivityCommand, activityCommand } from "@app/github/commands/activity";
+import { activityCommand, createActivityCommand } from "@app/github/commands/activity";
 import { createCodeSearchCommand } from "@app/github/commands/code-search";
 import { commentsCommand, createCommentsCommand } from "@app/github/commands/comments";
 import { createGetCommand, getCommand } from "@app/github/commands/get";

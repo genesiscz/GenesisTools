@@ -88,12 +88,10 @@ export function getTemplate(mode: TemplateName | string): PromptTemplate {
  * List all available templates with their names and descriptions.
  */
 export function listTemplates(): Array<{ name: TemplateName; description: string }> {
-    return (Object.entries(templateRegistry) as Array<[TemplateName, () => PromptTemplate]>).map(
-        ([name, factory]) => {
-            const template = factory();
-            return { name, description: template.description };
-        }
-    );
+    return (Object.entries(templateRegistry) as Array<[TemplateName, () => PromptTemplate]>).map(([name, factory]) => {
+        const template = factory();
+        return { name, description: template.description };
+    });
 }
 
 // =============================================================================
@@ -123,7 +121,9 @@ export function buildMetadataBlock(ctx: TemplateContext): string {
     lines.push(`- **Content size:** ~${ctx.tokenCount.toLocaleString()} tokens`);
 
     if (ctx.truncated) {
-        lines.push(`\n> **Warning:** This session was truncated. ${ctx.truncationInfo ?? "Some content may be missing from the beginning or middle of the session."}`);
+        lines.push(
+            `\n> **Warning:** This session was truncated. ${ctx.truncationInfo ?? "Some content may be missing from the beginning or middle of the session."}`
+        );
     }
 
     return lines.join("\n");
