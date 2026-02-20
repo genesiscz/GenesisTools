@@ -68,3 +68,46 @@ export function matchGlob(value: string, pattern: string): boolean {
     const escaped = pattern.replace(/[.+^${}()|[\]\\?]/g, "\\$&").replace(/\*/g, ".*");
     return new RegExp(`^${escaped}$`, "i").test(value);
 }
+
+/**
+ * Simple fuzzy match: checks if all characters of `query` appear
+ * in `target` in order (case-insensitive). Returns match score
+ * (lower = better, -1 = no match).
+ */
+export function fuzzyMatch(query: string, target: string): number {
+    const q = query.toLowerCase();
+    const t = target.toLowerCase();
+
+    if (t === q) return 0;
+    if (t.startsWith(q)) return 1;
+    if (t.includes(q)) return 2;
+
+    let qi = 0;
+    let gaps = 0;
+    for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+        if (t[ti] === q[qi]) {
+            qi++;
+        } else if (qi > 0) {
+            gaps++;
+        }
+    }
+    if (qi < q.length) return -1;
+    return 3 + gaps;
+}
+
+/**
+ * Find the best fuzzy match from a list of candidates.
+ * Returns null if no match found.
+ */
+export function fuzzyFind(query: string, candidates: string[]): string | null {
+    let bestScore = Infinity;
+    let bestMatch: string | null = null;
+    for (const c of candidates) {
+        const score = fuzzyMatch(query, c);
+        if (score >= 0 && score < bestScore) {
+            bestScore = score;
+            bestMatch = c;
+        }
+    }
+    return bestMatch;
+}
