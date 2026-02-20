@@ -52,7 +52,10 @@ async function gitHandler(step: PresetStep, ctx: StepContext): Promise<StepResul
       }
 
       case "branch": {
-        const branchName = ctx.interpolate(params.branch!);
+        if (!params.branch) {
+          return makeResult("error", null, start, "git.branch requires a 'branch' param");
+        }
+        const branchName = ctx.interpolate(params.branch);
         const from = params.from ? ctx.interpolate(params.from) : undefined;
         await git.createBranch(branchName, from);
         return makeResult("success", { branch: branchName }, start);

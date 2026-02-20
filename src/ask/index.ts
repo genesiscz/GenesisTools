@@ -325,7 +325,7 @@ class ASKTool {
                     );
                 }
 
-                // Auto-save conversation every 5 messages
+                // Auto-save conversation every 5 exchanges (10 messages)
                 if (chatEngine.getConversationLength() % 10 === 0) {
                     session.messages = chatEngine.exportConversation();
                     await convManager.saveConversation(session);
