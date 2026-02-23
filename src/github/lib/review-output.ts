@@ -15,7 +15,9 @@ function formatDiffHunk(
     targetLine: number | null = null,
     startLine: number | null = null
 ): string {
-    if (!diffHunk) return "";
+    if (!diffHunk) {
+        return "";
+    }
 
     const lines = diffHunk.split("\n");
 
@@ -32,7 +34,9 @@ function formatDiffHunk(
 
     return lines
         .map((line, idx) => {
-            if (line.startsWith("@@")) return chalk.cyan(line);
+            if (line.startsWith("@@")) {
+                return chalk.cyan(line);
+            }
 
             let isTarget = false;
             if (canTrackLines && idx > 0) {
@@ -45,15 +49,21 @@ function formatDiffHunk(
             }
 
             const marker = isTarget ? chalk.bold.white("-> ") : "   ";
-            if (line.startsWith("+")) return marker + chalk.green(line);
-            if (line.startsWith("-")) return `   ${chalk.red(line)}`;
+            if (line.startsWith("+")) {
+                return marker + chalk.green(line);
+            }
+            if (line.startsWith("-")) {
+                return `   ${chalk.red(line)}`;
+            }
             return marker + chalk.dim(line);
         })
         .join("\n");
 }
 
 function formatSuggestion(suggestion: string | null, diffHunk: string | null): string {
-    if (!suggestion) return "";
+    if (!suggestion) {
+        return "";
+    }
 
     const suggestionLines = suggestion.split("\n");
 

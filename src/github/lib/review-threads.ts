@@ -1,7 +1,13 @@
 // Shared review thread library - GraphQL queries, fetching, parsing, mutations
 // Extracted from src/github-pr/index.ts, adapted to use shared octokit
 
-import type { ParsedReviewThread, PRLevelComment, ReviewThread, ReviewThreadComment, ReviewThreadStats } from "@app/github/types";
+import type {
+    ParsedReviewThread,
+    PRLevelComment,
+    ReviewThread,
+    ReviewThreadComment,
+    ReviewThreadStats,
+} from "@app/github/types";
 import { getGhCliToken, getOctokit } from "@app/utils/github/octokit";
 import { Octokit } from "octokit";
 
@@ -647,14 +653,20 @@ function trimDiffHunk(
     startLine: number | null = null,
     contextLines: number = 3
 ): string | null {
-    if (!diffHunk || !targetLine) return diffHunk;
+    if (!diffHunk || !targetLine) {
+        return diffHunk;
+    }
 
     const lines = diffHunk.split("\n");
-    if (lines.length === 0) return diffHunk;
+    if (lines.length === 0) {
+        return diffHunk;
+    }
 
     // Parse the @@ header to get starting line number
     const headerMatch = lines[0].match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-    if (!headerMatch) return diffHunk;
+    if (!headerMatch) {
+        return diffHunk;
+    }
 
     const newStartLine = parseInt(headerMatch[2], 10);
 
@@ -703,7 +715,9 @@ function trimDiffHunk(
         }
     }
 
-    if (relevantLines.length === 0) return diffHunk;
+    if (relevantLines.length === 0) {
+        return diffHunk;
+    }
 
     // Build new header with separate old/new line counts
     const firstLineNum = relevantLines.find((r) => r.lineNum !== null)?.lineNum ?? targetLine;
