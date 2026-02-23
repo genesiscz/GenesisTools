@@ -64,8 +64,12 @@ const KNOWN_BOTS = [
  * Check if a user is a bot
  */
 function isBot(username: string, userType?: string): boolean {
-    if (userType === "Bot") return true;
-    if (username.endsWith("[bot]")) return true;
+    if (userType === "Bot") {
+        return true;
+    }
+    if (username.endsWith("[bot]")) {
+        return true;
+    }
     const lowerName = username.toLowerCase();
     return KNOWN_BOTS.some((bot) => lowerName.includes(bot));
 }
@@ -320,7 +324,9 @@ export async function issueCommand(input: string, options: IssueCommandOptions):
         .filter(Boolean);
     if (inputs.length > 1) {
         for (let i = 0; i < inputs.length; i++) {
-            if (i > 0) console.log(chalk.dim("\n---\n"));
+            if (i > 0) {
+                console.log(chalk.dim("\n---\n"));
+            }
             await issueSingleCommand(inputs[i], options);
         }
         return;
@@ -400,7 +406,10 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
     }
 
     // Get issue ID from cache
-    const issueRecord = getIssue(repoRecord.id, number)!;
+    const issueRecord = getIssue(repoRecord.id, number);
+    if (!issueRecord) {
+        throw new Error(`Issue #${number} not found in cache`);
+    }
 
     // Check issue body reaction thresholds
     if (issue.reactions) {
@@ -512,17 +521,16 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
         }
 
         if (options.minCommentReactions !== undefined) {
-            comments = comments.filter((c) => sumReactions(c.reactions) >= options.minCommentReactions!);
+            const min = options.minCommentReactions;
+            comments = comments.filter((c) => sumReactions(c.reactions) >= min);
         }
         if (options.minCommentReactionsPositive !== undefined) {
-            comments = comments.filter(
-                (c) => sumPositiveReactions(c.reactions) >= options.minCommentReactionsPositive!
-            );
+            const min = options.minCommentReactionsPositive;
+            comments = comments.filter((c) => sumPositiveReactions(c.reactions) >= min);
         }
         if (options.minCommentReactionsNegative !== undefined) {
-            comments = comments.filter(
-                (c) => sumNegativeReactions(c.reactions) >= options.minCommentReactionsNegative!
-            );
+            const min = options.minCommentReactionsNegative;
+            comments = comments.filter((c) => sumNegativeReactions(c.reactions) >= min);
         }
 
         if (options.author) {
@@ -563,9 +571,10 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
 
     // Resolve cross-references (automatic unless --no-resolve-refs)
     const linkedIssues: LinkedIssue[] = [];
-    const shouldResolveRefs = !options.noResolveRefs && issue.body;
+    const issueBody = issue.body;
+    const shouldResolveRefs = !options.noResolveRefs && issueBody;
     if (shouldResolveRefs) {
-        const refs = detectCrossReferences(issue.body!);
+        const refs = detectCrossReferences(issueBody);
         if (refs.length > 0) {
             verbose(options, `Found ${refs.length} cross-references to resolve`);
             console.log(chalk.dim(`Resolving ${refs.length} cross-references...`));

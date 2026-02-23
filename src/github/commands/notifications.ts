@@ -85,9 +85,13 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
         const notifications = data as GitHubNotification[];
         allNotifications.push(...notifications);
 
-        if (notifications.length < 50) break;
+        if (notifications.length < 50) {
+            break;
+        }
         page++;
-        if (page > 10) break; // Safety: max 500 notifications
+        if (page > 10) {
+            break; // Safety: max 500 notifications
+        }
     }
 
     verbose(options, `Fetched ${allNotifications.length} raw notifications`);

@@ -92,7 +92,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                 console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
             }
         } else {
-            const result = await batchReply(threadIds, options.respond!, {
+            const result = await batchReply(threadIds, options.respond ?? "", {
                 onProgress: showProgress
                     ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
                     : undefined,
@@ -140,11 +140,12 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
         state: prInfo.state,
         threads: displayThreads,
         stats,
-        prComments: options.prComments !== false
-            ? (authorLogin
-                ? prInfo.prComments?.filter((c) => c.author.toLowerCase() === authorLogin)
-                : prInfo.prComments)
-            : undefined,
+        prComments:
+            options.prComments !== false
+                ? authorLogin
+                    ? prInfo.prComments?.filter((c) => c.author.toLowerCase() === authorLogin)
+                    : prInfo.prComments
+                : undefined,
     };
 
     // JSON output

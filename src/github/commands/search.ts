@@ -307,12 +307,14 @@ export async function searchCommand(query: string, options: SearchCommandOptions
 
     // Client-side safety filter for issue-level reactions
     if (options.minReactions !== undefined) {
-        results = results.filter((r) => r.reactions >= options.minReactions!);
+        const min = options.minReactions;
+        results = results.filter((r) => r.reactions >= min);
     }
 
     // GraphQL-based comment reaction filter
     let preFilterResults: SearchResult[] | undefined;
     if (options.minCommentReactions !== undefined && results.length > 0) {
+        const minCommentReactions = options.minCommentReactions;
         // Estimate cost using actual comment counts from search results (capped at 100 since GraphQL fetches first:100)
         const totalComments = results.reduce((sum, r) => sum + Math.min(r.comments, 100), 0);
         const estimatedCost = results.length * 2 + totalComments; // 2 per issue (node + connection) + 1 per comment node
@@ -351,7 +353,7 @@ export async function searchCommand(query: string, options: SearchCommandOptions
             const reactions = await batchFetchCommentReactions(repoOwner, repoName, numbers);
 
             for (const [num, info] of reactions) {
-                if (info.maxCommentReactions >= options.minCommentReactions!) {
+                if (info.maxCommentReactions >= minCommentReactions) {
                     keep.add(`${repoFullName}#${num}`);
                 }
             }

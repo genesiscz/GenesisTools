@@ -14,6 +14,7 @@ import type {
     PRCommandOptions,
     PRData,
     ReviewCommentData,
+    ReviewThreadStats,
 } from "@app/github/types";
 import logger from "@app/logger";
 import { getOctokit } from "@app/utils/github/octokit";
@@ -40,8 +41,12 @@ const KNOWN_BOTS = [
 ];
 
 function isBot(username: string, userType?: string): boolean {
-    if (userType === "Bot") return true;
-    if (username.endsWith("[bot]")) return true;
+    if (userType === "Bot") {
+        return true;
+    }
+    if (username.endsWith("[bot]")) {
+        return true;
+    }
     const lowerName = username.toLowerCase();
     return KNOWN_BOTS.some((bot) => lowerName.includes(bot));
 }
@@ -290,7 +295,7 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
     }
 
     let reviewThreads: ParsedReviewThread[] | undefined;
-    let reviewThreadStats;
+    let reviewThreadStats: ReviewThreadStats | undefined;
     if (options.reviews) {
         verbose(options, "Fetching review threads (GraphQL)...");
         console.log(chalk.dim("Fetching review threads..."));
