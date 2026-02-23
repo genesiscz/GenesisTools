@@ -1,7 +1,7 @@
 // Shared review thread library - GraphQL queries, fetching, parsing, mutations
 // Extracted from src/github-pr/index.ts, adapted to use shared octokit
 
-import type { ParsedReviewThread, ReviewThread, ReviewThreadComment, ReviewThreadStats } from "@app/github/types";
+import type { ParsedReviewThread, PRLevelComment, ReviewThread, ReviewThreadComment, ReviewThreadStats } from "@app/github/types";
 import { getGhCliToken, getOctokit } from "@app/utils/github/octokit";
 import { Octokit } from "octokit";
 
@@ -47,6 +47,39 @@ const REVIEW_THREADS_QUERY = `
             }
           }
         }
+        reviews(first: 50) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          edges {
+            node {
+              id
+              author {
+                login
+              }
+              body
+              state
+              createdAt
+            }
+          }
+        }
+        comments(first: 50) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          edges {
+            node {
+              id
+              author {
+                login
+              }
+              body
+              createdAt
+            }
+          }
+        }
       }
     }
   }
@@ -78,6 +111,57 @@ const THREAD_COMMENTS_QUERY = `
   }
 `;
 
+const PR_REVIEWS_QUERY = `
+  query($owner: String!, $repo: String!, $pr: Int!, $cursor: String!) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $pr) {
+        reviews(first: 50, after: $cursor) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          edges {
+            node {
+              id
+              author {
+                login
+              }
+              body
+              state
+              createdAt
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const PR_COMMENTS_QUERY = `
+  query($owner: String!, $repo: String!, $pr: Int!, $cursor: String!) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $pr) {
+        comments(first: 50, after: $cursor) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          edges {
+            node {
+              id
+              author {
+                login
+              }
+              body
+              createdAt
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
 // =============================================================================
 // GraphQL Response Types
 // =============================================================================
@@ -98,6 +182,21 @@ interface CommentsConnection {
     edges: Array<{
         node: CommentNode;
     }>;
+}
+
+interface ReviewNode {
+    id: string;
+    author: { login: string } | null;
+    body: string;
+    state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
+    createdAt: string;
+}
+
+interface PrCommentNode {
+    id: string;
+    author: { login: string } | null;
+    body: string;
+    createdAt: string;
 }
 
 interface GraphQLResponse {
@@ -121,6 +220,14 @@ interface GraphQLResponse {
                     };
                 }>;
             };
+            reviews: {
+                pageInfo: { hasNextPage: boolean; endCursor: string | null };
+                edges: Array<{ node: ReviewNode }>;
+            };
+            comments: {
+                pageInfo: { hasNextPage: boolean; endCursor: string | null };
+                edges: Array<{ node: PrCommentNode }>;
+            };
         } | null;
     };
 }
@@ -135,11 +242,100 @@ interface PRReviewInfo {
     title: string;
     state: string;
     threads: ReviewThread[];
+    prComments: PRLevelComment[];
 }
 
 // =============================================================================
 // Fetching
 // =============================================================================
+
+interface PrReviewsPageResponse {
+    repository: {
+        pullRequest: {
+            reviews: {
+                pageInfo: { hasNextPage: boolean; endCursor: string | null };
+                edges: Array<{ node: ReviewNode }>;
+            };
+        } | null;
+    };
+}
+
+interface PrCommentsPageResponse {
+    repository: {
+        pullRequest: {
+            comments: {
+                pageInfo: { hasNextPage: boolean; endCursor: string | null };
+                edges: Array<{ node: PrCommentNode }>;
+            };
+        } | null;
+    };
+}
+
+async function fetchAdditionalPrReviews(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    startCursor: string
+): Promise<ReviewNode[]> {
+    const octokit = getOctokit();
+    const reviews: ReviewNode[] = [];
+    let cursor: string | null = startCursor;
+
+    while (cursor) {
+        const data: PrReviewsPageResponse = await octokit.graphql(PR_REVIEWS_QUERY, {
+            owner,
+            repo,
+            pr: prNumber,
+            cursor,
+        });
+
+        const pr = data.repository?.pullRequest;
+        if (!pr) {
+            break;
+        }
+
+        for (const edge of pr.reviews.edges) {
+            reviews.push(edge.node);
+        }
+
+        cursor = pr.reviews.pageInfo.hasNextPage ? pr.reviews.pageInfo.endCursor : null;
+    }
+
+    return reviews;
+}
+
+async function fetchAdditionalPrComments(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    startCursor: string
+): Promise<PrCommentNode[]> {
+    const octokit = getOctokit();
+    const comments: PrCommentNode[] = [];
+    let cursor: string | null = startCursor;
+
+    while (cursor) {
+        const data: PrCommentsPageResponse = await octokit.graphql(PR_COMMENTS_QUERY, {
+            owner,
+            repo,
+            pr: prNumber,
+            cursor,
+        });
+
+        const pr = data.repository?.pullRequest;
+        if (!pr) {
+            break;
+        }
+
+        for (const edge of pr.comments.edges) {
+            comments.push(edge.node);
+        }
+
+        cursor = pr.comments.pageInfo.hasNextPage ? pr.comments.pageInfo.endCursor : null;
+    }
+
+    return comments;
+}
 
 async function fetchAdditionalComments(threadId: string, startCursor: string): Promise<ReviewThreadComment[]> {
     const octokit = getOctokit();
@@ -178,9 +374,11 @@ async function fetchAdditionalComments(threadId: string, startCursor: string): P
 export async function fetchPRReviewThreads(owner: string, repo: string, prNumber: number): Promise<PRReviewInfo> {
     const octokit = getOctokit();
     const allThreads: ReviewThread[] = [];
+    const prComments: PRLevelComment[] = [];
     let cursor: string | null = null;
     let title = "";
     let state = "";
+    let prLevelCaptured = false;
 
     // Track threads that need additional comment pages
     const threadsNeedingMoreComments: Array<{
@@ -204,6 +402,52 @@ export async function fetchPRReviewThreads(owner: string, repo: string, prNumber
 
         title = pr.title;
         state = pr.state;
+
+        // Capture PR-level reviews and comments on first page, queue pagination if needed
+        if (!prLevelCaptured) {
+            prLevelCaptured = true;
+
+            const allReviewNodes: ReviewNode[] = pr.reviews.edges.map((e) => e.node);
+            if (pr.reviews.pageInfo.hasNextPage && pr.reviews.pageInfo.endCursor) {
+                const extra = await fetchAdditionalPrReviews(owner, repo, prNumber, pr.reviews.pageInfo.endCursor);
+                allReviewNodes.push(...extra);
+            }
+
+            for (const node of allReviewNodes) {
+                if (!node.body.trim() || node.state === "PENDING") {
+                    continue;
+                }
+
+                prComments.push({
+                    id: node.id,
+                    author: node.author?.login ?? "ghost",
+                    body: node.body,
+                    createdAt: node.createdAt,
+                    type: "review",
+                    reviewState: node.state as PRLevelComment["reviewState"],
+                });
+            }
+
+            const allPrCommentNodes: PrCommentNode[] = pr.comments.edges.map((e) => e.node);
+            if (pr.comments.pageInfo.hasNextPage && pr.comments.pageInfo.endCursor) {
+                const extra = await fetchAdditionalPrComments(owner, repo, prNumber, pr.comments.pageInfo.endCursor);
+                allPrCommentNodes.push(...extra);
+            }
+
+            for (const node of allPrCommentNodes) {
+                if (!node.body.trim()) {
+                    continue;
+                }
+
+                prComments.push({
+                    id: node.id,
+                    author: node.author?.login ?? "ghost",
+                    body: node.body,
+                    createdAt: node.createdAt,
+                    type: "comment",
+                });
+            }
+        }
 
         for (const edge of pr.reviewThreads.edges) {
             const node = edge.node;
@@ -243,7 +487,7 @@ export async function fetchPRReviewThreads(owner: string, repo: string, prNumber
         allThreads[threadIndex].comments.push(...additionalComments);
     }
 
-    return { title, state, threads: allThreads };
+    return { title, state, threads: allThreads, prComments };
 }
 
 // =============================================================================
