@@ -88,7 +88,7 @@ export function truncateText(text: string, maxLength: number = 100): string {
         return text;
     }
 
-    return text.substring(0, maxLength - 3) + "...";
+    return `${text.substring(0, maxLength - 3)}...`;
 }
 
 /**
@@ -99,10 +99,12 @@ export function sanitizeOutput(text: string, removeANSI: boolean = false): strin
 
     if (removeANSI) {
         // Remove ANSI escape codes
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape codes use control chars
         sanitized = sanitized.replace(/\x1b\[[0-9;]*m/g, "");
     }
 
     // Remove other potentially problematic characters
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally stripping control chars
     sanitized = sanitized.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
 
     return sanitized;
@@ -166,12 +168,7 @@ export function validateAPIKey(key: string, provider: string): boolean {
     }
 
     // Check for common patterns that indicate invalid keys
-    const invalidPatterns = [
-        /^your_api_key_here$/i,
-        /^sk-test-/i,
-        /^placeholder$/i,
-        /^xxx+/i,
-    ];
+    const invalidPatterns = [/^your_api_key_here$/i, /^sk-test-/i, /^placeholder$/i, /^xxx+/i];
 
     if (invalidPatterns.some((pattern) => pattern.test(key))) {
         return false;
@@ -184,6 +181,7 @@ export function validateAPIKey(key: string, provider: string): boolean {
  * Sanitize filename by removing invalid characters
  */
 export function sanitizeFilename(filename: string): string {
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching invalid filename chars
     return filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_");
 }
 
@@ -219,6 +217,7 @@ export function throttle<T extends (...args: unknown[]) => void>(
         if (!inThrottle) {
             func(...args);
             inThrottle = true;
+            // biome-ignore lint/suspicious/noAssignInExpressions: standard throttle pattern
             setTimeout(() => (inThrottle = false), limit);
         }
     };
@@ -227,11 +226,7 @@ export function throttle<T extends (...args: unknown[]) => void>(
 /**
  * Retry with exponential backoff
  */
-export function retry<T>(
-    operation: () => Promise<T>,
-    maxAttempts: number = 3,
-    delay: number = 1000
-): Promise<T> {
+export function retry<T>(operation: () => Promise<T>, maxAttempts: number = 3, delay: number = 1000): Promise<T> {
     return new Promise((resolve, reject) => {
         let attempt = 0;
 
@@ -244,7 +239,7 @@ export function retry<T>(
                 if (attempt >= maxAttempts) {
                     reject(error);
                 } else {
-                    setTimeout(tryOperation, delay * Math.pow(2, attempt - 1));
+                    setTimeout(tryOperation, delay * 2 ** (attempt - 1));
                 }
             }
         };
@@ -256,11 +251,7 @@ export function retry<T>(
 /**
  * Add timeout to a promise
  */
-export async function withTimeout<T>(
-    promise: Promise<T>,
-    timeoutMs: number,
-    timeoutError?: Error
-): Promise<T> {
+export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutError?: Error): Promise<T> {
     const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
             reject(timeoutError || new Error(`Operation timed out after ${timeoutMs}ms`));

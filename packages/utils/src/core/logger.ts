@@ -28,11 +28,21 @@ function shouldLog(level: LogLevel, currentLevel: LogLevel): boolean {
  * Get log level from environment or arguments
  */
 export function getLogLevel(): LogLevel {
-    if (process.env.LOG_TRACE === "1") return "trace";
-    if (process.env.LOG_DEBUG === "1") return "debug";
-    if (process.env.LOG_SILENT === "1") return "silent";
-    if (process.argv.some(arg => arg === "-vv") || process.argv.includes("--trace")) return "trace";
-    if (process.argv.includes("-v") || process.argv.includes("--verbose")) return "debug";
+    if (process.env.LOG_TRACE === "1") {
+        return "trace";
+    }
+    if (process.env.LOG_DEBUG === "1") {
+        return "debug";
+    }
+    if (process.env.LOG_SILENT === "1") {
+        return "silent";
+    }
+    if (process.argv.some((arg) => arg === "-vv") || process.argv.includes("--trace")) {
+        return "trace";
+    }
+    if (process.argv.includes("-v") || process.argv.includes("--verbose")) {
+        return "debug";
+    }
     return "info";
 }
 
@@ -67,8 +77,12 @@ export function createLogger(options: LoggerOptions = {}): Logger {
     const formatArgs = (args: unknown[]): string => {
         return args
             .map((arg) => {
-                if (typeof arg === "string") return arg;
-                if (arg instanceof Error) return arg.message;
+                if (typeof arg === "string") {
+                    return arg;
+                }
+                if (arg instanceof Error) {
+                    return arg.message;
+                }
                 try {
                     return JSON.stringify(arg);
                 } catch {
@@ -79,7 +93,7 @@ export function createLogger(options: LoggerOptions = {}): Logger {
     };
 
     // Try to import chalk for colors (optional)
-    let colors: {
+    const colors: {
         gray: (s: string) => string;
         yellow: (s: string) => string;
         red: (s: string) => string;

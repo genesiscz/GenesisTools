@@ -22,9 +22,9 @@ const noopLogger: RateLimitLogger = {
 export interface RateLimitError {
     status: number;
     headers?: {
-        'x-ratelimit-remaining'?: string;
-        'x-ratelimit-reset'?: string;
-        'retry-after'?: string;
+        "x-ratelimit-remaining"?: string;
+        "x-ratelimit-reset"?: string;
+        "retry-after"?: string;
     };
 }
 
@@ -32,7 +32,9 @@ export interface RateLimitError {
  * Check if error is a rate limit error
  */
 export function isRateLimitError(error: unknown): error is RateLimitError {
-    if (!error || typeof error !== 'object') return false;
+    if (!error || typeof error !== "object") {
+        return false;
+    }
     const err = error as Record<string, unknown>;
     return err.status === 403 || err.status === 429;
 }
@@ -41,16 +43,18 @@ export function isRateLimitError(error: unknown): error is RateLimitError {
  * Get delay from rate limit error headers
  */
 function getDelayFromHeaders(error: RateLimitError): number | null {
-    if (!error.headers) return null;
+    if (!error.headers) {
+        return null;
+    }
 
     // Check retry-after header (seconds)
-    if (error.headers['retry-after']) {
-        return parseInt(error.headers['retry-after'], 10) * 1000;
+    if (error.headers["retry-after"]) {
+        return parseInt(error.headers["retry-after"], 10) * 1000;
     }
 
     // Check rate limit reset time
-    if (error.headers['x-ratelimit-reset']) {
-        const resetTime = parseInt(error.headers['x-ratelimit-reset'], 10) * 1000;
+    if (error.headers["x-ratelimit-reset"]) {
+        const resetTime = parseInt(error.headers["x-ratelimit-reset"], 10) * 1000;
         const now = Date.now();
         const delay = resetTime - now;
         if (delay > 0) {
@@ -65,7 +69,7 @@ function getDelayFromHeaders(error: RateLimitError): number | null {
  * Sleep for given milliseconds
  */
 function sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -83,10 +87,7 @@ export interface RetryOptions {
 /**
  * Execute function with retry on rate limit
  */
-export async function withRetry<T>(
-    fn: () => Promise<T>,
-    options: RetryOptions = {}
-): Promise<T> {
+export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
     const maxRetries = options.maxRetries ?? MAX_RETRIES;
     const logger = options.logger ?? noopLogger;
     let lastError: unknown;
@@ -115,10 +116,12 @@ export async function withRetry<T>(
 
             // Calculate delay
             const headerDelay = getDelayFromHeaders(error);
-            const exponentialDelay = INITIAL_DELAY_MS * Math.pow(2, attempt);
+            const exponentialDelay = INITIAL_DELAY_MS * 2 ** attempt;
             const delay = headerDelay ?? exponentialDelay;
 
-            logger.warn(`Rate limited. Retrying in ${Math.round(delay / 1000)}s... (attempt ${attempt + 1}/${maxRetries})`);
+            logger.warn(
+                `Rate limited. Retrying in ${Math.round(delay / 1000)}s... (attempt ${attempt + 1}/${maxRetries})`
+            );
 
             if (options.onRetry) {
                 options.onRetry(attempt + 1, delay);
@@ -137,7 +140,7 @@ export async function withRetry<T>(
 export function createRateLimitedCaller(minDelayMs: number = 100) {
     let lastCallTime = 0;
 
-    return async function <T>(fn: () => Promise<T>, options?: RetryOptions): Promise<T> {
+    return async <T>(fn: () => Promise<T>, options?: RetryOptions): Promise<T> => {
         const now = Date.now();
         const timeSinceLastCall = now - lastCallTime;
 

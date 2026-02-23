@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { writeFile, unlink } from "node:fs/promises";
+import { unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -116,7 +116,9 @@ export class DiffUtil {
                                 this.logger.error(this.colorizer.red(`Diff error: ${stderr}`));
                             }
                             // Fallback: show a simple comparison
-                            this.logger.warn(this.colorizer.yellow("Could not generate diff. Showing content comparison:"));
+                            this.logger.warn(
+                                this.colorizer.yellow("Could not generate diff. Showing content comparison:")
+                            );
                             this.logger.info(this.colorizer.red(`--- ${oldLabel}`));
                             this.logger.info(oldContent);
                             this.logger.info(this.colorizer.green(`+++ ${newLabel}`));
@@ -167,13 +169,13 @@ export class DiffUtil {
             } else if (line.startsWith("+++")) {
                 formatted += this.colorizer.green(`+++ ${newLabel}\n`);
             } else if (line.startsWith("-")) {
-                formatted += this.colorizer.red(line) + "\n";
+                formatted += `${this.colorizer.red(line)}\n`;
             } else if (line.startsWith("+")) {
-                formatted += this.colorizer.green(line) + "\n";
+                formatted += `${this.colorizer.green(line)}\n`;
             } else if (line.startsWith("@")) {
-                formatted += this.colorizer.cyan(line) + "\n";
+                formatted += `${this.colorizer.cyan(line)}\n`;
             } else {
-                formatted += line + "\n";
+                formatted += `${line}\n`;
             }
         }
 
