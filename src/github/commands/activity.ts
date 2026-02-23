@@ -166,9 +166,13 @@ export async function activityCommand(options: ActivityCommandOptions): Promise<
         const events = data as GitHubEvent[];
         allEvents.push(...events);
 
-        if (events.length < 100) break;
+        if (events.length < 100) {
+            break;
+        }
         page++;
-        if (page > 5) break; // Safety: max 500 events
+        if (page > 5) {
+            break; // Safety: max 500 events
+        }
     }
 
     verbose(options, `Fetched ${allEvents.length} raw events`);

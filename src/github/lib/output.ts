@@ -107,7 +107,9 @@ function formatRepoMarkdown(repos: RepoSearchResult[]): string {
 }
 
 function formatStarCount(n: number): string {
-    if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+    if (n >= 1000) {
+        return `${(n / 1000).toFixed(1)}k`;
+    }
     return String(n);
 }
 
@@ -206,11 +208,13 @@ function formatPRSummary(data: PRData, options: FormatOptions): string {
         prStats.push("");
         prStats.push(`- **Branch:** ${data.pr.head.ref} → ${data.pr.base.ref}`);
         prStats.push(`- **Changes:** +${data.pr.additions} -${data.pr.deletions} in ${data.pr.changed_files} files`);
-        if (data.pr.draft) prStats.push("- **Status:** Draft");
-        if (data.pr.merged)
-            prStats.push(
-                `- **Merged:** ${formatDate(data.pr.merged_at!)} by @${data.pr.merged_by?.login ?? "unknown"}`
-            );
+        if (data.pr.draft) {
+            prStats.push("- **Status:** Draft");
+        }
+        if (data.pr.merged) {
+            const mergedAt = data.pr.merged_at ?? "";
+            prStats.push(`- **Merged:** ${formatDate(mergedAt)} by @${data.pr.merged_by?.login ?? "unknown"}`);
+        }
         prStats.push("");
 
         // Insert before _Fetched
@@ -433,7 +437,8 @@ function formatPRMarkdown(data: PRData, options: FormatOptions): string {
         }
 
         if (data.pr.merged) {
-            prInfo.push(`**Merged:** ${formatDate(data.pr.merged_at!)} by @${data.pr.merged_by?.login ?? "unknown"}`);
+            const mergedAt = data.pr.merged_at ?? "";
+            prInfo.push(`**Merged:** ${formatDate(mergedAt)} by @${data.pr.merged_by?.login ?? "unknown"}`);
         }
     }
 
@@ -566,7 +571,9 @@ function formatSearchMarkdown(results: SearchResult[]): string {
 // Notification and Activity formatters
 
 export function formatNotifications(items: NotificationItem[], format: "ai" | "md" | "json"): string {
-    if (format === "json") return JSON.stringify(items, null, 2);
+    if (format === "json") {
+        return JSON.stringify(items, null, 2);
+    }
 
     const lines: string[] = [];
     lines.push(`# Notifications (${items.length})\n`);
@@ -601,7 +608,9 @@ export function formatNotifications(items: NotificationItem[], format: "ai" | "m
 }
 
 export function formatActivity(items: ActivityItem[], format: "ai" | "md" | "json"): string {
-    if (format === "json") return JSON.stringify(items, null, 2);
+    if (format === "json") {
+        return JSON.stringify(items, null, 2);
+    }
 
     const lines: string[] = [];
     lines.push(`# Activity Feed (${items.length})\n`);
@@ -708,16 +717,24 @@ function buildIndex(data: IssueData): IndexEntry[] {
 // Helper functions
 
 function formatDate(dateStr: string): string {
-    if (!dateStr) return "-";
+    if (!dateStr) {
+        return "-";
+    }
     const date = new Date(dateStr);
-    if (Number.isNaN(date.getTime())) return "-";
+    if (Number.isNaN(date.getTime())) {
+        return "-";
+    }
     return date.toISOString().replace("T", " ").slice(0, 16);
 }
 
 function formatDateShort(dateStr: string): string {
-    if (!dateStr) return "-";
+    if (!dateStr) {
+        return "-";
+    }
     const date = new Date(dateStr);
-    if (Number.isNaN(date.getTime())) return "-";
+    if (Number.isNaN(date.getTime())) {
+        return "-";
+    }
     const day = date.getDate().toString().padStart(2, "0");
     const month = (date.getMonth() + 1).toString().padStart(2, "0");
     const year = date.getFullYear();
@@ -754,7 +771,9 @@ function formatReactions(reactions: GitHubReactions): string {
 }
 
 function _truncate(text: string, maxLength: number): string {
-    if (text.length <= maxLength) return text;
+    if (text.length <= maxLength) {
+        return text;
+    }
     return `${text.slice(0, maxLength - 3)}...`;
 }
 

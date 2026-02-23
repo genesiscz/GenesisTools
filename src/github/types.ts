@@ -371,6 +371,16 @@ export interface ReviewData {
     state: string;
     threads: ParsedReviewThread[];
     stats: ReviewThreadStats;
+    prComments?: PRLevelComment[];
+}
+
+export interface PRLevelComment {
+    id: string;
+    author: string;
+    body: string;
+    createdAt: string;
+    type: "review" | "comment";
+    reviewState?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED";
 }
 
 export interface ReviewCommandOptions {
@@ -384,6 +394,8 @@ export interface ReviewCommandOptions {
     resolveThread?: boolean;
     resolve?: boolean;
     verbose?: boolean;
+    prComments?: boolean;
+    author?: string;
 }
 
 export interface RepoSearchResult {

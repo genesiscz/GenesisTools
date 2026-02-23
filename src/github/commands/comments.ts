@@ -68,13 +68,19 @@ const KNOWN_BOTS = [
 
 function formatCacheDate(dateStr: string): string {
     const d = new Date(dateStr);
-    if (Number.isNaN(d.getTime())) return dateStr;
+    if (Number.isNaN(d.getTime())) {
+        return dateStr;
+    }
     return d.toISOString().replace("T", " ").slice(0, 16);
 }
 
 function isBot(username: string, userType?: string): boolean {
-    if (userType === "Bot") return true;
-    if (username.endsWith("[bot]")) return true;
+    if (userType === "Bot") {
+        return true;
+    }
+    if (username.endsWith("[bot]")) {
+        return true;
+    }
     const lowerName = username.toLowerCase();
     return KNOWN_BOTS.some((bot) => lowerName.includes(bot));
 }
@@ -221,7 +227,11 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
             last_fetched: new Date().toISOString(),
             last_comment_cursor: null,
         });
-        issueRecord = getIssue(repoRecord.id, number)!;
+        const fetched = getIssue(repoRecord.id, number);
+        if (!fetched) {
+            throw new Error(`Issue #${number} not found in cache after insert`);
+        }
+        issueRecord = fetched;
     }
 
     const metadata = getFetchMetadata(issueRecord.id);
@@ -287,8 +297,9 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
         // Incremental fetch - get new comments since last fetch, merge with cache
         verbose(options, `Incremental fetch: getting comments since ${metadata.last_comment_date}`);
 
+        const sinceDate = metadata.last_comment_date ?? "";
         const apiComments = await fetchComments(owner, repo, number, {
-            since: metadata.last_comment_date!,
+            since: sinceDate,
         });
 
         // Filter out comments we already have (GitHub's since is inclusive of updated comments)
@@ -363,13 +374,16 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
         }
 
         if (options.minReactions !== undefined) {
-            comments = comments.filter((c) => sumReactions(c.reactions) >= options.minReactions!);
+            const min = options.minReactions;
+            comments = comments.filter((c) => sumReactions(c.reactions) >= min);
         }
         if (options.minReactionsPositive !== undefined) {
-            comments = comments.filter((c) => sumPositiveReactions(c.reactions) >= options.minReactionsPositive!);
+            const min = options.minReactionsPositive;
+            comments = comments.filter((c) => sumPositiveReactions(c.reactions) >= min);
         }
         if (options.minReactionsNegative !== undefined) {
-            comments = comments.filter((c) => sumNegativeReactions(c.reactions) >= options.minReactionsNegative!);
+            const min = options.minReactionsNegative;
+            comments = comments.filter((c) => sumNegativeReactions(c.reactions) >= min);
         }
 
         if (options.author) {

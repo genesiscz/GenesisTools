@@ -1,9 +1,9 @@
 // Review thread output formatting - terminal (chalk), markdown, JSON
 // Extracted from src/github-pr/index.ts, adapted to use chalk
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { ParsedReviewThread, ReviewData } from "@app/github/types";
+import type { ParsedReviewThread, PRLevelComment, ReviewData } from "@app/github/types";
 import chalk from "chalk";
 
 // =============================================================================
@@ -15,7 +15,9 @@ function formatDiffHunk(
     targetLine: number | null = null,
     startLine: number | null = null
 ): string {
-    if (!diffHunk) return "";
+    if (!diffHunk) {
+        return "";
+    }
 
     const lines = diffHunk.split("\n");
 
@@ -32,7 +34,9 @@ function formatDiffHunk(
 
     return lines
         .map((line, idx) => {
-            if (line.startsWith("@@")) return chalk.cyan(line);
+            if (line.startsWith("@@")) {
+                return chalk.cyan(line);
+            }
 
             let isTarget = false;
             if (canTrackLines && idx > 0) {
@@ -45,15 +49,21 @@ function formatDiffHunk(
             }
 
             const marker = isTarget ? chalk.bold.white("-> ") : "   ";
-            if (line.startsWith("+")) return marker + chalk.green(line);
-            if (line.startsWith("-")) return `   ${chalk.red(line)}`;
+            if (line.startsWith("+")) {
+                return marker + chalk.green(line);
+            }
+            if (line.startsWith("-")) {
+                return `   ${chalk.red(line)}`;
+            }
             return marker + chalk.dim(line);
         })
         .join("\n");
 }
 
 function formatSuggestion(suggestion: string | null, diffHunk: string | null): string {
-    if (!suggestion) return "";
+    if (!suggestion) {
+        return "";
+    }
 
     const suggestionLines = suggestion.split("\n");
 
@@ -128,10 +138,16 @@ function formatThread(thread: ParsedReviewThread): string {
     if (thread.replies.length > 0) {
         output += `\n${chalk.bold.cyan("Replies:")}\n`;
         for (const reply of thread.replies) {
-            output +=
-                chalk.dim(`  > ${reply.author} (${chalk.dim(reply.id)}): `) +
-                reply.body.split("\n")[0].substring(0, 60) +
-                "\n";
+            const bodyLines = reply.body.split("\n");
+            output += `${chalk.dim(`  > ${reply.author} (`)}${chalk.dim(reply.id)}${chalk.dim("): ")}${bodyLines[0]}\n`;
+            for (const line of bodyLines.slice(1)) {
+                if (line.trim()) {
+                    output += `${chalk.dim("  > ")}${line}\n`;
+                } else {
+                    output += "\n";
+                }
+            }
+            output += "\n";
         }
     }
 
@@ -163,12 +179,46 @@ function formatSummary(data: ReviewData, shownCount: number): string {
     return output;
 }
 
+function formatPrLevelComments(prComments: PRLevelComment[]): string {
+    if (prComments.length === 0) {
+        return "";
+    }
+
+    const stateLabel: Record<string, string> = {
+        APPROVED: chalk.green("APPROVED"),
+        CHANGES_REQUESTED: chalk.red("CHANGES_REQUESTED"),
+        COMMENTED: chalk.yellow("COMMENTED"),
+        DISMISSED: chalk.dim("DISMISSED"),
+    };
+
+    let output = `\n${chalk.cyan("=".repeat(90))}\n`;
+    output += chalk.bold(`PR-LEVEL COMMENTS (${prComments.length})\n`);
+    output += `${chalk.cyan("=".repeat(90))}\n`;
+
+    for (const c of prComments) {
+        output += "\n";
+        const label =
+            c.type === "review" && c.reviewState
+                ? (stateLabel[c.reviewState] ?? chalk.white(c.reviewState))
+                : chalk.white("COMMENT");
+        const date = c.createdAt.slice(0, 10);
+        output += `${label} ${chalk.bold(`@${c.author}`)} ${chalk.dim(date)}\n`;
+        output += `${c.body}\n`;
+    }
+
+    return output;
+}
+
 /**
  * Format review data for terminal output (colorized)
  */
 export function formatReviewTerminal(data: ReviewData, groupByFile: boolean): string {
     const { threads } = data;
     let output = formatSummary(data, threads.length);
+
+    if (data.prComments && data.prComments.length > 0) {
+        output += formatPrLevelComments(data.prComments);
+    }
 
     if (threads.length === 0) {
         output += chalk.dim("\nNo review comments found.\n");
@@ -251,15 +301,33 @@ function formatMarkdownThread(thread: ParsedReviewThread): string {
     if (thread.replies.length > 0) {
         output += `**Replies:**\n\n`;
         for (const reply of thread.replies) {
-            const firstLine = reply.body.split("\n")[0];
-            const replyPreview = firstLine.substring(0, 100);
-            const truncated = firstLine.length > 100 || reply.body.length > firstLine.length;
-            output += `- **@${reply.author}** (\`${reply.id}\`): ${replyPreview}${truncated ? "..." : ""}\n`;
+            const indentedBody = reply.body
+                .split("\n")
+                .map((line) => `  ${line}`)
+                .join("\n");
+            output += `- **@${reply.author}** (\`${reply.id}\`):\n${indentedBody}\n\n`;
         }
-        output += "\n";
     }
 
     output += "---\n\n";
+    return output;
+}
+
+function formatPrLevelCommentsMarkdown(prComments: PRLevelComment[]): string {
+    if (prComments.length === 0) {
+        return "";
+    }
+
+    let output = `## PR-Level Comments\n\n`;
+
+    for (const c of prComments) {
+        const stateLabel = c.type === "review" && c.reviewState ? ` — ${c.reviewState}` : "";
+        const date = c.createdAt.slice(0, 10);
+        output += `### @${c.author}${stateLabel} (${date})\n\n`;
+        output += `${c.body}\n\n`;
+        output += `---\n\n`;
+    }
+
     return output;
 }
 
@@ -286,6 +354,10 @@ export function formatReviewMarkdown(data: ReviewData, groupByFile: boolean): st
     output += `| [HIGH] High Priority | ${stats.high} |\n`;
     output += `| [MED] Medium Priority | ${stats.medium} |\n`;
     output += `| [LOW] Low Priority | ${stats.low} |\n\n`;
+
+    if (data.prComments && data.prComments.length > 0) {
+        output += formatPrLevelCommentsMarkdown(data.prComments);
+    }
 
     if (threads.length === 0) {
         output += `*No review comments found.*\n`;
@@ -334,6 +406,7 @@ export function formatReviewJSON(data: ReviewData): string {
             state: data.state,
             stats: data.stats,
             threads: data.threads,
+            prComments: data.prComments ?? [],
         },
         null,
         2
@@ -347,7 +420,7 @@ export function formatReviewJSON(data: ReviewData): string {
 /**
  * Save review markdown to .claude/github/reviews/
  */
-export function saveReviewMarkdown(content: string, prNumber: number): string {
+export async function saveReviewMarkdown(content: string, prNumber: number): Promise<string> {
     const now = new Date();
     const datetime = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const filename = `pr-${prNumber}-${datetime}.md`;
@@ -355,7 +428,7 @@ export function saveReviewMarkdown(content: string, prNumber: number): string {
     const filePath = join(reviewsDir, filename);
 
     mkdirSync(reviewsDir, { recursive: true });
-    writeFileSync(filePath, content, "utf-8");
+    await Bun.write(filePath, content);
 
     return filePath;
 }

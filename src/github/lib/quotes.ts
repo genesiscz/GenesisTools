@@ -176,13 +176,14 @@ export function detectCrossReferences(body: string): {
     ];
 
     for (const { regex, type } of patterns) {
-        let match;
-        while ((match = regex.exec(body)) !== null) {
+        let match = regex.exec(body);
+        while (match !== null) {
             const number = parseInt(match[1], 10);
             // Avoid duplicates
             if (!refs.some((r) => r.number === number)) {
                 refs.push({ type, number });
             }
+            match = regex.exec(body);
         }
     }
 
