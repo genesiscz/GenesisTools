@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import { join, resolve, basename, dirname } from "node:path";
-import { mkdtemp, rm, mkdir, writeFile, readdir, stat as fsStat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { realpathSync } from "node:fs";
+import { stat as fsStat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 // Path to the script to be tested
 const scriptPath = resolve(__dirname, "./index.ts");
@@ -46,7 +46,6 @@ async function runGit(args: string[], cwd: string): Promise<ExecResult> {
     }
     return { stdout, stderr, exitCode };
 }
-
 
 describe("collect-files-for-ai", () => {
     let testRepoDir: string;
@@ -100,16 +99,17 @@ describe("collect-files-for-ai", () => {
                     entries.push(relativePath);
                 }
             }
-        } catch (e: any) {
-            if (e.code === 'ENOENT') return []; // If dir doesn't exist, return empty
+        } catch (e: unknown) {
+            if (e instanceof Error && "code" in e && e.code === "ENOENT") {
+                return []; // If dir doesn't exist, return empty
+            }
             throw e;
         }
         return entries.sort();
     };
 
-
     it("should show help with --help flag", async () => {
-        const { stdout, stderr, exitCode } = await runScript(["--help"]);
+        const { stdout, exitCode } = await runScript(["--help"]);
         // console.log("Help STDOUT:", stdout);
         // console.log("Help STDERR:", stderr);
         expect(exitCode).toBe(0);
@@ -120,7 +120,7 @@ describe("collect-files-for-ai", () => {
     });
 
     it("should show help and exit with 1 if no directory is provided", async () => {
-        const { stdout, stderr, exitCode } = await runScript([]);
+        const { stdout, exitCode } = await runScript([]);
         // console.log("No dir STDOUT:", stdout);
         // console.log("No dir STDERR:", stderr);
         expect(exitCode).toBe(1);
@@ -131,7 +131,7 @@ describe("collect-files-for-ai", () => {
         const nonRepoDir = await mkdtemp(join(realpathSync(tmpdir()), "non-repo-"));
         process.chdir(originalCwd); // Run script from outside the temp non-repo dir
 
-        const { stdout, stderr, exitCode } = await runScript([nonRepoDir]);
+        const { stdout: _stdout, stderr, exitCode } = await runScript([nonRepoDir]);
         // console.log("Non-repo STDOUT:", stdout);
         // console.log("Non-repo STDERR:", stderr);
 
@@ -145,7 +145,7 @@ describe("collect-files-for-ai", () => {
     });
 
     it("should exit with error for mutually exclusive mode flags", async () => {
-        const { stdout, stderr, exitCode } = await runScript([testRepoDir, "--staged", "--unstaged"]);
+        const { stderr, exitCode } = await runScript([testRepoDir, "--staged", "--unstaged"]);
         expect(exitCode).toBe(1);
         expect(stderr).toContain("Error: Options --commits, --staged, --unstaged, --all are mutually exclusive.");
     });
@@ -180,15 +180,17 @@ describe("collect-files-for-ai", () => {
             if (targetOutputDir) {
                 await rm(targetOutputDir, { recursive: true, force: true });
             }
-             // Clean up default .ai directories, if any were created due to -t not being used
+            // Clean up default .ai directories, if any were created due to -t not being used
             const defaultAiDir = join(testRepoDir, ".ai");
             try {
                 const stats = await fsStat(defaultAiDir);
                 if (stats.isDirectory()) {
                     await rm(defaultAiDir, { recursive: true, force: true });
                 }
-            } catch (e: any) {
-                if (e.code !== 'ENOENT') throw e;
+            } catch (e: unknown) {
+                if (e instanceof Error && "code" in e && e.code !== "ENOENT") {
+                    throw e;
+                }
             }
         });
 
@@ -224,7 +226,6 @@ describe("collect-files-for-ai", () => {
             expect(file1Content).toBe("content1");
         });
 
-
         it("should collect unstaged (modified) files with --unstaged", async () => {
             await setupFiles({ "file1.txt": "initial content", "file2.txt": "content2" });
             await runGit(["add", "."], testRepoDir);
@@ -250,7 +251,7 @@ describe("collect-files-for-ai", () => {
                 "tracked_modified.txt": "initial",
                 "tracked_staged.txt": "initial",
                 "new_unstaged.txt": "new", // This won't be picked by 'git diff --name-only HEAD' unless added
-                "new_staged.txt": "new staged"
+                "new_staged.txt": "new staged",
             });
             await runGit(["add", "tracked_modified.txt", "tracked_staged.txt"], testRepoDir);
             await runGit(["commit", "-m", "Initial commit for tracked files"], testRepoDir);
@@ -264,7 +265,6 @@ describe("collect-files-for-ai", () => {
 
             // Stage a new file
             await runGit(["add", "new_staged.txt"], testRepoDir);
-
 
             const { stdout, exitCode } = await runScript([testRepoDir, "--all", "-t", targetOutputDir]);
             // console.log("--all STDOUT:", stdout);
@@ -283,13 +283,10 @@ describe("collect-files-for-ai", () => {
             expect(stdout).toContain("Copied: tracked_staged.txt");
             expect(stdout).toContain("Copied: new_staged.txt");
 
-
             const copiedFiles = await getFilesInDir(targetOutputDir);
-            expect(copiedFiles).toEqual(expect.arrayContaining([
-                "tracked_modified.txt",
-                "tracked_staged.txt",
-                "new_staged.txt"
-            ]));
+            expect(copiedFiles).toEqual(
+                expect.arrayContaining(["tracked_modified.txt", "tracked_staged.txt", "new_staged.txt"])
+            );
             expect(copiedFiles.length).toBe(3);
 
             const modContent = await Bun.file(join(targetOutputDir, "tracked_modified.txt")).text();
@@ -300,7 +297,6 @@ describe("collect-files-for-ai", () => {
             expect(newStagedContent).toBe("new staged");
         });
 
-
         it("should use default mode 'all' if no mode specified", async () => {
             await setupFiles({ "file1.txt": "initial" });
             await runGit(["add", "."], testRepoDir);
@@ -308,7 +304,7 @@ describe("collect-files-for-ai", () => {
             await writeFile(join(testRepoDir, "file1.txt"), "modified"); // Unstaged
 
             const { stdout, exitCode } = await runScript([testRepoDir, "-t", targetOutputDir]);
-             expect(exitCode).toBe(0);
+            expect(exitCode).toBe(0);
             expect(stdout).toContain("Found 1 file(s) to copy."); // file1.txt is modified
             expect(stdout).toContain("Copied: file1.txt");
             const copiedFiles = await getFilesInDir(targetOutputDir);
@@ -370,7 +366,6 @@ describe("collect-files-for-ai", () => {
                 expect(stdout).toContain("Copied: file_c3.txt");
                 expect(stdout).toContain("Copied: shared.txt");
 
-
                 const copiedFiles = await getFilesInDir(targetOutputDir);
                 expect(copiedFiles).toEqual(expect.arrayContaining(["file_c2.txt", "file_c3.txt", "shared.txt"]));
                 expect(copiedFiles.length).toBe(3);
@@ -380,12 +375,19 @@ describe("collect-files-for-ai", () => {
             });
 
             it("should collect files with --commits and --flat", async () => {
-                 await setupFiles({ "dir/file_c4.txt": "c4"});
-                 await runGit(["add", "."], testRepoDir);
-                 await runGit(["commit", "-m", "commit 4 with dir"], testRepoDir); // This is now HEAD
+                await setupFiles({ "dir/file_c4.txt": "c4" });
+                await runGit(["add", "."], testRepoDir);
+                await runGit(["commit", "-m", "commit 4 with dir"], testRepoDir); // This is now HEAD
 
                 // HEAD is commit 4, HEAD~1 is commit 3
-                const { stdout, exitCode } = await runScript([testRepoDir, "--commits", "1", "-t", targetOutputDir, "--flat"]);
+                const { stdout, exitCode } = await runScript([
+                    testRepoDir,
+                    "--commits",
+                    "1",
+                    "-t",
+                    targetOutputDir,
+                    "--flat",
+                ]);
                 expect(exitCode).toBe(0);
                 expect(stdout).toContain("Found 1 file(s) to copy."); // Only dir/file_c4.txt from the latest commit
                 expect(stdout).toContain("Copied: dir/file_c4.txt as file_c4.txt");
@@ -394,16 +396,17 @@ describe("collect-files-for-ai", () => {
                 expect(copiedFiles).toEqual(["file_c4.txt"]); // Flattened
             });
 
-
             it("should handle --commits NUM greater than history (collects all based on git diff behavior)", async () => {
-                 const { stdout, exitCode } = await runScript([testRepoDir, "--commits", "10", "-t", targetOutputDir]); // We have 3 commits initially in this describe block
-                 expect(exitCode).toBe(0);
-                 // Git diff HEAD~10 HEAD will effectively be all tracked files if 10 > num_commits in the repo
-                 // For this specific setup (Commit 1, 2, 3): file_c1.txt, file_c2.txt, file_c3.txt, shared.txt
-                 expect(stdout).toContain("Found 4 file(s) to copy.");
-                 const copiedFiles = await getFilesInDir(targetOutputDir);
-                 expect(copiedFiles).toEqual(expect.arrayContaining(["file_c1.txt", "file_c2.txt", "file_c3.txt", "shared.txt"]));
-                 expect(copiedFiles.length).toBe(4);
+                const { stdout, exitCode } = await runScript([testRepoDir, "--commits", "10", "-t", targetOutputDir]); // We have 3 commits initially in this describe block
+                expect(exitCode).toBe(0);
+                // Git diff HEAD~10 HEAD will effectively be all tracked files if 10 > num_commits in the repo
+                // For this specific setup (Commit 1, 2, 3): file_c1.txt, file_c2.txt, file_c3.txt, shared.txt
+                expect(stdout).toContain("Found 4 file(s) to copy.");
+                const copiedFiles = await getFilesInDir(targetOutputDir);
+                expect(copiedFiles).toEqual(
+                    expect.arrayContaining(["file_c1.txt", "file_c2.txt", "file_c3.txt", "shared.txt"])
+                );
+                expect(copiedFiles.length).toBe(4);
             });
         });
 
@@ -447,4 +450,4 @@ describe("collect-files-for-ai", () => {
             expect(copiedFiles.length).toBe(0);
         });
     });
-}); 
+});

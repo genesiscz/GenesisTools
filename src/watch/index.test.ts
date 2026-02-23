@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import { join, resolve, dirname } from "node:path";
-import { mkdtemp, rm, mkdir, writeFile, readFile, appendFile, unlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { type ChildProcess, spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { type ChildProcess, spawn } from 'node:child_process';
+import { appendFile, mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const scriptPath = resolve(__dirname, "./index.ts");
@@ -18,7 +18,7 @@ interface WatchResult {
 // Helper to run the watch script
 async function runWatchScript(args: string[], testDir: string, timeoutMs = 5000): Promise<WatchResult> {
     const output = { stdout: "", stderr: "" };
-    
+
     const scriptProcess = spawn("bun", ["run", scriptPath, ...args], {
         cwd: testDir,
         stdio: ["ignore", "pipe", "pipe"],
@@ -41,14 +41,18 @@ async function runWatchScript(args: string[], testDir: string, timeoutMs = 5000)
 
     let exitCode: number | null = null;
     if (!args.includes("-f") && !args.includes("--follow")) {
-         exitCode = await Promise.race([
+        exitCode = await Promise.race([
             exitPromise,
             sleep(timeoutMs, null).then(() => {
-                if (!scriptProcess.killed) scriptProcess.kill();
+                if (!scriptProcess.killed) {
+                    scriptProcess.kill();
+                }
                 return -1;
-            })
+            }),
         ]);
-        if(exitCode === -1) console.warn("Script did not exit as expected in non-follow mode.");
+        if (exitCode === -1) {
+            console.warn("Script did not exit as expected in non-follow mode.");
+        }
     } else {
         await sleep(500);
     }
@@ -57,21 +61,27 @@ async function runWatchScript(args: string[], testDir: string, timeoutMs = 5000)
 }
 
 async function stopWatchScript(proc: ChildProcess): Promise<void> {
-    if (!proc || proc.killed) return;
+    if (!proc || proc.killed) {
+        return;
+    }
     return new Promise((resolve) => {
         let killTimer: NodeJS.Timeout | null = null;
         const onExit = () => {
-            if (killTimer) clearTimeout(killTimer);
+            if (killTimer) {
+                clearTimeout(killTimer);
+            }
             resolve();
         };
         proc.on("exit", onExit);
         proc.kill("SIGTERM");
         killTimer = setTimeout(() => {
             killTimer = null;
-            if (!proc.killed) proc.kill("SIGKILL");
+            if (!proc.killed) {
+                proc.kill("SIGKILL");
+            }
             proc.removeListener("exit", onExit);
             resolve();
-        }, 1000) as any;
+        }, 1000) as ReturnType<typeof setTimeout>;
     });
 }
 
@@ -127,7 +137,9 @@ describe("watch tool", () => {
         expect(result.exitCode).toBe(1);
         expect(result.stderr).toContain("Error: It appears your glob patterns may have been expanded by the shell");
         expect(result.stdout).toContain("To prevent this, please wrap each pattern in quotes:");
-        expect(result.stdout).toContain("Without quotes, the shell expands wildcards before passing arguments to the script.");
+        expect(result.stdout).toContain(
+            "Without quotes, the shell expands wildcards before passing arguments to the script."
+        );
     });
 
     it("should not warn for shell expansion if glob pattern is quoted (contains glob chars)", async () => {
@@ -142,16 +154,12 @@ describe("watch tool", () => {
             await createStructure(testDir, {
                 "file1.txt": "Line1\nLine2",
                 "sub/file2.log": "Log Data 1\nLog Data 2\nLog Data 3",
-                "another.txt": "Single line"
+                "another.txt": "Single line",
             });
             await sleep(50);
             await writeFile(join(testDir, "file1.txt"), "Line1\nLine2\nUpdatedL1");
 
-            const result = await runWatchScript([
-                "*.txt", 
-                "sub/*.log", 
-                "-n", "2"
-            ], testDir);
+            const result = await runWatchScript(["*.txt", "sub/*.log", "-n", "2"], testDir);
             currentProcess = result.process;
 
             expect(result.exitCode).toBe(0);
@@ -159,7 +167,7 @@ describe("watch tool", () => {
             expect(result.stdout).toContain("another.txt");
             expect(result.stdout).toContain("Single line");
             expect(result.stdout).toContain("file1.txt");
-            expect(result.stdout).toContain("UpdatedL1"); 
+            expect(result.stdout).toContain("UpdatedL1");
             expect(result.stdout).toContain("sub/file2.log");
             expect(result.stdout).toContain("Log Data 3");
             expect(result.stdout).toContain("Log Data 2");
@@ -175,9 +183,11 @@ describe("watch tool", () => {
                     const chunk = data.toString();
                     accumulatedStdout += chunk;
                     if (typeof text === "string" ? accumulatedStdout.includes(text) : text.test(accumulatedStdout)) {
-                         if (timer) clearTimeout(timer);
-                         proc.stdout?.removeListener("data", listener);
-                         resolve(true);
+                        if (timer) {
+                            clearTimeout(timer);
+                        }
+                        proc.stdout?.removeListener("data", listener);
+                        resolve(true);
                     }
                 };
                 proc.stdout?.on("data", listener);
@@ -185,7 +195,7 @@ describe("watch tool", () => {
                     timer = null;
                     proc.stdout?.removeListener("data", listener);
                     resolve(false);
-                }, timeout) as any;
+                }, timeout) as ReturnType<typeof setTimeout>;
             });
         }
 
@@ -194,17 +204,25 @@ describe("watch tool", () => {
             const result = await runWatchScript(["*.txt", "-f", "-n", "10"], testDir, 15000);
             currentProcess = result.process;
 
-            const initialOutputFound = await waitForOutput(result.process, /EXISTING FILE: .*follow.txt.*Initial content\./s);
+            const initialOutputFound = await waitForOutput(
+                result.process,
+                /EXISTING FILE: .*follow.txt.*Initial content\./s
+            );
             expect(initialOutputFound).toBe(true);
 
             await appendFile(join(testDir, "follow.txt"), "\nAppended line 1.");
-            const update1Found = await waitForOutput(result.process, /UPDATED: follow.txt.*Initial content\.\nAppended line 1\./s);
+            const update1Found = await waitForOutput(
+                result.process,
+                /UPDATED: follow.txt.*Initial content\.\nAppended line 1\./s
+            );
             expect(update1Found).toBe(true);
-            
-            await appendFile(join(testDir, "follow.txt"), "\nAppended line 2.");
-            const update2Found = await waitForOutput(result.process, /UPDATED: follow.txt.*Appended line 1\.\nAppended line 2\./s);
-            expect(update2Found).toBe(true);
 
+            await appendFile(join(testDir, "follow.txt"), "\nAppended line 2.");
+            const update2Found = await waitForOutput(
+                result.process,
+                /UPDATED: follow.txt.*Appended line 1\.\nAppended line 2\./s
+            );
+            expect(update2Found).toBe(true);
         }, 5000);
 
         it("should detect and display content of new files", async () => {
@@ -216,17 +234,16 @@ describe("watch tool", () => {
             await writeFile(join(testDir, "newfile.new"), "Content of new file.");
             const newFileFound = await waitForOutput(result.process, /NEW FILE: .*newfile.new.*Content of new file\./s);
             expect(newFileFound).toBe(true);
-
         }, 5000);
 
         it("should report removed files", async () => {
             await createStructure(testDir, { "todelete.del": "delete me" });
             const result = await runWatchScript(["*.del", "-f"], testDir, 15000);
             currentProcess = result.process;
-            
+
             await unlink(join(testDir, "todelete.del"));
             const removedFileFound = await waitForOutput(result.process, /REMOVED: .*todelete.del/s);
             expect(removedFileFound).toBe(true);
         }, 5000);
     });
-}); 
+});

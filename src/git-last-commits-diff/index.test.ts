@@ -1,9 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn, mock } from "bun:test";
-import { join, resolve, dirname } from "node:path";
-import { mkdtemp, rm, mkdir, writeFile, readFile, readdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { realpathSync } from "node:fs";
-import Enquirer from 'enquirer';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 // Path to the script to be tested
 const scriptPath = resolve(__dirname, "./index.ts");
@@ -18,7 +17,7 @@ async function runScript(args: string[], cwd?: string): Promise<ExecResult> {
     const proc = Bun.spawn({
         cmd: ["bun", "run", scriptPath, ...args],
         cwd: cwd || process.cwd(),
-        env: { ...process.env }, 
+        env: { ...process.env },
         stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -44,7 +43,6 @@ async function runGit(args: string[], cwd: string): Promise<ExecResult> {
     }
     return { stdout, stderr, exitCode };
 }
-
 
 describe("git-last-commits-diff", () => {
     let testRepoDir: string;
@@ -72,7 +70,7 @@ describe("git-last-commits-diff", () => {
         delete process.env.TEST_MODE_CLIPBOARD_OUTPUT_FILE;
     });
 
-    const setupCommits = async (commitDetails: Array<{ files: Record<string, string>, message: string }>) => {
+    const setupCommits = async (commitDetails: Array<{ files: Record<string, string>; message: string }>) => {
         for (const commit of commitDetails) {
             for (const [file, content] of Object.entries(commit.files)) {
                 const dir = dirname(file);
@@ -84,7 +82,7 @@ describe("git-last-commits-diff", () => {
             }
             await runGit(["commit", "-m", commit.message], testRepoDir);
         }
-        const { stdout: log } = await runGit(["log", "--oneline"], testRepoDir);
+        const { stdout: _log } = await runGit(["log", "--oneline"], testRepoDir);
         // console.log("Repo log after setup:\n", log);
     };
 
@@ -161,7 +159,6 @@ describe("git-last-commits-diff", () => {
             expect(diffContent).toContain("+updated\n\\ No newline at end of file");
         });
 
-        
         it("--output FILE should take precedence over --clipboard", async () => {
             const outputFile = join(testRepoDir, "output_prec.txt");
             const testClipboardFile = join(testRepoDir, "clipboard_prec_test_output.txt");
@@ -170,8 +167,10 @@ describe("git-last-commits-diff", () => {
 
             const { stdout, exitCode, stderr } = await runScript([
                 testRepoDir,
-                "--commits", "1",
-                "--output", outputFile,
+                "--commits",
+                "1",
+                "--output",
+                outputFile,
                 "--clipboard", // This should be ignored
                 // No need to pass --test-mode-clipboard-file here, as clipboard action shouldn't be taken
             ]);
@@ -186,7 +185,7 @@ describe("git-last-commits-diff", () => {
             expect(stdout).toContain("✔ Absolute path ");
             expect(stdout).toContain(`"${outputFile}"`);
             expect(stdout).toContain(" copied to clipboard.");
-            
+
             // Ensure the actual output file was written
             const fileContent = await readFile(outputFile, "utf-8");
             expect(fileContent).toContain("+content v3");
@@ -196,9 +195,9 @@ describe("git-last-commits-diff", () => {
                 await readFile(testClipboardFile, "utf-8");
                 // If readFile succeeds, the file was created, which is an error for this test.
                 throw new Error("Clipboard test file was created, but --output should have taken precedence.");
-            } catch (error: any) {
+            } catch (error: unknown) {
                 // Expecting ENOENT (file not found) or similar error
-                expect(error.code).toBe("ENOENT");
+                expect((error as NodeJS.ErrnoException).code).toBe("ENOENT");
             }
             expect(stderr).not.toContain("[TEST MODE] Diff intended for clipboard written to");
         });
@@ -231,7 +230,6 @@ describe("git-last-commits-diff", () => {
     //             return {};
     //         });
 
-
     //         // Run without --commits to trigger interactive commit selection, and without output flags
     //         const { stdout, stderr, exitCode } = await runScript([testRepoDir, "--output", ""]); // Force stdout
     //         console.log("Interactive stdout:", stdout);
@@ -244,5 +242,4 @@ describe("git-last-commits-diff", () => {
     //         expect(stdout).toContain("+b"); // Content from HEAD (Commit B)
     //     });
     // });
-
-}); 
+});

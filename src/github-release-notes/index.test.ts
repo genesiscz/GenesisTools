@@ -1,15 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { join, resolve } from "node:path";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { realpathSync } from "node:fs";
-import axios from 'axios';
+import { spyOn } from "bun:test";
+import { resolve } from "node:path";
+import axios from "axios";
 
 // Path to the script to be tested
 const scriptPath = resolve(__dirname, "./index.ts");
 
 // Mock axios
-const axiosGetSpy = spyOn(axios, 'get');
+const _axiosGetSpy = spyOn(axios, "get");
 
 interface ExecResult {
     stdout: string;
@@ -17,10 +14,10 @@ interface ExecResult {
     exitCode: number | null;
 }
 
-async function runScript(args: string[], envVars: Record<string, string> = {}): Promise<ExecResult> {
+async function _runScript(args: string[], envVars: Record<string, string> = {}): Promise<ExecResult> {
     const proc = Bun.spawn({
         cmd: ["bun", "run", scriptPath, ...args],
-        cwd: process.cwd(), 
+        cwd: process.cwd(),
         env: { ...process.env, ...envVars },
         stdio: ["ignore", "pipe", "pipe"],
     });
@@ -33,28 +30,28 @@ async function runScript(args: string[], envVars: Record<string, string> = {}): 
 }
 
 // Sample GitHub Release Data
-const mockReleases = [
+const _mockReleases = [
     {
         tag_name: "v1.0.0",
         name: "Version 1.0.0",
         published_at: "2023-01-15T10:00:00Z",
         body: "Initial release content.",
-        html_url: "https://github.com/testowner/testrepo/releases/tag/v1.0.0"
+        html_url: "https://github.com/testowner/testrepo/releases/tag/v1.0.0",
     },
     {
         tag_name: "v1.1.0",
         name: "Version 1.1.0",
         published_at: "2023-02-20T12:00:00Z",
         body: "Update features for 1.1.0.",
-        html_url: "https://github.com/testowner/testrepo/releases/tag/v1.1.0"
+        html_url: "https://github.com/testowner/testrepo/releases/tag/v1.1.0",
     },
     {
         tag_name: "v0.9.0",
         name: "Version 0.9.0",
         published_at: "2022-12-25T08:00:00Z",
         body: "Beta release content.",
-        html_url: "https://github.com/testowner/testrepo/releases/tag/v0.9.0"
-    }
+        html_url: "https://github.com/testowner/testrepo/releases/tag/v0.9.0",
+    },
 ];
 /*
 describe("github-release-notes", () => {

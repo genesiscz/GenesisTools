@@ -1,21 +1,25 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn, mock } from "bun:test";
-import { WebSocketServer, WebSocket } from "ws";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { spawn } from "node:child_process";
 import { resolve } from "node:path";
-import { ChildProcess, spawn } from 'node:child_process';
 import { setTimeout } from "node:timers/promises";
+import { WebSocket, WebSocketServer } from "ws";
 
 const clientScriptPath = resolve(__dirname, "./client.ts");
 
 // Helper to run the client script
-async function runTestClient(): Promise<{ stdout: string, stderr: string, exitCode: number | null }> {
+async function runTestClient(): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
     const clientProcess = spawn("bun", ["run", clientScriptPath], {
         stdio: ["ignore", "pipe", "pipe"],
     });
 
     let stdout = "";
     let stderr = "";
-    clientProcess.stdout.on("data", (data) => stdout += data.toString());
-    clientProcess.stderr.on("data", (data) => stderr += data.toString());
+    clientProcess.stdout.on("data", (data) => {
+        stdout += data.toString();
+    });
+    clientProcess.stderr.on("data", (data) => {
+        stderr += data.toString();
+    });
 
     const exitCode = await new Promise<number | null>((resolve) => {
         clientProcess.on("close", resolve);
@@ -25,7 +29,6 @@ async function runTestClient(): Promise<{ stdout: string, stderr: string, exitCo
     return { stdout, stderr, exitCode };
 }
 
-
 describe("Hold-AI Client", () => {
     let mockWSS: WebSocketServer | null = null;
     let connectedClientWS: WebSocket | null = null; // The WebSocket instance from the client connection to the mock server
@@ -34,7 +37,9 @@ describe("Hold-AI Client", () => {
         // Reset before each test
         connectedClientWS = null;
         if (mockWSS) {
-            mockWSS.clients.forEach(client => client.terminate());
+            for (const client of mockWSS.clients) {
+                client.terminate();
+            }
             mockWSS.close();
             mockWSS = null;
         }
@@ -45,7 +50,9 @@ describe("Hold-AI Client", () => {
             connectedClientWS.terminate();
         }
         if (mockWSS) {
-            mockWSS.clients.forEach(client => client.terminate());
+            for (const client of mockWSS.clients) {
+                client.terminate();
+            }
             mockWSS.close();
             mockWSS = null;
         }
@@ -75,14 +82,16 @@ describe("Hold-AI Client", () => {
                     resolve();
                 }
             }, 100);
-            setTimeout(5000, () => { 
+            setTimeout(5000, () => {
                 clearInterval(interval);
-                reject(new Error("Client did not connect to mock server in time")); 
+                reject(new Error("Client did not connect to mock server in time"));
             });
         });
 
         expect(connectedClientWS).not.toBeNull();
-        if (!connectedClientWS) throw new Error("Client did not connect");
+        if (!connectedClientWS) {
+            throw new Error("Client did not connect");
+        }
 
         // Send messages from mock server to client
         connectedClientWS.send(JSON.stringify({ timestamp: new Date().toISOString(), message: "Message 1" }));
@@ -91,8 +100,8 @@ describe("Hold-AI Client", () => {
         await setTimeout(50);
         connectedClientWS.send(JSON.stringify({ timestamp: new Date().toISOString(), message: "__COMPLETED__" }));
 
-        const { stdout, stderr, exitCode } = await clientRunPromise;
-        
+        const { stdout, exitCode } = await clientRunPromise;
+
         // console.log("Client STDOUT:", stdout);
         // console.log("Client STDERR:", stderr);
 
@@ -108,11 +117,11 @@ describe("Hold-AI Client", () => {
     it("should attempt to reconnect if server is not initially available", async () => {
         // Don't start the server immediately
         const clientRunPromise = runTestClient();
-        
+
         // Client logs "Still processing..." on error/reconnect attempt
         // Wait a bit to see if client tries to connect (and fails)
         await setTimeout(1000);
-        
+
         // Now start the mock server
         mockWSS = await startMockServer();
 
@@ -123,21 +132,24 @@ describe("Hold-AI Client", () => {
                     resolve();
                 }
             }, 100);
-            setTimeout(7000, () => { // Client retries every 3s, give it time
+            setTimeout(7000, () => {
+                // Client retries every 3s, give it time
                 clearInterval(interval);
                 reject(new Error("Client did not connect to mock server after starting late"));
             });
         });
 
         expect(connectedClientWS).not.toBeNull();
-        if (!connectedClientWS) throw new Error("Client did not connect");
+        if (!connectedClientWS) {
+            throw new Error("Client did not connect");
+        }
 
         // Send completion to allow client to exit cleanly
         connectedClientWS.send(JSON.stringify({ timestamp: new Date().toISOString(), message: "__COMPLETED__" }));
-        
+
         const { stdout, exitCode } = await clientRunPromise;
         expect(exitCode).toBe(0);
         expect(stdout).toContain("Still processing..."); // Indicates it likely tried to connect while server was down
         expect(stdout).toContain("OK"); // Indicates successful completion
     }, 20000); // Longer timeout for reconnection logic
-}); 
+});

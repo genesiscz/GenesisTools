@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
 // Assuming the functions and interfaces are exported from index.ts
 // If not, we might need to copy them here or adjust the import.
@@ -60,15 +60,17 @@ describe("t3chat-length processor", () => {
 
         expect(result.length).toBe(3);
 
-        const msg1 = result.find(m => m.threadLink.includes("thread1"));
-        const msg2 = result.find(m => m.threadLink.includes("thread2"));
-        const msg3 = result.find(m => m.threadLink.includes("thread3"));
+        const msg1 = result.find((m) => m.threadLink.includes("thread1"));
+        const msg2 = result.find((m) => m.threadLink.includes("thread2"));
+        const msg3 = result.find((m) => m.threadLink.includes("thread3"));
 
         expect(msg1).toBeDefined();
         expect(msg2).toBeDefined();
         expect(msg3).toBeDefined();
 
-        if (!msg1 || !msg2 || !msg3) throw new Error("Test messages not found in result");
+        if (!msg1 || !msg2 || !msg3) {
+            throw new Error("Test messages not found in result");
+        }
 
         expect(msg1.threadLink).toBe("https://t3.chat/chat/thread1");
         expect(msg1.contentSizeKB).toBeCloseTo(5 / 1024);
@@ -108,14 +110,16 @@ describe("t3chat-length processor", () => {
         const result = processMessages(input);
 
         expect(result.length).toBe(2);
-        
-        const emptyMsg = result.find(m => m.threadLink.includes("empty"));
-        const nonEmptyMsg = result.find(m => m.threadLink.includes("not_empty"));
+
+        const emptyMsg = result.find((m) => m.threadLink.includes("empty"));
+        const nonEmptyMsg = result.find((m) => m.threadLink.includes("not_empty"));
 
         expect(emptyMsg).toBeDefined();
         expect(nonEmptyMsg).toBeDefined();
 
-        if (!emptyMsg || !nonEmptyMsg) throw new Error("Messages not found");
+        if (!emptyMsg || !nonEmptyMsg) {
+            throw new Error("Messages not found");
+        }
 
         expect(emptyMsg.contentSizeKB).toBe(0);
         expect(nonEmptyMsg.contentSizeKB).toBeCloseTo(9 / 1024);
@@ -130,28 +134,29 @@ describe("t3chat-length processor", () => {
         const messages: Message[] = [
             { content: "Hello", threadId: "ascii" }, // 5 bytes
             { content: "你好世界", threadId: "chinese" }, // Ni Hao Shi Jie - 4 chars, typically 12 bytes in UTF-8
-            { content: "😊", threadId: "emoji" } // Emoji - typically 4 bytes in UTF-8
+            { content: "😊", threadId: "emoji" }, // Emoji - typically 4 bytes in UTF-8
         ];
         const input: InputJson = { json: { messages } };
         const result = processMessages(input);
 
-        const asciiMsg = result.find(m => m.threadLink.includes("ascii"));
-        const chineseMsg = result.find(m => m.threadLink.includes("chinese"));
-        const emojiMsg = result.find(m => m.threadLink.includes("emoji"));
+        const asciiMsg = result.find((m) => m.threadLink.includes("ascii"));
+        const chineseMsg = result.find((m) => m.threadLink.includes("chinese"));
+        const emojiMsg = result.find((m) => m.threadLink.includes("emoji"));
 
         expect(asciiMsg).toBeDefined();
         expect(chineseMsg).toBeDefined();
         expect(emojiMsg).toBeDefined();
 
-        if (!asciiMsg || !chineseMsg || !emojiMsg) throw new Error("Messages not found");
+        if (!asciiMsg || !chineseMsg || !emojiMsg) {
+            throw new Error("Messages not found");
+        }
 
         expect(asciiMsg.contentSizeKB).toBeCloseTo(5 / 1024);
         expect(chineseMsg.contentSizeKB).toBeCloseTo(new TextEncoder().encode("你好世界").length / 1024);
         expect(emojiMsg.contentSizeKB).toBeCloseTo(new TextEncoder().encode("😊").length / 1024);
 
         // Verify sorting based on actual byte lengths
-        const expectedOrder = [chineseMsg, asciiMsg, emojiMsg].sort((a,b) => b.contentSizeKB - a.contentSizeKB);
-        expect(result.map(r => r.threadLink)).toEqual(expectedOrder.map(r=>r.threadLink));
-
+        const expectedOrder = [chineseMsg, asciiMsg, emojiMsg].sort((a, b) => b.contentSizeKB - a.contentSizeKB);
+        expect(result.map((r) => r.threadLink)).toEqual(expectedOrder.map((r) => r.threadLink));
     });
-}); 
+});

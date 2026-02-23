@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { join, resolve, dirname } from "node:path";
-import { mkdtemp, rm, mkdir, writeFile, readFile, readdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { realpathSync } from "node:fs";
-import type { Subprocess, FileSink } from "bun"; // Import Subprocess and FileSink types
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import type { FileSink, Subprocess } from "bun"; // Import Subprocess and FileSink types
 
 // Path to the script to be tested
 const scriptPath = resolve(__dirname, "./index.ts");
@@ -38,7 +38,7 @@ async function runScript(args: string[], stdinContent: string | null = null, cwd
         // When stdio[0] is "pipe", proc.stdin is a FileSink.
         const stdinSink = proc.stdin as FileSink;
         stdinSink.write(stdinContent); // Call write directly on FileSink
-        await stdinSink.end();       // Call end directly on FileSink
+        await stdinSink.end(); // Call end directly on FileSink
     }
 
     // When stdio[1] and stdio[2] are "pipe", proc.stdout/stderr are ReadableStream.
@@ -61,7 +61,7 @@ async function createStructure(basePath: string, structure: Record<string, strin
 }
 
 // Helper to get all file paths in a directory recursively (for verifying output dir contents)
-async function getFilesInDirRecursive(dir: string, baseDir = dir): Promise<string[]> {
+async function _getFilesInDirRecursive(dir: string, baseDir = dir): Promise<string[]> {
     let entries: string[] = [];
     try {
         const items = await readdir(dir, { withFileTypes: true });
@@ -69,13 +69,15 @@ async function getFilesInDirRecursive(dir: string, baseDir = dir): Promise<strin
             const fullPath = join(dir, item.name);
             const relativePath = fullPath.substring(baseDir.length + 1); // +1 for the slash
             if (item.isDirectory()) {
-                entries = entries.concat(await getFilesInDirRecursive(fullPath, baseDir));
+                entries = entries.concat(await _getFilesInDirRecursive(fullPath, baseDir));
             } else {
                 entries.push(relativePath);
             }
         }
-    } catch (e: any) {
-        if (e.code === 'ENOENT') return [];
+    } catch (e: unknown) {
+        if (e instanceof Error && "code" in e && (e as NodeJS.ErrnoException).code === "ENOENT") {
+            return [];
+        }
         throw e;
     }
     return entries.sort();
@@ -100,7 +102,7 @@ describe("files-to-prompt", () => {
     });
 
     it("should show help with --help flag", async () => {
-        const { stdout, stderr, exitCode } = await runScript(["--help"]);
+        const { stdout, exitCode } = await runScript(["--help"]);
         expect(exitCode).toBe(0);
         expect(stdout).toContain("Usage: files-to-prompt [options] [paths...]");
         expect(stdout).toContain("-e, --extension");
@@ -145,7 +147,7 @@ describe("files-to-prompt", () => {
         it("should process multiple files", async () => {
             await createStructure(testDir, {
                 "file1.txt": "Content1",
-                "file2.log": "Content2"
+                "file2.log": "Content2",
             });
             const { stdout, exitCode } = await runScript([join(testDir, "file1.txt"), join(testDir, "file2.log")]);
             expect(exitCode).toBe(0);
@@ -159,7 +161,7 @@ describe("files-to-prompt", () => {
             await createStructure(testDir, {
                 "file1.txt": "Root file",
                 "subdir/file2.txt": "Nested file",
-                "subdir/another.log": "Nested log"
+                "subdir/another.log": "Nested log",
             });
             const { stdout, exitCode } = await runScript([testDir]);
             expect(exitCode).toBe(0);
@@ -174,10 +176,7 @@ describe("files-to-prompt", () => {
         it("should output to a specified file with -o", async () => {
             await createStructure(testDir, { "file1.txt": "Output this" });
             const outputFile = join(testDir, "output.txt");
-            const { stdout, exitCode } = await runScript([
-                join(testDir, "file1.txt"),
-                "-o", outputFile
-            ]);
+            const { stdout, exitCode } = await runScript([join(testDir, "file1.txt"), "-o", outputFile]);
             expect(exitCode).toBe(0);
             expect(stdout).toBe(""); // No stdout when -o is used
 
@@ -193,10 +192,7 @@ describe("files-to-prompt", () => {
         });
 
         it("should output with line numbers using -n", async () => {
-            const { stdout, exitCode } = await runScript([
-                join(testDir, "test.js"),
-                "--lineNumbers"
-            ]);
+            const { stdout, exitCode } = await runScript([join(testDir, "test.js"), "--lineNumbers"]);
             expect(exitCode).toBe(0);
             expect(stdout).toContain(join(testDir, "test.js"));
             expect(stdout).toContain("---");
@@ -204,10 +200,7 @@ describe("files-to-prompt", () => {
         });
 
         it("should output in Markdown format using -m", async () => {
-            const { stdout, exitCode } = await runScript([
-                join(testDir, "test.js"),
-                "-m"
-            ]);
+            const { stdout, exitCode } = await runScript([join(testDir, "test.js"), "-m"]);
             expect(exitCode).toBe(0);
             expect(stdout).toContain(join(testDir, "test.js"));
             expect(stdout).toMatch(/```javascript\s*console\.log\('hello'\);\s*```/s);
@@ -218,10 +211,7 @@ describe("files-to-prompt", () => {
             // The script has globalIndex = 1. If tests run sequentially, this will increment.
             // This requires running the script in a way that resets its global state or making globalIndex not global.
             // For now, we'll just check for the pattern, assuming it starts at some index.
-            const { stdout, exitCode } = await runScript([
-                join(testDir, "test.js"),
-                "-c"
-            ]);
+            const { stdout, exitCode } = await runScript([join(testDir, "test.js"), "-c"]);
             expect(exitCode).toBe(0);
             expect(stdout).toMatch(/<document index="\d+">/);
             expect(stdout).toContain(`<source>${join(testDir, "test.js")}</source>`);
@@ -232,10 +222,7 @@ describe("files-to-prompt", () => {
         });
 
         it("should use Markdown with line numbers", async () => {
-            const { stdout, exitCode } = await runScript([
-                join(testDir, "test.js"),
-                "-m", "--lineNumbers"
-            ]);
+            const { stdout, exitCode } = await runScript([join(testDir, "test.js"), "-m", "--lineNumbers"]);
             expect(exitCode).toBe(0);
             expect(stdout).toContain(join(testDir, "test.js"));
             expect(stdout).toMatch(/```javascript\s*1\s+console\.log\('hello'\);\s*```/s);
@@ -243,13 +230,10 @@ describe("files-to-prompt", () => {
 
         it("should correctly determine backticks for markdown", async () => {
             await createStructure(testDir, { "test_with_backticks.md": "```js\nconsole.log('hello');\n```" });
-            const { stdout, exitCode } = await runScript([
-                join(testDir, "test_with_backticks.md"),
-                "-m"
-            ]);
+            const { stdout, exitCode } = await runScript([join(testDir, "test_with_backticks.md"), "-m"]);
             expect(exitCode).toBe(0);
             expect(stdout).toContain(join(testDir, "test_with_backticks.md"));
-            expect(stdout).toMatch(/````\s*```js\nconsole\.log\(\'hello\'\);\n```\s*````/s);
+            expect(stdout).toMatch(/````\s*```js\nconsole\.log\('hello'\);\n```\s*````/s);
         });
     });
 
@@ -261,7 +245,7 @@ describe("files-to-prompt", () => {
                 "file.ts": "typescript content",
                 "subdir/another.txt": "more text",
                 ".hiddenfile": "hidden content",
-                "subdir/.hidden_in_subdir": "hidden two"
+                "subdir/.hidden_in_subdir": "hidden two",
             });
         });
 
@@ -314,7 +298,7 @@ describe("files-to-prompt", () => {
                     ".env": "secret",
                     "data.json": "json data",
                     ".gitignore": "*.log\nnode_modules/\n.env", // Ignore all .log files, node_modules dir, .env file
-                    "subdir/.gitignore": "fileC.txt" // Ignore fileC.txt within subdir
+                    "subdir/.gitignore": "fileC.txt", // Ignore fileC.txt within subdir
                 });
             });
 
@@ -331,7 +315,7 @@ describe("files-to-prompt", () => {
             });
 
             it("should ignore .gitignore with --ignoreGitignore", async () => {
-                const { stdout, stderr, exitCode } = await runScript([testDir, "--ignoreGitignore"]);
+                const { stdout, exitCode } = await runScript([testDir, "--ignoreGitignore"]);
                 expect(exitCode).toBe(0);
                 expect(stdout).toContain(join(testDir, "fileA.txt"));
                 expect(stdout).toContain(join(testDir, "fileB.log")); // Now included
@@ -359,8 +343,10 @@ describe("files-to-prompt", () => {
                 const { stdout, exitCode } = await runScript([
                     testDir,
                     "--ignoreGitignore",
-                    "--ignore", "*.log",
-                    "--ignore", "**/.env" // More specific ignore for .env
+                    "--ignore",
+                    "*.log",
+                    "--ignore",
+                    "**/.env", // More specific ignore for .env
                 ]);
                 expect(exitCode).toBe(0);
                 expect(stdout).toContain(join(testDir, "fileA.txt"));
@@ -376,21 +362,17 @@ describe("files-to-prompt", () => {
                 const { stdout, exitCode } = await runScript([
                     testDir,
                     "--ignoreGitignore", // So node_modules is considered for traversal
-                    "--ignore", "*.js",
-                    "--ignoreFilesOnly"
+                    "--ignore",
+                    "*.js",
+                    "--ignoreFilesOnly",
                 ]);
                 expect(exitCode).toBe(0);
                 expect(stdout).toContain(join(testDir, "fileA.txt"));
                 expect(stdout).not.toContain("dep file"); // node_modules/some_dep/file.js is ignored
                 // Crucially, other files in node_modules (if any and not .js) would be processed.
                 // This setup only has one .js file there. If we add a non-js file:
-                await createStructure(testDir, {"node_modules/another.txt": "another in node_modules"});
-                const result = await runScript([
-                    testDir,
-                    "--ignoreGitignore",
-                    "--ignore", "*.js",
-                    "--ignoreFilesOnly"
-                ]);
+                await createStructure(testDir, { "node_modules/another.txt": "another in node_modules" });
+                const result = await runScript([testDir, "--ignoreGitignore", "--ignore", "*.js", "--ignoreFilesOnly"]);
                 expect(result.stdout).toContain("another in node_modules");
                 expect(result.stdout).not.toContain("dep file");
             });
@@ -401,7 +383,7 @@ describe("files-to-prompt", () => {
         it("should read paths from stdin", async () => {
             await createStructure(testDir, {
                 "file1.txt": "Stdin Content 1",
-                "file2.txt": "Stdin Content 2"
+                "file2.txt": "Stdin Content 2",
             });
             const pathsInput = `${join(testDir, "file1.txt")}\n${join(testDir, "file2.txt")}`;
             const { stdout, exitCode } = await runScript([], pathsInput);
@@ -414,7 +396,7 @@ describe("files-to-prompt", () => {
         it("should read paths from stdin with null separator using -0", async () => {
             await createStructure(testDir, {
                 "file1.txt": "Null Sep Content 1",
-                "file with space.txt": "Null Sep Content 2"
+                "file with space.txt": "Null Sep Content 2",
             });
             const pathsInput = `${join(testDir, "file1.txt")}\0${join(testDir, "file with space.txt")}\0`;
             const { stdout, exitCode } = await runScript(["-0"], pathsInput);
@@ -459,5 +441,4 @@ describe("files-to-prompt", () => {
         expect(stdout).toMatch(/<document index="\d+">/); // cxml format
         expect(stdout).not.toMatch(/```/); // Not markdown format
     });
-
-}); 
+});
