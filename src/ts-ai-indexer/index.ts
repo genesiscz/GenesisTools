@@ -1,24 +1,24 @@
-import { Command } from "commander";
+import { existsSync, statSync, writeFileSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import * as p from "@clack/prompts";
-import { resolve, join, relative } from "node:path";
-import { existsSync, writeFileSync, statSync } from "node:fs";
-import { minimatch } from "minimatch";
-import logger from "../logger";
 import clipboardy from "clipboardy";
+import { Command } from "commander";
+import { minimatch } from "minimatch";
 import {
-    Project,
-    SourceFile,
-    ClassDeclaration,
-    InterfaceDeclaration,
-    FunctionDeclaration,
-    EnumDeclaration,
-    TypeAliasDeclaration,
-    MethodDeclaration,
-    PropertyDeclaration,
-    ParameterDeclaration,
+    type ClassDeclaration,
+    type EnumDeclaration,
+    type FunctionDeclaration,
+    type InterfaceDeclaration,
+    type MethodDeclaration,
     Node,
+    type ParameterDeclaration,
+    Project,
+    type PropertyDeclaration,
+    type SourceFile,
     SyntaxKind,
+    type TypeAliasDeclaration,
 } from "ts-morph";
+import logger from "../logger";
 
 interface Options {
     path?: string;
@@ -174,16 +174,22 @@ interface ConstantInfo {
 // Commander handles help automatically
 
 function getJsDoc(node: Node): string | undefined {
-    if (!('getJsDocs' in node)) return undefined;
-    
+    if (!("getJsDocs" in node)) {
+        return undefined;
+    }
+
     const jsDocs = (node as any).getJsDocs();
-    if (jsDocs.length === 0) return undefined;
+    if (jsDocs.length === 0) {
+        return undefined;
+    }
 
     return jsDocs.map((jsDoc: any) => jsDoc.getCommentText()).join("\n");
 }
 
 function compactJsDoc(jsDoc: string | undefined): string {
-    if (!jsDoc) return "";
+    if (!jsDoc) {
+        return "";
+    }
 
     // Remove excessive whitespace and newlines
     const cleaned = jsDoc
@@ -201,17 +207,27 @@ function compactJsDoc(jsDoc: string | undefined): string {
 }
 
 function getVisibility(node: Node): "public" | "protected" | "private" | undefined {
-    if (!('hasModifier' in node)) return undefined;
-    
+    if (!("hasModifier" in node)) {
+        return undefined;
+    }
+
     const modifierNode = node as any;
-    if (modifierNode.hasModifier(SyntaxKind.PublicKeyword)) return "public";
-    if (modifierNode.hasModifier(SyntaxKind.ProtectedKeyword)) return "protected";
-    if (modifierNode.hasModifier(SyntaxKind.PrivateKeyword)) return "private";
+    if (modifierNode.hasModifier(SyntaxKind.PublicKeyword)) {
+        return "public";
+    }
+    if (modifierNode.hasModifier(SyntaxKind.ProtectedKeyword)) {
+        return "protected";
+    }
+    if (modifierNode.hasModifier(SyntaxKind.PrivateKeyword)) {
+        return "private";
+    }
     return undefined;
 }
 
 function getDecorators(node: Node): string[] {
-    if (!Node.isDecoratable(node)) return [];
+    if (!Node.isDecoratable(node)) {
+        return [];
+    }
 
     const decoratableNode = node as any;
     return decoratableNode.getDecorators().map((decorator: any) => {
@@ -222,18 +238,26 @@ function getDecorators(node: Node): string[] {
 }
 
 function getTypeParameters(node: Node): string[] | undefined {
-    if (!Node.isTypeParametered(node)) return undefined;
+    if (!Node.isTypeParametered(node)) {
+        return undefined;
+    }
 
     const typeParams = (node as any).getTypeParameters();
-    if (typeParams.length === 0) return undefined;
+    if (typeParams.length === 0) {
+        return undefined;
+    }
 
     return typeParams.map((tp: any) => {
         const constraint = tp.getConstraint();
         const defaultType = tp.getDefault();
 
         let result = tp.getName();
-        if (constraint) result += ` extends ${constraint.getText()}`;
-        if (defaultType) result += ` = ${defaultType.getText()}`;
+        if (constraint) {
+            result += ` extends ${constraint.getText()}`;
+        }
+        if (defaultType) {
+            result += ` = ${defaultType.getText()}`;
+        }
 
         return result;
     });
@@ -248,7 +272,7 @@ function simplifyType(type: string): string {
 
     // Truncate very long types
     if (type.length > 100) {
-        return type.substring(0, 97) + "...";
+        return `${type.substring(0, 97)}...`;
     }
 
     return type;
@@ -336,7 +360,9 @@ function extractAccessorInfo(cls: ClassDeclaration): AccessorInfo[] {
 
 function extractClassInfo(cls: ClassDeclaration): ClassInfo | null {
     const name = cls.getName();
-    if (!name) return null;
+    if (!name) {
+        return null;
+    }
 
     return {
         name,
@@ -384,7 +410,9 @@ function extractInterfaceInfo(iface: InterfaceDeclaration): InterfaceInfo {
 
 function extractFunctionInfo(func: FunctionDeclaration): FunctionInfo | null {
     const name = func.getName();
-    if (!name) return null;
+    if (!name) {
+        return null;
+    }
 
     return {
         name,
@@ -452,7 +480,9 @@ function analyzeSourceFile(sourceFile: SourceFile): FileInfo {
     // Extract classes
     sourceFile.getClasses().forEach((cls) => {
         const classInfo = extractClassInfo(cls);
-        if (classInfo) info.classes.push(classInfo);
+        if (classInfo) {
+            info.classes.push(classInfo);
+        }
     });
 
     // Extract interfaces
@@ -463,7 +493,9 @@ function analyzeSourceFile(sourceFile: SourceFile): FileInfo {
     // Extract functions
     sourceFile.getFunctions().forEach((func) => {
         const funcInfo = extractFunctionInfo(func);
-        if (funcInfo) info.functions.push(funcInfo);
+        if (funcInfo) {
+            info.functions.push(funcInfo);
+        }
     });
 
     // Extract enums
@@ -509,7 +541,7 @@ function generateCompactMarkdown(fileInfos: FileInfo[], options: Options): strin
         if (!byDirectory.has(dir)) {
             byDirectory.set(dir, []);
         }
-        byDirectory.get(dir)!.push(file);
+        byDirectory.get(dir)?.push(file);
     }
 
     // Generate content
@@ -530,18 +562,26 @@ function generateCompactMarkdown(fileInfos: FileInfo[], options: Options): strin
                 file.types.some((t) => t.isExported) ||
                 file.constants.some((c) => c.isExported);
 
-            if (!hasExportedContent && !options.includePrivate) continue;
+            if (!hasExportedContent && !options.includePrivate) {
+                continue;
+            }
 
             lines.push(`### 📄 ${filename}`);
 
             // Classes
             for (const cls of file.classes) {
-                if (!cls.isExported && !options.includePrivate) continue;
+                if (!cls.isExported && !options.includePrivate) {
+                    continue;
+                }
 
-                const decorators = cls.decorators.length > 0 ? cls.decorators.join(" ") + " " : "";
+                const decorators = cls.decorators.length > 0 ? `${cls.decorators.join(" ")} ` : "";
                 const parts: string[] = [];
-                if (cls.isExported) parts.push("export");
-                if (cls.isAbstract) parts.push("abstract");
+                if (cls.isExported) {
+                    parts.push("export");
+                }
+                if (cls.isAbstract) {
+                    parts.push("abstract");
+                }
                 parts.push("class");
                 parts.push(cls.name);
 
@@ -550,31 +590,49 @@ function generateCompactMarkdown(fileInfos: FileInfo[], options: Options): strin
                 }
 
                 let signature = decorators + parts.join(" ");
-                if (cls.extends) signature += ` extends ${cls.extends}`;
-                if (cls.implements.length > 0) signature += ` implements ${cls.implements.join(", ")}`;
+                if (cls.extends) {
+                    signature += ` extends ${cls.extends}`;
+                }
+                if (cls.implements.length > 0) {
+                    signature += ` implements ${cls.implements.join(", ")}`;
+                }
 
                 lines.push(`#### ${signature}`);
 
                 const jsDoc = compactJsDoc(cls.jsDoc);
-                if (jsDoc) lines.push(jsDoc);
+                if (jsDoc) {
+                    lines.push(jsDoc);
+                }
 
                 // Properties
                 const properties = cls.properties.filter((p) => {
-                    if (p.visibility === "private" && !options.includePrivate) return false;
-                    if (p.visibility === "protected" && !options.includeProtected) return false;
+                    if (p.visibility === "private" && !options.includePrivate) {
+                        return false;
+                    }
+                    if (p.visibility === "protected" && !options.includeProtected) {
+                        return false;
+                    }
                     return true;
                 });
 
                 if (properties.length > 0) {
                     lines.push("Properties:");
                     for (const prop of properties) {
-                        const propDecorators = prop.decorators.length > 0 ? prop.decorators.join(" ") + " " : "";
+                        const propDecorators = prop.decorators.length > 0 ? `${prop.decorators.join(" ")} ` : "";
                         const propParts: string[] = [];
-                        if (prop.visibility) propParts.push(prop.visibility);
-                        if (prop.isStatic) propParts.push("static");
-                        if (prop.isReadonly) propParts.push("readonly");
+                        if (prop.visibility) {
+                            propParts.push(prop.visibility);
+                        }
+                        if (prop.isStatic) {
+                            propParts.push("static");
+                        }
+                        if (prop.isReadonly) {
+                            propParts.push("readonly");
+                        }
                         propParts.push(prop.name);
-                        if (prop.isOptional) propParts.push("?");
+                        if (prop.isOptional) {
+                            propParts.push("?");
+                        }
 
                         const propDoc = compactJsDoc(prop.jsDoc);
                         lines.push(
@@ -587,8 +645,12 @@ function generateCompactMarkdown(fileInfos: FileInfo[], options: Options): strin
 
                 // Accessors
                 const accessors = cls.accessors.filter((a) => {
-                    if (a.visibility === "private" && !options.includePrivate) return false;
-                    if (a.visibility === "protected" && !options.includeProtected) return false;
+                    if (a.visibility === "private" && !options.includePrivate) {
+                        return false;
+                    }
+                    if (a.visibility === "protected" && !options.includeProtected) {
+                        return false;
+                    }
                     return true;
                 });
 
@@ -596,12 +658,20 @@ function generateCompactMarkdown(fileInfos: FileInfo[], options: Options): strin
                     lines.push("Accessors:");
                     for (const accessor of accessors) {
                         const accParts: string[] = [];
-                        if (accessor.visibility) accParts.push(accessor.visibility);
-                        if (accessor.isStatic) accParts.push("static");
+                        if (accessor.visibility) {
+                            accParts.push(accessor.visibility);
+                        }
+                        if (accessor.isStatic) {
+                            accParts.push("static");
+                        }
 
                         const accessType = [];
-                        if (accessor.hasGetter) accessType.push("get");
-                        if (accessor.hasSetter) accessType.push("set");
+                        if (accessor.hasGetter) {
+                            accessType.push("get");
+                        }
+                        if (accessor.hasSetter) {
+                            accessType.push("set");
+                        }
 
                         lines.push(
                             `- ${accParts.join(" ")} ${accessType.join("/")} ${accessor.name}: ${accessor.type}`
@@ -611,29 +681,47 @@ function generateCompactMarkdown(fileInfos: FileInfo[], options: Options): strin
 
                 // Methods
                 const methods = cls.methods.filter((m) => {
-                    if (m.visibility === "private" && !options.includePrivate) return false;
-                    if (m.visibility === "protected" && !options.includeProtected) return false;
+                    if (m.visibility === "private" && !options.includePrivate) {
+                        return false;
+                    }
+                    if (m.visibility === "protected" && !options.includeProtected) {
+                        return false;
+                    }
                     return true;
                 });
 
                 if (methods.length > 0) {
                     lines.push("Methods:");
                     for (const method of methods) {
-                        const methodDecorators = method.decorators.length > 0 ? method.decorators.join(" ") + " " : "";
+                        const methodDecorators = method.decorators.length > 0 ? `${method.decorators.join(" ")} ` : "";
                         const methodParts: string[] = [];
-                        if (method.visibility) methodParts.push(method.visibility);
-                        if (method.isStatic) methodParts.push("static");
-                        if (method.isAbstract) methodParts.push("abstract");
-                        if (method.isAsync) methodParts.push("async");
+                        if (method.visibility) {
+                            methodParts.push(method.visibility);
+                        }
+                        if (method.isStatic) {
+                            methodParts.push("static");
+                        }
+                        if (method.isAbstract) {
+                            methodParts.push("abstract");
+                        }
+                        if (method.isAsync) {
+                            methodParts.push("async");
+                        }
 
                         const params = method.parameters
                             .map((p) => {
                                 let param = "";
-                                if (p.isRest) param += "...";
+                                if (p.isRest) {
+                                    param += "...";
+                                }
                                 param += p.name;
-                                if (p.isOptional) param += "?";
+                                if (p.isOptional) {
+                                    param += "?";
+                                }
                                 param += `: ${p.type}`;
-                                if (p.defaultValue) param += ` = ${p.defaultValue}`;
+                                if (p.defaultValue) {
+                                    param += ` = ${p.defaultValue}`;
+                                }
                                 return param;
                             })
                             .join(", ");
@@ -656,10 +744,14 @@ function generateCompactMarkdown(fileInfos: FileInfo[], options: Options): strin
 
             // Interfaces
             for (const iface of file.interfaces) {
-                if (!iface.isExported && !options.includePrivate) continue;
+                if (!iface.isExported && !options.includePrivate) {
+                    continue;
+                }
 
                 let signature = "";
-                if (iface.isExported) signature += "export ";
+                if (iface.isExported) {
+                    signature += "export ";
+                }
                 signature += `interface ${iface.name}`;
 
                 if (iface.typeParameters && iface.typeParameters.length > 0) {
@@ -673,7 +765,9 @@ function generateCompactMarkdown(fileInfos: FileInfo[], options: Options): strin
                 lines.push(`#### ${signature}`);
 
                 const jsDoc = compactJsDoc(iface.jsDoc);
-                if (jsDoc) lines.push(jsDoc);
+                if (jsDoc) {
+                    lines.push(jsDoc);
+                }
 
                 // Properties
                 if (iface.properties.length > 0) {
@@ -690,11 +784,17 @@ function generateCompactMarkdown(fileInfos: FileInfo[], options: Options): strin
                         const params = method.parameters
                             .map((p) => {
                                 let param = "";
-                                if (p.isRest) param += "...";
+                                if (p.isRest) {
+                                    param += "...";
+                                }
                                 param += p.name;
-                                if (p.isOptional) param += "?";
+                                if (p.isOptional) {
+                                    param += "?";
+                                }
                                 param += `: ${p.type}`;
-                                if (p.defaultValue) param += ` = ${p.defaultValue}`;
+                                if (p.defaultValue) {
+                                    param += ` = ${p.defaultValue}`;
+                                }
                                 return param;
                             })
                             .join(", ");
@@ -722,18 +822,28 @@ function generateCompactMarkdown(fileInfos: FileInfo[], options: Options): strin
                     const params = func.parameters
                         .map((p) => {
                             let param = "";
-                            if (p.isRest) param += "...";
+                            if (p.isRest) {
+                                param += "...";
+                            }
                             param += p.name;
-                            if (p.isOptional) param += "?";
+                            if (p.isOptional) {
+                                param += "?";
+                            }
                             param += `: ${p.type}`;
-                            if (p.defaultValue) param += ` = ${p.defaultValue}`;
+                            if (p.defaultValue) {
+                                param += ` = ${p.defaultValue}`;
+                            }
                             return param;
                         })
                         .join(", ");
 
                     const funcParts: string[] = [];
-                    if (func.isExported) funcParts.push("export");
-                    if (func.isAsync) funcParts.push("async");
+                    if (func.isExported) {
+                        funcParts.push("export");
+                    }
+                    if (func.isAsync) {
+                        funcParts.push("async");
+                    }
                     funcParts.push("function");
 
                     const typeParams =
@@ -757,8 +867,12 @@ function generateCompactMarkdown(fileInfos: FileInfo[], options: Options): strin
                 lines.push("#### Enums");
                 for (const enumInfo of exportedEnums) {
                     const enumParts: string[] = [];
-                    if (enumInfo.isExported) enumParts.push("export");
-                    if (enumInfo.isConst) enumParts.push("const");
+                    if (enumInfo.isExported) {
+                        enumParts.push("export");
+                    }
+                    if (enumInfo.isConst) {
+                        enumParts.push("const");
+                    }
                     enumParts.push("enum");
                     enumParts.push(enumInfo.name);
 
@@ -775,7 +889,9 @@ function generateCompactMarkdown(fileInfos: FileInfo[], options: Options): strin
                 lines.push("#### Types");
                 for (const typeInfo of exportedTypes) {
                     let typeSig = "";
-                    if (typeInfo.isExported) typeSig += "export ";
+                    if (typeInfo.isExported) {
+                        typeSig += "export ";
+                    }
                     typeSig += `type ${typeInfo.name}`;
 
                     if (typeInfo.typeParameters && typeInfo.typeParameters.length > 0) {
@@ -795,7 +911,7 @@ function generateCompactMarkdown(fileInfos: FileInfo[], options: Options): strin
                     // For function types, don't include the implementation
                     const isFunctionType = constant.type.includes("=>") || constant.type.startsWith("(");
                     const valueToShow = !isFunctionType && constant.value ? ` = ${constant.value}` : "";
-                    
+
                     lines.push(
                         `- ${constant.isExported ? "export " : ""}const ${constant.name}: ${constant.type}${valueToShow}`
                     );
@@ -840,14 +956,26 @@ function generateDetailedMarkdown(fileInfos: FileInfo[], options: Options): stri
 
         // Classes
         for (const cls of file.classes) {
-            if (!cls.isExported && !options.includePrivate) continue;
+            if (!cls.isExported && !options.includePrivate) {
+                continue;
+            }
 
             lines.push(`### Class: ${cls.name}`);
-            if (cls.jsDoc) lines.push(`> ${cls.jsDoc}`);
-            if (cls.extends) lines.push(`- **Extends:** ${cls.extends}`);
-            if (cls.implements.length > 0) lines.push(`- **Implements:** ${cls.implements.join(", ")}`);
-            if (cls.isAbstract) lines.push("- **Abstract**");
-            if (cls.decorators.length > 0) lines.push(`- **Decorators:** ${cls.decorators.join(", ")}`);
+            if (cls.jsDoc) {
+                lines.push(`> ${cls.jsDoc}`);
+            }
+            if (cls.extends) {
+                lines.push(`- **Extends:** ${cls.extends}`);
+            }
+            if (cls.implements.length > 0) {
+                lines.push(`- **Implements:** ${cls.implements.join(", ")}`);
+            }
+            if (cls.isAbstract) {
+                lines.push("- **Abstract**");
+            }
+            if (cls.decorators.length > 0) {
+                lines.push(`- **Decorators:** ${cls.decorators.join(", ")}`);
+            }
             lines.push("");
 
             if (cls.properties.length > 0) {
@@ -855,9 +983,15 @@ function generateDetailedMarkdown(fileInfos: FileInfo[], options: Options): stri
                 lines.push("| Name | Type | Visibility | Static | Readonly | Optional |");
                 lines.push("|------|------|-----------|--------|----------|----------|");
                 for (const prop of cls.properties) {
-                    if (prop.visibility === "private" && !options.includePrivate) continue;
-                    if (prop.visibility === "protected" && !options.includeProtected) continue;
-                    lines.push(`| ${prop.name} | \`${prop.type}\` | ${prop.visibility ?? "public"} | ${prop.isStatic} | ${prop.isReadonly} | ${prop.isOptional} |`);
+                    if (prop.visibility === "private" && !options.includePrivate) {
+                        continue;
+                    }
+                    if (prop.visibility === "protected" && !options.includeProtected) {
+                        continue;
+                    }
+                    lines.push(
+                        `| ${prop.name} | \`${prop.type}\` | ${prop.visibility ?? "public"} | ${prop.isStatic} | ${prop.isReadonly} | ${prop.isOptional} |`
+                    );
                 }
                 lines.push("");
             }
@@ -865,11 +999,19 @@ function generateDetailedMarkdown(fileInfos: FileInfo[], options: Options): stri
             if (cls.methods.length > 0) {
                 lines.push("#### Methods");
                 for (const method of cls.methods) {
-                    if (method.visibility === "private" && !options.includePrivate) continue;
-                    if (method.visibility === "protected" && !options.includeProtected) continue;
+                    if (method.visibility === "private" && !options.includePrivate) {
+                        continue;
+                    }
+                    if (method.visibility === "protected" && !options.includeProtected) {
+                        continue;
+                    }
                     const params = method.parameters.map((p) => `${p.name}: ${p.type}`).join(", ");
-                    lines.push(`- \`${method.visibility ?? "public"} ${method.isAsync ? "async " : ""}${method.name}(${params}): ${method.returnType}\``);
-                    if (method.jsDoc) lines.push(`  > ${method.jsDoc}`);
+                    lines.push(
+                        `- \`${method.visibility ?? "public"} ${method.isAsync ? "async " : ""}${method.name}(${params}): ${method.returnType}\``
+                    );
+                    if (method.jsDoc) {
+                        lines.push(`  > ${method.jsDoc}`);
+                    }
                 }
                 lines.push("");
             }
@@ -877,11 +1019,17 @@ function generateDetailedMarkdown(fileInfos: FileInfo[], options: Options): stri
 
         // Interfaces
         for (const iface of file.interfaces) {
-            if (!iface.isExported && !options.includePrivate) continue;
+            if (!iface.isExported && !options.includePrivate) {
+                continue;
+            }
 
             lines.push(`### Interface: ${iface.name}`);
-            if (iface.jsDoc) lines.push(`> ${iface.jsDoc}`);
-            if (iface.extends.length > 0) lines.push(`- **Extends:** ${iface.extends.join(", ")}`);
+            if (iface.jsDoc) {
+                lines.push(`> ${iface.jsDoc}`);
+            }
+            if (iface.extends.length > 0) {
+                lines.push(`- **Extends:** ${iface.extends.join(", ")}`);
+            }
             lines.push("");
 
             if (iface.properties.length > 0) {
@@ -901,7 +1049,9 @@ function generateDetailedMarkdown(fileInfos: FileInfo[], options: Options): stri
             for (const func of funcs) {
                 const params = func.parameters.map((p) => `${p.name}: ${p.type}`).join(", ");
                 lines.push(`- \`${func.isAsync ? "async " : ""}function ${func.name}(${params}): ${func.returnType}\``);
-                if (func.jsDoc) lines.push(`  > ${func.jsDoc}`);
+                if (func.jsDoc) {
+                    lines.push(`  > ${func.jsDoc}`);
+                }
             }
             lines.push("");
         }
@@ -925,7 +1075,9 @@ function generateDetailedMarkdown(fileInfos: FileInfo[], options: Options): stri
             lines.push("### Type Aliases");
             for (const t of types) {
                 lines.push(`- \`type ${t.name} = ${t.type}\``);
-                if (t.jsDoc) lines.push(`  > ${t.jsDoc}`);
+                if (t.jsDoc) {
+                    lines.push(`  > ${t.jsDoc}`);
+                }
             }
             lines.push("");
         }
@@ -936,7 +1088,9 @@ function generateDetailedMarkdown(fileInfos: FileInfo[], options: Options): stri
             lines.push("### Constants");
             for (const c of consts) {
                 lines.push(`- \`const ${c.name}: ${c.type}\`${c.value ? ` = \`${c.value}\`` : ""}`);
-                if (c.jsDoc) lines.push(`  > ${c.jsDoc}`);
+                if (c.jsDoc) {
+                    lines.push(`  > ${c.jsDoc}`);
+                }
             }
             lines.push("");
         }
