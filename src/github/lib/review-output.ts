@@ -248,10 +248,6 @@ export function formatReviewTerminal(data: ReviewData, groupByFile: boolean): st
         }
     }
 
-    if (data.prComments && data.prComments.length > 0) {
-        output += formatPrLevelComments(data.prComments);
-    }
-
     return output;
 }
 
@@ -366,10 +362,6 @@ export function formatReviewMarkdown(data: ReviewData, groupByFile: boolean): st
     if (threads.length === 0) {
         output += `*No review comments found.*\n`;
         return output;
-    }
-
-    if (data.prComments && data.prComments.length > 0) {
-        output += formatPrLevelCommentsMarkdown(data.prComments);
     }
 
     output += `## Review Threads\n\n`;
