@@ -257,12 +257,12 @@ function formatMarkdownThread(thread: ParsedReviewThread): string {
     if (thread.replies.length > 0) {
         output += `**Replies:**\n\n`;
         for (const reply of thread.replies) {
-            const firstLine = reply.body.split("\n")[0];
-            const replyPreview = firstLine.substring(0, 100);
-            const truncated = firstLine.length > 100 || reply.body.length > firstLine.length;
-            output += `- **@${reply.author}** (\`${reply.id}\`): ${replyPreview}${truncated ? "..." : ""}\n`;
+            const indentedBody = reply.body
+                .split("\n")
+                .map((line) => `  ${line}`)
+                .join("\n");
+            output += `- **@${reply.author}** (\`${reply.id}\`):\n${indentedBody}\n\n`;
         }
-        output += "\n";
     }
 
     output += "---\n\n";
