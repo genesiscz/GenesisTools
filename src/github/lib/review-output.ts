@@ -3,7 +3,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ParsedReviewThread, ReviewData } from "@app/github/types";
+import type { ParsedReviewThread, PRLevelComment, ReviewData } from "@app/github/types";
 import chalk from "chalk";
 
 // =============================================================================
@@ -169,6 +169,36 @@ function formatSummary(data: ReviewData, shownCount: number): string {
     return output;
 }
 
+function formatPrLevelComments(prComments: PRLevelComment[]): string {
+    if (prComments.length === 0) {
+        return "";
+    }
+
+    const stateLabel: Record<string, string> = {
+        APPROVED: chalk.green("APPROVED"),
+        CHANGES_REQUESTED: chalk.red("CHANGES_REQUESTED"),
+        COMMENTED: chalk.yellow("COMMENTED"),
+        DISMISSED: chalk.dim("DISMISSED"),
+    };
+
+    let output = `\n${chalk.cyan("=".repeat(90))}\n`;
+    output += chalk.bold(`PR-LEVEL COMMENTS (${prComments.length})\n`);
+    output += `${chalk.cyan("=".repeat(90))}\n`;
+
+    for (const c of prComments) {
+        output += "\n";
+        const label =
+            c.type === "review" && c.reviewState
+                ? (stateLabel[c.reviewState] ?? chalk.white(c.reviewState))
+                : chalk.white("COMMENT");
+        const date = c.createdAt.slice(0, 10);
+        output += `${label} ${chalk.bold(`@${c.author}`)} ${chalk.dim(date)}\n`;
+        output += `${c.body}\n`;
+    }
+
+    return output;
+}
+
 /**
  * Format review data for terminal output (colorized)
  */
@@ -202,6 +232,10 @@ export function formatReviewTerminal(data: ReviewData, groupByFile: boolean): st
         for (const thread of threads) {
             output += formatThread(thread);
         }
+    }
+
+    if (data.prComments && data.prComments.length > 0) {
+        output += formatPrLevelComments(data.prComments);
     }
 
     return output;
@@ -269,6 +303,24 @@ function formatMarkdownThread(thread: ParsedReviewThread): string {
     return output;
 }
 
+function formatPrLevelCommentsMarkdown(prComments: PRLevelComment[]): string {
+    if (prComments.length === 0) {
+        return "";
+    }
+
+    let output = `## PR-Level Comments\n\n`;
+
+    for (const c of prComments) {
+        const stateLabel = c.type === "review" && c.reviewState ? ` — ${c.reviewState}` : "";
+        const date = c.createdAt.slice(0, 10);
+        output += `### @${c.author}${stateLabel} (${date})\n\n`;
+        output += `${c.body}\n\n`;
+        output += `---\n\n`;
+    }
+
+    return output;
+}
+
 /**
  * Format review data as markdown
  */
@@ -296,6 +348,10 @@ export function formatReviewMarkdown(data: ReviewData, groupByFile: boolean): st
     if (threads.length === 0) {
         output += `*No review comments found.*\n`;
         return output;
+    }
+
+    if (data.prComments && data.prComments.length > 0) {
+        output += formatPrLevelCommentsMarkdown(data.prComments);
     }
 
     output += `## Review Threads\n\n`;
@@ -340,6 +396,7 @@ export function formatReviewJSON(data: ReviewData): string {
             state: data.state,
             stats: data.stats,
             threads: data.threads,
+            prComments: data.prComments ?? [],
         },
         null,
         2
