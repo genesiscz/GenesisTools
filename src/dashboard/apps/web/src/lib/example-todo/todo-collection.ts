@@ -64,12 +64,11 @@ export async function getTodosCollection() {
     }
 
     // Dynamic imports to avoid SSR issues - all PowerSync-related imports happen here
-    const [{ createCollection }, { powerSyncCollectionOptions }, { db, APP_SCHEMA }] =
-        await Promise.all([
-            import("@tanstack/react-db"),
-            import("@tanstack/powersync-db-collection"),
-            import("../db/powersync"),
-        ]);
+    const [{ createCollection }, { powerSyncCollectionOptions }, { db, APP_SCHEMA }] = await Promise.all([
+        import("@tanstack/react-db"),
+        import("@tanstack/powersync-db-collection"),
+        import("../db/powersync"),
+    ]);
 
     if (!db || !APP_SCHEMA) {
         throw new Error("[TodoCollection] PowerSync not initialized. Call initializeDatabase() first.");
@@ -104,7 +103,9 @@ export const todosCollection = {
         return _todosCollection;
     },
     insert(data: TodoInput) {
-        if (!_todosCollection) throw new Error("Collection not initialized");
+        if (!_todosCollection) {
+            throw new Error("Collection not initialized");
+        }
         // Convert TodoInput to the format expected by the collection
         return _todosCollection.insert({
             id: data.id,
@@ -116,11 +117,15 @@ export const todosCollection = {
         });
     },
     update(id: string, updater: (draft: Todo) => void) {
-        if (!_todosCollection) throw new Error("Collection not initialized");
+        if (!_todosCollection) {
+            throw new Error("Collection not initialized");
+        }
         return _todosCollection.update(id, updater);
     },
     delete(id: string) {
-        if (!_todosCollection) throw new Error("Collection not initialized");
+        if (!_todosCollection) {
+            throw new Error("Collection not initialized");
+        }
         return _todosCollection.delete(id);
     },
 };

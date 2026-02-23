@@ -1,21 +1,22 @@
 // Core Phase 1 hooks (localStorage)
-export { useTaskStore, taskStore } from './useTaskStore'
-export { useContextParking } from './useContextParking'
-export { useStreak } from './useStreak'
+
+export { useBadgeProgress } from "./useBadgeProgress";
+export { blockersStore, useBlockers } from "./useBlockers";
+export { useCelebrations } from "./useCelebrations";
 
 // Phase 2 hooks (localStorage)
-export { useCommunicationLog, communicationStore } from './useCommunicationLog'
-export { useDecisionLog, decisionStore } from './useDecisionLog'
-export { useBlockers, blockersStore } from './useBlockers'
-export { useHandoff } from './useHandoff'
-export { useDeadlineRisk } from './useDeadlineRisk'
+export { communicationStore, useCommunicationLog } from "./useCommunicationLog";
+export { useContextParking } from "./useContextParking";
+export { useDeadlineRisk } from "./useDeadlineRisk";
+export { decisionStore, useDecisionLog } from "./useDecisionLog";
+export { useDistractions } from "./useDistractions";
 
 // Phase 3 hooks (localStorage)
-export { useEnergyData } from './useEnergyData'
-export { useDistractions } from './useDistractions'
-export { useWeeklyReview } from './useWeeklyReview'
-export { useCelebrations } from './useCelebrations'
-export { useBadgeProgress } from './useBadgeProgress'
+export { useEnergyData } from "./useEnergyData";
+export { useHandoff } from "./useHandoff";
+export { useStreak } from "./useStreak";
+export { taskStore, useTaskStore } from "./useTaskStore";
+export { useWeeklyReview } from "./useWeeklyReview";
 
 // ============================================
 // Server-first TanStack Query hooks
@@ -24,65 +25,65 @@ export { useBadgeProgress } from './useBadgeProgress'
 // Gradually migrate components to use these for database persistence.
 
 export {
-  // Query keys for cache management
-  assistantKeys,
-  // Tasks
-  useAssistantTasksQuery,
-  useAssistantTaskQuery,
-  useCreateAssistantTaskMutation,
-  useUpdateAssistantTaskMutation,
-  useDeleteAssistantTaskMutation,
-  // Context Parking
-  useAssistantContextParkingsQuery,
-  useCreateAssistantContextParkingMutation,
-  useUpdateAssistantContextParkingMutation,
-  // Completions
-  useAssistantCompletionsQuery,
-  useCreateAssistantCompletionMutation,
-  // Streaks
-  useAssistantStreakQuery,
-  useUpsertAssistantStreakMutation,
-  // Badges
-  useAssistantBadgesQuery,
-  useCreateAssistantBadgeMutation,
-  // Communications
-  useAssistantCommunicationsQuery,
-  useCreateAssistantCommunicationMutation,
-  useUpdateAssistantCommunicationMutation,
-  useDeleteAssistantCommunicationMutation,
-  // Decisions
-  useAssistantDecisionsQuery,
-  useCreateAssistantDecisionMutation,
-  useUpdateAssistantDecisionMutation,
-  useDeleteAssistantDecisionMutation,
-  // Blockers
-  useAssistantBlockersQuery,
-  useAssistantBlockersByTaskQuery,
-  useCreateAssistantBlockerMutation,
-  useUpdateAssistantBlockerMutation,
-  useResolveAssistantBlockerMutation,
-  // Handoffs
-  useAssistantHandoffsQuery,
-  useAssistantHandoffsByTaskQuery,
-  useCreateAssistantHandoffMutation,
-  useUpdateAssistantHandoffMutation,
-  // Deadline Risks
-  useAssistantDeadlineRisksQuery,
-  useAssistantDeadlineRiskByTaskQuery,
-  useCreateAssistantDeadlineRiskMutation,
-  // Energy Snapshots
-  useAssistantEnergySnapshotsQuery,
-  useCreateAssistantEnergySnapshotMutation,
-  // Distractions
-  useAssistantDistractionsQuery,
-  useCreateAssistantDistractionMutation,
-  // Weekly Reviews
-  useAssistantWeeklyReviewsQuery,
-  useAssistantCurrentWeekReviewQuery,
-  useCreateAssistantWeeklyReviewMutation,
-  // Celebrations
-  useAssistantCelebrationsQuery,
-  useCreateAssistantCelebrationMutation,
-  useMarkAssistantCelebrationShownMutation,
-  useDismissAssistantCelebrationMutation,
-} from './useAssistantQueries'
+    // Query keys for cache management
+    assistantKeys,
+    // Badges
+    useAssistantBadgesQuery,
+    useAssistantBlockersByTaskQuery,
+    // Blockers
+    useAssistantBlockersQuery,
+    // Celebrations
+    useAssistantCelebrationsQuery,
+    // Communications
+    useAssistantCommunicationsQuery,
+    // Completions
+    useAssistantCompletionsQuery,
+    // Context Parking
+    useAssistantContextParkingsQuery,
+    useAssistantCurrentWeekReviewQuery,
+    useAssistantDeadlineRiskByTaskQuery,
+    // Deadline Risks
+    useAssistantDeadlineRisksQuery,
+    // Decisions
+    useAssistantDecisionsQuery,
+    // Distractions
+    useAssistantDistractionsQuery,
+    // Energy Snapshots
+    useAssistantEnergySnapshotsQuery,
+    useAssistantHandoffsByTaskQuery,
+    // Handoffs
+    useAssistantHandoffsQuery,
+    // Streaks
+    useAssistantStreakQuery,
+    useAssistantTaskQuery,
+    // Tasks
+    useAssistantTasksQuery,
+    // Weekly Reviews
+    useAssistantWeeklyReviewsQuery,
+    useCreateAssistantBadgeMutation,
+    useCreateAssistantBlockerMutation,
+    useCreateAssistantCelebrationMutation,
+    useCreateAssistantCommunicationMutation,
+    useCreateAssistantCompletionMutation,
+    useCreateAssistantContextParkingMutation,
+    useCreateAssistantDeadlineRiskMutation,
+    useCreateAssistantDecisionMutation,
+    useCreateAssistantDistractionMutation,
+    useCreateAssistantEnergySnapshotMutation,
+    useCreateAssistantHandoffMutation,
+    useCreateAssistantTaskMutation,
+    useCreateAssistantWeeklyReviewMutation,
+    useDeleteAssistantCommunicationMutation,
+    useDeleteAssistantDecisionMutation,
+    useDeleteAssistantTaskMutation,
+    useDismissAssistantCelebrationMutation,
+    useMarkAssistantCelebrationShownMutation,
+    useResolveAssistantBlockerMutation,
+    useUpdateAssistantBlockerMutation,
+    useUpdateAssistantCommunicationMutation,
+    useUpdateAssistantContextParkingMutation,
+    useUpdateAssistantDecisionMutation,
+    useUpdateAssistantHandoffMutation,
+    useUpdateAssistantTaskMutation,
+    useUpsertAssistantStreakMutation,
+} from "./useAssistantQueries";

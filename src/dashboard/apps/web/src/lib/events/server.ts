@@ -1,4 +1,4 @@
-import { EventEmitter } from 'events'
+import { EventEmitter } from "node:events";
 
 /**
  * Global event emitter for all features
@@ -6,16 +6,16 @@ import { EventEmitter } from 'events'
  * This single emitter handles all real-time events across the entire application.
  * Each feature subscribes to specific channels based on patterns.
  */
-const globalEventEmitter = new EventEmitter()
+const globalEventEmitter = new EventEmitter();
 
 // Support many concurrent connections (default is 10)
-globalEventEmitter.setMaxListeners(100)
+globalEventEmitter.setMaxListeners(100);
 
 /**
  * Get the global event emitter (used by SSE endpoint)
  */
 export function getEventEmitter(): EventEmitter {
-  return globalEventEmitter
+    return globalEventEmitter;
 }
 
 /**
@@ -30,8 +30,8 @@ export function getEventEmitter(): EventEmitter {
  * ```
  */
 export function broadcast(channel: string, data: unknown): void {
-  console.log(`[Events] Broadcasting to channel: ${channel}`)
-  globalEventEmitter.emit(channel, data)
+    console.log(`[Events] Broadcasting to channel: ${channel}`);
+    globalEventEmitter.emit(channel, data);
 }
 
 /**
@@ -46,7 +46,7 @@ export function broadcast(channel: string, data: unknown): void {
  * ```
  */
 export function broadcastToUser(feature: string, userId: string, data: unknown): void {
-  broadcast(`${feature}:${userId}`, data)
+    broadcast(`${feature}:${userId}`, data);
 }
 
 /**
@@ -61,7 +61,7 @@ export function broadcastToUser(feature: string, userId: string, data: unknown):
  * ```
  */
 export function broadcastToScope(feature: string, scope: string, id: string, data: unknown): void {
-  broadcast(`${feature}:${scope}:${id}`, data)
+    broadcast(`${feature}:${scope}:${id}`, data);
 }
 
 /**
@@ -76,5 +76,5 @@ export function broadcastToScope(feature: string, scope: string, id: string, dat
  * ```
  */
 export function broadcastToFeature(feature: string, data: unknown): void {
-  broadcast(`${feature}:*`, data)
+    broadcast(`${feature}:*`, data);
 }

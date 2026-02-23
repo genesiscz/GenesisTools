@@ -1,20 +1,14 @@
-import { HeadContent, Scripts, createRootRouteWithContext } from "@tanstack/react-router";
-import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { TanStackDevtools } from "@tanstack/react-devtools";
-import { Toaster } from "sonner";
-
-import WorkOSProvider from "@/integrations/workos/provider";
-
-import TanStackQueryDevtools from "@/integrations/tanstack-query/devtools";
-
-import AiDevtools from "@/lib/ai-example/ai-devtools";
-
-import appCss from "@/styles.css?url";
-
 import type { QueryClient } from "@tanstack/react-query";
-
-import type { TRPCRouter } from "@/integrations/trpc/router";
+import { createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
+import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import type { TRPCOptionsProxy } from "@trpc/tanstack-react-query";
+import { Toaster } from "sonner";
+import TanStackQueryDevtools from "@/integrations/tanstack-query/devtools";
+import type { TRPCRouter } from "@/integrations/trpc/router";
+import WorkOSProvider from "@/integrations/workos/provider";
+import AiDevtools from "@/lib/ai-example/ai-devtools";
+import appCss from "@/styles.css?url";
 
 interface MyRouterContext {
     queryClient: QueryClient;
@@ -61,9 +55,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                         position="bottom-right"
                         toastOptions={{
                             style: {
-                                background: 'rgba(3, 3, 8, 0.95)',
-                                border: '1px solid rgba(245, 158, 11, 0.2)',
-                                color: '#fff',
+                                background: "rgba(3, 3, 8, 0.95)",
+                                border: "1px solid rgba(245, 158, 11, 0.2)",
+                                color: "#fff",
                             },
                         }}
                     />

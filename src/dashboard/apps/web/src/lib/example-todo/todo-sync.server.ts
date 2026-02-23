@@ -12,10 +12,10 @@
  * or configured via TODO_DB_BACKEND environment variable.
  */
 
-import { createServerFn } from "@tanstack/react-start";
 import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
+import { createServerFn } from "@tanstack/react-start";
 import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/neon-http";
 import { todos } from "./drizzle/schema";
 
 // Backend types (nitro-sqlite removed due to SSR incompatibility)
@@ -55,9 +55,7 @@ const neonAdapter = {
         if (!this.sql) {
             const url = process.env.DATABASE_URL;
             if (!url) {
-                throw new Error(
-                    "DATABASE_URL environment variable is required for Neon"
-                );
+                throw new Error("DATABASE_URL environment variable is required for Neon");
             }
             this.sql = neon(url);
         }
@@ -129,9 +127,7 @@ const drizzleAdapter = {
         if (!this.db) {
             const url = process.env.DATABASE_URL;
             if (!url) {
-                throw new Error(
-                    "DATABASE_URL environment variable is required for Drizzle"
-                );
+                throw new Error("DATABASE_URL environment variable is required for Drizzle");
             }
             this.db = drizzle(neon(url));
         }
@@ -165,11 +161,7 @@ const drizzleAdapter = {
 
     async getAll(userId: string) {
         const db = this.getClient();
-        const rows = await db
-            .select()
-            .from(todos)
-            .where(eq(todos.userId, userId))
-            .orderBy(todos.createdAt);
+        const rows = await db.select().from(todos).where(eq(todos.userId, userId)).orderBy(todos.createdAt);
         console.log("[Server:Drizzle] Fetched", rows.length, "todos");
         // Convert to TodoRow format for consistency
         return rows.map((r) => ({
@@ -277,15 +269,9 @@ interface CrudOperation {
  * This is called by the PowerSync connector when syncing
  */
 export const uploadTodoBatch = createServerFn({ method: "POST" })
-    .inputValidator(
-        (d: { operations: CrudOperation[]; backend?: DbBackend }) => d
-    )
+    .inputValidator((d: { operations: CrudOperation[]; backend?: DbBackend }) => d)
     .handler(async ({ data }): Promise<{ success: boolean }> => {
-        console.log(
-            "[Server] uploadTodoBatch called with",
-            data.operations.length,
-            "operations"
-        );
+        console.log("[Server] uploadTodoBatch called with", data.operations.length, "operations");
         const adapter = getAdapter(data.backend);
         await adapter.ensureTable();
 

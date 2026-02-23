@@ -42,11 +42,7 @@ export default defineWebSocketHandler({
             console.log("[WS:Todo] Message received:", data.type, "| Total clients:", clients.size);
 
             // Broadcast todo changes to all other connected clients
-            if (
-                data.type === "TODO_CREATED" ||
-                data.type === "TODO_UPDATED" ||
-                data.type === "TODO_DELETED"
-            ) {
+            if (data.type === "TODO_CREATED" || data.type === "TODO_UPDATED" || data.type === "TODO_DELETED") {
                 const broadcasted = broadcastToOthers(peer, data);
                 console.log("[WS:Todo] Broadcasted", data.type, "to", broadcasted, "other clients");
             }
@@ -66,7 +62,7 @@ export default defineWebSocketHandler({
         }
     },
 
-    error(peer, error) {
+    error(_peer, error) {
         console.error("[WS:Todo] Error:", error);
     },
 });
@@ -82,10 +78,7 @@ function broadcastToOthers(sender: unknown, message: unknown): number {
                 count++;
                 console.log(`[WS:Todo] Sent to client ${client.id}`);
             } catch (error) {
-                console.error(
-                    `[WS:Todo] Failed to send to client ${client.id}:`,
-                    error
-                );
+                console.error(`[WS:Todo] Failed to send to client ${client.id}:`, error);
             }
         }
     }

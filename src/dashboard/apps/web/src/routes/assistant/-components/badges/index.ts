@@ -1,8 +1,8 @@
-export { BadgeCard, BadgeCardCompact, BadgeCardLarge } from './BadgeCard'
-export { BadgeShowcase, BadgeShowcaseCompact } from './BadgeShowcase'
+export { BadgeCard, BadgeCardCompact, BadgeCardLarge } from "./BadgeCard";
 export {
-  BadgeProgress,
-  BadgeProgressCompact,
-  NextBadgePreview,
-} from './BadgeProgress'
-export { BadgeUnlockAnimation, useBadgeUnlock } from './BadgeUnlockAnimation'
+    BadgeProgress,
+    BadgeProgressCompact,
+    NextBadgePreview,
+} from "./BadgeProgress";
+export { BadgeShowcase, BadgeShowcaseCompact } from "./BadgeShowcase";
+export { BadgeUnlockAnimation, useBadgeUnlock } from "./BadgeUnlockAnimation";

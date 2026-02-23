@@ -5,7 +5,7 @@
  * The schema matches the PowerSync SQLite schema for consistency.
  */
 
-import { pgTable, text, integer } from "drizzle-orm/pg-core";
+import { integer, pgTable, text } from "drizzle-orm/pg-core";
 
 export const todos = pgTable("todos", {
     id: text("id").primaryKey(),

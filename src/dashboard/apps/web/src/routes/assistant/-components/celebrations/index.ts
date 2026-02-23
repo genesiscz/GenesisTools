@@ -7,48 +7,45 @@
  * - Tier 3 (Full): Full-screen modal with confetti
  */
 
+export { BadgeCelebration, useBadgeCelebrations } from "./BadgeCelebration";
+export {
+    CelebrationManagerProvider,
+    CelebrationSettings,
+    celebrationManagerStore,
+    useCelebrationManager,
+} from "./CelebrationManager";
+export { createFocusSessionCelebration, FocusSessionComplete } from "./FocusSessionComplete";
 // Components
-export { MicroCelebration, useMicroCelebrations } from './MicroCelebration'
-export { BadgeCelebration, useBadgeCelebrations } from './BadgeCelebration'
-export { FocusSessionComplete, createFocusSessionCelebration } from './FocusSessionComplete'
-export {
-  StreakMilestone,
-  createStreakMilestoneCelebration,
-  isStreakMilestone,
-} from './StreakMilestone'
-export {
-  CelebrationManagerProvider,
-  useCelebrationManager,
-  CelebrationSettings,
-  celebrationManagerStore,
-} from './CelebrationManager'
-
-// Types
-export type {
-  CelebrationMode,
-  CelebrationTrigger,
-  CelebrationData,
-  MicroCelebrationData,
-  BadgeCelebrationData,
-  FullCelebrationData,
-  CelebrationSettings as CelebrationSettingsType,
-  QueuedCelebration,
-} from './types'
-
-export {
-  DEFAULT_CELEBRATION_SETTINGS,
-  CELEBRATION_DURATION,
-  CELEBRATION_MESSAGES,
-  getRandomMessage,
-} from './types'
-
+export { MicroCelebration, useMicroCelebrations } from "./MicroCelebration";
 // Particles
 export {
-  createParticles,
-  updateParticles,
-  renderParticles,
-  createBurstFromElement,
-  PARTICLE_COLORS,
-  type Particle,
-  type ParticleColorScheme,
-} from './particles'
+    createBurstFromElement,
+    createParticles,
+    PARTICLE_COLORS,
+    type Particle,
+    type ParticleColorScheme,
+    renderParticles,
+    updateParticles,
+} from "./particles";
+export {
+    createStreakMilestoneCelebration,
+    isStreakMilestone,
+    StreakMilestone,
+} from "./StreakMilestone";
+// Types
+export type {
+    BadgeCelebrationData,
+    CelebrationData,
+    CelebrationMode,
+    CelebrationSettings as CelebrationSettingsType,
+    CelebrationTrigger,
+    FullCelebrationData,
+    MicroCelebrationData,
+    QueuedCelebration,
+} from "./types";
+export {
+    CELEBRATION_DURATION,
+    CELEBRATION_MESSAGES,
+    DEFAULT_CELEBRATION_SETTINGS,
+    getRandomMessage,
+} from "./types";

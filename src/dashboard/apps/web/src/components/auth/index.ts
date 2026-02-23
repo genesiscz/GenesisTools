@@ -1,2 +1,2 @@
-export { AuthLayout } from './AuthLayout'
-import './cyberpunk.css'
+export { AuthLayout } from "./AuthLayout";
+import "./cyberpunk.css";

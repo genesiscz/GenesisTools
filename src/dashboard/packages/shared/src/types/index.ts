@@ -1,2 +1,2 @@
-export * from './timer'
-export * from './activity-log'
+export * from "./activity-log";
+export * from "./timer";

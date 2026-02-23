@@ -1,10 +1,10 @@
-import { eventHandler } from 'h3'
+import { eventHandler } from "h3";
 
 export default eventHandler(() => {
-  return {
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    service: '@dashboard/server',
-    version: '0.0.1',
-  }
-})
+    return {
+        status: "healthy",
+        timestamp: new Date().toISOString(),
+        service: "@dashboard/server",
+        version: "0.0.1",
+    };
+});

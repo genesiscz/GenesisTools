@@ -1,71 +1,67 @@
-import { defineConfig } from 'vite'
-import { devtools } from '@tanstack/devtools-vite'
-import { tanstackStart } from '@tanstack/react-start/plugin/vite'
-import viteReact from '@vitejs/plugin-react'
-import viteTsConfigPaths from 'vite-tsconfig-paths'
-import tailwindcss from '@tailwindcss/vite'
-import { nitro } from 'nitro/vite'
-import type { NitroConfig } from 'nitro/types'
+import tailwindcss from "@tailwindcss/vite";
+import { devtools } from "@tanstack/devtools-vite";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact from "@vitejs/plugin-react";
+import type { NitroConfig } from "nitro/types";
+import { nitro } from "nitro/vite";
+import { defineConfig } from "vite";
+import viteTsConfigPaths from "vite-tsconfig-paths";
 
 const nitroConfig: NitroConfig = {
-  experimental: {
-    database: true,
-    websocket: true, // Enable WebSocket support for live sync
-  },
-  database: {
-    default: {
-      connector: 'sqlite',
-      options: { name: 'dashboard' },
+    experimental: {
+        database: true,
+        websocket: true, // Enable WebSocket support for live sync
     },
-  },
-  // Scan server/routes directory for API and WebSocket handlers
-  scanDirs: ['./server'],
-}
-import neon from './neon-vite-plugin.ts'
+    database: {
+        default: {
+            connector: "sqlite",
+            options: { name: "dashboard" },
+        },
+    },
+    // Scan server/routes directory for API and WebSocket handlers
+    scanDirs: ["./server"],
+};
+
+import neon from "./neon-vite-plugin.ts";
 
 const config = defineConfig({
-  plugins: [
-    devtools(),
-    nitro(nitroConfig),
-    neon,
-    // this is the plugin that enables path aliases
-    viteTsConfigPaths({
-      projects: ['./tsconfig.json'],
-    }),
-    tailwindcss(),
-    tanstackStart(),
-    viteReact({
-      babel: {
-        plugins: ['babel-plugin-react-compiler'],
-      },
-    }),
-  ],
-  resolve: {
-    alias: {
-      '@dashboard/shared': new URL('../../packages/shared/src/index.ts', import.meta.url).pathname,
-      '@dashboard/ui': new URL('../../packages/ui/src/index.ts', import.meta.url).pathname,
-    },
-  },
-  // SSR config - mark browser-only packages and nitro internals as external
-  ssr: {
-    external: [
-      'nitro/database',
-      '#nitro-internal-virtual/database',
-      '@powersync/web',
-      '@journeyapps/wa-sqlite',
+    plugins: [
+        devtools(),
+        nitro(nitroConfig),
+        neon,
+        // this is the plugin that enables path aliases
+        viteTsConfigPaths({
+            projects: ["./tsconfig.json"],
+        }),
+        tailwindcss(),
+        tanstackStart(),
+        viteReact({
+            babel: {
+                plugins: ["babel-plugin-react-compiler"],
+            },
+        }),
     ],
-    noExternal: [],
-  },
-  // PowerSync web workers require 'es' format for code-splitting builds
-  worker: {
-    format: 'es',
-  },
-  // PowerSync worker/WASM configuration
-  // Exclude packages with workers/WASM from optimization
-  optimizeDeps: {
-    exclude: ['@journeyapps/wa-sqlite', '@powersync/web', 'nitro', 'nitro/database'],
-    include: ['@powersync/web > js-logger'],
-  },
-})
+    resolve: {
+        alias: {
+            "@dashboard/shared": new URL("../../packages/shared/src/index.ts", import.meta.url).pathname,
+            "@dashboard/ui": new URL("../../packages/ui/src/index.ts", import.meta.url).pathname,
+        },
+    },
+    // SSR config - mark browser-only packages and nitro internals as external
+    ssr: {
+        external: ["nitro/database", "#nitro-internal-virtual/database", "@powersync/web", "@journeyapps/wa-sqlite"],
+        noExternal: [],
+    },
+    // PowerSync web workers require 'es' format for code-splitting builds
+    worker: {
+        format: "es",
+    },
+    // PowerSync worker/WASM configuration
+    // Exclude packages with workers/WASM from optimization
+    optimizeDeps: {
+        exclude: ["@journeyapps/wa-sqlite", "@powersync/web", "nitro", "nitro/database"],
+        include: ["@powersync/web > js-logger"],
+    },
+});
 
-export default config
+export default config;

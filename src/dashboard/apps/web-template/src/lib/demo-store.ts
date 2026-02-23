@@ -1,13 +1,13 @@
-import { Derived, Store } from '@tanstack/store'
+import { Derived, Store } from "@tanstack/store";
 
 export const store = new Store({
-  firstName: 'Jane',
-  lastName: 'Smith',
-})
+    firstName: "Jane",
+    lastName: "Smith",
+});
 
 export const fullName = new Derived({
-  fn: () => `${store.state.firstName} ${store.state.lastName}`,
-  deps: [store],
-})
+    fn: () => `${store.state.firstName} ${store.state.lastName}`,
+    deps: [store],
+});
 
-fullName.mount()
+fullName.mount();

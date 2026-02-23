@@ -1,3 +1,3 @@
-import { aiDevtoolsPlugin } from '@tanstack/react-ai-devtools'
+import { aiDevtoolsPlugin } from "@tanstack/react-ai-devtools";
 
-export default aiDevtoolsPlugin()
+export default aiDevtoolsPlugin();

@@ -1,7 +1,7 @@
-import { drizzle } from 'drizzle-orm/neon-http'
-import { neon } from '@neondatabase/serverless'
-import { env } from '@/lib/env'
-import * as schema from './schema'
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
+import { env } from "@/lib/env";
+import * as schema from "./schema";
 
 /**
  * Create Neon HTTP client using type-safe environment variables
@@ -12,7 +12,7 @@ import * as schema from './schema'
  * - Cloudflare Workers
  * - Any serverless environment
  */
-const sql = neon(env.DATABASE_URL)
+const sql = neon(env.DATABASE_URL);
 
 /**
  * Drizzle ORM instance with full schema
@@ -23,7 +23,7 @@ const sql = neon(env.DATABASE_URL)
  * - Compile-time validation
  * - IntelliSense support
  */
-export const db = drizzle(sql, { schema })
+export const db = drizzle(sql, { schema });
 
 // Re-export schema and types for convenience
-export * from './schema'
+export * from "./schema";

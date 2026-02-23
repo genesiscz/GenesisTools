@@ -24,180 +24,178 @@
  * ```
  */
 export class EventStreamClient {
-  private eventSource: EventSource | null = null
-  private handlers: Map<string, Set<(data: unknown) => void>> = new Map()
-  private userId: string | null = null
-  private channels: string[] = []
+    private eventSource: EventSource | null = null;
+    private handlers: Map<string, Set<(data: unknown) => void>> = new Map();
+    private userId: string | null = null;
+    private channels: string[] = [];
 
-  /**
-   * Connect to the event stream
-   *
-   * @param userId - User ID (required)
-   * @param channels - List of channels to subscribe to (optional)
-   *
-   * If no channels provided, defaults to common channels for the user.
-   *
-   * @example
-   * ```ts
-   * // Subscribe to specific channels
-   * client.connect('user123', ['timer:user123', 'chat:room456'])
-   *
-   * // Or use defaults
-   * client.connect('user123')
-   * ```
-   */
-  connect(userId: string, channels?: string[]): void {
-    // Close existing connection
-    this.disconnect()
+    /**
+     * Connect to the event stream
+     *
+     * @param userId - User ID (required)
+     * @param channels - List of channels to subscribe to (optional)
+     *
+     * If no channels provided, defaults to common channels for the user.
+     *
+     * @example
+     * ```ts
+     * // Subscribe to specific channels
+     * client.connect('user123', ['timer:user123', 'chat:room456'])
+     *
+     * // Or use defaults
+     * client.connect('user123')
+     * ```
+     */
+    connect(userId: string, channels?: string[]): void {
+        // Close existing connection
+        this.disconnect();
 
-    this.userId = userId
-    this.channels = channels || []
+        this.userId = userId;
+        this.channels = channels || [];
 
-    const channelsParam = this.channels.length > 0
-      ? `&channels=${this.channels.join(',')}`
-      : ''
+        const channelsParam = this.channels.length > 0 ? `&channels=${this.channels.join(",")}` : "";
 
-    const url = `/api/events?userId=${userId}${channelsParam}`
-    console.log(`[EventClient] 🔌 Attempting to connect to ${url}`)
-    console.log(`[EventClient] Time: ${new Date().toISOString()}`)
+        const url = `/api/events?userId=${userId}${channelsParam}`;
+        console.log(`[EventClient] 🔌 Attempting to connect to ${url}`);
+        console.log(`[EventClient] Time: ${new Date().toISOString()}`);
 
-    this.eventSource = new EventSource(url)
-    console.log(`[EventClient] EventSource created, initial readyState: ${this.eventSource.readyState}`)
-    console.log(`[EventClient] ReadyState values: CONNECTING=0, OPEN=1, CLOSED=2`)
+        this.eventSource = new EventSource(url);
+        console.log(`[EventClient] EventSource created, initial readyState: ${this.eventSource.readyState}`);
+        console.log(`[EventClient] ReadyState values: CONNECTING=0, OPEN=1, CLOSED=2`);
 
-    this.eventSource.onopen = () => {
-      console.log('[EventClient] ✅ EventSource CONNECTED!')
-      console.log('[EventClient] readyState:', this.eventSource?.readyState)
-      console.log('[EventClient] Time:', new Date().toISOString())
+        this.eventSource.onopen = () => {
+            console.log("[EventClient] ✅ EventSource CONNECTED!");
+            console.log("[EventClient] readyState:", this.eventSource?.readyState);
+            console.log("[EventClient] Time:", new Date().toISOString());
+        };
+
+        this.eventSource.onmessage = (event) => {
+            const message = JSON.parse(event.data);
+
+            // Handle connection confirmation
+            if (message.type === "connected") {
+                console.log("[EventClient] Connection confirmed:", message);
+                return;
+            }
+
+            // Handle channel events
+            const { channel, data } = message;
+            console.log(`[EventClient] 📩 Message received on channel "${channel}":`, data);
+
+            const handlers = this.handlers.get(channel);
+
+            if (handlers) {
+                console.log(`[EventClient] Found ${handlers.size} handlers for channel "${channel}"`);
+                handlers.forEach((handler) => {
+                    try {
+                        handler(data);
+                    } catch (error) {
+                        console.error(`[EventClient] Handler error for channel ${channel}:`, error);
+                    }
+                });
+            } else {
+                console.warn(`[EventClient] No handlers registered for channel "${channel}"`);
+            }
+        };
+
+        this.eventSource.onerror = (error) => {
+            console.error("[EventClient] Connection error:", error);
+            // Browser will automatically attempt to reconnect
+        };
     }
 
-    this.eventSource.onmessage = (event) => {
-      const message = JSON.parse(event.data)
+    /**
+     * Subscribe to a channel
+     *
+     * @param channel - Channel name
+     * @param handler - Handler function
+     * @returns Unsubscribe function
+     *
+     * @example
+     * ```ts
+     * const unsubscribe = client.subscribe('timer:user123', (data) => {
+     *   console.log('Event:', data)
+     * })
+     *
+     * // Later:
+     * unsubscribe()
+     * ```
+     */
+    subscribe(channel: string, handler: (data: unknown) => void): () => void {
+        if (!this.handlers.has(channel)) {
+            this.handlers.set(channel, new Set());
+        }
+        this.handlers.get(channel)?.add(handler);
 
-      // Handle connection confirmation
-      if (message.type === 'connected') {
-        console.log('[EventClient] Connection confirmed:', message)
-        return
-      }
+        console.log(`[EventClient] Subscribed to channel: ${channel}`);
 
-      // Handle channel events
-      const { channel, data } = message
-      console.log(`[EventClient] 📩 Message received on channel "${channel}":`, data)
-
-      const handlers = this.handlers.get(channel)
-
-      if (handlers) {
-        console.log(`[EventClient] Found ${handlers.size} handlers for channel "${channel}"`)
-        handlers.forEach(handler => {
-          try {
-            handler(data)
-          } catch (error) {
-            console.error(`[EventClient] Handler error for channel ${channel}:`, error)
-          }
-        })
-      } else {
-        console.warn(`[EventClient] No handlers registered for channel "${channel}"`)
-      }
+        // Return unsubscribe function
+        return () => this.unsubscribe(channel, handler);
     }
 
-    this.eventSource.onerror = (error) => {
-      console.error('[EventClient] Connection error:', error)
-      // Browser will automatically attempt to reconnect
+    /**
+     * Unsubscribe from a channel
+     *
+     * @param channel - Channel name
+     * @param handler - Handler function to remove
+     */
+    unsubscribe(channel: string, handler: (data: unknown) => void): void {
+        const handlers = this.handlers.get(channel);
+        if (handlers) {
+            handlers.delete(handler);
+            console.log(`[EventClient] Unsubscribed from channel: ${channel}`);
+
+            // Clean up empty handler sets
+            if (handlers.size === 0) {
+                this.handlers.delete(channel);
+            }
+        }
     }
-  }
 
-  /**
-   * Subscribe to a channel
-   *
-   * @param channel - Channel name
-   * @param handler - Handler function
-   * @returns Unsubscribe function
-   *
-   * @example
-   * ```ts
-   * const unsubscribe = client.subscribe('timer:user123', (data) => {
-   *   console.log('Event:', data)
-   * })
-   *
-   * // Later:
-   * unsubscribe()
-   * ```
-   */
-  subscribe(channel: string, handler: (data: unknown) => void): () => void {
-    if (!this.handlers.has(channel)) {
-      this.handlers.set(channel, new Set())
+    /**
+     * Disconnect from the event stream
+     *
+     * Closes the SSE connection and clears all handlers.
+     */
+    disconnect(): void {
+        if (this.eventSource) {
+            this.eventSource.close();
+            this.eventSource = null;
+            this.handlers.clear();
+            this.userId = null;
+            this.channels = [];
+            console.log("[EventClient] Disconnected");
+        }
     }
-    this.handlers.get(channel)!.add(handler)
 
-    console.log(`[EventClient] Subscribed to channel: ${channel}`)
-
-    // Return unsubscribe function
-    return () => this.unsubscribe(channel, handler)
-  }
-
-  /**
-   * Unsubscribe from a channel
-   *
-   * @param channel - Channel name
-   * @param handler - Handler function to remove
-   */
-  unsubscribe(channel: string, handler: (data: unknown) => void): void {
-    const handlers = this.handlers.get(channel)
-    if (handlers) {
-      handlers.delete(handler)
-      console.log(`[EventClient] Unsubscribed from channel: ${channel}`)
-
-      // Clean up empty handler sets
-      if (handlers.size === 0) {
-        this.handlers.delete(channel)
-      }
+    /**
+     * Check if connected
+     *
+     * @returns true if connected and ready
+     */
+    isConnected(): boolean {
+        return this.eventSource !== null && this.eventSource.readyState === EventSource.OPEN;
     }
-  }
 
-  /**
-   * Disconnect from the event stream
-   *
-   * Closes the SSE connection and clears all handlers.
-   */
-  disconnect(): void {
-    if (this.eventSource) {
-      this.eventSource.close()
-      this.eventSource = null
-      this.handlers.clear()
-      this.userId = null
-      this.channels = []
-      console.log('[EventClient] Disconnected')
+    /**
+     * Get current user ID
+     */
+    getUserId(): string | null {
+        return this.userId;
     }
-  }
 
-  /**
-   * Check if connected
-   *
-   * @returns true if connected and ready
-   */
-  isConnected(): boolean {
-    return this.eventSource !== null && this.eventSource.readyState === EventSource.OPEN
-  }
-
-  /**
-   * Get current user ID
-   */
-  getUserId(): string | null {
-    return this.userId
-  }
-
-  /**
-   * Get subscribed channels
-   */
-  getChannels(): string[] {
-    return [...this.channels]
-  }
+    /**
+     * Get subscribed channels
+     */
+    getChannels(): string[] {
+        return [...this.channels];
+    }
 }
 
 /**
  * Singleton instance for application-wide use
  */
-let eventClient: EventStreamClient | null = null
+let eventClient: EventStreamClient | null = null;
 
 /**
  * Get or create the global event client
@@ -211,8 +209,8 @@ let eventClient: EventStreamClient | null = null
  * ```
  */
 export function getEventClient(): EventStreamClient {
-  if (!eventClient) {
-    eventClient = new EventStreamClient()
-  }
-  return eventClient
+    if (!eventClient) {
+        eventClient = new EventStreamClient();
+    }
+    return eventClient;
 }

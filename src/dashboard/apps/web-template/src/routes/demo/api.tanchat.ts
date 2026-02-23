@@ -1,12 +1,12 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { chat, maxIterations, toServerSentEventsResponse } from '@tanstack/ai'
-import { anthropicText } from '@tanstack/ai-anthropic'
-import { openaiText } from '@tanstack/ai-openai'
-import { geminiText } from '@tanstack/ai-gemini'
-import { ollamaText } from '@tanstack/ai-ollama'
+import { chat, maxIterations, toServerSentEventsResponse } from "@tanstack/ai";
+import { anthropicText } from "@tanstack/ai-anthropic";
+import { geminiText } from "@tanstack/ai-gemini";
+import { ollamaText } from "@tanstack/ai-ollama";
+import { openaiText } from "@tanstack/ai-openai";
+import { createFileRoute } from "@tanstack/react-router";
 
-import { getGuitars, recommendGuitarToolDef } from '@/lib/example.guitar-tools'
-import type { Provider } from '@/lib/model-selection'
+import { getGuitars, recommendGuitarToolDef } from "@/lib/example.guitar-tools";
+import type { Provider } from "@/lib/model-selection";
 
 const SYSTEM_PROMPT = `You are a helpful assistant for a store that sells guitars.
 
@@ -23,67 +23,63 @@ IMPORTANT:
 - ONLY recommend guitars from our inventory (use getGuitars first)
 - The recommendGuitar tool has a buy button - this is how customers purchase
 - Do NOT describe the guitar yourself - let the recommendGuitar tool do it
-`
+`;
 
-export const Route = createFileRoute('/demo/api/tanchat')({
-  server: {
-    handlers: {
-      POST: async ({ request }) => {
-        // Capture request signal before reading body (it may be aborted after body is consumed)
-        const requestSignal = request.signal
+export const Route = createFileRoute("/demo/api/tanchat")({
+    server: {
+        handlers: {
+            POST: async ({ request }) => {
+                // Capture request signal before reading body (it may be aborted after body is consumed)
+                const requestSignal = request.signal;
 
-        // If request is already aborted, return early
-        if (requestSignal.aborted) {
-          return new Response(null, { status: 499 }) // 499 = Client Closed Request
-        }
+                // If request is already aborted, return early
+                if (requestSignal.aborted) {
+                    return new Response(null, { status: 499 }); // 499 = Client Closed Request
+                }
 
-        const abortController = new AbortController()
+                const abortController = new AbortController();
 
-        try {
-          const body = await request.json()
-          const { messages } = body
-          const data = body.data || {}
-          const provider: Provider = data.provider || 'anthropic'
-          const model: string = data.model || 'claude-haiku-4-5'
+                try {
+                    const body = await request.json();
+                    const { messages } = body;
+                    const data = body.data || {};
+                    const provider: Provider = data.provider || "anthropic";
+                    const model: string = data.model || "claude-haiku-4-5";
 
-          // Adapter factory pattern for multi-vendor support
-          const adapterConfig = {
-            anthropic: () =>
-              anthropicText((model || 'claude-haiku-4-5') as any),
-            openai: () => openaiText((model || 'gpt-4o') as any),
-            gemini: () => geminiText((model || 'gemini-2.0-flash-exp') as any),
-            ollama: () => ollamaText((model || 'mistral:7b') as any),
-          }
+                    // Adapter factory pattern for multi-vendor support
+                    const adapterConfig = {
+                        anthropic: () => anthropicText((model || "claude-haiku-4-5") as any),
+                        openai: () => openaiText((model || "gpt-4o") as any),
+                        gemini: () => geminiText((model || "gemini-2.0-flash-exp") as any),
+                        ollama: () => ollamaText((model || "mistral:7b") as any),
+                    };
 
-          const adapter = adapterConfig[provider]()
+                    const adapter = adapterConfig[provider]();
 
-          const stream = chat({
-            adapter,
-            tools: [
-              getGuitars, // Server tool
-              recommendGuitarToolDef, // No server execute - client will handle
-            ],
-            systemPrompts: [SYSTEM_PROMPT],
-            agentLoopStrategy: maxIterations(5),
-            messages,
-            abortController,
-          })
+                    const stream = chat({
+                        adapter,
+                        tools: [
+                            getGuitars, // Server tool
+                            recommendGuitarToolDef, // No server execute - client will handle
+                        ],
+                        systemPrompts: [SYSTEM_PROMPT],
+                        agentLoopStrategy: maxIterations(5),
+                        messages,
+                        abortController,
+                    });
 
-          return toServerSentEventsResponse(stream, { abortController })
-        } catch (error: any) {
-          // If request was aborted, return early (don't send error response)
-          if (error.name === 'AbortError' || abortController.signal.aborted) {
-            return new Response(null, { status: 499 }) // 499 = Client Closed Request
-          }
-          return new Response(
-            JSON.stringify({ error: 'Failed to process chat request' }),
-            {
-              status: 500,
-              headers: { 'Content-Type': 'application/json' },
+                    return toServerSentEventsResponse(stream, { abortController });
+                } catch (error: any) {
+                    // If request was aborted, return early (don't send error response)
+                    if (error.name === "AbortError" || abortController.signal.aborted) {
+                        return new Response(null, { status: 499 }); // 499 = Client Closed Request
+                    }
+                    return new Response(JSON.stringify({ error: "Failed to process chat request" }), {
+                        status: 500,
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
             },
-          )
-        }
-      },
+        },
     },
-  },
-})
+});

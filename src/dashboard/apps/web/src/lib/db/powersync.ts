@@ -20,7 +20,7 @@ let initialized = false;
 let connector: ReturnType<typeof import("./powersync-connector").createConnector> | null = null;
 
 // Schema definition (will be initialized on client)
-const schemaConfig = {
+const _schemaConfig = {
     timers: {
         // Core fields
         name: "text" as const,
@@ -91,27 +91,27 @@ async function ensurePowerSync() {
         return { db, APP_SCHEMA };
     }
 
-    console.log('[PowerSync] Importing PowerSync modules...');
+    console.log("[PowerSync] Importing PowerSync modules...");
 
     // Dynamic import of PowerSync (browser-only)
     const PowerSyncModule = await import("@powersync/web");
     const { PowerSyncDatabase, Schema, Table, column } = PowerSyncModule;
-    console.log('[PowerSync] ✓ PowerSync imported', Object.keys(PowerSyncModule));
+    console.log("[PowerSync] ✓ PowerSync imported", Object.keys(PowerSyncModule));
 
     // Import WASM SQLite
     const sqliteModule = await import("@journeyapps/wa-sqlite");
-    console.log('[PowerSync] ✓ WASM SQLite imported', Object.keys(sqliteModule));
+    console.log("[PowerSync] ✓ WASM SQLite imported", Object.keys(sqliteModule));
 
     // Import wa-sqlite factory - needed for WASM initialization
     const { default: SQLiteESMFactory } = await import("@journeyapps/wa-sqlite/dist/wa-sqlite.mjs");
-    console.log('[PowerSync] ✓ SQLite factory imported');
+    console.log("[PowerSync] ✓ SQLite factory imported");
 
     // Import connector
     const { createConnector } = await import("./powersync-connector");
-    console.log('[PowerSync] ✓ Connector imported');
+    console.log("[PowerSync] ✓ Connector imported");
 
     // Build schema from config
-    console.log('[PowerSync] Building schema...');
+    console.log("[PowerSync] Building schema...");
     APP_SCHEMA = new Schema({
         timers: new Table({
             name: column.text,
@@ -150,14 +150,14 @@ async function ensurePowerSync() {
             updated_at: column.text,
         }),
     });
-    console.log('[PowerSync] ✓ Schema created');
+    console.log("[PowerSync] ✓ Schema created");
 
     // Create database instance
-    console.log('[PowerSync] Creating PowerSyncDatabase instance...');
+    console.log("[PowerSync] Creating PowerSyncDatabase instance...");
 
     // Import WASQLite adapter
     const { WASQLiteDBAdapter } = await import("@powersync/web");
-    console.log('[PowerSync] Creating WASQLite adapter...');
+    console.log("[PowerSync] Creating WASQLite adapter...");
 
     const adapter = new WASQLiteDBAdapter({
         dbFilename: "dashboard.sqlite",
@@ -166,17 +166,17 @@ async function ensurePowerSync() {
             useWebWorker: false,
         },
     });
-    console.log('[PowerSync] ✓ Adapter created');
+    console.log("[PowerSync] ✓ Adapter created");
 
     db = new PowerSyncDatabase({
         database: adapter,
         schema: APP_SCHEMA,
     });
-    console.log('[PowerSync] ✓ Database instance created');
+    console.log("[PowerSync] ✓ Database instance created");
 
-    console.log('[PowerSync] Creating connector...');
+    console.log("[PowerSync] Creating connector...");
     connector = createConnector();
-    console.log('[PowerSync] ✓ Connector created');
+    console.log("[PowerSync] ✓ Connector created");
 
     return { db, APP_SCHEMA };
 }
@@ -232,7 +232,11 @@ export async function initializeDatabase(): Promise<void> {
         const initPromise = database.init();
         const timeoutPromise = new Promise((_, reject) => {
             setTimeout(() => {
-                reject(new Error('PowerSync init timeout after 30 seconds. Check browser console for errors. Try: indexedDB.deleteDatabase("dashboard.sqlite") then refresh.'));
+                reject(
+                    new Error(
+                        'PowerSync init timeout after 30 seconds. Check browser console for errors. Try: indexedDB.deleteDatabase("dashboard.sqlite") then refresh.'
+                    )
+                );
             }, 30000); // 30 second timeout (first init can be slow)
         });
 

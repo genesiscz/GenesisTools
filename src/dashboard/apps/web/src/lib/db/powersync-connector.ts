@@ -50,7 +50,7 @@ export class DashboardConnector {
      */
     async uploadData(database: AbstractPowerSyncDatabase): Promise<void> {
         const startTime = Date.now();
-        console.log('[PowerSync] Starting uploadData...');
+        console.log("[PowerSync] Starting uploadData...");
 
         // Get pending CRUD operations IMMEDIATELY (batch size of 1 forces immediate upload)
         // Changed from 100 to 1 to eliminate the 20-second batching delay

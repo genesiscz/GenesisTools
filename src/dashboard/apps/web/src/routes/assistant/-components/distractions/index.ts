@@ -1,6 +1,7 @@
 // Distraction Tracker components
-export { QuickLogButton } from './QuickLogButton'
-export { DistractionLogModal } from './DistractionLogModal'
-export { DistractionStats } from './DistractionStats'
-export { DistractionPatterns } from './DistractionPatterns'
-export { DistractionInsights } from './DistractionInsights'
+
+export { DistractionInsights } from "./DistractionInsights";
+export { DistractionLogModal } from "./DistractionLogModal";
+export { DistractionPatterns } from "./DistractionPatterns";
+export { DistractionStats } from "./DistractionStats";
+export { QuickLogButton } from "./QuickLogButton";
