@@ -118,12 +118,18 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
 
     const prInfo = await fetchPRReviewThreads(owner, repo, prNumber);
 
-    // Parse threads and compute stats on ALL threads
+    // Parse threads, apply author filter, then compute stats
     const allThreads = parseThreads(prInfo.threads);
-    const stats = calculateReviewStats(allThreads);
+    const authorLogin = options.author?.toLowerCase();
+    const authorFilteredThreads = authorLogin
+        ? allThreads.filter((t) => t.author.toLowerCase() === authorLogin)
+        : allThreads;
+    const stats = calculateReviewStats(authorFilteredThreads);
 
-    // Filter if requested
-    const displayThreads = options.unresolvedOnly ? allThreads.filter((t) => t.status === "unresolved") : allThreads;
+    // Filter by resolution status if requested
+    const displayThreads = options.unresolvedOnly
+        ? authorFilteredThreads.filter((t) => t.status === "unresolved")
+        : authorFilteredThreads;
 
     // Build review data
     const reviewData: ReviewData = {
@@ -134,6 +140,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
         state: prInfo.state,
         threads: displayThreads,
         stats,
+        prComments: options.prComments !== false ? prInfo.prComments : undefined,
     };
 
     // JSON output
@@ -188,6 +195,8 @@ Examples:
         .option("-R, --resolve-thread", "Mark a thread as resolved", false)
         .option("--resolve", "Alias for --resolve-thread", false)
         .option("-v, --verbose", "Enable verbose logging")
+        .option("--no-pr-comments", "Hide PR-level review summaries and conversation comments")
+        .option("-a, --author <login>", "Filter threads by reviewer login (case-insensitive)")
         .action(async (input, opts) => {
             try {
                 await reviewCommand(input, opts);
