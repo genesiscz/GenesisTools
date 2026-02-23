@@ -1,6 +1,6 @@
-import { join, dirname, basename } from "node:path";
 import { existsSync, realpathSync } from "node:fs";
 import { readdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import logger from "../logger";
 import type { PackageLocation } from "./types";
 
@@ -9,9 +9,9 @@ export async function findPackageJsonAndDir(
     searchPaths: string[]
 ): Promise<PackageLocation | null> {
     logger.info(`Searching for package '${packageName}' in paths: ${searchPaths.join(", ")}`);
-    
+
     // Try multiple strategies to find the package
-    
+
     // Strategy 1: Try require.resolve (fastest)
     try {
         const resolvedPath = require.resolve(packageName, { paths: searchPaths });
@@ -26,18 +26,18 @@ export async function findPackageJsonAndDir(
     } catch (error) {
         logger.info(`require.resolve failed for ${packageName}: ${error}`);
     }
-    
+
     // Strategy 2: Check standard node_modules paths
     for (const searchPath of searchPaths) {
         const nodeModulesPath = join(searchPath, "node_modules", packageName);
         const packageJsonPath = join(nodeModulesPath, "package.json");
-        
+
         if (existsSync(packageJsonPath)) {
             logger.info(`Found package in node_modules at: ${nodeModulesPath}`);
             return { packageJsonPath, packageDir: nodeModulesPath };
         }
     }
-    
+
     // Strategy 3: Check pnpm paths (.pnpm directory)
     for (const searchPath of searchPaths) {
         const pnpmPath = join(searchPath, "node_modules", ".pnpm");
@@ -48,14 +48,14 @@ export async function findPackageJsonAndDir(
                     if (entry.includes(packageName)) {
                         const packagePath = join(pnpmPath, entry, "node_modules", packageName);
                         const packageJsonPath = join(packagePath, "package.json");
-                        
+
                         if (existsSync(packageJsonPath)) {
                             // Resolve symlinks for pnpm
                             const realPackagePath = realpathSync(packagePath);
                             logger.info(`Found package in pnpm at: ${realPackagePath}`);
-                            return { 
-                                packageJsonPath: join(realPackagePath, "package.json"), 
-                                packageDir: realPackagePath 
+                            return {
+                                packageJsonPath: join(realPackagePath, "package.json"),
+                                packageDir: realPackagePath,
                             };
                         }
                     }
@@ -65,7 +65,7 @@ export async function findPackageJsonAndDir(
             }
         }
     }
-    
+
     // Strategy 4: Check if searchPath is the package itself
     for (const searchPath of searchPaths) {
         const packageJsonPath = join(searchPath, "package.json");
@@ -81,30 +81,30 @@ export async function findPackageJsonAndDir(
             }
         }
     }
-    
+
     return null;
 }
 
 function findPackageRoot(startPath: string): string | null {
     let currentPath = startPath;
-    
+
     while (currentPath !== dirname(currentPath)) {
         if (existsSync(join(currentPath, "package.json"))) {
             return currentPath;
         }
         currentPath = dirname(currentPath);
     }
-    
+
     return null;
 }
 
 export async function findDeclarationFiles(packageLocation: PackageLocation): Promise<string[]> {
     const { packageJsonPath, packageDir } = packageLocation;
     const declarationFiles: string[] = [];
-    
+
     try {
         const packageJson = await Bun.file(packageJsonPath).json();
-        
+
         // Check for explicit types/typings field
         const typesField = packageJson.types || packageJson.typings;
         if (typesField) {
@@ -115,7 +115,7 @@ export async function findDeclarationFiles(packageLocation: PackageLocation): Pr
                 return declarationFiles;
             }
         }
-        
+
         // Check exports field
         if (packageJson.exports) {
             const typesPaths = extractTypesFromExports(packageJson.exports, packageDir);
@@ -124,7 +124,7 @@ export async function findDeclarationFiles(packageLocation: PackageLocation): Pr
                 return typesPaths;
             }
         }
-        
+
         // Check for index.d.ts
         const indexDts = join(packageDir, "index.d.ts");
         if (existsSync(indexDts)) {
@@ -132,7 +132,7 @@ export async function findDeclarationFiles(packageLocation: PackageLocation): Pr
             declarationFiles.push(indexDts);
             return declarationFiles;
         }
-        
+
         // Check for main field with .d.ts extension
         if (packageJson.main) {
             const mainBase = packageJson.main.replace(/\.[^.]+$/, "");
@@ -143,22 +143,21 @@ export async function findDeclarationFiles(packageLocation: PackageLocation): Pr
                 return declarationFiles;
             }
         }
-        
+
         // Fall back to scanning for all .d.ts files
         logger.info(`Scanning for all .d.ts files in ${packageDir}`);
         const allDtsFiles = await findAllDeclarationFiles(packageDir);
         return allDtsFiles;
-        
     } catch (error) {
         logger.error(`Failed to find declaration files: ${error}`);
         return [];
     }
 }
 
-function extractTypesFromExports(exports: any, packageDir: string): string[] {
+function extractTypesFromExports(exports: Record<string, unknown>, packageDir: string): string[] {
     const typesPaths: string[] = [];
-    
-    function processExport(exp: any) {
+
+    function processExport(exp: unknown) {
         if (typeof exp === "string") {
             if (exp.endsWith(".d.ts")) {
                 const fullPath = join(packageDir, exp);
@@ -167,35 +166,38 @@ function extractTypesFromExports(exports: any, packageDir: string): string[] {
                 }
             }
         } else if (typeof exp === "object" && exp !== null) {
-            if (exp.types) {
-                const fullPath = join(packageDir, exp.types);
+            const obj = exp as Record<string, unknown>;
+            if (typeof obj.types === "string") {
+                const fullPath = join(packageDir, obj.types);
                 if (existsSync(fullPath)) {
                     typesPaths.push(fullPath);
                 }
             }
             // Recursively check nested exports
-            for (const value of Object.values(exp)) {
+            for (const value of Object.values(obj)) {
                 processExport(value);
             }
         }
     }
-    
+
     processExport(exports);
     return [...new Set(typesPaths)]; // Remove duplicates
 }
 
 async function findAllDeclarationFiles(dir: string, maxDepth: number = 3): Promise<string[]> {
     const declarationFiles: string[] = [];
-    
+
     async function scan(currentDir: string, depth: number) {
-        if (depth > maxDepth) return;
-        
+        if (depth > maxDepth) {
+            return;
+        }
+
         try {
             const entries = await readdir(currentDir, { withFileTypes: true });
-            
+
             for (const entry of entries) {
                 const fullPath = join(currentDir, entry.name);
-                
+
                 if (entry.isFile() && entry.name.endsWith(".d.ts")) {
                     declarationFiles.push(fullPath);
                 } else if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules") {
@@ -206,7 +208,7 @@ async function findAllDeclarationFiles(dir: string, maxDepth: number = 3): Promi
             logger.warn(`Failed to scan directory ${currentDir}: ${error}`);
         }
     }
-    
+
     await scan(dir, 0);
     return declarationFiles;
 }

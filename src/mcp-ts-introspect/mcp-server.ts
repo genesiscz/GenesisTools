@@ -3,7 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import logger from "../logger";
-import { introspectPackage, introspectSource, introspectProject } from "./introspect";
+import { introspectPackage, introspectProject, introspectSource } from "./introspect";
 import type { IntrospectOptions } from "./types";
 
 // Zod schemas for parameter validation
@@ -55,9 +55,9 @@ export async function startMcpServer() {
                     cacheDir: args.cacheDir,
                     limit: args.limit,
                 };
-                
+
                 const exports = await introspectPackage(args.packageName, options);
-                
+
                 return {
                     content: [
                         {
@@ -68,12 +68,14 @@ export async function startMcpServer() {
                 };
             } catch (error) {
                 if (error instanceof z.ZodError) {
-                    throw new Error(`Invalid arguments: ${error.errors.map(e => `${e.path}: ${e.message}`).join(", ")}`);
+                    throw new Error(
+                        `Invalid arguments: ${error.errors.map((e) => `${e.path}: ${e.message}`).join(", ")}`
+                    );
                 }
                 throw error;
             }
         }
-        
+
         if (request.params.name === "introspect-source") {
             try {
                 const args = IntrospectSourceSchema.parse(request.params.arguments);
@@ -81,9 +83,9 @@ export async function startMcpServer() {
                     searchTerm: args.searchTerm,
                     limit: args.limit,
                 };
-                
+
                 const exports = await introspectSource(args.sourceCode, options);
-                
+
                 return {
                     content: [
                         {
@@ -94,12 +96,14 @@ export async function startMcpServer() {
                 };
             } catch (error) {
                 if (error instanceof z.ZodError) {
-                    throw new Error(`Invalid arguments: ${error.errors.map(e => `${e.path}: ${e.message}`).join(", ")}`);
+                    throw new Error(
+                        `Invalid arguments: ${error.errors.map((e) => `${e.path}: ${e.message}`).join(", ")}`
+                    );
                 }
                 throw error;
             }
         }
-        
+
         if (request.params.name === "introspect-project") {
             try {
                 const args = IntrospectProjectSchema.parse(request.params.arguments);
@@ -109,9 +113,9 @@ export async function startMcpServer() {
                     cacheDir: args.cacheDir,
                     limit: args.limit,
                 };
-                
+
                 const exports = await introspectProject(args.projectPath, options);
-                
+
                 return {
                     content: [
                         {
@@ -122,12 +126,14 @@ export async function startMcpServer() {
                 };
             } catch (error) {
                 if (error instanceof z.ZodError) {
-                    throw new Error(`Invalid arguments: ${error.errors.map(e => `${e.path}: ${e.message}`).join(", ")}`);
+                    throw new Error(
+                        `Invalid arguments: ${error.errors.map((e) => `${e.path}: ${e.message}`).join(", ")}`
+                    );
                 }
                 throw error;
             }
         }
-        
+
         throw new Error(`Unknown tool: ${request.params.name}`);
     });
 
@@ -233,6 +239,6 @@ export async function startMcpServer() {
     // Start the server
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    
+
     logger.info("MCP TypeScript Introspect Server started");
 }
