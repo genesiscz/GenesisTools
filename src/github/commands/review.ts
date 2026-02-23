@@ -140,7 +140,11 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
         state: prInfo.state,
         threads: displayThreads,
         stats,
-        prComments: options.prComments !== false ? prInfo.prComments : undefined,
+        prComments: options.prComments !== false
+            ? (authorLogin
+                ? prInfo.prComments?.filter((c) => c.author.toLowerCase() === authorLogin)
+                : prInfo.prComments)
+            : undefined,
     };
 
     // JSON output
@@ -152,7 +156,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
     // Markdown output (save to file)
     if (options.md) {
         const mdContent = formatReviewMarkdown(reviewData, options.groupByFile ?? false);
-        const filePath = saveReviewMarkdown(mdContent, prNumber);
+        const filePath = await saveReviewMarkdown(mdContent, prNumber);
         console.log(filePath);
         return;
     }

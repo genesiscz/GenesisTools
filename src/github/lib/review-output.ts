@@ -1,7 +1,7 @@
 // Review thread output formatting - terminal (chalk), markdown, JSON
 // Extracted from src/github-pr/index.ts, adapted to use chalk
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ParsedReviewThread, PRLevelComment, ReviewData } from "@app/github/types";
 import chalk from "chalk";
@@ -216,6 +216,10 @@ export function formatReviewTerminal(data: ReviewData, groupByFile: boolean): st
     const { threads } = data;
     let output = formatSummary(data, threads.length);
 
+    if (data.prComments && data.prComments.length > 0) {
+        output += formatPrLevelComments(data.prComments);
+    }
+
     if (threads.length === 0) {
         output += chalk.dim("\nNo review comments found.\n");
         return output;
@@ -242,10 +246,6 @@ export function formatReviewTerminal(data: ReviewData, groupByFile: boolean): st
         for (const thread of threads) {
             output += formatThread(thread);
         }
-    }
-
-    if (data.prComments && data.prComments.length > 0) {
-        output += formatPrLevelComments(data.prComments);
     }
 
     return output;
@@ -355,13 +355,13 @@ export function formatReviewMarkdown(data: ReviewData, groupByFile: boolean): st
     output += `| [MED] Medium Priority | ${stats.medium} |\n`;
     output += `| [LOW] Low Priority | ${stats.low} |\n\n`;
 
+    if (data.prComments && data.prComments.length > 0) {
+        output += formatPrLevelCommentsMarkdown(data.prComments);
+    }
+
     if (threads.length === 0) {
         output += `*No review comments found.*\n`;
         return output;
-    }
-
-    if (data.prComments && data.prComments.length > 0) {
-        output += formatPrLevelCommentsMarkdown(data.prComments);
     }
 
     output += `## Review Threads\n\n`;
@@ -420,7 +420,7 @@ export function formatReviewJSON(data: ReviewData): string {
 /**
  * Save review markdown to .claude/github/reviews/
  */
-export function saveReviewMarkdown(content: string, prNumber: number): string {
+export async function saveReviewMarkdown(content: string, prNumber: number): Promise<string> {
     const now = new Date();
     const datetime = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const filename = `pr-${prNumber}-${datetime}.md`;
@@ -428,7 +428,7 @@ export function saveReviewMarkdown(content: string, prNumber: number): string {
     const filePath = join(reviewsDir, filename);
 
     mkdirSync(reviewsDir, { recursive: true });
-    writeFileSync(filePath, content, "utf-8");
+    await Bun.write(filePath, content);
 
     return filePath;
 }
