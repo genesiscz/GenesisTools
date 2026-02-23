@@ -128,10 +128,16 @@ function formatThread(thread: ParsedReviewThread): string {
     if (thread.replies.length > 0) {
         output += `\n${chalk.bold.cyan("Replies:")}\n`;
         for (const reply of thread.replies) {
-            output +=
-                chalk.dim(`  > ${reply.author} (${chalk.dim(reply.id)}): `) +
-                reply.body.split("\n")[0].substring(0, 60) +
-                "\n";
+            const bodyLines = reply.body.split("\n");
+            output += chalk.dim(`  > ${reply.author} (`) + chalk.dim(reply.id) + chalk.dim("): ") + bodyLines[0] + "\n";
+            for (const line of bodyLines.slice(1)) {
+                if (line.trim()) {
+                    output += chalk.dim("  > ") + line + "\n";
+                } else {
+                    output += "\n";
+                }
+            }
+            output += "\n";
         }
     }
 
