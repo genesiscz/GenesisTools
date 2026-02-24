@@ -203,6 +203,7 @@ function makeSubscription(
 async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
     let attempt = 0;
     let lastError: unknown = null;
+    let succeeded = false;
     while (attempt < maxRetries) {
         const client = new (require("fb-watchman").Client)();
         await new Promise((resolve) => {
@@ -249,19 +250,19 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
                             logger.info(
                                 `Watch established on ${watchResp.watch} relative_path: ${watchResp.relative_path}`
                             );
-                            makeSubscription(client, watchResp.watch ?? "", watchResp.relative_path);
-                            attempt = maxRetries;
+                            makeSubscription(client, watchResp.watch, watchResp.relative_path);
+                            succeeded = true;
                             resolve(undefined);
                         }
                     );
                 }
             );
         });
-        if (attempt === maxRetries) {
+        if (succeeded) {
             return;
         }
     }
-    logger.error(`Failed to establish watch after 15 attempts. Exiting. ${lastError}`);
+    logger.error(`Failed to establish watch after ${maxRetries} attempts. Exiting. ${lastError}`);
     process.exit(1);
 }
 
