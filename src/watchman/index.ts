@@ -249,7 +249,7 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
                             logger.info(
                                 `Watch established on ${watchResp.watch} relative_path: ${watchResp.relative_path}`
                             );
-                            makeSubscription(client, watchResp.watch, watchResp.relative_path);
+                            makeSubscription(client, watchResp.watch ?? "", watchResp.relative_path);
                             attempt = maxRetries;
                             resolve(undefined);
                         }
