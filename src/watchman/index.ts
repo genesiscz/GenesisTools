@@ -236,10 +236,20 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
                             if ("warning" in watchResp && watchResp.warning) {
                                 logger.warn(`Warning: ${watchResp.warning}`);
                             }
+
+                            if (!watchResp.watch) {
+                                logger.error("watch-project response missing watch root");
+                                lastError = new Error("watch-project response missing watch root");
+                                attempt++;
+                                client.end();
+                                setTimeout(resolve, 1000);
+                                return;
+                            }
+
                             logger.info(
                                 `Watch established on ${watchResp.watch} relative_path: ${watchResp.relative_path}`
                             );
-                            makeSubscription(client, watchResp.watch ?? "", watchResp.relative_path);
+                            makeSubscription(client, watchResp.watch, watchResp.relative_path);
                             attempt = maxRetries;
                             resolve(undefined);
                         }

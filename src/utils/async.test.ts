@@ -11,9 +11,11 @@ describe("retry", () => {
         const result = await retry(
             async () => {
                 attempt++;
+
                 if (attempt < 2) {
                     throw new Error("fail");
                 }
+
                 return "success";
             },
             { maxAttempts: 3, delay: 10 }
@@ -47,7 +49,7 @@ describe("retry", () => {
                 {
                     maxAttempts: 5,
                     delay: 10,
-                    shouldRetry: (err) => (err as Error).message !== "fatal",
+                    shouldRetry: (err) => !(err instanceof Error && err.message === "fatal"),
                 }
             )
         ).rejects.toThrow("fatal");
@@ -60,9 +62,11 @@ describe("retry", () => {
         await retry(
             async () => {
                 attempt++;
+
                 if (attempt < 3) {
                     throw new Error("fail");
                 }
+
                 return "ok";
             },
             {
@@ -96,9 +100,11 @@ describe("retry", () => {
             await retry(
                 async () => {
                     attempt++;
+
                     if (attempt < 4) {
                         throw new Error("fail");
                     }
+
                     return "ok";
                 },
                 { maxAttempts: 4, delay: 10, backoff: "exponential", onRetry: (_a, d) => delays.push(d) }
@@ -112,9 +118,11 @@ describe("retry", () => {
             await retry(
                 async () => {
                     attempt++;
+
                     if (attempt < 4) {
                         throw new Error("fail");
                     }
+
                     return "ok";
                 },
                 { maxAttempts: 4, delay: 10, backoff: "linear", onRetry: (_a, d) => delays.push(d) }
@@ -128,9 +136,11 @@ describe("retry", () => {
             await retry(
                 async () => {
                     attempt++;
+
                     if (attempt < 4) {
                         throw new Error("fail");
                     }
+
                     return "ok";
                 },
                 { maxAttempts: 4, delay: 10, backoff: "fixed", onRetry: (_a, d) => delays.push(d) }
@@ -275,6 +285,7 @@ describe("concurrentMap", () => {
                 if (n === 2) {
                     throw new Error("fail");
                 }
+
                 return n * 10;
             },
             concurrency: 5,

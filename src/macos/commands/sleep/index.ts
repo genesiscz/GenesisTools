@@ -1,8 +1,8 @@
-import { Command } from "commander";
-import * as p from "@clack/prompts";
-import pc from "picocolors";
 import logger from "@app/logger";
 import { formatDuration, parseDuration } from "@app/utils/format";
+import * as p from "@clack/prompts";
+import { Command } from "commander";
+import pc from "picocolors";
 
 interface SleepOptions {
     after?: string;
@@ -15,7 +15,15 @@ export function registerSleepCommand(program: Command): void {
         .description("Put Mac to sleep, optionally after a delay")
         .option("--after <duration>", 'Delay before sleeping (e.g. "30m", "1h30m", "90s", "2hours")')
         .action(async (options: SleepOptions) => {
-            await main(options);
+            try {
+                await main(options);
+            } catch (error) {
+                process.stdout.write(`\r${" ".repeat(60)}\r`);
+                const message = error instanceof Error ? error.message : String(error);
+                logger.error(`Sleep command failed: ${message}`);
+                p.log.error(message);
+                process.exit(1);
+            }
         });
 
     program.addCommand(sleep);
@@ -60,7 +68,7 @@ async function countdown(totalMs: number): Promise<void> {
 
             if (remaining <= 0) {
                 clearInterval(interval);
-                process.stdout.write("\r" + " ".repeat(60) + "\r");
+                process.stdout.write(`\r${" ".repeat(60)}\r`);
                 resolve();
                 return;
             }
@@ -71,7 +79,7 @@ async function countdown(totalMs: number): Promise<void> {
 
         process.on("SIGINT", () => {
             clearInterval(interval);
-            process.stdout.write("\r" + " ".repeat(60) + "\r");
+            process.stdout.write(`\r${" ".repeat(60)}\r`);
             p.log.warn("Sleep cancelled");
             process.exit(0);
         });

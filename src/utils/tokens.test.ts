@@ -28,8 +28,8 @@ describe("countTokens", () => {
     });
 
     it("handles whitespace-only strings", () => {
-        // gpt-3-encoder encodes spaces as tokens; fallback would return 0
-        expect(countTokens("   ")).toBeGreaterThanOrEqual(0);
+        // gpt-3-encoder encodes spaces as tokens, so this should be > 0
+        expect(countTokens("   ")).toBeGreaterThan(0);
     });
 });
 
