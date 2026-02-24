@@ -30,10 +30,7 @@ async function generateAuthUrl(): Promise<string> {
 async function presentAuthUrl(authUrl: string): Promise<void> {
     p.note(
         [
-            "1. Open this URL in your browser:",
-            "",
-            pc.cyan(authUrl),
-            "",
+            "1. Open the URL below in your browser",
             "2. Log in with your Claude account (if needed)",
             "3. Click 'Authorize' to grant access",
             "4. Copy the code shown on the callback page",
@@ -41,6 +38,10 @@ async function presentAuthUrl(authUrl: string): Promise<void> {
         ].join("\n"),
         "OAuth Login"
     );
+
+    console.log();
+    console.log(`  ${pc.cyan(authUrl)}`);
+    console.log();
 
     const openBrowser = await p.confirm({
         message: "Open URL in browser?",
