@@ -80,6 +80,60 @@ export function formatDuration(value: number, unit: DurationUnit = "ms", style: 
     }
 }
 
+// ============= Duration Parsing =============
+
+const SIMPLE_DURATION_PATTERN = /^(\d+)\s*(s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?)$/i;
+const COMPOUND_DURATION_PATTERN =
+    /^(?:(\d+)\s*h(?:ours?|rs?|r)?)?\s*(?:(\d+)\s*m(?:in(?:utes?|s)?)?)?\s*(?:(\d+)\s*s(?:ec(?:onds?|s)?)?)?$/i;
+
+/**
+ * Parse a human-readable duration string into milliseconds.
+ *
+ * Supports:
+ *   - Simple: "30s", "30m", "30min", "30minutes", "2h", "2hours"
+ *   - Compound: "1h30m", "2h15min", "20m 1s", "1h30m15s"
+ *   - Plain number: treated as minutes (e.g. "30" → 30 minutes)
+ *
+ * Returns 0 if the input cannot be parsed.
+ */
+export function parseDuration(input: string): number {
+    const trimmed = input.trim();
+
+    if (/^\d+$/.test(trimmed)) {
+        return Number.parseInt(trimmed, 10) * 60 * 1000;
+    }
+
+    const simple = trimmed.match(SIMPLE_DURATION_PATTERN);
+
+    if (simple) {
+        const value = Number.parseInt(simple[1], 10);
+        const unit = simple[2].toLowerCase();
+
+        if (unit.startsWith("s")) {
+            return value * 1000;
+        }
+
+        if (unit.startsWith("m")) {
+            return value * 60 * 1000;
+        }
+
+        if (unit.startsWith("h")) {
+            return value * 60 * 60 * 1000;
+        }
+    }
+
+    const compound = trimmed.match(COMPOUND_DURATION_PATTERN);
+
+    if (compound && (compound[1] || compound[2] || compound[3])) {
+        const hours = compound[1] ? Number.parseInt(compound[1], 10) : 0;
+        const minutes = compound[2] ? Number.parseInt(compound[2], 10) : 0;
+        const seconds = compound[3] ? Number.parseInt(compound[3], 10) : 0;
+        return (hours * 3600 + minutes * 60 + seconds) * 1000;
+    }
+
+    return 0;
+}
+
 // ============= Relative Time =============
 
 interface FormatRelativeTimeOptions {
