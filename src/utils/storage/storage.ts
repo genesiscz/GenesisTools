@@ -100,7 +100,9 @@ export class Storage {
      */
     async getConfigValue<T>(key: string): Promise<T | undefined> {
         const config = await this.getConfig<Record<string, unknown>>();
-        if (!config) return undefined;
+        if (!config) {
+            return undefined;
+        }
 
         // Support dot notation
         const keys = key.split(".");
@@ -317,7 +319,9 @@ export class Storage {
     async clearCache(): Promise<void> {
         try {
             const removeDir = (dir: string) => {
-                if (!existsSync(dir)) return;
+                if (!existsSync(dir)) {
+                    return;
+                }
                 const files = readdirSync(dir, { withFileTypes: true });
                 for (const file of files) {
                     const filePath = join(dir, file.name);
@@ -346,7 +350,9 @@ export class Storage {
         const files: string[] = [];
 
         const walkDir = (dir: string, prefix: string = "") => {
-            if (!existsSync(dir)) return;
+            if (!existsSync(dir)) {
+                return;
+            }
             const entries = readdirSync(dir, { withFileTypes: true });
             for (const entry of entries) {
                 const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
@@ -424,7 +430,9 @@ export class Storage {
         let totalSizeBytes = 0;
 
         const walkDir = (dir: string) => {
-            if (!existsSync(dir)) return;
+            if (!existsSync(dir)) {
+                return;
+            }
             const entries = readdirSync(dir, { withFileTypes: true });
             for (const entry of entries) {
                 const filePath = join(dir, entry.name);

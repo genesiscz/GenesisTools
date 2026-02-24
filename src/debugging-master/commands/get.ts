@@ -22,10 +22,14 @@ function assignRefIds(entries: IndexedLogEntry[]): void {
 
     for (const entry of entries) {
         const prefix = prefixes[entry.level];
-        if (!prefix) continue;
+        if (!prefix) {
+            continue;
+        }
 
         const dataStr = JSON.stringify(entry.data ?? entry.vars ?? entry.stack ?? "");
-        if (dataStr.length <= REF_THRESHOLD) continue;
+        if (dataStr.length <= REF_THRESHOLD) {
+            continue;
+        }
 
         entry.refId = `${prefix}${entry.index}`;
     }

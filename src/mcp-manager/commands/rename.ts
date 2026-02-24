@@ -30,7 +30,9 @@ export async function renameServer(
             const selectedOldName = await search({
                 message: "Select server to rename:",
                 source: async (term) => {
-                    if (!term) return serverNames.map((name) => ({ value: name, name }));
+                    if (!term) {
+                        return serverNames.map((name) => ({ value: name, name }));
+                    }
                     const lowerTerm = term.toLowerCase();
                     return serverNames
                         .filter((name) => name.toLowerCase().includes(lowerTerm))
@@ -182,7 +184,9 @@ export async function renameServer(
     // Sync rename to each selected provider
     for (const providerName of selectedProviderNames) {
         const provider = providers.find((p) => p.getName() === providerName);
-        if (!provider) continue;
+        if (!provider) {
+            continue;
+        }
 
         try {
             await renameServerInProvider(provider, finalOldName, finalNewName, serverConfig);

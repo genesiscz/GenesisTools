@@ -311,9 +311,13 @@ export async function multilineText(options: MultilineOptions): Promise<string |
                 // UTF-8
                 if (byte >= 128) {
                     let charBytes = 1;
-                    if ((byte & 0xe0) === 0xc0) charBytes = 2;
-                    else if ((byte & 0xf0) === 0xe0) charBytes = 3;
-                    else if ((byte & 0xf8) === 0xf0) charBytes = 4;
+                    if ((byte & 0xe0) === 0xc0) {
+                        charBytes = 2;
+                    } else if ((byte & 0xf0) === 0xe0) {
+                        charBytes = 3;
+                    } else if ((byte & 0xf8) === 0xf0) {
+                        charBytes = 4;
+                    }
 
                     if (i + charBytes <= data.length) {
                         const charData = data.subarray(i, i + charBytes);

@@ -17,7 +17,9 @@ export function appendQueryParamsToSearchParams(
             return;
         }
         if (Array.isArray(value)) {
-            value.forEach((v) => searchParams.append(key, v));
+            value.forEach((v) => {
+                searchParams.append(key, v);
+            });
         } else {
             searchParams.set(key, value);
         }

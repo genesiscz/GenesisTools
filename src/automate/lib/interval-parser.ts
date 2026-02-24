@@ -41,7 +41,9 @@ export function computeNextRunAt(parsed: ParsedInterval, from: Date = new Date()
     if (parsed.isTimeOfDay && parsed.atHour !== undefined && parsed.atMinute !== undefined) {
         const next = new Date(from);
         next.setHours(parsed.atHour, parsed.atMinute, 0, 0);
-        if (next <= from) next.setDate(next.getDate() + 1);
+        if (next <= from) {
+            next.setDate(next.getDate() + 1);
+        }
         return next;
     }
     return new Date(from.getTime() + parsed.intervalMs);

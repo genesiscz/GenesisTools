@@ -12,7 +12,9 @@ const engines: Record<EngineName, () => MarkdownEngine> = {
 
 export function getEngine(name: EngineName): MarkdownEngine {
     const factory = engines[name];
-    if (!factory) throw new Error(`Unknown engine: ${name}`);
+    if (!factory) {
+        throw new Error(`Unknown engine: ${name}`);
+    }
     return factory();
 }
 

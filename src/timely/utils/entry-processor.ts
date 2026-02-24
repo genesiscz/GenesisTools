@@ -130,25 +130,50 @@ function isWorkRelated(entry: any): boolean {
 function getSimpleGroupKey(title: string, note: string, description: string): string {
     const text = `${title} ${note} ${description}`.toLowerCase();
 
-    if (title === "Cursor") return "Cursor";
-    if (title === "Warp") return "Warp";
-    if (title === "GitKraken") return "GitKraken";
-    if (title.includes("GitLab")) return "GitLab";
+    if (title === "Cursor") {
+        return "Cursor";
+    }
+    if (title === "Warp") {
+        return "Warp";
+    }
+    if (title === "GitKraken") {
+        return "GitKraken";
+    }
+    if (title.includes("GitLab")) {
+        return "GitLab";
+    }
     if (
         title === "Microsoft Teams" ||
         title.includes("Teams") ||
         text.includes("microsoft teams") ||
         title.startsWith("Chat |")
-    )
+    ) {
         return "Teams";
-    if (title === "Xcode") return "Xcode";
-    if (title === "Simulator") return "Simulator";
-    if (title === "Android Studio") return "Android Studio";
-    if (title === "Brave" || title === "Chrome") return "Brave";
-    if (title.includes("Elastic") || title.includes("Kibana")) return "Elastic";
-    if (title.includes("Sentry")) return "Sentry";
-    if (title === "Figma") return "Figma";
-    if (title === "Finder") return "Finder";
+    }
+    if (title === "Xcode") {
+        return "Xcode";
+    }
+    if (title === "Simulator") {
+        return "Simulator";
+    }
+    if (title === "Android Studio") {
+        return "Android Studio";
+    }
+    if (title === "Brave" || title === "Chrome") {
+        return "Brave";
+    }
+    if (title.includes("Elastic") || title.includes("Kibana")) {
+        return "Elastic";
+    }
+    if (title.includes("Sentry")) {
+        return "Sentry";
+    }
+    if (title === "Figma") {
+        return "Figma";
+    }
+    if (title === "Finder") {
+        return "Finder";
+    }
 
     return title;
 }
@@ -320,7 +345,9 @@ function extractDetailedContext(entry: any): ProcessedEntry {
 
         if (entry.entries && Array.isArray(entry.entries)) {
             entry.entries.forEach((e: TimelyEntry) => {
-                if (e.url) urls.add(e.url);
+                if (e.url) {
+                    urls.add(e.url);
+                }
                 if (e.description && (e.description.includes("http") || e.description.includes("."))) {
                     urls.add(e.description);
                 }

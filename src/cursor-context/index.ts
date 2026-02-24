@@ -49,11 +49,15 @@ Examples:
 function getAttributeValue(tag: string, attrName: string): string | null {
     const attrPattern = `${attrName}="`;
     const startIdx = tag.indexOf(attrPattern);
-    if (startIdx === -1) return null;
+    if (startIdx === -1) {
+        return null;
+    }
 
     const valueStart = startIdx + attrPattern.length;
     const valueEnd = tag.indexOf('"', valueStart);
-    if (valueEnd === -1) return null;
+    if (valueEnd === -1) {
+        return null;
+    }
 
     return tag.substring(valueStart, valueEnd);
 }
@@ -63,13 +67,17 @@ function getAttributeValue(tag: string, attrName: string): string | null {
  */
 function findCodeBlockEnd(content: string, startIndex: number): number {
     const codeBlockStart = content.indexOf("```", startIndex);
-    if (codeBlockStart === -1) return -1;
+    if (codeBlockStart === -1) {
+        return -1;
+    }
 
     // Find the closing ```
     let pos = codeBlockStart + 3;
     while (pos < content.length) {
         const nextBacktick = content.indexOf("```", pos);
-        if (nextBacktick === -1) return -1;
+        if (nextBacktick === -1) {
+            return -1;
+        }
         pos = nextBacktick + 3;
         // Check if this is actually a closing backtick (not part of content)
         // Simple check: if there's a newline before it, it's likely the end
@@ -90,11 +98,15 @@ function parseToolUseBlocks(content: string): ToolUseBlock[] {
     while (pos < content.length) {
         // Find opening <tool-use tag
         const openTagStart = content.indexOf("<tool-use", pos);
-        if (openTagStart === -1) break;
+        if (openTagStart === -1) {
+            break;
+        }
 
         // Find the end of the opening tag
         const openTagEnd = content.indexOf(">", openTagStart);
-        if (openTagEnd === -1) break;
+        if (openTagEnd === -1) {
+            break;
+        }
 
         const openTag = content.substring(openTagStart, openTagEnd + 1);
         const toolName = getAttributeValue(openTag, "data-tool-name");
@@ -106,7 +118,9 @@ function parseToolUseBlocks(content: string): ToolUseBlock[] {
 
         // Find the closing </tool-use> tag
         const closeTagStart = content.indexOf("</tool-use>", openTagEnd);
-        if (closeTagStart === -1) break;
+        if (closeTagStart === -1) {
+            break;
+        }
 
         const closeTagEnd = closeTagStart + "</tool-use>".length;
 

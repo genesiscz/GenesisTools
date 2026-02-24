@@ -28,7 +28,9 @@ export function findConfigPath(): string | null {
 
         const parentDir = dirname(currentDir);
 
-        if (parentDir === currentDir) break; // reached root
+        if (parentDir === currentDir) {
+            break; // reached root
+        }
         currentDir = parentDir;
     }
 
@@ -48,7 +50,9 @@ export function getLocalConfigDir(): string {
 export function loadConfig(): AzureConfig | null {
     const configPath = findConfigPath();
 
-    if (!configPath) return null;
+    if (!configPath) {
+        return null;
+    }
 
     try {
         return JSON.parse(readFileSync(configPath, "utf-8"));

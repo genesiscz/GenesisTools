@@ -102,13 +102,21 @@ export function generateEmptyTemplate(
 function inferWorkItemType(title: string): WorkItemType | undefined {
     const lower = title.toLowerCase();
 
-    if (lower.includes("bug") || lower.includes("fix") || lower.includes("error")) return "Bug";
+    if (lower.includes("bug") || lower.includes("fix") || lower.includes("error")) {
+        return "Bug";
+    }
 
-    if (lower.includes("feature") || lower.includes("implement")) return "Feature";
+    if (lower.includes("feature") || lower.includes("implement")) {
+        return "Feature";
+    }
 
-    if (lower.includes("task")) return "Task";
+    if (lower.includes("task")) {
+        return "Task";
+    }
 
-    if (lower.includes("story") || lower.includes("user")) return "User Story";
+    if (lower.includes("story") || lower.includes("user")) {
+        return "User Story";
+    }
     return undefined;
 }
 
@@ -117,7 +125,9 @@ function inferWorkItemType(title: string): WorkItemType | undefined {
  * Preserves section structure but clears content
  */
 function extractDescriptionTemplate(description?: string): string {
-    if (!description) return "";
+    if (!description) {
+        return "";
+    }
 
     // Convert HTML to markdown first
     const md = htmlToMarkdown(description);
@@ -147,7 +157,9 @@ function extractDescriptionTemplate(description?: string): string {
  * Handles objects with displayName (users), strings, numbers, etc.
  */
 function extractFieldValue(value: unknown): string | number | string[] | undefined {
-    if (value === null || value === undefined) return undefined;
+    if (value === null || value === undefined) {
+        return undefined;
+    }
 
     // Handle user/identity objects (have displayName)
     if (typeof value === "object" && value !== null && "displayName" in value) {
@@ -160,9 +172,13 @@ function extractFieldValue(value: unknown): string | number | string[] | undefin
     }
 
     // Handle primitives
-    if (typeof value === "string") return value;
+    if (typeof value === "string") {
+        return value;
+    }
 
-    if (typeof value === "number") return value;
+    if (typeof value === "number") {
+        return value;
+    }
 
     return String(value);
 }
@@ -270,17 +286,23 @@ export function generateTemplateFromWorkItem(
 
     // Process all raw fields
     for (const [refName, rawValue] of Object.entries(rawFields)) {
-        if (skipFields.has(refName)) continue;
+        if (skipFields.has(refName)) {
+            continue;
+        }
 
         // Skip GUID-named custom fields (e.g., "Custom.32af3eb0-3fc8-4099-...")
         const parts = refName.split(".");
         const lastPart = parts[parts.length - 1];
 
-        if (isGuid(lastPart)) continue;
+        if (isGuid(lastPart)) {
+            continue;
+        }
 
         const value = extractFieldValue(rawValue);
 
-        if (value === undefined || value === "") continue;
+        if (value === undefined || value === "") {
+            continue;
+        }
 
         // Map to known field name or use last part of reference name
         let fieldName = fieldMappings[refName];
@@ -316,12 +338,16 @@ export function generateTemplateFromWorkItem(
     // Add hints for fields that have allowedValues but weren't in the source item
     if (fieldSchema) {
         for (const [refName, schemaField] of fieldSchema) {
-            if (skipFields.has(refName)) continue;
+            if (skipFields.has(refName)) {
+                continue;
+            }
 
             if (schemaField.allowedValues && schemaField.allowedValues.length > 0) {
                 const lastPart = refName.split(".").pop();
 
-                if (!lastPart) continue;
+                if (!lastPart) {
+                    continue;
+                }
                 const fieldName = fieldMappings[refName] || lastPart.charAt(0).toLowerCase() + lastPart.slice(1);
 
                 if (!hints[fieldName]) {

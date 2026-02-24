@@ -32,7 +32,9 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
     const today = new Date().toISOString().slice(0, 10);
     const sortedDates = [...dates].sort();
 
-    if (verbose) logger.info(`[memories] Fetching memories for ${sortedDates.length} date(s) (today=${today})`);
+    if (verbose) {
+        logger.info(`[memories] Fetching memories for ${sortedDates.length} date(s) (today=${today})`);
+    }
 
     const entries: TimelyEntry[] = [];
     const byDate = new Map<string, TimelyEntry[]>();
@@ -49,23 +51,30 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
 
             if (isToday || force) {
                 memories = await fetchFromApi(accountId, accessToken, date);
-                if (!isToday) await storage.putCacheFile(cacheKey, memories, CACHE_TTL);
+                if (!isToday) {
+                    await storage.putCacheFile(cacheKey, memories, CACHE_TTL);
+                }
                 stats.fetched++;
-                if (verbose)
+                if (verbose) {
                     logger.info(
                         `[memories] ${progress} ${date}: ${memories.length} memories (${isToday ? "fresh, today" : "force refresh"})`
                     );
+                }
             } else {
                 const cached = await storage.getCacheFile<TimelyEntry[]>(cacheKey, CACHE_TTL);
                 if (cached) {
                     memories = cached;
                     stats.cached++;
-                    if (verbose) logger.info(`[memories] ${progress} ${date}: ${memories.length} memories (cached)`);
+                    if (verbose) {
+                        logger.info(`[memories] ${progress} ${date}: ${memories.length} memories (cached)`);
+                    }
                 } else {
                     memories = await fetchFromApi(accountId, accessToken, date);
                     await storage.putCacheFile(cacheKey, memories, CACHE_TTL);
                     stats.fetched++;
-                    if (verbose) logger.info(`[memories] ${progress} ${date}: ${memories.length} memories (fetched)`);
+                    if (verbose) {
+                        logger.info(`[memories] ${progress} ${date}: ${memories.length} memories (fetched)`);
+                    }
                 }
             }
 
@@ -74,7 +83,9 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
         } catch (err) {
             stats.failed++;
             logger.debug(`[memories] Failed to fetch memories for ${date}: ${err}`);
-            if (verbose) logger.info(`[memories] ${progress} ${date}: FAILED`);
+            if (verbose) {
+                logger.info(`[memories] ${progress} ${date}: FAILED`);
+            }
         }
     }
 
@@ -92,7 +103,9 @@ async function fetchFromApi(accountId: number, accessToken: string, date: string
     const res = await fetch(url, {
         headers: { accept: "application/json", Authorization: `Bearer ${accessToken}` },
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+    }
     return (await res.json()) as TimelyEntry[];
 }
 

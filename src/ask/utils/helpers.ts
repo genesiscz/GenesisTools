@@ -39,11 +39,21 @@ export function colorizeProvider(provider: string): string {
 
 /** Colorize text by price tier based on input cost per 1M tokens */
 export function colorizeByPriceTier(text: string, inputPer1M?: number): string {
-    if (inputPer1M == null) return pc.dim(text);
-    if (inputPer1M === 0) return pc.green(text);
-    if (inputPer1M < 1) return pc.green(text);
-    if (inputPer1M < 5) return pc.cyan(text);
-    if (inputPer1M < 15) return pc.yellow(text);
+    if (inputPer1M == null) {
+        return pc.dim(text);
+    }
+    if (inputPer1M === 0) {
+        return pc.green(text);
+    }
+    if (inputPer1M < 1) {
+        return pc.green(text);
+    }
+    if (inputPer1M < 5) {
+        return pc.cyan(text);
+    }
+    if (inputPer1M < 15) {
+        return pc.yellow(text);
+    }
     return pc.red(text);
 }
 

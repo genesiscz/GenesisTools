@@ -77,9 +77,13 @@ class BucketTracker {
     }
 
     private normalizeResetTime(t: string | null): string | null {
-        if (!t) return null;
+        if (!t) {
+            return null;
+        }
         const d = new Date(t);
-        if (Number.isNaN(d.getTime())) return t; // fallback to raw string
+        if (Number.isNaN(d.getTime())) {
+            return t; // fallback to raw string
+        }
         // Round to nearest hour - API returns jittery timestamps (17:59:59 vs 18:00:00)
         if (d.getMinutes() >= 30) {
             d.setHours(d.getHours() + 1);
@@ -105,14 +109,22 @@ class UsageWatcher {
         const notifications: Array<{ message: string; reason: string }> = [];
 
         for (const account of results) {
-            if (!account.usage) continue;
+            if (!account.usage) {
+                continue;
+            }
 
             for (const [bucket, data] of Object.entries(account.usage)) {
-                if (!data || typeof data !== "object" || !("utilization" in data)) continue;
-                if (data.utilization === null || data.utilization === undefined) continue;
+                if (!data || typeof data !== "object" || !("utilization" in data)) {
+                    continue;
+                }
+                if (data.utilization === null || data.utilization === undefined) {
+                    continue;
+                }
 
                 const thresholdKey = BUCKET_THRESHOLD_MAP[bucket];
-                if (!thresholdKey) continue;
+                if (!thresholdKey) {
+                    continue;
+                }
 
                 // Get or create tracker
                 const trackerKey = `${account.accountName}:${bucket}`;

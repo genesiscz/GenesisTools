@@ -67,7 +67,9 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
     // For each provider, ensure servers are installed and properly synced
     for (const providerName of selectedProviders) {
         const provider = availableProviders.find((p) => p.getName() === providerName);
-        if (!provider) continue;
+        if (!provider) {
+            continue;
+        }
 
         try {
             logger.info(`Syncing to ${providerName}...`);

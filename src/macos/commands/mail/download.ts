@@ -12,7 +12,9 @@ import type { Command } from "commander";
 /** Load the last search results from temp file */
 function loadLastSearchResults(): MailMessage[] | null {
     const path = join(tmpdir(), "macos-mail-last-search.json");
-    if (!existsSync(path)) return null;
+    if (!existsSync(path)) {
+        return null;
+    }
 
     try {
         const raw = readFileSync(path, "utf-8");
@@ -81,8 +83,12 @@ export function registerDownloadCommand(program: Command): void {
                                 process.exit(0);
                             }
 
-                            if (action === "overwrite") options.overwrite = true;
-                            if (action === "append") options.append = true;
+                            if (action === "overwrite") {
+                                options.overwrite = true;
+                            }
+                            if (action === "append") {
+                                options.append = true;
+                            }
                         }
                     }
 

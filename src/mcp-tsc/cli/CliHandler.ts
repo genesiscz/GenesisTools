@@ -71,10 +71,18 @@ export class CliHandler {
      * Determine which command to run based on arguments
      */
     determineCommand(argv: CliArgs): CommandType {
-        if (argv["kill-server"]) return "kill-server" as CommandType;
-        if (argv.mcp) return "mcp" as CommandType;
-        if (argv.hover) return "hover" as CommandType;
-        if (argv.diagnostics) return "diagnostics" as CommandType;
+        if (argv["kill-server"]) {
+            return "kill-server" as CommandType;
+        }
+        if (argv.mcp) {
+            return "mcp" as CommandType;
+        }
+        if (argv.hover) {
+            return "hover" as CommandType;
+        }
+        if (argv.diagnostics) {
+            return "diagnostics" as CommandType;
+        }
 
         // Default to diagnostics for backward compatibility
         return "diagnostics" as CommandType;

@@ -104,33 +104,33 @@ export class LiteLLMPricingFetcher {
 
     private logDebug(msg: unknown, ...args: unknown[]): void {
         if (typeof msg === "object" && msg !== null) {
-            this.logger.debug(msg as any, ...(args as any));
+            this.logger.debug(msg, ...args);
         } else {
-            this.logger.debug({ msg }, ...(args as any));
+            this.logger.debug({ msg }, ...args);
         }
     }
 
     private logError(msg: unknown, ...args: unknown[]): void {
         if (typeof msg === "object" && msg !== null) {
-            this.logger.error(msg as any, ...(args as any));
+            this.logger.error(msg, ...args);
         } else {
-            this.logger.error({ msg }, ...(args as any));
+            this.logger.error({ msg }, ...args);
         }
     }
 
     private logInfo(msg: unknown, ...args: unknown[]): void {
         if (typeof msg === "object" && msg !== null) {
-            this.logger.info(msg as any, ...(args as any));
+            this.logger.info(msg, ...args);
         } else {
-            this.logger.info({ msg }, ...(args as any));
+            this.logger.info({ msg }, ...args);
         }
     }
 
     private logWarn(msg: unknown, ...args: unknown[]): void {
         if (typeof msg === "object" && msg !== null) {
-            this.logger.warn(msg as any, ...(args as any));
+            this.logger.warn(msg, ...args);
         } else {
-            this.logger.warn({ msg }, ...(args as any));
+            this.logger.warn({ msg }, ...args);
         }
     }
 

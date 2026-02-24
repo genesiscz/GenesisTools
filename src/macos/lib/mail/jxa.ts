@@ -50,7 +50,9 @@ export async function searchBodies(
     messageIdentifiers: Array<{ rowid: number; subject: string; mailbox: string }>,
     query: string
 ): Promise<Set<number>> {
-    if (messageIdentifiers.length === 0) return new Set();
+    if (messageIdentifiers.length === 0) {
+        return new Set();
+    }
 
     const matchedRowids = new Set<number>();
     const batchSize = 50;
@@ -99,7 +101,9 @@ export async function searchBodies(
             const result = await runJxa(script, 60_000);
             if (result.exitCode === 0 && result.stdout) {
                 const rowids = JSON.parse(result.stdout) as number[];
-                for (const r of rowids) matchedRowids.add(r);
+                for (const r of rowids) {
+                    matchedRowids.add(r);
+                }
             }
         } catch (err) {
             logger.warn(`JXA body search batch failed: ${err}`);

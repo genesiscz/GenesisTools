@@ -15,7 +15,9 @@ function formatHeaders(headers: HarHeader[]): string {
 }
 
 function formatTimingLine(label: string, value: number | undefined): string | null {
-    if (value === undefined || value < 0) return null;
+    if (value === undefined || value < 0) {
+        return null;
+    }
     return `  ${label.padEnd(10)} ${formatDuration(value, "ms", "tiered")}`;
 }
 
@@ -81,7 +83,9 @@ async function showDetail(entry: HarEntry, fullUrl: string, format: OutputFormat
     ];
     for (const [label, value] of timingLabels) {
         const line = formatTimingLine(label, value);
-        if (line) lines.push(line);
+        if (line) {
+            lines.push(line);
+        }
     }
     lines.push(`  ${"total".padEnd(10)} ${formatDuration(entry.time, "ms", "tiered")}`);
     lines.push("");
@@ -183,10 +187,18 @@ async function showRaw(
         if (entry.response.cookies.length > 0) {
             for (const c of entry.response.cookies) {
                 const parts = [`${c.name}=${c.value}`];
-                if (c.domain) parts.push(`Domain=${c.domain}`);
-                if (c.path) parts.push(`Path=${c.path}`);
-                if (c.httpOnly) parts.push("HttpOnly");
-                if (c.secure) parts.push("Secure");
+                if (c.domain) {
+                    parts.push(`Domain=${c.domain}`);
+                }
+                if (c.path) {
+                    parts.push(`Path=${c.path}`);
+                }
+                if (c.httpOnly) {
+                    parts.push("HttpOnly");
+                }
+                if (c.secure) {
+                    parts.push("Secure");
+                }
                 lines.push(`  ${parts.join("; ")}`);
             }
         } else {

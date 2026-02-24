@@ -7,15 +7,23 @@ import type { Command } from "commander";
 import pc from "picocolors";
 
 function maskToken(token: string): string {
-    if (token.length < 32) return "****";
+    if (token.length < 32) {
+        return "****";
+    }
     return `${token.slice(0, 20)}...`;
 }
 
 function determineAccountLabel(profile: Awaited<ReturnType<typeof fetchOAuthProfile>>): string | undefined {
-    if (!profile) return undefined;
+    if (!profile) {
+        return undefined;
+    }
     const tier = profile.organization.rate_limit_tier;
-    if (tier.includes("max")) return "max";
-    if (tier.includes("pro")) return "pro";
+    if (tier.includes("max")) {
+        return "max";
+    }
+    if (tier.includes("pro")) {
+        return "pro";
+    }
     return profile.organization.billing_type;
 }
 
@@ -48,7 +56,9 @@ async function presentAuthUrl(authUrl: string): Promise<void> {
         initialValue: true,
     });
 
-    if (p.isCancel(openBrowser)) return;
+    if (p.isCancel(openBrowser)) {
+        return;
+    }
 
     if (openBrowser) {
         Bun.spawn(["open", authUrl], { stdio: ["ignore", "ignore", "ignore"] });
@@ -63,11 +73,15 @@ async function promptAndExchangeCode(): Promise<Awaited<ReturnType<typeof claude
         message: "Paste the authorization code:",
         placeholder: "code#state",
         validate: (val) => {
-            if (!val?.trim()) return "Code is required";
+            if (!val?.trim()) {
+                return "Code is required";
+            }
         },
     });
 
-    if (p.isCancel(code)) return null;
+    if (p.isCancel(code)) {
+        return null;
+    }
 
     const spinner = p.spinner();
     spinner.start("Exchanging code for tokens...");
@@ -118,11 +132,15 @@ async function promptAccountName(config: ClaudeConfig, suggestedName: string): P
         message: "Name for this account:",
         placeholder: suggestedName,
         validate: (val) => {
-            if (!val?.trim()) return "Name is required";
+            if (!val?.trim()) {
+                return "Name is required";
+            }
         },
     });
 
-    if (p.isCancel(name)) return null;
+    if (p.isCancel(name)) {
+        return null;
+    }
 
     if (config.accounts[name as string]) {
         const overwrite = await p.confirm({
@@ -134,12 +152,18 @@ async function promptAccountName(config: ClaudeConfig, suggestedName: string): P
             name = await p.text({
                 message: "Enter a different name:",
                 validate: (val) => {
-                    if (!val?.trim()) return "Name is required";
-                    if (config.accounts[val]) return `Account "${val}" already exists`;
+                    if (!val?.trim()) {
+                        return "Name is required";
+                    }
+                    if (config.accounts[val]) {
+                        return `Account "${val}" already exists`;
+                    }
                 },
             });
 
-            if (p.isCancel(name)) return null;
+            if (p.isCancel(name)) {
+                return null;
+            }
         }
     }
 
@@ -151,13 +175,17 @@ async function addAccountViaOAuth(config: ClaudeConfig): Promise<void> {
     await presentAuthUrl(authUrl);
 
     const tokens = await promptAndExchangeCode();
-    if (!tokens) return;
+    if (!tokens) {
+        return;
+    }
 
     const profile = await fetchAndDisplayProfile(tokens);
 
     const suggestedName = tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "personal";
     const name = await promptAccountName(config, suggestedName);
-    if (!name) return;
+    if (!name) {
+        return;
+    }
 
     config.accounts[name] = {
         accessToken: tokens.accessToken,
@@ -218,7 +246,9 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
         ],
     });
 
-    if (p.isCancel(action) || action === "back") return;
+    if (p.isCancel(action) || action === "back") {
+        return;
+    }
 
     if (action === "add-oauth") {
         await addAccountViaOAuth(config);
@@ -269,11 +299,17 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
             message: "Name for this account:",
             placeholder: email?.split("@")[0]?.toLowerCase() ?? "personal",
             validate: (val) => {
-                if (!val?.trim()) return "Name is required";
-                if (config.accounts[val]) return `Account "${val}" already exists`;
+                if (!val?.trim()) {
+                    return "Name is required";
+                }
+                if (config.accounts[val]) {
+                    return `Account "${val}" already exists`;
+                }
             },
         });
-        if (p.isCancel(name)) return;
+        if (p.isCancel(name)) {
+            return;
+        }
 
         // If refresh token available, "fork" it so we have our own copy
         // This prevents conflicts with Claude Code's token management
@@ -308,7 +344,9 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
                 message: "Save anyway?",
                 initialValue: false,
             });
-            if (p.isCancel(proceed) || !proceed) return;
+            if (p.isCancel(proceed) || !proceed) {
+                return;
+            }
         }
 
         config.accounts[name as string] = {
@@ -317,7 +355,9 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
             expiresAt,
             label: kc.subscriptionType,
         };
-        if (!config.defaultAccount) config.defaultAccount = name as string;
+        if (!config.defaultAccount) {
+            config.defaultAccount = name as string;
+        }
         await saveConfig(config);
         p.log.success(`Account "${name}" saved${refreshToken ? " with auto-refresh support" : ""}.`);
     } else if (action === "add-manual") {
@@ -325,19 +365,29 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
             message: "Name for this account:",
             placeholder: "work",
             validate: (val) => {
-                if (!val?.trim()) return "Name is required";
-                if (config.accounts[val]) return `Account "${val}" already exists`;
+                if (!val?.trim()) {
+                    return "Name is required";
+                }
+                if (config.accounts[val]) {
+                    return `Account "${val}" already exists`;
+                }
             },
         });
-        if (p.isCancel(name)) return;
+        if (p.isCancel(name)) {
+            return;
+        }
 
         const token = await p.text({
             message: "OAuth access token:",
             validate: (val) => {
-                if (!val?.trim()) return "Token is required";
+                if (!val?.trim()) {
+                    return "Token is required";
+                }
             },
         });
-        if (p.isCancel(token)) return;
+        if (p.isCancel(token)) {
+            return;
+        }
 
         const validateSpinner = p.spinner();
         validateSpinner.start("Validating token...");
@@ -350,7 +400,9 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
                 message: "Save anyway?",
                 initialValue: false,
             });
-            if (p.isCancel(proceed) || !proceed) return;
+            if (p.isCancel(proceed) || !proceed) {
+                return;
+            }
         }
 
         const label = await p.text({
@@ -362,7 +414,9 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
             accessToken: token as string,
             label: p.isCancel(label) ? undefined : (label as string) || undefined,
         };
-        if (!config.defaultAccount) config.defaultAccount = name as string;
+        if (!config.defaultAccount) {
+            config.defaultAccount = name as string;
+        }
         await saveConfig(config);
         p.log.success(`Account "${name}" saved.`);
     } else if (action === "remove") {
@@ -374,12 +428,16 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
                 label: `${a}${config.accounts[a].label ? ` (${config.accounts[a].label})` : ""}`,
             })),
         });
-        if (p.isCancel(toRemove)) return;
+        if (p.isCancel(toRemove)) {
+            return;
+        }
 
         const confirmed = await p.confirm({
             message: `Remove account "${toRemove}"?`,
         });
-        if (p.isCancel(confirmed) || !confirmed) return;
+        if (p.isCancel(confirmed) || !confirmed) {
+            return;
+        }
 
         delete config.accounts[toRemove as string];
         if (config.defaultAccount === toRemove) {
@@ -395,25 +453,33 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
         message: "Session thresholds (comma-separated %):",
         initialValue: config.notifications.sessionThresholds.join(", "),
     });
-    if (p.isCancel(sessionThresholds)) return;
+    if (p.isCancel(sessionThresholds)) {
+        return;
+    }
 
     const weeklyThresholds = await p.text({
         message: "Weekly thresholds (comma-separated %):",
         initialValue: config.notifications.weeklyThresholds.join(", "),
     });
-    if (p.isCancel(weeklyThresholds)) return;
+    if (p.isCancel(weeklyThresholds)) {
+        return;
+    }
 
     const interval = await p.text({
         message: "Watch poll interval (seconds):",
         initialValue: String(config.notifications.watchInterval),
     });
-    if (p.isCancel(interval)) return;
+    if (p.isCancel(interval)) {
+        return;
+    }
 
     const macosEnabled = await p.confirm({
         message: "Enable macOS notifications?",
         initialValue: config.notifications.channels.macos,
     });
-    if (p.isCancel(macosEnabled)) return;
+    if (p.isCancel(macosEnabled)) {
+        return;
+    }
 
     config.notifications.sessionThresholds = (sessionThresholds as string)
         .split(",")
@@ -556,7 +622,9 @@ export function registerConfigCommand(program: Command): void {
             }
 
             config.accounts[name] = { accessToken, refreshToken, expiresAt, label };
-            if (!config.defaultAccount) config.defaultAccount = name;
+            if (!config.defaultAccount) {
+                config.defaultAccount = name;
+            }
             await saveConfig(config);
             p.log.success(`Account "${name}" added${refreshToken ? " with auto-refresh" : ""}.`);
         });
@@ -634,7 +702,7 @@ export function registerConfigCommand(program: Command): void {
 
             // Exchange code
             console.log(pc.dim("Exchanging code for tokens..."));
-            let tokens;
+            let tokens: Awaited<ReturnType<typeof claudeOAuth.exchangeCode>>;
             try {
                 tokens = await claudeOAuth.exchangeCode(code);
             } catch (err) {
@@ -659,7 +727,9 @@ export function registerConfigCommand(program: Command): void {
                 expiresAt: tokens.expiresAt,
                 label,
             };
-            if (!config.defaultAccount) config.defaultAccount = accountName;
+            if (!config.defaultAccount) {
+                config.defaultAccount = accountName;
+            }
             await saveConfig(config);
 
             console.log();

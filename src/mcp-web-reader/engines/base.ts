@@ -14,9 +14,15 @@ export abstract class MarkdownEngine {
         const unclosed = codeBlocks % 2 !== 0;
 
         const issues: string[] = [];
-        if (htmlTags > 0) issues.push(`${htmlTags} HTML tags remaining`);
-        if (emptyLinks > 0) issues.push(`${emptyLinks} empty links`);
-        if (unclosed) issues.push("Unclosed code block detected");
+        if (htmlTags > 0) {
+            issues.push(`${htmlTags} HTML tags remaining`);
+        }
+        if (emptyLinks > 0) {
+            issues.push(`${emptyLinks} empty links`);
+        }
+        if (unclosed) {
+            issues.push("Unclosed code block detected");
+        }
 
         return {
             valid: issues.length === 0,

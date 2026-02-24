@@ -73,7 +73,7 @@ if (options.verbose) {
 const log = {
     info: (message: string) => logger.info(chalk.blue("ℹ️ ") + message),
     debug: (message: string) => (options.verbose ? logger.info(chalk.gray("🔍 ") + message) : null),
-    error: (message: string, err?: any) => logger.error(chalk.red("❌ ") + message + (err ? `: ${err}` : "")),
+    error: (message: string, err?: unknown) => logger.error(chalk.red("❌ ") + message + (err ? `: ${err}` : "")),
     warn: (message: string) => logger.info(chalk.yellow("⚠️ ") + message),
     file: {
         new: (filepath: string) => logger.info(chalk.green(`\n📄 NEW FILE: ${filepath}`)),

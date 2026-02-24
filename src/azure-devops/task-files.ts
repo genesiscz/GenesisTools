@@ -19,7 +19,9 @@ export function getTasksDir(category?: string): string {
  * Find task file in a specific directory (flat, not in task subfolder)
  */
 export function findTaskFileFlat(id: number, ext: string, dir: string): string | null {
-    if (!existsSync(dir)) return null;
+    if (!existsSync(dir)) {
+        return null;
+    }
 
     const files = readdirSync(dir);
     const match = files.find((f) => f.startsWith(`${id}-`) && f.endsWith(`.${ext}`));
@@ -32,7 +34,9 @@ export function findTaskFileFlat(id: number, ext: string, dir: string): string |
 export function findTaskFileInFolder(id: number, ext: string, dir: string): string | null {
     const taskFolderPath = join(dir, String(id));
 
-    if (!existsSync(taskFolderPath)) return null;
+    if (!existsSync(taskFolderPath)) {
+        return null;
+    }
 
     const files = readdirSync(taskFolderPath);
     const match = files.find((f) => f.startsWith(`${id}-`) && f.endsWith(`.${ext}`));
@@ -54,17 +58,23 @@ export function findTaskFile(id: number, ext: string, category?: string): string
 export function findTaskFileAnywhere(id: number, ext: string): FoundTaskFile | null {
     const baseTasksDir = getTasksDir();
 
-    if (!existsSync(baseTasksDir)) return null;
+    if (!existsSync(baseTasksDir)) {
+        return null;
+    }
 
     // Check root flat
     const rootFlat = findTaskFileFlat(id, ext, baseTasksDir);
 
-    if (rootFlat) return { path: rootFlat, inTaskFolder: false };
+    if (rootFlat) {
+        return { path: rootFlat, inTaskFolder: false };
+    }
 
     // Check root task folder
     const rootFolder = findTaskFileInFolder(id, ext, baseTasksDir);
 
-    if (rootFolder) return { path: rootFolder, inTaskFolder: true };
+    if (rootFolder) {
+        return { path: rootFolder, inTaskFolder: true };
+    }
 
     // Check category subdirectories
     const entries = readdirSync(baseTasksDir, { withFileTypes: true });
@@ -76,12 +86,16 @@ export function findTaskFileAnywhere(id: number, ext: string): FoundTaskFile | n
             // Check flat in category
             const catFlat = findTaskFileFlat(id, ext, categoryDir);
 
-            if (catFlat) return { path: catFlat, category: entry.name, inTaskFolder: false };
+            if (catFlat) {
+                return { path: catFlat, category: entry.name, inTaskFolder: false };
+            }
 
             // Check task folder in category
             const catFolder = findTaskFileInFolder(id, ext, categoryDir);
 
-            if (catFolder) return { path: catFolder, category: entry.name, inTaskFolder: true };
+            if (catFolder) {
+                return { path: catFolder, category: entry.name, inTaskFolder: true };
+            }
         }
     }
 

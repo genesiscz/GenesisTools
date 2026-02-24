@@ -259,7 +259,9 @@ export class DynamicPricingManager {
         if (hasTieredPricing && (inputTokens > 200_000 || outputTokens > 200_000)) {
             // Use tiered pricing calculation (pricing is per million tokens)
             const calculateTieredCost = (tokens: number, basePricePer1M: number, tieredPricePer1M?: number): number => {
-                if (tokens <= 0) return 0;
+                if (tokens <= 0) {
+                    return 0;
+                }
                 if (tokens > 200_000 && tieredPricePer1M != null) {
                     const tokensBelow200k = 200_000;
                     const tokensAbove200k = tokens - 200_000;

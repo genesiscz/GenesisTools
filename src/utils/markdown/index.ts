@@ -155,7 +155,9 @@ function parseTableTokens(tokens: Token[], startIdx: number): { data: TableData;
 
     // Helper to render inline tokens and strip HTML for plain text
     const renderInline = (inlineToken: Token): string => {
-        if (!inlineToken.children) return inlineToken.content;
+        if (!inlineToken.children) {
+            return inlineToken.content;
+        }
         // Render inline content and strip HTML tags for plain display
         let text = "";
         for (const child of inlineToken.children) {
@@ -179,9 +181,13 @@ function parseTableTokens(tokens: Token[], startIdx: number): { data: TableData;
             while (idx < tokens.length && tokens[idx].type !== "thead_close") {
                 if (tokens[idx].type === "th_open") {
                     const style = tokens[idx].attrGet("style") || "";
-                    if (style.includes("text-align:center")) data.alignments.push("center");
-                    else if (style.includes("text-align:right")) data.alignments.push("right");
-                    else data.alignments.push("left");
+                    if (style.includes("text-align:center")) {
+                        data.alignments.push("center");
+                    } else if (style.includes("text-align:right")) {
+                        data.alignments.push("right");
+                    } else {
+                        data.alignments.push("left");
+                    }
                     idx++;
                     if (tokens[idx].type === "inline") {
                         data.headers.push(renderInline(tokens[idx]));
@@ -236,7 +242,9 @@ function getDisplayWidth(str: string): number {
 
 function renderAsciiTable(data: TableData): string {
     const { headers, alignments, rows } = data;
-    if (headers.length === 0) return "";
+    if (headers.length === 0) {
+        return "";
+    }
 
     // Calculate column widths using display width
     const colWidths = headers.map((h, i) => {
@@ -248,7 +256,9 @@ function renderAsciiTable(data: TableData): string {
     const padCell = (content: string, width: number, align: "left" | "center" | "right"): string => {
         const displayWidth = getDisplayWidth(content);
         const padding = width - displayWidth;
-        if (padding <= 0) return content;
+        if (padding <= 0) {
+            return content;
+        }
 
         if (align === "center") {
             const left = Math.floor(padding / 2);
@@ -376,7 +386,9 @@ function wrapToWidth(str: string, width: number): string {
         .map((line) => {
             // Use display width (emoji = 2 cols) for the early-exit check
             const plainLength = getDisplayWidth(stripAnsi(line));
-            if (plainLength <= width) return line;
+            if (plainLength <= width) {
+                return line;
+            }
             // Walk the string, counting only visible characters
             let visible = 0;
             let i = 0;
@@ -391,7 +403,9 @@ function wrapToWidth(str: string, width: number): string {
                     emojiRegex.lastIndex = 0; // reset stateful regex
                     const isWide = emojiRegex.test(ch);
                     const charWidth = isWide ? 2 : 1;
-                    if (visible + charWidth > width) break;
+                    if (visible + charWidth > width) {
+                        break;
+                    }
                     visible += charWidth;
                     i++;
                 }

@@ -61,8 +61,12 @@ export function registerCreateCommand(program: Command): void {
                     placeholder: `step-${steps.length + 1}`,
                     defaultValue: `step-${steps.length + 1}`,
                     validate: (v) => {
-                        if (!v || !/^[a-zA-Z0-9_-]+$/.test(v)) return "Must be alphanumeric with hyphens/underscores";
-                        if (steps.some((s) => s.id === v)) return "ID already used";
+                        if (!v || !/^[a-zA-Z0-9_-]+$/.test(v)) {
+                            return "Must be alphanumeric with hyphens/underscores";
+                        }
+                        if (steps.some((s) => s.id === v)) {
+                            return "ID already used";
+                        }
                         return undefined;
                     },
                 });
@@ -142,6 +146,7 @@ export function registerCreateCommand(program: Command): void {
                         name: stepName,
                         action: "if",
                         condition: `{{ ${condition} }}`,
+                        // biome-ignore lint/suspicious/noThenProperty: this is a step config field for if/then/else branching, not a thenable
                         then: thenStep || undefined,
                         else: elseStep || undefined,
                     };

@@ -14,8 +14,12 @@ const BUCKET_PERIODS_MS: Record<string, number> = {
 };
 
 function colorForPct(pct: number): (s: string) => string {
-    if (pct >= 80) return pc.red;
-    if (pct >= 50) return pc.yellow;
+    if (pct >= 80) {
+        return pc.red;
+    }
+    if (pct >= 50) {
+        return pc.yellow;
+    }
     return pc.green;
 }
 
@@ -48,14 +52,22 @@ function formatDuration(ms: number): string {
     const minutes = totalMinutes % 60;
 
     const parts: string[] = [];
-    if (days > 0) parts.push(`${days}d`);
-    if (hours > 0) parts.push(`${hours}h`);
-    if (minutes > 0 || parts.length === 0) parts.push(`${minutes}m`);
+    if (days > 0) {
+        parts.push(`${days}d`);
+    }
+    if (hours > 0) {
+        parts.push(`${hours}h`);
+    }
+    if (minutes > 0 || parts.length === 0) {
+        parts.push(`${minutes}m`);
+    }
     return parts.join(" ");
 }
 
 function formatResetTime(resetsAt: string | null): string {
-    if (!resetsAt) return "";
+    if (!resetsAt) {
+        return "";
+    }
     const d = new Date(resetsAt);
     const now = Date.now();
     const remainingMs = d.getTime() - now;
@@ -70,21 +82,29 @@ function formatResetTime(resetsAt: string | null): string {
         timeZoneName: "short",
     });
 
-    if (remainingMs <= 0) return `Resets ${timeFmt.format(d)}`;
+    if (remainingMs <= 0) {
+        return `Resets ${timeFmt.format(d)}`;
+    }
     return `Resets ${timeFmt.format(d)} (${formatDuration(remainingMs)})`;
 }
 
 function calcProjection(utilization: number, resetsAt: string | null, bucketKey: string): number | null {
-    if (!resetsAt || utilization <= 0) return null;
+    if (!resetsAt || utilization <= 0) {
+        return null;
+    }
     const periodMs = BUCKET_PERIODS_MS[bucketKey];
-    if (!periodMs) return null;
+    if (!periodMs) {
+        return null;
+    }
 
     const resetTime = new Date(resetsAt).getTime();
     const now = Date.now();
     const startTime = resetTime - periodMs;
     const elapsed = now - startTime;
 
-    if (elapsed <= 0) return null;
+    if (elapsed <= 0) {
+        return null;
+    }
 
     const projected = (utilization / elapsed) * periodMs;
     return Math.round(projected);
@@ -105,23 +125,31 @@ export function renderAccountUsage(account: AccountUsage): string {
         return lines.join("\n");
     }
 
-    if (!account.usage) return lines.join("\n");
+    if (!account.usage) {
+        return lines.join("\n");
+    }
 
     for (const [key, bucket] of Object.entries(account.usage)) {
-        if (!bucket || typeof bucket !== "object" || !("utilization" in bucket)) continue;
+        if (!bucket || typeof bucket !== "object" || !("utilization" in bucket)) {
+            continue;
+        }
         lines.push(`${bucketLabel(key)}`);
         lines.push(renderBar(bucket.utilization));
 
         const parts: string[] = [];
         const resetStr = formatResetTime(bucket.resets_at);
-        if (resetStr) parts.push(resetStr);
+        if (resetStr) {
+            parts.push(resetStr);
+        }
 
         const projected = calcProjection(bucket.utilization, bucket.resets_at, key);
         if (projected !== null && projected !== Math.round(bucket.utilization)) {
             parts.push(renderProjection(projected));
         }
 
-        if (parts.length > 0) lines.push(pc.dim(parts[0]) + (parts[1] ? `  ${parts[1]}` : ""));
+        if (parts.length > 0) {
+            lines.push(pc.dim(parts[0]) + (parts[1] ? `  ${parts[1]}` : ""));
+        }
         lines.push("");
     }
 

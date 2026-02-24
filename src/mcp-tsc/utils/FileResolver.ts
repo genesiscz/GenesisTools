@@ -19,7 +19,9 @@ export async function resolveFiles(patterns: string[], cwd: string = process.cwd
                 absolute: false,
                 ignore: ["**/node_modules/**", "**/*.d.ts", "**/dist/**", "**/build/**"],
             });
-            matches.forEach((file) => files.add(path.resolve(cwd, file)));
+            matches.forEach((file) => {
+                files.add(path.resolve(cwd, file));
+            });
         }
         // Check if it's a glob pattern
         else if (pattern.includes("*") || pattern.includes("?") || pattern.includes("[") || pattern.includes("{")) {
@@ -28,7 +30,9 @@ export async function resolveFiles(patterns: string[], cwd: string = process.cwd
                 absolute: false,
                 ignore: ["**/node_modules/**", "**/*.d.ts"],
             });
-            matches.forEach((file) => files.add(path.resolve(cwd, file)));
+            matches.forEach((file) => {
+                files.add(path.resolve(cwd, file));
+            });
         }
         // Check if it's a direct file path
         else if (ts.sys.fileExists(absolutePath)) {

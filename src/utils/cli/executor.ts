@@ -18,7 +18,9 @@ export function enhanceHelp(cmd: Command): void {
             const lines: string[] = [pc.dim("\nSubcommand Options:")];
             for (const sub of cmd.commands as Command[]) {
                 const opts = sub.options.filter((o) => o.long !== "--help");
-                if (opts.length === 0) continue;
+                if (opts.length === 0) {
+                    continue;
+                }
                 lines.push(`\n  ${pc.bold(sub.name())}:`);
                 for (const opt of opts) {
                     lines.push(`    ${pc.dim(opt.flags.padEnd(30))} ${opt.description}`);
@@ -41,7 +43,9 @@ export function enhanceHelp(cmd: Command): void {
 export function buildCommand(base: string, args: Record<string, string | boolean | undefined>): string {
     const parts = [base];
     for (const [key, value] of Object.entries(args)) {
-        if (value === undefined || value === false) continue;
+        if (value === undefined || value === false) {
+            continue;
+        }
         const flag = `--${key.replace(/([A-Z])/g, (_, c) => `-${c.toLowerCase()}`)}`;
         if (value === true) {
             parts.push(flag);
@@ -211,7 +215,9 @@ export class Executor {
      * Returns undefined when no custom env is configured (inherits process.env automatically).
      */
     private buildEnv(callEnv?: Record<string, string | undefined>): Record<string, string | undefined> | undefined {
-        if (!this.env && !callEnv) return undefined;
+        if (!this.env && !callEnv) {
+            return undefined;
+        }
 
         return {
             ...process.env,
@@ -280,9 +286,15 @@ export class Executor {
         };
 
         if (this.debug) {
-            if (result.stdout) console.log(pc.dim(`  [${this.label}:out] ${result.stdout.substring(0, 200)}`));
-            if (result.stderr) console.log(pc.dim(`  [${this.label}:err] ${result.stderr.substring(0, 200)}`));
-            if (!result.success) console.log(pc.red(`  [${this.label}] exit ${exitCode}`));
+            if (result.stdout) {
+                console.log(pc.dim(`  [${this.label}:out] ${result.stdout.substring(0, 200)}`));
+            }
+            if (result.stderr) {
+                console.log(pc.dim(`  [${this.label}:err] ${result.stderr.substring(0, 200)}`));
+            }
+            if (!result.success) {
+                console.log(pc.red(`  [${this.label}] exit ${exitCode}`));
+            }
         }
 
         return result;

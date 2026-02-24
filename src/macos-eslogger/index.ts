@@ -541,7 +541,9 @@ function getValueByPath(obj: any, path: string): any {
 
     let current = obj;
     for (const part of parts) {
-        if (current == null) return undefined;
+        if (current == null) {
+            return undefined;
+        }
         current = current[part];
     }
 

@@ -76,7 +76,9 @@ class ASKTool {
             const validation = validateOptions(argv);
             if (!validation.valid) {
                 logger.error("Invalid options:");
-                validation.errors.forEach((error) => logger.error(`  - ${error}`));
+                for (const error of validation.errors) {
+                    logger.error(`  - ${error}`);
+                }
                 process.exit(1);
             }
 
@@ -200,7 +202,7 @@ class ASKTool {
 
             // Raw mode: output only the response content
             if (argv.raw) {
-                process.stdout.write(response.content.endsWith("\n") ? response.content : response.content + "\n");
+                process.stdout.write(response.content.endsWith("\n") ? response.content : `${response.content}\n`);
                 return;
             }
 

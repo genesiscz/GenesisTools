@@ -146,11 +146,15 @@ async function scanCachedActivity(
 
     for (const file of workitemFiles) {
         const idMatch = file.match(/^workitem-(\d+)\.json$/);
-        if (!idMatch) continue;
+        if (!idMatch) {
+            continue;
+        }
 
         const id = parseInt(idMatch[1], 10);
         const cached = await loadWorkItemCache(id);
-        if (!cached) continue;
+        if (!cached) {
+            continue;
+        }
 
         const title = cached.title || `#${id}`;
         const updates = cached.history?.updates ?? [];
@@ -159,18 +163,26 @@ async function scanCachedActivity(
             withoutHistory++;
         }
 
-        if (updates.length === 0 && (!includeComments || !cached.comments?.length)) continue;
+        if (updates.length === 0 && (!includeComments || !cached.comments?.length)) {
+            continue;
+        }
         scannedCount++;
 
         // Scan updates
         for (const update of updates) {
             const revisedByName =
                 typeof update.revisedBy === "string" ? update.revisedBy : update.revisedBy?.displayName;
-            if (!revisedByName || !userMatches(revisedByName, userName)) continue;
+            if (!revisedByName || !userMatches(revisedByName, userName)) {
+                continue;
+            }
 
             const updateDate = new Date(update.revisedDate);
-            if (fromDate && updateDate < fromDate) continue;
-            if (toDate && updateDate > toDate) continue;
+            if (fromDate && updateDate < fromDate) {
+                continue;
+            }
+            if (toDate && updateDate > toDate) {
+                continue;
+            }
 
             const extracted = extractEventsFromUpdate(update, id, title);
             if (extracted.length > 0) {
@@ -182,11 +194,17 @@ async function scanCachedActivity(
         // Scan cached comments (flat array in WorkItemCache.comments)
         if (includeComments && cached.comments) {
             for (const comment of cached.comments) {
-                if (!comment.author || !userMatches(comment.author, userName)) continue;
+                if (!comment.author || !userMatches(comment.author, userName)) {
+                    continue;
+                }
 
                 const commentDate = new Date(comment.date);
-                if (fromDate && commentDate < fromDate) continue;
-                if (toDate && commentDate > toDate) continue;
+                if (fromDate && commentDate < fromDate) {
+                    continue;
+                }
+                if (toDate && commentDate > toDate) {
+                    continue;
+                }
 
                 events.push(commentToEvent(comment, id, title));
                 matchedItems.add(id);
@@ -206,7 +224,9 @@ async function discoverAndSync(api: Api, userName: string, fromDate?: Date, toDa
     const cachedIds = new Set<number>();
     for (const f of cacheFiles) {
         const m = f.match(/^workitem-(\d+)\.json$/);
-        if (m) cachedIds.add(parseInt(m[1], 10));
+        if (m) {
+            cachedIds.add(parseInt(m[1], 10));
+        }
     }
 
     // WIQL: items changed by user in date range
@@ -214,8 +234,12 @@ async function discoverAndSync(api: Api, userName: string, fromDate?: Date, toDa
     const userValue = isMeMacro ? "@Me" : `'${escapeWiqlValue(userName)}'`;
 
     let wiql = `SELECT [System.Id] FROM WorkItems WHERE [System.ChangedBy] = ${userValue}`;
-    if (fromDate) wiql += ` AND [System.ChangedDate] >= '${fromDate.toISOString().slice(0, 10)}'`;
-    if (toDate) wiql += ` AND [System.ChangedDate] <= '${toDate.toISOString().slice(0, 10)}'`;
+    if (fromDate) {
+        wiql += ` AND [System.ChangedDate] >= '${fromDate.toISOString().slice(0, 10)}'`;
+    }
+    if (toDate) {
+        wiql += ` AND [System.ChangedDate] <= '${toDate.toISOString().slice(0, 10)}'`;
+    }
     wiql += " ORDER BY [System.ChangedDate] DESC";
 
     const response = await api.runWiql(wiql, { top: 500 });
@@ -229,10 +253,14 @@ async function discoverAndSync(api: Api, userName: string, fromDate?: Date, toDa
             continue;
         }
         const cached = await loadWorkItemCache(id);
-        if (!cached?.history) needSync.push(id);
+        if (!cached?.history) {
+            needSync.push(id);
+        }
     }
 
-    if (needSync.length === 0) return [];
+    if (needSync.length === 0) {
+        return [];
+    }
 
     // Sync history for discovered items
     for (const id of needSync) {
@@ -274,7 +302,9 @@ async function fetchMissingComments(api: Api, matchedItemIds: number[]): Promise
         }
     }
 
-    if (needComments.length === 0) return 0;
+    if (needComments.length === 0) {
+        return 0;
+    }
 
     const comments = await api.batchGetComments(needComments, 5);
     for (const [id, itemComments] of comments) {
@@ -307,7 +337,9 @@ function groupByDay(events: ActivityEvent[]): ActivityDay[] {
     const dayMap = new Map<string, ActivityEvent[]>();
     for (const event of sorted) {
         const dayKey = event.date.slice(0, 10);
-        if (!dayMap.has(dayKey)) dayMap.set(dayKey, []);
+        if (!dayMap.has(dayKey)) {
+            dayMap.set(dayKey, []);
+        }
         dayMap.get(dayKey)?.push(event);
     }
 
@@ -366,14 +398,26 @@ function printSummary(days: ActivityDay[]): void {
     p.log.step(pc.bold("Activity Summary"));
     for (const day of days) {
         const counts: Record<string, number> = {};
-        for (const e of day.events) counts[e.type] = (counts[e.type] ?? 0) + 1;
+        for (const e of day.events) {
+            counts[e.type] = (counts[e.type] ?? 0) + 1;
+        }
 
         const parts: string[] = [];
-        if (counts.created) parts.push(`${counts.created} created`);
-        if (counts.state_change) parts.push(`${counts.state_change} state changes`);
-        if (counts.assignment_change) parts.push(`${counts.assignment_change} (re)assignments`);
-        if (counts.comment) parts.push(`${counts.comment} comments`);
-        if (counts.field_edit) parts.push(`${counts.field_edit} edits`);
+        if (counts.created) {
+            parts.push(`${counts.created} created`);
+        }
+        if (counts.state_change) {
+            parts.push(`${counts.state_change} state changes`);
+        }
+        if (counts.assignment_change) {
+            parts.push(`${counts.assignment_change} (re)assignments`);
+        }
+        if (counts.comment) {
+            parts.push(`${counts.comment} comments`);
+        }
+        if (counts.field_edit) {
+            parts.push(`${counts.field_edit} edits`);
+        }
 
         const uniqueItems = new Set(day.events.map((e) => e.workItemId));
         console.log(
@@ -402,7 +446,9 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
 
     // Migrate old history-*.json if any exist
     const migrated = await migrateHistoryCache();
-    if (migrated > 0) p.log.info(`Migrated ${migrated} history files into workitem cache`);
+    if (migrated > 0) {
+        p.log.info(`Migrated ${migrated} history files into workitem cache`);
+    }
 
     // Resolve @me to actual user name for local matching
     let resolvedUserName = userName;
@@ -412,7 +458,9 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
         let azUser: string;
         try {
             const azResult = await $`az account show --query user.name -o tsv`.quiet();
-            if (azResult.exitCode !== 0) throw new Error(`exit code ${azResult.exitCode}`);
+            if (azResult.exitCode !== 0) {
+                throw new Error(`exit code ${azResult.exitCode}`);
+            }
             azUser = azResult.text().trim();
         } catch {
             p.log.error("Failed to resolve @me — is Azure CLI installed and logged in? (az login)");
@@ -432,7 +480,9 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
     const toDate = options.to
         ? (() => {
               const d = new Date(options.to!);
-              if (options.to?.length <= 10) d.setHours(23, 59, 59, 999);
+              if (options.to?.length <= 10) {
+                  d.setHours(23, 59, 59, 999);
+              }
               return d;
           })()
         : undefined;
@@ -512,7 +562,9 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
     // Suggest --discover if not used
     if (!options.discover) {
         const stats = [`${totalCached} cached items`];
-        if (withoutHistory > 0) stats.push(`${withoutHistory} without history`);
+        if (withoutHistory > 0) {
+            stats.push(`${withoutHistory} without history`);
+        }
         stats.push(`${scannedCount} with activity data`);
 
         const cmd = suggestCommand("tools azure-devops", {

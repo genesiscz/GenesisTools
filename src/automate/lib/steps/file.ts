@@ -16,56 +16,95 @@ async function fileHandler(step: PresetStep, ctx: StepContext): Promise<StepResu
     try {
         switch (subAction) {
             case "read": {
-                const filePath = resolve(ctx.interpolate(params.path!));
+                if (!params.path) {
+                    return makeResult("error", null, start, "file.read requires a 'path' param");
+                }
+
+                const filePath = resolve(ctx.interpolate(params.path));
                 if (!existsSync(filePath)) {
                     return makeResult("error", null, start, `File not found: ${filePath}`);
                 }
+
                 const content = await Bun.file(filePath).text();
                 return makeResult("success", { path: filePath, content, size: content.length }, start);
             }
 
             case "write": {
-                const filePath = resolve(ctx.interpolate(params.path!));
+                if (!params.path) {
+                    return makeResult("error", null, start, "file.write requires a 'path' param");
+                }
+
+                const filePath = resolve(ctx.interpolate(params.path));
                 const content = ctx.interpolate(params.content ?? "");
                 const dir = dirname(filePath);
-                if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+                if (!existsSync(dir)) {
+                    mkdirSync(dir, { recursive: true });
+                }
+
                 await Bun.write(filePath, content);
                 return makeResult("success", { path: filePath, size: content.length }, start);
             }
 
             case "copy": {
-                const source = resolve(ctx.interpolate(params.source!));
-                const destination = resolve(ctx.interpolate(params.destination!));
+                if (!params.source || !params.destination) {
+                    return makeResult("error", null, start, "file.copy requires 'source' and 'destination' params");
+                }
+
+                const source = resolve(ctx.interpolate(params.source));
+                const destination = resolve(ctx.interpolate(params.destination));
                 if (!existsSync(source)) {
                     return makeResult("error", null, start, `Source not found: ${source}`);
                 }
+
                 const destDir = dirname(destination);
-                if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
+                if (!existsSync(destDir)) {
+                    mkdirSync(destDir, { recursive: true });
+                }
+
                 copyFileSync(source, destination);
                 return makeResult("success", { source, destination }, start);
             }
 
             case "move": {
-                const source = resolve(ctx.interpolate(params.source!));
-                const destination = resolve(ctx.interpolate(params.destination!));
+                if (!params.source || !params.destination) {
+                    return makeResult("error", null, start, "file.move requires 'source' and 'destination' params");
+                }
+
+                const source = resolve(ctx.interpolate(params.source));
+                const destination = resolve(ctx.interpolate(params.destination));
                 if (!existsSync(source)) {
                     return makeResult("error", null, start, `Source not found: ${source}`);
                 }
+
                 const destDir = dirname(destination);
-                if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
+                if (!existsSync(destDir)) {
+                    mkdirSync(destDir, { recursive: true });
+                }
+
                 renameSync(source, destination);
                 return makeResult("success", { source, destination }, start);
             }
 
             case "delete": {
-                const filePath = resolve(ctx.interpolate(params.path!));
+                if (!params.path) {
+                    return makeResult("error", null, start, "file.delete requires a 'path' param");
+                }
+
+                const filePath = resolve(ctx.interpolate(params.path));
                 const existed = existsSync(filePath);
-                if (existed) unlinkSync(filePath);
+                if (existed) {
+                    unlinkSync(filePath);
+                }
+
                 return makeResult("success", { path: filePath, existed }, start);
             }
 
             case "glob": {
-                const pattern = ctx.interpolate(params.pattern!);
+                if (!params.pattern) {
+                    return makeResult("error", null, start, "file.glob requires a 'pattern' param");
+                }
+
+                const pattern = ctx.interpolate(params.pattern);
                 const cwd = params.cwd ? resolve(ctx.interpolate(params.cwd)) : process.cwd();
                 const files = await glob(pattern, { absolute: true, nodir: true, cwd });
                 return makeResult("success", { pattern, cwd, files, count: files.length }, start);
@@ -102,7 +141,9 @@ async function fileHandler(step: PresetStep, ctx: StepContext): Promise<StepResu
                 if (params.path) {
                     const outPath = resolve(ctx.interpolate(params.path));
                     const dir = dirname(outPath);
-                    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+                    if (!existsSync(dir)) {
+                        mkdirSync(dir, { recursive: true });
+                    }
                     await Bun.write(outPath, rendered);
                     return makeResult("success", { path: outPath, content: rendered }, start);
                 }

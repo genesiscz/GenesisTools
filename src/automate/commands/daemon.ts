@@ -13,8 +13,12 @@ import pc from "picocolors";
 
 function tailDaemonLogs(): void {
     const files: string[] = [];
-    if (existsSync(DAEMON_STDOUT_LOG)) files.push(DAEMON_STDOUT_LOG);
-    if (existsSync(DAEMON_STDERR_LOG)) files.push(DAEMON_STDERR_LOG);
+    if (existsSync(DAEMON_STDOUT_LOG)) {
+        files.push(DAEMON_STDOUT_LOG);
+    }
+    if (existsSync(DAEMON_STDERR_LOG)) {
+        files.push(DAEMON_STDERR_LOG);
+    }
 
     if (files.length === 0) {
         p.log.warn("No daemon logs found. Is the daemon installed?");
@@ -40,10 +44,16 @@ function tailDaemonLogs(): void {
 
 function showRecentLogs(lines = 20): void {
     const files: string[] = [];
-    if (existsSync(DAEMON_STDOUT_LOG)) files.push(DAEMON_STDOUT_LOG);
-    if (existsSync(DAEMON_STDERR_LOG)) files.push(DAEMON_STDERR_LOG);
+    if (existsSync(DAEMON_STDOUT_LOG)) {
+        files.push(DAEMON_STDOUT_LOG);
+    }
+    if (existsSync(DAEMON_STDERR_LOG)) {
+        files.push(DAEMON_STDERR_LOG);
+    }
 
-    if (files.length === 0) return;
+    if (files.length === 0) {
+        return;
+    }
 
     const proc = Bun.spawnSync(["tail", `-${lines}`, ...files], {
         stdio: ["ignore", "pipe", "pipe"],

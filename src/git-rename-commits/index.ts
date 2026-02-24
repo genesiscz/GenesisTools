@@ -16,7 +16,9 @@ const logger = {
     warn: (msg: string) => console.log(chalk.yellow("⚠"), msg),
     error: (msg: string) => console.log(chalk.red("✖"), msg),
     debug: (msg: string) => {
-        if (process.env.DEBUG) console.log(chalk.dim("🐛"), msg);
+        if (process.env.DEBUG) {
+            console.log(chalk.dim("🐛"), msg);
+        }
     },
 };
 

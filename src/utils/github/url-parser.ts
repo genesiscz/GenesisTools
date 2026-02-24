@@ -275,10 +275,14 @@ export function buildRawGitHubUrl(owner: string, repo: string, ref: string, path
  * API: https://api.github.com/repos/owner/repo/commits/sha -> https://github.com/owner/repo/commit/sha
  */
 export function apiUrlToWebUrl(apiUrl: string | null, repoHtmlUrl: string): string {
-    if (!apiUrl) return repoHtmlUrl;
+    if (!apiUrl) {
+        return repoHtmlUrl;
+    }
 
     const match = apiUrl.match(/api\.github\.com\/repos\/([^/]+\/[^/]+)\/(issues|pulls|releases|commits)\/(.+)/);
-    if (!match) return repoHtmlUrl;
+    if (!match) {
+        return repoHtmlUrl;
+    }
 
     const [, repoPath, resource, identifier] = match;
     const base = `https://github.com/${repoPath}`;
@@ -301,7 +305,9 @@ export function apiUrlToWebUrl(apiUrl: string | null, repoHtmlUrl: string): stri
  * Extract issue/PR number from a GitHub API URL
  */
 export function extractNumberFromApiUrl(apiUrl: string | null): number | null {
-    if (!apiUrl) return null;
+    if (!apiUrl) {
+        return null;
+    }
     const match = apiUrl.match(/\/(issues|pulls)\/(\d+)$/);
     return match ? parseInt(match[2], 10) : null;
 }

@@ -32,7 +32,9 @@ export async function classifyText(
     categories: string[],
     options: ClassifyOptions = {}
 ): Promise<ClassificationResult> {
-    if (categories.length === 0) throw new Error("classifyText: categories must be non-empty");
+    if (categories.length === 0) {
+        throw new Error("classifyText: categories must be non-empty");
+    }
 
     const language = options.language ?? "en";
 
@@ -79,7 +81,9 @@ export async function classifyBatch<IdType = string>(
     categories: string[],
     options: ClassifyOptions = {}
 ): Promise<Array<ClassificationItem<IdType>>> {
-    if (categories.length === 0) throw new Error("classifyBatch: categories must be non-empty");
+    if (categories.length === 0) {
+        throw new Error("classifyBatch: categories must be non-empty");
+    }
 
     const concurrency = options.concurrency ?? 5;
     const results: Array<ClassificationItem<IdType>> = [];
@@ -122,7 +126,9 @@ export async function groupByCategory<T extends { text: string }>(
 ): Promise<Record<string, T[]>> {
     const concurrency = options.concurrency ?? 5;
     const groups: Record<string, T[]> = {};
-    for (const cat of categories) groups[cat] = [];
+    for (const cat of categories) {
+        groups[cat] = [];
+    }
 
     for (let i = 0; i < items.length; i += concurrency) {
         const chunk = items.slice(i, i + concurrency);
@@ -137,7 +143,9 @@ export async function groupByCategory<T extends { text: string }>(
             })
         );
         for (const { item, category } of chunkResults) {
-            if (!groups[category]) groups[category] = [];
+            if (!groups[category]) {
+                groups[category] = [];
+            }
             groups[category].push(item);
         }
     }

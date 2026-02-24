@@ -41,7 +41,9 @@ export class ModelSelector {
             })),
         });
 
-        if (p.isCancel(result)) return null;
+        if (p.isCancel(result)) {
+            return null;
+        }
         return result;
     }
 
@@ -73,7 +75,9 @@ export class ModelSelector {
             items,
         });
 
-        if (result === searchSelectCancelSymbol) return null;
+        if (result === searchSelectCancelSymbol) {
+            return null;
+        }
         return result as ModelInfo;
     }
 
@@ -104,7 +108,9 @@ export class ModelSelector {
                     }
                 })
                 .join("");
-            if (caps) parts.push(pc.dim("[") + caps + pc.dim("]"));
+            if (caps) {
+                parts.push(pc.dim("[") + caps + pc.dim("]"));
+            }
         }
 
         return parts.join(" ");

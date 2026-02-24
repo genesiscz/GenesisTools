@@ -220,7 +220,9 @@ async function detectForkPoint(
         try {
             const mb = await git.mergeBase(sourceBranch, candidate);
             const count = await git.countCommits(mb, sourceBranch);
-            if (count <= 0) continue;
+            if (count <= 0) {
+                continue;
+            }
 
             const isCommon = commonBases.includes(candidate);
             // Prefer the candidate that gives us the fewest commits
@@ -298,12 +300,16 @@ async function refineGroups(
         // This lets users pull commits from other groups or ungrouped
         const allParsed = allCommits
             .filter((c) => {
-                if (!allowDuplicates && assignedCommitHashes.has(c.hash)) return false;
+                if (!allowDuplicates && assignedCommitHashes.has(c.hash)) {
+                    return false;
+                }
                 return true;
             })
             .map((c) => {
                 const existing = availableCommits.find((ac) => ac.commit.hash === c.hash);
-                if (existing) return existing;
+                if (existing) {
+                    return existing;
+                }
                 return parseCommit(c);
             });
 
@@ -363,14 +369,17 @@ async function nameGroups(git: GitInstance, groups: CommitGroup[], sourceBranch:
                 placeholder: suggestion,
                 defaultValue: suggestion,
                 validate: (value: string | undefined) => {
-                    if (!value?.trim()) return "Branch name cannot be empty.";
+                    if (!value?.trim()) {
+                        return "Branch name cannot be empty.";
+                    }
                     if (
                         /[~^: \\?*\\[]/.test(value) ||
                         value.includes("..") ||
                         value.startsWith("/") ||
                         value.endsWith("/")
-                    )
+                    ) {
                         return "Branch name contains invalid characters or sequences.";
+                    }
                     return undefined;
                 },
             })

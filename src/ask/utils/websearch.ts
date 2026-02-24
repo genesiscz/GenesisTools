@@ -179,7 +179,7 @@ export class WebSearchTool {
                 try {
                     const results = await this.searchWeb(params.query, {
                         numResults: params.numResults,
-                        safeSearch: params.safeSearch as any,
+                        safeSearch: params.safeSearch as WebSearchOptions["safeSearch"],
                     });
 
                     return {

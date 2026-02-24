@@ -68,14 +68,18 @@ function toDisplay(
 }
 
 function formatDate(iso: string): string {
-    if (!iso) return "";
+    if (!iso) {
+        return "";
+    }
     return formatRelativeTime(new Date(iso), { compact: true });
 }
 
 function dedup(sessions: DisplaySession[]): DisplaySession[] {
     const seen = new Set<string>();
     return sessions.filter((s) => {
-        if (seen.has(s.sessionId)) return false;
+        if (seen.has(s.sessionId)) {
+            return false;
+        }
         seen.add(s.sessionId);
         return true;
     });
@@ -137,7 +141,9 @@ async function loadSessions(allProjects: boolean, spinner: Spinner): Promise<Loa
 function matchByIdOrName(all: DisplaySession[], query: string): DisplaySession[] {
     const q = query.toLowerCase();
     const byId = all.filter((s) => s.sessionId.toLowerCase().startsWith(q));
-    if (byId.length > 0) return byId;
+    if (byId.length > 0) {
+        return byId;
+    }
 
     return all.filter(
         (s) =>
@@ -227,7 +233,9 @@ async function searchByContent(query: string, spinner: Spinner, project?: string
 const EXCERPT_MAX_LEN = 120;
 
 function buildExcerpt(s: DisplaySession): string | undefined {
-    if (s.matchSnippet) return s.matchSnippet;
+    if (s.matchSnippet) {
+        return s.matchSnippet;
+    }
 
     const nameNorm = s.name.toLowerCase().trim();
 

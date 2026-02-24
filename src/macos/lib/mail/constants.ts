@@ -33,6 +33,8 @@ export function parseMailboxUrl(url: string): { account: string; mailbox: string
  */
 export function normalizeMailboxName(rawName: string): string {
     const name = rawName.replace(/^\[Gmail\]\//, "");
-    if (name.toUpperCase() === "INBOX") return "Inbox";
+    if (name.toUpperCase() === "INBOX") {
+        return "Inbox";
+    }
     return name;
 }

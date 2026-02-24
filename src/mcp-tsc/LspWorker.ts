@@ -315,7 +315,9 @@ export class LspWorker {
     }
 
     private async initializeLsp(): Promise<void> {
-        if (!this.client) throw new LspError("LSP client not created");
+        if (!this.client) {
+            throw new LspError("LSP client not created");
+        }
 
         await this.client.initialize({
             processId: process.pid,
@@ -351,7 +353,9 @@ export class LspWorker {
     }
 
     async shutdown(): Promise<void> {
-        if (!this.client || !this.lspProcess) return;
+        if (!this.client || !this.lspProcess) {
+            return;
+        }
 
         try {
             this.log("Shutting down LSP server...");
@@ -465,7 +469,9 @@ export class LspWorker {
         const uri = `file://${file}`;
         const state = this.getFileState(uri);
 
-        if (!state || !state.isOpen) return true;
+        if (!state || !state.isOpen) {
+            return true;
+        }
 
         try {
             const currentModTime = statSync(file).mtimeMs;
@@ -666,7 +672,9 @@ export class LspWorker {
 
             for (const d of fileDiagnostics) {
                 // Skip info/hint (severity > 2)
-                if (d.severity > 2) continue;
+                if (d.severity > 2) {
+                    continue;
+                }
 
                 const diagnostic: TsDiagnostic = {
                     file,
@@ -679,15 +687,22 @@ export class LspWorker {
 
                 diagnostics.push(diagnostic);
 
-                if (d.severity === 1) errors++;
-                else if (d.severity === 2) warnings++;
+                if (d.severity === 1) {
+                    errors++;
+                } else if (d.severity === 2) {
+                    warnings++;
+                }
             }
         }
 
         // Sort by file, then line, then character
         diagnostics.sort((a, b) => {
-            if (a.file !== b.file) return a.file.localeCompare(b.file);
-            if (a.line !== b.line) return a.line - b.line;
+            if (a.file !== b.file) {
+                return a.file.localeCompare(b.file);
+            }
+            if (a.line !== b.line) {
+                return a.line - b.line;
+            }
             return a.character - b.character;
         });
 
@@ -842,7 +857,9 @@ export class LspWorker {
     // ========================================================================
 
     async closeFiles(files: string[]): Promise<void> {
-        if (!this.client) return;
+        if (!this.client) {
+            return;
+        }
 
         for (const file of files) {
             const uri = `file://${file}`;
@@ -864,8 +881,12 @@ export class LspWorker {
         const lines: string[] = [];
 
         for (const d of result.diagnostics) {
-            if (d.severity > 2) continue;
-            if (d.severity === 2 && !showWarnings) continue;
+            if (d.severity > 2) {
+                continue;
+            }
+            if (d.severity === 2 && !showWarnings) {
+                continue;
+            }
 
             const relativeFile = path.relative(this.cwd, d.file) || d.file;
             const severityText = d.severity === 1 ? "error" : "warning";

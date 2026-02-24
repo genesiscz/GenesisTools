@@ -49,12 +49,18 @@ function parseMinTime(raw: string): number {
     const hourMatch = raw.match(/(\d+)\s*h/i);
     const minMatch = raw.match(/(\d+)\s*m/i);
     let total = 0;
-    if (hourMatch) total += parseInt(hourMatch[1], 10) * 60;
-    if (minMatch) total += parseInt(minMatch[1], 10);
+    if (hourMatch) {
+        total += parseInt(hourMatch[1], 10) * 60;
+    }
+    if (minMatch) {
+        total += parseInt(minMatch[1], 10);
+    }
     // Plain number without unit defaults to minutes
     if (!hourMatch && !minMatch) {
         const num = parseInt(raw, 10);
-        if (!Number.isNaN(num)) total = num;
+        if (!Number.isNaN(num)) {
+            total = num;
+        }
     }
     return total;
 }
@@ -193,7 +199,9 @@ async function fetchWorkItemsBatch(config: AzureConfig, idsParam: string, fields
 
 /** Print work items as a simple table */
 function printWorkItemsTable(items: WorkItem[]): void {
-    if (items.length === 0) return;
+    if (items.length === 0) {
+        return;
+    }
 
     const header = `${pad("ID", 8)} ${pad("State", 14)} ${pad("Assignee", 24)} ${pad("Title", 50)}`;
     console.log(pc.bold(header));
@@ -241,23 +249,33 @@ async function localSearch(options: SearchOptions): Promise<void> {
 
     for (const file of workitemFiles) {
         const idMatch = file.match(/^workitem-(\d+)\.json$/);
-        if (!idMatch) continue;
+        if (!idMatch) {
+            continue;
+        }
 
         const id = parseInt(idMatch[1], 10);
         const cached = await loadWorkItemCache(id);
-        if (!cached?.history) continue;
+        if (!cached?.history) {
+            continue;
+        }
 
         const history = cached.history;
         scannedCount++;
         const fetchTime = cached.cache?.historyFetchedAt ? new Date(cached.cache.historyFetchedAt).getTime() : 0;
-        if (fetchTime > lastSyncTime) lastSyncTime = fetchTime;
+        if (fetchTime > lastSyncTime) {
+            lastSyncTime = fetchTime;
+        }
 
         // Track data date range from earliest state/assignment period
         for (const period of history.statePeriods) {
             const start = new Date(period.startDate).getTime();
-            if (start < oldestActivity) oldestActivity = start;
+            if (start < oldestActivity) {
+                oldestActivity = start;
+            }
             const end = period.endDate ? new Date(period.endDate).getTime() : Date.now();
-            if (end > newestActivity) newestActivity = end;
+            if (end > newestActivity) {
+                newestActivity = end;
+            }
         }
 
         // Filter by assignee
@@ -265,7 +283,9 @@ async function localSearch(options: SearchOptions): Promise<void> {
             const hasMatch = history.assignmentPeriods.some((period) =>
                 userMatches(period.assignee, options.assignedTo!)
             );
-            if (!hasMatch) continue;
+            if (!hasMatch) {
+                continue;
+            }
         }
 
         // Filter state periods by criteria
@@ -296,13 +316,17 @@ async function localSearch(options: SearchOptions): Promise<void> {
             matchedPeriods = matchedPeriods.filter((period) => new Date(period.startDate).getTime() <= toDate);
         }
 
-        if (matchedPeriods.length === 0) continue;
+        if (matchedPeriods.length === 0) {
+            continue;
+        }
 
         // Sum up time
         const totalMinutes = matchedPeriods.reduce((sum, period) => sum + (period.durationMinutes ?? 0), 0);
 
         // Filter by minimum time
-        if (totalMinutes < minTimeMinutes) continue;
+        if (totalMinutes < minTimeMinutes) {
+            continue;
+        }
 
         // Derive title/state from cache or history
         const currentState = deriveCurrentState(cached);
@@ -351,22 +375,30 @@ async function localSearch(options: SearchOptions): Promise<void> {
 
 /** Derive the current state from cache or last state period */
 function deriveCurrentState(cache: WorkItemCache): string {
-    if (cache.state) return cache.state;
+    if (cache.state) {
+        return cache.state;
+    }
     const periods = cache.history?.statePeriods ?? [];
-    if (periods.length === 0) return "Unknown";
+    if (periods.length === 0) {
+        return "Unknown";
+    }
     return periods[periods.length - 1].state;
 }
 
 /** Derive the current assignee from the last assignment period */
 function deriveCurrentAssignee(cache: WorkItemCache): string {
     const periods = cache.history?.assignmentPeriods ?? [];
-    if (periods.length === 0) return "-";
+    if (periods.length === 0) {
+        return "-";
+    }
     return periods[periods.length - 1].assignee;
 }
 
 /** Derive title from cache or first update that set System.Title */
 function deriveTitle(cache: WorkItemCache): string {
-    if (cache.title) return cache.title;
+    if (cache.title) {
+        return cache.title;
+    }
     for (const update of cache.history?.updates ?? []) {
         const titleChange = update.fields?.["System.Title"];
         if (titleChange?.newValue) {

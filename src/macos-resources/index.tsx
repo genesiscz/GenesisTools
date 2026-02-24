@@ -454,7 +454,9 @@ const App: React.FC = () => {
 
                 for (const line of lines.slice(1)) {
                     const parts = line.trim().split(/\s+/);
-                    if (parts.length < 11) continue;
+                    if (parts.length < 11) {
+                        continue;
+                    }
 
                     const pid = parseInt(parts[1], 10);
                     const cpu = parseFloat(parts[2]);
@@ -466,7 +468,9 @@ const App: React.FC = () => {
 
                     // Skip if processFilter is a number (PID) and doesn't match
                     if (processFilter && !Number.isNaN(Number(processFilter))) {
-                        if (pid !== parseInt(processFilter, 10)) continue;
+                        if (pid !== parseInt(processFilter, 10)) {
+                            continue;
+                        }
                     }
                     // Skip if processFilter is a string and doesn't match
                     else if (
@@ -531,13 +535,17 @@ const App: React.FC = () => {
                     .split("\n")
                     .filter((line) => line);
 
-                if (lines.length <= 1) return [];
+                if (lines.length <= 1) {
+                    return [];
+                }
 
                 const files: OpenFile[] = [];
 
                 for (const line of lines.slice(1)) {
                     const parts = line.trim().split(/\s+/);
-                    if (parts.length < 9) continue;
+                    if (parts.length < 9) {
+                        continue;
+                    }
 
                     const fd = parts[3];
                     const type = parts[4];
@@ -548,7 +556,9 @@ const App: React.FC = () => {
 
                 // Sort by type, then by name
                 return files.sort((a, b) => {
-                    if (a.type !== b.type) return a.type.localeCompare(b.type);
+                    if (a.type !== b.type) {
+                        return a.type.localeCompare(b.type);
+                    }
                     return a.name.localeCompare(b.name);
                 });
             } catch {

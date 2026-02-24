@@ -35,7 +35,9 @@ let sessionPath = join(SESSIONS_DIR, `${currentSession}.jsonl`);
 let dirEnsured = false;
 
 function ensureDir(): void {
-    if (dirEnsured) return;
+    if (dirEnsured) {
+        return;
+    }
     if (!existsSync(SESSIONS_DIR)) {
         mkdirSync(SESSIONS_DIR, { recursive: true });
     }
@@ -44,12 +46,16 @@ function ensureDir(): void {
 
 function getCallerLocation(): { file: string; line: number } {
     const stack = new Error().stack;
-    if (!stack) return { file: "unknown", line: 0 };
+    if (!stack) {
+        return { file: "unknown", line: 0 };
+    }
 
     const lines = stack.split("\n");
     for (let i = 1; i < lines.length; i++) {
         const frame = lines[i];
-        if (frame.includes("llm-log")) continue;
+        if (frame.includes("llm-log")) {
+            continue;
+        }
         const match = frame.match(/(?:at\s+.*?\s+\(|at\s+)(.+?):(\d+):\d+\)?/);
         if (match) {
             return { file: match[1], line: parseInt(match[2], 10) };
@@ -62,7 +68,7 @@ function write(entry: Record<string, unknown>): void {
     ensureDir();
     const { file, line } = getCallerLocation();
     const full = { ...entry, ts: Date.now(), file, line };
-    appendFileSync(sessionPath, JSON.stringify(full) + "\n");
+    appendFileSync(sessionPath, `${JSON.stringify(full)}\n`);
 }
 
 export const dbg = {
@@ -92,7 +98,9 @@ export const dbg = {
         } else if (err !== undefined) {
             entry.data = err;
         }
-        if (opts?.h) entry.h = opts.h;
+        if (opts?.h) {
+            entry.h = opts.h;
+        }
         write(entry);
     },
 

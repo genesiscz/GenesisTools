@@ -45,14 +45,18 @@ export async function batchFetchCommentReactions(
 
         for (const num of batch) {
             const item = repoData[`i${num}`];
-            if (!item?.comments?.nodes) continue;
+            if (!item?.comments?.nodes) {
+                continue;
+            }
 
             let maxReactions = 0;
             let totalReactions = 0;
             for (const comment of item.comments.nodes) {
                 const count = comment.reactions?.totalCount || 0;
                 totalReactions += count;
-                if (count > maxReactions) maxReactions = count;
+                if (count > maxReactions) {
+                    maxReactions = count;
+                }
             }
 
             results.set(num, {

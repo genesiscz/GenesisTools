@@ -85,7 +85,9 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
     // Import servers from each selected provider
     for (const providerName of selectedProviders) {
         const provider = availableProviders.find((p) => p.getName() === providerName);
-        if (!provider) continue;
+        if (!provider) {
+            continue;
+        }
 
         try {
             logger.info(`Reading servers from ${providerName}...`);

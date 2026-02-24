@@ -55,24 +55,34 @@ export function registerTaskCommand(parent: Command): void {
                     label: `${pr.name} — ${pr.description ?? ""}`,
                 })),
             });
-            if (p.isCancel(presetName)) return;
+            if (p.isCancel(presetName)) {
+                return;
+            }
 
             const name = await p.text({
                 message: "Task name (unique identifier):",
                 placeholder: `${presetName}-daily`,
                 validate: (val) => {
-                    if (!val || !/^[a-zA-Z0-9_-]+$/.test(val)) return "Only alphanumeric, hyphens, underscores";
+                    if (!val || !/^[a-zA-Z0-9_-]+$/.test(val)) {
+                        return "Only alphanumeric, hyphens, underscores";
+                    }
                     const db = getDb();
-                    if (db.getSchedule(val)) return "Task name already exists";
+                    if (db.getSchedule(val)) {
+                        return "Task name already exists";
+                    }
                 },
             });
-            if (p.isCancel(name)) return;
+            if (p.isCancel(name)) {
+                return;
+            }
 
             const interval = await p.text({
                 message: "Run interval:",
                 placeholder: "every 5 minutes",
                 validate: (val) => {
-                    if (!val) return "Interval is required";
+                    if (!val) {
+                        return "Interval is required";
+                    }
                     try {
                         parseInterval(val);
                     } catch (e) {
@@ -80,7 +90,9 @@ export function registerTaskCommand(parent: Command): void {
                     }
                 },
             });
-            if (p.isCancel(interval)) return;
+            if (p.isCancel(interval)) {
+                return;
+            }
 
             const parsed = parseInterval(interval as string);
             const nextRunAt = computeNextRunAt(parsed).toISOString();
@@ -112,7 +124,9 @@ export function registerTaskCommand(parent: Command): void {
                 p.log.info(
                     `Trigger: ${run.trigger_type} | Status: ${run.status} | Duration: ${run.duration_ms != null ? formatDuration(run.duration_ms) : "running"}`
                 );
-                if (run.error) p.log.error(`Error: ${run.error}`);
+                if (run.error) {
+                    p.log.error(`Error: ${run.error}`);
+                }
 
                 const logs = db.getRunLogs(asNum);
                 if (logs.length === 0) {
@@ -216,7 +230,9 @@ export function registerTaskCommand(parent: Command): void {
                 return;
             }
             const confirm = await p.confirm({ message: `Delete task "${name}"?` });
-            if (p.isCancel(confirm) || !confirm) return;
+            if (p.isCancel(confirm) || !confirm) {
+                return;
+            }
             db.deleteSchedule(name);
             p.log.success(`Task "${name}" deleted`);
         });
@@ -252,8 +268,12 @@ export function registerTaskCommand(parent: Command): void {
             const successCount = result.steps.filter((s) => s.result.status === "success").length;
             const failCount = result.steps.filter((s) => s.result.status === "error").length;
             const parts: string[] = [];
-            if (successCount > 0) parts.push(pc.green(`${successCount} passed`));
-            if (failCount > 0) parts.push(pc.red(`${failCount} failed`));
+            if (successCount > 0) {
+                parts.push(pc.green(`${successCount} passed`));
+            }
+            if (failCount > 0) {
+                parts.push(pc.red(`${failCount} failed`));
+            }
 
             p.outro(
                 result.success
@@ -261,7 +281,9 @@ export function registerTaskCommand(parent: Command): void {
                     : pc.red(`Failed after ${formatDuration(result.totalDuration)} (${parts.join(", ")})`)
             );
 
-            if (!result.success) process.exit(1);
+            if (!result.success) {
+                process.exit(1);
+            }
         });
 
     // task history — show recent execution runs

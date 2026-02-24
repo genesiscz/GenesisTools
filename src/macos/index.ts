@@ -17,6 +17,7 @@
 
 import logger from "@app/logger";
 import { registerMailCommand } from "@app/macos/commands/mail/index";
+import { registerSleepCommand } from "@app/macos/commands/sleep/index";
 import { Command } from "commander";
 
 const program = new Command();
@@ -28,6 +29,7 @@ program
     .showHelpAfterError(true);
 
 registerMailCommand(program);
+registerSleepCommand(program);
 
 async function main(): Promise<void> {
     try {

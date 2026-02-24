@@ -11,8 +11,12 @@ export function formatResultsTable(
     options?: { showBodyMatch?: boolean; showSemanticScore?: boolean }
 ): string {
     const headers = ["Date", "From", "Subject", "Attachments"];
-    if (options?.showBodyMatch) headers.push("Body");
-    if (options?.showSemanticScore) headers.push("Relevance");
+    if (options?.showBodyMatch) {
+        headers.push("Body");
+    }
+    if (options?.showSemanticScore) {
+        headers.push("Relevance");
+    }
 
     const rows = messages.map((msg) => {
         const row = [
@@ -73,7 +77,9 @@ export function generateEmailMarkdown(msg: MailMessage): string {
     lines.push(`| Date | ${msg.dateSent.toISOString()} |`);
     lines.push(`| Mailbox | ${msg.mailbox} |`);
     lines.push(`| Read | ${msg.read ? "Yes" : "No"} |`);
-    if (msg.flagged) lines.push(`| Flagged | Yes |`);
+    if (msg.flagged) {
+        lines.push(`| Flagged | Yes |`);
+    }
     lines.push(`| Size | ${formatBytes(msg.size)} |`);
 
     if (msg.attachments.length > 0) {
@@ -103,7 +109,9 @@ export function generateIndexMarkdown(messages: MailMessage[], query?: string): 
 
     lines.push("# Email Export");
     lines.push("");
-    if (query) lines.push(`Search query: \`${query}\``);
+    if (query) {
+        lines.push(`Search query: \`${query}\``);
+    }
     lines.push(`Exported: ${new Date().toISOString()}`);
     lines.push(`Total: ${messages.length} emails`);
     lines.push("");

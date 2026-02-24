@@ -85,6 +85,7 @@ function applyPattern(text: string, pattern: WorkitemPattern): WorkitemRef[] {
     const re = new RegExp(pattern.regex, "gi");
     let match: RegExpExecArray | null;
 
+    // biome-ignore lint/suspicious/noAssignInExpressions: assignment in while loop for regex matching
     while ((match = re.exec(text)) !== null) {
         const capturedValue = match[pattern.captureGroup];
 
@@ -188,6 +189,7 @@ export function suggestPatterns(messages: string[], branches: string[]): Suggest
             let match: RegExpExecArray | null;
             re.lastIndex = 0;
 
+            // biome-ignore lint/suspicious/noAssignInExpressions: assignment in while loop for regex matching
             while ((match = re.exec(text)) !== null) {
                 matchCount++;
 

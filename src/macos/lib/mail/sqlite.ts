@@ -25,7 +25,9 @@ function escapeLike(s: string): string {
  * Reuses the same copy within a single CLI invocation.
  */
 export function getDatabase(): Database {
-    if (_db) return _db;
+    if (_db) {
+        return _db;
+    }
 
     if (!existsSync(ENVELOPE_INDEX_PATH)) {
         throw new Error(
@@ -41,8 +43,12 @@ export function getDatabase(): Database {
     // Also copy WAL and SHM if they exist (for consistency)
     const walPath = `${ENVELOPE_INDEX_PATH}-wal`;
     const shmPath = `${ENVELOPE_INDEX_PATH}-shm`;
-    if (existsSync(walPath)) copyFileSync(walPath, `${_tempDbPath}-wal`);
-    if (existsSync(shmPath)) copyFileSync(shmPath, `${_tempDbPath}-shm`);
+    if (existsSync(walPath)) {
+        copyFileSync(walPath, `${_tempDbPath}-wal`);
+    }
+    if (existsSync(shmPath)) {
+        copyFileSync(shmPath, `${_tempDbPath}-shm`);
+    }
 
     _db = new Database(_tempDbPath, { readonly: true });
     return _db;
@@ -184,7 +190,9 @@ export function listMessages(mailbox: string, limit: number): MailMessageRow[] {
  * Get attachments for a set of message ROWIDs.
  */
 export function getAttachments(messageRowids: number[]): Map<number, MailAttachment[]> {
-    if (messageRowids.length === 0) return new Map();
+    if (messageRowids.length === 0) {
+        return new Map();
+    }
     const db = getDatabase();
 
     const placeholders = messageRowids.map(() => "?").join(",");
@@ -214,7 +222,9 @@ export function getAttachments(messageRowids: number[]): Map<number, MailAttachm
  * Get recipients (To/CC) for a set of message ROWIDs.
  */
 export function getRecipients(messageRowids: number[]): Map<number, MailRecipient[]> {
-    if (messageRowids.length === 0) return new Map();
+    if (messageRowids.length === 0) {
+        return new Map();
+    }
     const db = getDatabase();
 
     const placeholders = messageRowids.map(() => "?").join(",");

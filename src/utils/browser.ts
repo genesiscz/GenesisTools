@@ -88,7 +88,9 @@ export class Browser {
     }
 
     static async openAll(urls: string[], options?: BrowserOpenOptions): Promise<OpenResult[]> {
-        if (urls.length === 0) return [];
+        if (urls.length === 0) {
+            return [];
+        }
         const staggerMs = options?.staggerMs ?? 300;
         const results: OpenResult[] = [];
 
@@ -111,14 +113,22 @@ export class Browser {
             }
             if (platform === "linux") {
                 const binary = LINUX_BINARIES[browser];
-                if (binary) return [binary, url];
+                if (binary) {
+                    return [binary, url];
+                }
             }
         }
 
         // OS default fallback
-        if (platform === "darwin") return ["open", url];
-        if (platform === "linux") return ["xdg-open", url];
-        if (platform === "win32") return ["cmd", "/c", "start", "", url];
+        if (platform === "darwin") {
+            return ["open", url];
+        }
+        if (platform === "linux") {
+            return ["xdg-open", url];
+        }
+        if (platform === "win32") {
+            return ["cmd", "/c", "start", "", url];
+        }
         return ["xdg-open", url];
     }
 }

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import type { TSServer } from "@app/mcp-tsc/core/interfaces.js";
+import type { DiagnosticsResult, TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import type { GetTsDiagnosticsArgs, GetTsHoverArgs, GetTsHoverResponse } from "@app/mcp-tsc/types/mcp.js";
 import { filterByTsconfig, resolveFiles } from "@app/mcp-tsc/utils/FileResolver.js";
 import { normalizeFilePaths } from "@app/utils.js";
@@ -199,7 +199,7 @@ export class McpAdapter {
             }
 
             // Get diagnostics using TSServer
-            let result;
+            let result: DiagnosticsResult;
             try {
                 result = await this.tsServer.getDiagnostics(filteredFiles, {
                     showWarnings,

@@ -40,7 +40,9 @@ export async function installLaunchd(): Promise<void> {
     await Bun.write(PLIST_PATH, generatePlist());
     const proc = Bun.spawn(["launchctl", "load", PLIST_PATH], { stdio: ["ignore", "pipe", "pipe"] });
     const exitCode = await proc.exited;
-    if (exitCode !== 0) throw new Error(`launchctl load failed: ${await new Response(proc.stderr).text()}`);
+    if (exitCode !== 0) {
+        throw new Error(`launchctl load failed: ${await new Response(proc.stderr).text()}`);
+    }
 }
 
 export async function uninstallLaunchd(): Promise<void> {
@@ -52,10 +54,14 @@ export async function uninstallLaunchd(): Promise<void> {
 
 export async function getDaemonStatus(): Promise<{ installed: boolean; running: boolean; pid: number | null }> {
     const installed = existsSync(PLIST_PATH);
-    if (!installed) return { installed: false, running: false, pid: null };
+    if (!installed) {
+        return { installed: false, running: false, pid: null };
+    }
     const proc = Bun.spawn(["launchctl", "list", LABEL], { stdio: ["ignore", "pipe", "pipe"] });
     const stdout = await new Response(proc.stdout).text();
-    if ((await proc.exited) !== 0) return { installed: true, running: false, pid: null };
+    if ((await proc.exited) !== 0) {
+        return { installed: true, running: false, pid: null };
+    }
     const pidMatch = stdout.match(/^(\d+)/m);
     const pid = pidMatch ? parseInt(pidMatch[1], 10) : null;
     return { installed, running: pid != null && pid > 0, pid };

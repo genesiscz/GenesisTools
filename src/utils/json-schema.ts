@@ -38,18 +38,30 @@ interface FormatOptions {
  * Infer a schema node from any JSON value.
  */
 function inferNode(value: unknown, depth: number, maxDepth: number): SchemaNode {
-    if (depth > maxDepth) return { type: "unknown" };
+    if (depth > maxDepth) {
+        return { type: "unknown" };
+    }
 
-    if (value === null) return { type: "null" };
+    if (value === null) {
+        return { type: "null" };
+    }
 
     const t = typeof value;
 
-    if (t === "string") return { type: "string" };
-    if (t === "number") return { type: Number.isInteger(value as number) ? "integer" : "number" };
-    if (t === "boolean") return { type: "boolean" };
+    if (t === "string") {
+        return { type: "string" };
+    }
+    if (t === "number") {
+        return { type: Number.isInteger(value as number) ? "integer" : "number" };
+    }
+    if (t === "boolean") {
+        return { type: "boolean" };
+    }
 
     if (Array.isArray(value)) {
-        if (value.length === 0) return { type: "array", items: { type: "unknown" } };
+        if (value.length === 0) {
+            return { type: "array", items: { type: "unknown" } };
+        }
 
         const merged = value.reduce<SchemaNode | null>((acc, item) => {
             const node = inferNode(item, depth + 1, maxDepth);
@@ -110,10 +122,14 @@ function mergeNodes(a: SchemaNode, b: SchemaNode): SchemaNode {
         // Preserve extra union types (e.g. null) from either side
         const extraTypes = new Set<string>();
         for (const t of Array.isArray(a.type) ? a.type : [a.type]) {
-            if (t !== "object") extraTypes.add(t);
+            if (t !== "object") {
+                extraTypes.add(t);
+            }
         }
         for (const t of Array.isArray(b.type) ? b.type : [b.type]) {
-            if (t !== "object") extraTypes.add(t);
+            if (t !== "object") {
+                extraTypes.add(t);
+            }
         }
 
         const resultType: string | string[] = extraTypes.size > 0 ? ["object", ...extraTypes] : "object";
@@ -126,10 +142,14 @@ function mergeNodes(a: SchemaNode, b: SchemaNode): SchemaNode {
 
         const extraTypes = new Set<string>();
         for (const t of Array.isArray(a.type) ? a.type : [a.type]) {
-            if (t !== "array") extraTypes.add(t);
+            if (t !== "array") {
+                extraTypes.add(t);
+            }
         }
         for (const t of Array.isArray(b.type) ? b.type : [b.type]) {
-            if (t !== "array") extraTypes.add(t);
+            if (t !== "array") {
+                extraTypes.add(t);
+            }
         }
 
         const resultType: string | string[] = extraTypes.size > 0 ? ["array", ...extraTypes] : "array";
@@ -141,7 +161,9 @@ function mergeNodes(a: SchemaNode, b: SchemaNode): SchemaNode {
     const bTypes = Array.isArray(b.type) ? b.type : [b.type];
     const union = new Set([...aTypes, ...bTypes]);
 
-    if (union.size === 1) return a;
+    if (union.size === 1) {
+        return a;
+    }
 
     const result: SchemaNode = { type: [...union] };
 
@@ -202,7 +224,9 @@ function formatSkeletonCompact(node: SchemaNode): string {
     if (hasType(node.type, "object") && node.properties) {
         const required = new Set(node.required ?? []);
         const entries = Object.entries(node.properties);
-        if (entries.length === 0) return "{}";
+        if (entries.length === 0) {
+            return "{}";
+        }
 
         const parts = entries.map(([key, child]) => {
             const opt = required.has(key) ? "" : "?";
@@ -233,7 +257,9 @@ function formatSkeletonPretty(node: SchemaNode, indent: number): string {
     if (hasType(node.type, "object") && node.properties) {
         const required = new Set(node.required ?? []);
         const entries = Object.entries(node.properties);
-        if (entries.length === 0) return "{}";
+        if (entries.length === 0) {
+            return "{}";
+        }
 
         const lines: string[] = ["{"];
         for (const [key, child] of entries) {
@@ -374,8 +400,14 @@ function pascalCase(str: string): string {
 }
 
 function singularize(str: string): string {
-    if (str.endsWith("ies")) return `${str.slice(0, -3)}y`;
-    if (str.endsWith("ses") || str.endsWith("xes") || str.endsWith("zes")) return str.slice(0, -2);
-    if (str.endsWith("s") && !str.endsWith("ss")) return str.slice(0, -1);
+    if (str.endsWith("ies")) {
+        return `${str.slice(0, -3)}y`;
+    }
+    if (str.endsWith("ses") || str.endsWith("xes") || str.endsWith("zes")) {
+        return str.slice(0, -2);
+    }
+    if (str.endsWith("s") && !str.endsWith("ss")) {
+        return str.slice(0, -1);
+    }
     return str;
 }

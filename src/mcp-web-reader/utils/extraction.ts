@@ -57,7 +57,9 @@ function calculateQuality(extracted: string, original: string): number {
     // Simple heuristic: ratio of text lengths
     const extractedText = extracted.replace(/<[^>]+>/g, "").trim();
     const originalText = original.replace(/<[^>]+>/g, "").trim();
-    if (originalText.length === 0) return 0;
+    if (originalText.length === 0) {
+        return 0;
+    }
     return Math.min(1, extractedText.length / originalText.length);
 }
 

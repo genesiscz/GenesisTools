@@ -4,7 +4,9 @@ import type { IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
 import type { Command } from "commander";
 
 function urlMatches(fullUrl: string, target: string): boolean {
-    if (fullUrl === target) return true;
+    if (fullUrl === target) {
+        return true;
+    }
     try {
         const a = new URL(fullUrl);
         const b = new URL(target, fullUrl); // resolve relative target against fullUrl
@@ -25,11 +27,15 @@ function buildRedirectChains(entries: IndexedEntry[]): RedirectChain[] {
 
     for (const entry of entries) {
         // Skip if already part of a chain or not a redirect
-        if (visited.has(entry.index) || !entry.isRedirect) continue;
+        if (visited.has(entry.index) || !entry.isRedirect) {
+            continue;
+        }
 
         // Check if this entry is the target of another redirect (i.e., not a chain start)
         const isTarget = entries.some((e) => e.isRedirect && e.redirectURL && urlMatches(entry.url, e.redirectURL));
-        if (isTarget) continue;
+        if (isTarget) {
+            continue;
+        }
 
         // Build chain starting from this entry
         const chain: IndexedEntry[] = [entry];
@@ -40,7 +46,9 @@ function buildRedirectChains(entries: IndexedEntry[]): RedirectChain[] {
             const redirectTarget = current.redirectURL;
             // Find the next entry whose URL matches the redirect target
             const candidates = findNextEntry(entries, redirectTarget, current.index, visited);
-            if (!candidates) break;
+            if (!candidates) {
+                break;
+            }
 
             chain.push(candidates);
             visited.add(candidates.index);
@@ -66,7 +74,9 @@ function findNextEntry(
 ): IndexedEntry | null {
     // Try exact URL match first, then partial match on path
     for (const entry of entries) {
-        if (entry.index <= afterIndex || visited.has(entry.index)) continue;
+        if (entry.index <= afterIndex || visited.has(entry.index)) {
+            continue;
+        }
 
         if (entry.url === redirectUrl || entry.url.endsWith(redirectUrl)) {
             return entry;
@@ -75,7 +85,9 @@ function findNextEntry(
 
     // Also try matching just the path portion
     for (const entry of entries) {
-        if (entry.index <= afterIndex || visited.has(entry.index)) continue;
+        if (entry.index <= afterIndex || visited.has(entry.index)) {
+            continue;
+        }
 
         try {
             const parsedUrl = new URL(entry.url);

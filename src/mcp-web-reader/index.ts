@@ -55,7 +55,9 @@ async function runCli(opts: CliOptions): Promise<void> {
             log.info(`Fetching raw HTML: ${chalk.cyan(url)}`);
             const headers = opts.headers ? JSON.parse(String(opts.headers)) : undefined;
             let html = await fetchText(url, headers);
-            if (saveTokens) html = html.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n");
+            if (saveTokens) {
+                html = html.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n");
+            }
             const limited = limitToTokens(html, maxTokens);
             if (out) {
                 await Bun.write(out, limited.text);
@@ -70,7 +72,9 @@ async function runCli(opts: CliOptions): Promise<void> {
             const jUrl = buildJinaUrl(url);
             log.info(`Fetching Jina Reader MD: ${chalk.cyan(jUrl)}`);
             let md = await fetchText(jUrl);
-            if (saveTokens) md = compactCodeBlocks(md);
+            if (saveTokens) {
+                md = compactCodeBlocks(md);
+            }
             const limited = limitToTokens(md, maxTokens);
             if (out) {
                 await Bun.write(out, limited.text);
@@ -93,7 +97,9 @@ async function runCli(opts: CliOptions): Promise<void> {
             });
 
             let md = result.markdown;
-            if (saveTokens) md = compactCodeBlocks(md);
+            if (saveTokens) {
+                md = compactCodeBlocks(md);
+            }
             const limited = limitToTokens(md, maxTokens);
 
             if (out) {
@@ -288,7 +294,9 @@ async function main(): Promise<void> {
             await downloadLLMModel({
                 onProgress: (downloaded, total, pct) => {
                     const now = Date.now();
-                    if (now - lastUpdate < 1000 && pct < 100) return; // Throttle to 1s
+                    if (now - lastUpdate < 1000 && pct < 100) {
+                        return; // Throttle to 1s
+                    }
                     lastUpdate = now;
                     process.stdout.clearLine?.(0);
                     process.stdout.cursorTo?.(0);

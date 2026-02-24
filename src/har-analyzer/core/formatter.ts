@@ -3,12 +3,16 @@ import { formatBytes, formatDuration } from "@app/utils/format.ts";
 import { formatTable } from "@app/utils/table.ts";
 
 export function truncatePath(path: string, maxLen: number): string {
-    if (path.length <= maxLen) return path;
+    if (path.length <= maxLen) {
+        return path;
+    }
     return `${path.slice(0, maxLen - 3)}...`;
 }
 
 export function formatPercent(count: number, total: number): string {
-    if (total === 0) return "(0%)";
+    if (total === 0) {
+        return "(0%)";
+    }
     const pct = Math.round((count / total) * 100);
     return `(${pct}%)`;
 }

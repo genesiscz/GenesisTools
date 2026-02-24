@@ -10,18 +10,26 @@ import { similarityScore } from "@app/utils/fuzzy-match";
  */
 export function isQueryIdOrUrl(input: string): boolean {
     // GUID pattern
-    if (/^[a-f0-9-]{36}$/i.test(input)) return true;
+    if (/^[a-f0-9-]{36}$/i.test(input)) {
+        return true;
+    }
     // URL pattern
-    if (input.includes("query/")) return true;
+    if (input.includes("query/")) {
+        return true;
+    }
     // Bare GUID without dashes
-    if (/^[a-f0-9]{32}$/i.test(input)) return true;
+    if (/^[a-f0-9]{32}$/i.test(input)) {
+        return true;
+    }
     return false;
 }
 
 export function extractQueryId(input: string): string {
     const match = input.match(/query\/([a-f0-9-]+)/i) || input.match(/^([a-f0-9-]+)$/i);
 
-    if (!match) throw new Error(`Invalid query URL/ID: ${input}`);
+    if (!match) {
+        throw new Error(`Invalid query URL/ID: ${input}`);
+    }
     return match[1];
 }
 
@@ -38,7 +46,9 @@ export function findQueryByName(
     // Filter to non-folder queries only
     const actualQueries = queries.filter((q) => !q.isFolder);
 
-    if (actualQueries.length === 0) return null;
+    if (actualQueries.length === 0) {
+        return null;
+    }
 
     // Calculate scores for all queries
     const scored = actualQueries.map((q) => {
@@ -76,7 +86,9 @@ export function findQueryByName(
     const best = scored[0];
 
     // If best score is too low, no good match
-    if (best.score < 0.3) return null;
+    if (best.score < 0.3) {
+        return null;
+    }
 
     // Get alternatives (other high-scoring matches)
     const alternatives = scored
@@ -101,7 +113,9 @@ export function extractWorkItemIds(input: string): number[] {
     for (const part of parts) {
         const match = part.match(/workItems?\/(\d+)/i) || part.match(/edit\/(\d+)/i) || part.match(/^(\d+)$/);
 
-        if (!match) throw new Error(`Invalid work item URL/ID: ${part}`);
+        if (!match) {
+            throw new Error(`Invalid work item URL/ID: ${part}`);
+        }
         ids.push(parseInt(match[1], 10));
     }
 
@@ -111,7 +125,9 @@ export function extractWorkItemIds(input: string): number[] {
 export function extractDashboardId(input: string): string {
     const match = input.match(/dashboard\/([a-f0-9-]+)/i) || input.match(/^([a-f0-9-]+)$/i);
 
-    if (!match) throw new Error(`Invalid dashboard URL/ID: ${input}`);
+    if (!match) {
+        throw new Error(`Invalid dashboard URL/ID: ${input}`);
+    }
     return match[1];
 }
 

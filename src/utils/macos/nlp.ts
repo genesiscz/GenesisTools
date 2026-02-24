@@ -154,8 +154,12 @@ export async function getKeywords(text: string, maxKeywords = 10, language?: str
     const wordMap = new Map<string, { lexicalClass?: string; lemma?: string }>();
     for (const token of result.tokens) {
         const entry = wordMap.get(token.text) ?? {};
-        if (token.scheme === "lexicalClass") entry.lexicalClass = token.tag;
-        if (token.scheme === "lemma") entry.lemma = token.tag;
+        if (token.scheme === "lexicalClass") {
+            entry.lexicalClass = token.tag;
+        }
+        if (token.scheme === "lemma") {
+            entry.lemma = token.tag;
+        }
         wordMap.set(token.text, entry);
     }
 

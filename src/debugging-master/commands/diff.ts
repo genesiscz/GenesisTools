@@ -10,9 +10,13 @@ function groupByLabel(entries: IndexedLogEntry[]): Map<string, IndexedLogEntry[]
     const map = new Map<string, IndexedLogEntry[]>();
     for (const e of entries) {
         const key = e.label ?? e.msg;
-        if (!key) continue;
-        if (!map.has(key)) map.set(key, []);
-        map.get(key)!.push(e);
+        if (!key) {
+            continue;
+        }
+        if (!map.has(key)) {
+            map.set(key, []);
+        }
+        map.get(key)?.push(e);
     }
     return map;
 }
@@ -22,7 +26,9 @@ function formatTime(ts: number): string {
 }
 
 function percentChange(a: number, b: number): string {
-    if (a === 0) return "N/A";
+    if (a === 0) {
+        return "N/A";
+    }
     const pct = ((b - a) / a) * 100;
     const sign = pct >= 0 ? "+" : "";
     return `${sign}${pct.toFixed(0)}%`;
@@ -46,7 +52,9 @@ export function registerDiffCommand(program: Command): void {
             const name1 = await sm.resolveSession(globalOpts.session);
             const name2 = await sm.resolveSession(opts.against);
             // Restore recent session — diff shouldn't change it
-            if (recentBefore) await sm.getConfig().setRecentSession(recentBefore);
+            if (recentBefore) {
+                await sm.getConfig().setRecentSession(recentBefore);
+            }
 
             const raw1 = await sm.readEntries(name1);
             const raw2 = await sm.readEntries(name2);
@@ -73,7 +81,9 @@ export function registerDiffCommand(program: Command): void {
                     const e1 = groups1.get(label)?.find((e) => e.level === level);
                     const e2 = groups2.get(label)?.find((e) => e.level === level);
 
-                    if (!e1 && !e2) continue;
+                    if (!e1 && !e2) {
+                        continue;
+                    }
 
                     if (e1 && !e2) {
                         matches.push(
@@ -85,7 +95,9 @@ export function registerDiffCommand(program: Command): void {
                         );
                     } else if (e1 && e2) {
                         const extractComparable = (e: IndexedLogEntry) => {
-                            if (e.level === "assert") return { passed: e.passed, ctx: e.ctx };
+                            if (e.level === "assert") {
+                                return { passed: e.passed, ctx: e.ctx };
+                            }
                             return e.data ?? e.vars ?? "";
                         };
                         const d1 = JSON.stringify(extractComparable(e1));
@@ -102,7 +114,9 @@ export function registerDiffCommand(program: Command): void {
 
                 if (matches.length > 0) {
                     console.log(`\nMatching ${level}s:`);
-                    for (const m of matches) console.log(m);
+                    for (const m of matches) {
+                        console.log(m);
+                    }
                 }
             }
 
@@ -137,7 +151,9 @@ export function registerDiffCommand(program: Command): void {
                 console.log("");
                 if (only1.length > 0) {
                     const byLevel: Record<string, number> = {};
-                    for (const e of only1) byLevel[e.level] = (byLevel[e.level] ?? 0) + 1;
+                    for (const e of only1) {
+                        byLevel[e.level] = (byLevel[e.level] ?? 0) + 1;
+                    }
                     const summary = Object.entries(byLevel)
                         .map(([l, c]) => `${c} ${l}`)
                         .join(", ");
@@ -145,7 +161,9 @@ export function registerDiffCommand(program: Command): void {
                 }
                 if (only2.length > 0) {
                     const byLevel: Record<string, number> = {};
-                    for (const e of only2) byLevel[e.level] = (byLevel[e.level] ?? 0) + 1;
+                    for (const e of only2) {
+                        byLevel[e.level] = (byLevel[e.level] ?? 0) + 1;
+                    }
                     const summary = Object.entries(byLevel)
                         .map(([l, c]) => `${c} ${l}`)
                         .join(", ");

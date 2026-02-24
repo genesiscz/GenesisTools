@@ -13,8 +13,12 @@ interface CookieInfo {
 }
 
 function collapseEntryRanges(indices: number[]): string {
-    if (indices.length === 0) return "none";
-    if (indices.length === 1) return `e${indices[0]}`;
+    if (indices.length === 0) {
+        return "none";
+    }
+    if (indices.length === 1) {
+        return `e${indices[0]}`;
+    }
 
     const sorted = [...indices].sort((a, b) => a - b);
     const ranges: string[] = [];
@@ -38,17 +42,27 @@ function collapseEntryRanges(indices: number[]): string {
 function extractCookieFlags(setCookieValue: string): string[] {
     const flags: string[] = [];
     const lower = setCookieValue.toLowerCase();
-    if (lower.includes("httponly")) flags.push("HttpOnly");
-    if (lower.includes("secure")) flags.push("Secure");
-    if (lower.includes("samesite=strict")) flags.push("SameSite=Strict");
-    else if (lower.includes("samesite=lax")) flags.push("SameSite=Lax");
-    else if (lower.includes("samesite=none")) flags.push("SameSite=None");
+    if (lower.includes("httponly")) {
+        flags.push("HttpOnly");
+    }
+    if (lower.includes("secure")) {
+        flags.push("Secure");
+    }
+    if (lower.includes("samesite=strict")) {
+        flags.push("SameSite=Strict");
+    } else if (lower.includes("samesite=lax")) {
+        flags.push("SameSite=Lax");
+    } else if (lower.includes("samesite=none")) {
+        flags.push("SameSite=None");
+    }
     return flags;
 }
 
 function parseCookieName(setCookieValue: string): string {
     const eqIndex = setCookieValue.indexOf("=");
-    if (eqIndex === -1) return setCookieValue.trim();
+    if (eqIndex === -1) {
+        return setCookieValue.trim();
+    }
     return setCookieValue.slice(0, eqIndex).trim();
 }
 
@@ -101,7 +115,9 @@ function analyzeCookies(harEntries: HarEntry[]): CookieInfo[] {
                 const pairs = header.value.split(";").map((p) => p.trim());
                 for (const pair of pairs) {
                     const name = pair.split("=")[0]?.trim();
-                    if (!name) continue;
+                    if (!name) {
+                        continue;
+                    }
 
                     const info = cookieMap.get(name);
                     if (info) {

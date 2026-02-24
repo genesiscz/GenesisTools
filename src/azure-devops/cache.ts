@@ -158,14 +158,18 @@ export async function updateWorkItemCacheSection(
 /** Check if a workitem's history section is fresh (within 7-day TTL). */
 export function isHistoryFresh(cache: WorkItemCache): boolean {
     const fetchedAt = cache.cache?.historyFetchedAt;
-    if (!fetchedAt) return false;
+    if (!fetchedAt) {
+        return false;
+    }
     return Date.now() - new Date(fetchedAt).getTime() < SECTION_TTL_MS;
 }
 
 /** Check if a workitem's comments section is fresh (within 7-day TTL). */
 export function isCommentsFresh(cache: WorkItemCache): boolean {
     const fetchedAt = cache.cache?.commentsFetchedAt;
-    if (!fetchedAt) return false;
+    if (!fetchedAt) {
+        return false;
+    }
     return Date.now() - new Date(fetchedAt).getTime() < SECTION_TTL_MS;
 }
 
@@ -184,12 +188,16 @@ export async function migrateHistoryCache(): Promise<number> {
         return 0;
     }
 
-    if (historyFiles.length === 0) return 0;
+    if (historyFiles.length === 0) {
+        return 0;
+    }
 
     let migrated = 0;
     for (const file of historyFiles) {
         const idMatch = file.match(/^history-(\d+)\.json$/);
-        if (!idMatch) continue;
+        if (!idMatch) {
+            continue;
+        }
 
         const id = parseInt(idMatch[1], 10);
         try {

@@ -270,6 +270,7 @@ export class SummarizeEngine {
         // Reset regex state
         sectionPattern.lastIndex = 0;
 
+        // biome-ignore lint/suspicious/noAssignInExpressions: assignment in while loop for regex matching
         while ((match = sectionPattern.exec(content)) !== null) {
             if (lastTopic !== null) {
                 const sectionContent = content.slice(lastStart, match.index).trim();

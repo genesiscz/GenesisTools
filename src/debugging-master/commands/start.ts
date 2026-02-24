@@ -18,8 +18,12 @@ const SNIPPET_EXT: Record<Language, string> = {
 };
 
 function detectLanguage(projectPath: string): Language {
-    if (existsSync(join(projectPath, "tsconfig.json"))) return "typescript";
-    if (existsSync(join(projectPath, "composer.json"))) return "php";
+    if (existsSync(join(projectPath, "tsconfig.json"))) {
+        return "typescript";
+    }
+    if (existsSync(join(projectPath, "composer.json"))) {
+        return "php";
+    }
     return "typescript";
 }
 
@@ -67,8 +71,12 @@ export function registerStartCommand(program: Command): void {
                     message: "Session name",
                     placeholder: basename(projectPath),
                     validate(v: string | undefined) {
-                        if (!v?.trim()) return "Session name is required";
-                        if (/[^a-zA-Z0-9_-]/.test(v)) return "Use only alphanumeric, hyphens, underscores";
+                        if (!v?.trim()) {
+                            return "Session name is required";
+                        }
+                        if (/[^a-zA-Z0-9_-]/.test(v)) {
+                            return "Use only alphanumeric, hyphens, underscores";
+                        }
                     },
                 });
 

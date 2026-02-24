@@ -16,7 +16,9 @@ export interface ToolInfo {
  */
 export function discoverTools(srcDir: string): ToolInfo[] {
     const tools: ToolInfo[] = [];
-    if (!existsSync(srcDir)) return tools;
+    if (!existsSync(srcDir)) {
+        return tools;
+    }
     const entries = readdirSync(srcDir);
 
     for (const entry of entries) {
@@ -67,11 +69,21 @@ function extractDescription(toolDir: string): string {
         const lines = content.split("\n");
         for (const line of lines) {
             const trimmed = line.trim();
-            if (!trimmed) continue;
-            if (trimmed.startsWith("#")) continue;
-            if (trimmed.startsWith("---")) continue;
-            if (trimmed.startsWith("![")) continue;
-            if (trimmed.startsWith("[![")) continue;
+            if (!trimmed) {
+                continue;
+            }
+            if (trimmed.startsWith("#")) {
+                continue;
+            }
+            if (trimmed.startsWith("---")) {
+                continue;
+            }
+            if (trimmed.startsWith("![")) {
+                continue;
+            }
+            if (trimmed.startsWith("[![")) {
+                continue;
+            }
             return trimmed.length > 80 ? `${trimmed.slice(0, 77)}...` : trimmed;
         }
     }

@@ -76,7 +76,9 @@ async function ensureValidToken(account: AccountConfig): Promise<{ accessToken: 
 
 export async function fetchAllAccountsUsage(accounts: Record<string, AccountConfig>): Promise<AccountUsage[]> {
     const entries = Object.entries(accounts);
-    if (entries.length === 0) return [];
+    if (entries.length === 0) {
+        return [];
+    }
 
     const results = await Promise.allSettled(
         entries.map(async ([name, account]) => {
@@ -101,7 +103,9 @@ export async function fetchAllAccountsUsage(accounts: Record<string, AccountConf
             }
         }
     }
-    if (dirty) await saveConfig(config);
+    if (dirty) {
+        await saveConfig(config);
+    }
 
     return results.map((r, i) =>
         r.status === "fulfilled"

@@ -212,7 +212,9 @@ async function runInteractiveFlow(session: ClaudeSession, opts: SummarizeCommand
             message: "Enter your custom summarization prompt:",
             placeholder: "e.g., Focus on the error handling patterns used...",
             validate: (val) => {
-                if (!val || !val.trim()) return "Prompt cannot be empty for custom mode.";
+                if (!val || !val.trim()) {
+                    return "Prompt cannot be empty for custom mode.";
+                }
             },
         });
         if (p.isCancel(promptInput)) {
@@ -343,7 +345,9 @@ function buildNonInteractiveOptions(session: ClaudeSession, opts: SummarizeComma
 // =============================================================================
 
 function displayResult(result: SummarizeResult): void {
-    if (!process.stdout.isTTY) return;
+    if (!process.stdout.isTTY) {
+        return;
+    }
 
     const parts: string[] = ["\n"];
 

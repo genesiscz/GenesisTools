@@ -49,7 +49,9 @@ export function registerStepCatalog(entry: StepCatalogEntry): void {
 }
 
 export function resolveStepHandler(action: string): StepHandler | undefined {
-    if (handlers.has(action)) return handlers.get(action);
+    if (handlers.has(action)) {
+        return handlers.get(action);
+    }
 
     const dotIndex = action.indexOf(".");
     if (dotIndex > 0) {

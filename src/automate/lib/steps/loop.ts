@@ -33,8 +33,12 @@ async function forEachHandler(step: PresetStep, ctx: StepContext): Promise<StepR
         const childCtx: StepContext = {
             ...ctx,
             evaluate: (expr: string) => {
-                if (expr === itemVar) return item;
-                if (expr === indexVar) return index;
+                if (expr === itemVar) {
+                    return item;
+                }
+                if (expr === indexVar) {
+                    return index;
+                }
                 if (expr.startsWith(`${itemVar}.`)) {
                     const path = expr.substring(itemVar.length + 1);
                     return path.split(".").reduce<unknown>((obj, key) => {
@@ -128,7 +132,9 @@ async function whileHandler(step: PresetStep, ctx: StepContext): Promise<StepRes
 
     while (iteration < maxIterations) {
         const conditionResult = ctx.evaluate(params.condition);
-        if (!conditionResult) break;
+        if (!conditionResult) {
+            break;
+        }
 
         const iterationStep: PresetStep = {
             ...childStep,
@@ -139,7 +145,9 @@ async function whileHandler(step: PresetStep, ctx: StepContext): Promise<StepRes
         results.push(result);
         ctx.steps[`${step.id}[${iteration}]`] = result;
 
-        if (result.status === "error" && step.onError !== "continue") break;
+        if (result.status === "error" && step.onError !== "continue") {
+            break;
+        }
 
         iteration++;
     }

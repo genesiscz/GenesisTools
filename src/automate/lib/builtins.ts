@@ -124,7 +124,7 @@ async function handleShell(step: PresetStep, ctx: ExecutionContext, start: numbe
         env: { ...process.env },
     });
 
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
             proc.kill();
@@ -135,7 +135,11 @@ async function handleShell(step: PresetStep, ctx: ExecutionContext, start: numbe
     const [stdout, stderr, exitCode] = (await Promise.race([
         Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]),
         timeoutPromise,
-    ]).finally(() => clearTimeout(timer!))) as [string, string, number];
+    ]).finally(() => {
+        if (timer) {
+            clearTimeout(timer);
+        }
+    })) as [string, string, number];
 
     // Try to parse stdout as JSON for structured access
     let output: unknown = stdout.trim();

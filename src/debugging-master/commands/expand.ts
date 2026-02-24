@@ -20,7 +20,7 @@ export function registerExpandCommand(program: Command): void {
 
             const prefix = refId[0];
             const entryIndex = parseInt(refId.slice(1), 10);
-            if (isNaN(entryIndex)) {
+            if (Number.isNaN(entryIndex)) {
                 console.error(`Invalid ref ID: ${refId}. Expected format like d2, e5, s8`);
                 process.exit(1);
             }

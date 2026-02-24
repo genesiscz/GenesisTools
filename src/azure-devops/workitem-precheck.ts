@@ -112,7 +112,9 @@ function selectBestChildren(
         deprioritizedStates.some((ds) => ds.toLowerCase() === state.toLowerCase());
 
     const isDefaultUser = (assignee: string) => {
-        if (!defaultUserName || !assignee) return false;
+        if (!defaultUserName || !assignee) {
+            return false;
+        }
         const normAssignee = assignee.toLowerCase();
         const normDefault = defaultUserName.toLowerCase();
         return normAssignee.includes(normDefault) || normDefault.includes(normAssignee);
@@ -120,11 +122,15 @@ function selectBestChildren(
 
     // Tier 1: Active state + default user
     const tier1 = children.filter((c) => !isDeprioritized(c.state) && isDefaultUser(c.assignee));
-    if (tier1.length > 0) return tier1;
+    if (tier1.length > 0) {
+        return tier1;
+    }
 
     // Tier 2: Active state + anyone
     const tier2 = children.filter((c) => !isDeprioritized(c.state));
-    if (tier2.length > 0) return tier2;
+    if (tier2.length > 0) {
+        return tier2;
+    }
 
     // Tier 3: Deprioritized states — sort by most recently changed
     return [...children].sort((a, b) => b.changedDate.localeCompare(a.changedDate));

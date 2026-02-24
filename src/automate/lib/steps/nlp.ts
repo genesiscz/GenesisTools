@@ -17,19 +17,25 @@ async function nlpHandler(step: PresetStep, ctx: StepContext): Promise<StepResul
     try {
         switch (subAction) {
             case "sentiment": {
-                if (!text) return makeResult("error", null, start, "nlp.sentiment requires params.text");
+                if (!text) {
+                    return makeResult("error", null, start, "nlp.sentiment requires params.text");
+                }
                 const result = await analyzeSentiment(text);
                 return makeResult("success", result, start);
             }
 
             case "language": {
-                if (!text) return makeResult("error", null, start, "nlp.language requires params.text");
+                if (!text) {
+                    return makeResult("error", null, start, "nlp.language requires params.text");
+                }
                 const result = await detectLanguage(text);
                 return makeResult("success", result, start);
             }
 
             case "tag": {
-                if (!text) return makeResult("error", null, start, "nlp.tag requires params.text");
+                if (!text) {
+                    return makeResult("error", null, start, "nlp.tag requires params.text");
+                }
                 const schemes = params.schemes ?? ["lexicalClass"];
                 const result = await tagText(text, schemes, language);
                 return makeResult("success", result, start);
@@ -46,7 +52,9 @@ async function nlpHandler(step: PresetStep, ctx: StepContext): Promise<StepResul
             }
 
             case "embed": {
-                if (!text) return makeResult("error", null, start, "nlp.embed requires params.text");
+                if (!text) {
+                    return makeResult("error", null, start, "nlp.embed requires params.text");
+                }
                 const type = params.type ?? "sentence";
                 const result = await embedText(text, language, type);
                 return makeResult("success", result, start);

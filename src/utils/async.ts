@@ -71,7 +71,9 @@ export function retry<T>(operation: () => Promise<T>, options?: RetryOptions | n
 export function debounce<T extends (...args: any[]) => void>(func: T, wait: number): (...args: Parameters<T>) => void {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     return (...args: Parameters<T>) => {
-        if (timeout !== undefined) clearTimeout(timeout);
+        if (timeout !== undefined) {
+            clearTimeout(timeout);
+        }
         timeout = setTimeout(() => func(...args), wait);
     };
 }
@@ -88,7 +90,9 @@ export function throttle<T extends (...args: any[]) => void>(func: T, limit: num
         if (!inThrottle) {
             func(...args);
             inThrottle = true;
-            setTimeout(() => (inThrottle = false), limit);
+            setTimeout(() => {
+                inThrottle = false;
+            }, limit);
         }
     };
 }
@@ -134,7 +138,9 @@ export async function concurrentMap<T, R>({
     concurrency = 5,
     onError,
 }: ConcurrentMapOptions<T, R>): Promise<Map<T, R>> {
-    if (concurrency < 1) throw new Error(`concurrentMap: concurrency must be >= 1, got ${concurrency}`);
+    if (concurrency < 1) {
+        throw new Error(`concurrentMap: concurrency must be >= 1, got ${concurrency}`);
+    }
     const result = new Map<T, R>();
 
     for (let i = 0; i < items.length; i += concurrency) {

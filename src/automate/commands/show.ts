@@ -2,6 +2,7 @@
 
 import { isBuiltinAction } from "@app/automate/lib/builtins.ts";
 import { getPresetMeta, listPresets, loadPreset } from "@app/automate/lib/storage.ts";
+import type { Preset } from "@app/automate/lib/types.ts";
 import { formatRelativeTime } from "@app/utils/format.ts";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -31,7 +32,7 @@ export function registerShowCommand(program: Command): void {
                 return;
             }
 
-            let preset;
+            let preset: Preset;
             try {
                 preset = await loadPreset(presetArg);
             } catch (error) {
@@ -65,9 +66,15 @@ export function registerShowCommand(program: Command): void {
                 const actionLabel = isBuiltin ? pc.magenta(step.action) : pc.cyan(`tools ${step.action}`);
 
                 const flags: string[] = [];
-                if (step.interactive) flags.push(pc.yellow("interactive"));
-                if (step.onError && step.onError !== "stop") flags.push(pc.dim(`onError:${step.onError}`));
-                if (step.output) flags.push(pc.dim(`-> ${step.output}`));
+                if (step.interactive) {
+                    flags.push(pc.yellow("interactive"));
+                }
+                if (step.onError && step.onError !== "stop") {
+                    flags.push(pc.dim(`onError:${step.onError}`));
+                }
+                if (step.output) {
+                    flags.push(pc.dim(`-> ${step.output}`));
+                }
 
                 p.log.info(
                     `  ${pc.dim(`${i + 1}.`)} ${pc.bold(step.name)} ${pc.dim(`(${step.id})`)}\n` +

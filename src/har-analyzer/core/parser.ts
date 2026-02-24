@@ -39,10 +39,18 @@ function buildIndexedEntry(entry: HarEntry, index: number): IndexedEntry {
 }
 
 function getStatusBucket(status: number): string {
-    if (status >= 200 && status < 300) return "2xx";
-    if (status >= 300 && status < 400) return "3xx";
-    if (status >= 400 && status < 500) return "4xx";
-    if (status >= 500 && status < 600) return "5xx";
+    if (status >= 200 && status < 300) {
+        return "2xx";
+    }
+    if (status >= 300 && status < 400) {
+        return "3xx";
+    }
+    if (status >= 400 && status < 500) {
+        return "4xx";
+    }
+    if (status >= 500 && status < 600) {
+        return "5xx";
+    }
     return `${Math.floor(status / 100)}xx`;
 }
 
