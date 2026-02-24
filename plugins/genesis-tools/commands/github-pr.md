@@ -50,11 +50,13 @@ The script outputs the file path to stdout (e.g., `.claude/github/reviews/pr-137
 
 **Otherwise:**
 
-Use `cat` to read the generated markdown file completely:
+Use the **Read** tool (not `cat`) to read the generated markdown file:
 
-```bash
-cat <generated-file-path>
 ```
+Read <generated-file-path>
+```
+
+> **Why Read, not cat?** Large `cat` output gets truncated by Claude Code, then auto-persisted to `tool-results/`, forcing multiple chunked Read calls to retrieve the same content. Using Read directly avoids the Bash→persist→re-read cycle entirely.
 
 **If `--open` flag is present:**
 Also open the review file in Cursor:
@@ -237,7 +239,7 @@ Display final summary:
 User: /github-pr 137 -u
 
 1. Run: tools github review 137 -g --md -u
-2. cat .claude/github/reviews/pr-137-2026-01-03T13-44-20.md
+2. Read .claude/github/reviews/pr-137-2026-01-03T13-44-20.md
 3. Display: "PR #137 has 14 unresolved threads (0 HIGH, 14 MEDIUM, 0 LOW)"
 4. Ask: "Which threads to fix?"
 5. User selects: "Fix all unresolved"
@@ -436,7 +438,7 @@ User: analyze these PRs and write plans:
 
 ## Key Rules
 
-1. **Always cat the full markdown file** — don't truncate
+1. **Always Read the full markdown file** — use the Read tool, not cat/Bash (avoids double-read via tool-results persistence)
 2. **Ask before fixing** — let user choose what to fix
 3. **Follow commit message style** — match existing repo patterns
 4. **Run linting** — validate fixes don't break types

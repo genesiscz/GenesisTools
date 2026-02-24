@@ -159,6 +159,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
         const mdContent = formatReviewMarkdown(reviewData, options.groupByFile ?? false);
         const filePath = await saveReviewMarkdown(mdContent, prNumber);
         console.log(filePath);
+        console.error(`  View: tools markdown-cli ${filePath}`);
         return;
     }
 
