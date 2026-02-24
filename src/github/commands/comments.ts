@@ -297,7 +297,11 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
         // Incremental fetch - get new comments since last fetch, merge with cache
         verbose(options, `Incremental fetch: getting comments since ${metadata.last_comment_date}`);
 
-        const sinceDate = metadata.last_comment_date ?? "";
+        const sinceDate = metadata.last_comment_date;
+        if (!sinceDate) {
+            throw new Error("Expected last_comment_date for incremental fetch");
+        }
+
         const apiComments = await fetchComments(owner, repo, number, {
             since: sinceDate,
         });

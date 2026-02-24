@@ -211,6 +211,7 @@ function formatPRSummary(data: PRData, options: FormatOptions): string {
         if (data.pr.draft) {
             prStats.push("- **Status:** Draft");
         }
+
         if (data.pr.merged) {
             const mergedAt = data.pr.merged_at ?? "";
             prStats.push(`- **Merged:** ${formatDate(mergedAt)} by @${data.pr.merged_by?.login ?? "unknown"}`);
