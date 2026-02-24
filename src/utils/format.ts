@@ -98,7 +98,15 @@ export function formatDuration(value: number, unit: DurationUnit = "ms", style: 
 
 // ============= Duration Parsing =============
 
+// Single value + unit, e.g. "30m", "2hours", "90s"
 const SIMPLE_DURATION_PATTERN = /^(\d+)\s*(s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?)$/i;
+
+// Multi-part durations, e.g. "1h30m", "2h15min10s". Each group is optional,
+// allowing any combination of hours/minutes/seconds:
+//   (?:(\d+)\s*h...)? — optional hours  (capture group 1)
+//   (?:(\d+)\s*m...)? — optional minutes (capture group 2)
+//   (?:(\d+)\s*s...)? — optional seconds (capture group 3)
+// Unit suffixes accept common spellings: h/hr/hrs/hour/hours, m/min/mins/minute/minutes, s/sec/secs/second/seconds
 const COMPOUND_DURATION_PATTERN =
     /^(?:(\d+)\s*h(?:ours?|rs?|r)?)?\s*(?:(\d+)\s*m(?:in(?:utes?|s)?)?)?\s*(?:(\d+)\s*s(?:ec(?:onds?|s)?)?)?$/i;
 
