@@ -19,7 +19,9 @@ interface RateLimitError {
  * Check if error is a rate limit error
  */
 export function isRateLimitError(error: unknown): error is RateLimitError {
-    if (!error || typeof error !== "object") return false;
+    if (!error || typeof error !== "object") {
+        return false;
+    }
     const err = error as Record<string, unknown>;
     return err.status === 403 || err.status === 429;
 }
@@ -28,7 +30,9 @@ export function isRateLimitError(error: unknown): error is RateLimitError {
  * Get delay from rate limit error headers
  */
 function getDelayFromHeaders(error: RateLimitError): number | null {
-    if (!error.headers) return null;
+    if (!error.headers) {
+        return null;
+    }
 
     // Check retry-after header (seconds)
     if (error.headers["retry-after"]) {

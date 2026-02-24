@@ -17,8 +17,12 @@ async function readInput(filePath?: string): Promise<string> {
     const reader = Bun.stdin.stream().getReader();
     while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
-        if (value) chunks.push(value);
+        if (done) {
+            break;
+        }
+        if (value) {
+            chunks.push(value);
+        }
     }
     return Buffer.concat(chunks).toString("utf-8");
 }

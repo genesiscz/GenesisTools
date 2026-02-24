@@ -158,7 +158,9 @@ class StressTest {
             console.error(
                 `  [${i + 1}/${CONFIG.sequentialDiagnostics}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`
             );
-            if (!result.success) console.error(`    Error: ${result.error}`);
+            if (!result.success) {
+                console.error(`    Error: ${result.error}`);
+            }
         }
     }
 
@@ -174,7 +176,9 @@ class StressTest {
             console.error(
                 `  [${i + 1}/${CONFIG.sequentialHover}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`
             );
-            if (!result.success) console.error(`    Error: ${result.error}`);
+            if (!result.success) {
+                console.error(`    Error: ${result.error}`);
+            }
         }
     }
 
@@ -259,7 +263,9 @@ class StressTest {
         const result = await this.callDiagnostics(absolutePaths, 30);
         this.results.push(result);
         console.error(`  ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`);
-        if (!result.success) console.error(`    Error: ${result.error}`);
+        if (!result.success) {
+            console.error(`    Error: ${result.error}`);
+        }
     }
 
     async testFileModification(): Promise<void> {

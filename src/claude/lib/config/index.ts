@@ -42,7 +42,9 @@ const storage = new Storage("claude");
 
 export async function loadConfig(): Promise<ClaudeConfig> {
     const saved = await storage.getConfig<Partial<ClaudeConfig>>();
-    if (!saved) return { ...DEFAULT_CONFIG };
+    if (!saved) {
+        return { ...DEFAULT_CONFIG };
+    }
     return {
         accounts: saved.accounts ?? {},
         defaultAccount: saved.defaultAccount,

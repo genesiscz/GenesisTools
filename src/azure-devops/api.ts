@@ -66,10 +66,14 @@ export class Api {
     // (caller encodes when needed, e.g., work item type names with spaces).
 
     private static filterParams(params?: Record<string, string | undefined>): Record<string, string> | undefined {
-        if (!params) return undefined;
+        if (!params) {
+            return undefined;
+        }
         const result: Record<string, string> = {};
         for (const [k, v] of Object.entries(params)) {
-            if (v !== undefined) result[k] = v;
+            if (v !== undefined) {
+                result[k] = v;
+            }
         }
         return Object.keys(result).length > 0 ? result : undefined;
     }
@@ -404,7 +408,9 @@ export class Api {
     async getWorkItem(id: number): Promise<WorkItemFull> {
         const results = await this.getWorkItems([id], { comments: true });
         const item = results.get(id);
-        if (!item) throw new Error(`Work item #${id} not found`);
+        if (!item) {
+            throw new Error(`Work item #${id} not found`);
+        }
         return item;
     }
 
@@ -450,7 +456,9 @@ export class Api {
         const result = new Map<number, WorkItemFull>();
         for (const id of ids) {
             const base = allBaseItems.get(id);
-            if (!base) continue;
+            if (!base) {
+                continue;
+            }
             const entry: WorkItemFull = {
                 ...base,
                 comments: commentsMap.get(id) ?? [],
@@ -763,7 +771,9 @@ export class Api {
                 `updates for #${id} (skip=${skip})`
             );
             updates.push(...data.value);
-            if (data.value.length < top) break;
+            if (data.value.length < top) {
+                break;
+            }
             skip += top;
         }
         return updates;
@@ -814,8 +824,12 @@ export class Api {
             );
             totalRevisions += data.values.length;
             for (const revision of data.values) {
-                if (options.workItemIds && !options.workItemIds.includes(revision.id)) continue;
-                if (!revisionsByItem.has(revision.id)) revisionsByItem.set(revision.id, []);
+                if (options.workItemIds && !options.workItemIds.includes(revision.id)) {
+                    continue;
+                }
+                if (!revisionsByItem.has(revision.id)) {
+                    revisionsByItem.set(revision.id, []);
+                }
                 revisionsByItem.get(revision.id)?.push(revision);
             }
             continuationToken = data.continuationToken;
@@ -860,7 +874,9 @@ export class Api {
      */
     async getTeamMembers(): Promise<IdentityRef[]> {
         const cached = await loadTeamMembersCache(this.config.projectId);
-        if (cached) return cached;
+        if (cached) {
+            return cached;
+        }
 
         const teamsUrl = Api.orgUrl(this.config, ["projects", this.config.projectId, "teams"]);
         const teams = await this.get<TeamsListResponse>(teamsUrl, "teams");

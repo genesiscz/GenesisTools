@@ -41,7 +41,9 @@ export async function saveCredential(credential: StoredCredential): Promise<void
  */
 export async function loadCredential(name: string): Promise<StoredCredential | null> {
     const filePath = join(CREDENTIALS_DIR, `${safeName(name)}.json`);
-    if (!existsSync(filePath)) return null;
+    if (!existsSync(filePath)) {
+        return null;
+    }
 
     try {
         const content = await Bun.file(filePath).text();
@@ -63,7 +65,9 @@ export function listCredentials(): string[] {
 /** Delete a credential by name */
 export function deleteCredential(name: string): boolean {
     const filePath = join(CREDENTIALS_DIR, `${safeName(name)}.json`);
-    if (!existsSync(filePath)) return false;
+    if (!existsSync(filePath)) {
+        return false;
+    }
     unlinkSync(filePath);
     logger.debug(`Credential deleted: ${name}`);
     return true;

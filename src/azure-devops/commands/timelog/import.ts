@@ -38,7 +38,7 @@ export function registerImportSubcommand(parent: Command): void {
                 process.exit(1);
             }
 
-            const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+            const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog?.functionsKey, user);
 
             // Validate time types
             const types = await api.getTimeTypes();
@@ -96,7 +96,7 @@ export function registerImportSubcommand(parent: Command): void {
                 validEntries.push({
                     workItemId: entry.workItemId,
                     minutes,
-                    timeType: exactType!.description,
+                    timeType: exactType?.description,
                     date: entry.date,
                     comment: entry.comment || "",
                 });

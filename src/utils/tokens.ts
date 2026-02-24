@@ -22,7 +22,9 @@ export function countTokens(text: string): number {
         return encode(text).length;
     } catch {
         const trimmed = text.trim();
-        if (!trimmed) return 0;
+        if (!trimmed) {
+            return 0;
+        }
         return Math.ceil(trimmed.split(/\s+/).length * 1.3);
     }
 }

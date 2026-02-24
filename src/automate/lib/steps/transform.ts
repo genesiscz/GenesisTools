@@ -18,21 +18,33 @@ async function jsonHandler(step: PresetStep, ctx: StepContext): Promise<StepResu
     try {
         switch (subAction) {
             case "parse": {
-                const input = ctx.interpolate(params.input!);
+                if (!params.input) {
+                    return makeResult("error", null, start, "json.parse requires an 'input' param");
+                }
+
+                const input = ctx.interpolate(params.input);
                 const parsed = JSON.parse(input);
                 return makeResult("success", parsed, start);
             }
 
             case "stringify": {
-                const input = ctx.evaluate(params.input!);
+                if (!params.input) {
+                    return makeResult("error", null, start, "json.stringify requires an 'input' param");
+                }
+
+                const input = ctx.evaluate(params.input);
                 const indent = params.indent ?? 2;
                 const result = JSON.stringify(input, null, indent);
                 return makeResult("success", result, start);
             }
 
             case "query": {
-                const input = ctx.evaluate(params.input!);
-                const query = ctx.interpolate(params.query!);
+                if (!params.input || !params.query) {
+                    return makeResult("error", null, start, "json.query requires 'input' and 'query' params");
+                }
+
+                const input = ctx.evaluate(params.input);
+                const query = ctx.interpolate(params.query);
                 const result = jsonpath.query(input, query);
                 return makeResult("success", result, start);
             }
@@ -55,8 +67,12 @@ async function textHandler(step: PresetStep, ctx: StepContext): Promise<StepResu
     try {
         switch (subAction) {
             case "regex": {
-                const input = String(ctx.evaluate(params.input!) ?? "");
-                const pattern = ctx.interpolate(params.pattern!);
+                if (!params.input || !params.pattern) {
+                    return makeResult("error", null, start, "text.regex requires 'input' and 'pattern' params");
+                }
+
+                const input = String(ctx.evaluate(params.input) ?? "");
+                const pattern = ctx.interpolate(params.pattern);
                 const flags = params.flags ?? "g";
                 const regex = new RegExp(pattern, flags);
 
@@ -75,18 +91,30 @@ async function textHandler(step: PresetStep, ctx: StepContext): Promise<StepResu
             }
 
             case "template": {
-                const template = ctx.interpolate(params.template!);
+                if (!params.template) {
+                    return makeResult("error", null, start, "text.template requires a 'template' param");
+                }
+
+                const template = ctx.interpolate(params.template);
                 return makeResult("success", template, start);
             }
 
             case "split": {
-                const input = String(ctx.evaluate(params.input!) ?? "");
+                if (!params.input) {
+                    return makeResult("error", null, start, "text.split requires an 'input' param");
+                }
+
+                const input = String(ctx.evaluate(params.input) ?? "");
                 const separator = ctx.interpolate(params.separator ?? "\n");
                 return makeResult("success", input.split(separator), start);
             }
 
             case "join": {
-                const input = ctx.evaluate(params.input!) as string[];
+                if (!params.input) {
+                    return makeResult("error", null, start, "text.join requires an 'input' param");
+                }
+
+                const input = ctx.evaluate(params.input) as string[];
                 const separator = ctx.interpolate(params.separator ?? "\n");
                 return makeResult("success", input.join(separator), start);
             }
@@ -107,14 +135,22 @@ async function arrayHandler(step: PresetStep, ctx: StepContext): Promise<StepRes
     const subAction = step.action.split(".")[1];
 
     try {
-        const input = ctx.evaluate(params.input!) as unknown[];
+        if (!params.input) {
+            return makeResult("error", null, start, `array.${subAction} requires an 'input' param`);
+        }
+
+        const input = ctx.evaluate(params.input) as unknown[];
         if (!Array.isArray(input)) {
             return makeResult("error", null, start, "Input is not an array");
         }
 
         switch (subAction) {
             case "filter": {
-                const expression = params.expression!;
+                if (!params.expression) {
+                    return makeResult("error", null, start, "array.filter requires an 'expression' param");
+                }
+
+                const expression = params.expression;
                 const fn = new Function("item", "index", "vars", "steps", "env", `return (${expression});`);
                 const result = input.filter((item, index) =>
                     Boolean(fn(item, index, ctx.variables, ctx.steps, ctx.env))
@@ -123,7 +159,11 @@ async function arrayHandler(step: PresetStep, ctx: StepContext): Promise<StepRes
             }
 
             case "map": {
-                const expression = params.expression!;
+                if (!params.expression) {
+                    return makeResult("error", null, start, "array.map requires an 'expression' param");
+                }
+
+                const expression = params.expression;
                 const fn = new Function("item", "index", "vars", "steps", "env", `return (${expression});`);
                 const result = input.map((item, index) => fn(item, index, ctx.variables, ctx.steps, ctx.env));
                 return makeResult("success", result, start);

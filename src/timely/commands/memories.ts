@@ -99,7 +99,9 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
     const byDay = new Map<string, TimelyEntry[]>();
     for (const entry of allEntries) {
         const day = entry.date || dates[0];
-        if (!byDay.has(day)) byDay.set(day, []);
+        if (!byDay.has(day)) {
+            byDay.set(day, []);
+        }
         byDay.get(day)?.push(entry);
     }
 
@@ -115,7 +117,9 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
         let dayTotal = 0;
         for (const entry of dayEntries) {
             const app = resolveAppName(entry);
-            if (!byApp.has(app)) byApp.set(app, { totalSeconds: 0, entries: [] });
+            if (!byApp.has(app)) {
+                byApp.set(app, { totalSeconds: 0, entries: [] });
+            }
             const group = byApp.get(app)!;
             group.totalSeconds += entry.duration.total_seconds;
             group.entries.push(entry);
@@ -172,7 +176,9 @@ function resolveAppName(entry: TimelyEntry): string {
     const apiEntries = (entry as unknown as Record<string, unknown>).entries as TimelyEntry[] | undefined;
     if (apiEntries && apiEntries.length > 0) {
         const appAttr = apiEntries[0].extra_attributes?.find((a) => a.name === "application");
-        if (appAttr?.value) return appAttr.value;
+        if (appAttr?.value) {
+            return appAttr.value;
+        }
     }
 
     // Try extracting app name from icon_url (e.g., "timeline_app_logos/brave-...")
@@ -190,7 +196,9 @@ function resolveAppName(entry: TimelyEntry): string {
 function fmtDurHm(totalSeconds: number): string {
     const h = Math.floor(totalSeconds / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60);
-    if (h > 0) return `${h}h ${m}m`;
+    if (h > 0) {
+        return `${h}h ${m}m`;
+    }
     return `${m}m`;
 }
 

@@ -23,7 +23,9 @@ export function createVerboseLogger(label?: string): VerboseLogger {
             enabled = v;
         },
         log(...args: unknown[]) {
-            if (enabled) console.error(prefix, ...args);
+            if (enabled) {
+                console.error(prefix, ...args);
+            }
         },
     };
 }

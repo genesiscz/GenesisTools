@@ -16,7 +16,9 @@ export function setupInquirerMock(): void {
             const responses = (globalThis as any).__inquirerMockResponses || {};
             const value = responses.selectedProviders;
             // Throw if the response is an Error (e.g., ExitPromptError for testing cancellation)
-            if (value instanceof Error) throw value;
+            if (value instanceof Error) {
+                throw value;
+            }
             // checkbox returns an array directly (not wrapped in an object)
             return value ?? [];
         },
@@ -25,7 +27,9 @@ export function setupInquirerMock(): void {
             // Check for error responses first
             const errorKeys = ["selectedProvider", "choice", "inputType"];
             for (const key of errorKeys) {
-                if (responses[key] instanceof Error) throw responses[key];
+                if (responses[key] instanceof Error) {
+                    throw responses[key];
+                }
             }
             // select returns a single value directly
             // Support both 'selectedProvider' and 'choice' keys for different test scenarios
@@ -44,17 +48,33 @@ export function setupInquirerMock(): void {
                 "newServerName",
             ];
             for (const key of inputKeys) {
-                if (responses[key] instanceof Error) throw responses[key];
+                if (responses[key] instanceof Error) {
+                    throw responses[key];
+                }
             }
             // input returns a string directly
             // Support multiple input field keys based on what the test expects
-            if (responses.inputServerName !== undefined) return responses.inputServerName;
-            if (responses.inputNewName !== undefined) return responses.inputNewName;
-            if (responses.inputCommand !== undefined) return responses.inputCommand;
-            if (responses.inputEnv !== undefined) return responses.inputEnv;
-            if (responses.inputHeaders !== undefined) return responses.inputHeaders;
-            if (responses.inputVal !== undefined) return responses.inputVal;
-            if (responses.newServerName !== undefined) return responses.newServerName;
+            if (responses.inputServerName !== undefined) {
+                return responses.inputServerName;
+            }
+            if (responses.inputNewName !== undefined) {
+                return responses.inputNewName;
+            }
+            if (responses.inputCommand !== undefined) {
+                return responses.inputCommand;
+            }
+            if (responses.inputEnv !== undefined) {
+                return responses.inputEnv;
+            }
+            if (responses.inputHeaders !== undefined) {
+                return responses.inputHeaders;
+            }
+            if (responses.inputVal !== undefined) {
+                return responses.inputVal;
+            }
+            if (responses.newServerName !== undefined) {
+                return responses.newServerName;
+            }
             // Fall back to default if provided in config
             return config?.default ?? "";
         },
@@ -62,7 +82,9 @@ export function setupInquirerMock(): void {
             const responses = (globalThis as any).__inquirerMockResponses || {};
             const value = responses.confirmed;
             // Throw if the response is an Error
-            if (value instanceof Error) throw value;
+            if (value instanceof Error) {
+                throw value;
+            }
             // confirm returns a boolean directly
             return value ?? false;
         },
@@ -71,20 +93,30 @@ export function setupInquirerMock(): void {
             // Check for error responses first
             const searchKeys = ["selectedOldName", "selectedServerName", "inputServerName"];
             for (const key of searchKeys) {
-                if (responses[key] instanceof Error) throw responses[key];
+                if (responses[key] instanceof Error) {
+                    throw responses[key];
+                }
             }
             // search returns a single value directly
             // Support both 'selectedOldName' and 'selectedServerName' keys
-            if (responses.selectedOldName !== undefined) return responses.selectedOldName;
-            if (responses.selectedServerName !== undefined) return responses.selectedServerName;
-            if (responses.inputServerName !== undefined) return responses.inputServerName;
+            if (responses.selectedOldName !== undefined) {
+                return responses.selectedOldName;
+            }
+            if (responses.selectedServerName !== undefined) {
+                return responses.selectedServerName;
+            }
+            if (responses.inputServerName !== undefined) {
+                return responses.inputServerName;
+            }
             return "";
         },
         password: async (_config: unknown) => {
             const responses = (globalThis as any).__inquirerMockResponses || {};
             const value = responses.password;
             // Throw if the response is an Error
-            if (value instanceof Error) throw value;
+            if (value instanceof Error) {
+                throw value;
+            }
             // password returns a string directly
             return value ?? "";
         },

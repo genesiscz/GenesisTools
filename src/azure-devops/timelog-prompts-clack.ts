@@ -14,7 +14,7 @@ export async function runInteractiveAddClack(
 ): Promise<void> {
     p.intro(pc.bgCyan(pc.black(" TimeLog - Add Entry ")));
 
-    const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+    const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog?.functionsKey, user);
 
     // Fetch time types
     const spinner = p.spinner();
@@ -32,8 +32,12 @@ export async function runInteractiveAddClack(
             message: "Work Item ID:",
             placeholder: "268935",
             validate: (value) => {
-                if (!value) return "Work item ID is required";
-                if (Number.isNaN(parseInt(value, 10))) return "Must be a number";
+                if (!value) {
+                    return "Work item ID is required";
+                }
+                if (Number.isNaN(parseInt(value, 10))) {
+                    return "Must be a number";
+                }
                 return undefined;
             },
         });
@@ -66,9 +70,13 @@ export async function runInteractiveAddClack(
         message: "Hours:",
         placeholder: "2",
         validate: (value) => {
-            if (!value) return "Hours is required (use 0 for minutes only)";
+            if (!value) {
+                return "Hours is required (use 0 for minutes only)";
+            }
             const num = parseFloat(value);
-            if (Number.isNaN(num) || num < 0) return "Must be a non-negative number";
+            if (Number.isNaN(num) || num < 0) {
+                return "Must be a non-negative number";
+            }
             return undefined;
         },
     });
@@ -131,7 +139,9 @@ export async function runInteractiveAddClack(
     p.log.info(`Time: ${formatMinutes(totalMinutes)}`);
     p.log.info(`Type: ${selectedType}`);
     p.log.info(`Date: ${dateInput}`);
-    if (comment) p.log.info(`Comment: ${comment}`);
+    if (comment) {
+        p.log.info(`Comment: ${comment}`);
+    }
     p.log.info(pc.dim("─".repeat(40)));
 
     const confirm = await p.confirm({

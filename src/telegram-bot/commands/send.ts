@@ -18,7 +18,9 @@ export function registerSendCommand(program: Command): void {
             }
 
             let text = message;
-            if (opts.stdin) text = await new Response(Bun.stdin.stream()).text();
+            if (opts.stdin) {
+                text = await new Response(Bun.stdin.stream()).text();
+            }
 
             const api = new Api(config.botToken);
             try {

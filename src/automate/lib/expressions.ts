@@ -81,7 +81,9 @@ function resolvePropertyPath(path: string, ctx: ExecutionContext): unknown {
     let current: unknown = ctx;
 
     for (const part of parts) {
-        if (current === null || current === undefined) return undefined;
+        if (current === null || current === undefined) {
+            return undefined;
+        }
         if (typeof current === "object") {
             current = (current as Record<string, unknown>)[part];
         } else {

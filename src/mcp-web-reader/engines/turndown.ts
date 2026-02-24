@@ -53,7 +53,9 @@ export class TurndownEngine extends MarkdownEngine {
                     return content;
                 }
                 const cleanContent = content.replace(/\s+/g, " ").trim();
-                if (!cleanContent) return "";
+                if (!cleanContent) {
+                    return "";
+                }
                 // Use the stored baseUrl from options
                 const url = resolveUrl((this as TurndownEngineWithBaseUrl).currentBaseUrl || "", href);
                 return `[${cleanContent}](${url})`;
@@ -66,7 +68,9 @@ export class TurndownEngine extends MarkdownEngine {
             replacement: (_content, node) => {
                 const img = (node as Element).querySelector("img");
                 const caption = (node as Element).querySelector("figcaption");
-                if (!img) return _content;
+                if (!img) {
+                    return _content;
+                }
                 const src = img.getAttribute("src") || "";
                 const alt = img.getAttribute("alt") || "";
                 let result = `![${alt}](${src})`;
@@ -82,7 +86,9 @@ export class TurndownEngine extends MarkdownEngine {
             filter: (node) => node.nodeName === "CODE" && !(node as Element).closest("pre"),
             replacement: (_content, node) => {
                 const text = ((node as Element).textContent || "").replace(/\s+/g, " ").trim();
-                if (!text) return "";
+                if (!text) {
+                    return "";
+                }
                 const safe = text.replace(/`/g, "\u0060");
                 return `\`${safe}\``;
             },
@@ -90,12 +96,16 @@ export class TurndownEngine extends MarkdownEngine {
     }
 
     private detectLanguage(el: Element | null): string {
-        if (!el) return "";
+        if (!el) {
+            return "";
+        }
         const classes = `${el.className} ${el.parentElement?.className || ""}`;
         const patterns = [/language-(\w+)/i, /lang-(\w+)/i, /highlight-(\w+)/i, /brush:\s*(\w+)/i];
         for (const p of patterns) {
             const m = classes.match(p);
-            if (m) return this.normalizeLanguage(m[1]);
+            if (m) {
+                return this.normalizeLanguage(m[1]);
+            }
         }
         return "";
     }
@@ -113,7 +123,9 @@ export class TurndownEngine extends MarkdownEngine {
     }
 
     private extractCodeText(el: Element | null): string {
-        if (!el) return "";
+        if (!el) {
+            return "";
+        }
         // Convert <br> to newlines, strip other HTML
         let text = el.innerHTML.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "");
         // Decode HTML entities
@@ -155,10 +167,16 @@ export class TurndownEngine extends MarkdownEngine {
 
     private buildHeader(meta: Record<string, string | undefined>, url: string): string {
         const lines = ["---"];
-        if (meta.title) lines.push(`title: ${meta.title}`);
+        if (meta.title) {
+            lines.push(`title: ${meta.title}`);
+        }
         lines.push(`url: ${url}`);
-        if (meta.author) lines.push(`author: ${meta.author}`);
-        if (meta.publishedTime) lines.push(`date: ${meta.publishedTime}`);
+        if (meta.author) {
+            lines.push(`author: ${meta.author}`);
+        }
+        if (meta.publishedTime) {
+            lines.push(`date: ${meta.publishedTime}`);
+        }
         lines.push("---\n\n");
         return lines.join("\n");
     }

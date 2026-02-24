@@ -27,14 +27,18 @@ export class DarwinKitClient {
 
     /** Ensure the subprocess is running. Idempotent — safe to call multiple times. */
     async start(): Promise<void> {
-        if (this.startPromise) return this.startPromise;
+        if (this.startPromise) {
+            return this.startPromise;
+        }
         this.startPromise = this._doStart();
         return this.startPromise;
     }
 
     private async _ensureInstalled(): Promise<void> {
         const which = Bun.spawnSync(["which", this.config.binaryPath]);
-        if (which.exitCode === 0) return;
+        if (which.exitCode === 0) {
+            return;
+        }
 
         logger.info("DarwinKitClient: darwinkit not found, installing...");
         console.log("  Installing darwinkit...");
@@ -125,7 +129,9 @@ export class DarwinKitClient {
 
     /** Reads stdout line-by-line using the Web Streams reader. */
     private async _readLoop(): Promise<void> {
-        if (!this.proc) return;
+        if (!this.proc) {
+            return;
+        }
 
         const decoder = new TextDecoder();
         const reader = this.proc.stdout.getReader();
@@ -133,7 +139,9 @@ export class DarwinKitClient {
         try {
             while (true) {
                 const { done, value } = await reader.read();
-                if (done) break;
+                if (done) {
+                    break;
+                }
 
                 this.lineBuffer += decoder.decode(value, { stream: true });
                 const lines = this.lineBuffer.split("\n");
@@ -151,7 +159,9 @@ export class DarwinKitClient {
     }
 
     private _handleLine(line: string): void {
-        if (!line.trim()) return;
+        if (!line.trim()) {
+            return;
+        }
 
         let msg: JsonRpcResponse;
         try {
@@ -161,7 +171,9 @@ export class DarwinKitClient {
             return;
         }
 
-        if (!msg.id) return;
+        if (!msg.id) {
+            return;
+        }
 
         const entry = this.pending.get(msg.id);
         if (!entry) {

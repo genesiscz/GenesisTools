@@ -22,7 +22,9 @@ export const prompts = {
         return search({
             message: "Which branch do you want to rebase?",
             source: async (term) => {
-                if (!term) return allChoices;
+                if (!term) {
+                    return allChoices;
+                }
                 const lower = term.toLowerCase();
                 return allChoices.filter((c) => c.value.toLowerCase().includes(lower));
             },
@@ -46,7 +48,9 @@ export const prompts = {
         return search({
             message: "Onto which branch?",
             source: async (term) => {
-                if (!term) return allChoices;
+                if (!term) {
+                    return allChoices;
+                }
                 const lower = term.toLowerCase();
                 return allChoices.filter((c) => c.value.toLowerCase().includes(lower));
             },

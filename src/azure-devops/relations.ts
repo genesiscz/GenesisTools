@@ -47,7 +47,7 @@ export function parseAttachments(relations: Relation[]): AttachmentInfo[] {
         .filter((r) => r.rel === "AttachedFile" && r.attributes?.name)
         .map((r) => ({
             id: extractAttachmentId(r.url),
-            filename: r.attributes?.name!,
+            filename: r.attributes?.name ?? "",
             size: r.attributes?.resourceSize ?? 0,
             createdDate: r.attributes?.resourceCreatedDate ?? "",
         }));
@@ -60,15 +60,21 @@ export function filterAttachments(relations: Relation[], filter: AttachmentFilte
         .filter((r) => {
             const attrs = r.attributes!;
 
-            if (filter.from && (!attrs.resourceCreatedDate || new Date(attrs.resourceCreatedDate) < filter.from))
+            if (filter.from && (!attrs.resourceCreatedDate || new Date(attrs.resourceCreatedDate) < filter.from)) {
                 return false;
+            }
 
-            if (filter.to && (!attrs.resourceCreatedDate || new Date(attrs.resourceCreatedDate) > filter.to))
+            if (filter.to && (!attrs.resourceCreatedDate || new Date(attrs.resourceCreatedDate) > filter.to)) {
                 return false;
+            }
 
-            if (filter.prefix && !attrs.name?.startsWith(filter.prefix)) return false;
+            if (filter.prefix && !attrs.name?.startsWith(filter.prefix)) {
+                return false;
+            }
 
-            if (filter.suffix && !attrs.name?.endsWith(filter.suffix)) return false;
+            if (filter.suffix && !attrs.name?.endsWith(filter.suffix)) {
+                return false;
+            }
             return true;
         });
 }

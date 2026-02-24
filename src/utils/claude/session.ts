@@ -192,7 +192,9 @@ function hasCwd(msg: ConversationMessage): msg is ConversationMessage & { cwd: s
 
 /** Extract readable text from a single user message content field. */
 function extractUserText(content: string | ContentBlock[]): string {
-    if (typeof content === "string") return content;
+    if (typeof content === "string") {
+        return content;
+    }
     const parts: string[] = [];
     for (const block of content) {
         if (block.type === "text") {
@@ -203,10 +205,13 @@ function extractUserText(content: string | ContentBlock[]): string {
                 parts.push(tr.content);
             } else if (Array.isArray(tr.content)) {
                 for (const inner of tr.content) {
-                    if (inner.type === "text") parts.push((inner as TextBlock).text);
-                    else if (inner.type === "image") parts.push(`[Image: ${(inner as ImageBlock).source.media_type}]`);
-                    else if (inner.type === "tool_reference")
+                    if (inner.type === "text") {
+                        parts.push((inner as TextBlock).text);
+                    } else if (inner.type === "image") {
+                        parts.push(`[Image: ${(inner as ImageBlock).source.media_type}]`);
+                    } else if (inner.type === "tool_reference") {
                         parts.push(`[Tool Reference: ${(inner as ToolReferenceBlock).tool_name}]`);
+                    }
                 }
             }
         } else if (block.type === "image") {
@@ -220,15 +225,21 @@ function extractUserText(content: string | ContentBlock[]): string {
 
 /** Extract tool_use blocks from an assistant message. */
 function getToolUseBlocks(msg: AssistantMessage): ToolUseBlock[] {
-    if (!Array.isArray(msg.message?.content)) return [];
+    if (!Array.isArray(msg.message?.content)) {
+        return [];
+    }
     return msg.message.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
 }
 
 /** Extract tool_use blocks from a subagent assistant message. */
 function getSubagentToolUseBlocks(msg: SubagentMessage): ToolUseBlock[] {
-    if (msg.role !== "assistant") return [];
+    if (msg.role !== "assistant") {
+        return [];
+    }
     const content = (msg.message as AssistantMessageContent).content;
-    if (!Array.isArray(content)) return [];
+    if (!Array.isArray(content)) {
+        return [];
+    }
     return content.filter((b): b is ToolUseBlock => b.type === "tool_use");
 }
 
@@ -254,7 +265,9 @@ function isSubagentFile(filePath: string): boolean {
 async function readHeadTailLines(filePath: string, headCount: number, tailCount: number): Promise<string[]> {
     const text = await Bun.file(filePath).text();
     const allLines = text.split("\n").filter((l) => l.trim());
-    if (allLines.length <= headCount + tailCount) return allLines;
+    if (allLines.length <= headCount + tailCount) {
+        return allLines;
+    }
     const head = allLines.slice(0, headCount);
     const tail = allLines.slice(-tailCount);
     return [...head, ...tail];
@@ -373,7 +386,9 @@ export class ClaudeSession {
             }
         }
 
-        if (patterns.length === 0) return [];
+        if (patterns.length === 0) {
+            return [];
+        }
 
         // Discover files
         let files: string[] = [];
@@ -448,8 +463,12 @@ export class ClaudeSession {
                 }
 
                 // Apply date filters
-                if (since && startDate && startDate < since) continue;
-                if (until && startDate && startDate > until) continue;
+                if (since && startDate && startDate < since) {
+                    continue;
+                }
+                if (until && startDate && startDate > until) {
+                    continue;
+                }
 
                 results.push({
                     filePath,
@@ -485,7 +504,9 @@ export class ClaudeSession {
     /** The session ID extracted from the first message that carries one, or null. */
     get sessionId(): string | null {
         for (const msg of this._messages) {
-            if (hasSessionId(msg)) return msg.sessionId;
+            if (hasSessionId(msg)) {
+                return msg.sessionId;
+            }
         }
         return null;
     }
@@ -515,7 +536,9 @@ export class ClaudeSession {
     /** The git branch recorded in the first message that has one, or null. */
     get gitBranch(): string | null {
         for (const msg of this._messages) {
-            if (hasGitBranch(msg)) return msg.gitBranch;
+            if (hasGitBranch(msg)) {
+                return msg.gitBranch;
+            }
         }
         return null;
     }
@@ -523,7 +546,9 @@ export class ClaudeSession {
     /** The working directory (cwd) recorded in the session, or null. */
     get cwd(): string | null {
         for (const msg of this._messages) {
-            if (hasCwd(msg)) return msg.cwd;
+            if (hasCwd(msg)) {
+                return msg.cwd;
+            }
         }
         return null;
     }
@@ -532,7 +557,9 @@ export class ClaudeSession {
     get project(): string | null {
         const pathAfterProjects = this._filePath.replace(PROJECTS_DIR + sep, "");
         const encodedDir = pathAfterProjects.split(sep)[0];
-        if (!encodedDir) return null;
+        if (!encodedDir) {
+            return null;
+        }
         const parts = encodedDir.split("-").filter(Boolean);
         return parts[parts.length - 1] || null;
     }
@@ -540,7 +567,9 @@ export class ClaudeSession {
     /** Timestamp of the first message in the session. */
     get startDate(): Date | null {
         for (const msg of this._messages) {
-            if (hasTimestamp(msg)) return new Date(msg.timestamp);
+            if (hasTimestamp(msg)) {
+                return new Date(msg.timestamp);
+            }
         }
         return null;
     }
@@ -549,7 +578,9 @@ export class ClaudeSession {
     get endDate(): Date | null {
         for (let i = this._messages.length - 1; i >= 0; i--) {
             const msg = this._messages[i];
-            if (hasTimestamp(msg)) return new Date(msg.timestamp);
+            if (hasTimestamp(msg)) {
+                return new Date(msg.timestamp);
+            }
         }
         return null;
     }
@@ -558,7 +589,9 @@ export class ClaudeSession {
     get duration(): number {
         const start = this.startDate;
         const end = this.endDate;
-        if (!start || !end) return 0;
+        if (!start || !end) {
+            return 0;
+        }
         return end.getTime() - start.getTime();
     }
 
@@ -634,12 +667,16 @@ export class ClaudeSession {
 
         for (const msg of this._messages) {
             // Skip progress messages — they are noisy real-time updates
-            if (msg.type === "progress") continue;
+            if (msg.type === "progress") {
+                continue;
+            }
 
             if (msg.type === "user") {
                 const userMsg = msg as UserMessage;
                 const text = extractUserText(userMsg.message.content);
-                if (text) parts.push(text);
+                if (text) {
+                    parts.push(text);
+                }
             } else if (msg.type === "assistant") {
                 const assistantMsg = msg as AssistantMessage;
                 for (const block of assistantMsg.message.content) {
@@ -670,7 +707,9 @@ export class ClaudeSession {
                 const sub = msg as SubagentMessage;
                 if (sub.role === "user") {
                     const text = extractUserText((sub.message as UserMessageContent).content);
-                    if (text) parts.push(text);
+                    if (text) {
+                        parts.push(text);
+                    }
                 } else if (sub.role === "assistant") {
                     const content = (sub.message as AssistantMessageContent).content;
                     for (const block of content) {
@@ -747,7 +786,9 @@ export class ClaudeSession {
      * Checks common input fields: `file_path`, `path`, `filePath`, `notebook_path`.
      */
     extractFilePaths(): string[] {
-        if (this._filePathsCache) return this._filePathsCache;
+        if (this._filePathsCache) {
+            return this._filePathsCache;
+        }
 
         const paths = new Set<string>();
 
@@ -760,7 +801,9 @@ export class ClaudeSession {
             }
             for (const tool of toolBlocks) {
                 const fp = extractFilePathFromInput(tool.input);
-                if (fp) paths.add(fp);
+                if (fp) {
+                    paths.add(fp);
+                }
             }
         }
 
@@ -835,7 +878,9 @@ export class ClaudeSession {
             } else if (msg.type === "subagent" && (msg as SubagentMessage).role === "assistant") {
                 contentBlocks = ((msg as SubagentMessage).message as AssistantMessageContent).content;
             }
-            if (!contentBlocks) continue;
+            if (!contentBlocks) {
+                continue;
+            }
             for (const block of contentBlocks) {
                 if (block.type === "thinking") {
                     blocks.push((block as ThinkingBlock).thinking);
@@ -876,7 +921,9 @@ export class ClaudeSession {
             } else if (msg.type === "subagent") {
                 tools = getSubagentToolUseBlocks(msg as SubagentMessage);
             }
-            if (tools.length === 0) continue;
+            if (tools.length === 0) {
+                continue;
+            }
 
             const hasMatch = tools.some((t) => t.name.toLowerCase() === lowerName);
             if (hasMatch) {
@@ -916,13 +963,21 @@ export class ClaudeSession {
      * Messages without timestamps are excluded.
      */
     filterByDateRange(since?: Date, until?: Date): ClaudeSession {
-        if (!since && !until) return this;
+        if (!since && !until) {
+            return this;
+        }
 
         const filtered = this._messages.filter((msg) => {
-            if (!hasTimestamp(msg)) return false;
+            if (!hasTimestamp(msg)) {
+                return false;
+            }
             const ts = new Date(msg.timestamp);
-            if (since && ts < since) return false;
-            if (until && ts > until) return false;
+            if (since && ts < since) {
+                return false;
+            }
+            if (until && ts > until) {
+                return false;
+            }
             return true;
         });
 
@@ -986,7 +1041,9 @@ export class ClaudeSession {
 
     /** Aggregated statistics for this session (computed once, then cached). */
     get stats(): SessionStats {
-        if (this._stats) return this._stats;
+        if (this._stats) {
+            return this._stats;
+        }
 
         let userMessageCount = 0;
         let assistantMessageCount = 0;
@@ -1006,8 +1063,12 @@ export class ClaudeSession {
             // Track timestamps
             if (hasTimestamp(msg)) {
                 const ts = new Date(msg.timestamp);
-                if (!firstTimestamp || ts < firstTimestamp) firstTimestamp = ts;
-                if (!lastTimestamp || ts > lastTimestamp) lastTimestamp = ts;
+                if (!firstTimestamp || ts < firstTimestamp) {
+                    firstTimestamp = ts;
+                }
+                if (!lastTimestamp || ts > lastTimestamp) {
+                    lastTimestamp = ts;
+                }
             }
 
             if (msg.type === "user") {
@@ -1034,7 +1095,9 @@ export class ClaudeSession {
                     toolCallCount++;
                     toolUsage[tool.name] = (toolUsage[tool.name] || 0) + 1;
                     const fp = extractFilePathFromInput(tool.input);
-                    if (fp) filesSet.add(fp);
+                    if (fp) {
+                        filesSet.add(fp);
+                    }
                 }
             } else if (msg.type === "system") {
                 systemMessageCount++;
@@ -1045,7 +1108,9 @@ export class ClaudeSession {
                 // Track subagent assistant models and token usage
                 if (sub.role === "assistant") {
                     const assistantContent = sub.message as AssistantMessageContent;
-                    if (assistantContent.model) modelsSet.add(assistantContent.model);
+                    if (assistantContent.model) {
+                        modelsSet.add(assistantContent.model);
+                    }
                     if (assistantContent.usage) {
                         tokenUsage.input += assistantContent.usage.input_tokens || 0;
                         tokenUsage.output += assistantContent.usage.output_tokens || 0;
@@ -1056,7 +1121,9 @@ export class ClaudeSession {
                         toolCallCount++;
                         toolUsage[tool.name] = (toolUsage[tool.name] || 0) + 1;
                         const fp = extractFilePathFromInput(tool.input);
-                        if (fp) filesSet.add(fp);
+                        if (fp) {
+                            filesSet.add(fp);
+                        }
                     }
                 }
             } else if (msg.type === "progress") {
@@ -1122,7 +1189,9 @@ export class ClaudeSession {
         // Format a single message into readable lines
         const formatMessage = (msg: ConversationMessage): string[] => {
             // Skip progress messages — they are noisy real-time updates
-            if (msg.type === "progress") return [];
+            if (msg.type === "progress") {
+                return [];
+            }
 
             const lines: string[] = [];
             const timestamp = includeTimestamps && hasTimestamp(msg) ? `[${msg.timestamp}] ` : "";
@@ -1141,10 +1210,14 @@ export class ClaudeSession {
                 for (const block of assistantMsg.message.content) {
                     if (block.type === "text") {
                         const text = (block as TextBlock).text.trim();
-                        if (text) lines.push(`${timestamp}[Assistant]: ${text}`);
+                        if (text) {
+                            lines.push(`${timestamp}[Assistant]: ${text}`);
+                        }
                     } else if (block.type === "thinking" && includeThinking) {
                         const text = (block as ThinkingBlock).thinking.trim();
-                        if (text) lines.push(`${timestamp}[Thinking]: ${text}`);
+                        if (text) {
+                            lines.push(`${timestamp}[Thinking]: ${text}`);
+                        }
                     } else if (block.type === "tool_use") {
                         const tool = block as ToolUseBlock;
                         const fp = extractFilePathFromInput(tool.input);
@@ -1171,10 +1244,14 @@ export class ClaudeSession {
                     for (const block of content) {
                         if (block.type === "text") {
                             const text = (block as TextBlock).text.trim();
-                            if (text) lines.push(`${timestamp}[Subagent]: ${text}`);
+                            if (text) {
+                                lines.push(`${timestamp}[Subagent]: ${text}`);
+                            }
                         } else if (block.type === "thinking" && includeThinking) {
                             const text = (block as ThinkingBlock).thinking.trim();
-                            if (text) lines.push(`${timestamp}[Subagent Thinking]: ${text}`);
+                            if (text) {
+                                lines.push(`${timestamp}[Subagent Thinking]: ${text}`);
+                            }
                         } else if (block.type === "tool_use") {
                             const tool = block as ToolUseBlock;
                             const fp = extractFilePathFromInput(tool.input);
@@ -1241,14 +1318,22 @@ export class ClaudeSession {
 
         // Track which messages are bookends to avoid duplicates
         const bookendSet = new Set<ConversationMessage>();
-        if (firstMsg) bookendSet.add(firstMsg);
-        if (lastMsg) bookendSet.add(lastMsg);
+        if (firstMsg) {
+            bookendSet.add(firstMsg);
+        }
+        if (lastMsg) {
+            bookendSet.add(lastMsg);
+        }
 
         for (const msg of orderedMessages) {
-            if (bookendSet.has(msg)) continue;
+            if (bookendSet.has(msg)) {
+                continue;
+            }
 
             const lines = formatMessage(msg);
-            if (lines.length === 0) continue;
+            if (lines.length === 0) {
+                continue;
+            }
 
             const text = lines.join("\n");
             const tokens = estimateTokens(text);
@@ -1306,11 +1391,13 @@ export class ClaudeSession {
                     parts.push(`[Tool Result]: ${tr.content}`);
                 } else if (Array.isArray(tr.content)) {
                     for (const inner of tr.content) {
-                        if (inner.type === "text") parts.push((inner as TextBlock).text);
-                        else if (inner.type === "image")
+                        if (inner.type === "text") {
+                            parts.push((inner as TextBlock).text);
+                        } else if (inner.type === "image") {
                             parts.push(`[Image: ${(inner as ImageBlock).source.media_type}]`);
-                        else if (inner.type === "tool_reference")
+                        } else if (inner.type === "tool_reference") {
                             parts.push(`[Tool Reference: ${(inner as ToolReferenceBlock).tool_name}]`);
+                        }
                     }
                 }
             }

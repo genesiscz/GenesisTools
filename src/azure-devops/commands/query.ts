@@ -30,7 +30,9 @@ import type { Command } from "commander";
 // Silent mode for JSON output - suppresses progress messages
 let silentMode = false;
 const log = (msg: string): void => {
-    if (!silentMode) consoleLog.info(msg);
+    if (!silentMode) {
+        consoleLog.info(msg);
+    }
 };
 
 // ============= Output Formatters =============
@@ -227,10 +229,11 @@ export async function handleQuery(
 ): Promise<void> {
     silentMode = format === "json"; // Suppress progress messages for JSON output
     logger.debug(`[query] Starting with input: ${input}, force=${forceRefresh}`);
-    if (filters)
+    if (filters) {
         logger.debug(
             `[query] Filters: states=${filters.states?.join(",")}, severities=${filters.severities?.join(",")}`
         );
+    }
 
     const config = requireConfig();
     logger.debug(`[query] Config loaded: org=${config.org}, project=${config.project}`);
@@ -291,8 +294,12 @@ export async function handleQuery(
     if (filters?.changesFrom || filters?.changesTo) {
         changes = changes.filter((change) => {
             const changeDate = new Date(change.newData.changed);
-            if (filters.changesFrom && changeDate < filters.changesFrom) return false;
-            if (filters.changesTo && changeDate > filters.changesTo) return false;
+            if (filters.changesFrom && changeDate < filters.changesFrom) {
+                return false;
+            }
+            if (filters.changesTo && changeDate > filters.changesTo) {
+                return false;
+            }
             return true;
         });
     }
@@ -394,11 +401,15 @@ export function registerQueryCommand(program: Command): void {
             }
             if (options.changesFrom) {
                 const d = new Date(options.changesFrom);
-                if (!Number.isNaN(d.getTime())) filters.changesFrom = d;
+                if (!Number.isNaN(d.getTime())) {
+                    filters.changesFrom = d;
+                }
             }
             if (options.changesTo) {
                 const d = new Date(options.changesTo);
-                if (!Number.isNaN(d.getTime())) filters.changesTo = d;
+                if (!Number.isNaN(d.getTime())) {
+                    filters.changesTo = d;
+                }
             }
 
             await handleQuery(

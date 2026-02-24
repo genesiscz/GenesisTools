@@ -78,7 +78,9 @@ export async function toggleServer(
     // For each provider, check if it supports projects and prompt for project selection
     for (const providerName of selectedProviderNames) {
         const provider = availableProviders.find((p) => p.getName() === providerName);
-        if (!provider) continue;
+        if (!provider) {
+            continue;
+        }
 
         // Check if provider supports projects
         const projects = await provider.getProjects();
@@ -188,19 +190,19 @@ export async function toggleServer(
                             perProjectState[projectPath] = enabled;
                         }
                     }
-                    config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = perProjectState;
+                    config.mcpServers[serverName]._meta?.enabled[providerName as MCPProviderName] = perProjectState;
                 } else if (isGlobalEnablement || projects.length === 0) {
                     // Global enablement (boolean true/false) - applies to all projects
-                    config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = enabled;
+                    config.mcpServers[serverName]._meta?.enabled[providerName as MCPProviderName] = enabled;
                 } else {
                     // Provider doesn't support projects - use boolean
                     if (projectChoices && projectChoices.length > 0) {
                         // If project choices exist but provider doesn't support projects, use boolean
                         // (This shouldn't happen, but handle it gracefully)
-                        config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = enabled;
+                        config.mcpServers[serverName]._meta?.enabled[providerName as MCPProviderName] = enabled;
                     } else {
                         // No projects - global enablement/disablement (boolean)
-                        config.mcpServers[serverName]._meta!.enabled[providerName as MCPProviderName] = enabled;
+                        config.mcpServers[serverName]._meta?.enabled[providerName as MCPProviderName] = enabled;
                     }
                 }
             } catch (error) {
@@ -224,7 +226,9 @@ export async function toggleServer(
             const restoreBackup = () => {
                 for (const serverName of serversToToggle) {
                     const meta = config.mcpServers[serverName]._meta;
-                    if (!meta) continue;
+                    if (!meta) {
+                        continue;
+                    }
                     const backup = metaBackup.get(serverName);
                     if (backup === undefined) {
                         delete meta.enabled[providerName as MCPProviderName];

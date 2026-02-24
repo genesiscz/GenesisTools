@@ -90,10 +90,16 @@ export class ReaderLMEngine extends MarkdownEngine {
 
     private buildHeader(meta: { title?: string; author?: string; publishedTime?: string }, url: string): string {
         const lines = ["---"];
-        if (meta.title) lines.push(`title: ${meta.title}`);
+        if (meta.title) {
+            lines.push(`title: ${meta.title}`);
+        }
         lines.push(`url: ${url}`);
-        if (meta.author) lines.push(`author: ${meta.author}`);
-        if (meta.publishedTime) lines.push(`date: ${meta.publishedTime}`);
+        if (meta.author) {
+            lines.push(`author: ${meta.author}`);
+        }
+        if (meta.publishedTime) {
+            lines.push(`date: ${meta.publishedTime}`);
+        }
         lines.push("---\n\n");
         return lines.join("\n");
     }

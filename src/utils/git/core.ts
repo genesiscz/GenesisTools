@@ -199,14 +199,22 @@ export function createGit(options?: GitOptions) {
          * Diagnose why a rebase failed by checking repository state
          */
         async diagnoseRebaseFailure(): Promise<"conflict" | "lock" | "dirty" | "unknown"> {
-            if (await this.isGitLocked()) return "lock";
+            if (await this.isGitLocked()) {
+                return "lock";
+            }
 
             const rebaseInProgress = await this.isRebaseInProgress();
             const hasChanges = await this.hasUncommittedChanges();
 
-            if (rebaseInProgress && hasChanges) return "conflict";
-            if (rebaseInProgress) return "conflict";
-            if (hasChanges) return "dirty";
+            if (rebaseInProgress && hasChanges) {
+                return "conflict";
+            }
+            if (rebaseInProgress) {
+                return "conflict";
+            }
+            if (hasChanges) {
+                return "dirty";
+            }
 
             return "unknown";
         },
@@ -268,7 +276,9 @@ export function createGit(options?: GitOptions) {
          */
         async stash(message?: string): Promise<void> {
             const args = ["stash", "push"];
-            if (message) args.push("-m", message);
+            if (message) {
+                args.push("-m", message);
+            }
             await executor.execOrThrow(args, "Failed to stash");
         },
 
@@ -359,11 +369,15 @@ export function createGit(options?: GitOptions) {
             const children: Array<{ name: string; commitsAhead: number }> = [];
 
             for (const branch of branches) {
-                if (branch.name === parentBranch) continue;
+                if (branch.name === parentBranch) {
+                    continue;
+                }
 
                 try {
                     const parentIsAncestor = await this.isAncestor(parentSha, branch.sha);
-                    if (!parentIsAncestor) continue;
+                    if (!parentIsAncestor) {
+                        continue;
+                    }
 
                     const commitsAhead = await this.countCommits(parentSha, branch.name);
                     if (commitsAhead > 0) {
@@ -396,7 +410,9 @@ export function createGit(options?: GitOptions) {
          */
         async createBranch(name: string, startPoint?: string): Promise<void> {
             const args = ["checkout", "-b", name];
-            if (startPoint) args.push(startPoint);
+            if (startPoint) {
+                args.push(startPoint);
+            }
             await executor.execOrThrow(args, `Failed to create branch ${name}`);
         },
 
@@ -410,7 +426,9 @@ export function createGit(options?: GitOptions) {
                 "--pretty=format:%H%x00%h%x00%an%x00%ai%x00%s",
                 `${from}..${to}`,
             ]);
-            if (!result.success || !result.stdout.trim()) return [];
+            if (!result.success || !result.stdout.trim()) {
+                return [];
+            }
             return result.stdout
                 .split("\n")
                 .filter(Boolean)

@@ -52,7 +52,9 @@ export function registerSearchCommand(program: Command): void {
                     }
 
                     const parseDate = (s?: string): Date | undefined => {
-                        if (!s) return undefined;
+                        if (!s) {
+                            return undefined;
+                        }
                         const d = new Date(s);
                         if (Number.isNaN(d.getTime())) {
                             throw new Error(`Invalid date: ${s}`);
@@ -144,7 +146,9 @@ export function registerSearchCommand(program: Command): void {
                             // Append messages that were filtered out (beyond maxDistance)
                             const rankedIds = new Set(reordered.map((m) => m.rowid));
                             for (const msg of messages) {
-                                if (!rankedIds.has(msg.rowid)) reordered.push(msg);
+                                if (!rankedIds.has(msg.rowid)) {
+                                    reordered.push(msg);
+                                }
                             }
                             messages.length = 0;
                             messages.push(...reordered);

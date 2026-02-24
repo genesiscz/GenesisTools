@@ -232,7 +232,9 @@ async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void
         {
             name: "requiredFields",
             run: async () => {
-                if (!state.fieldSchema || !state.type) return true;
+                if (!state.fieldSchema || !state.type) {
+                    return true;
+                }
 
                 const handledFields = new Set([
                     "System.Title",
@@ -352,7 +354,9 @@ async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void
                         message: "Parent work item ID:",
                         default: state.parentId?.toString() || "",
                         validate: (value) => {
-                            if (!value) return true;
+                            if (!value) {
+                                return true;
+                            }
                             const num = parseInt(value, 10);
                             return (!Number.isNaN(num) && num > 0) || "Enter a valid work item ID";
                         },
@@ -381,9 +385,15 @@ async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void
                         console.log(`  ${fieldInfo?.name || refName}: ${value}`);
                     }
                 }
-                if (state.tags && state.tags.length > 0) console.log(`  Tags: ${state.tags.join(", ")}`);
-                if (state.assignee) console.log(`  Assignee: ${state.assignee}`);
-                if (state.parentId) console.log(`  Parent: #${state.parentId}`);
+                if (state.tags && state.tags.length > 0) {
+                    console.log(`  Tags: ${state.tags.join(", ")}`);
+                }
+                if (state.assignee) {
+                    console.log(`  Assignee: ${state.assignee}`);
+                }
+                if (state.parentId) {
+                    console.log(`  Parent: #${state.parentId}`);
+                }
                 console.log("");
 
                 const confirmed = await confirm({
@@ -515,7 +525,9 @@ function templateToOperations(template: WorkItemTemplate): JsonPatchOperation[] 
     };
 
     for (const [key, value] of Object.entries(fields)) {
-        if (value === undefined || value === null || value === "") continue;
+        if (value === undefined || value === null || value === "") {
+            continue;
+        }
 
         // Handle tags array specially
         if (key === "tags") {
@@ -615,13 +627,21 @@ async function createFromFile(api: Api, config: AzureConfig, filePath: string): 
     console.log("📋 Template contents:");
     console.log(`  Type: ${template.type}`);
     console.log(`  Title: ${fields.title}`);
-    if (fields.severity) console.log(`  Severity: ${fields.severity}`);
-    if (fields.assignedTo) console.log(`  Assignee: ${fields.assignedTo}`);
+    if (fields.severity) {
+        console.log(`  Severity: ${fields.severity}`);
+    }
+    if (fields.assignedTo) {
+        console.log(`  Assignee: ${fields.assignedTo}`);
+    }
     if (fields.tags) {
         const tags = Array.isArray(fields.tags) ? fields.tags : [fields.tags];
-        if (tags.length > 0) console.log(`  Tags: ${tags.join(", ")}`);
+        if (tags.length > 0) {
+            console.log(`  Tags: ${tags.join(", ")}`);
+        }
     }
-    if (template.relations?.parent) console.log(`  Parent: #${template.relations.parent}`);
+    if (template.relations?.parent) {
+        console.log(`  Parent: #${template.relations.parent}`);
+    }
     console.log("");
 
     // Convert template to operations
@@ -796,8 +816,12 @@ Examples:
         console.log(`✅ Template generated: ${filePath}`);
         console.log(`\n📝 Pre-filled from source work item #${id}:`);
         console.log(`   Type: ${template.type}`);
-        if (template.fields.severity) console.log(`   Severity: ${template.fields.severity}`);
-        if (template.relations?.parent) console.log(`   Parent: #${template.relations.parent}`);
+        if (template.fields.severity) {
+            console.log(`   Severity: ${template.fields.severity}`);
+        }
+        if (template.relations?.parent) {
+            console.log(`   Parent: #${template.relations.parent}`);
+        }
 
         console.log(`\n💡 Fill the template and run:`);
         console.log(`   tools azure-devops workitem-create --from-file "${filePath}"`);

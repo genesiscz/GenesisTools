@@ -23,7 +23,9 @@ async function parallelHandler(step: PresetStep, ctx: StepContext): Promise<Step
 
     const childSteps = params.steps.map((id) => {
         const found = allSteps.find((s) => s.id === id);
-        if (!found) throw new Error(`Parallel step "${step.id}" references unknown step ID: "${id}"`);
+        if (!found) {
+            throw new Error(`Parallel step "${step.id}" references unknown step ID: "${id}"`);
+        }
         return found;
     });
 
@@ -48,7 +50,9 @@ async function parallelHandler(step: PresetStep, ctx: StepContext): Promise<Step
             for (const { id, result } of results) {
                 output[id] = result;
                 ctx.steps[id] = result;
-                if (result.status === "error") failureCount++;
+                if (result.status === "error") {
+                    failureCount++;
+                }
             }
         } catch (error) {
             return makeResult("error", output, start, error instanceof Error ? error.message : String(error));
@@ -59,7 +63,9 @@ async function parallelHandler(step: PresetStep, ctx: StepContext): Promise<Step
             if (entry.status === "fulfilled") {
                 output[entry.value.id] = entry.value.result;
                 ctx.steps[entry.value.id] = entry.value.result;
-                if (entry.value.result.status === "error") failureCount++;
+                if (entry.value.result.status === "error") {
+                    failureCount++;
+                }
             } else {
                 failureCount++;
             }

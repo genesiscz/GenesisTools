@@ -126,7 +126,9 @@ function generateMarkdown(releases: GitHubRelease[], owner: string, repo: string
 
 function parseRepoArg(repoArg: string): { owner: string; repo: string } | null {
     // Accepts owner/repo or full github.com URL
-    if (!repoArg) return null;
+    if (!repoArg) {
+        return null;
+    }
     const githubUrlPattern = /github\.com[:/]+([^/]+)\/([^/]+)(?:\/|$)/i;
     const ownerRepoPattern = /^([^/]+)\/([^/]+)$/;
 

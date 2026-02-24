@@ -20,7 +20,9 @@ export async function ensureStorage(): Promise<void> {
 }
 
 function seedBundledPresets(presetsDir: string): void {
-    if (!existsSync(BUNDLED_PRESETS_DIR)) return;
+    if (!existsSync(BUNDLED_PRESETS_DIR)) {
+        return;
+    }
     const bundled = readdirSync(BUNDLED_PRESETS_DIR).filter((f) => f.endsWith(".json"));
     for (const file of bundled) {
         const dest = join(presetsDir, file);
@@ -91,7 +93,9 @@ export async function listPresets(): Promise<
     }>
 > {
     const presetsDir = getPresetsDir();
-    if (!existsSync(presetsDir)) return [];
+    if (!existsSync(presetsDir)) {
+        return [];
+    }
 
     const files = readdirSync(presetsDir).filter((f) => f.endsWith(".json"));
     const result: Array<{

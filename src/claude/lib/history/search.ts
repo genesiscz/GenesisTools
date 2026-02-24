@@ -143,7 +143,9 @@ export function extractProjectName(filePath: string): string {
     const projectDir = filePath.replace(PROJECTS_DIR + sep, "").split(sep)[0];
 
     const cached = projectNameCache.get(projectDir);
-    if (cached) return cached;
+    if (cached) {
+        return cached;
+    }
 
     const name = resolveProjectNameFromEncoded(projectDir);
     projectNameCache.set(projectDir, name);
@@ -157,7 +159,9 @@ export function extractProjectName(filePath: string): string {
  * We resolve by progressively checking the filesystem for each candidate path.
  */
 function resolveProjectNameFromEncoded(projectDir: string): string {
-    if (!projectDir.startsWith("-")) return projectDir;
+    if (!projectDir.startsWith("-")) {
+        return projectDir;
+    }
 
     const home = homedir();
     const homeEncoded = home.replaceAll("/", "-");
@@ -276,10 +280,14 @@ export function extractTextFromMessage(message: ConversationMessage, excludeThin
 }
 
 export function extractToolUses(message: ConversationMessage): ToolUseBlock[] {
-    if (message.type !== "assistant") return [];
+    if (message.type !== "assistant") {
+        return [];
+    }
 
     const assistantMsg = message as AssistantMessage;
-    if (!Array.isArray(assistantMsg.message?.content)) return [];
+    if (!Array.isArray(assistantMsg.message?.content)) {
+        return [];
+    }
 
     return assistantMsg.message.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
 }
@@ -309,15 +317,21 @@ export function extractFilePaths(message: ConversationMessage): string[] {
  */
 function isSafeRegex(pattern: string): boolean {
     // Reject excessively long patterns
-    if (pattern.length > 200) return false;
+    if (pattern.length > 200) {
+        return false;
+    }
     // Reject patterns with nested quantifiers (e.g., (a+)+ or (a*)*b*)
     const nestedQuantifiers = /(\+|\*|\?|\{[\d,]+\})\s*\)?\s*(\+|\*|\?|\{[\d,]+\})/;
-    if (nestedQuantifiers.test(pattern)) return false;
+    if (nestedQuantifiers.test(pattern)) {
+        return false;
+    }
     return true;
 }
 
 export function matchesQuery(text: string, query: string, exact: boolean, regex: boolean): boolean {
-    if (!query) return true;
+    if (!query) {
+        return true;
+    }
 
     if (regex) {
         if (!isSafeRegex(query)) {
@@ -353,7 +367,9 @@ export function calculateRelevanceScore(
     allText: string,
     timestamp: Date
 ): number {
-    if (!query) return 0;
+    if (!query) {
+        return 0;
+    }
 
     let score = 0;
     const queryWords = query.toLowerCase().split(/\s+/);
@@ -393,6 +409,7 @@ export function calculateRelevanceScore(
         const wordLower = word.toLowerCase();
         let occurrences = 0;
         let pos = 0;
+        // biome-ignore lint/suspicious/noAssignInExpressions: assignment in while loop for indexOf matching
         while ((pos = allTextLower.indexOf(wordLower, pos)) !== -1 && occurrences < 10) {
             occurrences++;
             pos += wordLower.length;
@@ -466,9 +483,12 @@ function matchesFilters(message: ConversationMessage, filters: SearchFilters, al
 
     // Tool filter
     if (filters.tool) {
+        const toolFilter = filters.tool.toLowerCase();
         const toolUses = extractToolUses(message);
-        const hasMatchingTool = toolUses.some((t) => t.name.toLowerCase().includes(filters.tool!.toLowerCase()));
-        if (!hasMatchingTool) return false;
+        const hasMatchingTool = toolUses.some((t) => t.name.toLowerCase().includes(toolFilter));
+        if (!hasMatchingTool) {
+            return false;
+        }
     }
 
     // File filter
@@ -480,7 +500,9 @@ function matchesFilters(message: ConversationMessage, filters: SearchFilters, al
             if (filePattern.includes("*")) {
                 // Simple glob matching - escape regex metacharacters first, then convert * to .*
                 const regexPattern = filePattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-                if (!isSafeRegex(regexPattern)) return false;
+                if (!isSafeRegex(regexPattern)) {
+                    return false;
+                }
                 try {
                     const regex = new RegExp(regexPattern, "i");
                     return regex.test(lowerPath);
@@ -490,15 +512,21 @@ function matchesFilters(message: ConversationMessage, filters: SearchFilters, al
             }
             return lowerPath.includes(filePattern);
         });
-        if (!hasMatchingFile) return false;
+        if (!hasMatchingFile) {
+            return false;
+        }
     }
 
     // Date filters
     if (filters.since || filters.until) {
         const msgTimestamp = "timestamp" in message ? new Date(message.timestamp as string) : null;
         if (msgTimestamp) {
-            if (filters.since && msgTimestamp < filters.since) return false;
-            if (filters.until && msgTimestamp > filters.until) return false;
+            if (filters.since && msgTimestamp < filters.since) {
+                return false;
+            }
+            if (filters.until && msgTimestamp > filters.until) {
+                return false;
+            }
         }
     }
 
@@ -515,21 +543,32 @@ function matchesFilters(message: ConversationMessage, filters: SearchFilters, al
  */
 function searchSessionMetadataCache(filters: SearchFilters): SearchResult[] {
     // First ensure cache is populated for the target scope
-    const all = filters.project
-        ? getAllSessionMetadata().filter((s) => s.project?.toLowerCase().includes(filters.project!.toLowerCase()))
+    const projectFilter = filters.project?.toLowerCase();
+    const all = projectFilter
+        ? getAllSessionMetadata().filter((s) => s.project?.toLowerCase().includes(projectFilter))
         : getAllSessionMetadata();
 
     const results: SearchResult[] = [];
 
     for (const s of all) {
-        if (filters.excludeAgents && s.isSubagent) continue;
-        if (filters.agentsOnly && !s.isSubagent) continue;
+        if (filters.excludeAgents && s.isSubagent) {
+            continue;
+        }
+        if (filters.agentsOnly && !s.isSubagent) {
+            continue;
+        }
 
-        if (filters.excludeCurrentSession && s.sessionId === filters.excludeCurrentSession) continue;
+        if (filters.excludeCurrentSession && s.sessionId === filters.excludeCurrentSession) {
+            continue;
+        }
 
         const firstTimestamp = s.firstTimestamp ? new Date(s.firstTimestamp) : undefined;
-        if (filters.conversationDate && firstTimestamp && firstTimestamp < filters.conversationDate) continue;
-        if (filters.conversationDateUntil && firstTimestamp && firstTimestamp > filters.conversationDateUntil) continue;
+        if (filters.conversationDate && firstTimestamp && firstTimestamp < filters.conversationDate) {
+            continue;
+        }
+        if (filters.conversationDateUntil && firstTimestamp && firstTimestamp > filters.conversationDateUntil) {
+            continue;
+        }
 
         const allSearchText = [s.customTitle, s.summary, s.firstPrompt, s.allUserText].filter(Boolean).join(" ");
         if (filters.query && !matchesQuery(allSearchText, filters.query, !!filters.exact, !!filters.regex)) {
@@ -582,7 +621,9 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
         filters.onProgress?.(processed, total, basename(filePath, ".jsonl"));
 
         const messages = await parseJsonlFile(filePath);
-        if (messages.length === 0) continue;
+        if (messages.length === 0) {
+            continue;
+        }
 
         const project = extractProjectName(filePath);
         const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
@@ -624,10 +665,14 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
 
         // Conversation date filter (based on first message, not individual messages)
         if (filters.conversationDate && firstTimestamp) {
-            if (firstTimestamp < filters.conversationDate) continue;
+            if (firstTimestamp < filters.conversationDate) {
+                continue;
+            }
         }
         if (filters.conversationDateUntil && firstTimestamp) {
-            if (firstTimestamp > filters.conversationDateUntil) continue;
+            if (firstTimestamp > filters.conversationDateUntil) {
+                continue;
+            }
         }
 
         // Summary-only search mode
@@ -663,8 +708,9 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
 
         // Commit hash search
         if (filters.commitHash) {
+            const hashFilter = filters.commitHash.toLowerCase();
             const commitHashes = extractCommitHashes(messages);
-            if (!commitHashes.some((h) => h.toLowerCase().startsWith(filters.commitHash!.toLowerCase()))) {
+            if (!commitHashes.some((h) => h.toLowerCase().startsWith(hashFilter))) {
                 continue;
             }
             results.push({
@@ -702,9 +748,13 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
                         }
                     }
                 }
-                if (foundCommitMsg) break;
+                if (foundCommitMsg) {
+                    break;
+                }
             }
-            if (!foundCommitMsg) continue;
+            if (!foundCommitMsg) {
+                continue;
+            }
 
             results.push({
                 filePath,
@@ -805,7 +855,9 @@ export async function listConversationSummaries(filters: SearchFilters): Promise
 
     for (const filePath of files) {
         const messages = await parseJsonlFile(filePath);
-        if (messages.length === 0) continue;
+        if (messages.length === 0) {
+            continue;
+        }
 
         const project = extractProjectName(filePath);
         const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
@@ -841,14 +893,20 @@ export async function listConversationSummaries(filters: SearchFilters): Promise
 
         // Conversation date filter
         if (filters.conversationDate && firstTimestamp) {
-            if (firstTimestamp < filters.conversationDate) continue;
+            if (firstTimestamp < filters.conversationDate) {
+                continue;
+            }
         }
         if (filters.conversationDateUntil && firstTimestamp) {
-            if (firstTimestamp > filters.conversationDateUntil) continue;
+            if (firstTimestamp > filters.conversationDateUntil) {
+                continue;
+            }
         }
 
         // Skip if no summary/title
-        if (!summary && !customTitle) continue;
+        if (!summary && !customTitle) {
+            continue;
+        }
 
         results.push({
             filePath,
@@ -934,7 +992,9 @@ export async function getAllConversations(filters: SearchFilters = {}): Promise<
 
     for (const filePath of files) {
         const messages = await parseJsonlFile(filePath);
-        if (messages.length === 0) continue;
+        if (messages.length === 0) {
+            continue;
+        }
 
         const project = extractProjectName(filePath);
         const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
@@ -965,8 +1025,12 @@ export async function getAllConversations(filters: SearchFilters = {}): Promise<
             if ("timestamp" in msg && msg.timestamp && !firstTimestamp) {
                 firstTimestamp = new Date(msg.timestamp as string);
             }
-            if (msg.type === "user") userCount++;
-            if (msg.type === "assistant") assistantCount++;
+            if (msg.type === "user") {
+                userCount++;
+            }
+            if (msg.type === "assistant") {
+                assistantCount++;
+            }
         }
 
         results.push({
@@ -1069,7 +1133,9 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
             const mtime = Math.floor(fileStat.mtimeMs);
 
             const cached = getSessionMetadata(filePath);
-            if (cached && cached.mtime === mtime) continue;
+            if (cached && cached.mtime === mtime) {
+                continue;
+            }
 
             options.onProgress?.(processed, total, basename(filePath, ".jsonl"));
 
@@ -1128,13 +1194,17 @@ function resolveProjectDir(project: string): string | undefined {
     const cwd = process.cwd();
     const encoded = cwd.replaceAll(sep, "-");
     const exact = resolve(PROJECTS_DIR, encoded);
-    if (existsSync(exact)) return exact;
+    if (existsSync(exact)) {
+        return exact;
+    }
 
     // Fallback: find any dir ending with the project name
     try {
         const dirs = readdirSync(PROJECTS_DIR);
         const match = dirs.find((d) => d.endsWith(`-${project}`) || d === project);
-        if (match) return resolve(PROJECTS_DIR, match);
+        if (match) {
+            return resolve(PROJECTS_DIR, match);
+        }
     } catch {
         // ignore
     }
@@ -1182,7 +1252,9 @@ async function extractSessionMetadataFromFile(filePath: string, mtime: number): 
     try {
         // Skip extremely large session files to avoid performance issues
         const fileStat = await stat(filePath);
-        if (fileStat.size > 10 * 1024 * 1024) return null;
+        if (fileStat.size > 10 * 1024 * 1024) {
+            return null;
+        }
 
         const fileStream = createReadStream(filePath);
         const rl = createInterface({ input: fileStream, crlfDelay: Number.POSITIVE_INFINITY });
@@ -1199,7 +1271,9 @@ async function extractSessionMetadataFromFile(filePath: string, mtime: number): 
         const USER_TEXT_CAP = 5000;
 
         for await (const line of rl) {
-            if (!line.trim()) continue;
+            if (!line.trim()) {
+                continue;
+            }
 
             try {
                 const obj = JSON.parse(line);
@@ -1231,10 +1305,14 @@ async function extractSessionMetadataFromFile(filePath: string, mtime: number): 
                         text = obj.message.content;
                     } else if (Array.isArray(obj.message?.content)) {
                         const textBlock = obj.message.content.find((b: { type: string }) => b.type === "text");
-                        if (textBlock?.text) text = textBlock.text;
+                        if (textBlock?.text) {
+                            text = textBlock.text;
+                        }
                     }
                     if (text) {
-                        if (!firstPrompt) firstPrompt = text;
+                        if (!firstPrompt) {
+                            firstPrompt = text;
+                        }
                         const remaining = USER_TEXT_CAP - userTextLen;
                         userTexts.push(text.slice(0, remaining));
                         userTextLen += text.length;
@@ -1349,22 +1427,30 @@ export async function rgExtractSnippet(query: string, filePath: string): Promise
             filePath,
         ]);
 
-        if (exitCode > 1) return undefined;
+        if (exitCode > 1) {
+            return undefined;
+        }
 
         const line = stdout;
-        if (!line) return undefined;
+        if (!line) {
+            return undefined;
+        }
 
         // Try to extract readable text from the JSON line
         try {
             const obj = JSON.parse(line);
             const text = extractTextFromMessage(obj as ConversationMessage, true);
 
-            if (!text) return undefined;
+            if (!text) {
+                return undefined;
+            }
 
             const lowerText = text.toLowerCase();
             const lowerQuery = query.toLowerCase();
             const idx = lowerText.indexOf(lowerQuery);
-            if (idx === -1) return text.slice(0, 100);
+            if (idx === -1) {
+                return text.slice(0, 100);
+            }
 
             const start = Math.max(0, idx - 40);
             const end = Math.min(text.length, idx + query.length + 60);
@@ -1378,7 +1464,9 @@ export async function rgExtractSnippet(query: string, filePath: string): Promise
             const lowerLine = line.toLowerCase();
             const lowerQuery = query.toLowerCase();
             const idx = lowerLine.indexOf(lowerQuery);
-            if (idx === -1) return undefined;
+            if (idx === -1) {
+                return undefined;
+            }
 
             const start = Math.max(0, idx - 40);
             const end = Math.min(line.length, idx + query.length + 60);
@@ -1401,7 +1489,9 @@ export async function getConversationBySessionId(sessionId: string): Promise<Sea
         const fileName = basename(filePath, ".jsonl");
         if (fileName === sessionId || filePath.includes(sessionId)) {
             const messages = await parseJsonlFile(filePath);
-            if (messages.length === 0) continue;
+            if (messages.length === 0) {
+                continue;
+            }
 
             const project = extractProjectName(filePath);
             const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
@@ -1495,7 +1585,9 @@ export async function getConversationStats(): Promise<ConversationStats> {
 
     for (const filePath of files) {
         const messages = await parseJsonlFile(filePath);
-        if (messages.length === 0) continue;
+        if (messages.length === 0) {
+            continue;
+        }
 
         stats.totalConversations++;
         stats.totalMessages += messages.length;
@@ -1505,7 +1597,9 @@ export async function getConversationStats(): Promise<ConversationStats> {
         stats.projectCounts[project] = (stats.projectCounts[project] || 0) + 1;
 
         const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
-        if (isSubagent) stats.subagentCount++;
+        if (isSubagent) {
+            stats.subagentCount++;
+        }
 
         for (const msg of messages) {
             // Track daily and hourly activity
@@ -1652,9 +1746,15 @@ export interface FileStats {
  * Extract model name from full model ID (e.g., "claude-opus-4-5-20251101" -> "opus")
  */
 function extractModelName(modelId: string): string {
-    if (modelId.includes("opus")) return "opus";
-    if (modelId.includes("sonnet")) return "sonnet";
-    if (modelId.includes("haiku")) return "haiku";
+    if (modelId.includes("opus")) {
+        return "opus";
+    }
+    if (modelId.includes("sonnet")) {
+        return "sonnet";
+    }
+    if (modelId.includes("haiku")) {
+        return "haiku";
+    }
     return "other";
 }
 
@@ -1696,8 +1796,12 @@ export async function computeFileStats(filePath: string): Promise<FileStats> {
             stats.dailyActivity[dateStr] = (stats.dailyActivity[dateStr] || 0) + 1;
             stats.hourlyActivity[hour] = (stats.hourlyActivity[hour] || 0) + 1;
 
-            if (!minDate || dateStr < minDate) minDate = dateStr;
-            if (!maxDate || dateStr > maxDate) maxDate = dateStr;
+            if (!minDate || dateStr < minDate) {
+                minDate = dateStr;
+            }
+            if (!maxDate || dateStr > maxDate) {
+                maxDate = dateStr;
+            }
         }
 
         // Track tool usage
@@ -1972,7 +2076,9 @@ export function getQuickStatsFromCache(): {
     projectCount: number;
 } | null {
     const totals = getCachedTotals();
-    if (!totals) return null;
+    if (!totals) {
+        return null;
+    }
 
     return {
         totalConversations: totals.totalConversations,

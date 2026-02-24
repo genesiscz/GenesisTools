@@ -36,7 +36,9 @@ async function handleToolAction(tool: ToolInfo, srcDir: string): Promise<void> {
         options,
     });
 
-    if (p.isCancel(action) || action === "back") return;
+    if (p.isCancel(action) || action === "back") {
+        return;
+    }
 
     if (action === "run") {
         p.outro(`Running ${pc.bold(`tools ${tool.name}`)}...`);
@@ -141,7 +143,9 @@ async function main(): Promise<void> {
         }
 
         const tool = tools.find((t) => t.name === selected);
-        if (!tool) continue;
+        if (!tool) {
+            continue;
+        }
 
         await handleToolAction(tool, srcDir);
     }

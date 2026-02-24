@@ -12,7 +12,9 @@ export class AutomateDatabase {
 
     constructor(dbPath: string = DB_PATH) {
         const dir = dirname(dbPath);
-        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+        if (!existsSync(dir)) {
+            mkdirSync(dir, { recursive: true });
+        }
 
         this.db = new Database(dbPath);
         this.db.exec("PRAGMA journal_mode = WAL");
@@ -239,7 +241,9 @@ export interface RunLogRow {
 let _instance: AutomateDatabase | null = null;
 
 export function getDb(): AutomateDatabase {
-    if (!_instance) _instance = new AutomateDatabase();
+    if (!_instance) {
+        _instance = new AutomateDatabase();
+    }
     return _instance;
 }
 

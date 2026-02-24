@@ -36,7 +36,9 @@ export function compactCodeBlocks(markdown: string): string {
             line = line.replace(/[ \t]+$/g, "");
             const isBlank = line.trim().length === 0;
             if (isBlank) {
-                if (!lastBlank) out.push("");
+                if (!lastBlank) {
+                    out.push("");
+                }
                 lastBlank = true;
             } else {
                 out.push(line);
@@ -60,10 +62,15 @@ export function compactCodeBlocks(markdown: string): string {
             inFence = false;
             continue;
         }
-        if (inFence) buffer.push(line);
-        else result.push(line.replace(/[ \t]+$/g, ""));
+        if (inFence) {
+            buffer.push(line);
+        } else {
+            result.push(line.replace(/[ \t]+$/g, ""));
+        }
     }
-    if (buffer.length) flushBuffer();
+    if (buffer.length) {
+        flushBuffer();
+    }
     return result.join("\n");
 }
 
@@ -76,7 +83,9 @@ export async function handleFetchWebRaw(args: Record<string, unknown>): Promise<
     const saveTokens = Number(args.save_tokens) === 1;
     const maxTokens = typeof args.tokens === "number" ? (args.tokens as number) : undefined;
     let html = await fetchText(url, headers);
-    if (saveTokens) html = html.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n");
+    if (saveTokens) {
+        html = html.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n");
+    }
     const limited = limitToTokens(html, maxTokens);
     return { content: [{ type: "text", text: limited.text }], meta: { tokens: String(limited.tokens) } };
 }
@@ -89,7 +98,9 @@ export async function handleFetchJina(args: Record<string, unknown>): Promise<{
     const saveTokens = Number(args.save_tokens) === 1;
     const maxTokens = typeof args.tokens === "number" ? (args.tokens as number) : undefined;
     let md = await fetchText(buildJinaUrl(url));
-    if (saveTokens) md = compactCodeBlocks(md);
+    if (saveTokens) {
+        md = compactCodeBlocks(md);
+    }
     const limited = limitToTokens(md, maxTokens);
     return { content: [{ type: "text", text: limited.text }], meta: { tokens: String(limited.tokens) } };
 }

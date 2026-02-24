@@ -35,14 +35,22 @@ export interface LocalSkill {
 }
 
 export function findManifestPath(): string | null {
-    if (!existsSync(CLAUDE_DESKTOP_BASE)) return null;
+    if (!existsSync(CLAUDE_DESKTOP_BASE)) {
+        return null;
+    }
     for (const orgEntry of readdirSync(CLAUDE_DESKTOP_BASE, { withFileTypes: true })) {
-        if (!orgEntry.isDirectory()) continue;
+        if (!orgEntry.isDirectory()) {
+            continue;
+        }
         const orgPath = join(CLAUDE_DESKTOP_BASE, orgEntry.name);
         for (const pluginEntry of readdirSync(orgPath, { withFileTypes: true })) {
-            if (!pluginEntry.isDirectory()) continue;
+            if (!pluginEntry.isDirectory()) {
+                continue;
+            }
             const candidate = join(orgPath, pluginEntry.name, "manifest.json");
-            if (existsSync(candidate)) return candidate;
+            if (existsSync(candidate)) {
+                return candidate;
+            }
         }
     }
     return null;
@@ -50,7 +58,9 @@ export function findManifestPath(): string | null {
 
 export function parseFrontmatter(content: string): { name?: string; description?: string } {
     const match = content.match(/^---\n([\s\S]*?)\n---/);
-    if (!match) return {};
+    if (!match) {
+        return {};
+    }
     const yaml = match[1];
     const name = yaml.match(/^name:\s*(.+)$/m)?.[1]?.trim();
     const descMatch = yaml.match(/^description:\s*(.+(?:\n[ \t]+.+)*)/m);
@@ -61,12 +71,16 @@ export function parseFrontmatter(content: string): { name?: string; description?
 export function generateSkillId(): string {
     const chars = "ABCDEFGHJKMNPQRSTVWXYZabcdefghjkmnpqrstvwxyz0123456789";
     let id = "skill_01";
-    for (let i = 0; i < 22; i++) id += chars[Math.floor(Math.random() * chars.length)];
+    for (let i = 0; i < 22; i++) {
+        id += chars[Math.floor(Math.random() * chars.length)];
+    }
     return id;
 }
 
 export function discoverLocalSkills(manifest: Manifest | null): LocalSkill[] {
-    if (!existsSync(CLAUDE_CODE_SKILLS)) return [];
+    if (!existsSync(CLAUDE_CODE_SKILLS)) {
+        return [];
+    }
     return readdirSync(CLAUDE_CODE_SKILLS)
         .filter((dir) => existsSync(join(CLAUDE_CODE_SKILLS, dir, "SKILL.md")))
         .map((dirName) => {
@@ -103,7 +117,9 @@ export function installSkill(skill: LocalSkill, manifest: Manifest, manifestPath
         throw new Error(`Cannot overwrite built-in skill "${skill.name}" (creatorType: anthropic)`);
     }
 
-    if (existsSync(destPath)) rmSync(destPath, { recursive: true });
+    if (existsSync(destPath)) {
+        rmSync(destPath, { recursive: true });
+    }
     mkdirSync(destPath, { recursive: true });
     cpSync(skill.sourcePath, destPath, { recursive: true });
 

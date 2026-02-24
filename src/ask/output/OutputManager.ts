@@ -6,10 +6,18 @@ import type { OutputConfig, OutputFormat } from "@ask/types";
 import { write } from "bun";
 import pc from "picocolors";
 
+export interface ResponseMetadata {
+    provider?: string;
+    model?: string;
+    cost?: number;
+    tokens?: number;
+    timestamp?: string | number;
+}
+
 export interface FormattedResponse {
     content: string;
     format: OutputFormat;
-    metadata?: Record<string, any>;
+    metadata?: ResponseMetadata;
 }
 
 export class OutputManager {
@@ -30,7 +38,7 @@ export class OutputManager {
         return { ...this.currentConfig };
     }
 
-    async handleOutput(content: string, format?: OutputConfig, metadata?: Record<string, any>): Promise<void> {
+    async handleOutput(content: string, format?: OutputConfig, metadata?: ResponseMetadata): Promise<void> {
         const config = format || this.currentConfig;
 
         try {
@@ -67,7 +75,7 @@ export class OutputManager {
         }
     }
 
-    private async outputText(content: string, metadata?: Record<string, any>): Promise<void> {
+    private async outputText(content: string, metadata?: ResponseMetadata): Promise<void> {
         if (metadata) {
             // Add metadata as header for text format
             const metadataText = this.formatMetadata(metadata, "text");
@@ -77,7 +85,7 @@ export class OutputManager {
         console.log(content);
     }
 
-    private async outputJSON(content: string, metadata?: Record<string, any>): Promise<void> {
+    private async outputJSON(content: string, metadata?: ResponseMetadata): Promise<void> {
         const response = {
             content,
             timestamp: new Date().toISOString(),
@@ -88,7 +96,7 @@ export class OutputManager {
         console.log(jsonOutput);
     }
 
-    private async outputMarkdown(content: string, metadata?: Record<string, any>): Promise<void> {
+    private async outputMarkdown(content: string, metadata?: ResponseMetadata): Promise<void> {
         let markdown = "";
 
         if (metadata) {
@@ -101,7 +109,7 @@ export class OutputManager {
         console.log(markdown);
     }
 
-    private async outputToClipboard(content: string, metadata?: Record<string, any>): Promise<void> {
+    private async outputToClipboard(content: string, metadata?: ResponseMetadata): Promise<void> {
         try {
             let clipboardContent = content;
 
@@ -123,7 +131,7 @@ export class OutputManager {
         }
     }
 
-    private async outputToFile(content: string, filename: string, metadata?: Record<string, any>): Promise<void> {
+    private async outputToFile(content: string, filename: string, metadata?: ResponseMetadata): Promise<void> {
         try {
             const filePath = resolve(filename);
             const fileDir = dirname(filePath);
@@ -141,8 +149,11 @@ export class OutputManager {
                 const ext = this.getFileExtension(filename);
                 let format: "text" | "json" | "markdown" = "text";
 
-                if (ext === ".json") format = "json";
-                else if (ext === ".md" || ext === ".markdown") format = "markdown";
+                if (ext === ".json") {
+                    format = "json";
+                } else if (ext === ".md" || ext === ".markdown") {
+                    format = "markdown";
+                }
 
                 const metadataText = this.formatMetadata(metadata, format);
                 fileContent = `${metadataText}\n\n${content}`;
@@ -161,7 +172,7 @@ export class OutputManager {
         }
     }
 
-    private formatMetadata(metadata: Record<string, any>, format: "text" | "json" | "markdown" | "clipboard"): string {
+    private formatMetadata(metadata: ResponseMetadata, format: "text" | "json" | "markdown" | "clipboard"): string {
         switch (format) {
             case "text":
                 return this.formatMetadataText(metadata);
@@ -181,7 +192,7 @@ export class OutputManager {
         }
     }
 
-    private formatMetadataText(metadata: Record<string, any>): string {
+    private formatMetadataText(metadata: ResponseMetadata): string {
         const lines: string[] = [];
         lines.push("─".repeat(50));
 
@@ -205,7 +216,7 @@ export class OutputManager {
         return lines.join("\n");
     }
 
-    private formatMetadataMarkdown(metadata: Record<string, any>): string {
+    private formatMetadataMarkdown(metadata: ResponseMetadata): string {
         const lines: string[] = [];
         lines.push("---");
 
@@ -229,7 +240,7 @@ export class OutputManager {
         return lines.join("\n");
     }
 
-    private formatMetadataClipboard(metadata: Record<string, any>): string {
+    private formatMetadataClipboard(metadata: ResponseMetadata): string {
         const lines: string[] = [];
         lines.push("# Generated Content");
 
@@ -394,6 +405,7 @@ export class OutputManager {
 
     stripAnsiCodes(text: string): string {
         // Remove ANSI color codes for non-TTY output
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape sequence stripping
         return text.replace(/\x1b\[[0-9;]*m/g, "");
     }
 }

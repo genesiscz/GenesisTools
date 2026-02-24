@@ -87,6 +87,7 @@ describe("DynamicPricingManager", () => {
                 inputPer1M: 5.0,
                 outputPer1M: 15.0,
             };
+            // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
             const usage: LanguageModelUsage = {
@@ -109,6 +110,7 @@ describe("DynamicPricingManager", () => {
                 outputPer1M: 15.0,
                 cachedReadPer1M: 2.5,
             };
+            // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
             const usage: LanguageModelUsage = {
@@ -116,6 +118,7 @@ describe("DynamicPricingManager", () => {
                 outputTokens: 500,
                 totalTokens: 1500,
             };
+            // biome-ignore lint/suspicious/noExplicitAny: extending LanguageModelUsage with undocumented property
             (usage as any).cachedPromptTokens = 200;
 
             const cost = await pricingManager.calculateCost("openai", "gpt-4o", usage);
@@ -133,6 +136,7 @@ describe("DynamicPricingManager", () => {
                 outputPer1MAbove200k: 30.0,
             };
 
+            // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
             // 300k input tokens, 250k output tokens
@@ -159,6 +163,7 @@ describe("DynamicPricingManager", () => {
                 outputPer1MAbove200k: 30.0,
             };
 
+            // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
             // Exactly 200k tokens - should use base pricing only
@@ -182,6 +187,7 @@ describe("DynamicPricingManager", () => {
                 outputPer1MAbove200k: 30.0,
             };
 
+            // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
             // 200,001 tokens - should use tiered pricing for 1 token
@@ -210,6 +216,7 @@ describe("DynamicPricingManager", () => {
         });
 
         it("should handle missing pricing gracefully", async () => {
+            // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(null);
 
             const usage: LanguageModelUsage = {
@@ -259,6 +266,7 @@ describe("DynamicPricingManager", () => {
 
             expect(liteLLMPricing).not.toBeNull();
 
+            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
             const pricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing!);
 
             // Verify conversion (per token to per million)
@@ -284,7 +292,7 @@ describe("DynamicPricingManager", () => {
                 cache_read_input_token_cost: 2.5e-6, // $2.5 per million
             };
 
-            const pricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing as any);
+            const pricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
 
             expect(pricingInfo.inputPer1M).toBe(5.0);
             expect(pricingInfo.outputPer1M).toBe(15.0);
@@ -299,7 +307,7 @@ describe("DynamicPricingManager", () => {
                 output_cost_per_token_above_200k_tokens: 30e-6,
             };
 
-            const pricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing as any);
+            const pricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
 
             expect(pricingInfo.inputPer1M).toBe(3.0);
             expect(pricingInfo.outputPer1M).toBe(15.0);
@@ -454,6 +462,7 @@ describe("DynamicPricingManager", () => {
                 outputPer1MAbove200k: 30.0,
             };
 
+            // biome-ignore lint/suspicious/noExplicitAny: spyOn requires cast for method name type mismatch
             spyOn(pricingManager, "getPricing" as any).mockResolvedValue(mockPricing);
 
             const edgeCases = [
@@ -583,8 +592,10 @@ describe("DynamicPricingManager", () => {
             expect(directOpenAIPricing).not.toBeNull();
 
             // OpenRouter should be cheaper (or at least not more expensive)
-            expect(openRouterPricing?.inputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.inputPer1M!);
-            expect(openRouterPricing?.outputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.outputPer1M!);
+            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
+            expect(openRouterPricing?.inputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.inputPer1M);
+            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
+            expect(openRouterPricing?.outputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.outputPer1M);
         });
 
         it("should verify Claude tiered pricing structure for 1M context models", async () => {
@@ -633,6 +644,7 @@ describe("DynamicPricingManager", () => {
                 const liteLLMPricing = await liteLLMPricingFetcher.getModelPricing(modelName);
                 expect(liteLLMPricing).not.toBeNull();
 
+                // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
                 const convertedPricing = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing!);
 
                 // Verify conversion: per-token * 1M = per-million
@@ -669,8 +681,10 @@ describe("DynamicPricingManager", () => {
             expect(directOpenAIPricing).not.toBeNull();
 
             // OpenRouter should be cheaper or equal (it's a reseller, shouldn't be more expensive)
-            expect(openRouterPricing?.inputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.inputPer1M! * 1.5); // Allow 50% markup max
-            expect(openRouterPricing?.outputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.outputPer1M! * 1.5);
+            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
+            expect(openRouterPricing?.inputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.inputPer1M * 1.5); // Allow 50% markup max
+            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
+            expect(openRouterPricing?.outputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.outputPer1M * 1.5);
         });
 
         it("should verify Claude models have reasonable pricing (input < $20, output < $100)", async () => {
@@ -691,8 +705,10 @@ describe("DynamicPricingManager", () => {
             expect(gpt4oMiniPricing).not.toBeNull();
 
             // Mini should be significantly cheaper
-            expect(gpt4oMiniPricing?.inputPer1M).toBeLessThan(gpt4oPricing!.inputPer1M!);
-            expect(gpt4oMiniPricing?.outputPer1M).toBeLessThan(gpt4oPricing!.outputPer1M!);
+            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
+            expect(gpt4oMiniPricing?.inputPer1M).toBeLessThan(gpt4oPricing!.inputPer1M);
+            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
+            expect(gpt4oMiniPricing?.outputPer1M).toBeLessThan(gpt4oPricing!.outputPer1M);
         });
 
         it("should verify OpenRouter Claude pricing is reasonable compared to direct", async () => {
@@ -779,7 +795,8 @@ describe("DynamicPricingManager", () => {
                 expect(pricing?.inputPer1M).toBeGreaterThan(0);
                 expect(pricing?.outputPer1M).toBeGreaterThan(0);
                 // Output should generally be more expensive than input
-                expect(pricing?.outputPer1M).toBeGreaterThanOrEqual(pricing!.inputPer1M!);
+                // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
+                expect(pricing?.outputPer1M).toBeGreaterThanOrEqual(pricing!.inputPer1M);
             }
         });
 
@@ -924,8 +941,10 @@ describe("DynamicPricingManager", () => {
             const liteLLMPricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
 
             // Compare pricing (allow 5% difference due to cache/timing differences)
-            const inputDiff = Math.abs(providerManagerPricing!.inputPer1M! - liteLLMPricingInfo.inputPer1M);
-            const outputDiff = Math.abs(providerManagerPricing!.outputPer1M! - liteLLMPricingInfo.outputPer1M);
+            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not undefined above
+            const inputDiff = Math.abs(providerManagerPricing!.inputPer1M - liteLLMPricingInfo.inputPer1M);
+            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not undefined above
+            const outputDiff = Math.abs(providerManagerPricing!.outputPer1M - liteLLMPricingInfo.outputPer1M);
             const maxInputDiff = liteLLMPricingInfo.inputPer1M * 0.05;
             const maxOutputDiff = liteLLMPricingInfo.outputPer1M * 0.05;
 
@@ -966,8 +985,10 @@ describe("DynamicPricingManager", () => {
 
             const liteLLMPricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
 
-            const inputDiff = Math.abs(providerManagerPricing!.inputPer1M! - liteLLMPricingInfo.inputPer1M);
-            const outputDiff = Math.abs(providerManagerPricing!.outputPer1M! - liteLLMPricingInfo.outputPer1M);
+            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not undefined above
+            const inputDiff = Math.abs(providerManagerPricing!.inputPer1M - liteLLMPricingInfo.inputPer1M);
+            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not undefined above
+            const outputDiff = Math.abs(providerManagerPricing!.outputPer1M - liteLLMPricingInfo.outputPer1M);
             const maxInputDiff = Math.max(liteLLMPricingInfo.inputPer1M * 0.05, 0.1); // At least $0.10 tolerance
             const maxOutputDiff = Math.max(liteLLMPricingInfo.outputPer1M * 0.05, 0.5); // At least $0.50 tolerance
 
@@ -1050,13 +1071,14 @@ describe("DynamicPricingManager", () => {
             // Sample 10 random models with pricing
             const modelsWithPricing = openRouterProvider?.models.filter((m) => m.pricing).slice(0, 10);
 
-            if (modelsWithPricing!.length === 0) {
+            if (modelsWithPricing?.length === 0) {
                 console.log("Skipping test: No models with pricing found");
                 return;
             }
 
             let consistentCount = 0;
 
+            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not undefined above
             for (const model of modelsWithPricing!) {
                 const liteLLMPricing = await liteLLMPricingFetcher.getModelPricing(`openrouter/${model.id}`);
                 if (!liteLLMPricing) {
@@ -1066,13 +1088,13 @@ describe("DynamicPricingManager", () => {
                 const liteLLMPricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
 
                 // Check if both have pricing (structure consistency)
-                const bothHaveInput = model.pricing!.inputPer1M! > 0 && liteLLMPricingInfo.inputPer1M > 0;
-                const bothHaveOutput = model.pricing!.outputPer1M! > 0 && liteLLMPricingInfo.outputPer1M > 0;
+                const bothHaveInput = (model.pricing?.inputPer1M ?? 0) > 0 && liteLLMPricingInfo.inputPer1M > 0;
+                const bothHaveOutput = (model.pricing?.outputPer1M ?? 0) > 0 && liteLLMPricingInfo.outputPer1M > 0;
 
                 if (bothHaveInput && bothHaveOutput) {
                     // Check if prices are within 5% tolerance (accounting for cache/stale data differences)
-                    const inputDiff = Math.abs(model.pricing!.inputPer1M! - liteLLMPricingInfo.inputPer1M);
-                    const outputDiff = Math.abs(model.pricing!.outputPer1M! - liteLLMPricingInfo.outputPer1M);
+                    const inputDiff = Math.abs((model.pricing?.inputPer1M ?? 0) - liteLLMPricingInfo.inputPer1M);
+                    const outputDiff = Math.abs((model.pricing?.outputPer1M ?? 0) - liteLLMPricingInfo.outputPer1M);
                     const maxInputDiff = liteLLMPricingInfo.inputPer1M * 0.05;
                     const maxOutputDiff = liteLLMPricingInfo.outputPer1M * 0.05;
 
@@ -1104,6 +1126,7 @@ describe("DynamicPricingManager", () => {
             // Check that models with pricing have valid values
             const modelsWithPricing = openRouterProvider?.models.filter((m) => m.pricing);
 
+            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not undefined above
             for (const model of modelsWithPricing!.slice(0, 20)) {
                 // Verify pricing structure is valid
                 expect(model.pricing).toBeDefined();
@@ -1116,7 +1139,8 @@ describe("DynamicPricingManager", () => {
                     const liteLLMPricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
 
                     // Both should have non-zero pricing or both should be zero
-                    const providerHasPricing = model.pricing!.inputPer1M! > 0 || model.pricing!.outputPer1M! > 0;
+                    const providerHasPricing =
+                        (model.pricing?.inputPer1M ?? 0) > 0 || (model.pricing?.outputPer1M ?? 0) > 0;
                     const liteLLMHasPricing = liteLLMPricingInfo.inputPer1M > 0 || liteLLMPricingInfo.outputPer1M > 0;
 
                     // If one has pricing, both should (allowing for cache issues)
@@ -1128,7 +1152,7 @@ describe("DynamicPricingManager", () => {
                 }
             }
 
-            expect(modelsWithPricing!.length).toBeGreaterThan(0);
+            expect(modelsWithPricing?.length).toBeGreaterThan(0);
         });
     });
 });

@@ -101,7 +101,9 @@ export async function executeStep(
 function buildToolsArgs(step: PresetStep, ctx: ExecutionContext): string[] {
     const parts = step.action.split(/\s+/);
 
-    if (!step.params) return parts;
+    if (!step.params) {
+        return parts;
+    }
 
     const resolved = resolveParams(step.params as Record<string, unknown>, ctx);
     const args: string[] = [...parts];
@@ -110,7 +112,9 @@ function buildToolsArgs(step: PresetStep, ctx: ExecutionContext): string[] {
         if (key.startsWith("--") || key.startsWith("-")) {
             // Flag parameter
             if (typeof value === "boolean") {
-                if (value) args.push(key);
+                if (value) {
+                    args.push(key);
+                }
                 // false = omit the flag entirely
             } else if (Array.isArray(value)) {
                 args.push(key, value.join(","));
@@ -165,7 +169,9 @@ function buildStepContext(ctx: ExecutionContext): StepContext {
         env: ctx.env,
         evaluate: (expr: string) => {
             // Intercept __allSteps for parallel handler
-            if (expr === "__allSteps") return runnerMeta.allSteps;
+            if (expr === "__allSteps") {
+                return runnerMeta.allSteps;
+            }
             return resolveExpression(`{{ ${expr} }}`, ctx);
         },
         interpolate: (template: string) => {

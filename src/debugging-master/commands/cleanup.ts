@@ -67,7 +67,9 @@ async function checkGitDiff(filePath: string): Promise<{ hasOnlyWhitespace: bool
         throw new Error(`git diff failed (exit ${exitCode}): ${stderr.trim()}`);
     }
 
-    if (!diff.trim()) return { hasOnlyWhitespace: true, diff: "" };
+    if (!diff.trim()) {
+        return { hasOnlyWhitespace: true, diff: "" };
+    }
 
     const changedLines = diff
         .split("\n")
@@ -118,7 +120,9 @@ export function registerCleanupCommand(program: Command): void {
                     allWarnings.push({ file, warning: w });
                 }
 
-                if (blocks.length === 0) continue;
+                if (blocks.length === 0) {
+                    continue;
+                }
 
                 fileBlockMap.set(file, blocks);
                 totalBlocks += blocks.length;
@@ -221,7 +225,9 @@ export function registerCleanupCommand(program: Command): void {
                         renameSync(sessionPath, archivePath);
                     }
 
-                    if (existsSync(metaPath)) unlinkSync(metaPath);
+                    if (existsSync(metaPath)) {
+                        unlinkSync(metaPath);
+                    }
 
                     console.log(`\n${pc.green("Logs archived to:")} ${archivePath}`);
                     if (!opts.keepLogs) {

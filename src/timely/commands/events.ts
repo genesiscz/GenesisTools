@@ -100,9 +100,15 @@ async function eventsAction(storage: Storage, service: TimelyService, options: E
     const to = options.to || options.upto;
 
     const params: { since?: string; upto?: string; day?: string } = {};
-    if (from) params.since = from;
-    if (to) params.upto = to;
-    if (options.day) params.day = options.day;
+    if (from) {
+        params.since = from;
+    }
+    if (to) {
+        params.upto = to;
+    }
+    if (options.day) {
+        params.day = options.day;
+    }
 
     if (!from && !to && !options.day) {
         logger.error("Please provide at least one date filter: --from, --to, or --day");
@@ -141,7 +147,9 @@ async function eventsAction(storage: Storage, service: TimelyService, options: E
         });
 
         const subEntryToMemory = buildSubEntryMap(result.entries);
-        if (verbose) logger.info(chalk.dim(`[entries] Built map: ${subEntryToMemory.size} sub-entry IDs`));
+        if (verbose) {
+            logger.info(chalk.dim(`[entries] Built map: ${subEntryToMemory.size} sub-entry IDs`));
+        }
 
         // Match event entry_ids to memories (deduplicated)
         const linkedMemoryIds = new Set<number>();
@@ -163,17 +171,24 @@ async function eventsAction(storage: Storage, service: TimelyService, options: E
                     }
                 }
                 (event as TimelyEvent & { entries?: TimelyEntry[] }).entries = matched;
-                if (matched.length > 0) matchedCount++;
-                else unmatchedCount++;
+                if (matched.length > 0) {
+                    matchedCount++;
+                } else {
+                    unmatchedCount++;
+                }
             }
         }
 
-        if (verbose) logger.info(chalk.dim(`[entries] Matched: ${matchedCount} events, unmatched: ${unmatchedCount}`));
+        if (verbose) {
+            logger.info(chalk.dim(`[entries] Matched: ${matchedCount} events, unmatched: ${unmatchedCount}`));
+        }
 
         // Find unlinked memories per day and fuzzy match to events
         for (const [date, memories] of result.byDate) {
             const unlinked = memories.filter((m) => !linkedMemoryIds.has(m.id));
-            if (unlinked.length === 0) continue;
+            if (unlinked.length === 0) {
+                continue;
+            }
 
             const dayEvents = events.filter((e) => e.day === date);
             const candidates = dayEvents.map((e) => ({
@@ -322,12 +337,16 @@ function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay
 
     // Build event lookup for fuzzy match display
     const eventById = new Map<number, TimelyEvent>();
-    for (const e of events) eventById.set(e.id, e);
+    for (const e of events) {
+        eventById.set(e.id, e);
+    }
 
     // Group by day
     const byDay = new Map<string, TimelyEvent[]>();
     for (const event of events) {
-        if (!byDay.has(event.day)) byDay.set(event.day, []);
+        if (!byDay.has(event.day)) {
+            byDay.set(event.day, []);
+        }
         byDay.get(event.day)?.push(event);
     }
 

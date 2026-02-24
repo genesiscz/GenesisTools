@@ -168,7 +168,9 @@ function prettifyCompiledCode(code: string): string {
 
         // Find patterns like: const NAME = tN;
         VariableDeclaration(path) {
-            if (path.node.kind !== "const") return;
+            if (path.node.kind !== "const") {
+                return;
+            }
 
             for (const decl of path.node.declarations) {
                 if (t.isIdentifier(decl.id) && t.isIdentifier(decl.init) && /^t\d+$/.test(decl.init.name)) {
@@ -466,6 +468,7 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
     // Handle output destination
     if (options.clipboard) {
         // Strip ANSI codes for clipboard
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape/control character matching
         const plainText = outputText.replace(/\x1B\[[0-9;]*m/g, "");
         await copyToClipboard(plainText, { silent: true });
         console.log(chalk.green("Output copied to clipboard!"));

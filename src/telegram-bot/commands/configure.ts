@@ -33,11 +33,14 @@ export function registerConfigureCommand(program: Command): void {
                 message: "Paste your bot token:",
                 placeholder: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
                 validate: (val) => {
-                    if (!val || !/^\d+:[A-Za-z0-9_-]+$/.test(val))
+                    if (!val || !/^\d+:[A-Za-z0-9_-]+$/.test(val)) {
                         return "Invalid token format (expected: 123456:ABC...)";
+                    }
                 },
             });
-            if (p.isCancel(token)) return;
+            if (p.isCancel(token)) {
+                return;
+            }
 
             const api = new Api(token as string);
             let botUsername: string;
@@ -56,7 +59,9 @@ export function registerConfigureCommand(program: Command): void {
             let nextOffset: number | undefined;
             for (;;) {
                 const stale = await api.getUpdates({ offset: nextOffset ?? -1, timeout: 0 });
-                if (stale.length === 0) break;
+                if (stale.length === 0) {
+                    break;
+                }
                 nextOffset = stale[stale.length - 1].update_id + 1;
             }
 

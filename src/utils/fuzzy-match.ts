@@ -13,9 +13,15 @@ export function levenshteinDistance(a: string, b: string): number {
     const aLower = a.toLowerCase();
     const bLower = b.toLowerCase();
 
-    if (aLower === bLower) return 0;
-    if (aLower.length === 0) return bLower.length;
-    if (bLower.length === 0) return aLower.length;
+    if (aLower === bLower) {
+        return 0;
+    }
+    if (aLower.length === 0) {
+        return bLower.length;
+    }
+    if (bLower.length === 0) {
+        return aLower.length;
+    }
 
     const matrix: number[][] = [];
 
@@ -42,7 +48,9 @@ export function levenshteinDistance(a: string, b: string): number {
  */
 export function similarityScore(a: string, b: string): number {
     const maxLen = Math.max(a.length, b.length);
-    if (maxLen === 0) return 1;
+    if (maxLen === 0) {
+        return 1;
+    }
     return 1 - levenshteinDistance(a, b) / maxLen;
 }
 
@@ -72,11 +80,17 @@ export interface MatchSource extends TimeRange {
  * Parse "HH:MM" or ISO datetime to minutes since midnight.
  */
 function parseTimeToMinutes(time: string | null): number | null {
-    if (!time) return null;
+    if (!time) {
+        return null;
+    }
     const hhmm = time.match(/^(\d{1,2}):(\d{2})$/);
-    if (hhmm) return parseInt(hhmm[1], 10) * 60 + parseInt(hhmm[2], 10);
+    if (hhmm) {
+        return parseInt(hhmm[1], 10) * 60 + parseInt(hhmm[2], 10);
+    }
     const iso = time.match(/T(\d{2}):(\d{2})/);
-    if (iso) return parseInt(iso[1], 10) * 60 + parseInt(iso[2], 10);
+    if (iso) {
+        return parseInt(iso[1], 10) * 60 + parseInt(iso[2], 10);
+    }
     return null;
 }
 
@@ -89,9 +103,13 @@ export function timeOverlapRatio(source: TimeRange, target: TimeRange): number {
     const s1 = parseTimeToMinutes(source.to);
     const t0 = parseTimeToMinutes(target.from);
     const t1 = parseTimeToMinutes(target.to);
-    if (s0 == null || s1 == null || t0 == null || t1 == null) return 0;
+    if (s0 == null || s1 == null || t0 == null || t1 == null) {
+        return 0;
+    }
     const dur = s1 - s0;
-    if (dur <= 0) return 0;
+    if (dur <= 0) {
+        return 0;
+    }
     const overlap = Math.max(0, Math.min(s1, t1) - Math.max(s0, t0));
     return overlap / dur;
 }
@@ -115,9 +133,15 @@ function tokenize(text: string): Set<string> {
 export function wordSimilarity(a: string, b: string): number {
     const wa = tokenize(a);
     const wb = tokenize(b);
-    if (wa.size === 0 || wb.size === 0) return 0;
+    if (wa.size === 0 || wb.size === 0) {
+        return 0;
+    }
     let inter = 0;
-    for (const w of wa) if (wb.has(w)) inter++;
+    for (const w of wa) {
+        if (wb.has(w)) {
+            inter++;
+        }
+    }
     return inter / new Set([...wa, ...wb]).size;
 }
 

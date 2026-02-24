@@ -11,7 +11,9 @@ type Format = "json" | "jsonl" | "toon" | "unknown";
 
 function parseJSONL(input: string): unknown[] | null {
     const trimmed = input.trim();
-    if (!trimmed) return null;
+    if (!trimmed) {
+        return null;
+    }
 
     // First, try parsing as a single JSON object/array
     try {
@@ -48,7 +50,9 @@ function parseJSONL(input: string): unknown[] | null {
             continue;
         }
 
-        if (inString) continue;
+        if (inString) {
+            continue;
+        }
 
         if (char === "{" || char === "[" || char === "(") {
             depth++;

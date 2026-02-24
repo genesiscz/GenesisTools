@@ -202,7 +202,7 @@ class ASKTool {
 
             // Raw mode: output only the response content
             if (argv.raw) {
-                process.stdout.write(response.content.endsWith("\n") ? response.content : response.content + "\n");
+                process.stdout.write(response.content.endsWith("\n") ? response.content : `${response.content}\n`);
                 return;
             }
 

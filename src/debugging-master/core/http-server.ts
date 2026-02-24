@@ -6,7 +6,9 @@ import type { LogEntry } from "@app/debugging-master/types";
 const SESSIONS_DIR = join(homedir(), ".genesis-tools", "debugging-master", "sessions");
 
 function ensureDir(): void {
-    if (!existsSync(SESSIONS_DIR)) mkdirSync(SESSIONS_DIR, { recursive: true });
+    if (!existsSync(SESSIONS_DIR)) {
+        mkdirSync(SESSIONS_DIR, { recursive: true });
+    }
 }
 
 /**
@@ -74,7 +76,7 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
                 return req.text().then((body) => {
                     const entry = normalizeEntry(body);
                     const path = join(SESSIONS_DIR, `${sessionName}.jsonl`);
-                    appendFileSync(path, JSON.stringify(entry) + "\n");
+                    appendFileSync(path, `${JSON.stringify(entry)}\n`);
                     return new Response("ok", { status: 200 });
                 });
             }

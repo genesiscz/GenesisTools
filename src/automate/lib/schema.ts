@@ -18,6 +18,7 @@ export const presetStepSchema = z.object({
     onError: z.enum(["stop", "continue", "skip"]).optional(),
     interactive: z.boolean().optional(),
     condition: z.string().optional(),
+    // biome-ignore lint/suspicious/noThenProperty: this is a step config field for if/then/else branching, not a thenable
     then: z.string().optional(),
     else: z.string().optional(),
 });

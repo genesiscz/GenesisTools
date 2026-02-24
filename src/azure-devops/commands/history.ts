@@ -344,8 +344,12 @@ export function registerHistoryCommand(program: Command): void {
         .option("--to <date>", "Filter to date (ISO format)")
         .option("--until <date>", "Alias for --to")
         .action(async (idStr: string, options: ShowOptions & { since?: string; until?: string }) => {
-            if (options.since && !options.from) options.from = options.since;
-            if (options.until && !options.to) options.to = options.until;
+            if (options.since && !options.from) {
+                options.from = options.since;
+            }
+            if (options.until && !options.to) {
+                options.to = options.until;
+            }
             await handleHistoryShow(idStr, options);
         });
 
@@ -364,8 +368,12 @@ export function registerHistoryCommand(program: Command): void {
         .option("--current", "Search current assignment (= instead of EVER)")
         .option("-o, --output <format>", "Output format (table, json)", "table")
         .action((options: SearchOptions & { since?: string; until?: string }) => {
-            if (options.since && !options.from) options.from = options.since;
-            if (options.until && !options.to) options.to = options.until;
+            if (options.since && !options.from) {
+                options.from = options.since;
+            }
+            if (options.until && !options.to) {
+                options.to = options.until;
+            }
             return handleHistorySearch(options);
         });
 
@@ -390,8 +398,12 @@ export function registerHistoryCommand(program: Command): void {
         .option("--no-comments", "Skip fetching comments (faster)")
         .option("--discover", "Query Azure DevOps for all items you changed (not just locally cached)")
         .action(async (opts: ActivityOptions & { since?: string; until?: string; comments?: boolean }) => {
-            if (opts.since && !opts.from) opts.from = opts.since;
-            if (opts.until && !opts.to) opts.to = opts.until;
+            if (opts.since && !opts.from) {
+                opts.from = opts.since;
+            }
+            if (opts.until && !opts.to) {
+                opts.to = opts.until;
+            }
             opts.includeComments = opts.comments !== false;
             await handleHistoryActivity(opts);
         });

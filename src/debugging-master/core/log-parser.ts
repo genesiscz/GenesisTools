@@ -52,10 +52,15 @@ export function computeStats(entries: IndexedLogEntry[]): SessionStats {
     for (const e of entries) {
         levelCounts[e.level] = (levelCounts[e.level] ?? 0) + 1;
         if (e.level === "assert") {
-            if (e.passed) assertsPassed++;
-            else assertsFailed++;
+            if (e.passed) {
+                assertsPassed++;
+            } else {
+                assertsFailed++;
+            }
         }
-        if (e.file) files.add(e.file);
+        if (e.file) {
+            files.add(e.file);
+        }
     }
 
     const timerPairs = computeTimerPairs(entries);
@@ -91,7 +96,9 @@ export function mergeTimerEntries(entries: IndexedLogEntry[]): IndexedLogEntry[]
 
     const result: IndexedLogEntry[] = [];
     for (const e of entries) {
-        if (endIndices.has(e.index)) continue;
+        if (endIndices.has(e.index)) {
+            continue;
+        }
         if (startToEnd.has(e.index)) {
             const pair = startToEnd.get(e.index)!;
             result.push({

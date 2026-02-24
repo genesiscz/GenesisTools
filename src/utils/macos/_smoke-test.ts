@@ -46,7 +46,9 @@ async function main() {
     ];
     const ranked = await rankBySimilarity("finance budget planning", emails, { maxResults: 2 });
     console.log("✓ Semantic ranking (top 2 for 'finance budget planning'):");
-    ranked.forEach((r, i) => console.log(`  ${i + 1}. [score: ${r.score.toFixed(3)}] ${r.item.text}`));
+    ranked.forEach((r, i) => {
+        console.log(`  ${i + 1}. [score: ${r.score.toFixed(3)}] ${r.item.text}`);
+    });
 
     // 7. Batch sentiment
     const items = emails.map((e) => ({ id: e.id, text: e.text }));

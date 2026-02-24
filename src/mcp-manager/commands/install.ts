@@ -53,7 +53,9 @@ export async function installServer(
             const inputServerName = await search({
                 message: "Select server to install or create new:",
                 source: async (term) => {
-                    if (!term) return choices;
+                    if (!term) {
+                        return choices;
+                    }
                     const lowerTerm = term.toLowerCase();
                     return choices.filter((c) => c.name.toLowerCase().includes(lowerTerm));
                 },
@@ -312,7 +314,9 @@ export async function installServer(
     // Install to each selected provider
     for (const providerName of selectedProviderNames) {
         const provider = availableProviders.find((p) => p.getName() === providerName);
-        if (!provider) continue;
+        if (!provider) {
+            continue;
+        }
 
         const result = await provider.installServer(finalServerName, configToInstall);
         if (result === WriteResult.Applied) {

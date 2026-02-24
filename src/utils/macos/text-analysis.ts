@@ -30,7 +30,9 @@ export async function rankBySimilarity<T extends { text: string }>(
     items: T[],
     options: RankOptions = {}
 ): Promise<Array<ScoredItem<T>>> {
-    if (items.length === 0) return [];
+    if (items.length === 0) {
+        return [];
+    }
 
     const language = options.language ?? "en";
 
@@ -136,7 +138,9 @@ export async function groupByLanguage<IdType = string>(
         );
         for (const result of chunkResults) {
             const key = result.language;
-            if (!groups[key]) groups[key] = [];
+            if (!groups[key]) {
+                groups[key] = [];
+            }
             groups[key].push(result);
         }
     }
@@ -206,7 +210,9 @@ export async function deduplicateTexts<T extends { text: string }>(
     items: T[],
     options: DeduplicateOptions = {}
 ): Promise<T[]> {
-    if (items.length <= 1) return [...items];
+    if (items.length <= 1) {
+        return [...items];
+    }
     const threshold = options.threshold ?? 0.3;
     const language = options.language ?? "en";
 
@@ -225,7 +231,9 @@ export async function deduplicateTexts<T extends { text: string }>(
                 // On error, assume not a duplicate
             }
         }
-        if (!isDuplicate) kept.push(item);
+        if (!isDuplicate) {
+            kept.push(item);
+        }
     }
 
     return kept;
@@ -264,7 +272,9 @@ export async function clusterBySimilarity<T extends { text: string }>(
     items: T[],
     options: ClusterOptions = {}
 ): Promise<Array<Cluster<T>>> {
-    if (items.length === 0) return [];
+    if (items.length === 0) {
+        return [];
+    }
 
     const threshold = options.threshold ?? 0.5;
     const language = options.language ?? "en";
@@ -274,7 +284,9 @@ export async function clusterBySimilarity<T extends { text: string }>(
     const assigned = new Set<number>();
 
     for (let i = 0; i < items.length; i++) {
-        if (assigned.has(i)) continue;
+        if (assigned.has(i)) {
+            continue;
+        }
 
         // Start a new cluster with items[i] as seed
         clusterSeeds.push(items[i]);
@@ -283,7 +295,9 @@ export async function clusterBySimilarity<T extends { text: string }>(
 
         // Greedily add unassigned items within threshold of this seed
         for (let j = i + 1; j < items.length; j++) {
-            if (assigned.has(j)) continue;
+            if (assigned.has(j)) {
+                continue;
+            }
             try {
                 const { distance } = await textDistance(items[i].text, items[j].text, language, "sentence");
                 if (distance <= threshold) {

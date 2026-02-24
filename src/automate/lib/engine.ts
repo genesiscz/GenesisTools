@@ -156,7 +156,9 @@ export async function runPreset(
             runLogger?.logStep(i, step.id, step.name, step.action, exceptionResult);
 
             const errorStrategy = step.onError ?? "stop";
-            if (errorStrategy === "stop") break;
+            if (errorStrategy === "stop") {
+                break;
+            }
         }
 
         i++;
@@ -233,14 +235,20 @@ function buildContext(preset: Preset, options: RunOptions): ExecutionContext {
  * Variables with a default value are pre-populated and not prompted.
  */
 async function promptForMissingVars(preset: Preset, ctx: ExecutionContext): Promise<void> {
-    if (!preset.vars) return;
+    if (!preset.vars) {
+        return;
+    }
 
     for (const [key, def] of Object.entries(preset.vars)) {
         // Already has a value (from default or CLI override)
-        if (ctx.vars[key] !== undefined) continue;
+        if (ctx.vars[key] !== undefined) {
+            continue;
+        }
 
         // Skip explicitly optional vars
-        if (def.required === false) continue;
+        if (def.required === false) {
+            continue;
+        }
 
         // Prompt for the missing required variable
         const answer = await p.text({

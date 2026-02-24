@@ -101,7 +101,9 @@ export async function input(options: InputOptions): Promise<string | symbol> {
         };
 
         const keypressHandler = (_str: string, key: readline.Key): void => {
-            if (!key) return;
+            if (!key) {
+                return;
+            }
 
             if (key.name === "return") {
                 submit();

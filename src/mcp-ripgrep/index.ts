@@ -16,7 +16,9 @@ handleReadmeFlag(import.meta.url);
  * If colors are used, return the original output, otherwise strip ANSI codes.
  */
 function processOutput(output: string, _useColors: boolean): string {
-    if (!output) return output;
+    if (!output) {
+        return output;
+    }
     console.error("searchRoot", searchRoot);
     return searchRoot ? output.replaceAll(searchRoot, ".") : output;
 }

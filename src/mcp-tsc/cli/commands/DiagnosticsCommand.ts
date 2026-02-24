@@ -47,7 +47,9 @@ export class DiagnosticsCommand {
 
         // Format and display diagnostics
         const formattedLines = this.tsServer.formatDiagnostics(result, argv.warnings);
-        formattedLines.forEach((line) => console.log(line));
+        formattedLines.forEach((line) => {
+            console.log(line);
+        });
 
         // Summary
         console.log();

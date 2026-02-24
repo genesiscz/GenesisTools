@@ -39,7 +39,9 @@ import type { Command } from "commander";
 // Silent mode for JSON output - suppresses progress messages
 let silentMode = false;
 const log = (msg: string) => {
-    if (!silentMode) consoleLog.info(msg);
+    if (!silentMode) {
+        consoleLog.info(msg);
+    }
 };
 
 // ============= Output Formatters =============
@@ -115,8 +117,12 @@ function formatWorkItemAI(
             const dlCount = downloadedAttachments.filter((a) => a.downloaded).length;
             const existCount = downloadedAttachments.length - dlCount;
             const parts = [];
-            if (dlCount > 0) parts.push(`${dlCount} downloaded`);
-            if (existCount > 0) parts.push(`${existCount} already existed`);
+            if (dlCount > 0) {
+                parts.push(`${dlCount} downloaded`);
+            }
+            if (existCount > 0) {
+                parts.push(`${existCount} already existed`);
+            }
             lines.push(`## Attachments (${parts.join(", ")})`);
             for (const att of downloadedAttachments) {
                 const status = att.downloaded ? "Downloaded" : "Already exists";
@@ -357,8 +363,12 @@ export async function handleWorkItem(
         if (existingJsonPath && existingJsonPath !== jsonPath) {
             try {
                 const existingMdPath = existingJsonPath.replace(".json", ".md");
-                if (existsSync(existingJsonPath)) unlinkSync(existingJsonPath);
-                if (existsSync(existingMdPath)) unlinkSync(existingMdPath);
+                if (existsSync(existingJsonPath)) {
+                    unlinkSync(existingJsonPath);
+                }
+                if (existsSync(existingMdPath)) {
+                    unlinkSync(existingMdPath);
+                }
                 const oldDir = dirname(existingJsonPath);
                 if (existsSync(oldDir) && readdirSync(oldDir).length === 0) {
                     rmdirSync(oldDir);
@@ -424,7 +434,9 @@ export async function handleWorkItem(
             getTaskFilePath(item.id, item.title, "json", settings?.category, settings?.taskFolder);
         const cacheTime = cacheTimes.get(item.id);
 
-        if (i > 0) console.log("\n---\n");
+        if (i > 0) {
+            console.log("\n---\n");
+        }
 
         switch (format) {
             case "ai":
@@ -484,9 +496,13 @@ export function registerWorkitemCommand(program: Command): void {
                     options.outputDir;
 
                 const parseDate = (s: string | undefined): Date | undefined => {
-                    if (!s) return undefined;
+                    if (!s) {
+                        return undefined;
+                    }
                     const d = new Date(s);
-                    if (Number.isNaN(d.getTime())) throw new Error(`Invalid date format: ${s}`);
+                    if (Number.isNaN(d.getTime())) {
+                        throw new Error(`Invalid date format: ${s}`);
+                    }
                     return d;
                 };
 

@@ -60,7 +60,9 @@ export async function searchSelect<T>(options: SearchSelectOptions<T>): Promise<
         let lastRenderHeight = 0;
 
         const filter = (item: SearchItem<T>, q: string): boolean => {
-            if (!q) return true;
+            if (!q) {
+                return true;
+            }
             const lowerQ = q.toLowerCase();
             return item.label.toLowerCase().includes(lowerQ) || String(item.value).toLowerCase().includes(lowerQ);
         };
@@ -70,10 +72,14 @@ export async function searchSelect<T>(options: SearchSelectOptions<T>): Promise<
         };
 
         const emitHighlight = (): void => {
-            if (!onHighlight) return;
+            if (!onHighlight) {
+                return;
+            }
             const filtered = getFiltered();
             const item = filtered[cursor];
-            if (item) onHighlight(item);
+            if (item) {
+                onHighlight(item);
+            }
         };
 
         const clearRender = (): void => {
@@ -134,8 +140,12 @@ export async function searchSelect<T>(options: SearchSelectOptions<T>): Promise<
                     const hiddenAfter = filtered.length - visibleEnd;
                     if (hiddenBefore > 0 || hiddenAfter > 0) {
                         const parts: string[] = [];
-                        if (hiddenBefore > 0) parts.push(`\u2191 ${hiddenBefore} more`);
-                        if (hiddenAfter > 0) parts.push(`\u2193 ${hiddenAfter} more`);
+                        if (hiddenBefore > 0) {
+                            parts.push(`\u2191 ${hiddenBefore} more`);
+                        }
+                        if (hiddenAfter > 0) {
+                            parts.push(`\u2193 ${hiddenAfter} more`);
+                        }
                         lines.push(`${S_BAR}  ${pc.dim(parts.join("  "))}`);
                     }
                 }
@@ -166,7 +176,9 @@ export async function searchSelect<T>(options: SearchSelectOptions<T>): Promise<
         const submit = (): void => {
             const filtered = getFiltered();
             const item = filtered[cursor];
-            if (!item) return; // nothing to select
+            if (!item) {
+                return; // nothing to select
+            }
             render("submit");
             cleanup();
             resolve(item.value);
@@ -180,7 +192,9 @@ export async function searchSelect<T>(options: SearchSelectOptions<T>): Promise<
 
         // Handle keypresses
         const keypressHandler = (_str: string, key: readline.Key): void => {
-            if (!key) return;
+            if (!key) {
+                return;
+            }
 
             const filtered = getFiltered();
 

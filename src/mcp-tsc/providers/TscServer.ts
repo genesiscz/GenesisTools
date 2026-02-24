@@ -62,7 +62,9 @@ export class TscServer implements TSServer {
 
         // Sort diagnostics by file and position
         targetDiagnostics.sort((a, b) => {
-            if (!a.file || !b.file) return 0;
+            if (!a.file || !b.file) {
+                return 0;
+            }
             if (a.file.fileName !== b.file.fileName) {
                 return a.file.fileName.localeCompare(b.file.fileName);
             }
@@ -115,10 +117,14 @@ export class TscServer implements TSServer {
 
         for (const d of result.diagnostics) {
             // Skip info/hint diagnostics (severity > 2)
-            if (d.severity > 2) continue;
+            if (d.severity > 2) {
+                continue;
+            }
 
             // Skip warnings unless requested
-            if (d.severity === 2 && !showWarnings) continue;
+            if (d.severity === 2 && !showWarnings) {
+                continue;
+            }
 
             const relativeFile = path.relative(this.cwd, d.file) || d.file;
             const severityText = d.severity === 1 ? "error" : "warning";

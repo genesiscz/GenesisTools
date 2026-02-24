@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database, type Statement } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -290,10 +290,10 @@ export class UsageDatabase {
         messageCount: number;
         sessionCount: number;
     } {
-        let stmt;
+        let stmt: Statement;
         if (days) {
             stmt = this.db.prepare(`
-                SELECT 
+                SELECT
                     SUM(cost) as total_cost,
                     SUM(total_tokens) as total_tokens,
                     COUNT(*) as message_count,
@@ -303,7 +303,7 @@ export class UsageDatabase {
             `);
         } else {
             stmt = this.db.prepare(`
-                SELECT 
+                SELECT
                     SUM(cost) as total_cost,
                     SUM(total_tokens) as total_tokens,
                     COUNT(*) as message_count,
@@ -347,7 +347,7 @@ export class UsageDatabase {
     }
 
     getTopModels(limit: number = 10, days?: number): ModelUsage[] {
-        let stmt;
+        let stmt: Statement;
         if (days) {
             stmt = this.db.prepare(`
                 SELECT 

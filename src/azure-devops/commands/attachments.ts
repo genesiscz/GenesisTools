@@ -28,7 +28,9 @@ function extractAttachmentId(url: string): string {
 
 /** Resolve the output directory for a work item's attachments */
 function resolveOutputDir(workItemId: number, title: string, settings: WorkItemSettings, override?: string): string {
-    if (override) return resolve(override);
+    if (override) {
+        return resolve(override);
+    }
     // Default: same directory as the task .md file
     const taskPath = getTaskFilePath(workItemId, title, "md", settings.category, settings.taskFolder);
     return dirname(taskPath);
@@ -49,6 +51,7 @@ async function downloadSingleAttachment(
     const filename = attrs.name;
     const size = attrs.resourceSize ?? 0;
     const createdDate = attrs.resourceCreatedDate ?? "";
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape/control character matching
     const sanitized = basename(filename).replace(/[<>:"|?*\x00-\x1f]/g, "_");
     const targetPath = join(outputDir, `${workItemId}-${sanitized}`);
 
@@ -94,10 +97,14 @@ async function downloadWorkItemAttachments(
     settings: WorkItemSettings,
     filter: AttachmentFilter
 ): Promise<AttachmentInfo[]> {
-    if (!item.relations?.length) return [];
+    if (!item.relations?.length) {
+        return [];
+    }
 
     const filtered = filterAttachments(item.relations, filter);
-    if (filtered.length === 0) return [];
+    if (filtered.length === 0) {
+        return [];
+    }
 
     const outputDir = resolveOutputDir(item.id, item.title, settings, filter.outputDir);
     if (!existsSync(outputDir)) {
@@ -130,7 +137,9 @@ export async function downloadAttachments(
 
     for (const [id, item] of items) {
         const settings = settingsMap.get(id);
-        if (!settings) continue;
+        if (!settings) {
+            continue;
+        }
         const attachments = await downloadWorkItemAttachments(api, item, settings, filter);
         if (attachments.length > 0) {
             result.set(id, attachments);

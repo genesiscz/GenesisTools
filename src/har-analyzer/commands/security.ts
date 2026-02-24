@@ -32,8 +32,11 @@ function findHeader(headers: HarHeader[], name: string): HarHeader | undefined {
 function decodeBase64Url(str: string): string {
     let padded = str.replace(/-/g, "+").replace(/_/g, "/");
     const remainder = padded.length % 4;
-    if (remainder === 2) padded += "==";
-    else if (remainder === 3) padded += "=";
+    if (remainder === 2) {
+        padded += "==";
+    } else if (remainder === 3) {
+        padded += "=";
+    }
     return atob(padded);
 }
 
@@ -47,10 +50,14 @@ function tryDecodeJwtPart(part: string): Record<string, unknown> | null {
 
 function scanJwt(entry: HarEntry, index: number, findings: SecurityFinding[]): void {
     const authHeader = findHeader(entry.request.headers, "Authorization");
-    if (!authHeader) return;
+    if (!authHeader) {
+        return;
+    }
 
     const match = authHeader.value.match(/^Bearer\s+(eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*)/);
-    if (!match) return;
+    if (!match) {
+        return;
+    }
 
     const token = match[1];
     const parts = token.split(".");
@@ -109,7 +116,9 @@ function scanApiKeys(entry: HarEntry, index: number, findings: SecurityFinding[]
     for (const header of entry.request.headers) {
         const lowerName = header.name.toLowerCase();
         // Skip authorization header (handled by scanJwt)
-        if (lowerName === "authorization") continue;
+        if (lowerName === "authorization") {
+            continue;
+        }
         const matched = API_KEY_PATTERNS.some((pattern) => lowerName === pattern || lowerName.includes(pattern));
 
         if (matched && header.value.length > 0) {
@@ -229,7 +238,9 @@ export function registerSecurityCommand(program: Command): void {
 
             for (const severity of severityOrder) {
                 const group = bySeverity.get(severity);
-                if (!group) continue;
+                if (!group) {
+                    continue;
+                }
 
                 lines.push(`── ${SEVERITY_SYMBOLS[severity]} ${severity} (${group.length}) ──`);
                 lines.push("");

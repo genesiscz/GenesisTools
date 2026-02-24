@@ -29,7 +29,9 @@ function buildMimeBuckets(entries: IndexedEntry[]): MimeBucket[] {
 }
 
 function makeBar(value: number, max: number, width = 20): string {
-    if (max === 0) return "";
+    if (max === 0) {
+        return "";
+    }
     const filled = Math.round((value / max) * width);
     return "\u2588".repeat(filled);
 }

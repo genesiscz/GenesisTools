@@ -329,7 +329,9 @@ export async function startMcpServer(): Promise<void> {
 
                     if (type === "errors") {
                         const errors = ctx.session.entries.filter((e) => e.isError);
-                        if (errors.length === 0) return { content: [{ type: "text", text: "No errors found." }] };
+                        if (errors.length === 0) {
+                            return { content: [{ type: "text", text: "No errors found." }] };
+                        }
                         const lines = errors.map((e) => {
                             const raw = ctx.harFile.log.entries[e.index];
                             const body = raw.response.content.text?.slice(0, 80) ?? "";

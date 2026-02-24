@@ -22,7 +22,9 @@ export function registerTailCommand(program: Command): void {
 
             const raw = await sm.readEntries(sessionName);
             let existing = indexEntries(raw);
-            if (levels) existing = filterByLevel(existing, levels);
+            if (levels) {
+                existing = filterByLevel(existing, levels);
+            }
             const tail = existing.slice(-lastCount);
 
             console.log(`Tailing session: ${sessionName} (${raw.length} entries, showing last ${tail.length})`);
@@ -56,7 +58,9 @@ export function registerTailCommand(program: Command): void {
                     if (currentSize < offset) {
                         offset = 0;
                     }
-                    if (currentSize <= offset) return;
+                    if (currentSize <= offset) {
+                        return;
+                    }
 
                     const buffer = readFileSync(filePath);
                     const newBytes = buffer.subarray(offset, currentSize);
@@ -71,7 +75,9 @@ export function registerTailCommand(program: Command): void {
                             const entry = JSON.parse(line) as LogEntry;
                             const indexed: IndexedLogEntry = { ...entry, index: entryIndex };
 
-                            if (levels && !levels.includes(entry.level) && entry.level !== "raw") continue;
+                            if (levels && !levels.includes(entry.level) && entry.level !== "raw") {
+                                continue;
+                            }
 
                             const file = indexed.file ?? "unknown";
                             if (file !== currentFile) {

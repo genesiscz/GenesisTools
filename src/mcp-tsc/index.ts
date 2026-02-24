@@ -6,6 +6,7 @@ import { DiagnosticsCommand } from "@app/mcp-tsc/cli/commands/DiagnosticsCommand
 import { HoverCommand } from "@app/mcp-tsc/cli/commands/HoverCommand.js";
 import { KillServerCommand } from "@app/mcp-tsc/cli/commands/KillServerCommand.js";
 import { McpCommand } from "@app/mcp-tsc/cli/commands/McpCommand.js";
+import type { TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import { getPersistentServer } from "@app/mcp-tsc/utils/ServerManager.js";
 import { handleReadmeFlag } from "@app/utils/readme";
 
@@ -178,7 +179,7 @@ async function main() {
                 );
 
                 // For diagnostics, use persistent server if LSP mode, or create TSC server
-                let tsServer;
+                let tsServer: TSServer;
                 if (argv["use-tsc"]) {
                     logger.info({ component: "mcp-tsc", pid: process.pid }, "Using TSC server (--use-tsc flag)");
                     tsServer = cliHandler.createTsServer(argv, cwd);

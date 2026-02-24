@@ -4,7 +4,9 @@ export interface TableOptions {
 }
 
 function truncateCell(value: string, maxWidth: number): string {
-    if (value.length <= maxWidth) return value;
+    if (value.length <= maxWidth) {
+        return value;
+    }
     return `${value.slice(0, maxWidth - 3)}...`;
 }
 

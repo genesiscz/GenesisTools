@@ -95,7 +95,9 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                     message: "Entry number (e.g. 0 or e0):",
                     placeholder: "0",
                 });
-                if (p.isCancel(entryNum)) break;
+                if (p.isCancel(entryNum)) {
+                    break;
+                }
 
                 const idx = Number.parseInt(entryNum.replace(/^e/, ""), 10);
                 if (Number.isNaN(idx) || idx < 0 || idx >= session.entries.length) {
@@ -150,7 +152,9 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                     })),
                 });
 
-                if (p.isCancel(domain)) break;
+                if (p.isCancel(domain)) {
+                    break;
+                }
 
                 const domainIndexes = session.domains[domain] ?? [];
                 for (const idx of domainIndexes) {
@@ -164,7 +168,9 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                     message: "Search query:",
                     placeholder: "error",
                 });
-                if (p.isCancel(query)) break;
+                if (p.isCancel(query)) {
+                    break;
+                }
 
                 const scope = await p.select({
                     message: "Search scope:",
@@ -175,7 +181,9 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                         { value: "header", label: "Headers only" },
                     ],
                 });
-                if (p.isCancel(scope)) break;
+                if (p.isCancel(scope)) {
+                    break;
+                }
 
                 const lower = query.toLowerCase();
                 const results: Array<{ entry: IndexedEntry; context: string }> = [];
@@ -240,14 +248,18 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                     console.log(
                         `  e${e.index}  ${e.status}  ${e.method}  ${truncatePath(e.path, 40)}  ${formatDuration(e.timeMs)}`
                     );
-                    if (body) console.log(`       ${body}`);
+                    if (body) {
+                        console.log(`       ${body}`);
+                    }
                 }
                 break;
             }
 
             case "waterfall": {
                 const entries = session.entries;
-                if (entries.length === 0) break;
+                if (entries.length === 0) {
+                    break;
+                }
 
                 const firstStart = new Date(entries[0].startedDateTime).getTime();
                 const lastEnd = entries.reduce((max, e) => {
@@ -289,7 +301,9 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                     p.log.info("No security findings.");
                 } else {
                     p.log.warn(`${findings.length} finding(s):`);
-                    for (const f of findings) console.log(f);
+                    for (const f of findings) {
+                        console.log(f);
+                    }
                 }
                 break;
             }
@@ -324,15 +338,21 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                     ],
                 });
 
-                if (p.isCancel(moreAction) || moreAction === "back") break;
+                if (p.isCancel(moreAction) || moreAction === "back") {
+                    break;
+                }
 
                 if (moreAction === "dashboard") {
                     console.log(formatDashboard(session.stats, session.sourceFile));
                 } else if (moreAction === "diff") {
                     const e1 = await p.text({ message: "First entry (e.g. 0):", placeholder: "0" });
-                    if (p.isCancel(e1)) break;
+                    if (p.isCancel(e1)) {
+                        break;
+                    }
                     const e2 = await p.text({ message: "Second entry:", placeholder: "1" });
-                    if (p.isCancel(e2)) break;
+                    if (p.isCancel(e2)) {
+                        break;
+                    }
                     p.log.info(`Use CLI: tools har-analyzer diff e${e1.replace(/^e/, "")} e${e2.replace(/^e/, "")}`);
                 } else {
                     p.log.info(`Use CLI: tools har-analyzer ${moreAction}`);
@@ -345,7 +365,9 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                     message: "Path to .har file:",
                     placeholder: "/path/to/capture.har",
                 });
-                if (p.isCancel(filePath)) break;
+                if (p.isCancel(filePath)) {
+                    break;
+                }
 
                 const spinner = p.spinner();
                 spinner.start("Loading HAR file...");

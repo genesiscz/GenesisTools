@@ -13,7 +13,9 @@ interface WaterfallOptions {
 }
 
 function buildBar(startOffset: number, duration: number, totalSpan: number): string {
-    if (totalSpan <= 0) return "";
+    if (totalSpan <= 0) {
+        return "";
+    }
 
     const startPos = Math.round((startOffset / totalSpan) * BAR_WIDTH);
     const barLen = Math.max(1, Math.round((duration / totalSpan) * BAR_WIDTH));

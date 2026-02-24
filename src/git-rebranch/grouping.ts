@@ -46,7 +46,9 @@ function buildGroupKey(scope: string | null, tickets: string[]): string {
  * Build a human-readable label for a group.
  */
 function buildGroupLabel(key: string, _commits: ParsedCommit[]): string {
-    if (key === "ungrouped") return "Ungrouped commits";
+    if (key === "ungrouped") {
+        return "Ungrouped commits";
+    }
 
     const tickets = key.match(TICKET_RE) || [];
     const scopePart = key
@@ -55,8 +57,12 @@ function buildGroupLabel(key: string, _commits: ParsedCommit[]): string {
         .trim();
 
     const parts: string[] = [];
-    if (scopePart) parts.push(scopePart);
-    if (tickets.length > 0) parts.push(tickets.join(", "));
+    if (scopePart) {
+        parts.push(scopePart);
+    }
+    if (tickets.length > 0) {
+        parts.push(tickets.join(", "));
+    }
 
     return parts.join(" - ") || key;
 }
@@ -112,8 +118,12 @@ export function groupCommits(parsed: ParsedCommit[]): CommitGroup[] {
     }
 
     return groups.sort((a, b) => {
-        if (a.key === "ungrouped") return 1;
-        if (b.key === "ungrouped") return -1;
+        if (a.key === "ungrouped") {
+            return 1;
+        }
+        if (b.key === "ungrouped") {
+            return -1;
+        }
         return b.commits.length - a.commits.length;
     });
 }

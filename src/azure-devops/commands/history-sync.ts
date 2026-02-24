@@ -54,7 +54,9 @@ function getCachedWorkItems(): CachedWorkItem[] {
             let title = `#${id}`;
             try {
                 const data = JSON.parse(readFileSync(join(cacheDir, file), "utf-8"));
-                if (data.title) title = data.title;
+                if (data.title) {
+                    title = data.title;
+                }
             } catch {
                 /* use fallback title */
             }
@@ -69,7 +71,9 @@ function getCachedWorkItems(): CachedWorkItem[] {
  * If force is true, all items need sync. Otherwise, only those without existing history cache.
  */
 async function getItemsNeedingSync(allItems: CachedWorkItem[], force: boolean): Promise<CachedWorkItem[]> {
-    if (force) return allItems;
+    if (force) {
+        return allItems;
+    }
 
     const needSync: CachedWorkItem[] = [];
     for (const item of allItems) {
@@ -94,7 +98,9 @@ export async function handleHistorySync(options: SyncOptions): Promise<void> {
 
     // Migrate old history-*.json if any exist
     const migrated = await migrateHistoryCache();
-    if (migrated > 0) p.log.info(`Migrated ${migrated} history files into workitem cache`);
+    if (migrated > 0) {
+        p.log.info(`Migrated ${migrated} history files into workitem cache`);
+    }
 
     // Step 1: Find cached work item files
     const allItems = getCachedWorkItems();

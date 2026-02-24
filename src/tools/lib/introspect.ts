@@ -28,7 +28,9 @@ export function introspectTool(scriptPath: string): ToolHelp | null {
     });
 
     const output = result.stdout || result.stderr || "";
-    if (!output.trim()) return null;
+    if (!output.trim()) {
+        return null;
+    }
 
     return parseHelpOutput(output);
 }
@@ -43,7 +45,9 @@ export function introspectSubcommand(scriptPath: string, subcommand: string): To
     });
 
     const output = result.stdout || result.stderr || "";
-    if (!output.trim()) return null;
+    if (!output.trim()) {
+        return null;
+    }
 
     return parseHelpOutput(output);
 }
@@ -80,7 +84,9 @@ function parseHelpOutput(output: string): ToolHelp {
         if (trimmed.startsWith("Usage:")) {
             help.usage = trimmed.replace("Usage:", "").trim();
             const parts = help.usage.split(/\s+/);
-            if (parts[0]) help.name = parts[0];
+            if (parts[0]) {
+                help.name = parts[0];
+            }
             section = "description";
             continue;
         }
@@ -94,7 +100,9 @@ function parseHelpOutput(output: string): ToolHelp {
             continue;
         }
 
-        if (!trimmed && section === "description") continue;
+        if (!trimmed && section === "description") {
+            continue;
+        }
 
         if (section === "description" && trimmed && !help.description) {
             help.description = trimmed;

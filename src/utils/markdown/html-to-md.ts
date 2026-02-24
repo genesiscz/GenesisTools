@@ -16,6 +16,8 @@ turndown.use(gfm);
  * Returns empty string for falsy input.
  */
 export function htmlToMarkdown(html: string): string {
-    if (!html) return "";
+    if (!html) {
+        return "";
+    }
     return turndown.turndown(html).trim();
 }

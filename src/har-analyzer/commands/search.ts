@@ -24,7 +24,9 @@ function extractContext(text: string, query: string, contextLen: number = 60): s
     const lowerQuery = query.toLowerCase();
     const idx = lowerText.indexOf(lowerQuery);
 
-    if (idx === -1) return null;
+    if (idx === -1) {
+        return null;
+    }
 
     const start = Math.max(0, idx - Math.floor(contextLen / 2));
     const end = Math.min(text.length, idx + query.length + Math.floor(contextLen / 2));
@@ -45,7 +47,9 @@ function searchInBody(har: HarFile, entry: IndexedEntry, query: string): string 
     const responseBody = harEntry.response.content.text ?? "";
     const requestBody = harEntry.request.postData?.text ?? "";
     const combined = responseBody + requestBody;
-    if (!combined) return null;
+    if (!combined) {
+        return null;
+    }
     return extractContext(combined, query);
 }
 
@@ -56,14 +60,18 @@ function searchInHeaders(har: HarFile, entry: IndexedEntry, query: string): stri
     for (const h of harEntry.request.headers) {
         const serialized = `${h.name}: ${h.value}`;
         const found = extractContext(serialized, query);
-        if (found) return found;
+        if (found) {
+            return found;
+        }
     }
 
     // Search response headers
     for (const h of harEntry.response.headers) {
         const serialized = `${h.name}: ${h.value}`;
         const found = extractContext(serialized, query);
-        if (found) return found;
+        if (found) {
+            return found;
+        }
     }
 
     return null;
@@ -93,7 +101,9 @@ export function registerSearchCommand(program: Command): void {
             const matches: SearchMatch[] = [];
 
             for (const entry of entries) {
-                if (matches.length >= limit) break;
+                if (matches.length >= limit) {
+                    break;
+                }
 
                 // URL scope
                 if (scope === "url" || scope === "all") {

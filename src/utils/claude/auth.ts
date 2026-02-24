@@ -237,7 +237,9 @@ export async function fetchOAuthProfile(accessToken: string): Promise<OAuthProfi
                 Accept: "application/json",
             },
         });
-        if (!res.ok) return undefined;
+        if (!res.ok) {
+            return undefined;
+        }
         return (await res.json()) as OAuthProfileResponse;
     } catch {
         return undefined;
@@ -249,7 +251,9 @@ export async function getClaudeJsonAccount(): Promise<ClaudeJsonAccount | undefi
         const file = Bun.file(join(homedir(), ".claude.json"));
         const data = await file.json();
         const acct = data?.oauthAccount;
-        if (!acct) return undefined;
+        if (!acct) {
+            return undefined;
+        }
         return {
             accountUuid: acct.accountUuid,
             emailAddress: acct.emailAddress,
@@ -271,11 +275,15 @@ export async function getKeychainCredentials(): Promise<KeychainCredentials | nu
         });
         const text = await new Response(proc.stdout).text();
         const exitCode = await proc.exited;
-        if (exitCode !== 0 || !text.trim()) return null;
+        if (exitCode !== 0 || !text.trim()) {
+            return null;
+        }
 
         const data = JSON.parse(text.trim());
         const oauth = data.claudeAiOauth;
-        if (!oauth?.accessToken) return null;
+        if (!oauth?.accessToken) {
+            return null;
+        }
 
         const [api, claudeJson] = await Promise.all([fetchOAuthProfile(oauth.accessToken), getClaudeJsonAccount()]);
 

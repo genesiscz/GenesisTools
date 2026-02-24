@@ -54,11 +54,21 @@ function formatAbsoluteTime(date: Date): string {
 
 function getStatusColor(status: string): (text: string) => string {
     const firstChar = status.charAt(0);
-    if (firstChar === "M" || firstChar === " ") return chalk.yellow;
-    if (firstChar === "A") return chalk.green;
-    if (firstChar === "D") return chalk.red;
-    if (firstChar === "R") return chalk.blue;
-    if (firstChar === "C") return chalk.cyan;
+    if (firstChar === "M" || firstChar === " ") {
+        return chalk.yellow;
+    }
+    if (firstChar === "A") {
+        return chalk.green;
+    }
+    if (firstChar === "D") {
+        return chalk.red;
+    }
+    if (firstChar === "R") {
+        return chalk.blue;
+    }
+    if (firstChar === "C") {
+        return chalk.cyan;
+    }
     return chalk.gray;
 }
 
@@ -66,26 +76,56 @@ function getStatusDescription(status: string): string {
     const staged = status.charAt(0);
     const unstaged = status.charAt(1);
 
-    if (staged === "M" && unstaged === "M") return "modified (staged & unstaged)";
-    if (staged === "M") return "modified (staged)";
-    if (unstaged === "M") return "modified (unstaged)";
-    if (staged === "A") return "added (staged)";
-    if (unstaged === "A") return "added (unstaged)";
-    if (staged === "D") return "deleted (staged)";
-    if (unstaged === "D") return "deleted (unstaged)";
-    if (staged === "R") return "renamed (staged)";
-    if (staged === "C") return "copied (staged)";
-    if (staged === " " && unstaged === "?") return "untracked";
+    if (staged === "M" && unstaged === "M") {
+        return "modified (staged & unstaged)";
+    }
+    if (staged === "M") {
+        return "modified (staged)";
+    }
+    if (unstaged === "M") {
+        return "modified (unstaged)";
+    }
+    if (staged === "A") {
+        return "added (staged)";
+    }
+    if (unstaged === "A") {
+        return "added (unstaged)";
+    }
+    if (staged === "D") {
+        return "deleted (staged)";
+    }
+    if (unstaged === "D") {
+        return "deleted (unstaged)";
+    }
+    if (staged === "R") {
+        return "renamed (staged)";
+    }
+    if (staged === "C") {
+        return "copied (staged)";
+    }
+    if (staged === " " && unstaged === "?") {
+        return "untracked";
+    }
     return status;
 }
 
 function getCommitStatusDescription(status: string): string {
     // For commit diffs, status is usually a single letter
-    if (status === "M") return "modified";
-    if (status === "A") return "added";
-    if (status === "D") return "deleted";
-    if (status === "R") return "renamed";
-    if (status === "C") return "copied";
+    if (status === "M") {
+        return "modified";
+    }
+    if (status === "A") {
+        return "added";
+    }
+    if (status === "D") {
+        return "deleted";
+    }
+    if (status === "R") {
+        return "renamed";
+    }
+    if (status === "C") {
+        return "copied";
+    }
     return status;
 }
 
@@ -177,7 +217,9 @@ async function getUncommittedFiles(verbose: boolean): Promise<FileChange[]> {
     const files: FileChange[] = [];
 
     for (const rawLine of lines) {
-        if (rawLine.length < 4) continue;
+        if (rawLine.length < 4) {
+            continue;
+        }
 
         const status = rawLine.substring(0, 2);
         let fileName = rawLine.substring(3);
@@ -188,7 +230,9 @@ async function getUncommittedFiles(verbose: boolean): Promise<FileChange[]> {
             fileName = fileName.trim();
         }
 
-        if (!fileName) continue;
+        if (!fileName) {
+            continue;
+        }
 
         let filePath: string;
 
@@ -254,7 +298,9 @@ async function getCommittedFiles(numCommits: number, verbose: boolean): Promise<
         const trimmedLine = line.trim();
 
         // Skip empty lines
-        if (!trimmedLine) continue;
+        if (!trimmedLine) {
+            continue;
+        }
 
         // Check if this is a commit header (format: HASH|TIMESTAMP)
         if (trimmedLine.includes("|") && /^[a-f0-9]{40}\|\d+$/.test(trimmedLine)) {
@@ -267,11 +313,15 @@ async function getCommittedFiles(numCommits: number, verbose: boolean): Promise<
         }
 
         // If we don't have a commit date yet, skip this line
-        if (!currentCommitDate) continue;
+        if (!currentCommitDate) {
+            continue;
+        }
 
         // Parse file status line (format: STATUS\tFILE or STATUS\tFILE1\tFILE2 for rename)
         const parts = trimmedLine.split("\t");
-        if (parts.length < 2) continue;
+        if (parts.length < 2) {
+            continue;
+        }
 
         const status = parts[0].trim();
         let filePath: string;
@@ -283,7 +333,9 @@ async function getCommittedFiles(numCommits: number, verbose: boolean): Promise<
             filePath = parts[1];
         }
 
-        if (!filePath) continue;
+        if (!filePath) {
+            continue;
+        }
 
         // Normalize status to match uncommitted format (use first char, pad with space)
         let normalizedStatus = status.charAt(0);

@@ -34,6 +34,7 @@ const createSimpleLogger = () => {
                     console.log(msg);
                 } else {
                     // Strip ANSI codes for non-TTY output
+                    // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape/control character matching
                     console.log(msg.replace(/\u001b\[[0-9;]*m/g, ""));
                 }
             }
@@ -42,6 +43,7 @@ const createSimpleLogger = () => {
             if (isTTY) {
                 console.error(msg);
             } else {
+                // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape/control character matching
                 console.error(msg.replace(/\u001b\[[0-9;]*m/g, ""));
             }
         },
@@ -513,7 +515,9 @@ class EnhancedPackageComparison {
 
             installProcess.on("close", (code) => {
                 clearTimeout(timeout);
-                if (timedOut) return;
+                if (timedOut) {
+                    return;
+                }
 
                 if (code === 0) {
                     logger.debug(`Successfully installed ${pkg}@${version} to ${dir}`);
@@ -758,7 +762,9 @@ class EnhancedPackageComparison {
             this.pagerProcess.on("error", (err: any) => {
                 logger.debug(`Failed to start pager: ${err}`);
                 // Fallback to normal output
-                this.outputBuffer.forEach((line) => console.log(line));
+                this.outputBuffer.forEach((line) => {
+                    console.log(line);
+                });
                 this.outputBuffer = [];
             });
 
@@ -769,7 +775,9 @@ class EnhancedPackageComparison {
             this.outputBuffer = [];
         } catch (_e) {
             // Fallback to normal output
-            this.outputBuffer.forEach((line) => console.log(line));
+            this.outputBuffer.forEach((line) => {
+                console.log(line);
+            });
             this.outputBuffer = [];
         }
     }
@@ -1262,7 +1270,9 @@ class EnhancedPackageComparison {
 
             this.results
                 .filter((r) => r.status !== "identical" || this.options.showIdentical)
-                .forEach((result) => this.outputTerminalDiff(result));
+                .forEach((result) => {
+                    this.outputTerminalDiff(result);
+                });
 
             // Show statistics if requested
             if (this.options.stats) {

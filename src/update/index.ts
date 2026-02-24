@@ -109,12 +109,16 @@ function extractLatestEntry(changelog: string): string | null {
             break;
         }
     }
-    if (start === -1) return null;
+    if (start === -1) {
+        return null;
+    }
     return lines.slice(start, end).join("\n").trim();
 }
 
 function discoverSkills(skillsDir: string): Array<{ name: string; description: string }> {
-    if (!existsSync(skillsDir)) return [];
+    if (!existsSync(skillsDir)) {
+        return [];
+    }
     const skills: Array<{ name: string; description: string }> = [];
     for (const entry of readdirSync(skillsDir)) {
         const skillFile = join(skillsDir, entry, "SKILL.md");

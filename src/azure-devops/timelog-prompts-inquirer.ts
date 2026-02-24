@@ -15,7 +15,7 @@ export async function runInteractiveAddInquirer(
     console.log("\n📝 TimeLog - Add Entry\n");
 
     try {
-        const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+        const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog?.functionsKey, user);
 
         // Fetch time types
         console.log("Loading time types...");
@@ -30,8 +30,12 @@ export async function runInteractiveAddInquirer(
             const workItemInput = await input({
                 message: "Work Item ID:",
                 validate: (value) => {
-                    if (!value) return "Work item ID is required";
-                    if (Number.isNaN(parseInt(value, 10))) return "Must be a number";
+                    if (!value) {
+                        return "Work item ID is required";
+                    }
+                    if (Number.isNaN(parseInt(value, 10))) {
+                        return "Must be a number";
+                    }
                     return true;
                 },
             });
@@ -54,9 +58,13 @@ export async function runInteractiveAddInquirer(
             message: "Hours:",
             default: "1",
             validate: (value) => {
-                if (!value) return "Hours is required (use 0 for minutes only)";
+                if (!value) {
+                    return "Hours is required (use 0 for minutes only)";
+                }
                 const num = parseFloat(value);
-                if (Number.isNaN(num) || num < 0) return "Must be a non-negative number";
+                if (Number.isNaN(num) || num < 0) {
+                    return "Must be a non-negative number";
+                }
                 return true;
             },
         });
@@ -97,7 +105,9 @@ export async function runInteractiveAddInquirer(
         console.log(`Time: ${formatMinutes(totalMinutes)}`);
         console.log(`Type: ${selectedType}`);
         console.log(`Date: ${dateInput}`);
-        if (comment) console.log(`Comment: ${comment}`);
+        if (comment) {
+            console.log(`Comment: ${comment}`);
+        }
         console.log("─".repeat(40));
 
         const confirmed = await confirm({

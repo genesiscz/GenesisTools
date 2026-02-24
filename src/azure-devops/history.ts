@@ -38,17 +38,23 @@ export function userMatches(userName: string, query: string): boolean {
     const normalizedQuery = normalizeUserName(query);
 
     // Exact match
-    if (normalizedName === normalizedQuery) return true;
+    if (normalizedName === normalizedQuery) {
+        return true;
+    }
 
     // Contains match
-    if (normalizedName.includes(normalizedQuery)) return true;
+    if (normalizedName.includes(normalizedQuery)) {
+        return true;
+    }
 
     // Word-by-word match (handles reversed name order)
     const queryWords = normalizedQuery.split(/\s+/).filter(Boolean);
     if (queryWords.length > 0) {
         const nameWords = normalizedName.split(/\s+/).filter(Boolean);
         const allQueryWordsFound = queryWords.every((qw) => nameWords.some((nw) => nw.includes(qw)));
-        if (allQueryWordsFound) return true;
+        if (allQueryWordsFound) {
+            return true;
+        }
     }
 
     return false;
@@ -61,11 +67,15 @@ export function userMatches(userName: string, query: string): boolean {
 export function resolveUser(query: string, members: IdentityRef[]): IdentityRef | null {
     // Exact displayName match
     const exactDisplay = members.find((m) => m.displayName.toLowerCase() === query.toLowerCase());
-    if (exactDisplay) return exactDisplay;
+    if (exactDisplay) {
+        return exactDisplay;
+    }
 
     // Exact uniqueName match
     const exactUnique = members.find((m) => m.uniqueName?.toLowerCase() === query.toLowerCase());
-    if (exactUnique) return exactUnique;
+    if (exactUnique) {
+        return exactUnique;
+    }
 
     // Fuzzy match via userMatches
     const fuzzyMatch = members.find((m) => userMatches(m.displayName, query));
@@ -98,7 +108,9 @@ export function computeAssignmentPeriods(updates: WorkItemUpdate[]): AssignmentP
 
     for (const update of sorted) {
         const assignedToChange = update.fields?.["System.AssignedTo"];
-        if (!assignedToChange) continue;
+        if (!assignedToChange) {
+            continue;
+        }
 
         const newAssignee = (assignedToChange.newValue as IdentityRef)?.displayName ?? null;
         const changeDate = sanitizeDate(update.revisedDate);
@@ -153,7 +165,9 @@ export function computeStatePeriods(updates: WorkItemUpdate[]): StatePeriod[] {
             currentAssignee = (assignedToChange.newValue as IdentityRef)?.displayName ?? null;
         }
 
-        if (!stateChange) continue;
+        if (!stateChange) {
+            continue;
+        }
 
         const newState = stateChange.newValue as string | undefined;
         const changeDate = sanitizeDate(update.revisedDate);
@@ -295,7 +309,9 @@ export function calculateTimeInState(
     const result = new Map<string, { totalMinutes: number; byAssignee: Map<string, number> }>();
 
     for (const period of history.statePeriods) {
-        if (period.durationMinutes == null) continue;
+        if (period.durationMinutes == null) {
+            continue;
+        }
 
         let entry = result.get(period.state);
         if (!entry) {

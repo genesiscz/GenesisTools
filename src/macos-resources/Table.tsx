@@ -101,7 +101,9 @@ export default class Table<T extends ScalarDict> extends React.Component<
             const data = this.props.data.map((data) => {
                 const value = data[key];
 
-                if (value === undefined || value == null) return 0;
+                if (value === undefined || value == null) {
+                    return 0;
+                }
                 return String(value).length;
             });
 
@@ -371,7 +373,9 @@ function intersperse<T, I>(intersperser: (index: number) => I, elements: T[]): (
     const interspersed: (T | I)[] = elements.reduce(
         (acc, element, index) => {
             // Only add element if it's the first one.
-            if (acc.length === 0) return [element];
+            if (acc.length === 0) {
+                return [element];
+            }
             // Add the intersparser as well otherwise.
             return [...acc, intersperser(index), element];
         },

@@ -27,7 +27,9 @@ export function getClaudeProjectsDir(): string {
  * Skips invalid JSON lines silently.
  */
 export async function parseJsonlTranscript<T = Record<string, unknown>>(filePath: string): Promise<T[]> {
-    if (!existsSync(filePath)) return [];
+    if (!existsSync(filePath)) {
+        return [];
+    }
 
     const messages: T[] = [];
 

@@ -28,7 +28,9 @@ export function cleanHtml(doc: Document): Element {
 
     for (const sel of removeSelectors) {
         try {
-            body.querySelectorAll(sel).forEach((el) => el.remove());
+            body.querySelectorAll(sel).forEach((el) => {
+                el.remove();
+            });
         } catch {
             // Invalid selector, skip
         }

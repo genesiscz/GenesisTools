@@ -87,7 +87,9 @@ export function getGhCliToken(): string | undefined {
         });
         if (result.exitCode === 0) {
             const token = result.stdout.toString().trim();
-            if (token) return token;
+            if (token) {
+                return token;
+            }
         }
     } catch (err) {
         logger.debug({ err }, "Failed to run gh auth token");

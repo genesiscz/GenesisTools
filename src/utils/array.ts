@@ -7,6 +7,8 @@
  * Returns empty array for null/undefined.
  */
 export function wrapArray<T>(value: T | T[] | undefined | null): T[] {
-    if (value == null) return [];
+    if (value == null) {
+        return [];
+    }
     return Array.isArray(value) ? value : [value];
 }

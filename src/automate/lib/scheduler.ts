@@ -77,12 +77,16 @@ async function executeDueSchedule(db: AutomateDatabase, schedule: ScheduleRow): 
 
 function getNextWakeupMs(db: AutomateDatabase): number {
     const schedules = db.listSchedules().filter((s) => s.enabled);
-    if (schedules.length === 0) return 60_000;
+    if (schedules.length === 0) {
+        return 60_000;
+    }
     const now = Date.now();
     let earliest = Infinity;
     for (const s of schedules) {
         const nextMs = new Date(s.next_run_at).getTime() - now;
-        if (nextMs < earliest) earliest = nextMs;
+        if (nextMs < earliest) {
+            earliest = nextMs;
+        }
     }
     return earliest;
 }

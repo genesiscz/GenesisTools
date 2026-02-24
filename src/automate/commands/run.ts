@@ -3,6 +3,7 @@
 import { runPreset } from "@app/automate/lib/engine.ts";
 import { createRunLogger } from "@app/automate/lib/run-logger.ts";
 import { loadPreset } from "@app/automate/lib/storage.ts";
+import type { Preset } from "@app/automate/lib/types.ts";
 import { formatDuration } from "@app/utils/format.ts";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -22,7 +23,7 @@ export function registerRunCommand(program: Command): void {
             const loadSpinner = p.spinner();
             loadSpinner.start("Loading preset...");
 
-            let preset;
+            let preset: Preset;
             try {
                 preset = await loadPreset(presetArg);
                 loadSpinner.stop(`Loaded: ${pc.bold(preset.name)}`);
@@ -56,9 +57,15 @@ export function registerRunCommand(program: Command): void {
             const skipCount = result.steps.filter((s) => s.result.status === "skipped").length;
 
             const summaryParts: string[] = [];
-            if (successCount > 0) summaryParts.push(pc.green(`${successCount} passed`));
-            if (failCount > 0) summaryParts.push(pc.red(`${failCount} failed`));
-            if (skipCount > 0) summaryParts.push(pc.dim(`${skipCount} skipped`));
+            if (successCount > 0) {
+                summaryParts.push(pc.green(`${successCount} passed`));
+            }
+            if (failCount > 0) {
+                summaryParts.push(pc.red(`${failCount} failed`));
+            }
+            if (skipCount > 0) {
+                summaryParts.push(pc.dim(`${skipCount} skipped`));
+            }
 
             p.outro(
                 result.success
@@ -66,6 +73,8 @@ export function registerRunCommand(program: Command): void {
                     : pc.red(`Failed after ${formatDuration(result.totalDuration)} (${summaryParts.join(", ")})`)
             );
 
-            if (!result.success) process.exit(1);
+            if (!result.success) {
+                process.exit(1);
+            }
         });
 }

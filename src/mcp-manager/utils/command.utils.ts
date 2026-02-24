@@ -119,10 +119,14 @@ export function parseCommandString(commandString: string): { command: string; ar
  */
 function parseSinglePair(input: string, separator: string): { key: string; value: string } | null {
     const str = input.trim();
-    if (!str) return null;
+    if (!str) {
+        return null;
+    }
 
     const sepIndex = str.indexOf(separator);
-    if (sepIndex <= 0) return null; // No separator or starts with separator
+    if (sepIndex <= 0) {
+        return null; // No separator or starts with separator
+    }
 
     const key = str.slice(0, sepIndex).trim();
     let value = str.slice(sepIndex + 1).trim();
@@ -155,7 +159,9 @@ export function parseHeaderString(input: string | string[]): Record<string, stri
 
     for (const item of inputs) {
         const trimmed = item.trim();
-        if (!trimmed) continue;
+        if (!trimmed) {
+            continue;
+        }
 
         // Try JSON format first
         if (trimmed.startsWith("{")) {
@@ -198,7 +204,9 @@ export function parseEnvString(input: string | string[]): Record<string, string>
 
     for (const item of inputs) {
         const trimmed = item.trim();
-        if (!trimmed) continue;
+        if (!trimmed) {
+            continue;
+        }
 
         // Try JSON format first
         if (trimmed.startsWith("{")) {
@@ -232,7 +240,9 @@ export function parseEnvString(input: string | string[]): Record<string, string>
  * Parse comma-delimited server names from input string
  */
 export function parseServerNames(input?: string): string[] {
-    if (!input) return [];
+    if (!input) {
+        return [];
+    }
 
     if (input.includes(",")) {
         return input

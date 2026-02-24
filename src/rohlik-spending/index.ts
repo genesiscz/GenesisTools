@@ -88,25 +88,37 @@ function extractCookies(input: string): string | null {
 
     // Try -b 'cookies' format (single quotes - everything inside is literal)
     const bSingleMatch = normalized.match(/-b\s+'([^']+)'/);
-    if (bSingleMatch) return bSingleMatch[1].trim();
+    if (bSingleMatch) {
+        return bSingleMatch[1].trim();
+    }
 
     // Try -b "cookies" format (double quotes)
     const bDoubleMatch = normalized.match(/-b\s+"([^"]+)"/);
-    if (bDoubleMatch) return bDoubleMatch[1].trim();
+    if (bDoubleMatch) {
+        return bDoubleMatch[1].trim();
+    }
 
     // Try --cookie 'cookies' format
     const cookieSingleMatch = normalized.match(/--cookie\s+'([^']+)'/);
-    if (cookieSingleMatch) return cookieSingleMatch[1].trim();
+    if (cookieSingleMatch) {
+        return cookieSingleMatch[1].trim();
+    }
 
     const cookieDoubleMatch = normalized.match(/--cookie\s+"([^"]+)"/);
-    if (cookieDoubleMatch) return cookieDoubleMatch[1].trim();
+    if (cookieDoubleMatch) {
+        return cookieDoubleMatch[1].trim();
+    }
 
     // Try -H 'cookie: ...' format (header form)
     const headerSingleMatch = normalized.match(/-H\s+'[Cc]ookie:\s*([^']+)'/);
-    if (headerSingleMatch) return headerSingleMatch[1].trim();
+    if (headerSingleMatch) {
+        return headerSingleMatch[1].trim();
+    }
 
     const headerDoubleMatch = normalized.match(/-H\s+"[Cc]ookie:\s*([^"]+)"/);
-    if (headerDoubleMatch) return headerDoubleMatch[1].trim();
+    if (headerDoubleMatch) {
+        return headerDoubleMatch[1].trim();
+    }
 
     // If input looks like raw cookies (has = and ;), use as-is
     // But filter out curl command parts

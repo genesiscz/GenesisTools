@@ -1,9 +1,32 @@
 import logger from "@app/logger";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { providerManager } from "@ask/providers/ProviderManager";
+import type { ModelInfo, PricingInfo } from "@ask/types";
 import type { ModelsOptions } from "@ask/types/cli";
 import Table from "cli-table3";
 import pc from "picocolors";
+
+interface ModelWithPricing {
+    model: ModelInfo;
+    pricing: PricingInfo | null;
+}
+
+interface ModelWithProvider extends ModelWithPricing {
+    provider: string;
+}
+
+interface ProviderOutput {
+    name: string;
+    type: string;
+    description?: string;
+    models: Array<{
+        id: string;
+        name: string;
+        contextWindow: number;
+        capabilities: string[];
+        pricing: Omit<PricingInfo, never> | null;
+    }>;
+}
 
 // Re-export for backward compatibility
 export type { ModelsOptions as PricingOptions } from "@ask/types/cli";
@@ -19,8 +42,12 @@ function formatContextWindow(tokens: number): string {
 }
 
 function formatPrice(price: number | undefined): string {
-    if (price === undefined) return pc.dim("N/A");
-    if (price === 0) return pc.green("Free");
+    if (price === undefined) {
+        return pc.dim("N/A");
+    }
+    if (price === 0) {
+        return pc.green("Free");
+    }
     return `$${price.toFixed(4)}`;
 }
 
@@ -60,7 +87,7 @@ function matchesCapabilities(modelCapabilities: string[], filterCapabilities: st
     return normalizedFilterCaps.every((filterCap) => normalizedModelCaps.includes(filterCap));
 }
 
-function sortModels(modelsWithPricing: Array<{ model: any; pricing: any }>, sortBy?: ModelsOptions["sort"]): void {
+function sortModels(modelsWithPricing: ModelWithPricing[], sortBy?: ModelsOptions["sort"]): void {
     if (!sortBy || sortBy === "price_input" || sortBy === "input") {
         // Sort by input cost (cheapest first)
         modelsWithPricing.sort((a, b) => {
@@ -126,7 +153,9 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
         // Filter out models with invalid pricing (null, negative, or extreme values)
         // Also exclude "Auto Router" which has invalid pricing from OpenRouter
         modelsWithPricing = modelsWithPricing.filter(({ model, pricing }) => {
-            if (pricing === null) return true; // Keep models without pricing (they'll show as N/A)
+            if (pricing === null) {
+                return true; // Keep models without pricing (they'll show as N/A)
+            }
 
             // Exclude Auto Router models (they have invalid pricing)
             const modelName = (model.name || "").toLowerCase();
@@ -147,8 +176,12 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
             const outputPrice = pricing?.outputPer1M ?? Infinity;
 
             // Exclude negative prices or prices that are too extreme (likely errors)
-            if (inputPrice < 0 || outputPrice < 0) return false;
-            if (inputPrice > 1_000_000 || outputPrice > 1_000_000) return false; // Sanity check
+            if (inputPrice < 0 || outputPrice < 0) {
+                return false;
+            }
+            if (inputPrice > 1_000_000 || outputPrice > 1_000_000) {
+                return false; // Sanity check
+            }
 
             return true;
         });
@@ -192,7 +225,7 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
     console.log(pc.bold(pc.cyan("\n📊 SUMMARY\n")));
 
     // Collect all filtered models (accounting for capability filtering)
-    const allFilteredModels: Array<{ model: any; provider: string; pricing: any }> = [];
+    const allFilteredModels: ModelWithProvider[] = [];
     for (const provider of filteredProviders) {
         const modelsWithPricing = await Promise.all(
             provider.models.map(async (model) => {
@@ -224,7 +257,9 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
     // Filter out models with invalid pricing (null, negative, or extreme values)
     // Also exclude "Auto Router" which has invalid pricing from OpenRouter
     const validModels = modelsWithPricing.filter((m) => {
-        if (m.pricing === null) return false;
+        if (m.pricing === null) {
+            return false;
+        }
 
         // Exclude Auto Router models (they have invalid pricing)
         const modelName = (m.model.name || "").toLowerCase();
@@ -245,8 +280,12 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
         const outputPrice = m.pricing?.outputPer1M ?? Infinity;
 
         // Exclude negative prices or prices that are too extreme (likely errors)
-        if (inputPrice < 0 || outputPrice < 0) return false;
-        if (inputPrice > 1_000_000 || outputPrice > 1_000_000) return false; // Sanity check
+        if (inputPrice < 0 || outputPrice < 0) {
+            return false;
+        }
+        if (inputPrice > 1_000_000 || outputPrice > 1_000_000) {
+            return false; // Sanity check
+        }
 
         return true;
     });
@@ -322,10 +361,10 @@ async function showPricingJSON(providerFilter?: string, filterCapabilities?: str
         ? providers.filter((p) => p.name.toLowerCase() === providerFilter.toLowerCase())
         : providers;
 
-    const output: Record<string, any> = {};
+    const output: Record<string, ProviderOutput> = {};
 
     for (const provider of filteredProviders) {
-        const models: any[] = [];
+        const models: ProviderOutput["models"] = [];
 
         for (const model of provider.models) {
             // Filter by capabilities if specified

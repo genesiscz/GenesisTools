@@ -126,7 +126,9 @@ export class SessionManager {
     async getSessionMeta(name: string): Promise<SessionMeta | null> {
         const dir = await this.getSessionsDir();
         const metaPath = join(dir, `${name}.meta.json`);
-        if (!existsSync(metaPath)) return null;
+        if (!existsSync(metaPath)) {
+            return null;
+        }
 
         try {
             return (await Bun.file(metaPath).json()) as SessionMeta;
@@ -138,7 +140,9 @@ export class SessionManager {
     async touchSession(name: string): Promise<void> {
         const dir = await this.getSessionsDir();
         const metaPath = join(dir, `${name}.meta.json`);
-        if (!existsSync(metaPath)) return;
+        if (!existsSync(metaPath)) {
+            return;
+        }
 
         try {
             const meta = (await Bun.file(metaPath).json()) as SessionMeta;
@@ -152,10 +156,14 @@ export class SessionManager {
     async readEntries(name: string): Promise<LogEntry[]> {
         const dir = await this.getSessionsDir();
         const jsonlPath = join(dir, `${name}.jsonl`);
-        if (!existsSync(jsonlPath)) return [];
+        if (!existsSync(jsonlPath)) {
+            return [];
+        }
 
         const text = await Bun.file(jsonlPath).text();
-        if (!text.trim()) return [];
+        if (!text.trim()) {
+            return [];
+        }
 
         const lines = text.trim().split("\n");
         const entries: LogEntry[] = [];

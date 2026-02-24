@@ -10,7 +10,9 @@ export class ConfigManager {
     }
 
     async load(): Promise<DebugMasterConfig> {
-        if (this.config) return this.config;
+        if (this.config) {
+            return this.config;
+        }
         await this.storage.ensureDirs();
         const stored = await this.storage.getConfig<DebugMasterConfig>();
         this.config = stored ?? { projects: {} };
@@ -18,7 +20,9 @@ export class ConfigManager {
     }
 
     async save(): Promise<void> {
-        if (!this.config) return;
+        if (!this.config) {
+            return;
+        }
         await this.storage.setConfig(this.config);
     }
 

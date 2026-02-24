@@ -21,6 +21,7 @@ export function slugify(title: string): string {
  * Strip ANSI escape sequences from a string.
  */
 export function stripAnsi(input: string): string {
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code matching
     return input.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "");
 }
 
@@ -43,8 +44,12 @@ export function removeDiacritics(str: string): string {
  * Truncate text to a maximum length, appending "..." if truncated.
  */
 export function truncateText(text: string, maxLength: number = 100): string {
-    if (text.length <= maxLength) return text;
-    if (maxLength <= 3) return text.substring(0, maxLength);
+    if (text.length <= maxLength) {
+        return text;
+    }
+    if (maxLength <= 3) {
+        return text.substring(0, maxLength);
+    }
     return `${text.substring(0, maxLength - 3)}...`;
 }
 
@@ -56,6 +61,7 @@ export function sanitizeOutput(text: string, removeANSI: boolean = false): strin
     if (removeANSI) {
         sanitized = stripAnsi(sanitized);
     }
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional control character stripping for sanitization
     sanitized = sanitized.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
     return sanitized;
 }
@@ -78,9 +84,15 @@ export function fuzzyMatch(query: string, target: string): number {
     const q = query.toLowerCase();
     const t = target.toLowerCase();
 
-    if (t === q) return 0;
-    if (t.startsWith(q)) return 1;
-    if (t.includes(q)) return 2;
+    if (t === q) {
+        return 0;
+    }
+    if (t.startsWith(q)) {
+        return 1;
+    }
+    if (t.includes(q)) {
+        return 2;
+    }
 
     let qi = 0;
     let gaps = 0;
@@ -91,7 +103,9 @@ export function fuzzyMatch(query: string, target: string): number {
             gaps++;
         }
     }
-    if (qi < q.length) return -1;
+    if (qi < q.length) {
+        return -1;
+    }
     return 3 + gaps;
 }
 

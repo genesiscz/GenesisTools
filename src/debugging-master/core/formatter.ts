@@ -38,14 +38,18 @@ export function formatEntryLine(entry: IndexedLogEntry, pretty: boolean): string
         const coloredLevel = colorizeLevel(entry.level, level, entry.passed);
         const coloredSuffix = colorizeSuffix(entry, suffix);
         const line = `  ${coloredIdx}  ${coloredTime}  ${coloredLevel} ${label}`;
-        if (!coloredSuffix) return line;
+        if (!coloredSuffix) {
+            return line;
+        }
         const visibleLen = stripAnsi(line).length;
         const padded = line + " ".repeat(Math.max(0, 60 - visibleLen));
         return `${padded} ${coloredSuffix}`;
     }
 
     const line = `  ${idx}  ${time}  ${level} ${label}`;
-    if (!suffix) return line;
+    if (!suffix) {
+        return line;
+    }
     return `${line.padEnd(60)} ${suffix}`;
 }
 
@@ -78,7 +82,9 @@ function colorizeLevel(type: string, text: string, passed?: boolean): string {
 }
 
 function colorizeSuffix(entry: IndexedLogEntry, suffix: string): string {
-    if (!suffix) return "";
+    if (!suffix) {
+        return "";
+    }
     if (entry.level === "assert") {
         return entry.passed ? chalk.green(suffix) : chalk.red(suffix);
     }
@@ -101,7 +107,9 @@ export function formatSummary(stats: SessionStats): string {
     const levelOrder = ["dump", "info", "warn", "error", "checkpoint", "trace", "snapshot", "assert", "raw"];
     for (const level of levelOrder) {
         const count = lc[level];
-        if (!count) continue;
+        if (!count) {
+            continue;
+        }
         let text = `${count} ${level}`;
         if (level === "assert") {
             text += ` (${stats.assertsFailed} failed)`;
@@ -171,7 +179,6 @@ export function wrapOutput(content: string, format: OutputFormat, tip?: string):
             return JSON.stringify({ output: stripAnsi(content) });
         case "md":
             return content + (tip ?? "");
-        case "ai":
         default:
             return content + (tip ?? "");
     }

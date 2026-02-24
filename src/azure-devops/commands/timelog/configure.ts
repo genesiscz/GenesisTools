@@ -346,7 +346,9 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
     const allSelectedStates = new Set<string>();
     if (config.timelog.allowedStatesPerType) {
         for (const states of Object.values(config.timelog.allowedStatesPerType)) {
-            for (const s of states as string[]) allSelectedStates.add(s);
+            for (const s of states as string[]) {
+                allSelectedStates.add(s);
+            }
         }
     }
 

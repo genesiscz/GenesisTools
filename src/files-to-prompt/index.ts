@@ -291,7 +291,9 @@ async function processPath(
                 }
                 return;
             }
-            if (!includeHidden && fileName.startsWith(".")) return;
+            if (!includeHidden && fileName.startsWith(".")) {
+                return;
+            }
             if (ignorePatterns.length > 0) {
                 const baseName = basename(path);
                 const matchesPattern = ignorePatterns.some((pattern) => minimatch(baseName, pattern, { dot: true }));
@@ -529,7 +531,9 @@ async function readPathsFromStdin(useNullSeparator: boolean): Promise<string[]> 
     try {
         while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+                break;
+            }
             input += Buffer.from(value).toString();
         }
     } finally {
@@ -557,7 +561,9 @@ function formatFileSize(bytes: number): string {
 }
 
 function toRelativePath(path: string, basePath?: string): string {
-    if (!basePath) return path;
+    if (!basePath) {
+        return path;
+    }
     try {
         return relative(basePath, path);
     } catch {
@@ -594,7 +600,9 @@ function formatFileList<T extends string | IgnoredFile>(
     maxDisplayItems: number = 100,
     indent: string = "  "
 ): string[] {
-    if (items.length === 0) return [];
+    if (items.length === 0) {
+        return [];
+    }
 
     // Extract relative paths and metadata
     const pathsWithMeta = items.map((item) => {
@@ -660,7 +668,9 @@ function formatFileList<T extends string | IgnoredFile>(
     const sortedGroups = Array.from(selectedGroups.entries()).sort((a, b) => {
         const aIsDir = a[0].endsWith("/") || a[1][0].isDirectory;
         const bIsDir = b[0].endsWith("/") || b[1][0].isDirectory;
-        if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
+        if (aIsDir !== bIsDir) {
+            return aIsDir ? -1 : 1;
+        }
         return a[0].localeCompare(b[0]);
     });
 
@@ -722,19 +732,25 @@ function printStatistics(stats: Statistics): void {
                 }):`
             );
             const items = formatFileList(byReason.gitignore, stats.basePath, 100, "    ");
-            items.forEach((item) => console.log(item));
+            items.forEach((item) => {
+                console.log(item);
+            });
         }
 
         if (byReason.extension.length > 0) {
             console.log(`\n  By extension filter (${byReason.extension.length}):`);
             const items = formatFileList(byReason.extension, stats.basePath, 100, "    ");
-            items.forEach((item) => console.log(item));
+            items.forEach((item) => {
+                console.log(item);
+            });
         }
 
         if (byReason.pattern.length > 0) {
             console.log(`\n  By ignore pattern (${byReason.pattern.length}):`);
             const items = formatFileList(byReason.pattern, stats.basePath, 100, "    ");
-            items.forEach((item) => console.log(item));
+            items.forEach((item) => {
+                console.log(item);
+            });
         }
     }
 

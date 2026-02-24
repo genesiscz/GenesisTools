@@ -25,11 +25,21 @@ const LOG_LEVELS: Record<LogLevel, number> = {
 };
 
 const getLogLevel = (): LogLevel => {
-    if (process.env.LOG_TRACE === "1") return "trace";
-    if (process.env.LOG_DEBUG === "1") return "debug";
-    if (process.env.LOG_SILENT === "1") return "silent";
-    if (args.trace) return "trace";
-    if (args.verbose) return "debug";
+    if (process.env.LOG_TRACE === "1") {
+        return "trace";
+    }
+    if (process.env.LOG_DEBUG === "1") {
+        return "debug";
+    }
+    if (process.env.LOG_SILENT === "1") {
+        return "silent";
+    }
+    if (args.trace) {
+        return "trace";
+    }
+    if (args.verbose) {
+        return "debug";
+    }
     return "info";
 };
 
@@ -176,8 +186,12 @@ export const createConsoleLoggerRaw = (logLevel: LogLevel = currentLevel): RawCo
     const formatArgs = (args: unknown[]): string => {
         return args
             .map((arg) => {
-                if (typeof arg === "string") return arg;
-                if (arg instanceof Error) return arg.message;
+                if (typeof arg === "string") {
+                    return arg;
+                }
+                if (arg instanceof Error) {
+                    return arg.message;
+                }
                 try {
                     return JSON.stringify(arg);
                 } catch {

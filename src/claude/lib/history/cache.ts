@@ -212,7 +212,9 @@ export function getCachedTotals(): CachedTotals | null {
         last_updated: string;
     } | null;
 
-    if (!row) return null;
+    if (!row) {
+        return null;
+    }
 
     return {
         totalConversations: row.total_conversations,
@@ -250,7 +252,9 @@ export function getFileIndex(filePath: string): FileIndexRecord | null {
         last_indexed: string;
     } | null;
 
-    if (!row) return null;
+    if (!row) {
+        return null;
+    }
 
     return {
         filePath: row.file_path,
@@ -308,7 +312,9 @@ export function getAllFileIndexes(): FileIndexRecord[] {
 
 export async function checkFileChanged(filePath: string): Promise<boolean> {
     const indexed = getFileIndex(filePath);
-    if (!indexed) return true;
+    if (!indexed) {
+        return true;
+    }
 
     try {
         const fileStat = await stat(filePath);
@@ -338,7 +344,9 @@ const DEFAULT_TOKEN_USAGE: TokenUsage = {
  * Safely parse JSON with a fallback value if parsing fails
  */
 function safeJsonParse<T>(input: string | null | undefined, fallback: T): T {
-    if (input === null || input === undefined) return fallback;
+    if (input === null || input === undefined) {
+        return fallback;
+    }
     try {
         return JSON.parse(input) as T;
     } catch {
@@ -363,7 +371,9 @@ export function getDailyStats(date: string, project: string = "__all__"): DailyS
         computed_at: string;
     } | null;
 
-    if (!row) return null;
+    if (!row) {
+        return null;
+    }
 
     return {
         date: row.date,
@@ -565,7 +575,9 @@ export function invalidateDate(date: string): void {
 }
 
 export function invalidateDateRange(fromDate: string | null, toDate: string | null): void {
-    if (!fromDate || !toDate) return;
+    if (!fromDate || !toDate) {
+        return;
+    }
 
     const db = getDatabase();
     db.query("DELETE FROM daily_stats WHERE date >= ? AND date <= ?").run(fromDate, toDate);
@@ -734,7 +746,9 @@ export function getAllSessionMetadataFilePaths(): string[] {
 }
 
 export function removeSessionMetadataBatch(filePaths: string[]): void {
-    if (filePaths.length === 0) return;
+    if (filePaths.length === 0) {
+        return;
+    }
     const db = getDatabase();
     const stmt = db.prepare("DELETE FROM session_metadata WHERE file_path = ?");
     const transaction = db.transaction((paths: string[]) => {

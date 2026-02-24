@@ -120,18 +120,26 @@ export function extractUsedValuesFromFull(items: WorkItemFull[], project: string
     const parents = new Map<number, string>();
 
     for (const item of items) {
-        if (item.severity) severities.add(item.severity);
+        if (item.severity) {
+            severities.add(item.severity);
+        }
 
-        if (item.assignee) assignees.add(item.assignee);
+        if (item.assignee) {
+            assignees.add(item.assignee);
+        }
 
         // Extract area and iteration paths from rawFields
         if (item.rawFields) {
             const areaPath = item.rawFields["System.AreaPath"];
             const iterationPath = item.rawFields["System.IterationPath"];
 
-            if (typeof areaPath === "string") areas.add(areaPath);
+            if (typeof areaPath === "string") {
+                areas.add(areaPath);
+            }
 
-            if (typeof iterationPath === "string") iterations.add(iterationPath);
+            if (typeof iterationPath === "string") {
+                iterations.add(iterationPath);
+            }
         }
 
         if (item.tags) {

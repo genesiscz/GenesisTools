@@ -95,7 +95,9 @@ export function registerCredentialsCommand(program: Command): void {
 
                             process.exit(0);
                         }
-                        if (!header) break;
+                        if (!header) {
+                            break;
+                        }
                         const eqIdx = header.indexOf("=");
                         if (eqIdx > 0) {
                             headers[header.substring(0, eqIdx)] = header.substring(eqIdx + 1);
@@ -143,7 +145,9 @@ export function registerCredentialsCommand(program: Command): void {
             console.log(`  ${pc.bold("Name:")} ${cred.name}`);
             console.log(`  ${pc.bold("Type:")} ${cred.type}`);
             for (const [key, value] of Object.entries(cred)) {
-                if (key === "name" || key === "type") continue;
+                if (key === "name" || key === "type") {
+                    continue;
+                }
 
                 if (typeof value === "string") {
                     const masked = value.startsWith("{{")

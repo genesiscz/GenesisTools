@@ -65,7 +65,9 @@ export async function searchMultiselect<T>(options: SearchMultiselectOptions<T>)
         let lastRenderHeight = 0;
 
         const filter = (item: SearchItem<T>, q: string): boolean => {
-            if (!q) return true;
+            if (!q) {
+                return true;
+            }
             const lowerQ = q.toLowerCase();
             return item.label.toLowerCase().includes(lowerQ) || String(item.value).toLowerCase().includes(lowerQ);
         };
@@ -134,8 +136,12 @@ export async function searchMultiselect<T>(options: SearchMultiselectOptions<T>)
                     const hiddenAfter = filtered.length - visibleEnd;
                     if (hiddenBefore > 0 || hiddenAfter > 0) {
                         const parts: string[] = [];
-                        if (hiddenBefore > 0) parts.push(`↑ ${hiddenBefore} more`);
-                        if (hiddenAfter > 0) parts.push(`↓ ${hiddenAfter} more`);
+                        if (hiddenBefore > 0) {
+                            parts.push(`↑ ${hiddenBefore} more`);
+                        }
+                        if (hiddenAfter > 0) {
+                            parts.push(`↓ ${hiddenAfter} more`);
+                        }
                         lines.push(`${S_BAR}  ${pc.dim(parts.join("  "))}`);
                     }
                 }
@@ -188,7 +194,9 @@ export async function searchMultiselect<T>(options: SearchMultiselectOptions<T>)
 
         // Handle keypresses
         const keypressHandler = (_str: string, key: readline.Key): void => {
-            if (!key) return;
+            if (!key) {
+                return;
+            }
 
             const filtered = getFiltered();
 

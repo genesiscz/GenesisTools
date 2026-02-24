@@ -15,7 +15,9 @@ export async function startDaemon(): Promise<void> {
     const db = getDb();
     const cleanup = () => {
         closeDb();
-        if (existsSync(PID_FILE)) unlinkSync(PID_FILE);
+        if (existsSync(PID_FILE)) {
+            unlinkSync(PID_FILE);
+        }
         log.info("Daemon stopped");
     };
 
@@ -32,7 +34,9 @@ export async function startDaemon(): Promise<void> {
 }
 
 export function getDaemonPid(): number | null {
-    if (!existsSync(PID_FILE)) return null;
+    if (!existsSync(PID_FILE)) {
+        return null;
+    }
     try {
         const pid = parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10);
         try {

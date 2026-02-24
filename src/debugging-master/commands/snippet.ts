@@ -159,7 +159,9 @@ async function hasGuzzle(cwd: string): Promise<boolean> {
     try {
         const composerPath = resolve(cwd, "composer.json");
         const file = Bun.file(composerPath);
-        if (!(await file.exists())) return false;
+        if (!(await file.exists())) {
+            return false;
+        }
         const content = await file.json();
         const deps = { ...content.require, ...content["require-dev"] };
         return "guzzlehttp/guzzle" in deps;

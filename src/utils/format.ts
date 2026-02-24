@@ -39,9 +39,15 @@ export function formatDuration(value: number, unit: DurationUnit = "ms", style: 
 
     switch (style) {
         case "tiered": {
-            if (ms < 1000) return `${Math.round(ms)}ms`;
-            if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-            if (ms < 3600000) return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
+            if (ms < 1000) {
+                return `${Math.round(ms)}ms`;
+            }
+            if (ms < 60000) {
+                return `${(ms / 1000).toFixed(1)}s`;
+            }
+            if (ms < 3600000) {
+                return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
+            }
             return `${Math.floor(ms / 3600000)}h ${Math.floor((ms % 3600000) / 60000)}m`;
         }
 
@@ -52,15 +58,21 @@ export function formatDuration(value: number, unit: DurationUnit = "ms", style: 
         }
 
         case "hm-smart": {
-            if (totalMinutes < 1) return "< 1m";
+            if (totalMinutes < 1) {
+                return "< 1m";
+            }
             let hours = Math.floor(totalMinutes / 60);
             let mins = Math.round(totalMinutes % 60);
             if (mins === 60) {
                 hours++;
                 mins = 0;
             }
-            if (hours === 0) return `${mins}m`;
-            if (mins === 0) return `${hours}h`;
+            if (hours === 0) {
+                return `${mins}m`;
+            }
+            if (mins === 0) {
+                return `${hours}h`;
+            }
             return `${hours}h ${mins}m`;
         }
 
@@ -68,8 +80,12 @@ export function formatDuration(value: number, unit: DurationUnit = "ms", style: 
             const seconds = Math.floor(ms / 1000);
             const minutes = Math.floor(seconds / 60);
             const hours = Math.floor(minutes / 60);
-            if (hours > 0) return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
-            if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+            if (hours > 0) {
+                return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+            }
+            if (minutes > 0) {
+                return `${minutes}m ${seconds % 60}s`;
+            }
             return `${seconds}s`;
         }
 
@@ -168,18 +184,36 @@ export function formatRelativeTime(date: Date, options?: FormatRelativeTimeOptio
     }
 
     if (compact) {
-        if (diffMinutes < 1) return "now";
-        if (diffHours < 1) return `${diffMinutes}m ago`;
-        if (diffDays < 1) return `${diffHours}h ago`;
-        if (diffDays < 7) return `${diffDays}d ago`;
+        if (diffMinutes < 1) {
+            return "now";
+        }
+        if (diffHours < 1) {
+            return `${diffMinutes}m ago`;
+        }
+        if (diffDays < 1) {
+            return `${diffHours}h ago`;
+        }
+        if (diffDays < 7) {
+            return `${diffDays}d ago`;
+        }
         return date.toISOString().slice(0, 10);
     }
 
-    if (diffMinutes < 1) return "just now";
-    if (diffMinutes === 1) return "1 minute ago";
-    if (diffMinutes < 60) return `${diffMinutes} minute${diffMinutes !== 1 ? "s" : ""} ago`;
-    if (diffHours === 1) return "1 hour ago";
-    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? "s" : ""} ago`;
+    if (diffMinutes < 1) {
+        return "just now";
+    }
+    if (diffMinutes === 1) {
+        return "1 minute ago";
+    }
+    if (diffMinutes < 60) {
+        return `${diffMinutes} minute${diffMinutes !== 1 ? "s" : ""} ago`;
+    }
+    if (diffHours === 1) {
+        return "1 hour ago";
+    }
+    if (diffHours < 24) {
+        return `${diffHours} hour${diffHours !== 1 ? "s" : ""} ago`;
+    }
     return `${diffDays} day${diffDays === 1 ? "" : "s"} ago`;
 }
 
@@ -191,7 +225,9 @@ export function formatRelativeTime(date: Date, options?: FormatRelativeTimeOptio
  */
 export function formatBytes(bytes: number): string {
     const units = ["B", "KB", "MB", "GB", "TB"];
-    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024) {
+        return `${bytes} B`;
+    }
     let size = bytes;
     let i = 0;
     while (size >= 1024 && i < units.length - 1) {
@@ -214,8 +250,12 @@ export function formatCost(cost: number): string {
  * Format a token count with K/M abbreviations.
  */
 export function formatTokens(tokens: number): string {
-    if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
-    if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}K`;
+    if (tokens >= 1_000_000) {
+        return `${(tokens / 1_000_000).toFixed(1)}M`;
+    }
+    if (tokens >= 1_000) {
+        return `${(tokens / 1_000).toFixed(1)}K`;
+    }
     return tokens.toString();
 }
 
@@ -225,7 +265,9 @@ export function formatTokens(tokens: number): string {
  * Format a list of items, truncating if too long.
  */
 export function formatList(items: string[], maxShow = 5): string {
-    if (items.length <= maxShow) return items.join(", ");
+    if (items.length <= maxShow) {
+        return items.join(", ");
+    }
     const shown = items.slice(0, maxShow);
     const remaining = items.length - maxShow;
     return `${shown.join(", ")} +${remaining} more`;
@@ -237,8 +279,14 @@ export function formatList(items: string[], maxShow = 5): string {
  * Format a large number with K/M/B abbreviations.
  */
 export function formatNumber(n: number): string {
-    if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    if (n >= 1_000_000_000) {
+        return `${(n / 1_000_000_000).toFixed(1)}B`;
+    }
+    if (n >= 1_000_000) {
+        return `${(n / 1_000_000).toFixed(1)}M`;
+    }
+    if (n >= 1_000) {
+        return `${(n / 1_000).toFixed(1)}K`;
+    }
     return n.toString();
 }
