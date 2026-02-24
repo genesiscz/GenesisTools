@@ -169,13 +169,14 @@ function makeSubscription(
                 }
                 return;
             }
-            logger.info("Subscription", resp.subscribe, "established");
+            logger.info(`Subscription ${resp.subscribe} established`);
         }
     );
 
     // Remove any previous listeners to avoid duplicates
     client.removeAllListeners("subscription");
-    client.on("subscription", (resp: WatchmanResponse) => {
+    // biome-ignore lint/suspicious/noExplicitAny: fb-watchman subscription event lacks proper types
+    client.on("subscription", (resp: any) => {
         if (resp.subscription !== "mysubscription") {
             return;
         }
@@ -210,8 +211,7 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
                 (capabilityError: unknown, _capabilityResp: unknown) => {
                     if (capabilityError) {
                         logger.error(
-                            `Capability check failed (attempt ${attempt + 1}/${maxRetries}):`,
-                            capabilityError
+                            `Capability check failed (attempt ${attempt + 1}/${maxRetries}): ${capabilityError}`
                         );
                         lastError = capabilityError;
                         attempt++;
@@ -225,8 +225,7 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
                         (watchError: unknown, watchResp: WatchmanResponse) => {
                             if (watchError) {
                                 logger.error(
-                                    `Error initiating watch (attempt ${attempt + 1}/${maxRetries}):`,
-                                    watchError
+                                    `Error initiating watch (attempt ${attempt + 1}/${maxRetries}): ${watchError}`
                                 );
                                 lastError = watchError;
                                 attempt++;
@@ -234,16 +233,13 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
                                 setTimeout(resolve, 1000);
                                 return;
                             }
-                            if ("warning" in watchResp) {
-                                logger.warn("Warning:", watchResp.warning);
+                            if ("warning" in watchResp && watchResp.warning) {
+                                logger.warn(`Warning: ${watchResp.warning}`);
                             }
                             logger.info(
-                                "Watch established on",
-                                watchResp.watch,
-                                "relative_path:",
-                                watchResp.relative_path
+                                `Watch established on ${watchResp.watch} relative_path: ${watchResp.relative_path}`
                             );
-                            makeSubscription(client, watchResp.watch, watchResp.relative_path);
+                            makeSubscription(client, watchResp.watch ?? "", watchResp.relative_path);
                             attempt = maxRetries;
                             resolve(undefined);
                         }
@@ -255,7 +251,7 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
             return;
         }
     }
-    logger.error("Failed to establish watch after 15 attempts. Exiting.", lastError);
+    logger.error(`Failed to establish watch after 15 attempts. Exiting. ${lastError}`);
     process.exit(1);
 }
 
