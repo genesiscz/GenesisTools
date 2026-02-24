@@ -1,8 +1,5 @@
-import { describe, it, expect } from "bun:test";
-import {
-    levenshteinDistance, similarityScore, timeOverlapRatio,
-    wordSimilarity, fuzzyMatchBest,
-} from "./fuzzy-match";
+import { describe, expect, it } from "bun:test";
+import { fuzzyMatchBest, levenshteinDistance, similarityScore, timeOverlapRatio, wordSimilarity } from "./fuzzy-match";
 
 describe("levenshteinDistance", () => {
     it("returns 0 for identical strings", () => {
@@ -70,10 +67,12 @@ describe("timeOverlapRatio", () => {
     });
 
     it("parses ISO datetime format", () => {
-        expect(timeOverlapRatio(
-            { from: "2026-02-24T10:00:00Z", to: "2026-02-24T11:00:00Z" },
-            { from: "2026-02-24T09:00:00Z", to: "2026-02-24T12:00:00Z" },
-        )).toBe(1);
+        expect(
+            timeOverlapRatio(
+                { from: "2026-02-24T10:00:00Z", to: "2026-02-24T11:00:00Z" },
+                { from: "2026-02-24T09:00:00Z", to: "2026-02-24T12:00:00Z" }
+            )
+        ).toBe(1);
     });
 });
 
@@ -99,22 +98,19 @@ describe("wordSimilarity", () => {
 
 describe("fuzzyMatchBest", () => {
     it("returns best matching candidate", () => {
-        const result = fuzzyMatchBest(
-            { text: "project meeting", from: "10:00", to: "11:00" },
-            [
-                { id: 1, text: "project meeting notes", from: "10:00", to: "11:00" },
-                { id: 2, text: "lunch break", from: "12:00", to: "13:00" },
-            ],
-        );
+        const result = fuzzyMatchBest({ text: "project meeting", from: "10:00", to: "11:00" }, [
+            { id: 1, text: "project meeting notes", from: "10:00", to: "11:00" },
+            { id: 2, text: "lunch break", from: "12:00", to: "13:00" },
+        ]);
         expect(result).not.toBeNull();
-        expect(result!.targetId).toBe(1);
+        expect(result?.targetId).toBe(1);
     });
 
     it("returns null when below threshold", () => {
         const result = fuzzyMatchBest(
             { text: "completely different", from: "10:00", to: "11:00" },
             [{ id: 1, text: "unrelated topic", from: "14:00", to: "15:00" }],
-            0.9,
+            0.9
         );
         expect(result).toBeNull();
     });

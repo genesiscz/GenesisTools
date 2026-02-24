@@ -1,7 +1,14 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import {
-    slugify, stripAnsi, escapeShellArg, removeDiacritics,
-    truncateText, sanitizeOutput, matchGlob, fuzzyMatch, fuzzyFind,
+    escapeShellArg,
+    fuzzyFind,
+    fuzzyMatch,
+    matchGlob,
+    removeDiacritics,
+    sanitizeOutput,
+    slugify,
+    stripAnsi,
+    truncateText,
 } from "./string";
 
 describe("slugify", () => {
@@ -107,7 +114,7 @@ describe("truncateText", () => {
 
     it("uses default maxLength of 100", () => {
         const text = "a".repeat(101);
-        expect(truncateText(text)).toBe("a".repeat(97) + "...");
+        expect(truncateText(text)).toBe(`${"a".repeat(97)}...`);
     });
 
     it("handles empty string", () => {

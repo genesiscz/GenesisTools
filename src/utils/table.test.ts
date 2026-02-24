@@ -1,9 +1,15 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { formatTable } from "./table";
 
 describe("formatTable", () => {
     it("formats a basic table", () => {
-        const result = formatTable([["Alice", "30"], ["Bob", "25"]], ["Name", "Age"]);
+        const result = formatTable(
+            [
+                ["Alice", "30"],
+                ["Bob", "25"],
+            ],
+            ["Name", "Age"]
+        );
         const lines = result.split("\n");
         expect(lines.length).toBe(4);
         expect(lines[0]).toContain("Name");

@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
-import { inferSchema, formatSchema } from "./json-schema";
+import { describe, expect, it } from "bun:test";
+import { formatSchema, inferSchema } from "./json-schema";
 
 describe("inferSchema", () => {
     it("infers string type", () => {

@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
-import { estimateTokens, countTokens, limitToTokens } from "./tokens";
+import { describe, expect, it } from "bun:test";
+import { countTokens, estimateTokens, limitToTokens } from "./tokens";
 
 describe("estimateTokens", () => {
     it("estimates ~4 chars per token", () => {
