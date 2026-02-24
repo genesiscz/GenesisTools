@@ -23,7 +23,7 @@ export class ChatEngine {
         this.config = config;
     }
 
-    async sendMessage(message: string, tools?: Record<string, any>): Promise<ChatResponse> {
+    async sendMessage(message: string, tools?: Record<string, unknown>): Promise<ChatResponse> {
         // Add user message to history
         const userMessage: ChatMessage = {
             role: "user",
@@ -62,7 +62,7 @@ export class ChatEngine {
         }
     }
 
-    private async sendStreamingMessage(message: string, _tools?: Record<string, any>): Promise<ChatResponse> {
+    private async sendStreamingMessage(message: string, _tools?: Record<string, unknown>): Promise<ChatResponse> {
         // Store usage from onFinish callback - this is the most reliable source
         let finishUsage: LanguageModelUsage | undefined;
         let finishCost: number | undefined;
@@ -200,7 +200,7 @@ export class ChatEngine {
         };
     }
 
-    private async sendNonStreamingMessage(message: string, _tools?: Record<string, any>): Promise<ChatResponse> {
+    private async sendNonStreamingMessage(message: string, _tools?: Record<string, unknown>): Promise<ChatResponse> {
         const result = await generateText({
             model: this.config.model,
             prompt: message, // Use prompt instead of messages array

@@ -7,6 +7,24 @@ import { search } from "@inquirer/prompts";
 import { Command } from "commander";
 import * as watchman from "fb-watchman";
 
+interface WatchmanFile {
+    name: string;
+    size: number;
+    mtime_ms: number;
+    exists: boolean;
+    type: string;
+}
+
+interface WatchmanResponse {
+    roots?: string[];
+    subscribe?: string;
+    subscription?: string;
+    files?: WatchmanFile[];
+    watch?: string;
+    relative_path?: string;
+    warning?: string;
+}
+
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
@@ -77,7 +95,8 @@ async function getDirOfInterest(): Promise<string> {
     // No valid argument, show interactive selection
     // Get watched directories from watchman
     const watchedDirs: string[] = await new Promise((resolve) => {
-        (client as any).command(["watch-list"], (err: unknown, resp: any) => {
+        // biome-ignore lint/suspicious/noExplicitAny: fb-watchman Client lacks command() in types
+        (client as any).command(["watch-list"], (err: unknown, resp: WatchmanResponse) => {
             if (err || !resp || !resp.roots) {
                 client.end(); // Close client on error
                 return resolve([]);
@@ -135,24 +154,28 @@ function makeSubscription(
         subscription.relative_root = relativePath;
     }
 
-    (client as any).command(["subscribe", watch, "mysubscription", subscription], (error: unknown, resp: any) => {
-        if (error) {
-            if (retryCount < 15) {
-                logger.error(`Failed to subscribe (attempt ${retryCount + 1}/15): ${error}`);
-                setTimeout(() => makeSubscription(client, watch, relativePath, retryCount + 1), 1000);
-            } else {
-                logger.error("Failed to subscribe after 15 attempts. Exiting.");
-                client.end();
-                process.exit(1);
+    // biome-ignore lint/suspicious/noExplicitAny: fb-watchman Client lacks command() in types
+    (client as any).command(
+        ["subscribe", watch, "mysubscription", subscription],
+        (error: unknown, resp: WatchmanResponse) => {
+            if (error) {
+                if (retryCount < 15) {
+                    logger.error(`Failed to subscribe (attempt ${retryCount + 1}/15): ${error}`);
+                    setTimeout(() => makeSubscription(client, watch, relativePath, retryCount + 1), 1000);
+                } else {
+                    logger.error("Failed to subscribe after 15 attempts. Exiting.");
+                    client.end();
+                    process.exit(1);
+                }
+                return;
             }
-            return;
+            logger.info("Subscription", resp.subscribe, "established");
         }
-        logger.info("Subscription", resp.subscribe, "established");
-    });
+    );
 
     // Remove any previous listeners to avoid duplicates
     client.removeAllListeners("subscription");
-    client.on("subscription", (resp: any) => {
+    client.on("subscription", (resp: WatchmanResponse) => {
         if (resp.subscription !== "mysubscription") {
             return;
         }
@@ -161,11 +184,11 @@ function makeSubscription(
             return;
         }
         // Sort files by mtime_ms ascending (latest at the bottom)
-        const sortedFiles = resp.files.slice().sort((a: any, b: any) => {
+        const sortedFiles = resp.files.slice().sort((a: WatchmanFile, b: WatchmanFile) => {
             return Number(a.mtime_ms) - Number(b.mtime_ms);
         });
 
-        sortedFiles.forEach((file: any) => {
+        sortedFiles.forEach((file: WatchmanFile) => {
             const mtimeMs = +file.mtime_ms;
             const date = new Date(mtimeMs);
             const today = new Date();
@@ -178,13 +201,13 @@ function makeSubscription(
 
 async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
     let attempt = 0;
-    let lastError: any = null;
+    let lastError: unknown = null;
     while (attempt < maxRetries) {
         const client = new (require("fb-watchman").Client)();
         await new Promise((resolve) => {
             client.capabilityCheck(
                 { optional: [], required: ["relative_root"] },
-                (capabilityError: any, _capabilityResp: any) => {
+                (capabilityError: unknown, _capabilityResp: unknown) => {
                     if (capabilityError) {
                         logger.error(
                             `Capability check failed (attempt ${attempt + 1}/${maxRetries}):`,
@@ -196,23 +219,35 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
                         setTimeout(resolve, 1000);
                         return;
                     }
-                    (client as any).command(["watch-project", dirOfInterest], (watchError: any, watchResp: any) => {
-                        if (watchError) {
-                            logger.error(`Error initiating watch (attempt ${attempt + 1}/${maxRetries}):`, watchError);
-                            lastError = watchError;
-                            attempt++;
-                            client.end();
-                            setTimeout(resolve, 1000);
-                            return;
+                    // biome-ignore lint/suspicious/noExplicitAny: fb-watchman Client lacks command() in types
+                    (client as any).command(
+                        ["watch-project", dirOfInterest],
+                        (watchError: unknown, watchResp: WatchmanResponse) => {
+                            if (watchError) {
+                                logger.error(
+                                    `Error initiating watch (attempt ${attempt + 1}/${maxRetries}):`,
+                                    watchError
+                                );
+                                lastError = watchError;
+                                attempt++;
+                                client.end();
+                                setTimeout(resolve, 1000);
+                                return;
+                            }
+                            if ("warning" in watchResp) {
+                                logger.warn("Warning:", watchResp.warning);
+                            }
+                            logger.info(
+                                "Watch established on",
+                                watchResp.watch,
+                                "relative_path:",
+                                watchResp.relative_path
+                            );
+                            makeSubscription(client, watchResp.watch, watchResp.relative_path);
+                            attempt = maxRetries;
+                            resolve(undefined);
                         }
-                        if ("warning" in watchResp) {
-                            logger.warn("Warning:", watchResp.warning);
-                        }
-                        logger.info("Watch established on", watchResp.watch, "relative_path:", watchResp.relative_path);
-                        makeSubscription(client, watchResp.watch, watchResp.relative_path);
-                        attempt = maxRetries;
-                        resolve(undefined);
-                    });
+                    );
                 }
             );
         });

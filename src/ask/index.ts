@@ -76,7 +76,9 @@ class ASKTool {
             const validation = validateOptions(argv);
             if (!validation.valid) {
                 logger.error("Invalid options:");
-                validation.errors.forEach((error) => logger.error(`  - ${error}`));
+                for (const error of validation.errors) {
+                    logger.error(`  - ${error}`);
+                }
                 process.exit(1);
             }
 

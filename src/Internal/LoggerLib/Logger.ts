@@ -569,7 +569,7 @@ export class Logger implements ILogger {
             }
 
             // Create the method (dynamic assignment requires type assertion)
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            // biome-ignore lint/suspicious/noExplicitAny: dynamic method assignment on this
             (this as any)[methodName] = (...data: unknown[]): boolean => {
                 return this._log(levelToUse, data);
             };
@@ -579,7 +579,7 @@ export class Logger implements ILogger {
         configuredLevels.forEach((levelName) => {
             if (!requiredMethods.includes(levelName)) {
                 // Dynamic method assignment requires type assertion
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                // biome-ignore lint/suspicious/noExplicitAny: dynamic method assignment on this
                 (this as any)[levelName] = (...data: unknown[]): boolean => {
                     return this._log(levelName, data);
                 };
