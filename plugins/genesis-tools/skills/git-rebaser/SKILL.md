@@ -120,4 +120,4 @@ All branches verified. No orphaned commits.
 - **ALWAYS ask confirmation** before every `git rebase` command
 - **STOP on conflicts** — guide the user, don't auto-resolve
 - **Use `git rebase --onto`** for child branches — never plain `git rebase`
-- If `OLD_PARENT` cannot be determined from reflog, ask the user to provide it manually or use `git merge-base <child> <parent>` as fallback (explain the tradeoff)
+- If `OLD_PARENT` cannot be determined from reflog, ask the user to provide it manually
