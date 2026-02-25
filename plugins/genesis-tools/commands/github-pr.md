@@ -41,6 +41,8 @@ The script outputs the file path to stdout (e.g., `.claude/github/reviews/pr-137
 
 ### Step 2: Read and Display Review
 
+> **CRITICAL — READ THIS FIRST:** To read the review file, you MUST use the **Read** tool. NEVER use `cat`, `Bash(cat ...)`, `head`, `tail`, or ANY Bash command to read it. Bash output gets truncated at ~50 lines, then auto-persisted to `tool-results/`, forcing 5+ chunked Read calls on the persisted file — wasting thousands of tokens and minutes of time. The Read tool gets the full file in one call.
+
 **If `--open-only` flag is present:**
 1. Open the review file in Cursor:
    ```bash
@@ -50,26 +52,163 @@ The script outputs the file path to stdout (e.g., `.claude/github/reviews/pr-137
 
 **Otherwise:**
 
-Use the **Read** tool (not `cat`) to read the generated markdown file:
-
-```
-Read <generated-file-path>
-```
-
-> **Why Read, not cat?** Large `cat` output gets truncated by Claude Code, then auto-persisted to `tool-results/`, forcing multiple chunked Read calls to retrieve the same content. Using Read directly avoids the Bash→persist→re-read cycle entirely.
-
 **If `--open` flag is present:**
 Also open the review file in Cursor:
 ```bash
 cursor <generated-file-path>
 ```
 
-Present a summary to the user:
+Present a high-level summary to the user:
 
 - PR title and state
 - Total threads count
 - Breakdown by severity (HIGH/MEDIUM/LOW)
 - Breakdown by status (resolved/unresolved)
+
+### Step 2.5: Analyze Every Thread (before showing to user)
+
+**Do not blindly accept review comments.** Reviewers make mistakes. Before presenting threads to the user, analyze each one by reading the actual source code.
+
+#### Dispatching Explore agents
+
+Use **Explore agents** (`subagent_type: "Explore"`) to parallelize the analysis. Group threads intelligently:
+
+- **By file** — if multiple threads reference the same file or nearby lines, batch them into one agent (the agent reads the file once and evaluates all related threads).
+- **By problem domain** — if threads span different files but relate to the same concern (e.g., "persons_type inconsistency" touches a migration, an enum, and docs), group them into one agent so it can cross-reference.
+- **Simple threads solo** — trivial threads (e.g., typo in docs, obvious wording fix) can be analyzed by the main agent directly without spawning an agent.
+- **Complex threads** — if a thread requires tracing call chains, understanding framework behavior, or reading multiple files, give it a dedicated Explore agent with `thoroughness: "very thorough"`.
+
+**Prompt template for each Explore agent:**
+
+```
+Analyze these PR review threads by reading the actual source code.
+For each thread, determine if the reviewer is correct.
+
+Threads to analyze:
+- Thread #N: [reviewer's concern summary]. File: [path:lines]
+- Thread #M: [reviewer's concern summary]. File: [path:lines]
+
+For EACH thread, return:
+1. **Concern**: 1-3 line summary of the reviewer's claim
+2. **Code found**: The actual code at the referenced location (include surrounding context — guards, types, comments)
+3. **Verdict**: One of:
+   - VALID — reviewer is correct, fix needed
+   - FALSE_POSITIVE — reviewer is wrong (explain why with code evidence)
+   - BY_DESIGN — intentional choice (explain rationale)
+   - ALREADY_FIXED — addressed in a prior commit
+   - NEEDS_CLARIFICATION — ambiguous, needs user input (explain what's unclear)
+4. **Suggested action**: What to do (fix description, or why to skip)
+5. **Proposed reply**: Draft GitHub reply text for this thread
+
+Watch for common false positives:
+- Flagging patterns that are correct for the runtime (e.g., Bun vs. Node.js APIs)
+- Misreading control flow or missing existing guards
+- Suggesting JSON.stringify replacer doesn't recurse (it does, by spec)
+- Flagging intentional design choices (local CLI security model, YAGNI)
+- Missing framework/library guarantees that make the concern moot
+
+Be thorough — read the actual code, don't guess. If a reviewer claims
+something is missing, search for it before agreeing.
+```
+
+**Dispatch pattern:**
+
+1. Group threads (by file/domain as described above)
+2. Spawn Explore agents in parallel — one per group
+3. Collect all results
+4. Compile into the analysis report (Step 2.6)
+
+For small PRs (1-3 threads), skip agents and analyze inline — the overhead isn't worth it.
+
+### Step 2.6: Present Analysis Report
+
+After analyzing all threads, present each one as a rich markdown section. Claude Code renders markdown natively, so this displays nicely. Include the reviewer's concern, your analysis, code snippets, verdict, and proposed action/reply.
+
+**Format each thread like this:**
+
+```markdown
+---
+
+#### #1 [MED] `reservations.md:69-129` — @gemini-code-assist
+
+**Concern:** persons_type inconsistency between reservations table (varchar: adult/child/mixed/unknown)
+and timeslots table (enum: adult, child, all, unknown).
+
+**Code context:**
+‎```php
+// timeslots migration
+$table->enum('persons_type', ['adult', 'child', 'all', 'unknown']);
+
+// PersonsType enum in code
+case OnlyAdults = 'only_adults';
+case OnlyChildren = 'only_children';
+‎```
+
+**Analysis:** Reviewer is correct — three different value sets exist for the same concept.
+The documentation accurately reflects this inconsistency but doesn't call it out explicitly.
+
+**Verdict:** VALID
+**Action:** Update docs to explicitly note the inconsistency across tables and code enum.
+**Proposed reply:** Fixed in [abc1234](url) — added explicit callout of the persons_type
+value inconsistency across reservations table, timeslots table, and PersonsType enum.
+
+---
+
+#### #5 [HIGH] `ReservationPossibleBugs.md:24` — @copilot
+
+**Concern:** Plan flags negative persons_filled as a bug, but code intentionally allows
+negatives as a "corruption canary".
+
+**Code context:**
+‎```php
+// TimeslotManager::unHoldTimeslot()
+// Intentionally allow negative values as corruption canary for TimeslotFixer
+'persons_filled' => DB::raw("persons_filled - {$count}")
+‎```
+
+**Analysis:** Reviewer is correct — the code comment explicitly says negatives are intentional.
+The plan incorrectly treats this as a bug to fix.
+
+**Verdict:** VALID
+**Action:** Downgrade from MEDIUM to LOW, reword to acknowledge the canary pattern,
+suggest adding tests instead of adding a floor check.
+**Proposed reply:** Good catch — updated the plan to acknowledge the intentional canary
+pattern. Changed to recommend tests for the canary→fix flow instead of a GREATEST(0,...) guard.
+
+---
+
+#### #12 [MED] `some-file.ts:42` — @coderabbitai
+
+**Concern:** Missing null check on `user.profile` before accessing `.name`.
+
+**Code context:**
+‎```typescript
+// Line 40-45
+const user = await getUser(id);  // returns User (never null — throws on not found)
+const name = user.profile.name;  // profile is non-optional in User type
+‎```
+
+**Analysis:** Reviewer is wrong. `getUser()` throws on not-found (never returns null),
+and `profile` is a required field on the `User` type — no null check needed.
+
+**Verdict:** FALSE_POSITIVE
+**Action:** Skip fix, reply with explanation.
+**Proposed reply:** No fix needed — `getUser()` throws on not-found (never returns null)
+and `User.profile` is a required (non-optional) field per the type definition.
+```
+
+**Rules for the analysis report:**
+- **Concern:** 1-3 line summary of what the reviewer flagged.
+- **Code context:** Show the relevant code snippet(s) — both the code the reviewer references AND any surrounding code that informs your verdict (e.g., guards, type definitions, comments). This is the most valuable part for the user.
+- **Analysis:** Your assessment — why the reviewer is right or wrong, with evidence from the code you read.
+- **Verdict:** One of: `VALID`, `FALSE_POSITIVE`, `BY_DESIGN`, `ALREADY_FIXED`, `NEEDS_CLARIFICATION`.
+- **Action:** What you'll do — fix (with brief description), skip, or ask for clarification.
+- **Proposed reply:** The text you'll post on GitHub for this thread (whether fixing or declining). Draft these now so the user can review/adjust them before they're posted.
+- **Suggested changes:** If the reviewer provided a `suggestion` code block, include it verbatim after the concern — this shows exactly what they want changed.
+- **Group by file:** Use the same file grouping as the review markdown.
+- **Separator:** Use `---` between threads for visual clarity.
+
+**Important:** This analysis report is critical — without it the user has no context to make an informed selection. Always show it before asking which threads to fix.
 
 ### Step 3: Ask User Which Comments to Fix
 
@@ -80,47 +219,24 @@ Use AskUserQuestion tool to let user select which review threads to address:
 Which review threads should I fix?
 
 Options:
-1. Fix all unresolved threads (X threads)
-2. Fix only HIGH priority threads (Y threads)
-3. Fix HIGH + MEDIUM priority threads (Z threads)
-4. Let me specify thread numbers
+1. Fix all VALID threads (X threads)
+2. Fix only HIGH priority VALID threads (Y threads)
+3. Let me specify thread numbers
+4. Adjust verdicts first (I disagree with some analysis)
 ```
 
 If user chooses "specify thread numbers", ask for comma-separated thread numbers (e.g., "1, 3, 5, 7").
+If user chooses "adjust verdicts", ask which threads they want to override and what the new verdict should be.
 
-### Step 3.5: Critically Evaluate Each Thread Before Fixing
-
-**Do not blindly implement every review comment.** Reviewers make mistakes. Before touching any code, evaluate each thread:
-
-1. **Read the actual code** at the referenced file and line — don't rely solely on the reviewer's description
-2. **Verify the claim** — is the reviewer correct? Does the bug/issue actually exist?
-3. **Check for false positives** — common reviewer mistakes include:
-   - Flagging patterns that are correct for the runtime (e.g., Bun vs. Node.js APIs)
-   - Misreading control flow or missing existing guards (e.g., claiming `clearTimeout` is missing when it's present)
-   - Suggesting `JSON.stringify` replacer doesn't recurse (it does, by spec)
-   - Flagging intentional design choices (local CLI security model, YAGNI, by-design behavior)
-   - Missing framework/library guarantees that make the concern moot
-4. **Categorize each thread** before doing anything:
-   - `VALID` — reviewer is correct, fix needed
-   - `FALSE_POSITIVE` — reviewer is wrong; push back with a clear technical explanation
-   - `BY_DESIGN` — intentional choice; decline with rationale
-   - `ALREADY_FIXED` — addressed in a prior commit
-
-**When you're unsure about a thread** — use `AskUserQuestion` to ask the user rather than guessing. For example:
-- "Thread #5 claims X — I see the guard on line 42 which looks like it addresses this. Is this intentional or should I still fix it?"
-- "Thread #12 suggests using vm2 for sandboxing — this is a local CLI where the user writes their own presets. Should I decline this or implement it?"
-
-**Never assume intent.** If a thread is ambiguous (e.g., the reviewer's suggested fix would change behavior in a way that might or might not be desired), stop and ask before implementing.
+**Never assume intent.** If a thread is ambiguous (e.g., the reviewer's suggested fix would change behavior in a way that might or might not be desired), mark it `NEEDS_CLARIFICATION` and ask during the report presentation.
 
 ### Step 4: Implement Fixes
 
-For each thread marked `VALID`:
+For each thread the user approved (verdicts already assigned in Step 2.5):
 
-1. Read the file mentioned in the thread
-2. Understand the issue from the review comment
-3. Apply the fix according to:
-   - Suggested code (if provided in the review)
-   - Issue description (if no suggestion)
+1. The source code was already read during analysis — apply the fix based on your analysis
+2. Use the suggested code from the reviewer if provided and correct
+3. Otherwise implement based on your analysis from Step 2.5
 4. Follow project coding patterns
 
 **Important:**
@@ -156,7 +272,7 @@ EOF
 
 ### Step 6: Reply to Threads
 
-After committing, reply to each thread on GitHub explaining what happened.
+After committing, reply to each thread on GitHub using the proposed replies from Step 2.6 (update commit hashes with the actual commit). For FALSE_POSITIVE/BY_DESIGN threads, post the decline reply. For VALID threads, post the fix reply with commit link.
 
 **IMPORTANT: Delegate to a background agent.** Thread replies are many independent shell commands that don't need the main agent's context. Spawn a **haiku** Task agent (subagent_type: `Bash`) to run all the reply commands. This saves significant time and tokens.
 
@@ -241,11 +357,13 @@ User: /github-pr 137 -u
 1. Run: tools github review 137 -g --md -u
 2. Read .claude/github/reviews/pr-137-2026-01-03T13-44-20.md
 3. Display: "PR #137 has 14 unresolved threads (0 HIGH, 14 MEDIUM, 0 LOW)"
-4. Ask: "Which threads to fix?"
-5. User selects: "Fix all unresolved"
-6. Fix each thread, run linting
-7. Commit: "fix(scope): address code review issues..."
-8. Report: "Fixed 14 threads, modified 5 files, commit abc1234"
+4. Analyze each thread: read source code, verify claims, assign verdicts
+5. Display analysis report (concern, code, analysis, verdict, action, proposed reply per thread)
+6. Ask: "Which threads to fix?" (options reference VALID count)
+7. User selects: "Fix all VALID threads"
+8. Fix each thread, run linting
+9. Commit: "fix(scope): address code review issues..."
+10. Report: "Fixed 12 threads, skipped 2 (FALSE_POSITIVE), modified 5 files, commit abc1234"
 ```
 
 ---
