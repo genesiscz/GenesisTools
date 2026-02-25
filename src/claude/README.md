@@ -62,6 +62,11 @@ Interactive migration wizard for moving/syncing Claude assets into Codex-compati
 ### Wizard behavior
 
 - `ESC` goes back one step (instead of cancelling immediately)
+- Existing-target conflicts are resolved interactively:
+  - show diff (`src/utils/diff.ts` helper)
+  - overwrite
+  - skip
+  - rename target path
 - Steps:
   1. Choose source scope (`project`, `global`, `both`)
   2. Choose components (`skills`, `commands`, `instructions`)

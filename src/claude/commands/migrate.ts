@@ -1,3 +1,5 @@
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync } from "node:fs";
+import { basename, dirname, join, relative } from "node:path";
 import {
     buildMigrationPlan,
     type DiscoveredSources,
@@ -11,6 +13,7 @@ import {
     summarizeExecution,
     summarizePlan,
 } from "@app/claude/lib/migrate-to-codex";
+import { DiffUtil } from "@app/utils/diff";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -27,6 +30,8 @@ interface MigrateCodexOptions {
     yes?: boolean;
     nonInteractive?: boolean;
 }
+
+type ConflictChoice = "overwrite" | "skip" | "rename";
 
 interface WizardState {
     sourceScope: MigrationScope;
@@ -116,6 +121,17 @@ async function runMigrateToCodex(options: MigrateCodexOptions): Promise<void> {
         return;
     }
 
+    let overwriteTargets: string[] = [];
+    if (interactive && !options.force) {
+        const resolved = await resolveConflictsInteractive(plan);
+        if (!resolved) {
+            p.cancel("Migration cancelled.");
+            return;
+        }
+
+        overwriteTargets = [...resolved.overwriteTargets];
+    }
+
     if (!options.yes && !interactive) {
         p.log.warn("Non-interactive mode without -y defaults to preview only. Use -y to apply changes.");
     }
@@ -136,6 +152,14 @@ async function runMigrateToCodex(options: MigrateCodexOptions): Promise<void> {
         if (p.isCancel(confirmed) || !confirmed) {
             p.cancel("Migration cancelled.");
             return;
+        }
+    }
+
+    if (!options.dryRun) {
+        for (const targetPath of overwriteTargets) {
+            if (existsSync(targetPath)) {
+                rmSync(targetPath, { recursive: true, force: true });
+            }
         }
     }
 
@@ -516,4 +540,162 @@ function parseComponents(value: string | undefined): MigrationComponent[] {
     }
 
     return unique;
+}
+
+async function resolveConflictsInteractive(plan: ReturnType<typeof buildMigrationPlan>): Promise<{
+    plan: ReturnType<typeof buildMigrationPlan>;
+    overwriteTargets: Set<string>;
+} | null> {
+    const resolvedOperations = [...plan.operations];
+    const overwriteTargets = new Set<string>();
+
+    for (let index = 0; index < resolvedOperations.length; index++) {
+        const operation = resolvedOperations[index];
+        if (!existsSync(operation.targetPath)) {
+            continue;
+        }
+
+        const choice = await promptConflictChoice(operation.targetPath, operation.sourcePath, operation.component);
+        if (!choice) {
+            return null;
+        }
+
+        if (choice === "skip") {
+            resolvedOperations.splice(index, 1);
+            index -= 1;
+            continue;
+        }
+
+        if (choice === "rename") {
+            const renamed = await promptRenamePath(operation.targetPath);
+            if (!renamed) {
+                return null;
+            }
+
+            operation.targetPath = renamed;
+            operation.label = `${basename(operation.sourcePath)} -> ${basename(renamed)}`;
+            continue;
+        }
+
+        overwriteTargets.add(operation.targetPath);
+    }
+
+    plan.operations = resolvedOperations;
+    return { plan, overwriteTargets };
+}
+
+async function promptConflictChoice(
+    targetPath: string,
+    sourcePath: string,
+    component: MigrationComponent
+): Promise<ConflictChoice | null> {
+    while (true) {
+        const choice = await p.select({
+            message: `Conflict for ${component}: ${targetPath}`,
+            options: [
+                { value: "overwrite", label: "Overwrite target" },
+                { value: "skip", label: "Skip this item" },
+                { value: "rename", label: "Use different target name/path" },
+                { value: "diff", label: "Show diff and decide again" },
+            ],
+        });
+
+        if (p.isCancel(choice)) {
+            return null;
+        }
+
+        if (choice === "diff") {
+            await showConflictDiff(targetPath, sourcePath);
+            continue;
+        }
+
+        return choice as ConflictChoice;
+    }
+}
+
+async function promptRenamePath(targetPath: string): Promise<string | null> {
+    const defaultName = `${basename(targetPath)}-migrated`;
+    const suggested = join(dirname(targetPath), defaultName);
+
+    const renamed = await p.text({
+        message: "New target path:",
+        placeholder: suggested,
+        defaultValue: suggested,
+        validate: (value) => {
+            if (!value || !value.trim()) {
+                return "Path is required";
+            }
+        },
+    });
+
+    if (p.isCancel(renamed)) {
+        return null;
+    }
+
+    return (renamed as string).trim();
+}
+
+async function showConflictDiff(targetPath: string, sourcePath: string): Promise<void> {
+    const oldPreview = renderPathPreview(targetPath, 2);
+    const newPreview = renderPathPreview(sourcePath, 2);
+    await DiffUtil.showDiff(oldPreview, newPreview, `existing:${targetPath}`, `incoming:${sourcePath}`);
+}
+
+function renderPathPreview(path: string, depth: number): string {
+    if (!existsSync(path)) {
+        return "(missing)";
+    }
+
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink()) {
+        return `symlink -> ${readlinkSync(path)}`;
+    }
+
+    if (stat.isFile()) {
+        const content = readFileSync(path, "utf-8");
+        if (content.length > 25_000) {
+            return `${content.slice(0, 25_000)}\n\n... [truncated ${content.length - 25_000} chars]`;
+        }
+
+        return content;
+    }
+
+    if (stat.isDirectory()) {
+        return renderDirectoryTree(path, depth);
+    }
+
+    return `(unsupported path type: ${path})`;
+}
+
+function renderDirectoryTree(dirPath: string, maxDepth: number): string {
+    const lines: string[] = [];
+    const walk = (currentPath: string, level: number): void => {
+        if (level > maxDepth) {
+            lines.push(`${"  ".repeat(level)}...`);
+            return;
+        }
+
+        const entries = readdirSync(currentPath, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+        for (const entry of entries) {
+            const entryPath = join(currentPath, entry.name);
+            const rel = relative(dirPath, entryPath) || ".";
+            const prefix = "  ".repeat(level);
+
+            if (entry.isDirectory()) {
+                lines.push(`${prefix}${rel}/`);
+                walk(entryPath, level + 1);
+                continue;
+            }
+
+            if (entry.isSymbolicLink()) {
+                lines.push(`${prefix}${rel} -> ${readlinkSync(entryPath)}`);
+                continue;
+            }
+
+            lines.push(`${prefix}${rel}`);
+        }
+    };
+
+    walk(dirPath, 0);
+    return lines.join("\n");
 }
