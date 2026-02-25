@@ -4,6 +4,7 @@ import { Command } from "commander";
 import { registerConfigCommand } from "./commands/config";
 import { registerDesktopCommand } from "./commands/desktop";
 import { registerHistoryCommand } from "./commands/history";
+import { registerMigrateCommand } from "./commands/migrate";
 import { registerResumeCommand } from "./commands/resume";
 import { registerUsageCommand } from "./commands/usage";
 
@@ -11,7 +12,7 @@ const program = new Command();
 
 program
     .name("claude")
-    .description("Claude Code tools: history, resume, desktop sync, usage, config")
+    .description("Claude Code tools: history, resume, desktop sync, usage, config, migration")
     .version("1.0.0")
     .showHelpAfterError(true);
 
@@ -20,6 +21,7 @@ registerResumeCommand(program);
 registerDesktopCommand(program);
 registerUsageCommand(program);
 registerConfigCommand(program);
+registerMigrateCommand(program);
 
 async function main(): Promise<void> {
     try {
