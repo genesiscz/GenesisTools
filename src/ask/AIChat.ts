@@ -147,7 +147,7 @@ export class AIChat {
     ): AsyncGenerator<ChatEvent> {
         await this._ensureInitialized();
 
-        const engine = this._getEngine(options?.override);
+        const { engine, restore } = this._getEngine(options?.override);
 
         // Add user message to session
         if (addToHistory) {
@@ -243,24 +243,24 @@ export class AIChat {
             }
         } finally {
             reader.releaseLock();
+            restore();
         }
     }
 
-    /** Get a ChatEngine instance, potentially with per-call overrides.
-     *
-     * NOTE: This mutates the shared engine instance. ChatEngine does not expose
-     * getters for temperature/maxTokens, so we cannot save/restore state.
-     * Practical impact is low — most users won't mix overrides and non-overrides
-     * in the same AIChat instance. TODO: Add save/restore once ChatEngine exposes getters.
+    /** Get a ChatEngine instance with optional per-call overrides.
+     * Returns a restore function that resets the engine to its previous state.
      */
-    private _getEngine(override?: SendOptions["override"]): ChatEngine {
+    private _getEngine(override?: SendOptions["override"]): { engine: ChatEngine; restore: () => void } {
         if (!this._engine) {
             throw new Error("AIChat not initialized");
         }
 
         if (!override) {
-            return this._engine;
+            return { engine: this._engine, restore: () => {} };
         }
+
+        const saved = this._engine.getConfig();
+
         if (override.temperature !== undefined) {
             this._engine.setTemperature(override.temperature);
         }
@@ -273,7 +273,16 @@ export class AIChat {
             this._engine.setSystemPrompt(override.systemPrompt);
         }
 
-        return this._engine;
+        return {
+            engine: this._engine,
+            restore: () => {
+                this._engine!.setTemperature(saved.temperature ?? 0.7);
+                this._engine!.setMaxTokens(saved.maxTokens ?? 4096);
+                if (saved.systemPrompt !== undefined) {
+                    this._engine!.setSystemPrompt(saved.systemPrompt);
+                }
+            },
+        };
     }
 
     /**
