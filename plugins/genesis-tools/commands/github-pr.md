@@ -13,7 +13,7 @@ Fetch PR review comments, let user select which to fix, implement fixes, and com
 ```
 /github-pr <pr-number-or-url>              # All threads
 /github-pr <pr-number-or-url> -u           # Only unresolved threads
-/github-pr <pr-number-or-url> --open       # Cat + open in Cursor
+/github-pr <pr-number-or-url> --open       # Read + open in Cursor
 /github-pr <pr-number-or-url> --open-only  # Open in Cursor only, wait for input
 ```
 
@@ -24,7 +24,7 @@ Fetch PR review comments, let user select which to fix, implement fixes, and com
 Parse arguments:
 - First arg: PR number or full GitHub URL (required)
 - `-u` flag: Only show unresolved threads
-- `--open` flag: After catting, also open the review file in Cursor
+- `--open` flag: After reading, also open the review file in Cursor
 - `--open-only` flag: Skip cat, open in Cursor, then stop and wait for user input
 
 ## Process
@@ -42,6 +42,12 @@ The script outputs the file path to stdout (e.g., `.claude/github/reviews/pr-137
 ### Step 2: Read and Display Review
 
 > **CRITICAL — READ THIS FIRST:** To read the review file, you MUST use the **Read** tool. NEVER use `cat`, `Bash(cat ...)`, `head`, `tail`, or ANY Bash command to read it. Bash output gets truncated at ~50 lines, then auto-persisted to `tool-results/`, forcing 5+ chunked Read calls on the persisted file — wasting thousands of tokens and minutes of time. The Read tool gets the full file in one call.
+
+Use the **Read** tool to read the generated markdown file:
+
+```bash
+Read <generated-file-path>
+```
 
 **If `--open-only` flag is present:**
 1. Open the review file in Cursor:
@@ -80,7 +86,7 @@ Use **Explore agents** (`subagent_type: "Explore"`) to parallelize the analysis.
 
 **Prompt template for each Explore agent:**
 
-```
+```text
 Analyze these PR review threads by reading the actual source code.
 For each thread, determine if the reviewer is correct.
 
@@ -135,14 +141,14 @@ After analyzing all threads, present each one as a rich markdown section. Claude
 and timeslots table (enum: adult, child, all, unknown).
 
 **Code context:**
-‎```php
+```php
 // timeslots migration
 $table->enum('persons_type', ['adult', 'child', 'all', 'unknown']);
 
 // PersonsType enum in code
 case OnlyAdults = 'only_adults';
 case OnlyChildren = 'only_children';
-‎```
+```
 
 **Analysis:** Reviewer is correct — three different value sets exist for the same concept.
 The documentation accurately reflects this inconsistency but doesn't call it out explicitly.
@@ -160,11 +166,11 @@ value inconsistency across reservations table, timeslots table, and PersonsType 
 negatives as a "corruption canary".
 
 **Code context:**
-‎```php
+```php
 // TimeslotManager::unHoldTimeslot()
 // Intentionally allow negative values as corruption canary for TimeslotFixer
 'persons_filled' => DB::raw("persons_filled - {$count}")
-‎```
+```
 
 **Analysis:** Reviewer is correct — the code comment explicitly says negatives are intentional.
 The plan incorrectly treats this as a bug to fix.
@@ -182,11 +188,11 @@ pattern. Changed to recommend tests for the canary→fix flow instead of a GREAT
 **Concern:** Missing null check on `user.profile` before accessing `.name`.
 
 **Code context:**
-‎```typescript
+```typescript
 // Line 40-45
 const user = await getUser(id);  // returns User (never null — throws on not found)
 const name = user.profile.name;  // profile is non-optional in User type
-‎```
+```
 
 **Analysis:** Reviewer is wrong. `getUser()` throws on not-found (never returns null),
 and `profile` is a required field on the `User` type — no null check needed.
@@ -415,10 +421,11 @@ Use the `superpowers:dispatching-parallel-agents` skill to structure parallel di
 3. Reads the generated review markdown file
 4. Reads the actual source files referenced in each thread (using Glob/Grep/Read)
 5. For each thread, assigns a verdict:
-   - `VALID_FIX_NEEDED` — real issue, needs a fix
+   - `VALID` — real issue, needs a fix
    - `FALSE_POSITIVE` — reviewer is wrong or lacks context
    - `BY_DESIGN` — intentional, no fix needed
    - `ALREADY_FIXED` — addressed in a prior commit
+   - `NEEDS_CLARIFICATION` — ambiguous, needs user input
 6. Writes plan to `.claude/plans/reviews/PR-<id>-<datetime>.md`
 
 **Agent prompt template:**
@@ -430,7 +437,7 @@ You are analyzing PR #<id> review comments for the <repo> repository.
 2. Read the PR review file: `<path-to-review-md>`
 3. For each thread, READ THE ACTUAL SOURCE FILES at the referenced location before
    forming any opinion. Then assign a verdict:
-   - VALID_FIX_NEEDED — reviewer is correct, a real fix is needed
+   - VALID — reviewer is correct, a real fix is needed
    - FALSE_POSITIVE — reviewer is wrong (misread the code, wrong about the API,
      doesn't understand the runtime, etc.) — push back with evidence
    - BY_DESIGN — intentional choice; decline with rationale
@@ -462,7 +469,7 @@ CONSTRAINTS:
 Plan must include:
 - PR title and branch
 - Per-thread: Thread ID, file/line, concern, verdict, justification (with code evidence)
-- If VALID_FIX_NEEDED: exact file, what to change, how (code snippet if applicable)
+- If VALID: exact file, what to change, how (code snippet if applicable)
 - If FALSE_POSITIVE/BY_DESIGN: the technical reply text to post on GitHub
 - Summary verdict table
 - Prioritized fix list (HIGH → MED → LOW)
@@ -495,7 +502,7 @@ After all agents complete, read each plan file and compile a consolidated report
 
 | Verdict | Count |
 |---------|-------|
-| VALID_FIX_NEEDED | X |
+| VALID | X |
 | FALSE_POSITIVE | X |
 | BY_DESIGN | X |
 | ALREADY_FIXED | X |
