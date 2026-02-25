@@ -93,4 +93,15 @@ describe("ChatSessionManager", () => {
     it("exists() returns false for non-existent session", async () => {
         expect(await manager.exists("ghost")).toBe(false);
     });
+
+    it("rejects session IDs with path traversal characters", () => {
+        expect(() => manager.create("../etc/passwd")).toThrow("Invalid session ID");
+        expect(() => manager.create("foo/bar")).toThrow("Invalid session ID");
+        expect(() => manager.create("foo bar")).toThrow("Invalid session ID");
+    });
+
+    it("accepts valid session IDs with hyphens and underscores", () => {
+        const session = manager.create("my-session_123");
+        expect(session.id).toBe("my-session_123");
+    });
 });

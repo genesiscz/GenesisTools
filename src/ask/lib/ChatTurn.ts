@@ -60,6 +60,7 @@ export class ChatTurn implements PromiseLike<ChatResponse>, AsyncIterable<ChatEv
         }
 
         this._drainStarted = true;
+        this._consumed = true;
 
         try {
             const gen = this._source();

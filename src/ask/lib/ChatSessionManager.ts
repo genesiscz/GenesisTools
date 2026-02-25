@@ -18,6 +18,7 @@ export class ChatSessionManager implements ChatSessionManagerRef {
     /** Create a new empty session */
     create(id?: string): ChatSession {
         const sessionId = id ?? crypto.randomUUID();
+        this.validateSessionId(sessionId);
         const session = new ChatSession(sessionId);
         session.setManager(this);
         return session;
@@ -108,7 +109,14 @@ export class ChatSessionManager implements ChatSessionManagerRef {
         return existsSync(this.getFilePath(sessionId));
     }
 
+    private validateSessionId(sessionId: string): void {
+        if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) {
+            throw new Error(`Invalid session ID "${sessionId}" — only alphanumeric, hyphens, and underscores allowed`);
+        }
+    }
+
     private getFilePath(sessionId: string): string {
+        this.validateSessionId(sessionId);
         return resolve(this.dir, `${sessionId}.jsonl`);
     }
 }

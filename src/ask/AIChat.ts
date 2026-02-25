@@ -33,6 +33,12 @@ export class AIChat {
     readonly log: ChatLog;
 
     constructor(options: AIChatOptions) {
+        if (options.resume && options.session?.id && options.resume !== options.session.id) {
+            throw new Error(
+                `Conflicting session IDs: resume="${options.resume}" vs session.id="${options.session.id}". Use only one.`,
+            );
+        }
+
         this._options = { ...options };
         this.log = new ChatLog(options.logLevel ?? "info");
 
@@ -151,7 +157,9 @@ export class AIChat {
         // Build messages from session history
         const messages = this.session.toMessages();
 
-        // Set up system prompt from messages
+        // Rebuild system prompt each call to include any new system/context entries
+        // added between send() calls. This is intentional — the session may have
+        // new context entries that should be included in the prompt.
         const systemMessages = messages.filter((m) => m.role === "system").map((m) => m.content);
         const systemPrompt = [
             this._options.systemPrompt,
@@ -167,72 +175,84 @@ export class AIChat {
         let thinkingContent = "";
         const startTime = Date.now();
 
-        // Call ChatEngine with onChunk callback to capture streaming
-        const engineResponse = await engine.sendMessage(
-            message,
-            undefined, // tools — TODO: wire AIChatTool → AI SDK tools
-            {
-                onChunk: (chunk: string) => {
-                    // We don't use this directly — the ChatTurn handles event dispatch
-                    // But we need it to prevent ChatEngine from writing to stdout
-                    fullContent += chunk;
-                },
+        // Bridge push-based onChunk to pull-based async generator via ReadableStream
+        const stream = new ReadableStream<ChatEvent>({
+            start: async (controller) => {
+                try {
+                    const engineResponse = await engine.sendMessage(
+                        message,
+                        undefined, // tools — TODO: wire AIChatTool → AI SDK tools
+                        {
+                            onChunk: (chunk: string) => {
+                                controller.enqueue(ChatEvent.text(chunk));
+                                fullContent += chunk;
+                            },
+                        },
+                    );
+
+                    const duration = Date.now() - startTime;
+                    const response: ChatResponse = {
+                        content: fullContent || engineResponse.content,
+                        thinking: thinkingContent || undefined,
+                        usage: engineResponse.usage
+                            ? {
+                                  inputTokens: engineResponse.usage.inputTokens ?? 0,
+                                  outputTokens: engineResponse.usage.outputTokens ?? 0,
+                                  totalTokens: engineResponse.usage.totalTokens ?? 0,
+                                  cachedInputTokens: engineResponse.usage.cachedInputTokens ?? undefined,
+                              }
+                            : undefined,
+                        cost: engineResponse.cost,
+                        duration,
+                    };
+
+                    if (addToHistory) {
+                        this.session.add({
+                            role: "assistant",
+                            content: response.content,
+                            thinking: saveThinking ? thinkingContent : undefined,
+                            usage: response.usage,
+                            cost: engineResponse.cost,
+                        });
+                    }
+
+                    if (this._options.session?.autoSave && this._sessionManager) {
+                        await this.session.save();
+                    }
+
+                    controller.enqueue(ChatEvent.done(response));
+                } catch (error) {
+                    controller.error(error);
+                } finally {
+                    controller.close();
+                }
             },
-        );
+        });
 
-        // Since ChatEngine buffers internally and returns the full response,
-        // we emit text events from the response content.
-        // For true streaming, we'd need to refactor ChatEngine to yield chunks.
-        // For now, emit the full content as a single text event.
-        if (engineResponse.content) {
-            yield ChatEvent.text(engineResponse.content);
-            fullContent = engineResponse.content;
+        const reader = stream.getReader();
+
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+
+                if (done) {
+                    break;
+                }
+
+                yield value;
+            }
+        } finally {
+            reader.releaseLock();
         }
-
-        // Build the ChatResponse
-        const duration = Date.now() - startTime;
-        const response: ChatResponse = {
-            content: fullContent,
-            thinking: thinkingContent || undefined,
-            usage: engineResponse.usage
-                ? {
-                      inputTokens: engineResponse.usage.inputTokens ?? 0,
-                      outputTokens: engineResponse.usage.outputTokens ?? 0,
-                      totalTokens: engineResponse.usage.totalTokens ?? 0,
-                      cachedInputTokens: engineResponse.usage.cachedInputTokens ?? undefined,
-                  }
-                : undefined,
-            cost: engineResponse.cost,
-            duration,
-        };
-
-        // Add assistant message to session
-        if (addToHistory) {
-            this.session.add({
-                role: "assistant",
-                content: fullContent,
-                thinking: saveThinking ? thinkingContent : undefined,
-                usage: engineResponse.usage
-                    ? {
-                          inputTokens: engineResponse.usage.inputTokens ?? 0,
-                          outputTokens: engineResponse.usage.outputTokens ?? 0,
-                          totalTokens: engineResponse.usage.totalTokens ?? 0,
-                          cachedInputTokens: engineResponse.usage.cachedInputTokens ?? undefined,
-                      }
-                    : undefined,
-                cost: engineResponse.cost,
-            });
-        }
-
-        // Auto-save if configured
-        if (this._options.session?.autoSave && this._sessionManager) {
-            await this.session.save();
-        }
-
-        yield ChatEvent.done(response);
     }
 
-    /** Get a ChatEngine instance, potentially with per-call overrides */
+    /** Get a ChatEngine instance, potentially with per-call overrides.
+     *
+     * NOTE: This mutates the shared engine instance. ChatEngine does not expose
+     * getters for temperature/maxTokens, so we cannot save/restore state.
+     * Practical impact is low — most users won't mix overrides and non-overrides
+     * in the same AIChat instance. TODO: Add save/restore once ChatEngine exposes getters.
+     */
     private _getEngine(override?: SendOptions["override"]): ChatEngine {
         if (!this._engine) {
             throw new Error("AIChat not initialized");
@@ -241,9 +261,6 @@ export class AIChat {
         if (!override) {
             return this._engine;
         }
-
-        // For provider/model overrides, we'd need a new engine
-        // For now, apply simple overrides to the existing engine
         if (override.temperature !== undefined) {
             this._engine.setTemperature(override.temperature);
         }
@@ -320,15 +337,14 @@ export class AIChat {
      */
     static async getProviders(filter?: { capabilities?: string[] }): Promise<DetectedProvider[]> {
         const providers = await providerManager.detectProviders();
+        const caps = filter?.capabilities;
 
-        if (!filter?.capabilities?.length) {
+        if (!caps?.length) {
             return providers;
         }
 
         return providers.filter((p) =>
-            p.models.some((m) =>
-                filter.capabilities!.every((cap) => m.capabilities.includes(cap)),
-            ),
+            p.models.some((m) => caps.every((cap) => m.capabilities.includes(cap))),
         );
     }
 
@@ -338,11 +354,10 @@ export class AIChat {
     static async getModels(options: { provider: string; capabilities?: string[] }): Promise<ModelInfo[]> {
         await providerManager.detectProviders();
         let models = await providerManager.getModelsForProvider(options.provider);
+        const caps = options.capabilities;
 
-        if (options.capabilities?.length) {
-            models = models.filter((m) =>
-                options.capabilities!.every((cap) => m.capabilities.includes(cap)),
-            );
+        if (caps?.length) {
+            models = models.filter((m) => caps.every((cap) => m.capabilities.includes(cap)));
         }
 
         return models;

@@ -120,6 +120,23 @@ describe("ChatTurn", () => {
         expect(collected[3].isText()).toBe(true);
     });
 
+    it("does not invoke source twice when awaited then iterated", async () => {
+        let invocations = 0;
+        const source = async function* () {
+            invocations++;
+            yield ChatEvent.text("hello");
+            yield ChatEvent.done({ content: "hello", duration: 10 });
+        };
+
+        const turn = new ChatTurn(source);
+        await turn; // drains
+        const events: ChatEvent[] = [];
+        for await (const e of turn) { events.push(e); } // should replay
+
+        expect(invocations).toBe(1);
+        expect(events.length).toBe(2);
+    });
+
     it("fallback response when no done event", async () => {
         const events = [
             ChatEvent.text("partial "),

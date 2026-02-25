@@ -11,10 +11,19 @@ export const handleAsk: ActionHandler = async (message, contact, client, convers
     const typing = client.startTypingLoop(contact.userId);
 
     try {
-        // Get or create AIChat instance for this contact
-        let chat = contactChats.get(contact.userId);
+        // Get or create AIChat instance — cache key includes config so changes are detected
+        const cacheKey = `${contact.userId}:${contact.askProvider}:${contact.askModel}`;
+        let chat = contactChats.get(cacheKey);
 
         if (!chat) {
+            // Clean up old instance for this user if config changed
+            for (const [key, oldChat] of contactChats) {
+                if (key.startsWith(`${contact.userId}:`)) {
+                    oldChat.dispose();
+                    contactChats.delete(key);
+                }
+            }
+
             chat = new AIChat({
                 provider: contact.askProvider,
                 model: contact.askModel,
@@ -26,21 +35,16 @@ export const handleAsk: ActionHandler = async (message, contact, client, convers
                     autoSave: true,
                 },
             });
-            contactChats.set(contact.userId, chat);
+            contactChats.set(cacheKey, chat);
         }
 
-        // Build prompt with conversation history context
-        let promptText: string;
-
+        // Add conversation history as context if available, then send only the new message.
+        // Using addToHistory: false for the context to avoid duplicating history in the session.
         if (conversationHistory) {
-            promptText =
-                `[Recent conversation]\n${conversationHistory}\n\n` +
-                `[New message from ${contact.displayName}]\n${message.contentForLLM}`;
-        } else {
-            promptText = message.contentForLLM;
+            chat.session.add({ role: "system", content: `[Recent conversation]\n${conversationHistory}` });
         }
 
-        const response = await chat.send(promptText);
+        const response = await chat.send(message.contentForLLM);
 
         typing.stop();
 
