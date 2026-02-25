@@ -162,7 +162,7 @@ value inconsistency across reservations table, timeslots table, and PersonsType 
 
 ---
 
-#### #5 [HIGH] `ReservationPossibleBugs.md:24` — @copilot
+#### #5 [LOW] `ReservationPossibleBugs.md:24` — @copilot
 
 **Concern:** Plan flags negative persons_filled as a bug, but code intentionally allows
 negatives as a "corruption canary".
@@ -175,13 +175,13 @@ negatives as a "corruption canary".
 ```
 
 **Analysis:** Reviewer is correct — the code comment explicitly says negatives are intentional.
-The plan incorrectly treats this as a bug to fix.
+The plan incorrectly treats this as a bug to fix. No code change needed.
 
-**Verdict:** VALID
-**Action:** Downgrade from MEDIUM to LOW, reword to acknowledge the canary pattern,
-suggest adding tests instead of adding a floor check.
-**Proposed reply:** Good catch — updated the plan to acknowledge the intentional canary
-pattern. Changed to recommend tests for the canary→fix flow instead of a GREATEST(0,...) guard.
+**Verdict:** BY_DESIGN
+**Action:** Downgrade severity to LOW and note that negatives are intentional — no behavior
+change required. Update the plan's wording to acknowledge the canary pattern.
+**Proposed reply:** Good catch — negatives are intentional as a corruption canary for
+TimeslotFixer. Downgraded severity and updated the plan wording accordingly.
 
 ---
 
