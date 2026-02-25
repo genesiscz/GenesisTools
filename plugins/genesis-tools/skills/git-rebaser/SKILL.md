@@ -51,15 +51,40 @@ If the parent has NOT been rebased yet:
    ```
 5. If conflicts occur, **stop and tell the user** — do NOT attempt to resolve automatically. Guide them through `git rebase --continue` after they fix conflicts.
 
-If the parent was ALREADY rebased:
+If the parent was ALREADY rebased, determine `OLD_PARENT` using this tiered approach:
 
-1. Find the old parent ref from reflog:
+**Tier 1 — Reflog (most reliable, available ~90 days):**
+
+1. Run `git reflog <parent>` and find the entry just before the rebase (typically `<parent>@{1}`).
+2. Show the user the ref and its commit message. Ask them to confirm it's the pre-rebase tip.
+3. If confirmed, set `OLD_PARENT` to that ref.
+
+**Tier 2 — `git cherry` (works if commits weren't squashed/reordered during rebase):**
+
+If reflog is unavailable or inconclusive:
+
+1. Explain to the user: "Reflog doesn't have the old ref. I'll try matching commits by their diff content using `git cherry`. This works as long as the parent's commits weren't squashed or reordered during the rebase."
+2. For each child, run:
    ```bash
-   git reflog <parent>
+   git cherry -v <parent> <child>
    ```
-2. Look for the entry just before the rebase (typically `<parent>@{1}` but verify).
-3. **Show the user** the old ref and ask them to confirm it's correct.
-4. Set `OLD_PARENT` to that ref.
+   - Lines starting with `-` = commits whose patch content already exists on the new parent (shared commits, safe to exclude).
+   - Lines starting with `+` = commits unique to the child (these are the ones to replay).
+3. Show the user both lists and explain which commits will be kept vs dropped.
+4. If the `+` list looks correct, count N unique commits and set `OLD_PARENT` to `<child>~N`.
+
+**Tier 3 — Interactive commit selection (last resort, always works):**
+
+If reflog is gone AND commits were squashed/dropped/reordered (making `git cherry` unreliable):
+
+1. Explain to the user: "The parent branch's commits were modified during rebase (squashed, dropped, or reordered), so I can't automatically determine which commits belong to the child branch vs the old parent. The only safe approach is for you to identify your commits manually."
+2. Show the full commit history:
+   ```bash
+   git log --oneline <target>..<child>
+   ```
+3. Explain: "These are ALL commits on `<child>` that aren't on `<target>`. Some of these were on the old parent branch (and have already been rebased as part of the new parent). I need you to tell me which commits are YOUR work on this child branch."
+4. Ask the user to identify their commits (by hash, range, or count from the top).
+5. Once confirmed, set `OLD_PARENT` to `<child>~N` where N is the number of unique commits.
 
 ### Phase 4: Report New Parent State
 
@@ -120,4 +145,4 @@ All branches verified. No orphaned commits.
 - **ALWAYS ask confirmation** before every `git rebase` command
 - **STOP on conflicts** — guide the user, don't auto-resolve
 - **Use `git rebase --onto`** for child branches — never plain `git rebase`
-- If `OLD_PARENT` cannot be determined from reflog, ask the user to provide it manually
+- Determine `OLD_PARENT` using tiered fallback: reflog → `git cherry` → interactive commit selection (see Phase 3)
