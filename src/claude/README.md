@@ -58,6 +58,8 @@ Interactive migration wizard for moving/syncing Claude assets into Codex-compati
   - Project: `./.codex/prompts/`
   - Global: `~/.codex/prompts/`
 - **Instructions** (`CLAUDE.md`) -> `AGENTS.md`
+  - Project scope: `./AGENTS.md`
+  - Global scope: `~/.codex/AGENTS.md`
 
 ### Wizard behavior
 

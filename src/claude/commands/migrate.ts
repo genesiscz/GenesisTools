@@ -1,5 +1,5 @@
-import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync } from "node:fs";
-import { basename, dirname, join, relative } from "node:path";
+import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import {
     buildMigrationPlan,
     type DiscoveredSources,
@@ -421,39 +421,47 @@ function renderDiscoveryList(discovered: DiscoveredSources): void {
     lines.push(summarizeDiscovery(discovered));
     lines.push("");
 
+    const projectSkills = discovered.skills.filter((entry) => entry.scope === "project");
     lines.push("Project skills:");
-    for (const item of discovered.skills.filter((entry) => entry.scope === "project")) {
-        lines.push(`- ${item.path}`);
-    }
-    if (discovered.skills.filter((entry) => entry.scope === "project").length === 0) {
+    if (projectSkills.length === 0) {
         lines.push("- (none)");
+    } else {
+        for (const item of projectSkills) {
+            lines.push(`- ${item.path}`);
+        }
     }
 
+    const globalSkills = discovered.skills.filter((entry) => entry.scope === "global");
     lines.push("");
     lines.push("Global skills:");
-    for (const item of discovered.skills.filter((entry) => entry.scope === "global")) {
-        lines.push(`- ${item.path}`);
-    }
-    if (discovered.skills.filter((entry) => entry.scope === "global").length === 0) {
+    if (globalSkills.length === 0) {
         lines.push("- (none)");
+    } else {
+        for (const item of globalSkills) {
+            lines.push(`- ${item.path}`);
+        }
     }
 
+    const projectCommands = discovered.commands.filter((entry) => entry.scope === "project");
     lines.push("");
     lines.push("Project commands:");
-    for (const item of discovered.commands.filter((entry) => entry.scope === "project")) {
-        lines.push(`- ${item.path}`);
-    }
-    if (discovered.commands.filter((entry) => entry.scope === "project").length === 0) {
+    if (projectCommands.length === 0) {
         lines.push("- (none)");
+    } else {
+        for (const item of projectCommands) {
+            lines.push(`- ${item.path}`);
+        }
     }
 
+    const globalCommands = discovered.commands.filter((entry) => entry.scope === "global");
     lines.push("");
     lines.push("Global commands:");
-    for (const item of discovered.commands.filter((entry) => entry.scope === "global")) {
-        lines.push(`- ${item.path}`);
-    }
-    if (discovered.commands.filter((entry) => entry.scope === "global").length === 0) {
+    if (globalCommands.length === 0) {
         lines.push("- (none)");
+    } else {
+        for (const item of globalCommands) {
+            lines.push(`- ${item.path}`);
+        }
     }
 
     lines.push("");
@@ -632,7 +640,7 @@ async function promptRenamePath(targetPath: string): Promise<string | null> {
         return null;
     }
 
-    return (renamed as string).trim();
+    return resolve((renamed as string).trim());
 }
 
 async function showConflictDiff(targetPath: string, sourcePath: string): Promise<void> {
@@ -642,29 +650,33 @@ async function showConflictDiff(targetPath: string, sourcePath: string): Promise
 }
 
 function renderPathPreview(path: string, depth: number): string {
-    if (!existsSync(path)) {
-        return "(missing)";
-    }
-
-    const stat = lstatSync(path);
-    if (stat.isSymbolicLink()) {
-        return `symlink -> ${readlinkSync(path)}`;
-    }
-
-    if (stat.isFile()) {
-        const content = readFileSync(path, "utf-8");
-        if (content.length > 25_000) {
-            return `${content.slice(0, 25_000)}\n\n... [truncated ${content.length - 25_000} chars]`;
+    try {
+        if (!existsSync(path)) {
+            return "(missing)";
         }
 
-        return content;
-    }
+        const stat = lstatSync(path);
+        if (stat.isSymbolicLink()) {
+            return `symlink -> ${readlinkSync(path)}`;
+        }
 
-    if (stat.isDirectory()) {
-        return renderDirectoryTree(path, depth);
-    }
+        if (stat.isFile()) {
+            const content = readFileSync(path, "utf-8");
+            if (content.length > 25_000) {
+                return `${content.slice(0, 25_000)}\n\n... [truncated ${content.length - 25_000} chars]`;
+            }
 
-    return `(unsupported path type: ${path})`;
+            return content;
+        }
+
+        if (stat.isDirectory()) {
+            return renderDirectoryTree(path, depth);
+        }
+
+        return `(unsupported path type: ${path})`;
+    } catch {
+        return `(failed to read: ${path})`;
+    }
 }
 
 function renderDirectoryTree(dirPath: string, maxDepth: number): string {
@@ -675,7 +687,13 @@ function renderDirectoryTree(dirPath: string, maxDepth: number): string {
             return;
         }
 
-        const entries = readdirSync(currentPath, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+        let entries: Dirent[];
+        try {
+            entries = readdirSync(currentPath, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+        } catch {
+            return;
+        }
+
         for (const entry of entries) {
             const entryPath = join(currentPath, entry.name);
             const rel = relative(dirPath, entryPath) || ".";

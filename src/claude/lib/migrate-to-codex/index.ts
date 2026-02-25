@@ -165,10 +165,10 @@ export function buildMigrationPlan(discovered: DiscoveredSources, input: Migrati
 
     if (selected.has("skills")) {
         const skillSources = discovered.skills.filter((item) => sourceScopes.includes(item.scope));
-        const nameUsedByTarget = new Map<string, number>();
 
-        for (const source of skillSources) {
-            for (const targetScope of targetScopes) {
+        for (const targetScope of targetScopes) {
+            const nameUsedByTarget = new Map<string, number>();
+            for (const source of skillSources) {
                 const targetBase =
                     targetScope === "project"
                         ? join(input.projectRoot, ".agents", "skills")
@@ -197,10 +197,10 @@ export function buildMigrationPlan(discovered: DiscoveredSources, input: Migrati
 
     if (selected.has("commands")) {
         const commandSources = discovered.commands.filter((item) => sourceScopes.includes(item.scope));
-        const namespaceUsedByTarget = new Map<string, number>();
 
-        for (const source of commandSources) {
-            for (const targetScope of targetScopes) {
+        for (const targetScope of targetScopes) {
+            const namespaceUsedByTarget = new Map<string, number>();
+            for (const source of commandSources) {
                 const targetBase =
                     targetScope === "project"
                         ? join(input.projectRoot, ".codex", "prompts")
@@ -233,7 +233,7 @@ export function buildMigrationPlan(discovered: DiscoveredSources, input: Migrati
         for (const source of instructionSources) {
             for (const targetScope of targetScopes) {
                 const targetPath =
-                    targetScope === "project" ? join(input.projectRoot, "AGENTS.md") : join(homedir(), "AGENTS.md");
+                    targetScope === "project" ? join(input.projectRoot, "AGENTS.md") : join(GLOBAL_CODEX_DIR, "AGENTS.md");
 
                 if (seenTargets.has(targetPath)) {
                     warnings.push(`Skipping duplicate instruction target: ${targetPath}`);
@@ -538,6 +538,12 @@ function collectSkillDirsFromPaths(baseDir: string, paths: string[], warnings: s
 
         if (existsSync(join(resolvedPath, "SKILL.md"))) {
             results.push(resolvedPath);
+            continue;
+        }
+
+        const stat = lstatSync(resolvedPath);
+        if (!stat.isDirectory()) {
+            warnings.push(`Plugin skills path is not a directory: ${resolvedPath}`);
             continue;
         }
 
