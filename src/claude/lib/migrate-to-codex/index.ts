@@ -1,4 +1,5 @@
 import {
+    type Dirent,
     cpSync,
     existsSync,
     lstatSync,
@@ -7,6 +8,7 @@ import {
     readFileSync,
     readlinkSync,
     rmSync,
+    statSync,
     symlinkSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -167,7 +169,7 @@ export function buildMigrationPlan(discovered: DiscoveredSources, input: Migrati
         const skillSources = discovered.skills.filter((item) => sourceScopes.includes(item.scope));
 
         for (const targetScope of targetScopes) {
-            const nameUsedByTarget = new Map<string, number>();
+            const nameUsedByTarget = new Set<string>();
             for (const source of skillSources) {
                 const targetBase =
                     targetScope === "project"
@@ -199,7 +201,7 @@ export function buildMigrationPlan(discovered: DiscoveredSources, input: Migrati
         const commandSources = discovered.commands.filter((item) => sourceScopes.includes(item.scope));
 
         for (const targetScope of targetScopes) {
-            const namespaceUsedByTarget = new Map<string, number>();
+            const namespaceUsedByTarget = new Set<string>();
             for (const source of commandSources) {
                 const targetBase =
                     targetScope === "project"
@@ -576,6 +578,22 @@ function collectCommandFilesFromPaths(baseDir: string, paths: string[], warnings
     return uniqueStringPaths(results);
 }
 
+function isDirEntry(entry: Dirent, fullPath: string): boolean {
+    if (entry.isDirectory()) {
+        return true;
+    }
+
+    if (!entry.isSymbolicLink()) {
+        return false;
+    }
+
+    try {
+        return statSync(fullPath).isDirectory();
+    } catch {
+        return false;
+    }
+}
+
 function collectSkillDirs(baseDir: string): string[] {
     if (!existsSync(baseDir)) {
         return [];
@@ -584,11 +602,11 @@ function collectSkillDirs(baseDir: string): string[] {
     const entries = readdirSync(baseDir, { withFileTypes: true });
     const skillDirs: string[] = [];
     for (const entry of entries) {
-        if (!entry.isDirectory()) {
+        const candidate = join(baseDir, entry.name);
+        if (!isDirEntry(entry, candidate)) {
             continue;
         }
 
-        const candidate = join(baseDir, entry.name);
         if (existsSync(join(candidate, "SKILL.md"))) {
             skillDirs.push(candidate);
         }
@@ -607,7 +625,7 @@ function collectMarkdownFiles(baseDir: string): string[] {
         const entries = readdirSync(currentDir, { withFileTypes: true });
         for (const entry of entries) {
             const fullPath = join(currentDir, entry.name);
-            if (entry.isDirectory()) {
+            if (isDirEntry(entry, fullPath)) {
                 walk(fullPath);
                 continue;
             }
@@ -630,7 +648,7 @@ function expandScope(scope: MigrationScope): SingleScope[] {
     return [scope];
 }
 
-function buildSkillTargetName(source: SkillSource, style: NameStyle, used: Map<string, number>): string {
+function buildSkillTargetName(source: SkillSource, style: NameStyle, used: Set<string>): string {
     const baseName = basename(source.path);
     let candidate = baseName;
 
@@ -645,7 +663,7 @@ function buildSkillTargetName(source: SkillSource, style: NameStyle, used: Map<s
     return ensureUniqueName(candidate, used);
 }
 
-function buildCommandNamespace(source: CommandSource, style: NameStyle, used: Map<string, number>): string {
+function buildCommandNamespace(source: CommandSource, style: NameStyle, used: Set<string>): string {
     let namespace = source.namespace;
 
     if (style === "prefixed") {
@@ -659,17 +677,18 @@ function buildCommandNamespace(source: CommandSource, style: NameStyle, used: Ma
     return ensureUniqueName(namespace, used);
 }
 
-function ensureUniqueName(name: string, used: Map<string, number>): string {
+function ensureUniqueName(name: string, used: Set<string>): string {
     const normalized = normalizeSegment(name);
-    const current = used.get(normalized) ?? 0;
-    if (current === 0) {
-        used.set(normalized, 1);
-        return normalized;
+    let candidate = normalized;
+    let counter = 2;
+
+    while (used.has(candidate)) {
+        candidate = `${normalized}-${counter}`;
+        counter++;
     }
 
-    const next = current + 1;
-    used.set(normalized, next);
-    return `${normalized}-${next}`;
+    used.add(candidate);
+    return candidate;
 }
 
 function countByComponent(operations: PlannedOperation[]): Record<MigrationComponent, number> {

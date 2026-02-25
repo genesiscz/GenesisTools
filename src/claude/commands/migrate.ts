@@ -633,6 +633,10 @@ async function promptRenamePath(targetPath: string): Promise<string | null> {
             if (!value || !value.trim()) {
                 return "Path is required";
             }
+
+            if (existsSync(resolve(value.trim()))) {
+                return "Path already exists, choose a different name";
+            }
         },
     });
 

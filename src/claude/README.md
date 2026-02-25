@@ -43,9 +43,9 @@ Interactive migration wizard for moving/syncing Claude assets into Codex-compati
   - Project plugins: `.claude-plugin/marketplace.json` + `plugins/*/.claude-plugin/plugin.json`
   - Global: `~/.claude/skills/*/SKILL.md`
 - **Commands**
-  - Project: `./.claude/commands/*.md`
+  - Project: `./.claude/commands/**/*.md`
   - Plugin command markdown folders from plugin manifests
-  - Global: `~/.claude/commands/*.md`
+  - Global: `~/.claude/commands/**/*.md`
 - **Instructions**
   - Project and global `CLAUDE.md`
 
