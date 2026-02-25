@@ -3,6 +3,7 @@
 import logger from "@app/logger";
 import { input } from "@app/utils/prompts/clack";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { AIChat } from "@ask/AIChat";
 import { transcriptionManager } from "@ask/audio/TranscriptionManager";
 import { ChatEngine } from "@ask/chat/ChatEngine";
 import type { CommandResult } from "@ask/chat/CommandHandler";
@@ -136,113 +137,103 @@ class ASKTool {
         }
 
         try {
-            // In raw mode, suppress all stdout noise (model selection UI, streaming chunks)
-            const origStdoutWrite = argv.raw ? process.stdout.write : null;
-            const restoreStdout = () => {
-                if (origStdoutWrite) {
-                    Object.defineProperty(process.stdout, "write", {
-                        value: origStdoutWrite,
-                        writable: true,
-                        configurable: true,
-                    });
-                }
-            };
-
-            if (origStdoutWrite) {
-                Object.defineProperty(process.stdout, "write", {
-                    value: () => true,
-                    writable: true,
-                    configurable: true,
-                });
+            // Use AIChat — no stdout monkey-patching needed
+            if (!argv.provider || !argv.model) {
+                logger.error("Provider (-p) and model (-m) are required for non-interactive mode");
+                process.exit(1);
             }
 
-            // Determine provider and model
-            let modelChoice: Awaited<ReturnType<typeof modelSelector.selectModelByName>>;
-            let response: Awaited<ReturnType<InstanceType<typeof ChatEngine>["sendMessage"]>>;
+            const chat = new AIChat({
+                provider: argv.provider,
+                model: argv.model,
+                systemPrompt: createSystemPrompt(argv.systemPrompt),
+                temperature: parseTemperature(argv.temperature),
+                maxTokens: parseMaxTokens(argv.maxTokens),
+                logLevel: argv.raw ? "silent" : "info",
+            });
 
-            try {
-                modelChoice = await modelSelector.selectModelByName(argv.provider, argv.model);
-                if (!modelChoice) {
-                    logger.error("Failed to select model");
-                    process.exit(1);
-                }
-
-                if (!argv.raw) {
-                    p.log.info(`Using ${colorizeProvider(modelChoice.provider.name)}/${modelChoice.model.name}`);
-                }
-
-                // Create chat config
-                const chatConfig = await this.createChatConfig(modelChoice, argv);
-
-                // Create chat engine
-                const chatEngine = new ChatEngine(chatConfig);
-
-                // Optional: Show cost prediction if --predict-cost flag is set
-                if (!argv.raw && argv.predictCost) {
-                    const prediction = await costPredictor.predictCost(
-                        modelChoice.provider.name,
-                        modelChoice.model.id,
-                        message
-                    );
-                    p.log.info(pc.cyan(costPredictor.formatPrediction(prediction)));
-                }
-
-                // Set up tools
-                const tools = this.getAvailableTools();
-
-                if (!argv.raw) {
-                    p.log.step(pc.yellow("Thinking..."));
-                }
-
-                // Send message
-                response = await chatEngine.sendMessage(message, tools);
-            } finally {
-                restoreStdout();
-            }
-
-            // Raw mode: output only the response content
             if (argv.raw) {
+                // Raw mode: buffered response, only output content
+                const response = await chat.send(message);
                 process.stdout.write(response.content.endsWith("\n") ? response.content : `${response.content}\n`);
                 return;
             }
 
-            // Track usage for single message mode
-            if (response.usage) {
-                const sessionId = generateSessionId();
-                await costTracker.trackUsage(
-                    modelChoice.provider.name,
-                    modelChoice.model.id,
-                    response.usage,
-                    sessionId,
-                    0
-                );
+            // Streaming mode with UI
+            // We still need provider/model info for display, so resolve first
+            const config = chat.getConfig();
+            p.log.info(`Using ${colorizeProvider(config.provider)}/${config.model}`);
+
+            // Optional: Show cost prediction if --predict-cost flag is set
+            if (argv.predictCost) {
+                const modelChoice = await modelSelector.selectModelByName(argv.provider, argv.model);
+
+                if (modelChoice) {
+                    const prediction = await costPredictor.predictCost(
+                        modelChoice.provider.name,
+                        modelChoice.model.id,
+                        message,
+                    );
+                    p.log.info(pc.cyan(costPredictor.formatPrediction(prediction)));
+                }
             }
 
-            // Handle output (support both --output and --format)
-            const outputConfig = getOutputFormat(argv);
-            await outputManager.handleOutput(response.content, outputConfig, {
-                provider: modelChoice.provider.name,
-                model: modelChoice.model.id,
-                cost: response.cost,
-                usage: response.usage,
-            });
+            p.log.step(pc.yellow("Thinking..."));
 
-            // Show cost breakdown
-            if (response.cost && response.cost > 0) {
-                const breakdown = [
-                    {
-                        provider: modelChoice.provider.name,
-                        model: modelChoice.model.id,
-                        inputTokens: response.usage?.inputTokens || 0,
-                        outputTokens: response.usage?.outputTokens || 0,
-                        cachedInputTokens: response.usage?.cachedInputTokens || 0,
-                        totalTokens: response.usage?.totalTokens || 0,
+            // Stream the response
+            for await (const event of chat.send(message)) {
+                if (event.isText()) {
+                    process.stdout.write(event.text);
+                }
+
+                if (event.isDone()) {
+                    process.stdout.write("\n");
+                    const response = event.response;
+
+                    // Track usage
+                    if (response.usage) {
+                        const sessionId = generateSessionId();
+                        await costTracker.trackUsage(
+                            config.provider,
+                            config.model,
+                            {
+                                inputTokens: response.usage.inputTokens,
+                                outputTokens: response.usage.outputTokens,
+                                totalTokens: response.usage.totalTokens,
+                                cachedInputTokens: response.usage.cachedInputTokens,
+                            },
+                            sessionId,
+                            0,
+                        );
+                    }
+
+                    // Handle output
+                    const outputConfig = getOutputFormat(argv);
+                    await outputManager.handleOutput(response.content, outputConfig, {
+                        provider: config.provider,
+                        model: config.model,
                         cost: response.cost,
-                        currency: "USD",
-                    },
-                ];
+                        usage: response.usage,
+                    });
 
-                console.log(await outputManager.formatCostBreakdown(breakdown));
+                    // Show cost breakdown
+                    if (response.cost && response.cost > 0) {
+                        const breakdown = [
+                            {
+                                provider: config.provider,
+                                model: config.model,
+                                inputTokens: response.usage?.inputTokens || 0,
+                                outputTokens: response.usage?.outputTokens || 0,
+                                cachedInputTokens: response.usage?.cachedInputTokens || 0,
+                                totalTokens: response.usage?.totalTokens || 0,
+                                cost: response.cost,
+                                currency: "USD",
+                            },
+                        ];
+
+                        console.log(await outputManager.formatCostBreakdown(breakdown));
+                    }
+                }
             }
         } catch (error) {
             logger.error(`Chat failed: ${error}`);
