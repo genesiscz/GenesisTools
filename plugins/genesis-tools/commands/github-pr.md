@@ -185,6 +185,32 @@ pattern. Changed to recommend tests for the canary→fix flow instead of a GREAT
 
 ---
 
+#### #8 [MED] `utils/cache.ts:45-52` — @gemini-code-assist
+
+**Concern:** The cache TTL defaults to `0`, which means entries never expire.
+This is likely a bug — most callers expect a reasonable default like 300 seconds.
+
+**Suggested change:**
+```suggestion
+- const DEFAULT_TTL = 0;
++ const DEFAULT_TTL = 300;
+```
+
+**Code context:**
+```typescript
+const DEFAULT_TTL = 0;
+export function createCache(ttl = DEFAULT_TTL) { ... }
+```
+
+**Analysis:** Reviewer is correct — `0` disables expiry entirely, which causes unbounded
+memory growth. The callers in `src/api/` all pass explicit TTLs, but the default is a footgun.
+
+**Verdict:** VALID
+**Action:** Apply the reviewer's suggested change (DEFAULT_TTL = 300).
+**Proposed reply:** Fixed in [abc1234](url) — changed default TTL from 0 to 300 seconds.
+
+---
+
 #### #12 [MED] `some-file.ts:42` — @coderabbitai
 
 **Concern:** Missing null check on `user.profile` before accessing `.name`.
