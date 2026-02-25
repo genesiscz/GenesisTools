@@ -43,10 +43,12 @@ The script outputs the file path to stdout (e.g., `.claude/github/reviews/pr-137
 
 > **CRITICAL — READ THIS FIRST:** To read the review file, you MUST use the **Read** tool. NEVER use `cat`, `Bash(cat ...)`, `head`, `tail`, or ANY Bash command to read it. Bash output gets truncated at ~50 lines, then auto-persisted to `tool-results/`, forcing 5+ chunked Read calls on the persisted file — wasting thousands of tokens and minutes of time. The Read tool gets the full file in one call.
 
-Use the **Read** tool to read the generated markdown file:
+Use the **Read** tool to read the generated markdown file — **always try reading the entire file first** (no `offset`/`limit` parameters). Only if the Read tool returns an error because the file exceeds the token limit, fall back to chunked reads of **1000 lines** at a time. If 1000-line chunks still fail, fall back to **500 lines**:
 
-```bash
-Read <generated-file-path>
+```
+Read <generated-file-path>                    # Try whole file first
+Read <generated-file-path> offset=1 limit=1000   # Fallback: 1000-line chunks
+Read <generated-file-path> offset=1 limit=500    # Last resort: 500-line chunks
 ```
 
 **If `--open-only` flag is present:**
