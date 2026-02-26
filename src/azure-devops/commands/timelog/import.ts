@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
+import { Api } from "@app/azure-devops/api";
 import { AzureDevOpsCacheManager } from "@app/azure-devops/cache-manager";
 import { convertToMinutes, formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
+import { updateWorkItemEffort } from "@app/azure-devops/timelog-effort";
 import type { AllowedTypeConfig, TimeLogImportFile } from "@app/azure-devops/types";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { precheckWorkItem } from "@app/azure-devops/workitem-precheck";
@@ -243,6 +245,7 @@ export function registerImportSubcommand(parent: Command): void {
             let created = 0;
             const failed: string[] = [];
             const createdWorkItemIds: number[] = [];
+            const minutesPerWorkItem = new Map<number, number>();
 
             for (const entry of precheckPassed) {
                 try {
@@ -255,6 +258,10 @@ export function registerImportSubcommand(parent: Command): void {
                     );
                     created++;
                     createdWorkItemIds.push(entry.workItemId);
+                    minutesPerWorkItem.set(
+                        entry.workItemId,
+                        (minutesPerWorkItem.get(entry.workItemId) ?? 0) + entry.minutes
+                    );
                     const title = workitemTitles.get(entry.workItemId);
                     const wiLabel = title ? `#${entry.workItemId} ${title}` : `#${entry.workItemId}`;
                     const parts = [wiLabel, formatMinutes(entry.minutes), entry.timeType, entry.date];
@@ -277,6 +284,22 @@ export function registerImportSubcommand(parent: Command): void {
 
                 for (const f of failed) {
                     console.error(`  - ${f}`);
+                }
+            }
+
+            // Update Remaining/Completed Work on affected work items (one update per unique work item)
+            if (minutesPerWorkItem.size > 0) {
+                console.log("\nUpdating work item effort...");
+                const devopsApi = new Api(config);
+
+                for (const [workItemId, totalMins] of minutesPerWorkItem) {
+                    const effort = await updateWorkItemEffort(devopsApi, workItemId, totalMins);
+
+                    if (effort) {
+                        console.log(
+                            `  \u2714 #${workItemId}: Remaining ${effort.remaining}h | Completed ${effort.completed}h`
+                        );
+                    }
                 }
             }
 
