@@ -159,8 +159,7 @@ export class AIChat {
 
         // Track chunks for building response
         let fullContent = "";
-        // TODO: wire onThinking from ChatEngine.sendMessage() to populate this
-        const thinkingContent = "";
+        let thinkingContent = "";
         const startTime = Date.now();
 
         // Bridge push-based onChunk to pull-based async generator via ReadableStream
@@ -174,6 +173,10 @@ export class AIChat {
                             onChunk: (chunk: string) => {
                                 controller.enqueue(ChatEvent.text(chunk));
                                 fullContent += chunk;
+                            },
+                            onThinking: (text: string) => {
+                                controller.enqueue(ChatEvent.thinking(text));
+                                thinkingContent += text;
                             },
                         }
                     );
