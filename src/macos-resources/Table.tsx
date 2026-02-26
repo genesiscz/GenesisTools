@@ -28,7 +28,7 @@ export type TableProps<T extends ScalarDict> = {
     /**
      * Header component.
      */
-    header: (props: React.PropsWithChildren<{}>) => React.ReactElement;
+    header: (props: React.PropsWithChildren) => React.ReactElement;
     /**
      * Component used to render a cell in the table.
      */
@@ -36,7 +36,7 @@ export type TableProps<T extends ScalarDict> = {
     /**
      * Component used to render the skeleton of the table.
      */
-    skeleton: (props: React.PropsWithChildren<{}>) => React.ReactElement;
+    skeleton: (props: React.PropsWithChildren) => React.ReactElement;
 };
 
 /* Table */
@@ -128,7 +128,10 @@ export default class Table<T extends ScalarDict> extends React.Component<
     getHeadings(): Partial<T> {
         const { columns } = this.getConfig();
 
-        const headings: Partial<T> = columns.reduce((acc, column) => ({ ...acc, [column]: column }), {});
+        const headings: Partial<T> = {};
+        for (const column of columns) {
+            (headings as Record<string, unknown>)[column as string] = column;
+        }
 
         return headings;
     }
@@ -255,7 +258,7 @@ type RowConfig = {
      * Component used to render skeleton in the row.
      */
     skeleton: {
-        component: (props: React.PropsWithChildren<{}>) => React.ReactElement;
+        component: (props: React.PropsWithChildren) => React.ReactElement;
         /**
          * Characters used in skeleton.
          *    |             |
@@ -341,7 +344,7 @@ function row<T extends ScalarDict>(config: RowConfig): (props: RowProps<T>) => R
 /**
  * Renders the header of a table.
  */
-export function Header(props: React.PropsWithChildren<{}>) {
+export function Header(props: React.PropsWithChildren) {
     return (
         <Text bold color="blue">
             {props.children}
@@ -359,7 +362,7 @@ export function Cell(props: CellProps) {
 /**
  * Redners the scaffold of the table.
  */
-export function Skeleton(props: React.PropsWithChildren<{}>) {
+export function Skeleton(props: React.PropsWithChildren) {
     return <Text bold>{props.children}</Text>;
 }
 
@@ -370,17 +373,13 @@ export function Skeleton(props: React.PropsWithChildren<{}>) {
  */
 function intersperse<T, I>(intersperser: (index: number) => I, elements: T[]): (T | I)[] {
     // Intersparse by reducing from left.
-    const interspersed: (T | I)[] = elements.reduce(
-        (acc, element, index) => {
-            // Only add element if it's the first one.
-            if (acc.length === 0) {
-                return [element];
-            }
-            // Add the intersparser as well otherwise.
-            return [...acc, intersperser(index), element];
-        },
-        [] as (T | I)[]
-    );
+    const interspersed: (T | I)[] = [];
+    for (let i = 0; i < elements.length; i++) {
+        if (i > 0) {
+            interspersed.push(intersperser(i));
+        }
+        interspersed.push(elements[i]);
+    }
 
     return interspersed;
 }
