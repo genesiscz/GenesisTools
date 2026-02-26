@@ -32,6 +32,7 @@ export class ChatTurn implements PromiseLike<ChatResponse>, AsyncIterable<ChatEv
     }
 
     /** PromiseLike — await the turn to get the buffered ChatResponse */
+    // biome-ignore lint/suspicious/noThenProperty: intentional PromiseLike implementation
     then<TResult1 = ChatResponse, TResult2 = never>(
         onfulfilled?: ((value: ChatResponse) => TResult1 | PromiseLike<TResult1>) | null,
         onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null

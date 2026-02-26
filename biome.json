@@ -22,7 +22,8 @@
             },
             "style": {
                 "useConst": "error",
-                "useBlockStatements": "error"
+                "useBlockStatements": "error",
+                "noNonNullAssertion": "off"
             },
             "suspicious": {
                 "noExplicitAny": "warn"
