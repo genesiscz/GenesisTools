@@ -15,7 +15,7 @@ export async function downloadContact(
     client: TGClient,
     store: TelegramHistoryStore,
     contact: ContactConfig,
-    options: { since?: Date; until?: Date; limit?: number },
+    options: { since?: Date; until?: Date; limit?: number }
 ): Promise<void> {
     p.log.step(pc.bold(contact.displayName));
 
@@ -95,7 +95,7 @@ export async function downloadContact(
                 retryCount = 0;
 
                 progressSpinner.message(
-                    `Downloaded ${formatNumber(downloaded)} messages (${formatNumber(inserted)} new)`,
+                    `Downloaded ${formatNumber(downloaded)} messages (${formatNumber(inserted)} new)`
                 );
             }
         }
@@ -131,13 +131,13 @@ export async function downloadContact(
     }
 
     progressSpinner.stop(
-        `${pc.green(formatNumber(downloaded))} downloaded, ${pc.green(formatNumber(inserted))} new messages stored`,
+        `${pc.green(formatNumber(downloaded))} downloaded, ${pc.green(formatNumber(inserted))} new messages stored`
     );
 }
 
 export async function embedMessages(
     store: TelegramHistoryStore,
-    chatId: string,
+    chatId: string
 ): Promise<{ embedded: number; skipped: number; unsupportedLangs: Set<string> }> {
     let embedded = 0;
     let skipped = 0;

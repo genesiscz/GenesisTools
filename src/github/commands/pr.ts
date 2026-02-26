@@ -64,7 +64,7 @@ async function fetchPR(owner: string, repo: string, number: number): Promise<Git
                 repo,
                 pull_number: number,
             }),
-        { label: `GET /repos/${owner}/${repo}/pulls/${number}` },
+        { label: `GET /repos/${owner}/${repo}/pulls/${number}` }
     );
 
     return data as unknown as GitHubPullRequest;
@@ -88,7 +88,7 @@ async function fetchReviewComments(owner: string, repo: string, number: number):
                     per_page: 100,
                     page,
                 }),
-            { label: `GET /repos/${owner}/${repo}/pulls/${number}/comments (page ${page})` },
+            { label: `GET /repos/${owner}/${repo}/pulls/${number}/comments (page ${page})` }
         );
 
         comments.push(...(data as GitHubReviewComment[]));
@@ -121,7 +121,7 @@ async function fetchCommits(owner: string, repo: string, number: number): Promis
                     per_page: 100,
                     page,
                 }),
-            { label: `GET /repos/${owner}/${repo}/pulls/${number}/commits (page ${page})` },
+            { label: `GET /repos/${owner}/${repo}/pulls/${number}/commits (page ${page})` }
         );
 
         allCommits.push(
@@ -130,7 +130,7 @@ async function fetchCommits(owner: string, repo: string, number: number): Promis
                 message: commit.commit.message.split("\n")[0],
                 author: commit.author?.login || commit.commit.author?.name || "unknown",
                 date: commit.commit.author?.date || "",
-            })),
+            }))
         );
 
         if (data.length < 100) {
@@ -161,7 +161,7 @@ async function fetchChecks(owner: string, repo: string, ref: string): Promise<Ch
                     per_page: 100,
                     page,
                 }),
-            { label: `GET /repos/${owner}/${repo}/commits/${ref}/check-runs (page ${page})` },
+            { label: `GET /repos/${owner}/${repo}/commits/${ref}/check-runs (page ${page})` }
         );
 
         allChecks.push(
@@ -169,7 +169,7 @@ async function fetchChecks(owner: string, repo: string, ref: string): Promise<Ch
                 name: check.name,
                 status: check.status,
                 conclusion: check.conclusion,
-            })),
+            }))
         );
 
         if (data.check_runs.length < 100) {
@@ -197,7 +197,7 @@ async function fetchDiff(owner: string, repo: string, number: number): Promise<s
                     format: "diff",
                 },
             }),
-        { label: `GET /repos/${owner}/${repo}/pulls/${number} (diff)` },
+        { label: `GET /repos/${owner}/${repo}/pulls/${number} (diff)` }
     );
 
     return data as unknown as string;
@@ -375,12 +375,12 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
     // Show summary
     verbose(
         options,
-        `Completed: PR #${number}, ${reviewComments.length} review comments, ${commits.length} commits, ${checks.length} checks`,
+        `Completed: PR #${number}, ${reviewComments.length} review comments, ${commits.length} commits, ${checks.length} checks`
     );
     console.log(
         chalk.dim(
-            `\nFetched: PR #${number}${reviewThreads ? `, ${reviewThreads.length} review threads` : ""}${reviewComments.length > 0 ? `, ${reviewComments.length} review comments` : ""}${commits.length > 0 ? `, ${commits.length} commits` : ""}`,
-        ),
+            `\nFetched: PR #${number}${reviewThreads ? `, ${reviewThreads.length} review threads` : ""}${reviewComments.length > 0 ? `, ${reviewComments.length} review comments` : ""}${commits.length > 0 ? `, ${commits.length} commits` : ""}`
+        )
     );
 }
 

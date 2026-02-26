@@ -124,7 +124,7 @@ export class AutomateDatabase {
     updateScheduleAfterRun(id: number, nextRunAt: string): void {
         this.db
             .prepare(
-                "UPDATE schedules SET last_run_at = datetime('now'), next_run_at = ?, updated_at = datetime('now') WHERE id = ?",
+                "UPDATE schedules SET last_run_at = datetime('now'), next_run_at = ?, updated_at = datetime('now') WHERE id = ?"
             )
             .run(nextRunAt, id);
     }
@@ -148,7 +148,7 @@ export class AutomateDatabase {
         status: string,
         output: string | null,
         durationMs: number,
-        error: string | null,
+        error: string | null
     ): void {
         const truncatedOutput = output && output.length > 65536 ? `${output.slice(0, 65536)}\n... (truncated)` : output;
         this.db
@@ -164,7 +164,7 @@ export class AutomateDatabase {
         status: "success" | "error" | "cancelled",
         stepCount: number,
         durationMs: number,
-        error?: string,
+        error?: string
     ): void {
         this.db
             .prepare(`

@@ -37,7 +37,7 @@ const startServer = () => {
     });
 
     log.info(
-        'Enter messages using multiline editor (save and exit to submit, type "OK" alone to finish current cycle and reset):',
+        'Enter messages using multiline editor (save and exit to submit, type "OK" alone to finish current cycle and reset):'
     );
 
     // Handle user input

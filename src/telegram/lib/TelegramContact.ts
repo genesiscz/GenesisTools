@@ -7,7 +7,7 @@ export class TelegramContact {
         public readonly userId: string,
         public readonly displayName: string,
         public readonly username: string | undefined,
-        public readonly config: ContactConfig,
+        public readonly config: ContactConfig
     ) {}
 
     get actions(): ActionType[] {
@@ -49,7 +49,7 @@ export class TelegramContact {
             user.id.toString(),
             displayName || config.displayName,
             user.username ?? undefined,
-            config,
+            config
         );
     }
 

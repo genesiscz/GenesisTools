@@ -65,7 +65,7 @@ export function registerErrorsCommand(program: Command): void {
             }
 
             lines.push(
-                `Total: ${errorEntries.length} errors (${clientErrors.length} client, ${serverErrors.length} server)`,
+                `Total: ${errorEntries.length} errors (${clientErrors.length} client, ${serverErrors.length} server)`
             );
 
             await printFormatted(lines.join("\n"), parentOpts.format);

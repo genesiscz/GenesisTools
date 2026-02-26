@@ -147,13 +147,13 @@ async function memoriesAction(storage: Storage, _service: TimelyService, options
                     for (const sub of subs) {
                         if (sub.note) {
                             console.log(
-                                `    ${chalk.dim(padDur(fmtDurHm(sub.duration.total_seconds)))} ${chalk.blue(sub.note)}`,
+                                `    ${chalk.dim(padDur(fmtDurHm(sub.duration.total_seconds)))} ${chalk.blue(sub.note)}`
                             );
                         }
                     }
                 } else if (entry.note) {
                     console.log(
-                        `    ${chalk.dim(padDur(fmtDurHm(entry.duration.total_seconds)))} ${chalk.blue(entry.note)}`,
+                        `    ${chalk.dim(padDur(fmtDurHm(entry.duration.total_seconds)))} ${chalk.blue(entry.note)}`
                     );
                 }
             }

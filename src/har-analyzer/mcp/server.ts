@@ -193,7 +193,7 @@ export async function startMcpServer(): Promise<void> {
                                 lines.push(
                                     await ctx.refStore.formatValue(entry.request.postData.text, `e${idx}.rq.body`, {
                                         full,
-                                    }),
+                                    })
                                 );
                             } else {
                                 lines.push("(none)");
@@ -221,16 +221,16 @@ export async function startMcpServer(): Promise<void> {
                     lines.push(`Status: ${entry.response.status} ${entry.response.statusText}`);
                     lines.push(`Time: ${formatDuration(entry.time)} | Size: ${formatBytes(ie.responseSize)}`);
                     lines.push(
-                        `Request Headers: ${entry.request.headers.length} | Response Headers: ${entry.response.headers.length}`,
+                        `Request Headers: ${entry.request.headers.length} | Response Headers: ${entry.response.headers.length}`
                     );
                     if (entry.request.queryString.length > 0) {
                         lines.push(`Query: ${entry.request.queryString.map((q) => `${q.name}=${q.value}`).join("&")}`);
                     }
                     lines.push(
-                        `Request Body: ${entry.request.postData && entry.request.bodySize >= 0 ? formatBytes(entry.request.bodySize) : entry.request.postData ? "unknown" : "none"}`,
+                        `Request Body: ${entry.request.postData && entry.request.bodySize >= 0 ? formatBytes(entry.request.bodySize) : entry.request.postData ? "unknown" : "none"}`
                     );
                     lines.push(
-                        `Response Body: ${formatBytes(entry.response.content.size)} (${entry.response.content.mimeType})`,
+                        `Response Body: ${formatBytes(entry.response.content.size)} (${entry.response.content.mimeType})`
                     );
 
                     return { content: [{ type: "text", text: lines.join("\n") }] };
@@ -293,12 +293,11 @@ export async function startMcpServer(): Promise<void> {
                             const allH = [...entry.request.headers, ...entry.response.headers];
                             if (
                                 allH.some(
-                                    (h) =>
-                                        h.name.toLowerCase().includes(query) || h.value.toLowerCase().includes(query),
+                                    (h) => h.name.toLowerCase().includes(query) || h.value.toLowerCase().includes(query)
                                 )
                             ) {
                                 results.push(
-                                    `[e${ie.index}] ${ie.method} ${truncatePath(ie.path, 40)} ${ie.status} (header match)`,
+                                    `[e${ie.index}] ${ie.method} ${truncatePath(ie.path, 40)} ${ie.status} (header match)`
                                 );
                                 continue;
                             }
@@ -308,7 +307,7 @@ export async function startMcpServer(): Promise<void> {
                             const body = (entry.response.content.text ?? "") + (entry.request.postData?.text ?? "");
                             if (body.toLowerCase().includes(query)) {
                                 results.push(
-                                    `[e${ie.index}] ${ie.method} ${truncatePath(ie.path, 40)} ${ie.status} (body match)`,
+                                    `[e${ie.index}] ${ie.method} ${truncatePath(ie.path, 40)} ${ie.status} (body match)`
                                 );
                             }
                         }

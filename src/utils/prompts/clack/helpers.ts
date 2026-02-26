@@ -36,7 +36,7 @@ export async function withCancel<T>(promptResult: Promise<T | symbol>, cancelMes
  * Enhanced multiselect with hint for keyboard usage
  */
 export async function multiselect<T extends p.Option<unknown>>(
-    opts: Omit<p.MultiSelectOptions<T>, "message"> & { message: string },
+    opts: Omit<p.MultiSelectOptions<T>, "message"> & { message: string }
 ): Promise<T["value"][] | symbol> {
     return p.multiselect({
         ...opts,

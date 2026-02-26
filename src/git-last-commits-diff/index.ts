@@ -124,7 +124,7 @@ async function getAndSelectCommit(git: Executor): Promise<string | undefined> {
             logger.info("\nℹ Commit selection cancelled by user.");
         } else {
             logger.error(
-                `\n✖ Error during commit selection prompt: ${promptError instanceof Error ? promptError.message : String(promptError)}`,
+                `\n✖ Error during commit selection prompt: ${promptError instanceof Error ? promptError.message : String(promptError)}`
             );
         }
         return undefined;
@@ -255,7 +255,7 @@ async function main() {
                 logger.info("\nℹ Output selection cancelled by user. Exiting.");
             } else {
                 logger.error(
-                    `\n✖ Error during output selection prompt: ${promptError instanceof Error ? promptError.message : String(promptError)}`,
+                    `\n✖ Error during output selection prompt: ${promptError instanceof Error ? promptError.message : String(promptError)}`
                 );
             }
             process.exit(0);

@@ -38,7 +38,7 @@ export class TimeLogApi {
         method: "GET" | "POST" | "PUT" | "DELETE",
         endpoint: string,
         body?: unknown,
-        queryParams?: QueryParams,
+        queryParams?: QueryParams
     ): Promise<T> {
         const url = buildUrl({ base: this.baseUrl, segments: [endpoint], queryParams });
         const shortUrl = endpoint.slice(0, 60);
@@ -105,7 +105,7 @@ export class TimeLogApi {
         logger.debug(`[timelog-api] Fetching time logs for work item #${workItemId}`);
         const entries = await this.request<TimeLogEntry[]>(
             "GET",
-            `/timelog/project/${this.projectId}/workitem/${workItemId}`,
+            `/timelog/project/${this.projectId}/workitem/${workItemId}`
         );
         logger.debug(`[timelog-api] Found ${entries.length} time log entries`);
         return entries;
@@ -126,7 +126,7 @@ export class TimeLogApi {
         minutes: number,
         timeTypeDescription: string,
         date: string,
-        comment: string = "",
+        comment: string = ""
     ): Promise<string[]> {
         logger.debug(`[timelog-api] Creating time log: ${minutes}min of "${timeTypeDescription}" for #${workItemId}`);
 
@@ -189,7 +189,7 @@ export function convertToMinutes(hours: number | undefined, minutes: number | un
     // Rule: --minutes alone requires --hours to be explicitly set
     if (minutes !== undefined && hours === undefined) {
         throw new Error(
-            "Cannot use --minutes without --hours. " + "Use --hours 0 --minutes N to confirm you meant only minutes.",
+            "Cannot use --minutes without --hours. " + "Use --hours 0 --minutes N to confirm you meant only minutes."
         );
     }
 

@@ -53,7 +53,7 @@ export function registerMigrateCommand(program: Command): void {
         .option("--target <scope>", "Target scope: project | global | both", "project")
         .option(
             "--components <list>",
-            "Comma-separated components: skills,commands,instructions (default: all components)",
+            "Comma-separated components: skills,commands,instructions (default: all components)"
         )
         .option("--mode <mode>", "Transfer mode: symlink | copy", "symlink")
         .option("--name-style <style>", "Target naming style: prefixed | preserve", "prefixed")
@@ -70,7 +70,7 @@ Examples:
   tools claude migrate-to codex --list
   tools claude migrate-to codex --source global --target global --components skills,commands --mode symlink -y
   tools claude migrate-to codex --source project --target project --components instructions --mode copy --dry-run
-`,
+`
         )
         .action(async (options: MigrateCodexOptions) => {
             await runMigrateToCodex(options);
@@ -177,7 +177,7 @@ async function runMigrateToCodex(options: MigrateCodexOptions): Promise<void> {
                 .slice(0, 20)
                 .map((item) => `${item.operation.targetPath} -> ${item.message}`)
                 .join("\n"),
-            "Failures",
+            "Failures"
         );
         process.exitCode = 1;
     }
@@ -189,7 +189,7 @@ async function runMigrateToCodex(options: MigrateCodexOptions): Promise<void> {
                 .slice(0, 20)
                 .map((item) => `${item.operation.targetPath} -> ${item.message}`)
                 .join("\n"),
-            "Skipped",
+            "Skipped"
         );
     }
 
@@ -203,7 +203,7 @@ async function runMigrateToCodex(options: MigrateCodexOptions): Promise<void> {
 async function runWizard(
     discovered: DiscoveredSources,
     initialState: WizardState,
-    options: MigrateCodexOptions,
+    options: MigrateCodexOptions
 ): Promise<WizardState | null> {
     const state: WizardState = {
         sourceScope: initialState.sourceScope,
@@ -595,7 +595,7 @@ async function resolveConflictsInteractive(plan: ReturnType<typeof buildMigratio
 async function promptConflictChoice(
     targetPath: string,
     sourcePath: string,
-    component: MigrationComponent,
+    component: MigrationComponent
 ): Promise<ConflictChoice | null> {
     while (true) {
         const choice = await p.select({

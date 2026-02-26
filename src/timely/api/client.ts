@@ -176,7 +176,7 @@ export class TimelyApiClient {
         method: "GET" | "POST" | "PUT" | "DELETE",
         path: string,
         body?: unknown,
-        options: RequestOptions = {},
+        options: RequestOptions = {}
     ): Promise<T> {
         const url = new URL(path.startsWith("http") ? path : `${this.baseUrl}${path}`);
 

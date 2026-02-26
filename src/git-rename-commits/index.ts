@@ -80,7 +80,7 @@ async function getCurrentBranch(repoDir: string): Promise<string> {
 async function getCommits(
     repoDir: string,
     count: number,
-    currentBranchOnly: boolean = true,
+    currentBranchOnly: boolean = true
 ): Promise<{ commits: CommitInfo[]; detectionMethod?: string; baseBranchName?: string }> {
     logger.debug(`⏳ Fetching last ${count} commits from ${repoDir}...`);
 
@@ -283,7 +283,7 @@ async function getCommits(
                 .trim()
                 .split("\n")
                 .filter((l) => l.trim()).length
-        } commits`,
+        } commits`
     );
 
     const lines = stdout
@@ -392,7 +392,7 @@ async function promptForNewMessage(
     index: number,
     total: number,
     allCommits: CommitInfo[],
-    defaultScope?: string | null,
+    defaultScope?: string | null
 ): Promise<string> {
     // Show current message clearly before the prompt
     const suggestion = suggestCommitName(commit, allCommits, defaultScope);
@@ -564,20 +564,20 @@ fi
                         `  1. Resolve any conflicts manually\n` +
                         `  2. Run: git rebase --continue\n` +
                         `  3. Or abort with: git rebase --abort\n` +
-                        `\nCurrent status:\n${statusOutput}`,
+                        `\nCurrent status:\n${statusOutput}`
                 );
             } else {
                 // No conflicts, might just need to continue
                 logger.warn("⚠️  Rebasing may have been interrupted. Try running: git rebase --continue");
                 throw new Error(
                     `Git rebase failed with exit code ${exitCode}. The rebase may have been interrupted.\n` +
-                        `Try running: git rebase --continue`,
+                        `Try running: git rebase --continue`
                 );
             }
         } else {
             // Not in rebase state anymore
             throw new Error(
-                `Git rebase failed with exit code ${exitCode}. The rebase may have been aborted or there may be conflicts.`,
+                `Git rebase failed with exit code ${exitCode}. The rebase may have been aborted or there may be conflicts.`
             );
         }
     }
@@ -755,7 +755,7 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
         if (localAheadCount === 0) {
             // Local has no commits that remote doesn't have - safe (remote is just ahead)
             logger.info(
-                `✅ All local commits exist on ${upstreamBranch} (remote is ${remoteAheadCount} commit(s) ahead)`,
+                `✅ All local commits exist on ${upstreamBranch} (remote is ${remoteAheadCount} commit(s) ahead)`
             );
             return true;
         } else {
@@ -776,7 +776,7 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
                 // File contents match - this is likely a rebase, safe to proceed
                 logger.info(`✅ Branches have diverged but file contents match (likely after a rebase)`);
                 logger.info(
-                    `   Local is ${localAheadCount} commit(s) ahead, remote is ${remoteAheadCount} commit(s) ahead`,
+                    `   Local is ${localAheadCount} commit(s) ahead, remote is ${remoteAheadCount} commit(s) ahead`
                 );
                 return true;
             } else {
@@ -815,7 +815,7 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
             // File contents are the same - this is likely a rebase, safe to proceed
             logger.info(`✅ Branches have diverged but file contents match (likely after a rebase)`);
             logger.info(
-                `   Local is ${localAheadCount} commit(s) ahead, remote is ${remoteAheadCount} commit(s) ahead`,
+                `   Local is ${localAheadCount} commit(s) ahead, remote is ${remoteAheadCount} commit(s) ahead`
             );
             return true;
         } else {
@@ -912,9 +912,9 @@ async function main() {
                 console.log(
                     chalk.dim(
                         `\n📍 Base branch detection: ${recentCommitsResult.detectionMethod} (${chalk.cyan(
-                            recentCommitsResult.baseBranchName,
-                        )})`,
-                    ),
+                            recentCommitsResult.baseBranchName
+                        )})`
+                    )
                 );
                 console.log(chalk.dim(`   Showing ${recentCommits.length} commit(s) unique to current branch\n`));
             }
@@ -923,7 +923,7 @@ async function main() {
             recentCommits.forEach((commit, index) => {
                 console.log(
                     chalk.dim(`${String(index + 1).padStart(2)}.`) +
-                        ` ${chalk.cyan(commit.shortHash)} - ${commit.message}`,
+                        ` ${chalk.cyan(commit.shortHash)} - ${commit.message}`
                 );
             });
             console.log();
@@ -963,8 +963,8 @@ async function main() {
                 chalk.dim(
                     `\n📍 Base branch: ${chalk.cyan(commitsResult.baseBranchName)} (detected via ${
                         commitsResult.detectionMethod
-                    })`,
-                ),
+                    })`
+                )
             );
             console.log(chalk.dim(`   Showing ${commits.length} commit(s) unique to current branch\n`));
         }

@@ -23,7 +23,7 @@ function transformHintsForTemplate(
             defaultValue?: string;
             examples?: string[];
         }
-    >,
+    >
 ): WorkItemTemplate["_hints"] {
     const templateHints: WorkItemTemplate["_hints"] = {};
 
@@ -70,7 +70,7 @@ export function generateEmptyTemplate(
             defaultValue?: string;
             examples?: string[];
         }
-    >,
+    >
 ): WorkItemTemplate {
     return {
         $schema: "azure-devops-workitem-v1",
@@ -203,7 +203,7 @@ export function generateTemplateFromWorkItem(
     fieldSchema?: Map<
         string,
         { name: string; required: boolean; allowedValues?: string[]; helpText?: string; defaultValue?: string }
-    >,
+    >
 ): WorkItemTemplate {
     const parsed = sourceItem.relations
         ? parseRelations(sourceItem.relations)
@@ -404,7 +404,7 @@ export function generateTemplateFromQuery(
             defaultValue?: string;
             examples?: string[];
         }
-    >,
+    >
 ): WorkItemTemplate {
     const usedValues = extractUsedValues(items, project, queryId);
 

@@ -32,7 +32,7 @@ export function getDatabase(): Database {
     if (!existsSync(ENVELOPE_INDEX_PATH)) {
         throw new Error(
             `Mail database not found at: ${ENVELOPE_INDEX_PATH}\n` +
-                "Make sure Mail.app is configured and has downloaded messages.",
+                "Make sure Mail.app is configured and has downloaded messages."
         );
     }
 

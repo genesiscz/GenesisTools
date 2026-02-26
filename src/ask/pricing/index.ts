@@ -132,9 +132,9 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
                 pc.blue(
                     `\n${provider.name.toUpperCase()} (${provider.models.length} model${
                         provider.models.length !== 1 ? "s" : ""
-                    })`,
-                ),
-            ),
+                    })`
+                )
+            )
         );
         if (provider.config.description) {
             console.log(pc.dim(`  ${provider.config.description}\n`));
@@ -147,7 +147,7 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
             provider.models.map(async (model) => {
                 const pricing = await dynamicPricingManager.getPricing(provider.name, model.id);
                 return { model, pricing };
-            }),
+            })
         );
 
         // Filter out models with invalid pricing (null, negative, or extreme values)
@@ -193,7 +193,7 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
                 .map((cap) => cap.trim())
                 .filter(Boolean);
             modelsWithPricing = modelsWithPricing.filter(({ model }) =>
-                matchesCapabilities(model.capabilities, filterCaps),
+                matchesCapabilities(model.capabilities, filterCaps)
             );
         }
 
@@ -241,7 +241,7 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
                 }
                 const pricing = await dynamicPricingManager.getPricing(provider.name, model.id);
                 return { model, provider: provider.name, pricing };
-            }),
+            })
         );
         allFilteredModels.push(...modelsWithPricing.filter((m): m is NonNullable<typeof m> => m !== null));
     }
@@ -293,31 +293,31 @@ async function showPricingTable(providerFilter?: string, sortBy?: ModelsOptions[
     if (validModels.length > 0) {
         // Find cheapest and most expensive
         const cheapest = validModels.reduce((min, m) =>
-            (m.pricing?.inputPer1M ?? Infinity) < (min.pricing?.inputPer1M ?? Infinity) ? m : min,
+            (m.pricing?.inputPer1M ?? Infinity) < (min.pricing?.inputPer1M ?? Infinity) ? m : min
         );
         const mostExpensive = validModels.reduce((max, m) =>
-            (m.pricing?.inputPer1M ?? 0) > (max.pricing?.inputPer1M ?? 0) ? m : max,
+            (m.pricing?.inputPer1M ?? 0) > (max.pricing?.inputPer1M ?? 0) ? m : max
         );
 
         console.log(pc.white("\nPricing:"));
         console.log(
             pc.white(
                 `  Cheapest Input: ${pc.green(cheapest.model.name || cheapest.model.id)} (${pc.yellow(
-                    `$${cheapest.pricing?.inputPer1M.toFixed(4)}/1M`,
-                )})`,
-            ),
+                    `$${cheapest.pricing?.inputPer1M.toFixed(4)}/1M`
+                )})`
+            )
         );
         console.log(
             pc.white(
                 `  Most Expensive Input: ${pc.red(
-                    mostExpensive.model.name || mostExpensive.model.id,
-                )} (${pc.yellow(`$${mostExpensive.pricing?.inputPer1M.toFixed(4)}/1M`)})`,
-            ),
+                    mostExpensive.model.name || mostExpensive.model.id
+                )} (${pc.yellow(`$${mostExpensive.pricing?.inputPer1M.toFixed(4)}/1M`)})`
+            )
         );
 
         // Count tiered pricing models
         const tieredModels = validModels.filter(
-            (m) => m.pricing?.inputPer1MAbove200k || m.pricing?.outputPer1MAbove200k,
+            (m) => m.pricing?.inputPer1MAbove200k || m.pricing?.outputPer1MAbove200k
         );
         if (tieredModels.length > 0) {
             console.log(pc.white(`  Tiered Pricing Models: ${pc.magenta(tieredModels.length.toString())}`));

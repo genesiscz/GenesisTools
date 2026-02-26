@@ -107,7 +107,7 @@ async function main(): Promise<void> {
             message: `Which branch to split? (current: ${pc.cyan(currentBranch)})`,
             options: branchOptions,
             initialValue: currentBranch,
-        }),
+        })
     )) as string;
 
     // === STEP 3: Detect base branch and fork point ===
@@ -121,7 +121,7 @@ async function main(): Promise<void> {
     }
 
     p.log.info(
-        `Found ${pc.bold(String(commits.length))} commit(s) on ${pc.cyan(sourceBranch)} since ${pc.cyan(baseBranch)}`,
+        `Found ${pc.bold(String(commits.length))} commit(s) on ${pc.cyan(sourceBranch)} since ${pc.cyan(baseBranch)}`
     );
 
     // === STEP 5: Parse and group commits ===
@@ -153,7 +153,7 @@ async function main(): Promise<void> {
                 },
             ],
             initialValue: false as const,
-        }),
+        })
     );
 
     // === STEP 7: Interactive group refinement ===
@@ -180,7 +180,7 @@ async function main(): Promise<void> {
     const confirmed = await withCancel(
         p.confirm({
             message: "Create these branches?",
-        }),
+        })
     );
     if (!confirmed) {
         p.cancel("Operation cancelled.");
@@ -203,7 +203,7 @@ type GitInstance = ReturnType<typeof createGit>;
 
 async function detectForkPoint(
     git: GitInstance,
-    sourceBranch: string,
+    sourceBranch: string
 ): Promise<{ baseBranch: string; forkPointSha: string }> {
     const branches = await git.getBranches();
     const candidates = branches.filter((b) => b.name !== sourceBranch).map((b) => b.name);
@@ -245,14 +245,14 @@ async function detectForkPoint(
     }
 
     spinner.stop(
-        `Detected: ${pc.cyan(sourceBranch)} forked from ${pc.cyan(bestBase)} (${bestCommitCount} commits, at ${pc.dim(bestForkSha.substring(0, 7))})`,
+        `Detected: ${pc.cyan(sourceBranch)} forked from ${pc.cyan(bestBase)} (${bestCommitCount} commits, at ${pc.dim(bestForkSha.substring(0, 7))})`
     );
 
     const useDetected = await withCancel(
         p.confirm({
             message: `Use ${pc.cyan(bestBase)} as the base branch?`,
             initialValue: true,
-        }),
+        })
     );
 
     if (!useDetected) {
@@ -260,7 +260,7 @@ async function detectForkPoint(
             p.select({
                 message: "Select base branch:",
                 options: candidates.map((c) => ({ value: c, label: c })),
-            }),
+            })
         );
         const newForkSha = await git.mergeBase(sourceBranch, selectedBase);
         return { baseBranch: selectedBase, forkPointSha: newForkSha };
@@ -272,7 +272,7 @@ async function detectForkPoint(
 async function refineGroups(
     groups: CommitGroup[],
     allowDuplicates: boolean,
-    allCommits: DetailedCommitInfo[],
+    allCommits: DetailedCommitInfo[]
 ): Promise<CommitGroup[]> {
     const assignedCommitHashes = new Set<string>();
     const refinedGroups: CommitGroup[] = [];
@@ -382,7 +382,7 @@ async function nameGroups(git: GitInstance, groups: CommitGroup[], sourceBranch:
                     }
                     return undefined;
                 },
-            }),
+            })
         );
 
         group.branchName = branchName;
@@ -455,7 +455,7 @@ async function executeBranches(git: GitInstance, groups: CommitGroup[], forkPoin
                     }
 
                     p.log.warn(
-                        `Conflict on ${pc.dim(parsedCommit.commit.shortHash)} in ${branchName}. Skipped this commit.`,
+                        `Conflict on ${pc.dim(parsedCommit.commit.shortHash)} in ${branchName}. Skipped this commit.`
                     );
                 }
             }

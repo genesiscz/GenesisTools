@@ -52,7 +52,7 @@ function toDisplay(
         timestamp?: string | null;
         source?: "cache" | "search";
         matchSnippet?: string;
-    },
+    }
 ): DisplaySession {
     return {
         sessionId,
@@ -125,7 +125,7 @@ async function loadSessions(allProjects: boolean, spinner: Spinner): Promise<Loa
                 branch: s.gitBranch,
                 project: s.project,
                 timestamp: new Date(s.mtime).toISOString(),
-            }),
+            })
         ),
         total: result.total,
         subagents: result.subagents,
@@ -150,7 +150,7 @@ function matchByIdOrName(all: DisplaySession[], query: string): DisplaySession[]
             s.name.toLowerCase().includes(q) ||
             s.branch.toLowerCase().includes(q) ||
             s.project.toLowerCase().includes(q) ||
-            s.firstPrompt.toLowerCase().includes(q),
+            s.firstPrompt.toLowerCase().includes(q)
     );
 }
 
@@ -182,7 +182,7 @@ async function searchByContent(query: string, spinner: Spinner, project?: string
             project: r.project,
             timestamp: r.timestamp.toISOString(),
             source: "search",
-        }),
+        })
     );
 
     const metaSessionIds = new Set(metaSessions.map((s) => s.sessionId));
@@ -213,7 +213,7 @@ async function searchByContent(query: string, spinner: Spinner, project?: string
                 timestamp: cached?.firstTimestamp || new Date(0).toISOString(),
                 source: "search",
                 matchSnippet: snippet,
-            }),
+            })
         );
     }
 
@@ -278,7 +278,7 @@ async function selectSession(candidates: DisplaySession[]): Promise<DisplaySessi
     if (candidates.length === 1) {
         const s = candidates[0];
         p.log.info(
-            `${pc.bold(s.name)} ${pc.dim(s.sessionId.slice(0, ID_PREFIX_LEN))} ${pc.magenta(s.branch)} ${pc.dim(formatDate(s.modified))}`,
+            `${pc.bold(s.name)} ${pc.dim(s.sessionId.slice(0, ID_PREFIX_LEN))} ${pc.magenta(s.branch)} ${pc.dim(formatDate(s.modified))}`
         );
         return s;
     }
@@ -358,7 +358,7 @@ async function main(query: string | undefined, opts: ResumeOptions) {
         if (candidates.length > 0) {
             p.log.info(
                 pc.dim(`index: ${candidates.length} match${candidates.length !== 1 ? "es" : ""} `) +
-                    pc.dim(`(name/branch/project/prompt)`),
+                    pc.dim(`(name/branch/project/prompt)`)
             );
         } else {
             p.log.info(pc.dim(`index: 0 matches for "${query}", searching content...`));
@@ -379,7 +379,7 @@ async function main(query: string | undefined, opts: ResumeOptions) {
                     result.sessions.map((h) => {
                         const cached = sessions.find((s) => s.sessionId === h.sessionId);
                         return cached ? { ...cached, source: "search" as const, matchSnippet: h.matchSnippet } : h;
-                    }),
+                    })
                 );
             }
         }

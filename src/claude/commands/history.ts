@@ -82,7 +82,7 @@ function formatResultsAsMarkdown(results: SearchResult[], filters: SearchFilters
     const queryDesc = filters.query ? `"${filters.query}"` : "all";
     const modeDesc = filters.summaryOnly ? " (summary-only)" : filters.sortByRelevance ? " (by relevance)" : "";
     lines.push(
-        `## Found ${results.length} conversation${results.length !== 1 ? "s" : ""} matching ${queryDesc}${modeDesc}\n`,
+        `## Found ${results.length} conversation${results.length !== 1 ? "s" : ""} matching ${queryDesc}${modeDesc}\n`
     );
 
     for (let i = 0; i < results.length; i++) {
@@ -94,7 +94,7 @@ function formatResultsAsMarkdown(results: SearchResult[], filters: SearchFilters
             filters.sortByRelevance && result.relevanceScore !== undefined ? ` [score: ${result.relevanceScore}]` : "";
 
         lines.push(
-            `### ${i + 1}. ${title} (${result.project})${result.isSubagent ? " [Subagent]" : ""}${relevanceStr}`,
+            `### ${i + 1}. ${title} (${result.project})${result.isSubagent ? " [Subagent]" : ""}${relevanceStr}`
         );
         lines.push(`**Date:** ${date}${result.gitBranch ? ` | **Branch:** ${result.gitBranch}` : ""}`);
         lines.push(`**Session ID:** \`${result.sessionId}\``);
@@ -108,7 +108,7 @@ function formatResultsAsMarkdown(results: SearchResult[], filters: SearchFilters
                 `**Commits:** ${result.commitHashes
                     .slice(0, 5)
                     .map((h) => `\`${h.substring(0, 7)}\``)
-                    .join(", ")}${result.commitHashes.length > 5 ? "..." : ""}`,
+                    .join(", ")}${result.commitHashes.length > 5 ? "..." : ""}`
             );
         }
 
@@ -237,7 +237,7 @@ export function registerHistoryCommand(program: Command): void {
                         if (projectIndex !== -1 && cwdParts[projectIndex + 1]) {
                             project = cwdParts[projectIndex + 1];
                             console.log(
-                                chalk.dim(`Auto-detected project: ${project} (use --all to search all projects)`),
+                                chalk.dim(`Auto-detected project: ${project} (use --all to search all projects)`)
                             );
                         }
                     }

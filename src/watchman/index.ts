@@ -142,7 +142,7 @@ function makeSubscription(
     client: watchman.Client,
     watch: string,
     relativePath: string | undefined,
-    retryCount = 0,
+    retryCount = 0
 ): void {
     const subscription: Record<string, unknown> = {
         // Match all files
@@ -170,7 +170,7 @@ function makeSubscription(
                 return;
             }
             logger.info(`Subscription ${resp.subscribe} established`);
-        },
+        }
     );
 
     // Remove any previous listeners to avoid duplicates
@@ -212,7 +212,7 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
                 (capabilityError: unknown, _capabilityResp: unknown) => {
                     if (capabilityError) {
                         logger.error(
-                            `Capability check failed (attempt ${attempt + 1}/${maxRetries}): ${capabilityError}`,
+                            `Capability check failed (attempt ${attempt + 1}/${maxRetries}): ${capabilityError}`
                         );
                         lastError = capabilityError;
                         attempt++;
@@ -226,7 +226,7 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
                         (watchError: unknown, watchResp: WatchmanResponse) => {
                             if (watchError) {
                                 logger.error(
-                                    `Error initiating watch (attempt ${attempt + 1}/${maxRetries}): ${watchError}`,
+                                    `Error initiating watch (attempt ${attempt + 1}/${maxRetries}): ${watchError}`
                                 );
                                 lastError = watchError;
                                 attempt++;
@@ -248,14 +248,14 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15) {
                             }
 
                             logger.info(
-                                `Watch established on ${watchResp.watch} relative_path: ${watchResp.relative_path}`,
+                                `Watch established on ${watchResp.watch} relative_path: ${watchResp.relative_path}`
                             );
                             makeSubscription(client, watchResp.watch, watchResp.relative_path);
                             succeeded = true;
                             resolve(undefined);
-                        },
+                        }
                     );
-                },
+                }
             );
         });
         if (succeeded) {

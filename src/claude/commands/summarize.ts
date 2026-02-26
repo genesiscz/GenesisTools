@@ -49,7 +49,7 @@ interface SummarizeCommandOptions {
 
 async function resolveSessionIds(
     positionalId: string | undefined,
-    opts: SummarizeCommandOptions,
+    opts: SummarizeCommandOptions
 ): Promise<ClaudeSession[]> {
     // 1. Positional argument
     if (positionalId) {
@@ -72,7 +72,7 @@ async function resolveSessionIds(
         if (!envId) {
             throw new Error(
                 "CLAUDE_CODE_SESSION_ID environment variable is not set. " +
-                    "Use --current only when running inside a Claude Code session.",
+                    "Use --current only when running inside a Claude Code session."
             );
         }
         const session = await ClaudeSession.fromSessionId(envId);
@@ -102,7 +102,7 @@ async function resolveSessionIds(
     // 6. Non-interactive without session = error
     throw new Error(
         "No session specified. Use a positional argument, --session, --current, or --since/--until. " +
-            "Run with -i for interactive mode.",
+            "Run with -i for interactive mode."
     );
 }
 
@@ -265,7 +265,7 @@ async function runInteractiveFlow(session: ClaudeSession, opts: SummarizeCommand
         ]
             .filter(Boolean)
             .join("\n"),
-        "Summary Preview",
+        "Summary Preview"
     );
 
     // Confirm
@@ -316,7 +316,7 @@ function buildNonInteractiveOptions(session: ClaudeSession, opts: SummarizeComma
 
     if (mode === "custom" && !opts.customPrompt) {
         throw new Error(
-            "Custom mode requires --custom-prompt. Provide a prompt string or use -i for interactive mode.",
+            "Custom mode requires --custom-prompt. Provide a prompt string or use -i for interactive mode."
         );
     }
 
@@ -354,8 +354,8 @@ function displayResult(result: SummarizeResult): void {
     if (result.tokenUsage) {
         parts.push(
             chalk.dim(
-                `Tokens: ${result.tokenUsage.input.toLocaleString()} in / ${result.tokenUsage.output.toLocaleString()} out`,
-            ),
+                `Tokens: ${result.tokenUsage.input.toLocaleString()} in / ${result.tokenUsage.output.toLocaleString()} out`
+            )
         );
     }
 
@@ -389,7 +389,7 @@ export function registerSummarizeCommand(program: Command): void {
                 prev.push(val);
                 return prev;
             },
-            [] as string[],
+            [] as string[]
         )
         .option("--current", "Use current session ($CLAUDE_CODE_SESSION_ID)")
         .option("--since <date>", "Sessions since date")

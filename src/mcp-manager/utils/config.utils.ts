@@ -46,7 +46,7 @@ export function stripMeta(config: UnifiedMCPServerConfig): UnifiedMCPServerConfi
  * Uses stripMeta internally for consistency.
  */
 export function stripMetaFromServers(
-    servers: Record<string, UnifiedMCPServerConfig>,
+    servers: Record<string, UnifiedMCPServerConfig>
 ): Record<string, UnifiedMCPServerConfig> {
     const stripped: Record<string, UnifiedMCPServerConfig> = {};
     for (const [name, config] of Object.entries(servers)) {

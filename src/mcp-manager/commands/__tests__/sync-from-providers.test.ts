@@ -40,7 +40,7 @@ describe("syncFromProviders", () => {
             async (config: UnifiedMCPConfig): Promise<boolean> => {
                 capturedConfig = config;
                 return true;
-            },
+            }
         );
         spyOn(logger, "info");
         spyOn(logger, "debug");
@@ -81,7 +81,7 @@ describe("syncFromProviders", () => {
             async (config: UnifiedMCPConfig): Promise<boolean> => {
                 capturedConfig = config;
                 return true;
-            },
+            }
         );
         spyOn(logger, "info");
         spyOn(logger, "debug");
@@ -151,7 +151,7 @@ describe("syncFromProviders", () => {
             async (config: UnifiedMCPConfig): Promise<boolean> => {
                 capturedConfig = config;
                 return true;
-            },
+            }
         );
         spyOn(logger, "info");
         spyOn(logger, "warn");

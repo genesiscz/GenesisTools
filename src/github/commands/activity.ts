@@ -160,7 +160,7 @@ export async function activityCommand(options: ActivityCommandOptions): Promise<
                     per_page: Math.min(100, limit),
                     page,
                 }),
-            { label: `${endpoint.split(" ")[1]}?page=${page}` },
+            { label: `${endpoint.split(" ")[1]}?page=${page}` }
         );
 
         const events = data as GitHubEvent[];

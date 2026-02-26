@@ -62,7 +62,7 @@ export const prompts = {
      */
     async selectChildBranches(
         parentBranch: string,
-        potentialChildren: Array<{ name: string; commitsAhead: number }>,
+        potentialChildren: Array<{ name: string; commitsAhead: number }>
     ): Promise<string[]> {
         if (potentialChildren.length === 0) {
             console.log(chalk.yellow("\nNo dependent branches found."));

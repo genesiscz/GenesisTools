@@ -19,7 +19,7 @@ const USE_CLACK = 1;
 async function runInteractiveAdd(
     config: AzureConfigWithTimeLog,
     user: TimeLogUser,
-    prefilledWorkItem?: string,
+    prefilledWorkItem?: string
 ): Promise<void> {
     if (USE_CLACK) {
         await runInteractiveAddClack(config, user, prefilledWorkItem);
@@ -122,7 +122,7 @@ Or use interactive mode:
                 try {
                     totalMinutes = convertToMinutes(
                         options.hours ? parseFloat(options.hours) : undefined,
-                        options.minutes ? parseInt(options.minutes, 10) : undefined,
+                        options.minutes ? parseInt(options.minutes, 10) : undefined
                     );
                 } catch (e) {
                     console.error(`${(e as Error).message}`);
@@ -189,7 +189,7 @@ ${types.map((t) => `  - ${t.description}`).join("\n")}
                     totalMinutes,
                     validType.description, // Use exact casing from API
                     date,
-                    comment,
+                    comment
                 );
 
                 console.log(`\u2714 Time logged successfully!`);
@@ -217,6 +217,6 @@ ${types.map((t) => `  - ${t.description}`).join("\n")}
                 cacheManager.onTimelogCreated([effectiveWorkItemId]).catch((err) => {
                     logger.debug(`[add] Cache eviction failed: ${err}`);
                 });
-            },
+            }
         );
 }

@@ -41,7 +41,7 @@ export function extractQueryId(input: string): string {
 export function findQueryByName(
     searchName: string,
     queries: QueryInfo[],
-    recentQueryIds?: Set<string>,
+    recentQueryIds?: Set<string>
 ): { query: QueryInfo; score: number; alternatives: QueryInfo[] } | null {
     // Filter to non-folder queries only
     const actualQueries = queries.filter((q) => !q.isFolder);
@@ -151,6 +151,6 @@ export function parseAzureDevOpsUrl(url: string): ParsedUrl {
     }
 
     throw new Error(
-        `Could not parse Azure DevOps URL: ${url}\n\nSupported formats:\n  https://dev.azure.com/{org}/{project}/...\n  https://{org}.visualstudio.com/{project}/...`,
+        `Could not parse Azure DevOps URL: ${url}\n\nSupported formats:\n  https://dev.azure.com/{org}/{project}/...\n  https://{org}.visualstudio.com/{project}/...`
     );
 }

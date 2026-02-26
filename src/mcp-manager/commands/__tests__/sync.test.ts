@@ -85,7 +85,7 @@ describe("syncServers", () => {
         await syncServers(mockProviders);
 
         expect(logger.warn).toHaveBeenCalledWith(
-            "No servers found in unified config. Run 'tools mcp-manager config' to add servers.",
+            "No servers found in unified config. Run 'tools mcp-manager config' to add servers."
         );
     });
 

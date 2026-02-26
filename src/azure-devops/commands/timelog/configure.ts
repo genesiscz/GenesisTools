@@ -135,7 +135,7 @@ function formatCurrentConfig(timelog: TimeLogConfig | undefined): string {
 
     if (timelog.deprioritizedStates?.length) {
         lines.push(
-            `  deprioritizedStates: ${pc.yellow(timelog.deprioritizedStates.join(", "))} ${pc.dim("(fallback only)")}`,
+            `  deprioritizedStates: ${pc.yellow(timelog.deprioritizedStates.join(", "))} ${pc.dim("(fallback only)")}`
         );
     } else {
         lines.push(`  deprioritizedStates: ${pc.dim("using defaults (Closed, Done, Resolved, Removed)")}`);
@@ -499,7 +499,7 @@ export function registerConfigureSubcommand(parent: Command): void {
         .description("Configure TimeLog settings (interactive by default)")
         .option(
             "--allowed-work-item-types <types>",
-            'Comma-separated list of allowed work item types (e.g., "Bug,Task")',
+            'Comma-separated list of allowed work item types (e.g., "Bug,Task")'
         )
         .option("--allowed-states-for-type <mapping>", "Type:State1,State2 mapping (repeatable)", collectOption, [])
         .option("--deprioritized-states <states>", 'Comma-separated fallback states (e.g., "Closed,Done,Resolved")')

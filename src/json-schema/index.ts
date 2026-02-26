@@ -34,9 +34,7 @@ program
     .description("Infer schema from JSON data. Reads from file or stdin.")
     .argument("[file]", "JSON file to analyze")
     .addOption(
-        new Option("-m, --mode <mode>", "Output mode")
-            .choices(["schema", "skeleton", "typescript"])
-            .default("skeleton"),
+        new Option("-m, --mode <mode>", "Output mode").choices(["schema", "skeleton", "typescript"]).default("skeleton")
     )
     .option("-p, --pretty", "Multi-line indented output (default: compact one-line)")
     .option("-c, --clipboard", "Copy output to clipboard")

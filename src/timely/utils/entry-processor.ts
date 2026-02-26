@@ -413,7 +413,7 @@ function extractDetailedContext(entry: ProcessedEntry): ProcessedEntry {
 async function processDay(
     date: string,
     storage: Storage,
-    detailMode: boolean = false,
+    detailMode: boolean = false
 ): Promise<{ rawEntries: ProcessedEntry[]; summary: string }> {
     const cacheKey = `suggested_entries/suggested_entries-${date}.json`;
 
@@ -560,7 +560,7 @@ function formatDateForDisplay(date: string, year: number, month: number): string
 export async function generateReportMarkdown(
     monthArg: string,
     storage: Storage,
-    detailMode: boolean = false,
+    detailMode: boolean = false
 ): Promise<{ content: string; filePath: string }> {
     const [year, month] = monthArg.split("-").map(Number);
     const dates = getDatesInMonth(monthArg);

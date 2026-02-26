@@ -109,7 +109,7 @@ async function searchLegacy(query: string, options: SearchCommandOptions): Promi
                 order: "desc",
                 per_page: options.limit || 30,
             }),
-        { label: `GET /search/issues?q=${encodeURIComponent(searchQuery.slice(0, 50))}...` },
+        { label: `GET /search/issues?q=${encodeURIComponent(searchQuery.slice(0, 50))}...` }
     );
 
     return mapItems(data.items as GitHubSearchItem[], "legacy");
@@ -149,7 +149,7 @@ async function searchAdvanced(query: string, options: SearchCommandOptions): Pro
                 per_page: options.limit || 30,
                 advanced_search: "true",
             }),
-        { label: `GET /search/issues?advanced_search=true&q=${encodeURIComponent(searchQuery.slice(0, 50))}...` },
+        { label: `GET /search/issues?advanced_search=true&q=${encodeURIComponent(searchQuery.slice(0, 50))}...` }
     );
 
     return mapItems(data.items as GitHubSearchItem[], "advanced");
@@ -220,7 +220,7 @@ async function searchRepos(query: string, options: SearchCommandOptions): Promis
                 order: "desc",
                 per_page: options.limit || 30,
             }),
-        { label: `GET /search/repositories?q=${encodeURIComponent(searchQuery.slice(0, 50))}...` },
+        { label: `GET /search/repositories?q=${encodeURIComponent(searchQuery.slice(0, 50))}...` }
     );
 
     return data.items.map((item) => ({
@@ -251,7 +251,7 @@ export async function searchCommand(query: string, options: SearchCommandOptions
     verbose(options, `Search query: ${query}`);
     verbose(
         options,
-        `Options: type=${options.type || "all"}, repo=${options.repo || "any"}, state=${options.state || "all"}`,
+        `Options: type=${options.type || "all"}, repo=${options.repo || "any"}, state=${options.state || "all"}`
     );
 
     // Repo search uses a completely different endpoint
@@ -323,15 +323,15 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         console.log("");
         console.log(
             chalk.yellow(
-                `⚠ GraphQL comment scan: ${results.length} issues, ${totalComments} comments (~${estimatedCost} of 5,000/hr points)`,
-            ),
+                `⚠ GraphQL comment scan: ${results.length} issues, ${totalComments} comments (~${estimatedCost} of 5,000/hr points)`
+            )
         );
         console.log(chalk.dim(`  ${issueList}`));
         console.log(chalk.dim(`  Tip: To check specific issues instead:`));
         console.log(
             chalk.cyan(
-                `    tools github issue <number>,<number> --repo ${results[0]?.repo || "owner/repo"} --min-comment-reactions ${options.minCommentReactions}`,
-            ),
+                `    tools github issue <number>,<number> --repo ${results[0]?.repo || "owner/repo"} --min-comment-reactions ${options.minCommentReactions}`
+            )
         );
         console.log("");
 
@@ -362,8 +362,8 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         results = results.filter((r) => keep.has(`${r.repo}#${r.number}`));
         console.log(
             chalk.dim(
-                `Filtered to ${results.length} of ${preFilterResults.length} results with comment reactions >= ${options.minCommentReactions}`,
-            ),
+                `Filtered to ${results.length} of ${preFilterResults.length} results with comment reactions >= ${options.minCommentReactions}`
+            )
         );
     }
 
@@ -372,8 +372,8 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         if (preFilterResults && preFilterResults.length > 0) {
             console.log(
                 chalk.yellow(
-                    `\nNo issues matched --min-comment-reactions ${options.minCommentReactions}. Showing all ${preFilterResults.length} search results:\n`,
-                ),
+                    `\nNo issues matched --min-comment-reactions ${options.minCommentReactions}. Showing all ${preFilterResults.length} search results:\n`
+                )
             );
             results = preFilterResults;
         } else {
@@ -413,7 +413,7 @@ export function createSearchCommand(): Command {
         .option("--state <state>", "Filter: open|closed|all", "all")
         .option(
             "--sort <field>",
-            "Sort: created|updated|comments|reactions (issues/PRs); stars|forks|updated|help-wanted-issues (repos)",
+            "Sort: created|updated|comments|reactions (issues/PRs); stars|forks|updated|help-wanted-issues (repos)"
         )
         .option("-L, --limit <n>", "Max results", parseInt, 30)
         .option("-f, --format <format>", "Output format: ai|md|json", "ai")

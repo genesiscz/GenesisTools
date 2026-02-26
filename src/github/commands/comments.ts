@@ -137,7 +137,7 @@ async function fetchComments(
     options: {
         since?: string;
         sinceId?: number;
-    } = {},
+    } = {}
 ): Promise<GitHubComment[]> {
     const octokit = getOctokit();
     const allComments: GitHubComment[] = [];
@@ -156,7 +156,7 @@ async function fetchComments(
                     page,
                     since: options.since,
                 }),
-            { label: `GET /repos/${owner}/${repo}/issues/${number}/comments (page ${page})` },
+            { label: `GET /repos/${owner}/${repo}/issues/${number}/comments (page ${page})` }
         );
 
         // If we have a sinceId, filter to only comments after it
@@ -347,7 +347,7 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
         const lastIncr = metadata?.last_incremental_fetch ? formatCacheDate(metadata.last_incremental_fetch) : "never";
         const ageMin = Math.round(cacheAgeMs / 60000);
         console.log(
-            chalk.dim(`Using cached comments (${ageMin}m old, last full: ${lastFull}, last update: ${lastIncr})`),
+            chalk.dim(`Using cached comments (${ageMin}m old, last full: ${lastFull}, last update: ${lastIncr})`)
         );
 
         let cachedRecords: CommentRecord[];
@@ -483,8 +483,8 @@ export async function commentsCommand(input: string, options: CommentsCommandOpt
     }
     console.log(
         chalk.dim(
-            `\nFetched: ${comments.length} comments ${cacheStatus}${sinceId ? ` (since comment ${sinceId})` : ""}`,
-        ),
+            `\nFetched: ${comments.length} comments ${cacheStatus}${sinceId ? ` (since comment ${sinceId})` : ""}`
+        )
     );
 }
 

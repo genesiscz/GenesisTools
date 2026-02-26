@@ -16,7 +16,7 @@ export async function listServers(providers: MCPProvider[]): Promise<void> {
             }
         } catch (error) {
             logger.warn(
-                `Failed to read ${provider.getName()} config: ${error instanceof Error ? error.message : String(error)}`,
+                `Failed to read ${provider.getName()} config: ${error instanceof Error ? error.message : String(error)}`
             );
         }
     }

@@ -360,7 +360,7 @@ describe("DynamicPricingManager", () => {
             ];
 
             const results = await Promise.all(
-                models.map(({ provider, model }) => pricingManager.getPricing(provider, model)),
+                models.map(({ provider, model }) => pricingManager.getPricing(provider, model))
             );
 
             expect(results.length).toBe(models.length);
@@ -647,13 +647,13 @@ describe("DynamicPricingManager", () => {
                 if (liteLLMPricing?.input_cost_per_token) {
                     expect(convertedPricing.inputPer1M).toBeCloseTo(
                         liteLLMPricing?.input_cost_per_token * 1_000_000,
-                        2,
+                        2
                     );
                 }
                 if (liteLLMPricing?.output_cost_per_token) {
                     expect(convertedPricing.outputPer1M).toBeCloseTo(
                         liteLLMPricing?.output_cost_per_token * 1_000_000,
-                        2,
+                        2
                     );
                 }
             }
@@ -707,7 +707,7 @@ describe("DynamicPricingManager", () => {
             // OpenRouter might route to Anthropic, so pricing should be similar
             const openRouterClaude = await pricingManager.getPricing(
                 "openrouter",
-                "anthropic/claude-3-5-sonnet-20241022",
+                "anthropic/claude-3-5-sonnet-20241022"
             );
             const directClaude = await pricingManager.getPricing("anthropic", "claude-3-5-sonnet-20241022");
 
@@ -856,7 +856,7 @@ describe("DynamicPricingManager", () => {
                     .join(", ");
                 throw new Error(
                     `Output pricing outside expected range ($0.6-$75): ${issueList}. ` +
-                        `Cheap models (<$0.6): ${cheapModels.length}, Expensive models (>$75): ${expensiveModels.length}`,
+                        `Cheap models (<$0.6): ${cheapModels.length}, Expensive models (>$75): ${expensiveModels.length}`
                 );
             }
 
@@ -911,7 +911,7 @@ describe("DynamicPricingManager", () => {
             expect(openRouterProvider).not.toBeUndefined();
 
             const gpt4oModel = openRouterProvider?.models.find(
-                (m) => m.id.includes("gpt-4o") && !m.id.includes("mini") && !m.id.includes("turbo"),
+                (m) => m.id.includes("gpt-4o") && !m.id.includes("mini") && !m.id.includes("turbo")
             );
 
             if (!gpt4oModel) {
@@ -955,7 +955,7 @@ describe("DynamicPricingManager", () => {
             expect(openRouterProvider).not.toBeUndefined();
 
             const claudeModel = openRouterProvider?.models.find(
-                (m) => m.id.includes("claude") && m.id.includes("sonnet"),
+                (m) => m.id.includes("claude") && m.id.includes("sonnet")
             );
 
             if (!claudeModel) {
@@ -1032,7 +1032,7 @@ describe("DynamicPricingManager", () => {
                     matchedCount++;
                 } else {
                     console.log(
-                        `Mismatch for ${modelId}: ProviderManager input=${model.pricing.inputPer1M}, LiteLLM input=${liteLLMPricingInfo.inputPer1M}, diff=${inputDiff}`,
+                        `Mismatch for ${modelId}: ProviderManager input=${model.pricing.inputPer1M}, LiteLLM input=${liteLLMPricingInfo.inputPer1M}, diff=${inputDiff}`
                     );
                 }
             }
@@ -1131,7 +1131,7 @@ describe("DynamicPricingManager", () => {
                     // If one has pricing, both should (allowing for cache issues)
                     if (providerHasPricing && !liteLLMHasPricing) {
                         console.log(
-                            `Note: ${model.id} has pricing in ProviderManager but not in LiteLLM (cache may be stale)`,
+                            `Note: ${model.id} has pricing in ProviderManager but not in LiteLLM (cache may be stale)`
                         );
                     }
                 }

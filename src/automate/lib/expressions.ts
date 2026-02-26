@@ -67,7 +67,7 @@ function evaluateExpression(expr: string, ctx: ExecutionContext): unknown {
         return fn(ctx.vars, ctx.steps, ctx.env);
     } catch (error) {
         throw new Error(
-            `Expression evaluation failed: "{{ ${expr} }}" - ${error instanceof Error ? error.message : String(error)}`,
+            `Expression evaluation failed: "{{ ${expr} }}" - ${error instanceof Error ? error.message : String(error)}`
         );
     }
 }

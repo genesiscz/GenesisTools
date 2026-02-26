@@ -27,7 +27,7 @@ export function registerContactsCommand(program: Command): void {
                 p.log.info(
                     `${pc.bold(c.displayName)} ${c.username ? pc.dim(`@${c.username}`) : ""}\n` +
                         `  Actions: [${c.actions.join(", ")}]` +
-                        (c.askSystemPrompt ? `\n  Prompt: "${c.askSystemPrompt}"` : ""),
+                        (c.askSystemPrompt ? `\n  Prompt: "${c.askSystemPrompt}"` : "")
                 );
             }
 

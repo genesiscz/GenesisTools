@@ -47,7 +47,7 @@ export class ReaderLMEngine extends MarkdownEngine {
             throw new Error(
                 `ReaderLM-v2 model not installed (~1GB).\n` +
                     `Model: https://huggingface.co/jinaai/ReaderLM-v2\n` +
-                    `Add --download-model to your command to download and convert.`,
+                    `Add --download-model to your command to download and convert.`
             );
         }
 

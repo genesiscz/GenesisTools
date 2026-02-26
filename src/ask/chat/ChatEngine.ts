@@ -29,7 +29,7 @@ export class ChatEngine {
         callbacks?: {
             onChunk?: (chunk: string) => void;
             onThinking?: (text: string) => void;
-        },
+        }
     ): Promise<ChatResponse> {
         // Add user message to history
         const userMessage: ChatMessage = {
@@ -75,7 +75,7 @@ export class ChatEngine {
         callbacks?: {
             onChunk?: (chunk: string) => void;
             onThinking?: (text: string) => void;
-        },
+        }
     ): Promise<ChatResponse> {
         // Store usage from onFinish callback - this is the most reliable source
         let finishUsage: LanguageModelUsage | undefined;
@@ -91,14 +91,14 @@ export class ChatEngine {
                 // This is called when the stream completes - usage is available HERE
                 logger.debug(
                     { usage: JSON.stringify(usage, null, 2) },
-                    `[ChatEngine] onFinish callback called with usage`,
+                    `[ChatEngine] onFinish callback called with usage`
                 );
                 if (usage) {
                     finishUsage = usage;
                     finishCost = await dynamicPricingManager.calculateCost(
                         this.config.provider,
                         this.config.modelName,
-                        usage,
+                        usage
                     );
                     logger.debug({ cost: finishCost }, `[ChatEngine] onFinish calculated cost`);
                 }
@@ -109,7 +109,7 @@ export class ChatEngine {
         logger.debug({ keys: Object.keys(result) }, `[ChatEngine] streamText result object keys`);
         logger.debug(
             { usage: result.usage ? JSON.stringify(result.usage, null, 2) : "null/undefined" },
-            `[ChatEngine] streamText result.usage`,
+            `[ChatEngine] streamText result.usage`
         );
         logger.debug({ usageType: typeof result.usage }, `[ChatEngine] streamText result.usage type`);
         logger.debug(
@@ -124,7 +124,7 @@ export class ChatEngine {
                       }
                     : "no usage object",
             },
-            `[ChatEngine] streamText result.usage structure`,
+            `[ChatEngine] streamText result.usage structure`
         );
 
         let fullResponse = "";
@@ -157,7 +157,7 @@ export class ChatEngine {
         logger.debug({ usageType: typeof result.usage }, `[ChatEngine] After streaming, result.usage type`);
         logger.debug(
             { isPromise: result.usage instanceof Promise },
-            `[ChatEngine] After streaming, result.usage is Promise`,
+            `[ChatEngine] After streaming, result.usage is Promise`
         );
 
         // Try to get usage - prioritize onFinish callback as it's most reliable
@@ -168,7 +168,7 @@ export class ChatEngine {
             // Use usage from onFinish callback (most reliable)
             logger.debug(
                 { usage: JSON.stringify(finishUsage, null, 2) },
-                `[ChatEngine] Using usage from onFinish callback`,
+                `[ChatEngine] Using usage from onFinish callback`
             );
             usage = finishUsage;
             cost = finishCost;
@@ -189,7 +189,7 @@ export class ChatEngine {
 
         if (!usage) {
             logger.warn(
-                `[ChatEngine] No usage data available from streamText result for ${this.config.provider}/${this.config.modelName}`,
+                `[ChatEngine] No usage data available from streamText result for ${this.config.provider}/${this.config.modelName}`
             );
         }
 
@@ -234,7 +234,7 @@ export class ChatEngine {
         logger.debug({ keys: Object.keys(result) }, `[ChatEngine] generateText result object keys`);
         logger.debug(
             { usage: result.usage ? JSON.stringify(result.usage, null, 2) : "null/undefined" },
-            `[ChatEngine] generateText result.usage`,
+            `[ChatEngine] generateText result.usage`
         );
         logger.debug({ usageType: typeof result.usage }, `[ChatEngine] generateText result.usage type`);
         logger.debug(
@@ -249,7 +249,7 @@ export class ChatEngine {
                       }
                     : "no usage object",
             },
-            `[ChatEngine] generateText result.usage structure`,
+            `[ChatEngine] generateText result.usage structure`
         );
 
         // Calculate cost
@@ -257,13 +257,13 @@ export class ChatEngine {
         if (result.usage) {
             logger.debug(
                 { usage: JSON.stringify(result.usage, null, 2) },
-                `[ChatEngine] Calculating cost for ${this.config.provider}/${this.config.modelName}`,
+                `[ChatEngine] Calculating cost for ${this.config.provider}/${this.config.modelName}`
             );
             cost = await dynamicPricingManager.calculateCost(this.config.provider, this.config.modelName, result.usage);
             logger.debug({ cost }, `[ChatEngine] Calculated cost`);
         } else {
             logger.warn(
-                `[ChatEngine] No usage data available from generateText result for ${this.config.provider}/${this.config.modelName}`,
+                `[ChatEngine] No usage data available from generateText result for ${this.config.provider}/${this.config.modelName}`
             );
         }
 
@@ -376,7 +376,7 @@ export class ChatEngine {
         const totalTokens = this.getTotalTokens();
 
         return `${userMessages} user messages, ${assistantMessages} assistant responses, ${dynamicPricingManager.formatTokens(
-            totalTokens,
+            totalTokens
         )} total tokens`;
     }
 
@@ -404,7 +404,7 @@ export class ChatEngine {
 
         if (this.conversationHistory.length < this.getConversationLength()) {
             logger.info(
-                `Trimmed conversation to fit within ${dynamicPricingManager.formatTokens(maxTokens)} token limit`,
+                `Trimmed conversation to fit within ${dynamicPricingManager.formatTokens(maxTokens)} token limit`
             );
         }
     }

@@ -32,7 +32,7 @@ export function registerDesktopCommand(program: Command): void {
             const builtInConflicts = allSkills.filter((s) => s.installedEntry?.creatorType === "anthropic");
             if (builtInConflicts.length > 0) {
                 p.log.warn(
-                    `Ignoring local skills that would overwrite built-in skills: ${builtInConflicts.map((s) => s.name).join(", ")}`,
+                    `Ignoring local skills that would overwrite built-in skills: ${builtInConflicts.map((s) => s.name).join(", ")}`
                 );
             }
             const skills = allSkills.filter((s) => s.installedEntry?.creatorType !== "anthropic");
@@ -77,7 +77,7 @@ export function registerDesktopCommand(program: Command): void {
                             };
                         }),
                         required: false,
-                    }),
+                    })
                 );
 
                 toInstall = selected as typeof skills;
@@ -97,7 +97,7 @@ export function registerDesktopCommand(program: Command): void {
                     installSkill(skill, manifest, manifestPath);
                     results.push({ name: skill.name, isUpdate: !!skill.installedEntry });
                     spinner.stop(
-                        `${pc.green("ok")} ${skill.name} ${skill.installedEntry ? pc.dim("(updated)") : pc.dim("(new)")}`,
+                        `${pc.green("ok")} ${skill.name} ${skill.installedEntry ? pc.dim("(updated)") : pc.dim("(new)")}`
                     );
                 } catch (err) {
                     results.push({ name: skill.name, isUpdate: false, error: String(err) });
@@ -126,7 +126,7 @@ export function registerDesktopCommand(program: Command): void {
             p.outro(
                 succeeded.length > 0
                     ? pc.green(`${succeeded.length} skill(s) installed. Restart Claude Desktop to apply.`)
-                    : pc.red("No skills installed."),
+                    : pc.red("No skills installed.")
             );
         });
 }

@@ -332,7 +332,7 @@ async function fetchPagedPrNodes<TNode, TResponse>(
     query: string,
     vars: { owner: string; repo: string; pr: number },
     startCursor: string,
-    getConnection: (data: TResponse) => PagedConnection<TNode> | null | undefined,
+    getConnection: (data: TResponse) => PagedConnection<TNode> | null | undefined
 ): Promise<TNode[]> {
     const octokit = getOctokit();
     const nodes: TNode[] = [];
@@ -390,7 +390,7 @@ async function fetchAdditionalComments(threadId: string, startCursor: string): P
 function collectThreadPage(
     reviewThreads: PagedConnection<ThreadNode>,
     allThreads: ReviewThread[],
-    threadsNeedingMoreComments: Array<{ threadIndex: number; threadId: string; commentsCursor: string }>,
+    threadsNeedingMoreComments: Array<{ threadIndex: number; threadId: string; commentsCursor: string }>
 ): void {
     for (const edge of reviewThreads.edges) {
         const node = edge.node;
@@ -458,7 +458,7 @@ export async function fetchPRReviewThreads(owner: string, repo: string, prNumber
             PR_REVIEWS_QUERY,
             { owner, repo, pr: prNumber },
             firstPr.reviews.pageInfo.endCursor,
-            (data) => data.repository?.pullRequest?.reviews,
+            (data) => data.repository?.pullRequest?.reviews
         );
         allReviewNodes.push(...extra);
     }
@@ -485,7 +485,7 @@ export async function fetchPRReviewThreads(owner: string, repo: string, prNumber
             PR_COMMENTS_QUERY,
             { owner, repo, pr: prNumber },
             firstPr.comments.pageInfo.endCursor,
-            (data) => data.repository?.pullRequest?.comments,
+            (data) => data.repository?.pullRequest?.comments
         );
         allPrCommentNodes.push(...extra);
     }
@@ -601,7 +601,7 @@ export async function markThreadResolved(threadId: string): Promise<boolean> {
  */
 export async function batchResolveThreads(
     threadIds: string[],
-    options?: { onProgress?: (done: number, total: number) => void },
+    options?: { onProgress?: (done: number, total: number) => void }
 ): Promise<{ resolved: number; failed: string[] }> {
     let resolved = 0;
     let processed = 0;
@@ -629,7 +629,7 @@ export async function batchResolveThreads(
 export async function batchReplyAndResolve(
     threadIds: string[],
     message: string,
-    options?: { onProgress?: (done: number, total: number) => void },
+    options?: { onProgress?: (done: number, total: number) => void }
 ): Promise<{ replied: number; resolved: number; failed: string[] }> {
     let replied = 0;
     let resolved = 0;
@@ -663,7 +663,7 @@ export async function batchReplyAndResolve(
 export async function batchReply(
     threadIds: string[],
     message: string,
-    options?: { onProgress?: (done: number, total: number) => void },
+    options?: { onProgress?: (done: number, total: number) => void }
 ): Promise<{ replied: number; failed: string[] }> {
     let replied = 0;
     let processed = 0;
@@ -696,7 +696,7 @@ function trimDiffHunk(
     diffHunk: string | null,
     targetLine: number | null,
     startLine: number | null = null,
-    contextLines: number = 3,
+    contextLines: number = 3
 ): string | null {
     if (!diffHunk || !targetLine) {
         return diffHunk;

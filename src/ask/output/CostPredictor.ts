@@ -21,7 +21,7 @@ export class CostPredictor {
         provider: string,
         model: string,
         inputText: string,
-        estimatedOutputLength?: number,
+        estimatedOutputLength?: number
     ): Promise<CostPrediction> {
         // Estimate input tokens (rough approximation: ~4 chars per token)
         const estimatedInputTokens = Math.ceil(inputText.length / 4);

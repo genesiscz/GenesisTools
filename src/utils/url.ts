@@ -10,7 +10,7 @@ interface BuildUrlOptions {
 
 export function appendQueryParamsToSearchParams(
     params: QueryParams,
-    searchParams: URLSearchParams = new URLSearchParams(),
+    searchParams: URLSearchParams = new URLSearchParams()
 ): URLSearchParams {
     Object.entries(params).forEach(([key, value]) => {
         if (value === undefined) {

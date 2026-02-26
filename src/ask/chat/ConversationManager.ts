@@ -65,7 +65,7 @@ export class ConversationManager {
                 }) => ({
                     ...msg,
                     timestamp: new Date(msg.timestamp),
-                }),
+                })
             );
 
             logger.debug(`Conversation loaded: ${sessionId}`);
@@ -290,7 +290,7 @@ export class ConversationManager {
                     totalMessages: 0,
                     totalTokens: 0,
                     totalCost: 0,
-                },
+                }
             );
 
             return stats;

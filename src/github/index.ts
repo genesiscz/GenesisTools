@@ -285,8 +285,8 @@ async function interactiveMode(): Promise<void> {
             if (!parsed && !defaultRepo) {
                 console.log(
                     chalk.red(
-                        "Could not parse input. Please provide a full GitHub URL or use --repo owner/repo option.",
-                    ),
+                        "Could not parse input. Please provide a full GitHub URL or use --repo owner/repo option."
+                    )
                 );
                 continue;
             }

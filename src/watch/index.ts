@@ -143,7 +143,7 @@ function readFileWithLineLimit(
     startPosition: number,
     fileSize: number,
     fd: number,
-    lineLimit: number,
+    lineLimit: number
 ): string {
     try {
         // If reading from a specific position (not the beginning), just read the new content
@@ -260,7 +260,7 @@ function tailFile({ filepath, follow = false, isInitialDisplay = false }: TailFi
                 startPosition,
                 fileSize,
                 fd,
-                isNewFile || isInitialDisplay ? parseInt(options.lines.toString(), 10) : 0,
+                isNewFile || isInitialDisplay ? parseInt(options.lines.toString(), 10) : 0
             );
 
             // Format the last modified time
@@ -338,7 +338,7 @@ async function scanForFiles(): Promise<string[]> {
                 }
 
                 return files;
-            }),
+            })
         );
 
         const allFiles = files.flat();
@@ -589,7 +589,7 @@ async function startWatcher() {
 
                     if (currentSize > trackedSize) {
                         log.debug(
-                            `File size change detected in interval check: ${file} (${trackedSize} -> ${currentSize})`,
+                            `File size change detected in interval check: ${file} (${trackedSize} -> ${currentSize})`
                         );
                         // Update last modified time
                         fileLastModified[file] = stats.mtimeMs;

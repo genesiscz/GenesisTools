@@ -13,7 +13,7 @@ import chalk from "chalk";
 export async function renameServer(
     oldName: string | undefined,
     newName: string | undefined,
-    providers: MCPProvider[],
+    providers: MCPProvider[]
 ): Promise<void> {
     const config = await readUnifiedConfig();
 
@@ -104,7 +104,7 @@ export async function renameServer(
             existingServerConfig,
             oldServerConfig,
             `existing '${finalNewName}'`,
-            `'${finalOldName}' (will replace)`,
+            `'${finalOldName}' (will replace)`
         );
 
         try {
@@ -206,7 +206,7 @@ async function renameServerInProvider(
     provider: MCPProvider,
     oldName: string,
     newName: string,
-    serverConfig: unknown,
+    serverConfig: unknown
 ): Promise<void> {
     // Check if provider has the old or new server
     const providerServers = await provider.listServers();
@@ -234,7 +234,7 @@ async function renameServerInProvider(
             existingConfig,
             replacingConfig,
             `existing '${newName}' in ${provider.getName()}`,
-            `'${oldName}' (will replace)`,
+            `'${oldName}' (will replace)`
         );
 
         try {
@@ -272,7 +272,7 @@ async function renameServerInProvider(
     // Now sync the updated servers to the provider (adds/updates the new name)
     // Provider reads _meta.enabled[providerName] for enabled state
     const syncResult = await provider.syncServers(
-        serversToSync as Record<string, import("../utils/providers/types.js").UnifiedMCPServerConfig>,
+        serversToSync as Record<string, import("../utils/providers/types.js").UnifiedMCPServerConfig>
     );
 
     if (syncResult === WriteResult.Rejected) {
@@ -305,7 +305,7 @@ async function removeServerFromProvider(provider: MCPProvider, serverName: strin
             // Remove from disabledMcpServers array
             if (claudeConfig.disabledMcpServers) {
                 claudeConfig.disabledMcpServers = (claudeConfig.disabledMcpServers as string[]).filter(
-                    (name: string) => name !== serverName,
+                    (name: string) => name !== serverName
                 );
             }
             // Remove from project-specific configs
@@ -316,7 +316,7 @@ async function removeServerFromProvider(provider: MCPProvider, serverName: strin
                     }
                     if (projectConfig.disabledMcpServers) {
                         projectConfig.disabledMcpServers = (projectConfig.disabledMcpServers as string[]).filter(
-                            (name: string) => name !== serverName,
+                            (name: string) => name !== serverName
                         );
                     }
                 }

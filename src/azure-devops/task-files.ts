@@ -107,7 +107,7 @@ export function getTaskFilePath(
     title: string,
     ext: string,
     category?: string,
-    useTaskFolder?: boolean,
+    useTaskFolder?: boolean
 ): string {
     const slug = slugify(title);
     const base = getTasksDir(category);

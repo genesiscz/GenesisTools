@@ -103,7 +103,7 @@ export class UsageDatabase {
         model: string,
         usage: LanguageModelUsage,
         cost: number,
-        messageIndex?: number,
+        messageIndex?: number
     ): Promise<number> {
         // DEBUG: Log what we're storing
         logger.debug(`[UsageDatabase] recordUsage called for ${provider}/${model}`);
@@ -117,7 +117,7 @@ export class UsageDatabase {
 
         logger.debug(
             { inputTokens, outputTokens, cachedInputTokens, totalTokens, cost },
-            `[UsageDatabase] Storing tokens`,
+            `[UsageDatabase] Storing tokens`
         );
 
         const timestamp = new Date().toISOString();
@@ -140,7 +140,7 @@ export class UsageDatabase {
             totalTokens,
             cost,
             timestamp,
-            messageIndex ?? null,
+            messageIndex ?? null
         );
 
         logger.debug(`[UsageDatabase] Record inserted with ID: ${result.lastInsertRowid}`);

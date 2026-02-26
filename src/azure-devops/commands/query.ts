@@ -58,7 +58,7 @@ function formatAI(queryId: string, items: WorkItem[], changes: ChangeInfo[], cac
         const title = item.title.length > 40 ? `${item.title.slice(0, 37)}...` : item.title;
         const changed = item.changed ? new Date(item.changed).toISOString().slice(0, 16).replace("T", " ") : "-";
         lines.push(
-            `| ${item.id} | ${title} | ${item.state} | ${item.severity || "-"} | ${changed} | ${item.assignee || "-"} |`,
+            `| ${item.id} | ${title} | ${item.state} | ${item.severity || "-"} | ${changed} | ${item.assignee || "-"} |`
         );
     }
 
@@ -103,7 +103,7 @@ function formatMD(items: WorkItem[]): string {
     for (const item of items) {
         const changed = item.changed ? new Date(item.changed).toISOString().slice(0, 16).replace("T", " ") : "-";
         lines.push(
-            `| ${item.id} | ${item.title.slice(0, 50)} | ${item.state} | ${item.severity || "-"} | ${changed} | ${item.assignee || "-"} |`,
+            `| ${item.id} | ${item.title.slice(0, 50)} | ${item.state} | ${item.severity || "-"} | ${changed} | ${item.assignee || "-"} |`
         );
     }
     return lines.join("\n");
@@ -146,7 +146,7 @@ async function resolveQueryId(input: string, api: Api, config: AzureConfig): Pro
     const recentQueryIds = new Set<string>(
         cacheFiles
             .filter((f) => f.startsWith("query-") && f.endsWith(".json"))
-            .map((f) => f.replace(/^query-/, "").replace(/\.json$/, "")),
+            .map((f) => f.replace(/^query-/, "").replace(/\.json$/, ""))
     );
 
     // Find the best match
@@ -188,7 +188,7 @@ export type WorkItemHandler = (
     category?: string,
     taskFolders?: boolean,
     queryMetadata?: Map<number, QueryItemMetadata>,
-    fetchOptions?: { comments?: boolean; updates?: boolean },
+    fetchOptions?: { comments?: boolean; updates?: boolean }
 ) => Promise<void>;
 
 let workItemHandler: WorkItemHandler | null = null;
@@ -225,13 +225,13 @@ export async function handleQuery(
     filters?: QueryFilters,
     downloadWorkitems?: boolean,
     category?: string,
-    taskFolders?: boolean,
+    taskFolders?: boolean
 ): Promise<void> {
     silentMode = format === "json"; // Suppress progress messages for JSON output
     logger.debug(`[query] Starting with input: ${input}, force=${forceRefresh}`);
     if (filters) {
         logger.debug(
-            `[query] Filters: states=${filters.states?.join(",")}, severities=${filters.severities?.join(",")}`,
+            `[query] Filters: states=${filters.states?.join(",")}, severities=${filters.severities?.join(",")}`
         );
     }
 
@@ -248,7 +248,7 @@ export async function handleQuery(
     const oldCache = rawCache?.items || null;
     const oldCacheTime = rawCache?.fetchedAt ? new Date(rawCache.fetchedAt) : undefined;
     logger.debug(
-        `[query] Cache: ${rawCache ? `found with ${oldCache?.length || 0} items` : "not found or forced refresh"}`,
+        `[query] Cache: ${rawCache ? `found with ${oldCache?.length || 0} items` : "not found or forced refresh"}`
     );
 
     // Run query
@@ -351,11 +351,11 @@ export async function handleQuery(
 
         // Build metadata map from fresh query results for smart cache comparison
         const queryMetadata = new Map<number, QueryItemMetadata>(
-            items.map((item) => [item.id, { id: item.id, changed: item.changed, rev: item.rev }]),
+            items.map((item) => [item.id, { id: item.id, changed: item.changed, rev: item.rev }])
         );
 
         log(
-            `\nDownloading ${items.length} work items${effectiveCategory ? ` to category: ${effectiveCategory}` : ""}${effectiveTaskFolders ? " (with task folders)" : ""}...\n`,
+            `\nDownloading ${items.length} work items${effectiveCategory ? ` to category: ${effectiveCategory}` : ""}${effectiveTaskFolders ? " (with task folders)" : ""}...\n`
         );
         const ids = items.map((item) => item.id).join(",");
         // Pass queryMetadata for smart comparison (ignores forceRefresh when metadata available)
@@ -419,7 +419,7 @@ export function registerQueryCommand(program: Command): void {
                 filters,
                 options.downloadWorkitems,
                 options.category,
-                options.taskFolders,
+                options.taskFolders
             );
         });
 }

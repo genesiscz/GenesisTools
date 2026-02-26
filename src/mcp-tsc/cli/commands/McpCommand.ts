@@ -8,7 +8,7 @@ export class McpCommand {
     async execute(argv: CliArgs): Promise<void> {
         logger.debug(
             { component: "mcp-tsc", subcomponent: "McpCommand", pid: process.pid },
-            "McpCommand.execute() called",
+            "McpCommand.execute() called"
         );
 
         // Use --root flag, fallback to first positional argument, then current directory
@@ -24,29 +24,29 @@ export class McpCommand {
                 cwd,
                 timeout,
             },
-            "MCP Server configuration",
+            "MCP Server configuration"
         );
         console.error(`Starting TypeScript Diagnostics MCP Server (root: ${cwd}, timeout: ${timeout}s)`);
 
         // MCP always uses LSP
         logger.debug(
             { component: "mcp-tsc", subcomponent: "McpCommand", pid: process.pid },
-            "Creating LspServer instance",
+            "Creating LspServer instance"
         );
         const lspServer = new LspServer({ cwd, debug: true });
         logger.debug(
             { component: "mcp-tsc", subcomponent: "McpCommand", pid: process.pid },
-            "LspServer instance created",
+            "LspServer instance created"
         );
 
         logger.debug(
             { component: "mcp-tsc", subcomponent: "McpCommand", pid: process.pid },
-            "Creating McpAdapter instance",
+            "Creating McpAdapter instance"
         );
         const mcpAdapter = new McpAdapter({ server: lspServer, cwd, timeout });
         logger.debug(
             { component: "mcp-tsc", subcomponent: "McpCommand", pid: process.pid },
-            "McpAdapter instance created",
+            "McpAdapter instance created"
         );
 
         // Cleanup handlers
@@ -57,20 +57,20 @@ export class McpCommand {
             if (sigintHandled) {
                 logger.warn(
                     { component: "mcp-tsc", subcomponent: "McpCommand", pid: process.pid },
-                    "SIGINT handler called again (already handled)",
+                    "SIGINT handler called again (already handled)"
                 );
                 return;
             }
             sigintHandled = true;
             logger.warn(
                 { component: "mcp-tsc", subcomponent: "McpCommand", pid: process.pid },
-                "SIGINT received, shutting down MCP adapter",
+                "SIGINT received, shutting down MCP adapter"
             );
             try {
                 await mcpAdapter.shutdown();
                 logger.info(
                     { component: "mcp-tsc", subcomponent: "McpCommand", pid: process.pid },
-                    "MCP adapter shutdown complete, exiting with code 0",
+                    "MCP adapter shutdown complete, exiting with code 0"
                 );
             } catch (error) {
                 logger.error(
@@ -81,7 +81,7 @@ export class McpCommand {
                         error: error instanceof Error ? error.message : String(error),
                         stack: error instanceof Error ? error.stack : undefined,
                     },
-                    "Error during MCP adapter shutdown",
+                    "Error during MCP adapter shutdown"
                 );
             }
             process.exit(0);
@@ -91,20 +91,20 @@ export class McpCommand {
             if (sigtermHandled) {
                 logger.warn(
                     { component: "mcp-tsc", subcomponent: "McpCommand", pid: process.pid },
-                    "SIGTERM handler called again (already handled)",
+                    "SIGTERM handler called again (already handled)"
                 );
                 return;
             }
             sigtermHandled = true;
             logger.warn(
                 { component: "mcp-tsc", subcomponent: "McpCommand", pid: process.pid },
-                "SIGTERM received, shutting down MCP adapter",
+                "SIGTERM received, shutting down MCP adapter"
             );
             try {
                 await mcpAdapter.shutdown();
                 logger.info(
                     { component: "mcp-tsc", subcomponent: "McpCommand", pid: process.pid },
-                    "MCP adapter shutdown complete, exiting with code 0",
+                    "MCP adapter shutdown complete, exiting with code 0"
                 );
             } catch (error) {
                 logger.error(
@@ -115,7 +115,7 @@ export class McpCommand {
                         error: error instanceof Error ? error.message : String(error),
                         stack: error instanceof Error ? error.stack : undefined,
                     },
-                    "Error during MCP adapter shutdown",
+                    "Error during MCP adapter shutdown"
                 );
             }
             process.exit(0);
@@ -123,13 +123,13 @@ export class McpCommand {
 
         logger.debug(
             { component: "mcp-tsc", subcomponent: "McpCommand", pid: process.pid },
-            "Signal handlers registered, calling mcpAdapter.start()",
+            "Signal handlers registered, calling mcpAdapter.start()"
         );
         try {
             await mcpAdapter.start();
             logger.warn(
                 { component: "mcp-tsc", subcomponent: "McpCommand", pid: process.pid },
-                "mcpAdapter.start() completed (this should not happen - MCP server should run indefinitely)",
+                "mcpAdapter.start() completed (this should not happen - MCP server should run indefinitely)"
             );
         } catch (error) {
             logger.error(
@@ -140,7 +140,7 @@ export class McpCommand {
                     error: error instanceof Error ? error.message : String(error),
                     stack: error instanceof Error ? error.stack : undefined,
                 },
-                "mcpAdapter.start() threw error",
+                "mcpAdapter.start() threw error"
             );
             throw error;
         }

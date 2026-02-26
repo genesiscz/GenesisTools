@@ -11,7 +11,7 @@ export function createRunLogger(
     presetName: string,
     scheduleId: number | null,
     triggerType: "manual" | "schedule",
-    db?: AutomateDatabase,
+    db?: AutomateDatabase
 ): RunLogger {
     const database = db ?? getDb();
     const runId = database.startRun(presetName, scheduleId, triggerType);
@@ -35,7 +35,7 @@ export function createRunLogger(
                 result.status,
                 output,
                 result.duration,
-                result.error ?? null,
+                result.error ?? null
             );
         },
 

@@ -120,7 +120,7 @@ function stringify(data: unknown): string {
                 }
                 return value;
             },
-            2,
+            2
         );
     } catch (_e) {
         return "[Object]";

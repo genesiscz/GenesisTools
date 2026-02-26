@@ -105,7 +105,7 @@ async function runCli(opts: CliOptions): Promise<void> {
             if (out) {
                 await Bun.write(out, limited.text);
                 log.ok(
-                    `Wrote extracted MD to ${out} (engine: ${engineName}, time: ${Math.round(result.metrics.conversionTimeMs)}ms)`,
+                    `Wrote extracted MD to ${out} (engine: ${engineName}, time: ${Math.round(result.metrics.conversionTimeMs)}ms)`
                 );
             } else {
                 process.stdout.write(`${limited.text}\n`);
@@ -127,7 +127,7 @@ const server = new Server(
         name: "mcp-web-reader",
         version: "0.2.0",
     },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {} } }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -301,7 +301,7 @@ async function main(): Promise<void> {
                     process.stdout.clearLine?.(0);
                     process.stdout.cursorTo?.(0);
                     process.stdout.write(
-                        `  Progress: ${pct.toFixed(1)}% (${(downloaded / 1e6).toFixed(0)}MB / ${(total / 1e6).toFixed(0)}MB)`,
+                        `  Progress: ${pct.toFixed(1)}% (${(downloaded / 1e6).toFixed(0)}MB / ${(total / 1e6).toFixed(0)}MB)`
                     );
                 },
             });

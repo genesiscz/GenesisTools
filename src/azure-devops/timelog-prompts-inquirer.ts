@@ -10,7 +10,7 @@ import { confirm, input, select } from "@inquirer/prompts";
 export async function runInteractiveAddInquirer(
     config: AzureConfigWithTimeLog,
     user: TimeLogUser,
-    prefilledWorkItem?: string,
+    prefilledWorkItem?: string
 ): Promise<void> {
     console.log("\n📝 TimeLog - Add Entry\n");
 

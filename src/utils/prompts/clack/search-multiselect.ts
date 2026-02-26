@@ -109,7 +109,7 @@ export async function searchMultiselect<T>(options: SearchMultiselectOptions<T>)
                 // Items
                 const visibleStart = Math.max(
                     0,
-                    Math.min(cursor - Math.floor(maxVisible / 2), filtered.length - maxVisible),
+                    Math.min(cursor - Math.floor(maxVisible / 2), filtered.length - maxVisible)
                 );
                 const visibleEnd = Math.min(filtered.length, visibleStart + maxVisible);
                 const visibleItems = filtered.slice(visibleStart, visibleEnd);

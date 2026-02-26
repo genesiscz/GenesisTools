@@ -144,7 +144,7 @@ export function registerImportSubcommand(parent: Command): void {
             if (!allowedTypeConfig) {
                 logger.debug("[import] allowedWorkItemTypes not configured, skipping precheck");
                 console.log(
-                    pc.yellow("Note: allowedWorkItemTypes not configured — skipping work item type precheck.\n"),
+                    pc.yellow("Note: allowedWorkItemTypes not configured — skipping work item type precheck.\n")
                 );
                 precheckPassed = validEntries;
             } else {
@@ -185,7 +185,7 @@ export function registerImportSubcommand(parent: Command): void {
 
                 if (precheckPassed.length - precheckRedirected.length > 0) {
                     console.log(
-                        pc.green(`  \u2714 ${precheckPassed.length - precheckRedirected.length} entries passed`),
+                        pc.green(`  \u2714 ${precheckPassed.length - precheckRedirected.length} entries passed`)
                     );
                 }
 
@@ -195,8 +195,8 @@ export function registerImportSubcommand(parent: Command): void {
                     for (const r of precheckRedirected) {
                         console.log(
                             pc.dim(
-                                `    #${r.original} ${r.originalTitle} (${r.originalType}) -> #${r.redirected} ${r.redirectedTitle} (${r.redirectedType})`,
-                            ),
+                                `    #${r.original} ${r.originalTitle} (${r.originalType}) -> #${r.redirected} ${r.redirectedTitle} (${r.redirectedType})`
+                            )
                         );
                     }
                 }
@@ -233,7 +233,7 @@ export function registerImportSubcommand(parent: Command): void {
                     const title = workitemTitles.get(e.workItemId);
                     const titlePart = title ? ` ${title}` : "";
                     console.log(
-                        `  #${e.workItemId}${titlePart}: ${formatMinutes(e.minutes)} ${e.timeType} on ${e.date}`,
+                        `  #${e.workItemId}${titlePart}: ${formatMinutes(e.minutes)} ${e.timeType} on ${e.date}`
                     );
                 }
 
@@ -254,13 +254,13 @@ export function registerImportSubcommand(parent: Command): void {
                         entry.minutes,
                         entry.timeType,
                         entry.date,
-                        entry.comment,
+                        entry.comment
                     );
                     created++;
                     createdWorkItemIds.push(entry.workItemId);
                     minutesPerWorkItem.set(
                         entry.workItemId,
-                        (minutesPerWorkItem.get(entry.workItemId) ?? 0) + entry.minutes,
+                        (minutesPerWorkItem.get(entry.workItemId) ?? 0) + entry.minutes
                     );
                     const title = workitemTitles.get(entry.workItemId);
                     const wiLabel = title ? `#${entry.workItemId} ${title}` : `#${entry.workItemId}`;
@@ -297,7 +297,7 @@ export function registerImportSubcommand(parent: Command): void {
 
                     if (effort) {
                         console.log(
-                            `  \u2714 #${workItemId}: Remaining ${effort.remaining}h | Completed ${effort.completed}h`,
+                            `  \u2714 #${workItemId}: Remaining ${effort.remaining}h | Completed ${effort.completed}h`
                         );
                     }
                 }

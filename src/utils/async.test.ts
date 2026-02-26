@@ -18,7 +18,7 @@ describe("retry", () => {
 
                 return "success";
             },
-            { maxAttempts: 3, delay: 10 },
+            { maxAttempts: 3, delay: 10 }
         );
         expect(result).toBe("success");
         expect(attempt).toBe(2);
@@ -32,8 +32,8 @@ describe("retry", () => {
                     attempt++;
                     throw new Error("always fails");
                 },
-                { maxAttempts: 3, delay: 10 },
-            ),
+                { maxAttempts: 3, delay: 10 }
+            )
         ).rejects.toThrow("always fails");
         expect(attempt).toBe(3);
     });
@@ -50,8 +50,8 @@ describe("retry", () => {
                     maxAttempts: 5,
                     delay: 10,
                     shouldRetry: (err) => !(err instanceof Error && err.message === "fatal"),
-                },
-            ),
+                }
+            )
         ).rejects.toThrow("fatal");
         expect(attempt).toBe(1);
     });
@@ -74,7 +74,7 @@ describe("retry", () => {
                 delay: 10,
                 backoff: "fixed",
                 onRetry: (a, d) => retries.push({ attempt: a, delay: d }),
-            },
+            }
         );
         expect(retries).toEqual([
             { attempt: 1, delay: 10 },
@@ -88,7 +88,7 @@ describe("retry", () => {
             retry(async () => {
                 attempt++;
                 throw new Error("fail");
-            }, 2),
+            }, 2)
         ).rejects.toThrow("fail");
         expect(attempt).toBe(2);
     });
@@ -107,7 +107,7 @@ describe("retry", () => {
 
                     return "ok";
                 },
-                { maxAttempts: 4, delay: 10, backoff: "exponential", onRetry: (_a, d) => delays.push(d) },
+                { maxAttempts: 4, delay: 10, backoff: "exponential", onRetry: (_a, d) => delays.push(d) }
             );
             expect(delays).toEqual([10, 20, 40]);
         });
@@ -125,7 +125,7 @@ describe("retry", () => {
 
                     return "ok";
                 },
-                { maxAttempts: 4, delay: 10, backoff: "linear", onRetry: (_a, d) => delays.push(d) },
+                { maxAttempts: 4, delay: 10, backoff: "linear", onRetry: (_a, d) => delays.push(d) }
             );
             expect(delays).toEqual([10, 20, 30]);
         });
@@ -143,7 +143,7 @@ describe("retry", () => {
 
                     return "ok";
                 },
-                { maxAttempts: 4, delay: 10, backoff: "fixed", onRetry: (_a, d) => delays.push(d) },
+                { maxAttempts: 4, delay: 10, backoff: "fixed", onRetry: (_a, d) => delays.push(d) }
             );
             expect(delays).toEqual([10, 10, 10]);
         });
@@ -299,7 +299,7 @@ describe("concurrentMap", () => {
 
     it("throws when concurrency < 1", async () => {
         await expect(concurrentMap({ items: [1], fn: async (n) => n, concurrency: 0 })).rejects.toThrow(
-            "concurrency must be >= 1",
+            "concurrency must be >= 1"
         );
     });
 });

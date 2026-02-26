@@ -18,7 +18,7 @@ function isUser(entity: unknown): entity is Api.User {
 }
 
 async function promptCredentials(
-    existing: TelegramConfigData | null,
+    existing: TelegramConfigData | null
 ): Promise<{ apiId: number; apiHash: string } | null> {
     p.note("Telegram API credentials are pre-filled.\nGet your own at https://my.telegram.org/apps", "API Credentials");
 
@@ -56,7 +56,7 @@ async function promptCredentials(
 async function runAuthFlow(client: TGClient): Promise<boolean> {
     p.note(
         "You'll enter your phone number and a verification code.\nThis connects as YOUR user account (not a bot).",
-        "Telegram Authentication",
+        "Telegram Authentication"
     );
 
     try {
@@ -243,7 +243,7 @@ export function registerConfigureCommand(program: Command): void {
                     spinner.stop("Session valid");
                     const me = await client.getMe();
                     p.log.success(
-                        `Logged in as ${pc.bold(me.firstName || "")} ` + `${me.username ? `(@${me.username})` : ""}`,
+                        `Logged in as ${pc.bold(me.firstName || "")} ` + `${me.username ? `(@${me.username})` : ""}`
                     );
                 } else {
                     spinner.stop("Session expired — re-authentication needed");

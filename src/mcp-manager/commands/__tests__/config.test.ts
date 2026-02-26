@@ -23,7 +23,7 @@ describe("openConfig", () => {
             () =>
                 ({
                     exited: Promise.resolve({ exitCode: 0 }),
-                }) as unknown as ReturnType<typeof Bun.spawn>,
+                }) as unknown as ReturnType<typeof Bun.spawn>
         );
 
         await openConfig();
@@ -47,7 +47,7 @@ describe("openConfig", () => {
             () =>
                 ({
                     exited: Promise.resolve({ exitCode: 0 }),
-                }) as unknown as ReturnType<typeof Bun.spawn>,
+                }) as unknown as ReturnType<typeof Bun.spawn>
         );
 
         await openConfig();
@@ -70,7 +70,7 @@ describe("openConfig", () => {
             () =>
                 ({
                     exited: Promise.resolve({ exitCode: 0 }),
-                }) as unknown as ReturnType<typeof Bun.spawn>,
+                }) as unknown as ReturnType<typeof Bun.spawn>
         );
 
         await openConfig();
@@ -78,7 +78,7 @@ describe("openConfig", () => {
         expect(mockSpawn).toHaveBeenCalledWith(
             expect.objectContaining({
                 cmd: expect.arrayContaining(["vim", mockConfigPath]),
-            }),
+            })
         );
 
         if (originalEditor) {
@@ -102,7 +102,7 @@ describe("openConfig", () => {
             () =>
                 ({
                     exited: Promise.resolve({ exitCode: 0 }),
-                }) as unknown as ReturnType<typeof Bun.spawn>,
+                }) as unknown as ReturnType<typeof Bun.spawn>
         );
 
         await openConfig();
@@ -110,7 +110,7 @@ describe("openConfig", () => {
         expect(mockSpawn).toHaveBeenCalledWith(
             expect.objectContaining({
                 cmd: expect.arrayContaining(["code", "--wait", mockConfigPath]),
-            }),
+            })
         );
 
         if (originalEditor) {

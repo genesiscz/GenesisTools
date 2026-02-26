@@ -65,7 +65,7 @@ async function nlpHandler(step: PresetStep, ctx: StepContext): Promise<StepResul
                     "error",
                     null,
                     start,
-                    `Unknown nlp action: ${subAction}. Valid: sentiment, language, tag, distance, embed`,
+                    `Unknown nlp action: ${subAction}. Valid: sentiment, language, tag, distance, embed`
                 );
         }
     } catch (error) {

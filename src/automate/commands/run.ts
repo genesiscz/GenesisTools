@@ -48,7 +48,7 @@ export function registerRunCommand(program: Command): void {
                     vars: opts.var,
                     verbose: opts.verbose,
                 },
-                runLogger,
+                runLogger
             );
 
             // Summary
@@ -70,7 +70,7 @@ export function registerRunCommand(program: Command): void {
             p.outro(
                 result.success
                     ? pc.green(`Done in ${formatDuration(result.totalDuration)} (${summaryParts.join(", ")})`)
-                    : pc.red(`Failed after ${formatDuration(result.totalDuration)} (${summaryParts.join(", ")})`),
+                    : pc.red(`Failed after ${formatDuration(result.totalDuration)} (${summaryParts.join(", ")})`)
             );
 
             if (!result.success) {

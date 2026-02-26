@@ -9,7 +9,7 @@ export const CLAUDE_DESKTOP_BASE = join(
     "Application Support",
     "Claude",
     "local-agent-mode-sessions",
-    "skills-plugin",
+    "skills-plugin"
 );
 
 export interface SkillEntry {

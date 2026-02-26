@@ -98,7 +98,7 @@ export function registerListSubcommand(parent: Command): void {
                         if (u === "@me") {
                             if (!defaultUserName) {
                                 console.error(
-                                    'Cannot resolve "@me": no defaultUser configured in timelog config. Pass an explicit --user name or set timelog.defaultUser.userName in config.',
+                                    'Cannot resolve "@me": no defaultUser configured in timelog config. Pass an explicit --user name or set timelog.defaultUser.userName in config.'
                                 );
                                 process.exit(1);
                             }
@@ -181,7 +181,7 @@ export function registerListSubcommand(parent: Command): void {
                     for (const e of entries) {
                         const wi = e.workItemId ? `#${e.workItemId}` : "-";
                         console.log(
-                            `| ${e.timeLogId.substring(0, 8)} | ${e.date} | ${wi} | ${e.timeTypeDescription} | ${formatMinutes(e.minutes)} | ${e.userName} | ${e.comment || "-"} |`,
+                            `| ${e.timeLogId.substring(0, 8)} | ${e.date} | ${wi} | ${e.timeTypeDescription} | ${formatMinutes(e.minutes)} | ${e.userName} | ${e.comment || "-"} |`
                         );
                     }
 
@@ -212,6 +212,6 @@ export function registerListSubcommand(parent: Command): void {
                         console.log(`  ${type}: ${formatMinutes(mins)}`);
                     }
                 }
-            },
+            }
         );
 }

@@ -93,7 +93,7 @@ function createCompilerOptions(options: ProgramOptions): CompilerOptions {
                 console.error(
                     chalk.dim("[Compiler Event]"),
                     chalk.cyan(filename || "unknown"),
-                    JSON.stringify(event, null, 2),
+                    JSON.stringify(event, null, 2)
                 );
             },
         };
@@ -405,7 +405,7 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
             target: compilerOptions.target,
             mode: compilerOptions.compilationMode,
         },
-        "Compiling",
+        "Compiling"
     );
 
     // Build output

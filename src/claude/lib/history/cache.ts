@@ -281,7 +281,7 @@ export function upsertFileIndex(record: FileIndexRecord): void {
         record.lastDate,
         record.project,
         record.isSubagent ? 1 : 0,
-        record.lastIndexed,
+        record.lastIndexed
     );
 }
 
@@ -407,7 +407,7 @@ export function upsertDailyStats(stats: DailyStats): void {
         JSON.stringify(stats.tokenUsage),
         JSON.stringify(stats.modelCounts),
         JSON.stringify(stats.branchCounts),
-        now,
+        now
     );
 }
 
@@ -693,7 +693,7 @@ export function upsertSessionMetadata(record: SessionMetadataRecord): void {
         record.mtime,
         record.firstTimestamp,
         record.isSubagent ? 1 : 0,
-        record.allUserText,
+        record.allUserText
     );
 }
 

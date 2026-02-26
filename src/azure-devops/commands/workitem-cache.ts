@@ -73,7 +73,7 @@ async function handleList(): Promise<void> {
         const title = item.title.length > 35 ? `${item.title.slice(0, 32)}...` : item.title;
         const age = getRelativeTime(item.fetchedAt);
         lines.push(
-            `| ${item.id} | ${title} | ${item.state} | ${age} | ${item.hasTask ? "✓" : "✗"} | ${item.hasHistory ? "✓" : "✗"} | ${item.hasComments ? "✓" : "✗"} |`,
+            `| ${item.id} | ${title} | ${item.state} | ${age} | ${item.hasTask ? "✓" : "✗"} | ${item.hasHistory ? "✓" : "✗"} | ${item.hasComments ? "✓" : "✗"} |`
         );
     }
 

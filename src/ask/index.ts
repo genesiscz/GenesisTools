@@ -172,7 +172,7 @@ class ASKTool {
                     const prediction = await costPredictor.predictCost(
                         modelChoice.provider.name,
                         modelChoice.model.id,
-                        message,
+                        message
                     );
                     p.log.info(pc.cyan(costPredictor.formatPrediction(prediction)));
                 }
@@ -203,7 +203,7 @@ class ASKTool {
                                 cachedInputTokens: response.usage.cachedInputTokens,
                             },
                             sessionId,
-                            0,
+                            0
                         );
                     }
 
@@ -312,7 +312,7 @@ class ASKTool {
                     const result = await commandHandler.handleCommand(
                         msg,
                         modelChoice.provider.name,
-                        modelChoice.model.id,
+                        modelChoice.model.id
                     );
 
                     if (result.shouldExit) {
@@ -349,7 +349,7 @@ class ASKTool {
                         modelChoice.model.id,
                         response.usage,
                         sessionId,
-                        messageIndex,
+                        messageIndex
                     );
                 }
 
@@ -466,7 +466,7 @@ class ASKTool {
         result: CommandResult,
         chatEngine: ChatEngine,
         modelChoice: ProviderChoice,
-        chatConfig: ChatConfig,
+        chatConfig: ChatConfig
     ): Promise<void> {
         if (result.newModel && result.newProvider) {
             await chatEngine.switchModel(result.newModel, result.newProvider, result.newModelName || "unknown");
@@ -492,7 +492,7 @@ class ASKTool {
                 generateSessionId(),
                 chatConfig.provider,
                 chatConfig.modelName,
-                chatEngine.exportConversation(),
+                chatEngine.exportConversation()
             );
             await convManager.saveConversation(session);
             p.log.success(`Conversation saved: ${session.id}`);
@@ -504,7 +504,7 @@ class ASKTool {
                 const transcriptionResult = await transcriptionManager.transcribeAudio(result.transcriptionFile);
 
                 await chatEngine.sendMessage(
-                    `Transcription of "${result.transcriptionFile}":\n\n${transcriptionResult.text}`,
+                    `Transcription of "${result.transcriptionFile}":\n\n${transcriptionResult.text}`
                 );
 
                 p.log.success(`Transcription completed in ${formatElapsedTime(transcriptionResult.processingTime)}`);

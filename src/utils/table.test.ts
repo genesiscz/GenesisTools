@@ -8,7 +8,7 @@ describe("formatTable", () => {
                 ["Alice", "30"],
                 ["Bob", "25"],
             ],
-            ["Name", "Age"],
+            ["Name", "Age"]
         );
         const lines = result.split("\n");
         expect(lines.length).toBe(4);

@@ -132,7 +132,7 @@ export class ProviderManager {
                             provider: config.name,
                             pricing: pricing || undefined,
                         };
-                    }),
+                    })
                 );
 
                 // Sort models alphabetically by name
@@ -206,7 +206,7 @@ export class ProviderManager {
                     chatModelPrefixes.some((prefix) => model.id.startsWith(prefix)) &&
                     !excludedPatterns.some((pattern) => model.id.toLowerCase().includes(pattern)) &&
                     // Only include models owned by OpenAI (exclude user-created fine-tuned models)
-                    (model.owned_by === "openai" || model.owned_by === "system"),
+                    (model.owned_by === "openai" || model.owned_by === "system")
             );
 
             const models: ModelInfo[] = await Promise.all(
@@ -226,7 +226,7 @@ export class ProviderManager {
                         provider: "openai",
                         pricing: pricing || undefined,
                     };
-                }),
+                })
             );
 
             // Sort models alphabetically by name
@@ -245,7 +245,7 @@ export class ProviderManager {
                         provider: "openai",
                         pricing: pricing || undefined,
                     };
-                }),
+                })
             );
         }
     }

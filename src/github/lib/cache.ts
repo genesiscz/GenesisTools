@@ -169,7 +169,7 @@ export function upsertIssue(data: Omit<IssueRecord, "id">): IssueRecord {
             data.closed_at,
             data.last_fetched,
             data.last_comment_cursor,
-            existing.id,
+            existing.id
         );
         return { ...existing, ...data };
     }
@@ -192,7 +192,7 @@ export function upsertIssue(data: Omit<IssueRecord, "id">): IssueRecord {
         data.updated_at,
         data.closed_at,
         data.last_fetched,
-        data.last_comment_cursor,
+        data.last_comment_cursor
     ) as { id: number };
 
     return { id: result.id, ...data };
@@ -211,7 +211,7 @@ export function getComments(
         minReactions?: number;
         author?: string;
         excludeBots?: boolean;
-    } = {},
+    } = {}
 ): CommentRecord[] {
     const db = getDatabase();
 
@@ -269,7 +269,7 @@ export function getLastNComments(
         excludeBots?: boolean;
         minReactions?: number;
         author?: string;
-    } = {},
+    } = {}
 ): CommentRecord[] {
     const db = getDatabase();
 
@@ -314,7 +314,7 @@ export function upsertComment(data: CommentRecord): void {
         data.updated_at,
         data.reaction_count,
         data.reactions_json,
-        data.is_bot,
+        data.is_bot
     );
 }
 
@@ -339,7 +339,7 @@ export function upsertComments(comments: CommentRecord[]): void {
                 c.updated_at,
                 c.reaction_count,
                 c.reactions_json,
-                c.is_bot,
+                c.is_bot
             );
         }
     });
@@ -432,7 +432,7 @@ export function updateFetchMetadata(issueId: number, data: Partial<FetchMetadata
             data.last_full_fetch ?? null,
             data.last_incremental_fetch ?? null,
             data.total_comments ?? 0,
-            data.last_comment_date ?? null,
+            data.last_comment_date ?? null
         );
     }
 }

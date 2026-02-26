@@ -120,7 +120,7 @@ export function buildGitHubUrl(
     repo: string,
     type: "issue" | "pr",
     number: number,
-    commentId?: number,
+    commentId?: number
 ): string {
     const typePath = type === "pr" ? "pull" : "issues";
     let url = `https://github.com/${owner}/${repo}/${typePath}/${number}`;
@@ -218,7 +218,7 @@ export function parseGitHubFileUrl(input: string): GitHubFileUrl | null {
     // https://raw.githubusercontent.com/owner/repo/refs/heads/branch/path
     // https://raw.githubusercontent.com/owner/repo/refs/tags/tag/path
     const rawRefsMatch = input.match(
-        /raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/refs\/(heads|tags)\/([^/]+)\/(.+)/,
+        /raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/refs\/(heads|tags)\/([^/]+)\/(.+)/
     );
     if (rawRefsMatch) {
         return {

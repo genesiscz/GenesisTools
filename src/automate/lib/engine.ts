@@ -33,7 +33,7 @@ export interface EngineResult {
 export async function runPreset(
     preset: Preset,
     options: RunOptions = {},
-    runLogger?: RunLogger,
+    runLogger?: RunLogger
 ): Promise<EngineResult> {
     const totalStart = Date.now();
 
@@ -172,7 +172,7 @@ export async function runPreset(
         allSuccess,
         results.length,
         totalDuration,
-        allSuccess ? undefined : results.find((r) => r.result.status === "error")?.result.error,
+        allSuccess ? undefined : results.find((r) => r.result.status === "error")?.result.error
     );
 
     // Update run metadata (skip for dry runs)

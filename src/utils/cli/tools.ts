@@ -41,7 +41,7 @@ export async function runTool(args: string[], options?: RunToolOptions): Promise
  */
 export async function runToolInteractive(
     args: string[],
-    options?: Omit<RunToolOptions, "timeout">,
+    options?: Omit<RunToolOptions, "timeout">
 ): Promise<ExecResult> {
     const proc = Bun.spawn(["bun", "run", TOOLS_PATH, ...args], {
         cwd: options?.cwd ?? process.cwd(),

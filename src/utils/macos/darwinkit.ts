@@ -50,7 +50,7 @@ export class DarwinKitClient {
         // Try direct binary download first (no sudo needed)
         const download = Bun.spawnSync(
             ["bash", "-c", `mkdir -p "${installDir}" && curl -fsSL "${downloadUrl}" | tar xz -C "${installDir}"`],
-            { stdio: ["ignore", "pipe", "pipe"] },
+            { stdio: ["ignore", "pipe", "pipe"] }
         );
 
         if (download.exitCode === 0) {
@@ -78,7 +78,7 @@ export class DarwinKitClient {
         throw new Error(
             "Failed to install darwinkit. Install manually:\n" +
                 `  curl -fsSL ${downloadUrl} | tar xz\n` +
-                '  mv darwinkit ~/.local/bin/ && export PATH="$HOME/.local/bin:$PATH"',
+                '  mv darwinkit ~/.local/bin/ && export PATH="$HOME/.local/bin:$PATH"'
         );
     }
 
@@ -102,8 +102,8 @@ export class DarwinKitClient {
                 reject(
                     new Error(
                         `DarwinKit did not send ready notification within ${this.config.startupTimeout}ms. ` +
-                            `Is darwinkit installed? Run: brew install darwinkit`,
-                    ),
+                            `Is darwinkit installed? Run: brew install darwinkit`
+                    )
                 );
             }, this.config.startupTimeout);
 

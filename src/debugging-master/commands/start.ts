@@ -60,7 +60,7 @@ export function registerStartCommand(program: Command): void {
                 if (!process.stdout.isTTY) {
                     console.error(
                         `Error: --session <name> is required in non-interactive mode.\n` +
-                            `  ${suggestCommand(TOOL_NAME, { add: ["--session", "<name>"] })}`,
+                            `  ${suggestCommand(TOOL_NAME, { add: ["--session", "<name>"] })}`
                     );
                     process.exit(1);
                 }

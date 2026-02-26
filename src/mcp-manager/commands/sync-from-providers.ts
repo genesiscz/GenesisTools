@@ -194,7 +194,7 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
                     const conflictCheck = DiffUtil.detectConflicts(
                         existingConfig as Record<string, unknown>,
                         serverConfig as Record<string, unknown>,
-                        ["command", "args", "env", "url", "type"],
+                        ["command", "args", "env", "url", "type"]
                     );
 
                     if (conflictCheck.hasConflict) {
@@ -207,9 +207,9 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
                         logger.warn(
                             chalk.yellow(
                                 `⚠ Conflict detected for '${serverName}': differences in ${conflictCheck.differences.join(
-                                    ", ",
-                                )}`,
-                            ),
+                                    ", "
+                                )}`
+                            )
                         );
                     } else {
                         // No conflict, safe to merge (preserve _meta with enabled state)
@@ -262,7 +262,7 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
                 existingJson,
                 incomingJson,
                 "Current (unified config)",
-                `Incoming (${conflict.provider})`,
+                `Incoming (${conflict.provider})`
             );
 
             // Ask user to choose
@@ -322,7 +322,7 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
 
     if (written) {
         logger.info(
-            chalk.green(`✓ Successfully synced ${Object.keys(mergedServers).length} server(s) to unified config`),
+            chalk.green(`✓ Successfully synced ${Object.keys(mergedServers).length} server(s) to unified config`)
         );
     }
 }

@@ -48,7 +48,7 @@ async function getCommitsByDate(
     from: string,
     to: string,
     authors: string[],
-    includeStat: boolean,
+    includeStat: boolean
 ): Promise<CommitWithStats[]> {
     const executor = new Executor({ prefix: "git", verbose: false });
 
@@ -176,7 +176,7 @@ function outputTable(
     _to: string,
     authors: string[],
     includeStat: boolean,
-    workitemMap: Map<number, { commits: number; totalInsertions: number; totalDeletions: number }>,
+    workitemMap: Map<number, { commits: number; totalInsertions: number; totalDeletions: number }>
 ): void {
     const grouped = groupByDay(commits);
     const sortedDays = [...grouped.keys()].sort();
@@ -220,7 +220,7 @@ function outputJson(
     from: string,
     to: string,
     authors: string[],
-    workitemMap: Map<number, { commits: number; totalInsertions: number; totalDeletions: number }>,
+    workitemMap: Map<number, { commits: number; totalInsertions: number; totalDeletions: number }>
 ): void {
     const workitemSummary: Record<string, { commits: number; totalInsertions: number; totalDeletions: number }> = {};
 

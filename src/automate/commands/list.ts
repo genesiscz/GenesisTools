@@ -34,7 +34,7 @@ export function registerListCommand(program: Command): void {
                     `${pc.bold(preset.name)} ${pc.dim(`(${preset.fileName})`)}\n` +
                         (preset.description ? `  ${preset.description}\n` : "") +
                         `  ${pc.dim("Steps:")} ${preset.stepCount}  ${pc.dim("Last run:")} ${lastRun}` +
-                        (preset.meta.runCount ? `  ${pc.dim("Runs:")} ${preset.meta.runCount}` : ""),
+                        (preset.meta.runCount ? `  ${pc.dim("Runs:")} ${preset.meta.runCount}` : "")
                 );
             }
 

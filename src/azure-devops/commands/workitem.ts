@@ -50,7 +50,7 @@ function formatWorkItemAI(
     item: WorkItemFull,
     taskPath: string,
     cacheTime?: Date,
-    downloadedAttachments?: AttachmentInfo[],
+    downloadedAttachments?: AttachmentInfo[]
 ): string {
     const lines: string[] = [];
 
@@ -157,7 +157,7 @@ function generateWorkItemMarkdown(item: WorkItemFull): string {
     lines.push(`| Assignee | ${item.assignee || "Unassigned"} |`);
     lines.push(`| Tags | ${item.tags || "None"} |`);
     lines.push(
-        `| Created | ${item.created ? new Date(item.created).toLocaleString() : "N/A"} by ${item.createdBy || "Unknown"} |`,
+        `| Created | ${item.created ? new Date(item.created).toLocaleString() : "N/A"} by ${item.createdBy || "Unknown"} |`
     );
     lines.push(`| Last Changed | ${item.changed ? new Date(item.changed).toLocaleString() : "N/A"} |`);
     lines.push(`| URL | ${item.url} |`);
@@ -232,11 +232,11 @@ export async function handleWorkItem(
     taskFoldersArg?: boolean,
     queryMetadata?: Map<number, QueryItemMetadata>,
     fetchOptions?: { comments?: boolean; updates?: boolean },
-    attachmentFilter?: AttachmentFilter,
+    attachmentFilter?: AttachmentFilter
 ): Promise<void> {
     silentMode = format === "json";
     logger.debug(
-        `[workitem] Starting with input: ${input}, force=${forceRefresh}, category=${categoryArg}, taskFolders=${taskFoldersArg}`,
+        `[workitem] Starting with input: ${input}, force=${forceRefresh}, category=${categoryArg}, taskFolders=${taskFoldersArg}`
     );
 
     const config = requireConfig();
@@ -259,7 +259,7 @@ export async function handleWorkItem(
         logger.debug(`[workitem] Processing work item #${id}`);
         const cache = await loadWorkItemCache(id);
         logger.debug(
-            `[workitem] #${id} cache: ${cache ? `found (fetched ${cache.cache?.fieldsFetchedAt})` : "not found"}`,
+            `[workitem] #${id} cache: ${cache ? `found (fetched ${cache.cache?.fieldsFetchedAt})` : "not found"}`
         );
 
         const existingFile = findTaskFileAnywhere(id, "json");
@@ -444,7 +444,7 @@ export async function handleWorkItem(
                 break;
             case "md":
                 console.log(
-                    `# ${item.title}\n\n${item.description || "No description"}\n\n## Comments\n${item.comments.map((c) => `- **${c.author}**: ${c.text}`).join("\n")}`,
+                    `# ${item.title}\n\n${item.description || "No description"}\n\n## Comments\n${item.comments.map((c) => `- **${c.author}**: ${c.text}`).join("\n")}`
                 );
                 break;
             case "json":
@@ -486,7 +486,7 @@ export function registerWorkitemCommand(program: Command): void {
                     attachmentsPrefix?: string;
                     attachmentsSuffix?: string;
                     outputDir?: string;
-                },
+                }
             ) => {
                 const hasAttachmentFilter =
                     options.attachmentsFrom ||
@@ -524,8 +524,8 @@ export function registerWorkitemCommand(program: Command): void {
                     options.taskFolders,
                     undefined,
                     undefined,
-                    attachmentFilter,
+                    attachmentFilter
                 );
-            },
+            }
         );
 }

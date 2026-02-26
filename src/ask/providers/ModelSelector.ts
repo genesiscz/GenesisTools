@@ -139,7 +139,7 @@ export class ModelSelector {
                         targetProvider = provider;
                         targetModel = model;
                         logger.info(
-                            `Auto-selected provider ${pc.cyan(provider.name)} for model ${pc.yellow(modelName)}`,
+                            `Auto-selected provider ${pc.cyan(provider.name)} for model ${pc.yellow(modelName)}`
                         );
                         break;
                     }
@@ -161,7 +161,7 @@ export class ModelSelector {
                         logger.error(
                             `Provider "${providerName}" not found. Available: ${providers
                                 .map((prov) => prov.name)
-                                .join(", ")}`,
+                                .join(", ")}`
                         );
                         return null;
                     }
@@ -200,7 +200,7 @@ export class ModelSelector {
     }
 
     async selectTranscriptionModel(
-        fileSize?: number,
+        fileSize?: number
     ): Promise<{ provider: string; model: string; providerInstance: ProviderV2 } | null> {
         const transcriptionProviders = [
             { name: "groq", envKey: "GROQ_API_KEY", model: "whisper-large-v3", maxFileSize: 25 * 1024 * 1024 },
@@ -226,7 +226,7 @@ export class ModelSelector {
         if (availableProviders.length === 0) {
             logger.error("No transcription providers available. Please set API keys for audio transcription.");
             logger.info(
-                "Supported: GROQ_API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, ASSEMBLYAI_API_KEY, DEEPGRAM_API_KEY, GLADIA_API_KEY",
+                "Supported: GROQ_API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, ASSEMBLYAI_API_KEY, DEEPGRAM_API_KEY, GLADIA_API_KEY"
             );
             return null;
         }

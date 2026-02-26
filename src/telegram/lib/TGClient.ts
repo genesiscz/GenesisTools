@@ -66,7 +66,7 @@ export class TGClient {
             new Api.messages.SetTyping({
                 peer,
                 action: new Api.SendMessageTypingAction(),
-            }),
+            })
         );
     }
 
@@ -108,7 +108,7 @@ export class TGClient {
 
     async *getMessages(
         userId: string,
-        options: { limit?: number; offsetDate?: number; minId?: number; maxId?: number } = {},
+        options: { limit?: number; offsetDate?: number; minId?: number; maxId?: number } = {}
     ): AsyncGenerator<Api.Message> {
         for await (const message of this.client.iterMessages(userId, {
             limit: options.limit,
@@ -134,7 +134,7 @@ export class TGClient {
                 maxId: 0,
                 minId: 0,
                 hash: bigInt(0),
-            }),
+            })
         );
 
         if ("count" in result) {

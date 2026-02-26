@@ -151,7 +151,7 @@ export function registerCleanupCommand(program: Command): void {
                 for (const file of modifiedFiles) {
                     const blocks = fileBlockMap.get(file)!;
                     console.log(
-                        `  ${pc.dim(relative(projectPath, file))} (${blocks.length} block${blocks.length > 1 ? "s" : ""})`,
+                        `  ${pc.dim(relative(projectPath, file))} (${blocks.length} block${blocks.length > 1 ? "s" : ""})`
                     );
                 }
             } else {
@@ -232,7 +232,7 @@ export function registerCleanupCommand(program: Command): void {
                     console.log(`\n${pc.green("Logs archived to:")} ${archivePath}`);
                     if (!opts.keepLogs) {
                         console.log(
-                            `${pc.dim("Tip: Keep logs permanently →")} ${suggestCommand(TOOL, { add: ["--keep-logs", "./debug-logs/"] })}`,
+                            `${pc.dim("Tip: Keep logs permanently →")} ${suggestCommand(TOOL, { add: ["--keep-logs", "./debug-logs/"] })}`
                         );
                     }
                 } else {

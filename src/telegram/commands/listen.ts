@@ -14,7 +14,7 @@ async function syncAndLoadHistory(
     client: TGClient,
     store: TelegramHistoryStore,
     contacts: ContactConfig[],
-    myName: string,
+    myName: string
 ): Promise<Map<string, string[]>> {
     const historyMap = new Map<string, string[]>();
 

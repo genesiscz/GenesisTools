@@ -194,7 +194,7 @@ function printPath(
     content: string,
     cxml: boolean,
     markdown: boolean,
-    lineNumbers: boolean,
+    lineNumbers: boolean
 ): void {
     if (cxml) {
         printAsXml(writer, path, content, lineNumbers);
@@ -261,7 +261,7 @@ async function processPath(
     outputDir?: string,
     basePath?: string,
     dry: boolean = false,
-    statistics?: Statistics,
+    statistics?: Statistics
 ): Promise<void> {
     if (!existsSync(path)) {
         logger.error(`Path does not exist: ${path}`);
@@ -382,7 +382,7 @@ async function processPath(
         dirPath: string,
         passedRules: string[],
         dry: boolean = false,
-        statistics?: Statistics,
+        statistics?: Statistics
     ): Promise<void> {
         // Read .gitignore specifically for this directory
         const currentDirGitignoreRules = ignoreGitignore ? [] : await readGitignore(dirPath);
@@ -395,7 +395,7 @@ async function processPath(
             for (const entry of entries) {
                 const entryPath = join(dirPath, entry.name);
                 logger.debug(
-                    `Processing entry: ${entry.name}, isFile: ${entry.isFile()}, isDirectory: ${entry.isDirectory()}`,
+                    `Processing entry: ${entry.name}, isFile: ${entry.isFile()}, isDirectory: ${entry.isDirectory()}`
                 );
 
                 // Skip .env.* files by default (check before hidden files check)
@@ -430,7 +430,7 @@ async function processPath(
                 // Apply ignore patterns if needed
                 if (ignorePatterns.length > 0) {
                     const matchesPattern = ignorePatterns.some((pattern) =>
-                        minimatch(entry.name, pattern, { dot: true }),
+                        minimatch(entry.name, pattern, { dot: true })
                     );
                     if (matchesPattern && (entry.isFile() || !ignoreFilesOnly)) {
                         if (dry && statistics) {
@@ -457,7 +457,7 @@ async function processPath(
                     logger.debug(
                         `File ${entry.name} has extension: ${ext}, extensions filter: ${
                             extensions.length > 0 ? extensions.join(",") : "none"
-                        }`,
+                        }`
                     );
                     // Skip default excluded extensions (images, binaries, etc.)
                     if (DEFAULT_EXCLUDED_EXTENSIONS.includes(ext)) {
@@ -518,7 +518,7 @@ async function processPath(
             }
         } catch (error) {
             logger.error(
-                `Error reading directory ${dirPath}: ${error instanceof Error ? error.message : String(error)}`,
+                `Error reading directory ${dirPath}: ${error instanceof Error ? error.message : String(error)}`
             );
         }
     }
@@ -598,7 +598,7 @@ function formatFileList<T extends string | IgnoredFile>(
     items: T[],
     basePath?: string,
     maxDisplayItems: number = 100,
-    indent: string = "  ",
+    indent: string = "  "
 ): string[] {
     if (items.length === 0) {
         return [];
@@ -692,7 +692,7 @@ function formatFileList<T extends string | IgnoredFile>(
         outputItems.push(
             `${indent}... and ${selectedGroups.size - maxDisplayItems} more ${
                 selectedDepth === 1 ? "directories" : "items"
-            }`,
+            }`
         );
     }
 
@@ -729,7 +729,7 @@ function printStatistics(stats: Statistics): void {
             console.log(
                 `\n  By gitignore (${totalCount}${
                     dirs.length > 0 ? `: ${dirs.length} directories, ${files.length} files` : ""
-                }):`,
+                }):`
             );
             const items = formatFileList(byReason.gitignore, stats.basePath, 100, "    ");
             items.forEach((item) => {
@@ -906,7 +906,7 @@ async function main(): Promise<void> {
                 };
             } catch (error) {
                 logger.error(
-                    `Error setting up output file ${outputFile}: ${error instanceof Error ? error.message : String(error)}`,
+                    `Error setting up output file ${outputFile}: ${error instanceof Error ? error.message : String(error)}`
                 );
                 process.exit(1);
             }
@@ -921,7 +921,7 @@ async function main(): Promise<void> {
                 }
             } catch (error) {
                 logger.error(
-                    `Error setting up output directory ${outputFile}: ${error instanceof Error ? error.message : String(error)}`,
+                    `Error setting up output directory ${outputFile}: ${error instanceof Error ? error.message : String(error)}`
                 );
                 process.exit(1);
             }
@@ -1014,7 +1014,7 @@ async function main(): Promise<void> {
                 flatFolder ? outputFile : undefined,
                 commonBasePath,
                 dry,
-                dry ? statistics : undefined,
+                dry ? statistics : undefined
             );
         }
 

@@ -120,7 +120,7 @@ class JenkinsServer {
                 capabilities: {
                     tools: {},
                 },
-            },
+            }
         );
 
         // Create axios instance with Jenkins authentication
@@ -316,7 +316,7 @@ class JenkinsServer {
                 if (axios.isAxiosError(error)) {
                     throw new McpError(
                         ErrorCode.InternalError,
-                        `Jenkins API error: ${error.response?.data?.message || error.message}`,
+                        `Jenkins API error: ${error.response?.data?.message || error.message}`
                     );
                 }
                 throw new McpError(ErrorCode.InternalError, "Unknown error occurred");
@@ -345,7 +345,7 @@ class JenkinsServer {
                             url: response.data.url,
                         },
                         null,
-                        2,
+                        2
                     ),
                 },
             ],
@@ -429,7 +429,7 @@ class JenkinsServer {
                             jobs: jobList,
                         },
                         null,
-                        2,
+                        2
                     ),
                 },
             ],
@@ -471,7 +471,7 @@ class JenkinsServer {
                             builds: buildHistory,
                         },
                         null,
-                        2,
+                        2
                     ),
                 },
             ],
@@ -526,7 +526,7 @@ class JenkinsServer {
                             queue: queue,
                         },
                         null,
-                        2,
+                        2
                     ),
                 },
             ],

@@ -144,7 +144,7 @@ export function extractFromBranch(branchName: string, patterns?: WorkitemPattern
 export function extractWorkitemIds(
     commits: DetailedCommitInfo[],
     branches?: string[],
-    patterns?: WorkitemPattern[],
+    patterns?: WorkitemPattern[]
 ): Map<number, WorkitemRef[]> {
     const result = new Map<number, WorkitemRef[]>();
 

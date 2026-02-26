@@ -70,7 +70,7 @@ export function retry<T>(operation: () => Promise<T>, options?: RetryOptions | n
  */
 export function debounce<T extends (...args: never[]) => void>(
     func: T,
-    wait: number,
+    wait: number
 ): (...args: Parameters<T>) => void {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     return (...args: Parameters<T>) => {
@@ -89,7 +89,7 @@ export function debounce<T extends (...args: never[]) => void>(
  */
 export function throttle<T extends (...args: never[]) => void>(
     func: T,
-    limit: number,
+    limit: number
 ): (...args: Parameters<T>) => void {
     let inThrottle = false;
     return (...args: Parameters<T>) => {

@@ -5,7 +5,7 @@ import ts from "typescript";
 export class HoverCommand {
     constructor(
         private tsServer: TSServer,
-        private cwd: string,
+        private cwd: string
     ) {}
 
     async execute(argv: CliArgs): Promise<void> {

@@ -287,7 +287,7 @@ async function getCommittedFiles(numCommits: number, verbose: boolean): Promise<
     const git = new Executor({ prefix: "git" });
     const { stdout } = await git.execOrThrow(
         ["log", `-n`, `${numCommits}`, `--format=%H|%ct`, "--name-status"],
-        "git log failed",
+        "git log failed"
     );
 
     const lines = stdout.split("\n");
@@ -363,7 +363,7 @@ async function main() {
     const program = new Command()
         .name("last-changes")
         .description(
-            "Shows uncommitted git changes grouped by modification time to help you understand what files were updated and when.",
+            "Shows uncommitted git changes grouped by modification time to help you understand what files were updated and when."
         )
         .option("-c, --commits <n>", "Show changes from the last N commits instead of uncommitted changes")
         .option("-v, --verbose", "Enable verbose logging")
@@ -414,8 +414,8 @@ async function main() {
         for (const group of groups) {
             log.info(
                 chalk.bold(
-                    chalk.cyan(`\n${group.label} (${group.files.length} file${group.files.length !== 1 ? "s" : ""}):`),
-                ),
+                    chalk.cyan(`\n${group.label} (${group.files.length} file${group.files.length !== 1 ? "s" : ""}):`)
+                )
             );
 
             for (const { file, status, mtime } of group.files) {

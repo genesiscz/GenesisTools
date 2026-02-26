@@ -18,7 +18,7 @@ async function runJxa(script: string, timeoutMs = 30_000): Promise<JxaResult> {
         setTimeout(() => {
             proc.kill();
             reject(new Error(`JXA script timed out after ${timeoutMs}ms`));
-        }, timeoutMs),
+        }, timeoutMs)
     );
 
     const [stdout, stderr, exitCode] = (await Promise.race([
@@ -48,7 +48,7 @@ function escapeJxa(s: string): string {
  */
 export async function searchBodies(
     messageIdentifiers: Array<{ rowid: number; subject: string; mailbox: string }>,
-    query: string,
+    query: string
 ): Promise<Set<number>> {
     if (messageIdentifiers.length === 0) {
         return new Set();
@@ -171,7 +171,7 @@ export async function saveAttachment(
     subject: string,
     senderAddress: string,
     attachmentName: string,
-    savePath: string,
+    savePath: string
 ): Promise<boolean> {
     const escapedSubject = escapeJxa(subject);
     const escapedSender = escapeJxa(senderAddress);

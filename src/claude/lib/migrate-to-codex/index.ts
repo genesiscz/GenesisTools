@@ -120,7 +120,7 @@ export function discoverMigrationSources(projectRoot: string): DiscoveredSources
         collectMarkdownFiles(projectClaudeCommandsDir),
         "project",
         "claude",
-        "claude",
+        "claude"
     );
     addInstruction(instructions, seenInstructions, projectClaudeMd, "project");
 
@@ -137,7 +137,7 @@ export function discoverMigrationSources(projectRoot: string): DiscoveredSources
             plugin.scope,
             "plugin",
             normalizeSegment(plugin.name),
-            plugin.name,
+            plugin.name
         );
     }
 
@@ -384,7 +384,7 @@ function addSkillDirs(
     paths: string[],
     scope: SingleScope,
     origin: SourceOrigin,
-    pluginName?: string,
+    pluginName?: string
 ): void {
     for (const sourcePath of paths) {
         const normalized = resolve(sourcePath);
@@ -410,7 +410,7 @@ function addCommandFiles(
     scope: SingleScope,
     origin: SourceOrigin,
     namespace: string,
-    pluginName?: string,
+    pluginName?: string
 ): void {
     for (const sourcePath of paths) {
         const normalized = resolve(sourcePath);
@@ -434,7 +434,7 @@ function addInstruction(
     instructions: InstructionSource[],
     seen: Set<string>,
     sourcePath: string,
-    scope: SingleScope,
+    scope: SingleScope
 ): void {
     if (!existsSync(sourcePath)) {
         return;
@@ -474,7 +474,7 @@ function discoverProjectPlugins(projectRoot: string, warnings: string[]): Plugin
                 const pluginRoot = sourceValue ? resolve(projectRoot, sourceValue) : "";
                 if (!pluginRoot || !existsSync(pluginRoot)) {
                     warnings.push(
-                        `Marketplace plugin root not found for ${pluginName}: ${pluginRoot || "(missing source)"}`,
+                        `Marketplace plugin root not found for ${pluginName}: ${pluginRoot || "(missing source)"}`
                     );
                     continue;
                 }
@@ -703,7 +703,7 @@ function countByComponent(operations: PlannedOperation[]): Record<MigrationCompo
             skills: 0,
             commands: 0,
             instructions: 0,
-        },
+        }
     );
 }
 
@@ -751,7 +751,7 @@ function parseJsonFile(filePath: string, warnings: string[]): Record<string, unk
         return JSON.parse(content) as Record<string, unknown>;
     } catch (error) {
         warnings.push(
-            `Failed to parse JSON file ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+            `Failed to parse JSON file ${filePath}: ${error instanceof Error ? error.message : String(error)}`
         );
         return null;
     }

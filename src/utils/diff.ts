@@ -24,7 +24,7 @@ export class DiffUtil {
         oldContent: string,
         newContent: string,
         oldLabel: string = "old",
-        newLabel: string = "new",
+        newLabel: string = "new"
     ): Promise<void> {
         // Create temporary files
         const tmpDir = tmpdir();
@@ -148,7 +148,7 @@ export class DiffUtil {
     static detectConflicts(
         oldObj: Record<string, unknown>,
         newObj: Record<string, unknown>,
-        fields: string[] = ["args", "name", "env"],
+        fields: string[] = ["args", "name", "env"]
     ): { hasConflict: boolean; differences: string[] } {
         const differences: string[] = [];
 

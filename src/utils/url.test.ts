@@ -33,7 +33,7 @@ describe("buildUrl", () => {
 
     it("joins segments", () => {
         expect(buildUrl({ base: "https://api.example.com", segments: ["v1", "users"] })).toBe(
-            "https://api.example.com/v1/users",
+            "https://api.example.com/v1/users"
         );
     });
 
@@ -45,13 +45,13 @@ describe("buildUrl", () => {
 
     it("preserves trailing slash", () => {
         expect(buildUrl({ base: "https://api.example.com", segments: ["users/"] })).toBe(
-            "https://api.example.com/users/",
+            "https://api.example.com/users/"
         );
     });
 
     it("strips trailing slash when keepTrailingSlash is false", () => {
         expect(buildUrl({ base: "https://api.example.com", segments: ["users/"], keepTrailingSlash: false })).toBe(
-            "https://api.example.com/users",
+            "https://api.example.com/users"
         );
     });
 

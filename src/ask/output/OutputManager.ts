@@ -327,7 +327,7 @@ export class OutputManager {
             totalTokens: number;
             cost: number;
             currency: string;
-        }>,
+        }>
     ): Promise<string> {
         if (breakdowns.length === 0) {
             return "";
@@ -343,14 +343,14 @@ export class OutputManager {
             if (breakdown.inputTokens > 0) {
                 const inputCost = breakdown.cost * (breakdown.inputTokens / breakdown.totalTokens);
                 output += `  Input:  ${this.formatTokens(breakdown.inputTokens)} (${pc.yellow(
-                    this.formatCost(inputCost),
+                    this.formatCost(inputCost)
                 )})\n`;
             }
 
             if (breakdown.outputTokens > 0) {
                 const outputCost = breakdown.cost * (breakdown.outputTokens / breakdown.totalTokens);
                 output += `  Output: ${this.formatTokens(breakdown.outputTokens)} (${pc.yellow(
-                    this.formatCost(outputCost),
+                    this.formatCost(outputCost)
                 )})\n`;
             }
 
@@ -359,7 +359,7 @@ export class OutputManager {
             }
 
             output += `  Total:  ${pc.green(this.formatTokens(breakdown.totalTokens))} (${pc.green(
-                this.formatCost(breakdown.cost),
+                this.formatCost(breakdown.cost)
             )})\n\n`;
         }
 

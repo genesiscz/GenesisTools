@@ -36,7 +36,7 @@ export function registerSearchCommand(program: Command): void {
                     limit?: string;
                     semantic?: boolean;
                     maxDistance?: string;
-                },
+                }
             ) => {
                 try {
                     // Handle --help-receivers: list receiver addresses and exit
@@ -109,7 +109,7 @@ export function registerSearchCommand(program: Command): void {
                                 subject: m.subject,
                                 mailbox: m.mailbox,
                             })),
-                            query,
+                            query
                         );
                         const jxaMs = performance.now() - startJxa;
 
@@ -119,7 +119,7 @@ export function registerSearchCommand(program: Command): void {
 
                         const bodyMatchCount = bodyMatches.size;
                         spinner.stop(
-                            `Body search complete: ${bodyMatchCount} body matches in ${(jxaMs / 1000).toFixed(1)}s`,
+                            `Body search complete: ${bodyMatchCount} body matches in ${(jxaMs / 1000).toFixed(1)}s`
                         );
                     }
 
@@ -156,7 +156,7 @@ export function registerSearchCommand(program: Command): void {
                             spinner.stop(`Semantic ranking complete (${ranked.length} relevant results)`);
                         } catch (err) {
                             spinner.stop(
-                                `Semantic ranking skipped: ${err instanceof Error ? err.message : String(err)}`,
+                                `Semantic ranking skipped: ${err instanceof Error ? err.message : String(err)}`
                             );
                             logger.warn(`Semantic ranking failed, falling back to keyword order: ${err}`);
                         } finally {
@@ -170,7 +170,7 @@ export function registerSearchCommand(program: Command): void {
                         formatResultsTable(messages, {
                             showBodyMatch: !searchOpts.withoutBody,
                             showSemanticScore: semanticActive,
-                        }),
+                        })
                     );
                     console.log("");
                     p.log.info(`${messages.length} results. Use 'tools macos mail download <dir>' to export.`);
@@ -181,7 +181,7 @@ export function registerSearchCommand(program: Command): void {
                             ...m,
                             dateSent: m.dateSent.toISOString(),
                             dateReceived: m.dateReceived.toISOString(),
-                        })),
+                        }))
                     );
                     const resultsPath = join(tmpdir(), "macos-mail-last-search.json");
                     await Bun.write(resultsPath, tempResults);
@@ -192,6 +192,6 @@ export function registerSearchCommand(program: Command): void {
                 } finally {
                     cleanup();
                 }
-            },
+            }
         );
 }

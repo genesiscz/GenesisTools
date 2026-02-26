@@ -35,7 +35,7 @@ async function fetchFileContent(
     repo: string,
     path: string,
     ref: string,
-    useRaw: boolean,
+    useRaw: boolean
 ): Promise<FileContent> {
     if (useRaw) {
         // Fetch via raw.githubusercontent.com (faster, no base64 decoding)
@@ -74,7 +74,7 @@ async function fetchFileContent(
                 path,
                 ref,
             }),
-        { label: `GET /repos/${owner}/${repo}/contents/${path}` },
+        { label: `GET /repos/${owner}/${repo}/contents/${path}` }
     );
 
     // Handle directory response
@@ -217,7 +217,7 @@ Examples:
 
   # Use URL with line references
   tools github get "https://github.com/owner/repo/blob/main/file.ts#L10-L20"
-`,
+`
         )
         .action(async (url, opts) => {
             try {

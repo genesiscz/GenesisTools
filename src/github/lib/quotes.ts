@@ -63,7 +63,7 @@ export function truncateQuote(quote: string, maxLines: number = MAX_QUOTE_LINES)
  */
 export function processQuotes(
     body: string,
-    maxQuoteLines: number = MAX_QUOTE_LINES,
+    maxQuoteLines: number = MAX_QUOTE_LINES
 ): {
     processedBody: string;
     hadTruncatedQuotes: boolean;

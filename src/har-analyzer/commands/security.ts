@@ -169,7 +169,7 @@ function scanSensitiveParams(entry: HarEntry, index: number, findings: SecurityF
     for (const [paramName] of searchParams) {
         const lowerName = paramName.toLowerCase();
         const matched = SENSITIVE_PARAM_PATTERNS.some(
-            (pattern) => lowerName === pattern || lowerName.includes(pattern),
+            (pattern) => lowerName === pattern || lowerName.includes(pattern)
         );
 
         if (matched) {

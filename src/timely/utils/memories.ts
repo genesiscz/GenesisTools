@@ -57,7 +57,7 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
                 stats.fetched++;
                 if (verbose) {
                     logger.info(
-                        `[memories] ${progress} ${date}: ${memories.length} memories (${isToday ? "fresh, today" : "force refresh"})`,
+                        `[memories] ${progress} ${date}: ${memories.length} memories (${isToday ? "fresh, today" : "force refresh"})`
                     );
                 }
             } else {
@@ -91,7 +91,7 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
 
     if (verbose) {
         logger.info(
-            `[memories] Done: ${entries.length} total, ${stats.fetched} fetched, ${stats.cached} cached, ${stats.failed} failed`,
+            `[memories] Done: ${entries.length} total, ${stats.fetched} fetched, ${stats.cached} cached, ${stats.failed} failed`
         );
     }
 

@@ -46,7 +46,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
         throw new Error(
             "--thread-id is required when using --respond or --resolve-thread\n" +
                 'Usage: tools github review <pr> --respond "message" -t <thread-id>\n' +
-                "       tools github review <pr> --resolve-thread -t <thread-id>",
+                "       tools github review <pr> --resolve-thread -t <thread-id>"
         );
     }
 
@@ -69,7 +69,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
             });
             if (result.replied === 0 && result.failed.length > 0) {
                 throw new Error(
-                    `Failed to reply to or resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`,
+                    `Failed to reply to or resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`
                 );
             }
             console.log(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
@@ -84,7 +84,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
             });
             if (result.resolved === 0 && result.failed.length > 0) {
                 throw new Error(
-                    `Failed to resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`,
+                    `Failed to resolve any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`
                 );
             }
             console.log(chalk.green(`Resolved ${result.resolved} thread(s)`));
@@ -99,7 +99,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
             });
             if (result.replied === 0 && result.failed.length > 0) {
                 throw new Error(
-                    `Failed to reply to any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`,
+                    `Failed to reply to any of ${result.failed.length} thread(s): ${result.failed.join(", ")}`
                 );
             }
             console.log(chalk.green(`Replied to ${result.replied} thread(s)`));
@@ -188,7 +188,7 @@ Examples:
   Batch operations (comma-separated thread IDs):
   $ tools github review 137 --resolve-thread -t id1,id2,id3              # Resolve multiple threads
   $ tools github review 137 --respond "Fixed" -t id1,id2                 # Reply to multiple threads
-  $ tools github review 137 --respond "Fixed" --resolve-thread -t id1,id2,id3  # Reply+resolve batch`,
+  $ tools github review 137 --respond "Fixed" --resolve-thread -t id1,id2,id3  # Reply+resolve batch`
         )
         .argument("<pr>", "PR number or full GitHub URL")
         .option("--repo <owner/repo>", "Repository (auto-detected from URL or git)")

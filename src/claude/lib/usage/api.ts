@@ -86,7 +86,7 @@ export async function fetchAllAccountsUsage(accounts: Record<string, AccountConf
             const { accessToken } = await ensureValidToken(account);
             const usage = await fetchUsage(accessToken);
             return { accountName: name, label: account.label, usage } satisfies AccountUsage;
-        }),
+        })
     );
 
     // Persist any refreshed tokens to disk in a single write (avoids race conditions)
@@ -110,6 +110,6 @@ export async function fetchAllAccountsUsage(accounts: Record<string, AccountConf
     return results.map((r, i) =>
         r.status === "fulfilled"
             ? r.value
-            : { accountName: entries[i][0], label: entries[i][1].label, error: String(r.reason) },
+            : { accountName: entries[i][0], label: entries[i][1].label, error: String(r.reason) }
     );
 }
