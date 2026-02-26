@@ -169,7 +169,7 @@ const MemoizedHeader = React.memo(
                 {sortIndicator}
             </Text>
         );
-    }
+    },
 );
 
 // Memoized cell component
@@ -396,8 +396,8 @@ const App: React.FC = () => {
                                     prev.map((p) =>
                                         p.pid === proc.pid
                                             ? { ...p, openFiles: parseInt(res.stdout.trim(), 10) - 1 }
-                                            : p
-                                    )
+                                            : p,
+                                    ),
                                 );
 
                                 // Update the last update time for this specific PID
@@ -412,7 +412,7 @@ const App: React.FC = () => {
                                 `Error getting open files for ${proc.name}: ${
                                     e instanceof Error ? e.message : String(e)
                                 }`,
-                                "files"
+                                "files",
                             );
                             // Process might have ended or permission denied
                         }
@@ -420,7 +420,7 @@ const App: React.FC = () => {
                 }
             }
         },
-        [lastFilesUpdate, trackCommand, addNotification]
+        [lastFilesUpdate, trackCommand, addNotification],
     );
 
     // Function to get process information
@@ -519,7 +519,7 @@ const App: React.FC = () => {
                 return [];
             }
         },
-        [trackCommand, sortBy, addNotification]
+        [trackCommand, sortBy, addNotification],
     );
 
     // Function to get open files for a specific process
@@ -565,7 +565,7 @@ const App: React.FC = () => {
                 return [];
             }
         },
-        [trackCommand]
+        [trackCommand],
     );
 
     // Check for resource limit violations and alert
@@ -650,7 +650,7 @@ const App: React.FC = () => {
             addNotification,
             sendSystemNotification,
             lastCpuAlert,
-        ]
+        ],
     );
 
     // Update processes periodically

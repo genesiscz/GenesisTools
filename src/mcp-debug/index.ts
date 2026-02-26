@@ -116,7 +116,7 @@ async function main() {
     if (commandArgs.length === 0 && !commandsEnv && !useEnv) {
         // Write error to stderr, not stdout
         process.stderr.write(
-            "Error: No command provided, COMMANDS environment variable not set, and --env not specified\n"
+            "Error: No command provided, COMMANDS environment variable not set, and --env not specified\n",
         );
         showHelp();
         process.exit(1);

@@ -16,7 +16,7 @@ import type { ExecutionContext, PresetStep, StepResult } from "./types.ts";
 export async function executeStep(
     step: PresetStep,
     ctx: ExecutionContext,
-    options: { dryRun?: boolean; verbose?: boolean }
+    options: { dryRun?: boolean; verbose?: boolean },
 ): Promise<{ result: StepResult; jumpTo?: string }> {
     // Dispatch built-in actions
     if (isBuiltinAction(step.action)) {

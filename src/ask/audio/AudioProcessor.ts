@@ -86,7 +86,7 @@ export class AudioProcessor {
     async splitAudioFile(
         inputPath: string,
         outputDir: string,
-        chunkDurationSeconds: number = 300 // 5 minutes chunks
+        chunkDurationSeconds: number = 300, // 5 minutes chunks
     ): Promise<string[]> {
         try {
             // Ensure output directory exists
@@ -127,7 +127,7 @@ export class AudioProcessor {
                 ],
                 {
                     stdio: ["ignore", "pipe", "pipe"],
-                }
+                },
             );
 
             const _stdout = await new Response(proc.stdout).text();
@@ -157,7 +157,7 @@ export class AudioProcessor {
     async splitAudioBySize(
         inputPath: string,
         outputDir: string,
-        maxChunkSizeBytes: number = this.CHUNK_SIZE
+        maxChunkSizeBytes: number = this.CHUNK_SIZE,
     ): Promise<string[]> {
         try {
             // Ensure output directory exists
@@ -201,7 +201,7 @@ export class AudioProcessor {
                 ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", filePath],
                 {
                     stdio: ["ignore", "pipe", "pipe"],
-                }
+                },
             );
 
             const stdout = await new Response(proc.stdout).text();
@@ -276,7 +276,7 @@ export class AudioProcessor {
                 ],
                 {
                     stdio: ["ignore", "pipe", "pipe"],
-                }
+                },
             );
 
             const _stdout = await new Response(proc.stdout).text();

@@ -78,7 +78,7 @@ function filterHistory(history: WorkItemHistorySection, options: ShowOptions): F
         const query = options.assignedTo;
         assignmentPeriods = assignmentPeriods.filter((period) => userMatches(period.assignee, query));
         statePeriods = statePeriods.filter(
-            (period) => period.assigneeDuring && userMatches(period.assigneeDuring, query)
+            (period) => period.assigneeDuring && userMatches(period.assigneeDuring, query),
         );
     }
 
@@ -92,10 +92,10 @@ function filterHistory(history: WorkItemHistorySection, options: ShowOptions): F
     if (options.from) {
         const fromDate = new Date(options.from).getTime();
         assignmentPeriods = assignmentPeriods.filter(
-            (period) => !period.endDate || new Date(period.endDate).getTime() >= fromDate
+            (period) => !period.endDate || new Date(period.endDate).getTime() >= fromDate,
         );
         statePeriods = statePeriods.filter(
-            (period) => !period.endDate || new Date(period.endDate).getTime() >= fromDate
+            (period) => !period.endDate || new Date(period.endDate).getTime() >= fromDate,
         );
     }
 
@@ -129,7 +129,7 @@ function printSummary(workItemId: number, filtered: FilteredHistory, history: Wo
             const durStr =
                 period.durationMinutes != null ? formatDuration(period.durationMinutes) : pc.yellow("ongoing");
             console.log(
-                `${pad(period.assignee, 30)} ${pad(formatDate(period.startDate), 18)} ${pad(endStr, 18)} ${durStr}`
+                `${pad(period.assignee, 30)} ${pad(formatDate(period.startDate), 18)} ${pad(endStr, 18)} ${durStr}`,
             );
         }
         console.log();
@@ -150,7 +150,7 @@ function printSummary(workItemId: number, filtered: FilteredHistory, history: Wo
                 period.durationMinutes != null ? formatDuration(period.durationMinutes) : pc.yellow("ongoing");
             const assignee = period.assigneeDuring ?? pc.dim("(none)");
             console.log(
-                `${pad(period.state, 20)} ${pad(formatDate(period.startDate), 18)} ${pad(endStr, 18)} ${pad(durStr, 10)} ${assignee}`
+                `${pad(period.state, 20)} ${pad(formatDate(period.startDate), 18)} ${pad(endStr, 18)} ${pad(durStr, 10)} ${assignee}`,
             );
         }
         console.log();
@@ -171,7 +171,7 @@ function printSummary(workItemId: number, filtered: FilteredHistory, history: Wo
                 .map(([assignee, mins]) => `${assignee}: ${formatDuration(mins)}`)
                 .join(", ");
             console.log(
-                `${pad(state, 20)} ${pad(formatDuration(entry.totalMinutes), 12)} ${byAssigneeStr || pc.dim("(no assignee)")}`
+                `${pad(state, 20)} ${pad(formatDuration(entry.totalMinutes), 12)} ${byAssigneeStr || pc.dim("(no assignee)")}`,
             );
         }
         console.log();
@@ -258,7 +258,7 @@ function printJson(workItemId: number, filtered: FilteredHistory, history: WorkI
                     totalMinutes: entry.totalMinutes,
                     byAssignee: Object.fromEntries(entry.byAssignee),
                 },
-            ])
+            ]),
         ),
     };
     console.log(formatJSON(output));

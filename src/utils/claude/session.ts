@@ -942,7 +942,7 @@ export class ClaudeSession {
                 const userMsg = msg as UserMessage;
                 if (Array.isArray(userMsg.message.content)) {
                     const hasResult = userMsg.message.content.some(
-                        (b) => b.type === "tool_result" && matchingToolUseIds.has((b as ToolResultBlock).tool_use_id)
+                        (b) => b.type === "tool_result" && matchingToolUseIds.has((b as ToolResultBlock).tool_use_id),
                     );
                     if (hasResult) {
                         filtered.push(msg);

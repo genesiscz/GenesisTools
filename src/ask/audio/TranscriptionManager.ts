@@ -60,7 +60,7 @@ export class TranscriptionManager {
             const transcriptionModel = await this.selectBestTranscriptionModel(
                 fileSize,
                 options.provider,
-                options.model
+                options.model,
             );
 
             if (!transcriptionModel) {
@@ -68,7 +68,7 @@ export class TranscriptionManager {
             }
 
             logger.info(
-                `Using ${pc.green(transcriptionModel.provider)} with model ${pc.yellow(transcriptionModel.model)}`
+                `Using ${pc.green(transcriptionModel.provider)} with model ${pc.yellow(transcriptionModel.model)}`,
             );
 
             // Read audio file
@@ -114,7 +114,7 @@ export class TranscriptionManager {
     private async transcribeWithFallback(
         filePath: string,
         options: TranscriptionOptions,
-        initialTime: number
+        initialTime: number,
     ): Promise<TranscriptionResult> {
         const fallbackProviders = [
             { env: "ASSEMBLYAI_API_KEY", provider: "assemblyai" },
@@ -151,7 +151,7 @@ export class TranscriptionManager {
     private async selectBestTranscriptionModel(
         fileSize: number,
         preferredProvider?: string,
-        preferredModel?: string
+        preferredModel?: string,
     ): Promise<{ provider: string; model: string; providerInstance: ProviderV2 } | null> {
         // If provider and model are explicitly requested, try to use them
         if (preferredProvider && preferredModel) {
@@ -205,7 +205,7 @@ export class TranscriptionManager {
 
     private async getSpecificTranscriptionModel(
         providerName: string,
-        modelName: string
+        modelName: string,
     ): Promise<{ provider: string; model: string; providerInstance: ProviderV2 } | null> {
         try {
             switch (providerName) {
@@ -309,7 +309,7 @@ export class TranscriptionManager {
             const ext = this.getFileExtension(filePath);
             if (!this.SUPPORTED_FORMATS.includes(ext)) {
                 throw new Error(
-                    `Unsupported audio format: ${ext}. Supported formats: ${this.SUPPORTED_FORMATS.join(", ")}`
+                    `Unsupported audio format: ${ext}. Supported formats: ${this.SUPPORTED_FORMATS.join(", ")}`,
                 );
             }
 
@@ -317,7 +317,7 @@ export class TranscriptionManager {
             const maxSize = 500 * 1024 * 1024; // 500MB practical limit
             if (stats.size > maxSize) {
                 throw new Error(
-                    `File too large: ${this.formatFileSize(stats.size)}. Maximum size: ${this.formatFileSize(maxSize)}`
+                    `File too large: ${this.formatFileSize(stats.size)}. Maximum size: ${this.formatFileSize(maxSize)}`,
                 );
             }
         } catch (error) {

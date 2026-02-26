@@ -187,7 +187,7 @@ export class ClaudeProvider extends MCPProvider {
                 for (const projectConfig of Object.values(config.projects)) {
                     if (projectConfig.disabledMcpServers) {
                         projectConfig.disabledMcpServers = projectConfig.disabledMcpServers.filter(
-                            (name) => name !== serverName
+                            (name) => name !== serverName,
                         );
                     }
                 }
@@ -270,7 +270,7 @@ export class ClaudeProvider extends MCPProvider {
             for (const projectConfig of Object.values(config.projects)) {
                 if (projectConfig.disabledMcpServers) {
                     projectConfig.disabledMcpServers = projectConfig.disabledMcpServers.filter(
-                        (name) => name !== serverName
+                        (name) => name !== serverName,
                     );
                 }
             }
@@ -317,7 +317,7 @@ export class ClaudeProvider extends MCPProvider {
                     for (const projectConfig of Object.values(config.projects)) {
                         if (projectConfig.disabledMcpServers) {
                             projectConfig.disabledMcpServers = projectConfig.disabledMcpServers.filter(
-                                (name) => name !== serverName
+                                (name) => name !== serverName,
                             );
                         }
                     }
@@ -400,7 +400,7 @@ export class ClaudeProvider extends MCPProvider {
             for (const projectConfig of Object.values(claudeConfig.projects)) {
                 if (projectConfig.disabledMcpServers) {
                     projectConfig.disabledMcpServers = projectConfig.disabledMcpServers.filter(
-                        (name) => name !== serverName
+                        (name) => name !== serverName,
                     );
                 }
             }

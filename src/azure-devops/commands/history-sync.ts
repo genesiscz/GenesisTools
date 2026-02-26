@@ -122,7 +122,7 @@ export async function handleHistorySync(options: SyncOptions): Promise<void> {
     const usePerItem = !options.batch;
     const mode = usePerItem ? "per-item" : "batch";
     p.log.info(
-        `${pc.bold(String(itemsToSync.length))} items need sync (${mode} mode)${options.force ? " [forced]" : ""}`
+        `${pc.bold(String(itemsToSync.length))} items need sync (${mode} mode)${options.force ? " [forced]" : ""}`,
     );
 
     const titleMap = new Map(itemsToSync.map((item) => [item.id, item.title]));
@@ -171,7 +171,7 @@ export async function handleHistorySync(options: SyncOptions): Promise<void> {
         spinner.start(
             `Fetching reporting revisions for ${idsToSync.length} items${
                 startDateTime ? ` since ${startDateTime.toISOString().slice(0, 10)}` : ""
-            }`
+            }`,
         );
 
         const revisionsByItem = await api.getReportingRevisions({
@@ -179,7 +179,7 @@ export async function handleHistorySync(options: SyncOptions): Promise<void> {
             startDateTime,
             onProgress: ({ page, matchedItems, totalRevisions }) => {
                 spinner.message(
-                    `Page ${page}: ${totalRevisions} revisions scanned, ${matchedItems}/${idsToSync.length} items matched`
+                    `Page ${page}: ${totalRevisions} revisions scanned, ${matchedItems}/${idsToSync.length} items matched`,
                 );
             },
         });

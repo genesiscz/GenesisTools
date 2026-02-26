@@ -125,7 +125,7 @@ describe("renameServer", () => {
         // Should detect conflict in unified config (since existing-server already exists there)
         const warnCalls = warnSpy.mock.calls.map((call) => call[0]);
         const hasConflictWarning = warnCalls.some(
-            (msg) => typeof msg === "string" && (msg.includes("Conflict") || msg.includes("conflict"))
+            (msg) => typeof msg === "string" && (msg.includes("Conflict") || msg.includes("conflict")),
         );
         expect(hasConflictWarning).toBe(true);
     });

@@ -201,7 +201,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                     if (scope === "header" || scope === "all") {
                         const allHeaders = [...raw.request.headers, ...raw.response.headers];
                         const match = allHeaders.find(
-                            (h) => h.name.toLowerCase().includes(lower) || h.value.toLowerCase().includes(lower)
+                            (h) => h.name.toLowerCase().includes(lower) || h.value.toLowerCase().includes(lower),
                         );
                         if (match) {
                             results.push({ entry, context: `Header: ${match.name}: ${match.value.slice(0, 50)}` });
@@ -228,7 +228,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                     p.log.info(`${results.length} match${results.length === 1 ? "" : "es"}:`);
                     for (const r of results) {
                         console.log(
-                            `  [e${r.entry.index}] ${r.entry.method} ${truncatePath(r.entry.path, 30)} ${r.entry.status} → ${r.context}`
+                            `  [e${r.entry.index}] ${r.entry.method} ${truncatePath(r.entry.path, 30)} ${r.entry.status} → ${r.context}`,
                         );
                     }
                 }
@@ -246,7 +246,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                     const raw = harFile.log.entries[e.index];
                     const body = raw.response.content.text?.slice(0, 80) ?? "";
                     console.log(
-                        `  e${e.index}  ${e.status}  ${e.method}  ${truncatePath(e.path, 40)}  ${formatDuration(e.timeMs)}`
+                        `  e${e.index}  ${e.status}  ${e.method}  ${truncatePath(e.path, 40)}  ${formatDuration(e.timeMs)}`,
                     );
                     if (body) {
                         console.log(`       ${body}`);
@@ -275,7 +275,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                     const len = span > 0 ? Math.max(1, Math.round((entry.timeMs / span) * barW)) : 1;
                     const bar = " ".repeat(startPos) + "\u2588".repeat(Math.min(len, barW - startPos));
                     console.log(
-                        `  e${entry.index}  ${entry.method.padEnd(6)}  ${truncatePath(entry.path, 20).padEnd(20)}  |${bar.padEnd(barW)}|  ${formatDuration(entry.timeMs)}`
+                        `  e${entry.index}  ${entry.method.padEnd(6)}  ${truncatePath(entry.path, 20).padEnd(20)}  |${bar.padEnd(barW)}|  ${formatDuration(entry.timeMs)}`,
                     );
                 }
                 break;

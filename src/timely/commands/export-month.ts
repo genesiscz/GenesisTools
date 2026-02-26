@@ -33,7 +33,7 @@ async function exportMonthAction(
     storage: Storage,
     service: TimelyService,
     monthArg: string,
-    options: ExportMonthOptions
+    options: ExportMonthOptions,
 ): Promise<void> {
     // Parse month argument (YYYY-MM)
     if (!monthArg || !/^\d{4}-\d{2}$/.test(monthArg)) {
@@ -88,10 +88,10 @@ async function exportMonthAction(
                     if (!response.ok) {
                         const errorText = await response.text();
                         logger.debug(
-                            `[suggested_entries] Failed for ${date}: ${response.status} ${response.statusText}`
+                            `[suggested_entries] Failed for ${date}: ${response.status} ${response.statusText}`,
                         );
                         throw new Error(
-                            `Failed to fetch suggested_entries for ${date}: ${response.status} ${errorText}`
+                            `Failed to fetch suggested_entries for ${date}: ${response.status} ${errorText}`,
                         );
                     }
 
@@ -99,11 +99,11 @@ async function exportMonthAction(
                     logger.debug(
                         `[suggested_entries] Success for ${date}: ${
                             Array.isArray(data) ? `array[${data.length}]` : typeof data
-                        }`
+                        }`,
                     );
                     return data;
                 },
-                ttl
+                ttl,
             );
         } catch (error: unknown) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -126,7 +126,7 @@ async function exportMonthAction(
     const events = await storage.getFileOrPut<TimelyEvent[]>(
         cacheKey,
         () => service.getAllEvents(accountId, { since, upto }),
-        ttl
+        ttl,
     );
 
     if (events.length === 0) {
@@ -181,7 +181,7 @@ function exportAsCsv(events: TimelyEvent[]): void {
                 event.duration.hours,
                 event.duration.minutes,
                 event.duration.formatted,
-            ].join(",")
+            ].join(","),
         );
     }
 }
@@ -194,7 +194,7 @@ async function exportAsRaw(
     monthArg: string,
     accountId: number,
     accessToken: string,
-    service: TimelyService
+    service: TimelyService,
 ): Promise<void> {
     logger.info(chalk.cyan(`\nFound ${events.length} event(s) for ${monthArg}:\n`));
 
@@ -452,7 +452,7 @@ async function exportAsReport(
     monthArg: string,
     storage: Storage,
     silent: boolean,
-    detailMode: boolean = false
+    detailMode: boolean = false,
 ): Promise<void> {
     if (!silent) {
         const modeText = detailMode ? "detailed " : "";

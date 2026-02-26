@@ -70,7 +70,7 @@ export class SessionManager {
     async listSessions(): Promise<Array<{ hash: string; sourceFile: string; createdAt: number; entryCount: number }>> {
         const files = await this.storage.listCacheFiles(false);
         const sessionFiles = files.filter(
-            (f) => f.startsWith("sessions/") && f.endsWith(".json") && !f.endsWith(".refs.json")
+            (f) => f.startsWith("sessions/") && f.endsWith(".json") && !f.endsWith(".refs.json"),
         );
 
         const sessions: Array<{
@@ -98,7 +98,7 @@ export class SessionManager {
     async cleanExpiredSessions(maxAgeMs: number = 86_400_000): Promise<number> {
         const files = await this.storage.listCacheFiles(false);
         const sessionFiles = files.filter(
-            (f) => f.startsWith("sessions/") && f.endsWith(".json") && !f.endsWith(".refs.json")
+            (f) => f.startsWith("sessions/") && f.endsWith(".json") && !f.endsWith(".refs.json"),
         );
 
         const now = Date.now();

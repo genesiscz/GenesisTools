@@ -30,7 +30,7 @@ export interface ClassifyOptions {
 export async function classifyText(
     text: string,
     categories: string[],
-    options: ClassifyOptions = {}
+    options: ClassifyOptions = {},
 ): Promise<ClassificationResult> {
     if (categories.length === 0) {
         throw new Error("classifyText: categories must be non-empty");
@@ -46,7 +46,7 @@ export async function classifyText(
             } catch {
                 return { category, score: 0 };
             }
-        })
+        }),
     );
 
     // Sort descending by score (highest confidence first)
@@ -79,7 +79,7 @@ export async function classifyText(
 export async function classifyBatch<IdType = string>(
     items: TextItem<IdType>[],
     categories: string[],
-    options: ClassifyOptions = {}
+    options: ClassifyOptions = {},
 ): Promise<Array<ClassificationItem<IdType>>> {
     if (categories.length === 0) {
         throw new Error("classifyBatch: categories must be non-empty");
@@ -103,7 +103,7 @@ export async function classifyBatch<IdType = string>(
                         scores: categories.map((c) => ({ category: c, score: 0 })),
                     };
                 }
-            })
+            }),
         );
         results.push(...chunkResults);
     }
@@ -122,7 +122,7 @@ export async function classifyBatch<IdType = string>(
 export async function groupByCategory<T extends { text: string }>(
     items: T[],
     categories: string[],
-    options: ClassifyOptions = {}
+    options: ClassifyOptions = {},
 ): Promise<Record<string, T[]>> {
     const concurrency = options.concurrency ?? 5;
     const groups: Record<string, T[]> = {};
@@ -140,7 +140,7 @@ export async function groupByCategory<T extends { text: string }>(
                 } catch {
                     return { item, category: categories[0] };
                 }
-            })
+            }),
         );
         for (const { item, category } of chunkResults) {
             if (!groups[category]) {

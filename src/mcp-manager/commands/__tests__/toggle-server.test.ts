@@ -68,7 +68,7 @@ describe("toggleServer", () => {
                 async (config: UnifiedMCPConfig): Promise<boolean> => {
                     capturedConfig = config;
                     return true;
-                }
+                },
             );
             spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
             spyOn(commandUtils, "promptForProviders").mockResolvedValue(["claude"]);
@@ -104,7 +104,7 @@ describe("toggleServer", () => {
                 async (config: UnifiedMCPConfig): Promise<boolean> => {
                     capturedConfig = config;
                     return true;
-                }
+                },
             );
             spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
             spyOn(commandUtils, "promptForProviders").mockResolvedValue(["claude"]);
@@ -135,7 +135,7 @@ describe("toggleServer", () => {
             await toggleServer(true, undefined, mockProviders);
 
             expect(logger.warn).toHaveBeenCalledWith(
-                "No servers found in unified config. Run 'tools mcp-manager config' to add servers."
+                "No servers found in unified config. Run 'tools mcp-manager config' to add servers.",
             );
             expect(mockProvider.enableServersCalls.length).toBe(0);
         });
@@ -233,7 +233,7 @@ describe("toggleServer", () => {
                 async (config: UnifiedMCPConfig): Promise<boolean> => {
                     capturedConfig = config;
                     return true;
-                }
+                },
             );
             spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
             spyOn(commandUtils, "promptForProviders").mockResolvedValue(["claude"]);

@@ -333,7 +333,7 @@ function row<T extends ScalarDict>(config: RowConfig): (props: RowProps<T>) => R
                             </config.cell>
                         );
                     }
-                })
+                }),
             )}
             {/* Right */}
             <skeleton.component>{skeleton.right}</skeleton.component>

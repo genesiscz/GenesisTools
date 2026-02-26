@@ -68,7 +68,7 @@ export async function withRetry<T>(
         onRetry?: (attempt: number, delay: number) => void;
         maxRetries?: number;
         label?: string;
-    } = {}
+    } = {},
 ): Promise<T> {
     const maxRetries = options.maxRetries ?? MAX_RETRIES;
     let lastError: unknown;
@@ -101,7 +101,7 @@ export async function withRetry<T>(
             const delay = headerDelay ?? exponentialDelay;
 
             logger.warn(
-                `Rate limited. Retrying in ${Math.round(delay / 1000)}s... (attempt ${attempt + 1}/${maxRetries})`
+                `Rate limited. Retrying in ${Math.round(delay / 1000)}s... (attempt ${attempt + 1}/${maxRetries})`,
             );
 
             if (options.onRetry) {

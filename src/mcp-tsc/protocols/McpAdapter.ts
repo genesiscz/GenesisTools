@@ -43,7 +43,7 @@ export class McpAdapter {
                 capabilities: {
                     tools: {},
                 },
-            }
+            },
         );
 
         this.setupHandlers();

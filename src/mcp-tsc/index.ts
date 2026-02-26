@@ -20,7 +20,7 @@ function setupDiagnosticHandlers(): void {
     if (diagnosticHandlersSetup) {
         logger.warn(
             { component: "mcp-tsc", pid: process.pid },
-            "Diagnostic handlers already set up, skipping duplicate setup"
+            "Diagnostic handlers already set up, skipping duplicate setup",
         );
         return;
     }
@@ -38,7 +38,7 @@ function setupDiagnosticHandlers(): void {
             arch: process.arch,
             command: process.argv.join(" "),
         },
-        "Process started"
+        "Process started",
     );
 
     // Track process exit
@@ -55,7 +55,7 @@ function setupDiagnosticHandlers(): void {
                 error: error.message,
                 stack: error.stack,
             },
-            "Uncaught exception"
+            "Uncaught exception",
         );
     });
 
@@ -69,7 +69,7 @@ function setupDiagnosticHandlers(): void {
                 pid: process.pid,
                 ...errorInfo,
             },
-            "Unhandled promise rejection"
+            "Unhandled promise rejection",
         );
     });
 
@@ -80,7 +80,7 @@ function setupDiagnosticHandlers(): void {
         process.on(signal, () => {
             logger.warn(
                 { component: "mcp-tsc", pid: process.pid, signal },
-                "Received signal - process may be terminated"
+                "Received signal - process may be terminated",
             );
         });
     }
@@ -102,7 +102,7 @@ function setupDiagnosticHandlers(): void {
     process.on("disconnect", () => {
         logger.warn(
             { component: "mcp-tsc", pid: process.pid },
-            "Process disconnected from parent (parent may have died)"
+            "Process disconnected from parent (parent may have died)",
         );
     });
 
@@ -116,7 +116,7 @@ function setupDiagnosticHandlers(): void {
                 warningMessage: warning.message,
                 stack: warning.stack,
             },
-            "Process warning"
+            "Process warning",
         );
     });
 }
@@ -153,12 +153,12 @@ async function main() {
             {
                 logger.info(
                     { component: "mcp-tsc", pid: process.pid, args: argv },
-                    "Executing mcp command - starting MCP server"
+                    "Executing mcp command - starting MCP server",
                 );
                 const mcpCommand = new McpCommand();
                 logger.debug(
                     { component: "mcp-tsc", pid: process.pid },
-                    "McpCommand instance created, calling execute()"
+                    "McpCommand instance created, calling execute()",
                 );
                 await mcpCommand.execute(argv);
                 logger.debug({ component: "mcp-tsc", pid: process.pid }, "McpCommand.execute() completed");
@@ -175,7 +175,7 @@ async function main() {
 
                 logger.info(
                     { component: "mcp-tsc", pid: process.pid, fileCount: argv._.length },
-                    "Executing diagnostics command"
+                    "Executing diagnostics command",
                 );
 
                 // For diagnostics, use persistent server if LSP mode, or create TSC server
@@ -208,7 +208,7 @@ async function main() {
                 // Hover always uses persistent LSP server
                 logger.debug(
                     { component: "mcp-tsc", pid: process.pid, cwd },
-                    "Retrieving persistent LSP server for hover"
+                    "Retrieving persistent LSP server for hover",
                 );
                 const tsServer = await getPersistentServer(cwd, process.env.DEBUG === "1");
                 logger.debug({ component: "mcp-tsc", pid: process.pid }, "Persistent LSP server retrieved for hover");
@@ -231,7 +231,7 @@ main().catch((err) => {
             error: err.message,
             stack: err.stack,
         },
-        "main() caught error"
+        "main() caught error",
     );
     console.error(`\nError: ${err.message}`);
     if (process.env.DEBUG === "1") {

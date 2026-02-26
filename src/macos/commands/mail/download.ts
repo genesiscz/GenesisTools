@@ -45,7 +45,7 @@ export function registerDownloadCommand(program: Command): void {
                     overwrite?: boolean;
                     append?: boolean;
                     saveAttachments?: boolean;
-                }
+                },
             ) => {
                 try {
                     const outputDir = resolve(outputDirArg);
@@ -184,6 +184,6 @@ export function registerDownloadCommand(program: Command): void {
                 } finally {
                     cleanup();
                 }
-            }
+            },
         );
 }

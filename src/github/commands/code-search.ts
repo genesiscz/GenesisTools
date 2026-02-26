@@ -57,7 +57,7 @@ async function searchCode(query: string, options: CodeSearchOptions): Promise<Co
                     accept: "application/vnd.github.text-match+json",
                 },
             }),
-        { label: `GET /search/code?q=${encodeURIComponent(searchQuery.slice(0, 50))}...` }
+        { label: `GET /search/code?q=${encodeURIComponent(searchQuery.slice(0, 50))}...` },
     );
 
     return data.items.map((item) => ({

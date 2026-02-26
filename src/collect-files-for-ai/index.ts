@@ -48,7 +48,7 @@ async function main() {
         .option("-t, --target <directory>", "Directory to copy files into (default: ./.ai/YYYY-MM-DD-HH.mm)")
         .option(
             "-f, --flat",
-            "Copy all files directly to the target directory without preserving the directory structure"
+            "Copy all files directly to the target directory without preserving the directory structure",
         )
         .parse();
 
@@ -119,7 +119,7 @@ async function main() {
         logger.error(
             "✖ Error creating target directory '%s': %s",
             targetDir,
-            error instanceof Error ? error.message : String(error)
+            error instanceof Error ? error.message : String(error),
         );
         process.exit(1);
     }

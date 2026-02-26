@@ -79,7 +79,7 @@ export function deleteCredential(name: string): boolean {
  */
 export function resolveCredentialValues(
     credential: StoredCredential,
-    interpolate: (s: string) => string
+    interpolate: (s: string) => string,
 ): Record<string, unknown> {
     const resolved: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(credential)) {
@@ -106,7 +106,7 @@ export function resolveCredentialValues(
  */
 export function resolveCredentialHeaders(
     credential: StoredCredential,
-    interpolate: (s: string) => string
+    interpolate: (s: string) => string,
 ): Record<string, string> {
     const resolved = resolveCredentialValues(credential, interpolate);
     const type = resolved.type as string;

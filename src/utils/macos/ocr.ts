@@ -37,7 +37,7 @@ export async function recognizeText(imagePath: string, options: OcrOptions = {})
 export async function recognizeTextFromBuffer(
     buffer: Buffer | Uint8Array,
     extension = "png",
-    options: OcrOptions = {}
+    options: OcrOptions = {},
 ): Promise<OcrResult> {
     const tempPath = join(tmpdir(), `darwin-ocr-${Date.now()}.${extension}`);
     try {

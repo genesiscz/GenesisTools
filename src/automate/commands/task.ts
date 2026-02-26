@@ -122,7 +122,7 @@ export function registerTaskCommand(parent: Command): void {
 
                 p.log.info(`Run #${run.id} — ${run.preset_name}`);
                 p.log.info(
-                    `Trigger: ${run.trigger_type} | Status: ${run.status} | Duration: ${run.duration_ms != null ? formatDuration(run.duration_ms) : "running"}`
+                    `Trigger: ${run.trigger_type} | Status: ${run.status} | Duration: ${run.duration_ms != null ? formatDuration(run.duration_ms) : "running"}`,
                 );
                 if (run.error) {
                     p.log.error(`Error: ${run.error}`);
@@ -168,7 +168,7 @@ export function registerTaskCommand(parent: Command): void {
             // Show recent runs for this schedule
             const runs = db.listRuns(10);
             const scheduleRuns = runs.filter(
-                (r) => r.preset_name === schedule.preset_name && r.trigger_type === "schedule"
+                (r) => r.preset_name === schedule.preset_name && r.trigger_type === "schedule",
             );
             if (scheduleRuns.length > 0) {
                 p.log.step(pc.underline("Recent runs:"));
@@ -262,7 +262,7 @@ export function registerTaskCommand(parent: Command): void {
                     vars: vars ? Object.entries(vars).map(([k, v]) => `${k}=${v}`) : undefined,
                     verbose: opts.verbose,
                 },
-                runLogger
+                runLogger,
             );
 
             const successCount = result.steps.filter((s) => s.result.status === "success").length;
@@ -278,7 +278,7 @@ export function registerTaskCommand(parent: Command): void {
             p.outro(
                 result.success
                     ? pc.green(`Done in ${formatDuration(result.totalDuration)} (${parts.join(", ")})`)
-                    : pc.red(`Failed after ${formatDuration(result.totalDuration)} (${parts.join(", ")})`)
+                    : pc.red(`Failed after ${formatDuration(result.totalDuration)} (${parts.join(", ")})`),
             );
 
             if (!result.success) {

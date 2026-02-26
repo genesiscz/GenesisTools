@@ -271,7 +271,7 @@ export function parseProviderNames(providerInput: string, availableProviders: MC
         const provider = availableProviders.find((p) => p.getName().toLowerCase() === name.toLowerCase());
         if (!provider) {
             logger.error(
-                `Provider '${name}' not found. Available: ${availableProviders.map((p) => p.getName()).join(", ")}`
+                `Provider '${name}' not found. Available: ${availableProviders.map((p) => p.getName()).join(", ")}`,
             );
             return null;
         }
@@ -286,7 +286,7 @@ export function parseProviderNames(providerInput: string, availableProviders: MC
  */
 export function validateServerNames(
     serverNames: string[],
-    config: UnifiedMCPConfig
+    config: UnifiedMCPConfig,
 ): { valid: boolean; invalidServers: string[] } {
     const invalidServers = serverNames.filter((name) => !config.mcpServers[name]);
     return {
@@ -330,7 +330,7 @@ export async function promptForServers(config: UnifiedMCPConfig, message: string
 export async function getServerNames(
     serverNameArg: string | undefined,
     config: UnifiedMCPConfig,
-    promptMessage: string
+    promptMessage: string,
 ): Promise<string[] | null> {
     const parsedNames = parseServerNames(serverNameArg);
 

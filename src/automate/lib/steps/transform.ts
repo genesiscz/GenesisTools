@@ -153,7 +153,7 @@ async function arrayHandler(step: PresetStep, ctx: StepContext): Promise<StepRes
                 const expression = params.expression;
                 const fn = new Function("item", "index", "vars", "steps", "env", `return (${expression});`);
                 const result = input.filter((item, index) =>
-                    Boolean(fn(item, index, ctx.variables, ctx.steps, ctx.env))
+                    Boolean(fn(item, index, ctx.variables, ctx.steps, ctx.env)),
                 );
                 return makeResult("success", result, start);
             }

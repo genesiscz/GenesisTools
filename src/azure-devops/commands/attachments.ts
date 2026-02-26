@@ -41,7 +41,7 @@ async function downloadSingleAttachment(
     api: Api,
     relation: Relation,
     workItemId: number,
-    outputDir: string
+    outputDir: string,
 ): Promise<AttachmentInfo> {
     const attrs = relation.attributes;
     if (!attrs?.name) {
@@ -95,7 +95,7 @@ async function downloadWorkItemAttachments(
     api: Api,
     item: WorkItemFull,
     settings: WorkItemSettings,
-    filter: AttachmentFilter
+    filter: AttachmentFilter,
 ): Promise<AttachmentInfo[]> {
     if (!item.relations?.length) {
         return [];
@@ -131,7 +131,7 @@ export async function downloadAttachments(
     api: Api,
     items: Map<number, WorkItemFull>,
     settingsMap: Map<number, WorkItemSettings>,
-    filter: AttachmentFilter
+    filter: AttachmentFilter,
 ): Promise<Map<number, AttachmentInfo[]>> {
     const result = new Map<number, AttachmentInfo[]>();
 

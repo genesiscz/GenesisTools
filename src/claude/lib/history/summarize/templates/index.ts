@@ -122,7 +122,7 @@ export function buildMetadataBlock(ctx: TemplateContext): string {
 
     if (ctx.truncated) {
         lines.push(
-            `\n> **Warning:** This session was truncated. ${ctx.truncationInfo ?? "Some content may be missing from the beginning or middle of the session."}`
+            `\n> **Warning:** This session was truncated. ${ctx.truncationInfo ?? "Some content may be missing from the beginning or middle of the session."}`,
         );
     }
 

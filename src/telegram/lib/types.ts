@@ -33,7 +33,7 @@ export type ActionHandler = (
     message: import("./TelegramMessage").TelegramMessage,
     contact: import("./TelegramContact").TelegramContact,
     client: import("./TGClient").TGClient,
-    conversationHistory?: string
+    conversationHistory?: string,
 ) => Promise<ActionResult>;
 
 export const DEFAULTS = {

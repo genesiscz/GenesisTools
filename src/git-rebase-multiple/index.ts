@@ -740,7 +740,7 @@ async function runInteractive(dryRun = false): Promise<void> {
             const info = await forkPointManager.save(parentBranch, child);
             forkPoints[child] = info.forkPointSha;
             console.log(
-                `   ${chalk.green("✓")} ${child}: ${chalk.dim(info.forkPointSha.substring(0, 7))} (${info.commitsAhead} commits ahead)`
+                `   ${chalk.green("✓")} ${child}: ${chalk.dim(info.forkPointSha.substring(0, 7))} (${info.commitsAhead} commits ahead)`,
             );
         }
     }

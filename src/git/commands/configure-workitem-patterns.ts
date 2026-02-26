@@ -87,7 +87,7 @@ async function handleSuggest(storage: Storage, repoPath: string): Promise<void> 
     for (const idx of selected as number[]) {
         const suggestion = suggestions[idx];
         const alreadyExists = newPatterns.some(
-            (p) => p.regex === suggestion.pattern.regex && p.source === suggestion.pattern.source
+            (p) => p.regex === suggestion.pattern.regex && p.source === suggestion.pattern.source,
         );
 
         if (!alreadyExists) {

@@ -19,7 +19,7 @@ export function deepMerge<T extends Record<string, unknown>>(target: T, source: 
         if (source[key] && isObject(source[key]) && isObject(result[key])) {
             (result as Record<string, unknown>)[key] = deepMerge(
                 result[key] as Record<string, unknown>,
-                source[key] as Record<string, unknown>
+                source[key] as Record<string, unknown>,
             );
         } else if (source[key] !== undefined) {
             (result as Record<string, unknown>)[key] = source[key];

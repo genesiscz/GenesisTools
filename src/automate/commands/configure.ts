@@ -11,7 +11,7 @@ export function registerConfigureCommand(program: Command): Command {
         const telegramConfig = await loadTelegramConfig();
         if (telegramConfig) {
             p.log.success(
-                `Telegram: configured (@${telegramConfig.botUsername ?? "bot"}, chat ${telegramConfig.chatId})`
+                `Telegram: configured (@${telegramConfig.botUsername ?? "bot"}, chat ${telegramConfig.chatId})`,
             );
         } else {
             p.log.warn("Telegram: not configured");

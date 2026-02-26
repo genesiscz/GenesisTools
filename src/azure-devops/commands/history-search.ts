@@ -210,7 +210,7 @@ function printWorkItemsTable(items: WorkItem[]): void {
     for (const item of items) {
         const line = `${pad(String(item.id), 8)} ${pad(item.state, 14)} ${pad(item.assignee ?? "-", 24)} ${pad(
             item.title,
-            50
+            50,
         )}`;
         console.log(line);
     }
@@ -281,7 +281,7 @@ async function localSearch(options: SearchOptions): Promise<void> {
         // Filter by assignee
         if (options.assignedTo) {
             const hasMatch = history.assignmentPeriods.some((period) =>
-                userMatches(period.assignee, options.assignedTo!)
+                userMatches(period.assignee, options.assignedTo!),
             );
             if (!hasMatch) {
                 continue;
@@ -298,7 +298,7 @@ async function localSearch(options: SearchOptions): Promise<void> {
 
         if (options.assignedTo) {
             matchedPeriods = matchedPeriods.filter(
-                (period) => period.assigneeDuring != null && userMatches(period.assigneeDuring, options.assignedTo!)
+                (period) => period.assigneeDuring != null && userMatches(period.assigneeDuring, options.assignedTo!),
             );
         }
 
@@ -359,7 +359,7 @@ async function localSearch(options: SearchOptions): Promise<void> {
             formatJSON({
                 results,
                 stats: { cached: scannedCount, matched: results.length, dataFrom, dataTo, syncDate },
-            })
+            }),
         );
     } else {
         printLocalResultsTable(results);
@@ -422,7 +422,7 @@ function printLocalResultsTable(results: LocalSearchResult[]): void {
     for (const r of results) {
         const line = `${pad(String(r.workItemId), 8)} ${pad(formatDuration(r.totalMinutes), 10)} ${pad(
             r.currentState,
-            14
+            14,
         )} ${pad(r.assignee, 24)} ${pad(r.title, 44)}`;
         console.log(line);
     }

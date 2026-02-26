@@ -87,7 +87,7 @@ async function fetchIssue(owner: string, repo: string, number: number): Promise<
                 repo,
                 issue_number: number,
             }),
-        { label: `GET /repos/${owner}/${repo}/issues/${number}` }
+        { label: `GET /repos/${owner}/${repo}/issues/${number}` },
     );
 
     return data as GitHubIssue;
@@ -105,7 +105,7 @@ async function fetchComments(
         perPage?: number;
         page?: number;
         all?: boolean;
-    } = {}
+    } = {},
 ): Promise<GitHubComment[]> {
     const octokit = getOctokit();
     const perPage = options.perPage || 100;
@@ -126,7 +126,7 @@ async function fetchComments(
                         page,
                         since: options.since,
                     }),
-                { label: `GET /repos/${owner}/${repo}/issues/${number}/comments (page ${page})` }
+                { label: `GET /repos/${owner}/${repo}/issues/${number}/comments (page ${page})` },
             );
 
             allComments.push(...(data as GitHubComment[]));
@@ -151,7 +151,7 @@ async function fetchComments(
                 page: options.page || 1,
                 since: options.since,
             }),
-        { label: `GET /repos/${owner}/${repo}/issues/${number}/comments` }
+        { label: `GET /repos/${owner}/${repo}/issues/${number}/comments` },
     );
 
     return data as GitHubComment[];
@@ -175,7 +175,7 @@ async function fetchTimelineEvents(owner: string, repo: string, number: number):
                     per_page: 100,
                     page,
                 }),
-            { label: `GET /repos/${owner}/${repo}/issues/${number}/timeline (page ${page})` }
+            { label: `GET /repos/${owner}/${repo}/issues/${number}/timeline (page ${page})` },
         );
 
         events.push(...(data as GitHubTimelineEvent[]));
@@ -202,7 +202,7 @@ async function fetchLinkedIssue(owner: string, repo: string, number: number): Pr
                     repo,
                     issue_number: number,
                 }),
-            { label: `GET /repos/${owner}/${repo}/issues/${number} (linked)` }
+            { label: `GET /repos/${owner}/${repo}/issues/${number} (linked)` },
         );
 
         return {
@@ -419,23 +419,25 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
 
         if (options.minReactions !== undefined && totalR < options.minReactions) {
             console.log(
-                chalk.yellow(`Issue #${number} has ${totalR} reactions (threshold: ${options.minReactions}). Skipping.`)
+                chalk.yellow(
+                    `Issue #${number} has ${totalR} reactions (threshold: ${options.minReactions}). Skipping.`,
+                ),
             );
             return;
         }
         if (options.minReactionsPositive !== undefined && positiveR < options.minReactionsPositive) {
             console.log(
                 chalk.yellow(
-                    `Issue #${number} has ${positiveR} positive reactions (threshold: ${options.minReactionsPositive}). Skipping.`
-                )
+                    `Issue #${number} has ${positiveR} positive reactions (threshold: ${options.minReactionsPositive}). Skipping.`,
+                ),
             );
             return;
         }
         if (options.minReactionsNegative !== undefined && negativeR < options.minReactionsNegative) {
             console.log(
                 chalk.yellow(
-                    `Issue #${number} has ${negativeR} negative reactions (threshold: ${options.minReactionsNegative}). Skipping.`
-                )
+                    `Issue #${number} has ${negativeR} negative reactions (threshold: ${options.minReactionsNegative}). Skipping.`,
+                ),
             );
             return;
         }
@@ -565,7 +567,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
                 actor: e.actor,
                 created_at: e.createdAt,
                 data_json: JSON.stringify({ details: e.details }),
-            }))
+            })),
         );
     }
 
@@ -650,12 +652,12 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
     // Show summary
     verbose(
         options,
-        `Completed: ${comments.length} comments, ${events.length} events, ${linkedIssues.length} linked issues`
+        `Completed: ${comments.length} comments, ${events.length} events, ${linkedIssues.length} linked issues`,
     );
     console.log(
         chalk.dim(
-            `\nFetched: ${comments.length} comments${events.length > 0 ? `, ${events.length} events` : ""}${linkedIssues.length > 0 ? `, ${linkedIssues.length} linked` : ""}`
-        )
+            `\nFetched: ${comments.length} comments${events.length > 0 ? `, ${events.length} events` : ""}${linkedIssues.length > 0 ? `, ${linkedIssues.length} linked` : ""}`,
+        ),
     );
 }
 

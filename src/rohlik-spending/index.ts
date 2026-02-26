@@ -275,7 +275,7 @@ async function main() {
 
                     for (const item of order.items) {
                         p.log.message(
-                            `  ${pc.cyan(`${item.quantity}x`)} ${item.name} - ${pc.green(`${item.totalPrice.amount.toFixed(2)} Kč`)}`
+                            `  ${pc.cyan(`${item.quantity}x`)} ${item.name} - ${pc.green(`${item.totalPrice.amount.toFixed(2)} Kč`)}`,
                         );
                     }
 
@@ -329,7 +329,7 @@ async function main() {
                 if (options.verbose) {
                     const date = new Date(order.orderTime).toLocaleDateString("cs-CZ");
                     p.log.message(
-                        `  ${pc.dim(date)} ${pc.dim(`(${order.itemsCount} items)`)} - ${pc.green(`${price.toFixed(2)} Kč`)} ${pc.dim(`#${order.id}`)}`
+                        `  ${pc.dim(date)} ${pc.dim(`(${order.itemsCount} items)`)} - ${pc.green(`${price.toFixed(2)} Kč`)} ${pc.dim(`#${order.id}`)}`,
                     );
                 }
             }
@@ -362,7 +362,7 @@ async function main() {
                     pc.dim(` from ${allOrders.length} orders`) +
                     "\n" +
                     pc.dim(`Average: ${Math.round(totalSpending / allOrders.length)} Kč/order`),
-                pc.bold("Rohlik Spending Summary")
+                pc.bold("Rohlik Spending Summary"),
             );
 
             p.outro(pc.green("Done!"));

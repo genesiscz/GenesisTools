@@ -34,7 +34,7 @@ export class AIChat {
     constructor(options: AIChatOptions) {
         if (options.resume && options.session?.id && options.resume !== options.session.id) {
             throw new Error(
-                `Conflicting session IDs: resume="${options.resume}" vs session.id="${options.session.id}". Use only one.`
+                `Conflicting session IDs: resume="${options.resume}" vs session.id="${options.session.id}". Use only one.`,
             );
         }
 
@@ -84,7 +84,7 @@ export class AIChat {
         if (!choice) {
             throw new Error(
                 `Could not resolve provider "${this._options.provider}" / model "${this._options.model}". ` +
-                    `Check that the API key is configured and the model ID is valid.`
+                    `Check that the API key is configured and the model ID is valid.`,
             );
         }
 
@@ -133,7 +133,7 @@ export class AIChat {
         message: string,
         options: SendOptions | undefined,
         addToHistory: boolean,
-        saveThinking: boolean
+        saveThinking: boolean,
     ): AsyncGenerator<ChatEvent> {
         await this._ensureInitialized();
 
@@ -174,7 +174,7 @@ export class AIChat {
                                 controller.enqueue(ChatEvent.text(chunk));
                                 fullContent += chunk;
                             },
-                        }
+                        },
                     );
 
                     const duration = Date.now() - startTime;

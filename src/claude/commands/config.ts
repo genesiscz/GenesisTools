@@ -44,7 +44,7 @@ async function presentAuthUrl(authUrl: string): Promise<void> {
             "4. Copy the code shown on the callback page",
             "   (format: code#state or just the code part)",
         ].join("\n"),
-        "OAuth Login"
+        "OAuth Login",
     );
 
     console.log();
@@ -96,7 +96,7 @@ async function promptAndExchangeCode(): Promise<Awaited<ReturnType<typeof claude
 }
 
 async function fetchAndDisplayProfile(
-    tokens: Awaited<ReturnType<typeof claudeOAuth.exchangeCode>>
+    tokens: Awaited<ReturnType<typeof claudeOAuth.exchangeCode>>,
 ): Promise<Awaited<ReturnType<typeof fetchOAuthProfile>>> {
     const spinner = p.spinner();
     spinner.start("Fetching account profile...");
@@ -274,22 +274,22 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
             infoLines.push(`${pc.dim("API:")} ${pc.green(a.display_name)} <${pc.cyan(a.email)}>`);
             infoLines.push(`     ${o.organization_type} — ${o.billing_type} (${o.rate_limit_tier})`);
             infoLines.push(
-                `     subscription: ${o.subscription_status}, extra usage: ${o.has_extra_usage_enabled ? "enabled" : "disabled"}`
+                `     subscription: ${o.subscription_status}, extra usage: ${o.has_extra_usage_enabled ? "enabled" : "disabled"}`,
             );
         }
         if (cj) {
             infoLines.push(
-                `${pc.dim(".claude.json:")} ${cj.displayName ?? "?"} <${pc.cyan(cj.emailAddress ?? "?")}> — ${cj.billingType ?? "?"}`
+                `${pc.dim(".claude.json:")} ${cj.displayName ?? "?"} <${pc.cyan(cj.emailAddress ?? "?")}> — ${cj.billingType ?? "?"}`,
             );
         }
         infoLines.push(
-            `${pc.dim("Token:")} ${pc.dim(maskToken(kc.accessToken))}${kc.subscriptionType ? ` — ${pc.cyan(kc.subscriptionType)}` : ""}${kc.rateLimitTier ? pc.dim(` (${kc.rateLimitTier})`) : ""}`
+            `${pc.dim("Token:")} ${pc.dim(maskToken(kc.accessToken))}${kc.subscriptionType ? ` — ${pc.cyan(kc.subscriptionType)}` : ""}${kc.rateLimitTier ? pc.dim(` (${kc.rateLimitTier})`) : ""}`,
         );
         if (kc.refreshToken) {
             infoLines.push(`${pc.dim("Refresh:")} ${pc.green("available")} — token can be auto-refreshed`);
         } else {
             infoLines.push(
-                `${pc.dim("Refresh:")} ${pc.yellow("not available")} — token cannot be refreshed after expiry`
+                `${pc.dim("Refresh:")} ${pc.yellow("not available")} — token cannot be refreshed after expiry`,
             );
         }
 
@@ -509,7 +509,7 @@ async function showConfig(config: ClaudeConfig): Promise<void> {
         spinner.start("Fetching account profiles...");
 
         const profileResults = await Promise.allSettled(
-            accounts.map(async ([, acc]) => fetchOAuthProfile(acc.accessToken))
+            accounts.map(async ([, acc]) => fetchOAuthProfile(acc.accessToken)),
         );
         const profiles = profileResults.map((r) => (r.status === "fulfilled" ? r.value : undefined));
         const claudeJson = await getClaudeJsonAccount();
@@ -526,10 +526,10 @@ async function showConfig(config: ClaudeConfig): Promise<void> {
             if (profile) {
                 lines.push(`    ${pc.dim("API:")} ${profile.account.display_name} <${pc.cyan(profile.account.email)}>`);
                 lines.push(
-                    `    ${pc.dim("     ")}${profile.organization.organization_type} — ${profile.organization.billing_type} (${profile.organization.rate_limit_tier})`
+                    `    ${pc.dim("     ")}${profile.organization.organization_type} — ${profile.organization.billing_type} (${profile.organization.rate_limit_tier})`,
                 );
                 lines.push(
-                    `    ${pc.dim("     ")}subscription: ${profile.organization.subscription_status}, extra usage: ${profile.organization.has_extra_usage_enabled ? "enabled" : "disabled"}`
+                    `    ${pc.dim("     ")}subscription: ${profile.organization.subscription_status}, extra usage: ${profile.organization.has_extra_usage_enabled ? "enabled" : "disabled"}`,
                 );
             } else {
                 lines.push(`    ${pc.dim("API:")} ${pc.yellow("unavailable")}`);
@@ -537,13 +537,13 @@ async function showConfig(config: ClaudeConfig): Promise<void> {
 
             if (claudeJson) {
                 lines.push(
-                    `    ${pc.dim(".claude.json:")} ${claudeJson.displayName ?? "?"} <${pc.cyan(claudeJson.emailAddress ?? "?")}>`
+                    `    ${pc.dim(".claude.json:")} ${claudeJson.displayName ?? "?"} <${pc.cyan(claudeJson.emailAddress ?? "?")}>`,
                 );
                 lines.push(`    ${pc.dim("              ")}${claudeJson.billingType ?? "unknown billing"}`);
             }
 
             lines.push(
-                `    ${pc.dim("Label:")} ${acc.label ?? pc.dim("none")}  ${pc.dim("Token:")} ${pc.dim(maskToken(acc.accessToken))}`
+                `    ${pc.dim("Label:")} ${acc.label ?? pc.dim("none")}  ${pc.dim("Token:")} ${pc.dim(maskToken(acc.accessToken))}`,
             );
             lines.push("");
         }
@@ -554,7 +554,7 @@ async function showConfig(config: ClaudeConfig): Promise<void> {
     lines.push(`  Weekly thresholds:  ${config.notifications.weeklyThresholds.join(", ")}%`);
     lines.push(`  Watch interval:     ${config.notifications.watchInterval}s`);
     lines.push(
-        `  macOS:              ${config.notifications.channels.macos ? pc.green("enabled") : pc.dim("disabled")}`
+        `  macOS:              ${config.notifications.channels.macos ? pc.green("enabled") : pc.dim("disabled")}`,
     );
 
     p.note(lines.join("\n"), "Current Configuration");
@@ -599,7 +599,7 @@ export function registerConfigCommand(program: Command): void {
                 label = kc.subscriptionType;
                 const who = kc.account.api?.account.display_name ?? kc.account.claudeJson?.displayName;
                 p.log.info(
-                    `Using Keychain credentials: ${pc.cyan(label ?? "unknown plan")}${who ? ` — ${pc.green(who)}` : ""}`
+                    `Using Keychain credentials: ${pc.cyan(label ?? "unknown plan")}${who ? ` — ${pc.green(who)}` : ""}`,
                 );
 
                 // Fork the token unless --no-fork is specified

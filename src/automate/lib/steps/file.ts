@@ -130,7 +130,7 @@ async function fileHandler(step: PresetStep, ctx: StepContext): Promise<StepResu
                         const resolvedValue = ctx.interpolate(value);
                         rendered = rendered.replace(
                             new RegExp(`\\{\\{\\s*${escapeRegex(key)}\\s*\\}\\}`, "g"),
-                            resolvedValue
+                            resolvedValue,
                         );
                     }
                 }

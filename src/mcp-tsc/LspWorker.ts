@@ -69,7 +69,7 @@ export class LspError extends Error {
     constructor(
         message: string,
         public readonly code?: string,
-        public readonly isRetryable: boolean = false
+        public readonly isRetryable: boolean = false,
     ) {
         super(message);
         this.name = "LspError";
@@ -80,7 +80,7 @@ export class LspTimeoutError extends LspError {
     constructor(
         message: string,
         public readonly timeoutMs: number,
-        public readonly operation: string
+        public readonly operation: string,
     ) {
         super(message, "TIMEOUT", true);
         this.name = "LspTimeoutError";
@@ -90,7 +90,7 @@ export class LspTimeoutError extends LspError {
 export class LspProtocolError extends LspError {
     constructor(
         message: string,
-        public readonly originalError?: Error
+        public readonly originalError?: Error,
     ) {
         super(message, "PROTOCOL", true);
         this.name = "LspProtocolError";
@@ -277,7 +277,7 @@ export class LspWorker {
                 "textDocument/publishDiagnostics",
                 (params: { uri: string; diagnostics: LspDiagnostic[] }) => {
                     this.handleDiagnosticsNotification(params);
-                }
+                },
             );
 
             // Handle stderr for debugging
@@ -297,7 +297,7 @@ export class LspWorker {
                 this.log(
                     `LSP process exited with code ${code}${signal ? ` (signal: ${signal})` : ""}`,
                     code === 0 ? "info" : "error",
-                    { exitCode: code, signal }
+                    { exitCode: code, signal },
                 );
                 this.initialized = false;
                 this.files.clear();
@@ -487,7 +487,7 @@ export class LspWorker {
 
     async getDiagnostics(
         targetFiles: string[],
-        options: { showWarnings?: boolean; maxWaitMs?: number } = {}
+        options: { showWarnings?: boolean; maxWaitMs?: number } = {},
     ): Promise<DiagnosticsResult> {
         const maxWait = options.maxWaitMs ?? this.DEFAULT_DIAGNOSTICS_TIMEOUT_MS;
 
@@ -499,7 +499,7 @@ export class LspWorker {
         targetFiles: string[],
         options: { showWarnings?: boolean; maxWaitMs?: number },
         maxWait: number,
-        attempt: number = 1
+        attempt: number = 1,
     ): Promise<DiagnosticsResult> {
         try {
             return await this.getDiagnosticsInternal(targetFiles, options, maxWait);
@@ -535,7 +535,7 @@ export class LspWorker {
     private async getDiagnosticsInternal(
         targetFiles: string[],
         options: { showWarnings?: boolean; maxWaitMs?: number },
-        maxWait: number
+        maxWait: number,
     ): Promise<DiagnosticsResult> {
         // Ensure LSP is running
         if (!this.isLspAlive()) {
@@ -650,7 +650,7 @@ export class LspWorker {
             const error = new LspTimeoutError(
                 `Timeout waiting for diagnostics (${maxWaitMs}ms) for ${missingFiles.length} file(s)`,
                 maxWaitMs,
-                "getDiagnostics"
+                "getDiagnostics",
             );
             // @ts-expect-error - Add extra info for error handling
             error.missingFiles = missingFiles;
@@ -716,7 +716,7 @@ export class LspWorker {
     async getHover(
         file: string,
         position: { line: number; character: number },
-        options: { timeoutMs?: number } = {}
+        options: { timeoutMs?: number } = {},
     ): Promise<HoverResult> {
         const timeoutMs = options.timeoutMs ?? this.DEFAULT_HOVER_TIMEOUT_MS;
 
@@ -728,7 +728,7 @@ export class LspWorker {
         file: string,
         position: { line: number; character: number },
         timeoutMs: number,
-        attempt: number = 1
+        attempt: number = 1,
     ): Promise<HoverResult> {
         try {
             return await this.getHoverInternal(file, position, timeoutMs);
@@ -764,7 +764,7 @@ export class LspWorker {
     private async getHoverInternal(
         file: string,
         position: { line: number; character: number },
-        timeoutMs: number
+        timeoutMs: number,
     ): Promise<HoverResult> {
         if (!this.isLspAlive()) {
             await this.start();

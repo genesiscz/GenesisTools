@@ -126,6 +126,6 @@ export function registerExportCommand(program: Command): void {
                 } else {
                     console.log(json);
                 }
-            }
+            },
         );
 }

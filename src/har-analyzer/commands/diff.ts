@@ -31,7 +31,7 @@ export function registerDiffCommand(program: Command): void {
             for (const idx of [idx1, idx2]) {
                 if (idx < 0 || idx >= session.entries.length) {
                     console.error(
-                        `Entry e${idx} not found. Session has ${session.entries.length} entries (0-${session.entries.length - 1}).`
+                        `Entry e${idx} not found. Session has ${session.entries.length} entries (0-${session.entries.length - 1}).`,
                     );
                     process.exit(1);
                 }
@@ -139,7 +139,7 @@ async function appendBodyLine(
     prefix: string,
     entry: HarEntry,
     idx: number,
-    refStore: RefStoreManager
+    refStore: RefStoreManager,
 ): Promise<void> {
     const content = entry.response.content;
     if (content.encoding === "base64") {

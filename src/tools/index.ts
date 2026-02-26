@@ -28,7 +28,7 @@ async function handleToolAction(tool: ToolInfo, srcDir: string): Promise<void> {
     options.push(
         { value: "help", label: "Explore subcommands", hint: "--help" },
         { value: "copy", label: "Copy command to clipboard" },
-        { value: "back", label: "Back to list" }
+        { value: "back", label: "Back to list" },
     );
 
     const action = await p.select({

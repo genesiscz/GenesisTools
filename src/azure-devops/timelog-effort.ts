@@ -20,7 +20,7 @@ interface EffortResult {
 export async function updateWorkItemEffort(
     api: Api,
     workItemId: number,
-    loggedMinutes: number
+    loggedMinutes: number,
 ): Promise<EffortResult | null> {
     try {
         const loggedHours = loggedMinutes / 60;
@@ -54,7 +54,7 @@ export async function updateWorkItemEffort(
         await api.updateWorkItem(workItemId, operations);
 
         logger.debug(
-            `[effort] Updated #${workItemId}: Remaining ${currentRemaining ?? 0} → ${newRemaining}, Completed ${currentCompleted ?? 0} → ${newCompleted}`
+            `[effort] Updated #${workItemId}: Remaining ${currentRemaining ?? 0} → ${newRemaining}, Completed ${currentCompleted ?? 0} → ${newCompleted}`,
         );
 
         return { remaining: newRemaining, completed: newCompleted };

@@ -48,7 +48,7 @@ export async function analyzeSentiment(text: string): Promise<SentimentResult> {
 export async function tagText(
     text: string,
     schemes: NlpScheme[] = ["lexicalClass"],
-    language?: string
+    language?: string,
 ): Promise<TagResult> {
     return getDarwinKit().call<TagResult>("nlp.tag", {
         text,
@@ -93,7 +93,7 @@ export async function textDistance(
     text1: string,
     text2: string,
     language = "en",
-    type: EmbedType = "sentence"
+    type: EmbedType = "sentence",
 ): Promise<DistanceResult> {
     return getDarwinKit().call<DistanceResult>("nlp.distance", { text1, text2, language, type });
 }
@@ -117,7 +117,7 @@ export async function findNeighbors(
     text: string,
     count = 5,
     language = "en",
-    type: EmbedType = "word"
+    type: EmbedType = "word",
 ): Promise<NeighborsResult> {
     return getDarwinKit().call<NeighborsResult>("nlp.neighbors", { text, language, type, count });
 }

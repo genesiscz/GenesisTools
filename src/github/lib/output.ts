@@ -131,7 +131,7 @@ function formatIssueSummary(data: IssueData, options: FormatOptions): string {
 
     // Quick metadata
     lines.push(
-        `**Repo:** ${data.owner}/${data.repo} | **State:** ${data.issue.state} | **Author:** @${data.issue.user?.login || "unknown"}`
+        `**Repo:** ${data.owner}/${data.repo} | **State:** ${data.issue.state} | **Author:** @${data.issue.user?.login || "unknown"}`,
     );
     lines.push(`**Created:** ${formatDate(data.issue.created_at)} | **Updated:** ${formatDate(data.issue.updated_at)}`);
     if (data.issue.reactions) {
@@ -176,7 +176,7 @@ function formatIssueSummary(data: IssueData, options: FormatOptions): string {
     }
     if (stats.dateRange.start && stats.dateRange.end) {
         lines.push(
-            `| Date Range | ${formatDateShort(stats.dateRange.start)} → ${formatDateShort(stats.dateRange.end)} |`
+            `| Date Range | ${formatDateShort(stats.dateRange.start)} → ${formatDateShort(stats.dateRange.end)} |`,
         );
     }
     lines.push("");
@@ -367,7 +367,7 @@ function formatIssueMarkdown(data: IssueData, options: FormatOptions): string {
                 comment.htmlUrl ||
                 `https://github.com/${data.owner}/${data.repo}/issues/${data.issue.number}#issuecomment-${comment.id}`;
             lines.push(
-                `### Comment ${i + 1} — @${comment.author} · [${formatDate(comment.createdAt)}](${commentLink})`
+                `### Comment ${i + 1} — @${comment.author} · [${formatDate(comment.createdAt)}](${commentLink})`,
             );
 
             // Reactions

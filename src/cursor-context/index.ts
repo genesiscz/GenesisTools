@@ -194,7 +194,7 @@ function removeSections(
     blocks: ToolUseBlock[],
     removeInputs: Set<string>,
     removeOutputs: Set<string>,
-    removeBoth: Set<string>
+    removeBoth: Set<string>,
 ): string {
     // Sort blocks by start index in reverse order so we can remove from end to start
     // This prevents index shifting issues
@@ -337,7 +337,7 @@ async function main() {
             blocks,
             new Set(toolsToRemoveInputsOnly),
             new Set(toolsToRemoveOutputsOnly),
-            new Set(toolsToRemoveBoth)
+            new Set(toolsToRemoveBoth),
         );
 
         // Show statistics

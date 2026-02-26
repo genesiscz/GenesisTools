@@ -87,11 +87,11 @@ export function registerDiffCommand(program: Command): void {
 
                     if (e1 && !e2) {
                         matches.push(
-                            `  ${label.padEnd(20)} ${name1}: #${e1.index} ${formatTime(e1.ts)}  ${name2}: missing`
+                            `  ${label.padEnd(20)} ${name1}: #${e1.index} ${formatTime(e1.ts)}  ${name2}: missing`,
                         );
                     } else if (!e1 && e2) {
                         matches.push(
-                            `  ${label.padEnd(20)} ${name1}: missing  ${name2}: #${e2.index} ${formatTime(e2.ts)}`
+                            `  ${label.padEnd(20)} ${name1}: missing  ${name2}: #${e2.index} ${formatTime(e2.ts)}`,
                         );
                     } else if (e1 && e2) {
                         const extractComparable = (e: IndexedLogEntry) => {

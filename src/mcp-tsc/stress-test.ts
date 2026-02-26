@@ -156,7 +156,7 @@ class StressTest {
             const result = await this.callDiagnostics([absolutePath]);
             this.results.push(result);
             console.error(
-                `  [${i + 1}/${CONFIG.sequentialDiagnostics}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`
+                `  [${i + 1}/${CONFIG.sequentialDiagnostics}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`,
             );
             if (!result.success) {
                 console.error(`    Error: ${result.error}`);
@@ -174,7 +174,7 @@ class StressTest {
             const result = await this.callHover(absolutePath, line);
             this.results.push(result);
             console.error(
-                `  [${i + 1}/${CONFIG.sequentialHover}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`
+                `  [${i + 1}/${CONFIG.sequentialHover}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`,
             );
             if (!result.success) {
                 console.error(`    Error: ${result.error}`);
@@ -211,7 +211,7 @@ class StressTest {
                 this.callHover(absolutePath, line).then((result) => {
                     console.error(`  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`);
                     return result;
-                })
+                }),
             );
         }
 
@@ -233,10 +233,10 @@ class StressTest {
                 promises.push(
                     this.callDiagnostics([absolutePath]).then((result) => {
                         console.error(
-                            `  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`
+                            `  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`,
                         );
                         return result;
-                    })
+                    }),
                 );
             } else {
                 // Hover - keep line numbers low to avoid out-of-range errors
@@ -244,10 +244,10 @@ class StressTest {
                 promises.push(
                     this.callHover(absolutePath, line).then((result) => {
                         console.error(
-                            `  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`
+                            `  [${i + 1}] ${result.success ? "✓" : "✗"} ${result.name} (${result.duration}ms)`,
                         );
                         return result;
-                    })
+                    }),
                 );
             }
         }
@@ -354,7 +354,7 @@ export function testFunction(input: TestInterface): string {
                 this.callDiagnostics([file], 5).then((result) => {
                     console.error(`  [${i + 1}] ${result.success ? "✓" : "✗"} (${result.duration}ms)`);
                     return result;
-                })
+                }),
             );
         }
 

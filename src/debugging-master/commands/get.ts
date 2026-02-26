@@ -58,7 +58,7 @@ export function registerGetCommand(program: Command): void {
                 }
                 // Filter by all requested levels (merged timer-end entries pass as "timer-end")
                 const filterLevels = levels.flatMap((l: string) =>
-                    l === "timer" ? ["timer-start", "timer-end"] : [l]
+                    l === "timer" ? ["timer-start", "timer-end"] : [l],
                 );
                 entries = filterByLevel(entries, filterLevels);
             }

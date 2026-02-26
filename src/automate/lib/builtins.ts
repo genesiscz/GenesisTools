@@ -18,7 +18,7 @@ export function isBuiltinAction(action: string): boolean {
  */
 export async function executeBuiltin(
     step: PresetStep,
-    ctx: ExecutionContext
+    ctx: ExecutionContext,
 ): Promise<{ result: StepResult; jumpTo?: string }> {
     const start = Date.now();
 

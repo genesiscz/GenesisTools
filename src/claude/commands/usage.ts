@@ -60,7 +60,7 @@ export function registerUsageCommand(program: Command): void {
                         notifConfig.watchInterval = parsed;
                     } else {
                         p.log.warn(
-                            `Invalid --interval "${opts.interval}", using default ${notifConfig.watchInterval}s.`
+                            `Invalid --interval "${opts.interval}", using default ${notifConfig.watchInterval}s.`,
                         );
                     }
                 }

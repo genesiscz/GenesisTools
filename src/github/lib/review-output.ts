@@ -13,7 +13,7 @@ import chalk from "chalk";
 function formatDiffHunk(
     diffHunk: string | null,
     targetLine: number | null = null,
-    startLine: number | null = null
+    startLine: number | null = null,
 ): string {
     if (!diffHunk) {
         return "";
@@ -409,7 +409,7 @@ export function formatReviewJSON(data: ReviewData): string {
             prComments: data.prComments ?? [],
         },
         null,
-        2
+        2,
     );
 }
 

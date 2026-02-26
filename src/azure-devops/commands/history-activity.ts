@@ -128,7 +128,7 @@ async function scanCachedActivity(
     userName: string,
     fromDate?: Date,
     toDate?: Date,
-    includeComments = true
+    includeComments = true,
 ): Promise<{
     events: ActivityEvent[];
     scannedCount: number;
@@ -421,7 +421,7 @@ function printSummary(days: ActivityDay[]): void {
 
         const uniqueItems = new Set(day.events.map((e) => e.workItemId));
         console.log(
-            `  ${pc.bold(day.date)} (${day.dayName}): ${day.events.length} actions across ${uniqueItems.size} items — ${parts.join(", ")}`
+            `  ${pc.bold(day.date)} (${day.dayName}): ${day.events.length} actions across ${uniqueItems.size} items — ${parts.join(", ")}`,
         );
     }
 
@@ -505,7 +505,7 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
         spinner.stop(
             newIds.length > 0
                 ? `Discovered and synced ${newIds.length} new work items`
-                : "No new work items to discover"
+                : "No new work items to discover",
         );
     }
 
@@ -516,7 +516,7 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
         resolvedUserName,
         fromDate,
         toDate,
-        includeComments
+        includeComments,
     );
     spinner.stop(`Scanned ${scannedCount} items, found ${events.length} actions across ${matchedItems.size} items`);
 
@@ -572,10 +572,10 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
         });
         p.log.message(
             pc.dim(
-                `Only locally cached items were scanned (${stats.join(", ")}). To query Azure DevOps for all items you changed:`
+                `Only locally cached items were scanned (${stats.join(", ")}). To query Azure DevOps for all items you changed:`,
             ) +
                 "\n" +
-                pc.cyan(`  ${cmd}`)
+                pc.cyan(`  ${cmd}`),
         );
     }
 }

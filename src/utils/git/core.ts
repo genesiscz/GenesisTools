@@ -40,7 +40,7 @@ export function createGit(options?: GitOptions) {
         async getCurrentBranch(): Promise<string> {
             const result = await executor.execOrThrow(
                 ["rev-parse", "--abbrev-ref", "HEAD"],
-                "Failed to get current branch"
+                "Failed to get current branch",
             );
             return result.stdout;
         },
@@ -51,7 +51,7 @@ export function createGit(options?: GitOptions) {
         async getBranches(): Promise<BranchInfo[]> {
             const result = await executor.execOrThrow(
                 ["for-each-ref", "--format=%(refname:short)|%(objectname)|%(HEAD)", "refs/heads/"],
-                "Failed to get branches"
+                "Failed to get branches",
             );
 
             const branches: BranchInfo[] = [];
@@ -80,7 +80,7 @@ export function createGit(options?: GitOptions) {
         async getShortSha(ref: string): Promise<string> {
             const result = await executor.execOrThrow(
                 ["rev-parse", "--short", ref],
-                `Failed to get short SHA for ${ref}`
+                `Failed to get short SHA for ${ref}`,
             );
             return result.stdout;
         },
@@ -152,7 +152,7 @@ export function createGit(options?: GitOptions) {
         async mergeBase(ref1: string, ref2: string): Promise<string> {
             const result = await executor.execOrThrow(
                 ["merge-base", ref1, ref2],
-                `Failed to find merge-base for ${ref1} and ${ref2}`
+                `Failed to find merge-base for ${ref1} and ${ref2}`,
             );
             return result.stdout;
         },
@@ -307,7 +307,7 @@ export function createGit(options?: GitOptions) {
          */
         async getDivergence(
             local: string,
-            remote: string
+            remote: string,
         ): Promise<{
             localOnly: number;
             remoteOnly: number;

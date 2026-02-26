@@ -14,7 +14,7 @@ export function makeResult(
     status: "success" | "error" | "skipped",
     output: unknown,
     startMs: number,
-    error?: string
+    error?: string,
 ): StepResult {
     return {
         status,

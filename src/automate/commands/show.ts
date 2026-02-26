@@ -25,7 +25,7 @@ export function registerShowCommand(program: Command): void {
                 p.log.step(pc.underline("Available presets:"));
                 for (const pr of presets) {
                     p.log.info(
-                        `  ${pc.cyan(pr.fileName.replace(".json", ""))} — ${pr.description ?? pc.dim("(no description)")}`
+                        `  ${pc.cyan(pr.fileName.replace(".json", ""))} — ${pr.description ?? pc.dim("(no description)")}`,
                     );
                 }
                 p.outro("");
@@ -78,7 +78,7 @@ export function registerShowCommand(program: Command): void {
 
                 p.log.info(
                     `  ${pc.dim(`${i + 1}.`)} ${pc.bold(step.name)} ${pc.dim(`(${step.id})`)}\n` +
-                        `     ${actionLabel}${flags.length > 0 ? ` [${flags.join(", ")}]` : ""}`
+                        `     ${actionLabel}${flags.length > 0 ? ` [${flags.join(", ")}]` : ""}`,
                 );
             }
 

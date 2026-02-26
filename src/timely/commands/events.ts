@@ -234,7 +234,7 @@ function outputJson(
     events: TimelyEvent[],
     options: EventsOptions,
     fetchEntries: boolean,
-    unlinkedByDay: Map<string, UnlinkedMemory[]>
+    unlinkedByDay: Map<string, UnlinkedMemory[]>,
 ): void {
     const hasUnlinked = unlinkedByDay.size > 0;
 
@@ -325,7 +325,7 @@ function outputCsv(events: TimelyEvent[]): void {
                 event.duration.hours,
                 event.duration.minutes,
                 event.duration.formatted,
-            ].join(",")
+            ].join(","),
         );
     }
 }
@@ -362,7 +362,7 @@ function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay
 
         const maxProjectLen = Math.min(
             20,
-            Math.max(7, ...dayEvents.map((e) => (e.project?.name || "No Project").length))
+            Math.max(7, ...dayEvents.map((e) => (e.project?.name || "No Project").length)),
         );
 
         if (fetchEntries) {
@@ -371,14 +371,14 @@ function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay
                 const note = event.note ? ` ${chalk.dim(event.note)}` : "";
                 const fromTo = event.from && event.to ? chalk.dim(` ${event.from}-${event.to}`) : "";
                 console.log(
-                    `  ${chalk.bold(event.duration.formatted.padStart(5))} ${chalk.yellow(project)}${note}${fromTo}`
+                    `  ${chalk.bold(event.duration.formatted.padStart(5))} ${chalk.yellow(project)}${note}${fromTo}`,
                 );
 
                 const entries = (event as TimelyEvent & { entries?: TimelyEntry[] }).entries;
                 if (entries && entries.length > 0) {
                     for (const ent of entries) {
                         console.log(
-                            `  ${" ".repeat(5)} ${chalk.cyan(ent.title.padEnd(maxProjectLen))} ${chalk.dim(ent.duration.formatted)}`
+                            `  ${" ".repeat(5)} ${chalk.cyan(ent.title.padEnd(maxProjectLen))} ${chalk.dim(ent.duration.formatted)}`,
                         );
                         const subs = getSubEntries(ent);
                         if (subs.length > 0) {
@@ -387,7 +387,7 @@ function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay
                                     const shortNote =
                                         sub.note.length > 60 ? `${sub.note.substring(0, 58)}..` : sub.note;
                                     console.log(
-                                        `  ${" ".repeat(5)} ${" ".repeat(maxProjectLen)} ${chalk.dim(`${sub.duration.formatted} ${shortNote}`)}`
+                                        `  ${" ".repeat(5)} ${" ".repeat(maxProjectLen)} ${chalk.dim(`${sub.duration.formatted} ${shortNote}`)}`,
                                     );
                                 }
                             }
@@ -418,7 +418,7 @@ function outputTable(events: TimelyEvent[], fetchEntries: boolean, unlinkedByDay
                             if (sub.note) {
                                 const shortNote = sub.note.length > 60 ? `${sub.note.substring(0, 58)}..` : sub.note;
                                 console.log(
-                                    `  ${" ".repeat(5)} ${" ".repeat(maxProjectLen)} ${chalk.dim(`${sub.duration.formatted} ${shortNote}`)}`
+                                    `  ${" ".repeat(5)} ${" ".repeat(maxProjectLen)} ${chalk.dim(`${sub.duration.formatted} ${shortNote}`)}`,
                                 );
                             }
                         }

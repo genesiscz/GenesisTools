@@ -74,7 +74,7 @@ export function suggestCommand(
         replaceCommand?: string[];
         /** Flag names to preserve from original argv when using replaceCommand (e.g., ["--session"]) */
         keepFlags?: string[];
-    } = {}
+    } = {},
 ): string {
     // process.argv = [bun, script, ...args]
     let args = process.argv.slice(2);
@@ -263,7 +263,7 @@ export class Executor {
             const timeoutResult = await Promise.race([
                 collectOutput.then((r) => ({ type: "done" as const, value: r })),
                 new Promise<{ type: "timeout" }>((resolve) =>
-                    setTimeout(() => resolve({ type: "timeout" }), timeoutMs)
+                    setTimeout(() => resolve({ type: "timeout" }), timeoutMs),
                 ),
             ]);
 
@@ -337,7 +337,8 @@ export class Executor {
         const result = await this.exec(args);
         if (!result.success) {
             throw new Error(
-                errorMsg ?? `Command failed: ${this.prefix ? `${this.prefix} ` : ""}${args.join(" ")}\n${result.stderr}`
+                errorMsg ??
+                    `Command failed: ${this.prefix ? `${this.prefix} ` : ""}${args.join(" ")}\n${result.stderr}`,
             );
         }
         return result;

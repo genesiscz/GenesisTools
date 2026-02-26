@@ -131,7 +131,7 @@ export function formatL1(
     sessionName: string,
     entries: IndexedLogEntry[],
     stats: SessionStats,
-    pretty: boolean
+    pretty: boolean,
 ): string {
     const lines: string[] = [];
 

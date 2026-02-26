@@ -84,7 +84,7 @@ function sleep(ms: number): Promise<void> {
 export async function withFileLock<T>(
     lockPath: string,
     fn: () => Promise<T>,
-    timeout: number = DEFAULT_TIMEOUT_MS
+    timeout: number = DEFAULT_TIMEOUT_MS,
 ): Promise<T> {
     const startTime = Date.now();
 
@@ -93,7 +93,7 @@ export async function withFileLock<T>(
 
         if (elapsed >= timeout) {
             throw new Error(
-                `Failed to acquire file lock at ${lockPath} within ${timeout}ms. Another process may be holding it.`
+                `Failed to acquire file lock at ${lockPath} within ${timeout}ms. Another process may be holding it.`,
             );
         }
 

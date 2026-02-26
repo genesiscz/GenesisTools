@@ -123,7 +123,7 @@ function tokenize(text: string): Set<string> {
             .toLowerCase()
             .replace(/[^a-z0-9áčďéěíňóřšťúůýž]/gi, " ")
             .split(/\s+/)
-            .filter((w) => w.length > 2)
+            .filter((w) => w.length > 2),
     );
 }
 
@@ -152,7 +152,7 @@ export function wordSimilarity(a: string, b: string): number {
 export function fuzzyMatchBest(
     source: MatchSource,
     candidates: MatchCandidate[],
-    threshold = 0.15
+    threshold = 0.15,
 ): FuzzyMatchResult | null {
     let best: FuzzyMatchResult | null = null;
     for (const c of candidates) {

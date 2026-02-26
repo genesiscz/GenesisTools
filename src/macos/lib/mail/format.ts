@@ -8,7 +8,7 @@ import chalk from "chalk";
  */
 export function formatResultsTable(
     messages: MailMessage[],
-    options?: { showBodyMatch?: boolean; showSemanticScore?: boolean }
+    options?: { showBodyMatch?: boolean; showSemanticScore?: boolean },
 ): string {
     const headers = ["Date", "From", "Subject", "Attachments"];
     if (options?.showBodyMatch) {

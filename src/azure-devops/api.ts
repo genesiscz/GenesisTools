@@ -84,7 +84,7 @@ export class Api {
     static witUrl(
         config: AzureConfig,
         path: string | string[],
-        queryParams?: Record<string, string | undefined>
+        queryParams?: Record<string, string | undefined>,
     ): string {
         const segments = Array.isArray(path) ? path : [path];
         return buildUrl({
@@ -102,7 +102,7 @@ export class Api {
         config: AzureConfig,
         path: string | string[],
         queryParams?: Record<string, string | undefined>,
-        version = "7.1-preview.3"
+        version = "7.1-preview.3",
     ): string {
         const segments = Array.isArray(path) ? path : [path];
         return buildUrl({
@@ -120,7 +120,7 @@ export class Api {
         config: AzureConfig,
         path: string[],
         queryParams?: Record<string, string | undefined>,
-        apiVersion = "7.1"
+        apiVersion = "7.1",
     ): string {
         return buildUrl({
             base: config.org,
@@ -205,7 +205,7 @@ export class Api {
     private async request<T>(
         method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH",
         url: string,
-        options: { body?: unknown; contentType?: string; description?: string } = {}
+        options: { body?: unknown; contentType?: string; description?: string } = {},
     ): Promise<T> {
         const { body, contentType = "application/json", description } = options;
         const shortUrl = url.replace(this.config.org, "").slice(0, 80);
@@ -258,7 +258,7 @@ export class Api {
         url: string,
         body: unknown,
         contentType = "application/json",
-        description?: string
+        description?: string,
     ): Promise<T> {
         return this.request<T>("POST", url, { body, contentType, description });
     }
@@ -270,7 +270,7 @@ export class Api {
         url: string,
         body: unknown,
         contentType = "application/json-patch+json",
-        description?: string
+        description?: string,
     ): Promise<T> {
         return this.request<T>("PATCH", url, { body, contentType, description });
     }
@@ -317,7 +317,7 @@ export class Api {
         const queryUrl = Api.witUrl(this.config, ["wiql", queryId]);
         const queryResult = await this.get<{ workItems?: Array<{ id: number; url: string }> }>(
             queryUrl,
-            `query ${queryId.slice(0, 8)}`
+            `query ${queryId.slice(0, 8)}`,
         );
 
         if (!queryResult.workItems || queryResult.workItems.length === 0) {
@@ -433,7 +433,7 @@ export class Api {
      */
     async getWorkItems(
         ids: number[],
-        options: GetWorkItemsOptions = { comments: true }
+        options: GetWorkItemsOptions = { comments: true },
     ): Promise<Map<number, WorkItemFull>> {
         const batchSize = 200;
 
@@ -447,7 +447,7 @@ export class Api {
             });
             const response = await this.get<{ value: AzWorkItemRaw[] }>(
                 url,
-                `batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(ids.length / batchSize)}`
+                `batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(ids.length / batchSize)}`,
             );
             for (const item of response.value) {
                 allBaseItems.set(item.id, this.mapRawToWorkItemBase(item));
@@ -524,7 +524,7 @@ export class Api {
             });
             const response = await this.get<{ value: AzWorkItemRaw[] }>(
                 url,
-                `batch full ${Math.floor(i / batchSize) + 1}/${Math.ceil(ids.length / batchSize)}`
+                `batch full ${Math.floor(i / batchSize) + 1}/${Math.ceil(ids.length / batchSize)}`,
             );
 
             for (const item of response.value) {
@@ -654,7 +654,7 @@ export class Api {
             url,
             operations,
             "application/json-patch+json",
-            `create ${type}`
+            `create ${type}`,
         );
         logger.debug(`[api] Created work item #${result.id}`);
 
@@ -803,7 +803,7 @@ export class Api {
             });
             const data = await this.get<{ count: number; value: WorkItemUpdate[] }>(
                 url,
-                `updates for #${id} (skip=${skip})`
+                `updates for #${id} (skip=${skip})`,
             );
             updates.push(...data.value);
             if (data.value.length < top) {
@@ -826,7 +826,7 @@ export class Api {
             fields?: string[];
             maxPageSize?: number;
             onProgress?: (info: { page: number; matchedItems: number; totalRevisions: number }) => void;
-        } = {}
+        } = {},
     ): Promise<Map<number, ReportingRevision[]>> {
         const fields = options.fields || [
             "System.Id",
@@ -855,7 +855,7 @@ export class Api {
                 url,
                 body,
                 "application/json",
-                "reporting revisions"
+                "reporting revisions",
             );
             totalRevisions += data.values.length;
             for (const revision of data.values) {
@@ -874,7 +874,7 @@ export class Api {
             // Stop if: explicit last batch flag, empty page, or no continuation token.
             if (data.isLastBatch || data.values.length === 0) {
                 logger.debug(
-                    `[api] Reporting API: stopping pagination (isLastBatch=${data.isLastBatch}, pageSize=${data.values.length})`
+                    `[api] Reporting API: stopping pagination (isLastBatch=${data.isLastBatch}, pageSize=${data.values.length})`,
                 );
                 break;
             }
@@ -890,7 +890,7 @@ export class Api {
      */
     async getWorkItemRevisions(
         id: number,
-        options?: { top?: number; expand?: string }
+        options?: { top?: number; expand?: string },
     ): Promise<Array<{ rev: number; fields: Record<string, unknown> }>> {
         const url = Api.witUrl(this.config, ["workItems", String(id), "revisions"], {
             $top: options?.top ? String(options.top) : undefined,
@@ -898,7 +898,7 @@ export class Api {
         });
         const data = await this.get<{ value: Array<{ rev: number; fields: Record<string, unknown> }> }>(
             url,
-            `revisions for #${id}`
+            `revisions for #${id}`,
         );
         return data.value;
     }

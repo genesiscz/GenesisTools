@@ -59,7 +59,7 @@ describe("showServerConfig", () => {
         await showServerConfig("test-server", [mockProvider]);
 
         const jsonCall = (consoleLog.info as unknown as { mock: { calls: string[][] } }).mock.calls.find(
-            (call: string[]) => call[0].includes("test-server-command")
+            (call: string[]) => call[0].includes("test-server-command"),
         );
         expect(jsonCall).toBeDefined();
     });

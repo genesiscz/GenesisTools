@@ -184,7 +184,7 @@ async function main(): Promise<void> {
     const program = new Command()
         .name("json")
         .description(
-            "JSON/TOON converter - Convert data between JSON and TOON (Token-Oriented Object Notation) formats"
+            "JSON/TOON converter - Convert data between JSON and TOON (Token-Oriented Object Notation) formats",
         )
         .argument("[file]", "Input file path (optional if reading from stdin)")
         .option("-t, --to-toon", "Force conversion to TOON format")
@@ -223,7 +223,7 @@ async function main(): Promise<void> {
         if (detectedFormat === "unknown") {
             if (validate) {
                 console.error(
-                    "Error: Input is neither valid JSON, JSONL, nor TOON format. Please check your input and try again."
+                    "Error: Input is neither valid JSON, JSONL, nor TOON format. Please check your input and try again.",
                 );
                 process.exit(1);
             }
@@ -254,7 +254,7 @@ async function main(): Promise<void> {
         if (forceToToon) {
             if (detectedFormat === "toon") {
                 console.error(
-                    "Error: Input is already in TOON format. Use --to-json to convert to JSON, or omit flags for auto-detection."
+                    "Error: Input is already in TOON format. Use --to-json to convert to JSON, or omit flags for auto-detection.",
                 );
                 process.exit(1);
             }

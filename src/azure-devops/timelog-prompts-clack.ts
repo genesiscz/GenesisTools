@@ -12,7 +12,7 @@ import pc from "picocolors";
 export async function runInteractiveAddClack(
     config: AzureConfigWithTimeLog,
     user: TimeLogUser,
-    prefilledWorkItem?: string
+    prefilledWorkItem?: string,
 ): Promise<void> {
     p.intro(pc.bgCyan(pc.black(" TimeLog - Add Entry ")));
 

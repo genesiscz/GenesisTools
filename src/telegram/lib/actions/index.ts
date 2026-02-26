@@ -16,7 +16,7 @@ export async function executeActions(
     contact: TelegramContact,
     message: TelegramMessage,
     client: TGClient,
-    conversationHistory?: string
+    conversationHistory?: string,
 ): Promise<ActionResult[]> {
     const results: ActionResult[] = [];
 

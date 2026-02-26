@@ -16,7 +16,7 @@ interface CommentReactionInfo {
 export async function batchFetchCommentReactions(
     owner: string,
     repo: string,
-    issueNumbers: number[]
+    issueNumbers: number[],
 ): Promise<Map<number, CommentReactionInfo>> {
     const octokit = getOctokit();
     const results = new Map<number, CommentReactionInfo>();
@@ -27,7 +27,7 @@ export async function batchFetchCommentReactions(
         const aliases = batch
             .map(
                 (num) =>
-                    `i${num}: issueOrPullRequest(number: ${num}) { ... on Issue { number comments(first: 100) { nodes { reactions { totalCount } } } } ... on PullRequest { number comments(first: 100) { nodes { reactions { totalCount } } } } }`
+                    `i${num}: issueOrPullRequest(number: ${num}) { ... on Issue { number comments(first: 100) { nodes { reactions { totalCount } } } } ... on PullRequest { number comments(first: 100) { nodes { reactions { totalCount } } } } }`,
             )
             .join("\n");
 

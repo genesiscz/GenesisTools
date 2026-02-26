@@ -70,7 +70,7 @@ function findNextEntry(
     entries: IndexedEntry[],
     redirectUrl: string,
     afterIndex: number,
-    visited: Set<number>
+    visited: Set<number>,
 ): IndexedEntry | null {
     // Try exact URL match first, then partial match on path
     for (const entry of entries) {
@@ -120,7 +120,7 @@ function formatChain(chain: RedirectChain, chainIndex: number): string {
             const nextEntry = chain.entries[i + 1];
             const nextPath = truncatePath(nextEntry.path, 30);
             lines.push(
-                `  ${id}  ${method} ${path}  -> ${entry.status} -> ${nextEntry ? `e${nextEntry.index}` : ""}  ${nextPath}`
+                `  ${id}  ${method} ${path}  -> ${entry.status} -> ${nextEntry ? `e${nextEntry.index}` : ""}  ${nextPath}`,
             );
         }
     }

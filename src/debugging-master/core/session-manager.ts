@@ -72,7 +72,7 @@ export class SessionManager {
             const available = names.length > 0 ? names.join(", ") : "(none)";
             throw new Error(
                 `Session "${sessionFlag}" not found. Available: ${available}\n` +
-                    `Tip: ${TOOL_NAME} start --session ${sessionFlag}`
+                    `Tip: ${TOOL_NAME} start --session ${sessionFlag}`,
             );
         }
 

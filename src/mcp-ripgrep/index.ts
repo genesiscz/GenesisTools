@@ -76,7 +76,7 @@ const server = new Server(
         capabilities: {
             tools: {}, // Enable tools capability
         },
-    }
+    },
 );
 
 /**

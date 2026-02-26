@@ -7,7 +7,7 @@ import { type ToggleOptions, toggleServer } from "./toggle-server.js";
 export async function disableServer(
     serverNameArg: string | undefined,
     providers: MCPProvider[],
-    options: ToggleOptions = {}
+    options: ToggleOptions = {},
 ): Promise<void> {
     await toggleServer(false, serverNameArg, providers, options);
 }

@@ -4,7 +4,7 @@ import { filterByTsconfig, resolveFiles } from "@app/mcp-tsc/utils/FileResolver.
 export class DiagnosticsCommand {
     constructor(
         private tsServer: TSServer,
-        private cwd: string
+        private cwd: string,
     ) {}
 
     async execute(argv: CliArgs): Promise<void> {

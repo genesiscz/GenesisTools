@@ -59,7 +59,7 @@ async function notifyHandler(step: PresetStep, ctx: StepContext): Promise<StepRe
                     api,
                     config.chatId,
                     message,
-                    parseMode as "MarkdownV2" | "HTML" | undefined
+                    parseMode as "MarkdownV2" | "HTML" | undefined,
                 );
 
                 return makeResult("success", { messageId: sent.message_id, chatId: config.chatId }, start);

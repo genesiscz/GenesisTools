@@ -42,7 +42,7 @@ function resolveContact(contacts: ContactConfig[], nameOrId: string): ContactCon
             c.userId === nameOrId ||
             c.displayName.toLowerCase() === lower ||
             c.username?.toLowerCase() === lower ||
-            c.username?.toLowerCase() === lower.replace(/^@/, "")
+            c.username?.toLowerCase() === lower.replace(/^@/, ""),
     );
 }
 
@@ -64,7 +64,7 @@ function registerDownloadCommand(history: Command): void {
                     until?: string;
                     limit?: number;
                     all?: boolean;
-                }
+                },
             ) => {
                 p.intro(pc.bgMagenta(pc.white(" telegram history download ")));
 
@@ -92,7 +92,7 @@ function registerDownloadCommand(history: Command): void {
 
                     if (!found) {
                         p.log.error(
-                            `Contact "${contactName}" not found. Available: ${contacts.map((c) => c.displayName).join(", ")}`
+                            `Contact "${contactName}" not found. Available: ${contacts.map((c) => c.displayName).join(", ")}`,
                         );
                         return;
                     }
@@ -174,7 +174,7 @@ function registerDownloadCommand(history: Command): void {
                                 p.log.warn(
                                     `Some messages were in unsupported languages (${langs}). ` +
                                         `Semantic search only works for: ${[...EMBEDDING_LANGUAGES].join(", ")}. ` +
-                                        `Keyword search still works for all languages.`
+                                        `Keyword search still works for all languages.`,
                                 );
                             }
                         }
@@ -185,7 +185,7 @@ function registerDownloadCommand(history: Command): void {
                 }
 
                 p.outro("Download complete.");
-            }
+            },
         );
 }
 
@@ -223,7 +223,7 @@ function registerEmbedCommand(history: Command): void {
 
                 if (!found) {
                     p.log.error(
-                        `Contact "${contactName}" not found. Available: ${contacts.map((c) => c.displayName).join(", ")}`
+                        `Contact "${contactName}" not found. Available: ${contacts.map((c) => c.displayName).join(", ")}`,
                     );
                     return;
                 }
@@ -273,7 +273,7 @@ function registerEmbedCommand(history: Command): void {
                     const total = store.getEmbeddedCount(contact.userId);
 
                     spinner.stop(
-                        `${pc.green(String(embedded))} new embeddings, ${skipped} skipped (${formatNumber(total)} total embedded)`
+                        `${pc.green(String(embedded))} new embeddings, ${skipped} skipped (${formatNumber(total)} total embedded)`,
                     );
 
                     if (unsupportedLangs.size > 0) {
@@ -281,7 +281,7 @@ function registerEmbedCommand(history: Command): void {
                         p.log.warn(
                             `Some messages were in unsupported languages (${langs}). ` +
                                 `Semantic search only works for: ${[...EMBEDDING_LANGUAGES].join(", ")}. ` +
-                                `Keyword search still works for all languages.`
+                                `Keyword search still works for all languages.`,
                         );
                     }
                 }
@@ -314,7 +314,7 @@ function registerSearchCommand(history: Command): void {
                     semantic?: boolean;
                     hybrid?: boolean;
                     limit?: number;
-                }
+                },
             ) => {
                 p.intro(pc.bgMagenta(pc.white(" telegram history search ")));
 
@@ -330,7 +330,7 @@ function registerSearchCommand(history: Command): void {
 
                 if (!contact) {
                     p.log.error(
-                        `Contact "${contactName}" not found. Available: ${data.contacts.map((c) => c.displayName).join(", ")}`
+                        `Contact "${contactName}" not found. Available: ${data.contacts.map((c) => c.displayName).join(", ")}`,
                     );
                     return;
                 }
@@ -361,7 +361,7 @@ function registerSearchCommand(history: Command): void {
                                 p.log.warn(
                                     `Query language "${langResult.language}" is not supported for semantic search. ` +
                                         `Supported: ${[...EMBEDDING_LANGUAGES].join(", ")}. ` +
-                                        `Results may be less accurate. Use keyword search for best results with this language.`
+                                        `Results may be less accurate. Use keyword search for best results with this language.`,
                                 );
                             }
 
@@ -393,7 +393,7 @@ function registerSearchCommand(history: Command): void {
                 }
 
                 p.outro(`${results?.length ?? 0} result(s) found.`);
-            }
+            },
         );
 }
 
@@ -415,7 +415,7 @@ function registerExportCommand(history: Command): void {
                     since?: string;
                     until?: string;
                     output?: string;
-                }
+                },
             ) => {
                 if (!VALID_EXPORT_FORMATS.includes(opts.format as ExportFormat)) {
                     p.log.error(`Invalid format "${opts.format}". Use: ${VALID_EXPORT_FORMATS.join(", ")}`);
@@ -434,7 +434,7 @@ function registerExportCommand(history: Command): void {
 
                 if (!contact) {
                     p.log.error(
-                        `Contact "${contactName}" not found. Available: ${data.contacts.map((c) => c.displayName).join(", ")}`
+                        `Contact "${contactName}" not found. Available: ${data.contacts.map((c) => c.displayName).join(", ")}`,
                     );
                     return;
                 }
@@ -462,7 +462,7 @@ function registerExportCommand(history: Command): void {
                 } else {
                     console.log(output);
                 }
-            }
+            },
         );
 }
 
@@ -492,7 +492,7 @@ function registerStatsCommand(history: Command): void {
 
                     if (!contact) {
                         p.log.error(
-                            `Contact "${contactName}" not found. Available: ${data.contacts.map((c) => c.displayName).join(", ")}`
+                            `Contact "${contactName}" not found. Available: ${data.contacts.map((c) => c.displayName).join(", ")}`,
                         );
                         return;
                     }
@@ -501,7 +501,7 @@ function registerStatsCommand(history: Command): void {
 
                     if (stats.length === 0) {
                         p.log.warn(
-                            `No messages downloaded for ${contact.displayName}. Run: tools telegram history download`
+                            `No messages downloaded for ${contact.displayName}. Run: tools telegram history download`,
                         );
                         return;
                     }
@@ -514,7 +514,7 @@ function registerStatsCommand(history: Command): void {
                             `  Received:          ${formatNumber(s.incomingMessages)}\n` +
                             `  Embedded:          ${formatNumber(s.embeddedMessages)}\n` +
                             `  First message:     ${s.firstMessageDate ?? "—"}\n` +
-                            `  Last message:      ${s.lastMessageDate ?? "—"}`
+                            `  Last message:      ${s.lastMessageDate ?? "—"}`,
                     );
                 } else {
                     const allStats = store.getStats();
@@ -547,13 +547,13 @@ function registerStatsCommand(history: Command): void {
                     console.log(
                         formatTable(rows, ["Contact", "Total", "In", "Out", "Embedded", "First", "Last"], {
                             alignRight: [1, 2, 3, 4],
-                        })
+                        }),
                     );
                     console.log();
 
                     p.log.info(
                         `${pc.bold("Summary")}: ${formatNumber(totalMessages)} messages across ${allStats.length} contact(s), ` +
-                            `${formatNumber(totalEmbedded)} embedded`
+                            `${formatNumber(totalEmbedded)} embedded`,
                     );
                 }
             } finally {

@@ -20,7 +20,7 @@ class BucketTracker {
 
     constructor(
         public readonly accountName: string,
-        public readonly bucketName: string
+        public readonly bucketName: string,
     ) {}
 
     get key(): string {
@@ -39,7 +39,7 @@ class BucketTracker {
         currentPct: number,
         resetAt: string | null,
         thresholds: number[],
-        isFirstPoll: boolean
+        isFirstPoll: boolean,
     ): "INIT" | "+5%" | null {
         const normalizedReset = this.normalizeResetTime(resetAt);
 
@@ -156,7 +156,7 @@ class UsageWatcher {
 
 export async function watchUsage(
     accounts: Record<string, AccountConfig>,
-    notifications: NotificationConfig
+    notifications: NotificationConfig,
 ): Promise<never> {
     const watcher = new UsageWatcher(notifications);
     const intervalMs = (notifications.watchInterval || 60) * 1000;
@@ -169,7 +169,7 @@ export async function watchUsage(
         process.stdout.write("\x1B[2J\x1B[H");
         console.log(renderAllAccounts(results));
         console.log(
-            `\n${new Date().toLocaleTimeString()} — refreshing every ${notifications.watchInterval}s (Ctrl+C to stop)`
+            `\n${new Date().toLocaleTimeString()} — refreshing every ${notifications.watchInterval}s (Ctrl+C to stop)`,
         );
 
         // Process and get notifications

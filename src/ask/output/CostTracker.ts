@@ -40,7 +40,7 @@ export class CostTracker {
         model: string,
         usage: LanguageModelUsage,
         sessionId: string = "default",
-        messageIndex?: number
+        messageIndex?: number,
     ): Promise<void> {
         // DEBUG: Log the usage object received
         logger.debug(`[CostTracker] trackUsage called for ${provider}/${model}, sessionId: ${sessionId}`);
@@ -101,8 +101,8 @@ export class CostTracker {
 
         logger.debug(
             `Tracked usage: ${provider}/${model} - ${dynamicPricingManager.formatTokens(
-                totalTokens
-            )} tokens, ${dynamicPricingManager.formatCost(cost)}`
+                totalTokens,
+            )} tokens, ${dynamicPricingManager.formatCost(cost)}`,
         );
     }
 
@@ -114,7 +114,7 @@ export class CostTracker {
                 amount: dailyCost,
                 threshold: this.dailyLimit,
                 message: `Daily cost limit exceeded: ${dynamicPricingManager.formatCost(
-                    dailyCost
+                    dailyCost,
                 )} > ${dynamicPricingManager.formatCost(this.dailyLimit)}`,
             };
             this.costAlerts.push(alert);
@@ -128,7 +128,7 @@ export class CostTracker {
                 amount: sessionCost.cost,
                 threshold: this.sessionLimit,
                 message: `Session cost limit exceeded: ${dynamicPricingManager.formatCost(
-                    sessionCost.cost
+                    sessionCost.cost,
                 )} > ${dynamicPricingManager.formatCost(this.sessionLimit)}`,
             };
             this.costAlerts.push(alert);
@@ -330,7 +330,7 @@ export class CostTracker {
             report += "By Provider:\n";
             for (const [provider, stats] of Object.entries(providerStats)) {
                 report += `  ${provider}: ${dynamicPricingManager.formatCost(
-                    stats.cost
+                    stats.cost,
                 )} (${dynamicPricingManager.formatTokens(stats.tokens)} tokens, ${stats.messages} messages)\n`;
             }
             report += "\n";
@@ -342,9 +342,9 @@ export class CostTracker {
             for (const item of breakdown) {
                 const avgCostPerToken = item.totalTokens > 0 ? (item.cost / item.totalTokens) * 1000 : 0;
                 report += `  ${item.provider}/${item.model}: ${dynamicPricingManager.formatCost(
-                    item.cost
+                    item.cost,
                 )} (${dynamicPricingManager.formatTokens(item.totalTokens)} tokens, ${dynamicPricingManager.formatCost(
-                    avgCostPerToken
+                    avgCostPerToken,
                 )}/1K tokens)\n`;
             }
             report += "\n";

@@ -26,7 +26,7 @@ export function registerConfigureCommand(program: Command): void {
                 "1. Open Telegram and search for @BotFather\n" +
                     "2. Send /newbot and follow the prompts\n" +
                     "3. Copy the API token BotFather gives you",
-                "Setup Instructions"
+                "Setup Instructions",
             );
 
             const token = await p.text({

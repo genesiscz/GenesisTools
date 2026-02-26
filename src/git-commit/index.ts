@@ -50,7 +50,7 @@ ${diff}`;
                         z.object({
                             summary: z.string().describe("Concise commit summary line"),
                             detail: z.string().describe("Detailed explanation of changes"),
-                        })
+                        }),
                     )
                     .length(4)
                     .describe("Exactly 4 commit messages with summaries and details"),

@@ -790,7 +790,7 @@ function monitorWithESF(
     silent = false,
     dryRun = false,
     debug = false,
-    filterExpression?: string
+    filterExpression?: string,
 ) {
     if (!silent) {
         console.log(chalk.blue("🚀 Starting ESLogger monitor..."));
@@ -864,7 +864,7 @@ function monitorWithESF(
                     if (!silent) {
                         const eventTypeName = getEventTypeName(event.event_type);
                         consoleLog.warn(
-                            `[FORMAT_ERROR] Failed to format ${eventTypeName}: ${formatErr instanceof Error ? formatErr.message : String(formatErr)}`
+                            `[FORMAT_ERROR] Failed to format ${eventTypeName}: ${formatErr instanceof Error ? formatErr.message : String(formatErr)}`,
                         );
                         if (debug) {
                             consoleLog.warn(`Event data: ${JSON.stringify(event, null, 2)}`);

@@ -55,7 +55,7 @@ async function forEachHandler(step: PresetStep, ctx: StepContext): Promise<StepR
                         const expr = match.replace(/\{\{\s*|\s*\}\}/g, "");
                         const val = childCtx.evaluate(expr);
                         return typeof val === "string" ? val : JSON.stringify(val);
-                    }
+                    },
                 );
                 result = result.replace(new RegExp(`\\{\\{\\s*${indexVar}\\s*\\}\\}`, "g"), String(index));
                 return ctx.interpolate(result);
@@ -82,7 +82,7 @@ async function forEachHandler(step: PresetStep, ctx: StepContext): Promise<StepR
         for (let i = 0; i < items.length; i += concurrency) {
             const batch = items.slice(i, i + concurrency);
             const batchResults = await Promise.allSettled(
-                batch.map((item, batchIdx) => processItem(item, i + batchIdx))
+                batch.map((item, batchIdx) => processItem(item, i + batchIdx)),
             );
             for (const [batchIdx, entry] of batchResults.entries()) {
                 const globalIdx = i + batchIdx;
@@ -94,7 +94,7 @@ async function forEachHandler(step: PresetStep, ctx: StepContext): Promise<StepR
                         "error",
                         null,
                         start,
-                        entry.reason instanceof Error ? entry.reason.message : String(entry.reason)
+                        entry.reason instanceof Error ? entry.reason.message : String(entry.reason),
                     );
                     results.push(failResult);
                     ctx.steps[`${step.id}[${globalIdx}]`] = failResult;
@@ -110,7 +110,7 @@ async function forEachHandler(step: PresetStep, ctx: StepContext): Promise<StepR
         failureCount === 0 ? "success" : "error",
         { results: outputs, count: items.length, failures: failureCount },
         start,
-        failureCount > 0 ? `${failureCount}/${items.length} iterations failed` : undefined
+        failureCount > 0 ? `${failureCount}/${items.length} iterations failed` : undefined,
     );
 }
 
@@ -162,7 +162,7 @@ async function whileHandler(step: PresetStep, ctx: StepContext): Promise<StepRes
             ? `Hit max iterations (${maxIterations})`
             : failureCount > 0
               ? `${failureCount} iterations failed`
-              : undefined
+              : undefined,
     );
 }
 

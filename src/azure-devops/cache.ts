@@ -118,7 +118,7 @@ export async function updateWorkItemCacheSection(
     update: {
         history?: WorkItemHistorySection;
         comments?: Comment[];
-    }
+    },
 ): Promise<void> {
     await storage.ensureDirs();
     const now = new Date().toISOString();

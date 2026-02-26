@@ -43,7 +43,7 @@ export function registerShowCommand(program: Command): void {
             const indexedEntry = session.entries[index];
             if (!indexedEntry) {
                 console.error(
-                    `Entry e${index} not found. Session has ${session.entries.length} entries (0-${session.entries.length - 1}).`
+                    `Entry e${index} not found. Session has ${session.entries.length} entries (0-${session.entries.length - 1}).`,
                 );
                 process.exit(1);
             }
@@ -147,7 +147,7 @@ async function showRaw(
     refStore: RefStoreManager,
     parentOpts: OutputOptions,
     section: ShowSection | undefined,
-    format: OutputFormat
+    format: OutputFormat,
 ): Promise<void> {
     const lines: string[] = [];
     const full = parentOpts.full ?? false;
@@ -269,7 +269,7 @@ export function registerExpandCommand(program: Command): void {
 
             if (entryIndex < 0 || entryIndex >= session.entries.length) {
                 console.error(
-                    `Entry e${entryIndex} not found. Session has ${session.entries.length} entries (0-${session.entries.length - 1}).`
+                    `Entry e${entryIndex} not found. Session has ${session.entries.length} entries (0-${session.entries.length - 1}).`,
                 );
                 process.exit(1);
             }
@@ -300,7 +300,7 @@ export function registerExpandCommand(program: Command): void {
                 }
                 await printFormatted(
                     formatSchema(parsed, mode as "skeleton" | "typescript" | "schema"),
-                    parentOpts.format
+                    parentOpts.format,
                 );
                 return;
             }

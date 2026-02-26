@@ -28,7 +28,7 @@ export interface RankOptions {
 export async function rankBySimilarity<T extends { text: string }>(
     query: string,
     items: T[],
-    options: RankOptions = {}
+    options: RankOptions = {},
 ): Promise<Array<ScoredItem<T>>> {
     if (items.length === 0) {
         return [];
@@ -44,7 +44,7 @@ export async function rankBySimilarity<T extends { text: string }>(
             } catch {
                 return { item, score: 2.0 };
             }
-        })
+        }),
     );
 
     scored.sort((a, b) => a.score - b.score);
@@ -75,7 +75,7 @@ export interface BatchSentimentOptions {
  */
 export async function batchSentiment<IdType = string>(
     items: TextItem<IdType>[],
-    options: BatchSentimentOptions = {}
+    options: BatchSentimentOptions = {},
 ): Promise<Array<SentimentItem<IdType>>> {
     const concurrency = options.concurrency ?? 5;
     const results: Array<SentimentItem<IdType>> = [];
@@ -90,7 +90,7 @@ export async function batchSentiment<IdType = string>(
                 } catch {
                     return { id: item.id, score: 0, label: "neutral" as const };
                 }
-            })
+            }),
         );
         results.push(...chunkResults);
     }
@@ -117,7 +117,7 @@ export interface GroupByLanguageOptions {
  */
 export async function groupByLanguage<IdType = string>(
     items: TextItem<IdType>[],
-    options: GroupByLanguageOptions = {}
+    options: GroupByLanguageOptions = {},
 ): Promise<Record<string, Array<LanguageItem<IdType>>>> {
     const concurrency = options.concurrency ?? 5;
     const minConfidence = options.minConfidence ?? 0.7;
@@ -134,7 +134,7 @@ export async function groupByLanguage<IdType = string>(
                 } catch {
                     return { id: item.id, language: "unknown", confidence: 0 };
                 }
-            })
+            }),
         );
         for (const result of chunkResults) {
             const key = result.language;
@@ -160,7 +160,7 @@ export interface TextEntities<IdType = string> {
  */
 export async function extractEntitiesBatch<IdType = string>(
     items: TextItem<IdType>[],
-    concurrency = 5
+    concurrency = 5,
 ): Promise<Array<TextEntities<IdType>>> {
     const results: Array<TextEntities<IdType>> = [];
 
@@ -174,7 +174,7 @@ export async function extractEntitiesBatch<IdType = string>(
                 } catch {
                     return { id: item.id, entities: [] };
                 }
-            })
+            }),
         );
         results.push(...chunkResults);
     }
@@ -208,7 +208,7 @@ export interface DeduplicateOptions {
  */
 export async function deduplicateTexts<T extends { text: string }>(
     items: T[],
-    options: DeduplicateOptions = {}
+    options: DeduplicateOptions = {},
 ): Promise<T[]> {
     if (items.length <= 1) {
         return [...items];
@@ -270,7 +270,7 @@ export interface ClusterOptions {
  */
 export async function clusterBySimilarity<T extends { text: string }>(
     items: T[],
-    options: ClusterOptions = {}
+    options: ClusterOptions = {},
 ): Promise<Array<Cluster<T>>> {
     if (items.length === 0) {
         return [];

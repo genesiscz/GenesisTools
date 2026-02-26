@@ -58,7 +58,7 @@ export async function loadPreset(nameOrPath: string): Promise<Preset> {
             throw new Error(
                 `Preset "${nameOrPath}" not found. Searched:\n` +
                     `  - ${resolvedPath}\n` +
-                    candidates.map((c) => `  - ${c}`).join("\n")
+                    candidates.map((c) => `  - ${c}`).join("\n"),
             );
         }
         filePath = found;

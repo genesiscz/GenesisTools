@@ -20,7 +20,7 @@ export async function toggleServer(
     enabled: boolean,
     serverNameArg: string | undefined,
     providers: MCPProvider[],
-    options: ToggleOptions = {}
+    options: ToggleOptions = {},
 ): Promise<void> {
     const action = enabled ? "enable" : "disable";
     const actionPast = enabled ? "enabled" : "disabled";
@@ -53,7 +53,7 @@ export async function toggleServer(
     if (options.provider) {
         // Filter to the specified provider
         const matchedProvider = availableProviders.find(
-            (p) => p.getName().toLowerCase() === options.provider?.toLowerCase()
+            (p) => p.getName().toLowerCase() === options.provider?.toLowerCase(),
         );
         if (!matchedProvider) {
             logger.warn(`Provider '${options.provider}' not found or has no config file.`);
@@ -63,7 +63,7 @@ export async function toggleServer(
     } else {
         selectedProviderNames = await promptForProviders(
             availableProviders,
-            `Select providers to ${action} server(s) in:`
+            `Select providers to ${action} server(s) in:`,
         );
     }
 
@@ -94,7 +94,7 @@ export async function toggleServer(
                 // Interactive: prompt for selection
                 projectChoices = await promptForProjects(
                     projects,
-                    `Select projects for ${providerName} (or "Global" for all):`
+                    `Select projects for ${providerName} (or "Global" for all):`,
                 );
 
                 if (!projectChoices || projectChoices.length === 0) {
@@ -112,7 +112,7 @@ export async function toggleServer(
             // If enabling and server not in unified config, try to import it from provider first
             if (enabled && !serverConfig) {
                 logger.info(
-                    `Server '${serverName}' not found in unified config. Attempting to import from ${providerName}...`
+                    `Server '${serverName}' not found in unified config. Attempting to import from ${providerName}...`,
                 );
                 const providerServerInfo = await provider.getServerConfig(serverName);
                 if (providerServerInfo) {
@@ -129,7 +129,7 @@ export async function toggleServer(
             // If disabling, server must exist in unified config
             if (!enabled && !serverConfig) {
                 logger.warn(
-                    `Server '${serverName}' not found in unified config. Run 'tools mcp-manager config' to add it first.`
+                    `Server '${serverName}' not found in unified config. Run 'tools mcp-manager config' to add it first.`,
                 );
                 continue;
             }
@@ -207,7 +207,7 @@ export async function toggleServer(
                 }
             } catch (error) {
                 logger.error(
-                    `✗ Failed to prepare '${serverName}' for ${actionGerund} in ${providerName}: ${error instanceof Error ? error.message : String(error)}`
+                    `✗ Failed to prepare '${serverName}' for ${actionGerund} in ${providerName}: ${error instanceof Error ? error.message : String(error)}`,
                 );
             }
         }
@@ -256,18 +256,18 @@ export async function toggleServer(
                                 logger.info(
                                     `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
                                         serversToToggle.length
-                                    } server(s) globally in ${providerName}`
+                                    } server(s) globally in ${providerName}`,
                                 );
                             } else {
                                 logger.info(
                                     `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
                                         serversToToggle.length
-                                    } server(s) in ${providerName} for project: ${projectChoice.displayName}`
+                                    } server(s) in ${providerName} for project: ${projectChoice.displayName}`,
                                 );
                             }
                         } else if (result === WriteResult.NoChanges) {
                             logger.info(
-                                `→ ${serversToToggle.length} server(s) already ${actionPast} in ${providerName} — no changes needed`
+                                `→ ${serversToToggle.length} server(s) already ${actionPast} in ${providerName} — no changes needed`,
                             );
                         }
                     }
@@ -286,17 +286,17 @@ export async function toggleServer(
                         logger.info(
                             `✓ ${actionPast.charAt(0).toUpperCase() + actionPast.slice(1)} ${
                                 serversToToggle.length
-                            } server(s) globally in ${providerName}`
+                            } server(s) globally in ${providerName}`,
                         );
                     } else if (result === WriteResult.NoChanges) {
                         logger.info(
-                            `→ ${serversToToggle.length} server(s) already ${actionPast} in ${providerName} — no changes needed`
+                            `→ ${serversToToggle.length} server(s) already ${actionPast} in ${providerName} — no changes needed`,
                         );
                     }
                 }
             } catch (error) {
                 logger.error(
-                    `✗ Failed to ${action} servers in ${providerName}: ${error instanceof Error ? error.message : String(error)}`
+                    `✗ Failed to ${action} servers in ${providerName}: ${error instanceof Error ? error.message : String(error)}`,
                 );
             }
         }

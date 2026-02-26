@@ -294,7 +294,7 @@ export class DynamicPricingManager {
         const totalCost = inputCost + outputCost + cachedReadCost + cachedCreateCost;
         logger.debug(
             { inputCost, outputCost, cachedReadCost, cachedCreateCost, totalCost },
-            `[DynamicPricing] Calculated costs`
+            `[DynamicPricing] Calculated costs`,
         );
 
         return totalCost;

@@ -280,7 +280,7 @@ export class LiteLLMPricingFetcher {
             cache_creation_input_tokens?: number;
             cache_read_input_tokens?: number;
         },
-        pricing: LiteLLMModelPricing
+        pricing: LiteLLMModelPricing,
     ): number {
         /**
          * Calculate cost with tiered pricing for 1M context window models
@@ -300,7 +300,7 @@ export class LiteLLMPricingFetcher {
             totalTokens: number | undefined,
             basePrice: number | undefined,
             tieredPrice: number | undefined,
-            threshold: number = DEFAULT_TIERED_THRESHOLD
+            threshold: number = DEFAULT_TIERED_THRESHOLD,
         ): number => {
             if (totalTokens == null || totalTokens <= 0) {
                 return 0;
@@ -323,22 +323,22 @@ export class LiteLLMPricingFetcher {
         const inputCost = calculateTieredCost(
             tokens.input_tokens,
             pricing.input_cost_per_token,
-            pricing.input_cost_per_token_above_200k_tokens
+            pricing.input_cost_per_token_above_200k_tokens,
         );
         const outputCost = calculateTieredCost(
             tokens.output_tokens,
             pricing.output_cost_per_token,
-            pricing.output_cost_per_token_above_200k_tokens
+            pricing.output_cost_per_token_above_200k_tokens,
         );
         const cacheCreationCost = calculateTieredCost(
             tokens.cache_creation_input_tokens,
             pricing.cache_creation_input_token_cost,
-            pricing.cache_creation_input_token_cost_above_200k_tokens
+            pricing.cache_creation_input_token_cost_above_200k_tokens,
         );
         const cacheReadCost = calculateTieredCost(
             tokens.cache_read_input_tokens,
             pricing.cache_read_input_token_cost,
-            pricing.cache_read_input_token_cost_above_200k_tokens
+            pricing.cache_read_input_token_cost_above_200k_tokens,
         );
 
         return inputCost + outputCost + cacheCreationCost + cacheReadCost;
@@ -389,7 +389,7 @@ export class LiteLLMPricingFetcher {
             cache_creation_input_tokens?: number;
             cache_read_input_tokens?: number;
         },
-        modelName?: string
+        modelName?: string,
     ): Promise<number> {
         if (modelName == null || modelName === "") {
             return 0;

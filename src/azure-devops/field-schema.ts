@@ -18,7 +18,7 @@ const STANDARD_FIELD_VALUES: Record<string, string[]> = {
  * Returns a map of field reference names to their metadata
  */
 export function buildFieldSchema(
-    typeDef: WorkItemTypeDefinition
+    typeDef: WorkItemTypeDefinition,
 ): Map<
     string,
     { name: string; required: boolean; allowedValues?: string[]; defaultValue?: string; helpText?: string }
@@ -181,7 +181,7 @@ export function extractUsedValuesFromFull(items: WorkItemFull[], project: string
  */
 export function mergeFieldsWithUsage(
     fieldSchema: Map<string, { name: string; required: boolean; allowedValues?: string[]; defaultValue?: string }>,
-    usedValues: UsedValuesCache
+    usedValues: UsedValuesCache,
 ): Record<
     string,
     {

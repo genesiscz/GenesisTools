@@ -140,7 +140,7 @@ export class SummarizeEngine {
             const choice = await modelSelector.selectModelByName(providerName, modelName);
             if (!choice) {
                 throw new Error(
-                    `Could not resolve model${modelName ? ` "${modelName}"` : ""}${providerName ? ` from provider "${providerName}"` : ""}. Check available providers and models.`
+                    `Could not resolve model${modelName ? ` "${modelName}"` : ""}${providerName ? ` from provider "${providerName}"` : ""}. Check available providers and models.`,
                 );
             }
             return choice;
@@ -172,7 +172,7 @@ export class SummarizeEngine {
         systemPrompt: string,
         userPrompt: string,
         providerChoice: ProviderChoice,
-        streaming: boolean
+        streaming: boolean,
     ): Promise<LLMCallResult> {
         const model = getLanguageModel(providerChoice.provider.provider, providerChoice.model.id);
 
@@ -328,7 +328,7 @@ export class SummarizeEngine {
     private async runChunkedSummarization(
         prepared: PreparedContent,
         providerChoice: ProviderChoice,
-        streaming: boolean
+        streaming: boolean,
     ): Promise<LLMCallResult> {
         const chunkSize = this.options.chunkSize ?? 100_000;
         const chunks = this.splitIntoChunks(prepared.content, chunkSize);
@@ -454,7 +454,7 @@ export class SummarizeEngine {
             cost = await dynamicPricingManager.calculateCost(
                 providerChoice.provider.name,
                 providerChoice.model.id,
-                llmResult.usage
+                llmResult.usage,
             );
         }
 

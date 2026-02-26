@@ -79,7 +79,7 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
                     page,
                     per_page: 50,
                 }),
-            { label: `GET /notifications?page=${page}` }
+            { label: `GET /notifications?page=${page}` },
         );
 
         const notifications = data as GitHubNotification[];
@@ -156,7 +156,7 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
                     octokit.request("PATCH /notifications/threads/{thread_id}", {
                         thread_id: parseInt(item.id, 10),
                     }),
-                { label: `PATCH /notifications/threads/${item.id}` }
+                { label: `PATCH /notifications/threads/${item.id}` },
             );
         }
         console.log(chalk.green(`Marked ${items.length} notification(s) as read`));
@@ -170,7 +170,7 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
                     octokit.request("DELETE /notifications/threads/{thread_id}", {
                         thread_id: parseInt(item.id, 10),
                     }),
-                { label: `DELETE /notifications/threads/${item.id}` }
+                { label: `DELETE /notifications/threads/${item.id}` },
             );
         }
         console.log(chalk.green(`Marked ${items.length} notification(s) as done`));

@@ -148,7 +148,7 @@ export class TelegramHistoryStore {
                     msg.mediaDescription ?? null,
                     msg.isOutgoing ? 1 : 0,
                     msg.dateUnix,
-                    msg.date
+                    msg.date,
                 );
 
                 if (result.changes > 0) {
@@ -310,7 +310,7 @@ export class TelegramHistoryStore {
             const storedVec = new Float32Array(
                 row.embedding.buffer,
                 row.embedding.byteOffset,
-                row.embedding.byteLength / 4
+                row.embedding.byteLength / 4,
             );
             const distance = cosineDistance(queryEmbedding, storedVec);
 
@@ -341,7 +341,7 @@ export class TelegramHistoryStore {
         chatId: string,
         query: string,
         queryEmbedding: Float32Array,
-        options: SearchOptions = {}
+        options: SearchOptions = {},
     ): SearchResult[] {
         const ftsResults = this.search(chatId, query, { ...options, limit: 100 });
         const vecResults = this.semanticSearch(chatId, queryEmbedding, { ...options, limit: 100 });
@@ -440,7 +440,7 @@ export class TelegramHistoryStore {
 				last_synced_id = excluded.last_synced_id,
 				last_synced_at = excluded.last_synced_at
 		`,
-            [chatId, messageId]
+            [chatId, messageId],
         );
     }
 

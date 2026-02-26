@@ -128,7 +128,7 @@ export async function findConversationFiles(filters: SearchFilters): Promise<str
         files.map(async (f) => {
             const fileStat = await stat(f);
             return { path: f, mtime: fileStat.mtime };
-        })
+        }),
     );
     fileStats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
 
@@ -365,7 +365,7 @@ export function calculateRelevanceScore(
     customTitle: string | undefined,
     firstUserMessage: string | undefined,
     allText: string,
-    timestamp: Date
+    timestamp: Date,
 ): number {
     if (!query) {
         return 0;
@@ -592,7 +592,7 @@ function searchSessionMetadataCache(filters: SearchFilters): SearchResult[] {
                       s.customTitle ?? undefined,
                       s.firstPrompt ?? undefined,
                       allSearchText,
-                      firstTimestamp || new Date()
+                      firstTimestamp || new Date(),
                   )
                 : 0,
         });
@@ -699,7 +699,7 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
                           customTitle,
                           firstUserMessage,
                           titleText,
-                          firstTimestamp || new Date()
+                          firstTimestamp || new Date(),
                       )
                     : 0,
             });
@@ -813,7 +813,7 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
                       customTitle,
                       firstUserMessage,
                       allText,
-                      firstTimestamp || new Date()
+                      firstTimestamp || new Date(),
                   )
                 : 0;
 
@@ -1371,7 +1371,7 @@ async function extractSessionMetadataFromFile(filePath: string, mtime: number): 
  */
 export async function rgSearchFiles(
     query: string,
-    options: { project?: string; limit?: number } = {}
+    options: { project?: string; limit?: number } = {},
 ): Promise<string[]> {
     const searchDir = options.project ? resolveProjectDir(options.project) || PROJECTS_DIR : PROJECTS_DIR;
     const rg = new Executor({ prefix: "rg" });
@@ -1968,7 +1968,7 @@ export async function getConversationStatsWithCache(
         forceRefresh?: boolean;
         dateRange?: DateRange;
         onProgress?: (processed: number, total: number, currentDate?: string) => void;
-    } = {}
+    } = {},
 ): Promise<ConversationStats> {
     const { forceRefresh = false, dateRange, onProgress } = options;
 
@@ -2018,7 +2018,7 @@ export async function getConversationStatsWithCache(
     WHERE project IS NOT NULL
     GROUP BY project
     ORDER BY count DESC
-  `
+  `,
         )
         .all() as Array<{ project: string; count: number }>;
 
@@ -2112,7 +2112,7 @@ export async function getStatsForDateRange(range: DateRange): Promise<Conversati
         AND NOT (last_date < ? OR first_date > ?)
       GROUP BY project
       ORDER BY count DESC
-    `
+    `,
             )
             .all(fromDate, toDate) as Array<{ project: string; count: number }>;
 

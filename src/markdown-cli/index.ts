@@ -16,7 +16,7 @@ program
     .addOption(
         new Option("--theme <name>", "Color theme: dark, light, minimal")
             .choices(["dark", "light", "minimal"])
-            .default("dark")
+            .default("dark"),
     )
     .option("--no-color", "Strip ANSI color codes from output")
     .action((file?: string, opts?: { watch?: boolean; width?: number; theme?: string; color?: boolean }) => {

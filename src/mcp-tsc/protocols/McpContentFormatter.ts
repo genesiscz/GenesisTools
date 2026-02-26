@@ -10,7 +10,7 @@
  */
 export function formatTextContent(
     content: string | Record<string, unknown>,
-    format: "json" | "text" | "auto" = "auto"
+    format: "json" | "text" | "auto" = "auto",
 ): string {
     // Auto-detect format
     if (format === "auto") {
@@ -50,7 +50,7 @@ export function formatErrorContent(message: string): Array<{ type: "text"; text:
  */
 export function formatSuccessContent(
     content: string | Record<string, unknown>,
-    format?: "json" | "text" | "auto"
+    format?: "json" | "text" | "auto",
 ): Array<{ type: "text"; text: string }> {
     return [
         {

@@ -27,7 +27,7 @@ export interface GetEventsParams {
 export class TimelyService {
     constructor(
         private client: TimelyApiClient,
-        private storage: Storage
+        private storage: Storage,
     ) {}
 
     // ============================================
@@ -182,7 +182,7 @@ export class TimelyService {
                             }
                         } catch (error) {
                             logger.debug(
-                                `[entry] Failed to fetch from ${url}: ${error instanceof Error ? error.message : String(error)}`
+                                `[entry] Failed to fetch from ${url}: ${error instanceof Error ? error.message : String(error)}`,
                             );
                         }
                     }
@@ -191,14 +191,14 @@ export class TimelyService {
                     logger.debug(`[entry] Could not fetch entry ${entryId} from any endpoint`);
                     return [];
                 },
-                ttl
+                ttl,
             );
 
             // Storage.getFileOrPut always returns unwrapped data (array of TimelyEntry)
             return entries;
         } catch (error) {
             logger.debug(
-                `[entry] Error fetching entry ${entryId}: ${error instanceof Error ? error.message : String(error)}`
+                `[entry] Error fetching entry ${entryId}: ${error instanceof Error ? error.message : String(error)}`,
             );
             return null;
         }

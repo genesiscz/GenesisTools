@@ -300,7 +300,7 @@ class EnhancedPackageComparison {
         private packageName: string,
         private version1: string,
         private version2: string,
-        private options: typeof config
+        private options: typeof config,
     ) {
         this.tempDir = path.join(os.tmpdir(), `npm-diff-${packageName.replace(/[^a-zA-Z0-9]/g, "-")}`);
         this.dir1 = path.join(this.tempDir, version1);
@@ -551,8 +551,8 @@ class EnhancedPackageComparison {
                         "   To install delta for beautiful diffs:\n" +
                         "   • macOS: brew install git-delta\n" +
                         "   • Linux: Download from https://github.com/dandavison/delta/releases\n" +
-                        "   • Cargo: cargo install git-delta\n"
-                )
+                        "   • Cargo: cargo install git-delta\n",
+                ),
             );
             process.exit(1);
         }
@@ -605,7 +605,7 @@ class EnhancedPackageComparison {
                         "",
                         `v${this.version1}`,
                         `v${this.version2}`,
-                        { context: this.options.context }
+                        { context: this.options.context },
                     );
 
                     this.results.push({
@@ -646,7 +646,7 @@ class EnhancedPackageComparison {
                         content2,
                         `v${this.version1}`,
                         `v${this.version2}`,
-                        { context: this.options.context }
+                        { context: this.options.context },
                     );
 
                     this.results.push({
@@ -714,7 +714,7 @@ class EnhancedPackageComparison {
                 content2,
                 `v${this.version1}`,
                 `v${this.version2}`,
-                { context: this.options.context }
+                { context: this.options.context },
             );
 
             this.results.push({
@@ -805,7 +805,7 @@ class EnhancedPackageComparison {
             this.write(chalk.yellow(`   Status: Modified`));
             this.write(chalk.gray(`   Size: ${filesize(result.oldSize || 0)} → ${filesize(result.newSize || 0)}`));
             this.write(
-                `${chalk.green(`   +${result.additions} additions`)} ${chalk.red(`-${result.deletions} deletions`)}`
+                `${chalk.green(`   +${result.additions} additions`)} ${chalk.red(`-${result.deletions} deletions`)}`,
             );
         }
         this.write(chalk.cyan(`${"=".repeat(80)}`));
@@ -955,7 +955,7 @@ class EnhancedPackageComparison {
                         const line = contextBuffer[i];
                         const truncated = line.substring(0, columnWidth - 2);
                         this.write(
-                            `${chalk.gray(`  ${truncated.padEnd(columnWidth - 2)}`)} │ ${chalk.gray(`  ${truncated}`)}`
+                            `${chalk.gray(`  ${truncated.padEnd(columnWidth - 2)}`)} │ ${chalk.gray(`  ${truncated}`)}`,
                         );
                         hasOutput = true;
                     }
@@ -979,7 +979,7 @@ class EnhancedPackageComparison {
                     lines.slice(0, context).forEach((line) => {
                         const truncated = line.substring(0, columnWidth - 2);
                         this.write(
-                            `${chalk.gray(`  ${truncated.padEnd(columnWidth - 2)}`)} │ ${chalk.gray(`  ${truncated}`)}`
+                            `${chalk.gray(`  ${truncated.padEnd(columnWidth - 2)}`)} │ ${chalk.gray(`  ${truncated}`)}`,
                         );
                         hasOutput = true;
                     });
@@ -1313,7 +1313,7 @@ class EnhancedPackageComparison {
                 margin: 1,
                 borderStyle: "round",
                 borderColor: "cyan",
-            }
+            },
         );
         this.write(statsBox);
     }

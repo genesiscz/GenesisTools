@@ -25,7 +25,7 @@ export async function installServer(
     serverName: string | undefined,
     commandOrUrl: string | undefined,
     providers: MCPProvider[],
-    options: InstallOptions = {}
+    options: InstallOptions = {},
 ): Promise<void> {
     const config = await readUnifiedConfig();
     let finalServerName = serverName;
@@ -273,18 +273,18 @@ export async function installServer(
     if (options.provider) {
         // Filter to the specified provider
         const requestedProvider = availableProviders.find(
-            (p) => p.getName().toLowerCase() === options.provider?.toLowerCase()
+            (p) => p.getName().toLowerCase() === options.provider?.toLowerCase(),
         );
         if (!requestedProvider) {
             logger.error(
-                `Provider '${options.provider}' not found. Available: ${availableProviders.map((p) => p.getName()).join(", ")}`
+                `Provider '${options.provider}' not found. Available: ${availableProviders.map((p) => p.getName()).join(", ")}`,
             );
             process.exit(1);
         }
         selectedProviderNames = [requestedProvider.getName()];
     } else if (isNonInteractive) {
         logger.error(
-            `Provider (--provider) is required for non-interactive mode. Available: ${availableProviders.map((p) => p.getName()).join(", ")}`
+            `Provider (--provider) is required for non-interactive mode. Available: ${availableProviders.map((p) => p.getName()).join(", ")}`,
         );
         process.exit(1);
     } else {

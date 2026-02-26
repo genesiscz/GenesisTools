@@ -55,7 +55,7 @@ export function formatValueWithRef(
     value: string,
     refId: string,
     refs: RefStore,
-    options?: { full?: boolean }
+    options?: { full?: boolean },
 ): { formatted: string; updated: boolean } {
     if (options?.full) {
         return { formatted: value, updated: false };

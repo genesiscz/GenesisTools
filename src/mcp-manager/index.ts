@@ -68,7 +68,7 @@ function parseProviderArg(providerArg: string | undefined, allProviders: MCPProv
         const provider = allProviders.find((p) => p.getName().toLowerCase() === name.toLowerCase());
         if (!provider) {
             logger.error(
-                `Provider '${name}' not found. Available: ${allProviders.map((p) => p.getName()).join(", ")}, all`
+                `Provider '${name}' not found. Available: ${allProviders.map((p) => p.getName()).join(", ")}, all`,
             );
             process.exit(1);
         }
@@ -87,7 +87,7 @@ const program = new Command()
     .option("-v, --verbose", "Enable verbose logging")
     .option(
         "-y, --yes",
-        "Auto-confirm changes without prompting (only after you do the command without --yes and check the diff)"
+        "Auto-confirm changes without prompting (only after you do the command without --yes and check the diff)",
     )
     .option("-p, --provider <name>", "Provider name(s) for operations (claude, cursor, gemini, codex, or 'all')")
     .option("-?, --help-full", "Show detailed help message")
@@ -172,13 +172,13 @@ program
         "-H, --headers <str>",
         "Headers for http/sse (uses colon separator: 'Key: value')",
         (val, prev: string[]) => (prev ? [...prev, val] : [val]),
-        []
+        [],
     )
     .option(
         "-e, --env <str>",
         "Env vars for stdio (uses equals separator: 'KEY=value')",
         (val, prev: string[]) => (prev ? [...prev, val] : [val]),
-        []
+        [],
     )
     .action(async (server, command, options) => {
         const opts = program.opts();

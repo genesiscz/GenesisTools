@@ -304,7 +304,7 @@ export function buildHistoryFromRevisions(revisions: ReportingRevision[]): WorkI
  * Only considers closed periods (with endDate) for accurate totals.
  */
 export function calculateTimeInState(
-    history: WorkItemHistorySection
+    history: WorkItemHistorySection,
 ): Map<string, { totalMinutes: number; byAssignee: Map<string, number> }> {
     const result = new Map<string, { totalMinutes: number; byAssignee: Map<string, number> }>();
 

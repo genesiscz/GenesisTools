@@ -71,11 +71,11 @@ async function fetchReleaseNotes(options: ScriptOptions): Promise<void> {
         // Sort releases
         if (oldest) {
             allReleases = allReleases.sort(
-                (a, b) => new Date(a.published_at).getTime() - new Date(b.published_at).getTime()
+                (a, b) => new Date(a.published_at).getTime() - new Date(b.published_at).getTime(),
             );
         } else {
             allReleases = allReleases.sort(
-                (a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime()
+                (a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime(),
             );
         }
 
@@ -93,7 +93,7 @@ async function fetchReleaseNotes(options: ScriptOptions): Promise<void> {
         if (axios.isAxiosError(error)) {
             if (error.response?.status === 403) {
                 logger.error(
-                    "Rate limit exceeded. Consider using a GitHub token by setting the GITHUB_TOKEN environment variable."
+                    "Rate limit exceeded. Consider using a GitHub token by setting the GITHUB_TOKEN environment variable.",
                 );
             } else if (error.response?.status === 404) {
                 logger.error(`Repository ${owner}/${repo} not found or no releases available.`);

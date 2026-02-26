@@ -71,7 +71,7 @@ async function executeDueSchedule(db: AutomateDatabase, schedule: ScheduleRow): 
     const result = await runPreset(preset, options, runLogger);
     logger.info(
         { name: schedule.name, success: result.success, duration: result.totalDuration },
-        "Schedule execution complete"
+        "Schedule execution complete",
     );
 }
 

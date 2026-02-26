@@ -22,7 +22,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
             mapSize: persistentServers.size,
             mapKeys: Array.from(persistentServers.keys()),
         },
-        "getPersistentServer() called"
+        "getPersistentServer() called",
     );
 
     const existing = persistentServers.get(cwd);
@@ -34,7 +34,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
                 pid: process.pid,
                 cwd,
             },
-            "Found existing server in memory, reusing it"
+            "Found existing server in memory, reusing it",
         );
 
         // Check if server info file exists and matches current PID
@@ -51,7 +51,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
                         infoStarted: new Date(info.started).toISOString(),
                         cwd,
                     },
-                    "Server info file exists"
+                    "Server info file exists",
                 );
 
                 if (info.pid !== process.pid) {
@@ -63,7 +63,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
                             infoPid: info.pid,
                             cwd,
                         },
-                        "PID mismatch - server may have been created by different process"
+                        "PID mismatch - server may have been created by different process",
                     );
                 }
             } catch (error) {
@@ -75,7 +75,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
                         cwd,
                         error: error instanceof Error ? error.message : String(error),
                     },
-                    "Failed to read server info file"
+                    "Failed to read server info file",
                 );
             }
         } else {
@@ -86,7 +86,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
                     pid: process.pid,
                     cwd,
                 },
-                "Server exists in memory but info file missing"
+                "Server exists in memory but info file missing",
             );
         }
 
@@ -100,7 +100,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
             pid: process.pid,
             cwd,
         },
-        "No existing server found, creating new server"
+        "No existing server found, creating new server",
     );
 
     // Check if server info file exists from previous process
@@ -117,7 +117,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
                     staleStarted: new Date(info.started).toISOString(),
                     cwd,
                 },
-                "Found stale server info file - possible process restart"
+                "Found stale server info file - possible process restart",
             );
         } catch (error) {
             logger.warn(
@@ -128,7 +128,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
                     cwd,
                     error: error instanceof Error ? error.message : String(error),
                 },
-                "Failed to read stale server info file"
+                "Failed to read stale server info file",
             );
         }
     }
@@ -141,7 +141,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
             pid: process.pid,
             cwd,
         },
-        "Creating new LspServer instance"
+        "Creating new LspServer instance",
     );
     const server = new LspServer({ cwd, debug });
 
@@ -152,7 +152,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
             pid: process.pid,
             cwd,
         },
-        "Initializing LspServer"
+        "Initializing LspServer",
     );
     await server.initialize();
     logger.info(
@@ -162,7 +162,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
             pid: process.pid,
             cwd,
         },
-        "LspServer initialized successfully"
+        "LspServer initialized successfully",
     );
 
     persistentServers.set(cwd, server);
@@ -174,7 +174,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
             cwd,
             newMapSize: persistentServers.size,
         },
-        "Server stored in persistentServers map"
+        "Server stored in persistentServers map",
     );
 
     // Save server info
@@ -195,7 +195,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
             infoPath,
             cwd,
         },
-        "Server info saved"
+        "Server info saved",
     );
 
     return server;

@@ -115,7 +115,7 @@ export async function searchSelect<T>(options: SearchSelectOptions<T>): Promise<
                 // Items
                 const visibleStart = Math.max(
                     0,
-                    Math.min(cursor - Math.floor(maxVisible / 2), filtered.length - maxVisible)
+                    Math.min(cursor - Math.floor(maxVisible / 2), filtered.length - maxVisible),
                 );
                 const visibleEnd = Math.min(filtered.length, visibleStart + maxVisible);
                 const visibleItems = filtered.slice(visibleStart, visibleEnd);

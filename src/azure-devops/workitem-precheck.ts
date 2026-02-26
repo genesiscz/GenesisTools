@@ -106,7 +106,7 @@ const DEFAULT_DEPRIORITIZED_STATES = ["Closed", "Done", "Resolved", "Removed"];
 function selectBestChildren(
     children: ChildInfo[],
     deprioritizedStates: string[],
-    defaultUserName?: string
+    defaultUserName?: string,
 ): ChildInfo[] {
     const isDeprioritized = (state: string) =>
         deprioritizedStates.some((ds) => ds.toLowerCase() === state.toLowerCase());
@@ -157,7 +157,7 @@ function selectBestChildren(
 export async function precheckWorkItem(
     workItemId: number,
     org: string,
-    config: AllowedTypeConfig | undefined
+    config: AllowedTypeConfig | undefined,
 ): Promise<PrecheckResult> {
     if (!config?.allowedWorkItemTypes?.length) {
         return {
