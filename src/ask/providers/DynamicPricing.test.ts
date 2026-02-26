@@ -266,7 +266,6 @@ describe("DynamicPricingManager", () => {
 
             expect(liteLLMPricing).not.toBeNull();
 
-            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
             const pricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing!);
 
             // Verify conversion (per token to per million)
@@ -592,9 +591,7 @@ describe("DynamicPricingManager", () => {
             expect(directOpenAIPricing).not.toBeNull();
 
             // OpenRouter should be cheaper (or at least not more expensive)
-            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
             expect(openRouterPricing?.inputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.inputPer1M);
-            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
             expect(openRouterPricing?.outputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.outputPer1M);
         });
 
@@ -644,7 +641,6 @@ describe("DynamicPricingManager", () => {
                 const liteLLMPricing = await liteLLMPricingFetcher.getModelPricing(modelName);
                 expect(liteLLMPricing).not.toBeNull();
 
-                // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
                 const convertedPricing = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing!);
 
                 // Verify conversion: per-token * 1M = per-million
@@ -681,9 +677,7 @@ describe("DynamicPricingManager", () => {
             expect(directOpenAIPricing).not.toBeNull();
 
             // OpenRouter should be cheaper or equal (it's a reseller, shouldn't be more expensive)
-            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
             expect(openRouterPricing?.inputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.inputPer1M * 1.5); // Allow 50% markup max
-            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
             expect(openRouterPricing?.outputPer1M).toBeLessThanOrEqual(directOpenAIPricing!.outputPer1M * 1.5);
         });
 
@@ -705,9 +699,7 @@ describe("DynamicPricingManager", () => {
             expect(gpt4oMiniPricing).not.toBeNull();
 
             // Mini should be significantly cheaper
-            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
             expect(gpt4oMiniPricing?.inputPer1M).toBeLessThan(gpt4oPricing!.inputPer1M);
-            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
             expect(gpt4oMiniPricing?.outputPer1M).toBeLessThan(gpt4oPricing!.outputPer1M);
         });
 
@@ -795,7 +787,6 @@ describe("DynamicPricingManager", () => {
                 expect(pricing?.inputPer1M).toBeGreaterThan(0);
                 expect(pricing?.outputPer1M).toBeGreaterThan(0);
                 // Output should generally be more expensive than input
-                // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not null above
                 expect(pricing?.outputPer1M).toBeGreaterThanOrEqual(pricing!.inputPer1M);
             }
         });
@@ -941,9 +932,7 @@ describe("DynamicPricingManager", () => {
             const liteLLMPricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
 
             // Compare pricing (allow 5% difference due to cache/timing differences)
-            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not undefined above
             const inputDiff = Math.abs(providerManagerPricing!.inputPer1M - liteLLMPricingInfo.inputPer1M);
-            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not undefined above
             const outputDiff = Math.abs(providerManagerPricing!.outputPer1M - liteLLMPricingInfo.outputPer1M);
             const maxInputDiff = liteLLMPricingInfo.inputPer1M * 0.05;
             const maxOutputDiff = liteLLMPricingInfo.outputPer1M * 0.05;
@@ -985,9 +974,7 @@ describe("DynamicPricingManager", () => {
 
             const liteLLMPricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
 
-            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not undefined above
             const inputDiff = Math.abs(providerManagerPricing!.inputPer1M - liteLLMPricingInfo.inputPer1M);
-            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not undefined above
             const outputDiff = Math.abs(providerManagerPricing!.outputPer1M - liteLLMPricingInfo.outputPer1M);
             const maxInputDiff = Math.max(liteLLMPricingInfo.inputPer1M * 0.05, 0.1); // At least $0.10 tolerance
             const maxOutputDiff = Math.max(liteLLMPricingInfo.outputPer1M * 0.05, 0.5); // At least $0.50 tolerance
@@ -1078,7 +1065,6 @@ describe("DynamicPricingManager", () => {
 
             let consistentCount = 0;
 
-            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not undefined above
             for (const model of modelsWithPricing!) {
                 const liteLLMPricing = await liteLLMPricingFetcher.getModelPricing(`openrouter/${model.id}`);
                 if (!liteLLMPricing) {
@@ -1126,7 +1112,6 @@ describe("DynamicPricingManager", () => {
             // Check that models with pricing have valid values
             const modelsWithPricing = openRouterProvider?.models.filter((m) => m.pricing);
 
-            // biome-ignore lint/style/noNonNullAssertion: test assertion - verified not undefined above
             for (const model of modelsWithPricing!.slice(0, 20)) {
                 // Verify pricing structure is valid
                 expect(model.pricing).toBeDefined();

@@ -9,7 +9,7 @@
  * @returns Formatted string for MCP text content
  */
 export function formatTextContent(
-    content: string | Record<string, any>,
+    content: string | Record<string, unknown>,
     format: "json" | "text" | "auto" = "auto"
 ): string {
     // Auto-detect format
@@ -49,7 +49,7 @@ export function formatErrorContent(message: string): Array<{ type: "text"; text:
  * Creates a standard MCP success response content
  */
 export function formatSuccessContent(
-    content: string | Record<string, any>,
+    content: string | Record<string, unknown>,
     format?: "json" | "text" | "auto"
 ): Array<{ type: "text"; text: string }> {
     return [

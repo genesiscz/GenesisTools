@@ -512,7 +512,7 @@ export class ClaudeProvider extends MCPProvider {
             args: claude.args,
             env: claude.env,
             url: claude.url,
-            headers: (claude as any).headers,
+            headers: (claude as unknown as { headers?: Record<string, string> }).headers,
         };
     }
 

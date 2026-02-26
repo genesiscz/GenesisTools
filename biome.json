@@ -22,10 +22,15 @@
             },
             "style": {
                 "useConst": "error",
-                "useBlockStatements": "error"
+                "useBlockStatements": "error",
+                "noNonNullAssertion": "off"
+            },
+            "complexity": {
+                "noStaticOnlyClass": "off"
             },
             "suspicious": {
-                "noExplicitAny": "warn"
+                "noExplicitAny": "warn",
+                "noTemplateCurlyInString": "off"
             }
         }
     },

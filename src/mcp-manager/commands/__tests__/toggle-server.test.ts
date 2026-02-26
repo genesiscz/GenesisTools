@@ -3,6 +3,7 @@ import logger from "@app/logger";
 import { toggleServer } from "@app/mcp-manager/commands/toggle-server.js";
 import * as commandUtils from "@app/mcp-manager/utils/command.utils.js";
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
+import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { createMockUnifiedConfig, MockMCPProvider } from "./test-utils.js";
 
 describe("toggleServer", () => {
@@ -61,12 +62,14 @@ describe("toggleServer", () => {
             const mockConfig = createMockUnifiedConfig();
             mockProvider.getProjectsResult = ["/path/to/project1", "/path/to/project2"];
 
-            let capturedConfig: any = null;
+            let capturedConfig: UnifiedMCPConfig | null = null;
             spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-            spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
-                capturedConfig = config;
-                return true;
-            });
+            spyOn(configUtils, "writeUnifiedConfig").mockImplementation(
+                async (config: UnifiedMCPConfig): Promise<boolean> => {
+                    capturedConfig = config;
+                    return true;
+                }
+            );
             spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
             spyOn(commandUtils, "promptForProviders").mockResolvedValue(["claude"]);
             spyOn(commandUtils, "promptForProjects").mockResolvedValue([
@@ -83,7 +86,10 @@ describe("toggleServer", () => {
 
             // Verify _meta.enabled was updated with per-project state
             expect(capturedConfig).not.toBeNull();
-            const enabledState = capturedConfig.mcpServers["test-server"]._meta.enabled.claude;
+            const enabledState = capturedConfig!.mcpServers["test-server"]._meta!.enabled.claude as Record<
+                string,
+                boolean
+            >;
             expect(typeof enabledState).toBe("object");
             expect(enabledState["/path/to/project1"]).toBe(true);
         });
@@ -92,12 +98,14 @@ describe("toggleServer", () => {
             const mockConfig = createMockUnifiedConfig();
             mockProvider.getProjectsResult = ["/path/to/project1"];
 
-            let capturedConfig: any = null;
+            let capturedConfig: UnifiedMCPConfig | null = null;
             spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-            spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
-                capturedConfig = config;
-                return true;
-            });
+            spyOn(configUtils, "writeUnifiedConfig").mockImplementation(
+                async (config: UnifiedMCPConfig): Promise<boolean> => {
+                    capturedConfig = config;
+                    return true;
+                }
+            );
             spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
             spyOn(commandUtils, "promptForProviders").mockResolvedValue(["claude"]);
             spyOn(commandUtils, "promptForProjects").mockResolvedValue([
@@ -114,7 +122,7 @@ describe("toggleServer", () => {
 
             // Verify _meta.enabled was set to boolean true for global
             expect(capturedConfig).not.toBeNull();
-            const enabledState = capturedConfig.mcpServers["test-server"]._meta.enabled.claude;
+            const enabledState = capturedConfig!.mcpServers["test-server"]._meta!.enabled.claude;
             expect(enabledState).toBe(true);
         });
 
@@ -219,12 +227,14 @@ describe("toggleServer", () => {
             const mockConfig = createMockUnifiedConfig();
             mockProvider.getProjectsResult = ["/path/to/project1"];
 
-            let capturedConfig: any = null;
+            let capturedConfig: UnifiedMCPConfig | null = null;
             spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-            spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
-                capturedConfig = config;
-                return true;
-            });
+            spyOn(configUtils, "writeUnifiedConfig").mockImplementation(
+                async (config: UnifiedMCPConfig): Promise<boolean> => {
+                    capturedConfig = config;
+                    return true;
+                }
+            );
             spyOn(commandUtils, "getServerNames").mockResolvedValue(["test-server"]);
             spyOn(commandUtils, "promptForProviders").mockResolvedValue(["claude"]);
             spyOn(commandUtils, "promptForProjects").mockResolvedValue([
@@ -241,7 +251,10 @@ describe("toggleServer", () => {
 
             // Verify _meta.enabled was updated with per-project state
             expect(capturedConfig).not.toBeNull();
-            const enabledState = capturedConfig.mcpServers["test-server"]._meta.enabled.claude;
+            const enabledState = capturedConfig!.mcpServers["test-server"]._meta!.enabled.claude as Record<
+                string,
+                boolean
+            >;
             expect(typeof enabledState).toBe("object");
             expect(enabledState["/path/to/project1"]).toBe(false);
         });

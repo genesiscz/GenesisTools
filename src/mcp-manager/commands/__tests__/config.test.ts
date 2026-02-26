@@ -23,7 +23,7 @@ describe("openConfig", () => {
             () =>
                 ({
                     exited: Promise.resolve({ exitCode: 0 }),
-                }) as any
+                }) as unknown as ReturnType<typeof Bun.spawn>
         );
 
         await openConfig();
@@ -47,7 +47,7 @@ describe("openConfig", () => {
             () =>
                 ({
                     exited: Promise.resolve({ exitCode: 0 }),
-                }) as any
+                }) as unknown as ReturnType<typeof Bun.spawn>
         );
 
         await openConfig();
@@ -70,7 +70,7 @@ describe("openConfig", () => {
             () =>
                 ({
                     exited: Promise.resolve({ exitCode: 0 }),
-                }) as any
+                }) as unknown as ReturnType<typeof Bun.spawn>
         );
 
         await openConfig();
@@ -102,7 +102,7 @@ describe("openConfig", () => {
             () =>
                 ({
                     exited: Promise.resolve({ exitCode: 0 }),
-                }) as any
+                }) as unknown as ReturnType<typeof Bun.spawn>
         );
 
         await openConfig();

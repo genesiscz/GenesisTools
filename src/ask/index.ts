@@ -172,7 +172,7 @@ class ASKTool {
                     const prediction = await costPredictor.predictCost(
                         modelChoice.provider.name,
                         modelChoice.model.id,
-                        message,
+                        message
                     );
                     p.log.info(pc.cyan(costPredictor.formatPrediction(prediction)));
                 }
@@ -203,7 +203,7 @@ class ASKTool {
                                 cachedInputTokens: response.usage.cachedInputTokens,
                             },
                             sessionId,
-                            0,
+                            0
                         );
                     }
 

@@ -50,7 +50,6 @@ export function registerExpandCommand(program: Command): void {
             let output: string;
 
             if (opts.query) {
-                // biome-ignore lint: JMESPath accepts any JSON-like value
                 const result = search(data as never, opts.query);
                 output = JSON.stringify(result, null, 2);
             } else if (opts.full) {

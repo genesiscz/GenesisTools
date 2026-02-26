@@ -678,12 +678,7 @@ export class Api {
         logger.debug(`[api] Operations: ${operations.map((o) => o.path).join(", ")}`);
         const url = Api.witUrl(this.config, ["workitems", String(id)]);
 
-        const result = await this.patch<AzWorkItemRaw>(
-            url,
-            operations,
-            "application/json-patch+json",
-            `update #${id}`
-        );
+        const result = await this.patch<AzWorkItemRaw>(url, operations, "application/json-patch+json", `update #${id}`);
         logger.debug(`[api] Updated work item #${id} to rev ${result.rev}`);
 
         return {

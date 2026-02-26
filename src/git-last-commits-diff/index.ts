@@ -119,11 +119,13 @@ async function getAndSelectCommit(git: Executor): Promise<string | undefined> {
         });
 
         return selectedCommit;
-    } catch (promptError: any) {
+    } catch (promptError: unknown) {
         if (promptError instanceof ExitPromptError) {
             logger.info("\nℹ Commit selection cancelled by user.");
         } else {
-            logger.error("\n✖ Error during commit selection prompt:", promptError);
+            logger.error(
+                `\n✖ Error during commit selection prompt: ${promptError instanceof Error ? promptError.message : String(promptError)}`
+            );
         }
         return undefined;
     }
@@ -248,11 +250,13 @@ async function main() {
                 // stdout
                 logger.info("ℹ Output will be written to stdout.");
             }
-        } catch (promptError: any) {
+        } catch (promptError: unknown) {
             if (promptError instanceof ExitPromptError) {
                 logger.info("\nℹ Output selection cancelled by user. Exiting.");
             } else {
-                logger.error("\n✖ Error during output selection prompt:", promptError);
+                logger.error(
+                    `\n✖ Error during output selection prompt: ${promptError instanceof Error ? promptError.message : String(promptError)}`
+                );
             }
             process.exit(0);
         }

@@ -33,7 +33,7 @@ export interface GroupedEntry {
 /**
  * Check if an entry is work-related based on title, note, and description
  */
-function isWorkRelated(entry: any): boolean {
+function isWorkRelated(entry: ProcessedEntry): boolean {
     const text = `${entry.title} ${entry.note || ""} ${entry.description}`.toLowerCase();
 
     // Include work-related entries
@@ -252,7 +252,7 @@ function formatDuration(minutes: number): string {
 /**
  * Extract detailed context from an entry
  */
-function extractDetailedContext(entry: any): ProcessedEntry {
+function extractDetailedContext(entry: ProcessedEntry): ProcessedEntry {
     const enhanced: ProcessedEntry = {
         title: entry.title,
         note: entry.note || "",
@@ -424,8 +424,8 @@ async function processDay(
             return { rawEntries: [], summary: "" };
         }
 
-        const entries = JSON.parse(rawData) as any[];
-        const workEntriesRaw = entries.filter((e: any) => isWorkRelated(e));
+        const entries = JSON.parse(rawData) as ProcessedEntry[];
+        const workEntriesRaw = entries.filter((e) => isWorkRelated(e));
 
         const workEntries = workEntriesRaw.map(extractDetailedContext);
 

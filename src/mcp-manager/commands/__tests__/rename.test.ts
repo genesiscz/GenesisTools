@@ -9,6 +9,7 @@ const { renameServer } = await import("../rename.js");
 
 import logger from "@app/logger";
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
+import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { createMockUnifiedConfig, MockMCPProvider } from "./test-utils.js";
 
 describe("renameServer", () => {
@@ -49,7 +50,7 @@ describe("renameServer", () => {
         // Get the last call to writeUnifiedConfig
         const calls = writeUnifiedConfigSpy.mock.calls;
         expect(calls.length).toBeGreaterThan(0);
-        const lastCall = calls[calls.length - 1][0] as any;
+        const lastCall = calls[calls.length - 1][0] as UnifiedMCPConfig;
         expect(lastCall.mcpServers["renamed-server"]).toBeDefined();
         expect(lastCall.mcpServers["test-server"]).toBeUndefined();
     });
@@ -148,8 +149,8 @@ describe("renameServer", () => {
         // Get the last call to writeUnifiedConfig
         const calls = writeUnifiedConfigSpy.mock.calls;
         expect(calls.length).toBeGreaterThan(0);
-        const lastCall = calls[calls.length - 1][0] as any;
-        expect(lastCall.enabledMcpServers["renamed-server"]).toBeDefined();
-        expect(lastCall.enabledMcpServers["test-server"]).toBeUndefined();
+        const lastCall = calls[calls.length - 1][0] as UnifiedMCPConfig;
+        expect(lastCall.enabledMcpServers!["renamed-server"]).toBeDefined();
+        expect(lastCall.enabledMcpServers!["test-server"]).toBeUndefined();
     });
 });

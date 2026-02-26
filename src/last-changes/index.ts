@@ -199,9 +199,9 @@ function getFilesInDirectory(dirPath: string, basePath: string): FileChange[] {
                         mtime: stats.mtime,
                     });
                 }
-            } catch (_error: any) {}
+            } catch (_error: unknown) {}
         }
-    } catch (_error: any) {
+    } catch (_error: unknown) {
         return result;
     }
 

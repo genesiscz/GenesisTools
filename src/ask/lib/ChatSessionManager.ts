@@ -1,7 +1,7 @@
-import { resolve } from "node:path";
 import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
-import { ChatSession } from "./ChatSession";
+import { resolve } from "node:path";
 import type { ChatSessionManagerRef } from "./ChatSession";
+import { ChatSession } from "./ChatSession";
 import type { SessionEntry } from "./types";
 
 export class ChatSessionManager implements ChatSessionManagerRef {
@@ -59,7 +59,7 @@ export class ChatSessionManager implements ChatSessionManagerRef {
     async save(session: ChatSession): Promise<void> {
         const filePath = this.getFilePath(session.id);
         const entries = session.getAllEntries();
-        const content = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
+        const content = `${entries.map((e) => JSON.stringify(e)).join("\n")}\n`;
         await Bun.write(filePath, content);
     }
 

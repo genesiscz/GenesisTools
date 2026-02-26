@@ -16,7 +16,7 @@ import type {
 } from "@ask/lib/types";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
-import type { ChatConfig, ProviderChoice } from "@ask/types";
+import type { ChatConfig } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
 
 const DEFAULT_SESSION_DIR = resolve(homedir(), ".genesis-tools/ai-chat/sessions");
@@ -24,7 +24,6 @@ const DEFAULT_SESSION_DIR = resolve(homedir(), ".genesis-tools/ai-chat/sessions"
 export class AIChat {
     private _options: AIChatOptions;
     private _engine: ChatEngine | null = null;
-    private _resolvedChoice: ProviderChoice | null = null;
     private _initPromise: Promise<void> | null = null;
     private _activeTurn: ChatTurn | null = null;
     private _sessionManager: ChatSessionManager | null = null;
@@ -35,7 +34,7 @@ export class AIChat {
     constructor(options: AIChatOptions) {
         if (options.resume && options.session?.id && options.resume !== options.session.id) {
             throw new Error(
-                `Conflicting session IDs: resume="${options.resume}" vs session.id="${options.session.id}". Use only one.`,
+                `Conflicting session IDs: resume="${options.resume}" vs session.id="${options.session.id}". Use only one.`
             );
         }
 
@@ -80,19 +79,14 @@ export class AIChat {
         }
 
         // Resolve provider and model
-        const choice = await modelSelector.selectModelByName(
-            this._options.provider,
-            this._options.model,
-        );
+        const choice = await modelSelector.selectModelByName(this._options.provider, this._options.model);
 
         if (!choice) {
             throw new Error(
                 `Could not resolve provider "${this._options.provider}" / model "${this._options.model}". ` +
-                `Check that the API key is configured and the model ID is valid.`,
+                    `Check that the API key is configured and the model ID is valid.`
             );
         }
-
-        this._resolvedChoice = choice;
 
         // Create ChatEngine
         const languageModel = getLanguageModel(choice.provider.provider, choice.model.id);
@@ -109,11 +103,7 @@ export class AIChat {
         this._engine = new ChatEngine(config);
 
         // Add config entry to session
-        this.session.addConfig(
-            choice.provider.name,
-            choice.model.id,
-            this._options.systemPrompt,
-        );
+        this.session.addConfig(choice.provider.name, choice.model.id, this._options.systemPrompt);
     }
 
     /**
@@ -143,7 +133,7 @@ export class AIChat {
         message: string,
         options: SendOptions | undefined,
         addToHistory: boolean,
-        saveThinking: boolean,
+        saveThinking: boolean
     ): AsyncGenerator<ChatEvent> {
         await this._ensureInitialized();
 
@@ -161,10 +151,7 @@ export class AIChat {
         // added between send() calls. This is intentional — the session may have
         // new context entries that should be included in the prompt.
         const systemMessages = messages.filter((m) => m.role === "system").map((m) => m.content);
-        const systemPrompt = [
-            this._options.systemPrompt,
-            ...systemMessages,
-        ].filter(Boolean).join("\n\n");
+        const systemPrompt = [this._options.systemPrompt, ...systemMessages].filter(Boolean).join("\n\n");
 
         if (systemPrompt) {
             engine.setSystemPrompt(systemPrompt);
@@ -187,7 +174,11 @@ export class AIChat {
                                 controller.enqueue(ChatEvent.text(chunk));
                                 fullContent += chunk;
                             },
-                        },
+                            onThinking: (text: string) => {
+                                controller.enqueue(ChatEvent.thinking(text));
+                                thinkingContent += text;
+                            },
+                        }
                     );
 
                     const duration = Date.now() - startTime;
@@ -276,10 +267,10 @@ export class AIChat {
         return {
             engine: this._engine,
             restore: () => {
-                this._engine!.setTemperature(saved.temperature ?? 0.7);
-                this._engine!.setMaxTokens(saved.maxTokens ?? 4096);
+                this._engine?.setTemperature(saved.temperature ?? 0.7);
+                this._engine?.setMaxTokens(saved.maxTokens ?? 4096);
                 if (saved.systemPrompt !== undefined) {
-                    this._engine!.setSystemPrompt(saved.systemPrompt);
+                    this._engine?.setSystemPrompt(saved.systemPrompt);
                 }
             },
         };
@@ -304,7 +295,6 @@ export class AIChat {
         if (options.provider || options.model) {
             this._engine = null;
             this._initPromise = null;
-            this._resolvedChoice = null;
         }
 
         if (this._engine) {
@@ -352,9 +342,7 @@ export class AIChat {
             return providers;
         }
 
-        return providers.filter((p) =>
-            p.models.some((m) => caps.every((cap) => m.capabilities.includes(cap))),
-        );
+        return providers.filter((p) => p.models.some((m) => caps.every((cap) => m.capabilities.includes(cap))));
     }
 
     /**

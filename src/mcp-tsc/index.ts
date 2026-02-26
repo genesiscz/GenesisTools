@@ -87,16 +87,18 @@ function setupDiagnosticHandlers(): void {
 
     // Track if process is being killed externally
     const originalKill = process.kill.bind(process);
-    (process as any).kill = (pid?: number | NodeJS.Signals, signal?: NodeJS.Signals): boolean => {
+    const wrappedKill: typeof process.kill = (pid, signal) => {
         logger.warn({ component: "mcp-tsc", pid: process.pid, targetPid: pid, signal }, "process.kill() called");
+
         if (pid !== undefined && signal !== undefined) {
-            return originalKill(pid as any, signal as any);
+            return originalKill(pid, signal);
         } else if (pid !== undefined) {
-            return originalKill(pid as any);
+            return originalKill(pid);
         } else {
             return originalKill(process.pid);
         }
     };
+    process.kill = wrappedKill;
 
     // Monitor for process disconnection (parent process died)
     process.on("disconnect", () => {

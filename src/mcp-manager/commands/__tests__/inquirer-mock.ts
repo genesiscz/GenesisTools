@@ -1,5 +1,11 @@
 import { mock } from "bun:test";
 
+type MockResponses = Record<string, unknown>;
+
+function getResponses(): MockResponses {
+    return ((globalThis as Record<string, unknown>).__inquirerMockResponses as MockResponses) || {};
+}
+
 /**
  * Setup @inquirer/prompts mock using globalThis for dynamic responses
  * Call this at the top of test files before importing command modules
@@ -9,11 +15,11 @@ import { mock } from "bun:test";
  */
 export function setupInquirerMock(): void {
     // Use globalThis to store mock responses so the mock can access them
-    (globalThis as any).__inquirerMockResponses = { selectedProviders: ["claude"] };
+    (globalThis as Record<string, unknown>).__inquirerMockResponses = { selectedProviders: ["claude"] };
 
     mock.module("@inquirer/prompts", () => ({
         checkbox: async (_config: unknown) => {
-            const responses = (globalThis as any).__inquirerMockResponses || {};
+            const responses = getResponses();
             const value = responses.selectedProviders;
             // Throw if the response is an Error (e.g., ExitPromptError for testing cancellation)
             if (value instanceof Error) {
@@ -23,7 +29,7 @@ export function setupInquirerMock(): void {
             return value ?? [];
         },
         select: async (_config: unknown) => {
-            const responses = (globalThis as any).__inquirerMockResponses || {};
+            const responses = getResponses();
             // Check for error responses first
             const errorKeys = ["selectedProvider", "choice", "inputType"];
             for (const key of errorKeys) {
@@ -36,7 +42,7 @@ export function setupInquirerMock(): void {
             return responses.selectedProvider ?? responses.choice ?? responses.inputType ?? "";
         },
         input: async (config: { message?: string; default?: string }) => {
-            const responses = (globalThis as any).__inquirerMockResponses || {};
+            const responses = getResponses();
             // Check for error responses first
             const inputKeys = [
                 "inputServerName",
@@ -79,7 +85,7 @@ export function setupInquirerMock(): void {
             return config?.default ?? "";
         },
         confirm: async (_config: unknown) => {
-            const responses = (globalThis as any).__inquirerMockResponses || {};
+            const responses = getResponses();
             const value = responses.confirmed;
             // Throw if the response is an Error
             if (value instanceof Error) {
@@ -89,7 +95,7 @@ export function setupInquirerMock(): void {
             return value ?? false;
         },
         search: async (_config: unknown) => {
-            const responses = (globalThis as any).__inquirerMockResponses || {};
+            const responses = getResponses();
             // Check for error responses first
             const searchKeys = ["selectedOldName", "selectedServerName", "inputServerName"];
             for (const key of searchKeys) {
@@ -111,7 +117,7 @@ export function setupInquirerMock(): void {
             return "";
         },
         password: async (_config: unknown) => {
-            const responses = (globalThis as any).__inquirerMockResponses || {};
+            const responses = getResponses();
             const value = responses.password;
             // Throw if the response is an Error
             if (value instanceof Error) {
@@ -151,12 +157,12 @@ export function setupInquirerMock(): void {
  * - newServerName: string - for input prompts when creating new server
  */
 export function setMockResponses(responses: Record<string, unknown>): void {
-    (globalThis as any).__inquirerMockResponses = responses;
+    (globalThis as Record<string, unknown>).__inquirerMockResponses = responses;
 }
 
 /**
  * Get current mock responses
  */
 export function getMockResponses(): Record<string, unknown> {
-    return (globalThis as any).__inquirerMockResponses || {};
+    return getResponses();
 }

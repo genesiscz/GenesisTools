@@ -7,7 +7,7 @@ import { resolvePathWithTilde } from "@app/utils";
 import { handleReadmeFlag } from "@app/utils/readme";
 import boxen from "boxen";
 import chalk from "chalk";
-import chokidar from "chokidar";
+import chokidar, { type FSWatcher } from "chokidar";
 import Table from "cli-table3";
 import { Command } from "commander";
 import * as diff from "diff";
@@ -78,7 +78,7 @@ const createSimpleLogger = () => {
 const logger = createSimpleLogger();
 
 // Configuration loading
-const loadConfig = (configPath?: string): any => {
+const loadConfig = (configPath?: string): Record<string, unknown> => {
     const defaultConfigPath = path.join(process.cwd(), ".npmpackagediffrc");
     const configFile = configPath || (fs.existsSync(defaultConfigPath) ? defaultConfigPath : null);
 
@@ -289,11 +289,11 @@ class EnhancedPackageComparison {
     private dir2: string;
     private addedFiles1: FileMetadata[] = [];
     private addedFiles2: FileMetadata[] = [];
-    private watchers: any[] = [];
+    private watchers: FSWatcher[] = [];
     private spinner?: Ora;
     private results: DiffResult[] = [];
     private packageManager: PackageManager;
-    private pagerProcess?: any;
+    private pagerProcess?: ReturnType<typeof spawn>;
     private outputBuffer: string[] = [];
 
     constructor(
@@ -390,7 +390,7 @@ class EnhancedPackageComparison {
         this.spinner?.succeed(`Created temporary directories`);
     }
 
-    private setupWatcher(directory: string, addedFiles: FileMetadata[]): any {
+    private setupWatcher(directory: string, addedFiles: FileMetadata[]): FSWatcher {
         logger.debug(`Setting up watcher for: ${directory}`);
 
         const watcher = chokidar.watch(directory, {
@@ -759,7 +759,7 @@ class EnhancedPackageComparison {
                 stdio: ["pipe", "inherit", "inherit"],
             });
 
-            this.pagerProcess.on("error", (err: any) => {
+            this.pagerProcess.on("error", (err: unknown) => {
                 logger.debug(`Failed to start pager: ${err}`);
                 // Fallback to normal output
                 this.outputBuffer.forEach((line) => {
@@ -770,7 +770,7 @@ class EnhancedPackageComparison {
 
             // Write buffered output to pager
             this.outputBuffer.forEach((line) => {
-                this.pagerProcess.stdin.write(`${line}\n`);
+                this.pagerProcess?.stdin?.write(`${line}\n`);
             });
             this.outputBuffer = [];
         } catch (_e) {

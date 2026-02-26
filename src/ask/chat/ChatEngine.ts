@@ -29,7 +29,7 @@ export class ChatEngine {
         callbacks?: {
             onChunk?: (chunk: string) => void;
             onThinking?: (text: string) => void;
-        },
+        }
     ): Promise<ChatResponse> {
         // Add user message to history
         const userMessage: ChatMessage = {
@@ -75,7 +75,7 @@ export class ChatEngine {
         callbacks?: {
             onChunk?: (chunk: string) => void;
             onThinking?: (text: string) => void;
-        },
+        }
     ): Promise<ChatResponse> {
         // Store usage from onFinish callback - this is the most reliable source
         let finishUsage: LanguageModelUsage | undefined;
@@ -130,15 +130,19 @@ export class ChatEngine {
         let fullResponse = "";
         const startTime = Date.now();
 
-        // Stream output immediately without artificial delays
-        for await (const chunk of result.textStream) {
-            if (callbacks?.onChunk) {
-                callbacks.onChunk(chunk);
-            } else {
-                process.stdout.write(chunk);
-            }
+        // Stream output — use fullStream to capture both text and reasoning deltas
+        for await (const part of result.fullStream) {
+            if (part.type === "text-delta") {
+                if (callbacks?.onChunk) {
+                    callbacks.onChunk(part.text);
+                } else {
+                    process.stdout.write(part.text);
+                }
 
-            fullResponse += chunk;
+                fullResponse += part.text;
+            } else if (part.type === "reasoning-delta" && callbacks?.onThinking) {
+                callbacks.onThinking(part.text);
+            }
         }
 
         const endTime = Date.now();
