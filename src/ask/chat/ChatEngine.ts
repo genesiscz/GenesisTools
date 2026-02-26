@@ -29,7 +29,7 @@ export class ChatEngine {
         callbacks?: {
             onChunk?: (chunk: string) => void;
             onThinking?: (text: string) => void;
-        },
+        }
     ): Promise<ChatResponse> {
         // Add user message to history
         const userMessage: ChatMessage = {
@@ -75,7 +75,7 @@ export class ChatEngine {
         callbacks?: {
             onChunk?: (chunk: string) => void;
             onThinking?: (text: string) => void;
-        },
+        }
     ): Promise<ChatResponse> {
         // Store usage from onFinish callback - this is the most reliable source
         let finishUsage: LanguageModelUsage | undefined;

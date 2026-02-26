@@ -1,7 +1,7 @@
 import type { LanguageModelUsage } from "ai";
 
 // Re-export relevant existing types
-export type { ProviderChoice, DetectedProvider, ModelInfo } from "@ask/types";
+export type { DetectedProvider, ModelInfo, ProviderChoice } from "@ask/types";
 
 export type LogLevel = "silent" | "error" | "warn" | "info" | "debug" | "trace";
 

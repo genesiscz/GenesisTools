@@ -35,7 +35,7 @@ export class AIChat {
     constructor(options: AIChatOptions) {
         if (options.resume && options.session?.id && options.resume !== options.session.id) {
             throw new Error(
-                `Conflicting session IDs: resume="${options.resume}" vs session.id="${options.session.id}". Use only one.`,
+                `Conflicting session IDs: resume="${options.resume}" vs session.id="${options.session.id}". Use only one.`
             );
         }
 
@@ -80,15 +80,12 @@ export class AIChat {
         }
 
         // Resolve provider and model
-        const choice = await modelSelector.selectModelByName(
-            this._options.provider,
-            this._options.model,
-        );
+        const choice = await modelSelector.selectModelByName(this._options.provider, this._options.model);
 
         if (!choice) {
             throw new Error(
                 `Could not resolve provider "${this._options.provider}" / model "${this._options.model}". ` +
-                `Check that the API key is configured and the model ID is valid.`,
+                    `Check that the API key is configured and the model ID is valid.`
             );
         }
 
@@ -109,11 +106,7 @@ export class AIChat {
         this._engine = new ChatEngine(config);
 
         // Add config entry to session
-        this.session.addConfig(
-            choice.provider.name,
-            choice.model.id,
-            this._options.systemPrompt,
-        );
+        this.session.addConfig(choice.provider.name, choice.model.id, this._options.systemPrompt);
     }
 
     /**
@@ -143,7 +136,7 @@ export class AIChat {
         message: string,
         options: SendOptions | undefined,
         addToHistory: boolean,
-        saveThinking: boolean,
+        saveThinking: boolean
     ): AsyncGenerator<ChatEvent> {
         await this._ensureInitialized();
 
@@ -161,10 +154,7 @@ export class AIChat {
         // added between send() calls. This is intentional — the session may have
         // new context entries that should be included in the prompt.
         const systemMessages = messages.filter((m) => m.role === "system").map((m) => m.content);
-        const systemPrompt = [
-            this._options.systemPrompt,
-            ...systemMessages,
-        ].filter(Boolean).join("\n\n");
+        const systemPrompt = [this._options.systemPrompt, ...systemMessages].filter(Boolean).join("\n\n");
 
         if (systemPrompt) {
             engine.setSystemPrompt(systemPrompt);
@@ -172,7 +162,7 @@ export class AIChat {
 
         // Track chunks for building response
         let fullContent = "";
-        let thinkingContent = "";
+        const thinkingContent = "";
         const startTime = Date.now();
 
         // Bridge push-based onChunk to pull-based async generator via ReadableStream
@@ -187,7 +177,7 @@ export class AIChat {
                                 controller.enqueue(ChatEvent.text(chunk));
                                 fullContent += chunk;
                             },
-                        },
+                        }
                     );
 
                     const duration = Date.now() - startTime;
@@ -352,9 +342,7 @@ export class AIChat {
             return providers;
         }
 
-        return providers.filter((p) =>
-            p.models.some((m) => caps.every((cap) => m.capabilities.includes(cap))),
-        );
+        return providers.filter((p) => p.models.some((m) => caps.every((cap) => m.capabilities.includes(cap))));
     }
 
     /**

@@ -1,6 +1,6 @@
 import {
-    type Dirent,
     cpSync,
+    type Dirent,
     existsSync,
     lstatSync,
     mkdirSync,
@@ -235,7 +235,9 @@ export function buildMigrationPlan(discovered: DiscoveredSources, input: Migrati
         for (const source of instructionSources) {
             for (const targetScope of targetScopes) {
                 const targetPath =
-                    targetScope === "project" ? join(input.projectRoot, "AGENTS.md") : join(GLOBAL_CODEX_DIR, "AGENTS.md");
+                    targetScope === "project"
+                        ? join(input.projectRoot, "AGENTS.md")
+                        : join(GLOBAL_CODEX_DIR, "AGENTS.md");
 
                 if (seenTargets.has(targetPath)) {
                     warnings.push(`Skipping duplicate instruction target: ${targetPath}`);

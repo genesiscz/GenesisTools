@@ -19,11 +19,7 @@ describe("ChatTurn", () => {
         cost: 0.001,
     };
 
-    const mockEvents = [
-        ChatEvent.text("Hello "),
-        ChatEvent.text("there!"),
-        ChatEvent.done(mockResponse),
-    ];
+    const mockEvents = [ChatEvent.text("Hello "), ChatEvent.text("there!"), ChatEvent.done(mockResponse)];
 
     it("await resolves with ChatResponse", async () => {
         const turn = new ChatTurn(createMockSource(mockEvents));
@@ -52,7 +48,9 @@ describe("ChatTurn", () => {
         const turn = new ChatTurn(createMockSource(mockEvents));
 
         // Consume the stream
-        for await (const _ of turn) { /* drain */ }
+        for await (const _ of turn) {
+            /* drain */
+        }
 
         const response = await turn.response;
         expect(response.content).toBe("Hello there!");
@@ -71,7 +69,9 @@ describe("ChatTurn", () => {
         const chunks: string[] = [];
         const turn = new ChatTurn(createMockSource(mockEvents), (text) => chunks.push(text));
 
-        for await (const _ of turn) { /* drain */ }
+        for await (const _ of turn) {
+            /* drain */
+        }
 
         expect(chunks).toEqual(["Hello ", "there!"]);
     });
@@ -131,17 +131,16 @@ describe("ChatTurn", () => {
         const turn = new ChatTurn(source);
         await turn; // drains
         const events: ChatEvent[] = [];
-        for await (const e of turn) { events.push(e); } // should replay
+        for await (const e of turn) {
+            events.push(e);
+        } // should replay
 
         expect(invocations).toBe(1);
         expect(events.length).toBe(2);
     });
 
     it("fallback response when no done event", async () => {
-        const events = [
-            ChatEvent.text("partial "),
-            ChatEvent.text("response"),
-        ];
+        const events = [ChatEvent.text("partial "), ChatEvent.text("response")];
 
         const turn = new ChatTurn(createMockSource(events));
         const response = await turn;

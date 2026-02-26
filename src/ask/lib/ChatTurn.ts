@@ -1,4 +1,4 @@
-import { ChatEvent } from "./ChatEvent";
+import type { ChatEvent } from "./ChatEvent";
 import type { ChatResponse } from "./types";
 
 /**
@@ -22,10 +22,7 @@ export class ChatTurn implements PromiseLike<ChatResponse>, AsyncIterable<ChatEv
     /** The final response — resolves after the stream completes */
     readonly response: Promise<ChatResponse>;
 
-    constructor(
-        source: () => AsyncGenerator<ChatEvent>,
-        onChunk?: (text: string) => void,
-    ) {
+    constructor(source: () => AsyncGenerator<ChatEvent>, onChunk?: (text: string) => void) {
         this._source = source;
         this._onChunk = onChunk;
         this.response = new Promise<ChatResponse>((resolve, reject) => {
@@ -37,7 +34,7 @@ export class ChatTurn implements PromiseLike<ChatResponse>, AsyncIterable<ChatEv
     /** PromiseLike — await the turn to get the buffered ChatResponse */
     then<TResult1 = ChatResponse, TResult2 = never>(
         onfulfilled?: ((value: ChatResponse) => TResult1 | PromiseLike<TResult1>) | null,
-        onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+        onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
     ): Promise<TResult1 | TResult2> {
         return this._drain().then(onfulfilled, onrejected);
     }

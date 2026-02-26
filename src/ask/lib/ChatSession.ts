@@ -1,11 +1,11 @@
 import type {
-    SessionEntry,
-    SessionConfigEntry,
-    SessionUserEntry,
     SessionAssistantEntry,
-    SessionSystemEntry,
+    SessionConfigEntry,
     SessionContextEntry,
+    SessionEntry,
     SessionStats,
+    SessionSystemEntry,
+    SessionUserEntry,
     ToolCallResult,
 } from "./types";
 
@@ -261,9 +261,7 @@ export class ChatSession {
 
         const lastEntry = this.entries[this.entries.length - 1];
         const duration =
-            startedAt && lastEntry
-                ? new Date(lastEntry.timestamp).getTime() - new Date(startedAt).getTime()
-                : 0;
+            startedAt && lastEntry ? new Date(lastEntry.timestamp).getTime() - new Date(startedAt).getTime() : 0;
 
         this._statsCache = {
             messageCount: this.entries.length,
