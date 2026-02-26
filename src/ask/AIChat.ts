@@ -159,6 +159,7 @@ export class AIChat {
 
         // Track chunks for building response
         let fullContent = "";
+        // TODO: wire onThinking from ChatEngine.sendMessage() to populate this
         const thinkingContent = "";
         const startTime = Date.now();
 
