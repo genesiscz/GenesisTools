@@ -2,7 +2,9 @@
  * TimeLog Interactive Prompts - @clack/prompts implementation
  */
 
+import { Api } from "@app/azure-devops/api";
 import { convertToMinutes, formatMinutes, getTodayDate, TimeLogApi } from "@app/azure-devops/timelog-api";
+import { updateWorkItemEffort } from "@app/azure-devops/timelog-effort";
 import type { AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
@@ -157,6 +159,14 @@ export async function runInteractiveAddClack(
     spinner.start("Creating time log entry...");
     const ids = await api.createTimeLogEntry(workItemId, totalMinutes, selectedType as string, dateInput, comment);
     spinner.stop("Time log created!");
+
+    // Update Remaining/Completed Work on the work item
+    const devopsApi = new Api(config);
+    const effort = await updateWorkItemEffort(devopsApi, workItemId, totalMinutes);
+
+    if (effort) {
+        p.log.info(`Remaining: ${effort.remaining}h | Completed: ${effort.completed}h`);
+    }
 
     p.outro(pc.green(`✔ Entry ID: ${ids[0]}`));
 }

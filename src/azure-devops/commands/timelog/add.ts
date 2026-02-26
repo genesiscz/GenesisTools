@@ -1,5 +1,7 @@
+import { Api } from "@app/azure-devops/api";
 import { AzureDevOpsCacheManager } from "@app/azure-devops/cache-manager";
 import { convertToMinutes, formatMinutes, getTodayDate, TimeLogApi } from "@app/azure-devops/timelog-api";
+import { updateWorkItemEffort } from "@app/azure-devops/timelog-effort";
 import { runInteractiveAddClack } from "@app/azure-devops/timelog-prompts-clack";
 import { runInteractiveAddInquirer } from "@app/azure-devops/timelog-prompts-inquirer";
 import type { AllowedTypeConfig, AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
@@ -201,6 +203,14 @@ ${types.map((t) => `  - ${t.description}`).join("\n")}
                 }
 
                 console.log(`  Entry ID: ${ids[0]}`);
+
+                // Update Remaining/Completed Work on the work item
+                const devopsApi = new Api(config);
+                const effort = await updateWorkItemEffort(devopsApi, effectiveWorkItemId, totalMinutes);
+
+                if (effort) {
+                    console.log(`  Remaining: ${effort.remaining}h | Completed: ${effort.completed}h`);
+                }
 
                 // Evict timelog cache for affected work item
                 const cacheManager = new AzureDevOpsCacheManager();

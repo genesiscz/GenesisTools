@@ -203,7 +203,7 @@ export class Api {
      * Make an HTTP request with logging and error handling
      */
     private async request<T>(
-        method: "GET" | "POST" | "PUT" | "DELETE",
+        method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH",
         url: string,
         options: { body?: unknown; contentType?: string; description?: string } = {}
     ): Promise<T> {
@@ -261,6 +261,18 @@ export class Api {
         description?: string
     ): Promise<T> {
         return this.request<T>("POST", url, { body, contentType, description });
+    }
+
+    /**
+     * Make a PATCH request to the Azure DevOps API
+     */
+    private async patch<T>(
+        url: string,
+        body: unknown,
+        contentType = "application/json-patch+json",
+        description?: string
+    ): Promise<T> {
+        return this.request<T>("PATCH", url, { body, contentType, description });
     }
 
     /**
@@ -648,6 +660,34 @@ export class Api {
 
         return {
             ...this.mapRawToWorkItemBase(result as unknown as AzWorkItemRaw),
+            comments: [],
+        };
+    }
+
+    /**
+     * Update an existing work item using JSON Patch operations.
+     *
+     * @example
+     * const operations: JsonPatchOperation[] = [
+     *   { op: "replace", path: "/fields/Microsoft.VSTS.Scheduling.RemainingWork", value: 6 },
+     * ];
+     * const updated = await api.updateWorkItem(12345, operations);
+     */
+    async updateWorkItem(id: number, operations: JsonPatchOperation[]): Promise<WorkItemFull> {
+        logger.debug(`[api] Updating work item #${id}`);
+        logger.debug(`[api] Operations: ${operations.map((o) => o.path).join(", ")}`);
+        const url = Api.witUrl(this.config, ["workitems", String(id)]);
+
+        const result = await this.patch<AzWorkItemRaw>(
+            url,
+            operations,
+            "application/json-patch+json",
+            `update #${id}`
+        );
+        logger.debug(`[api] Updated work item #${id} to rev ${result.rev}`);
+
+        return {
+            ...this.mapRawToWorkItemBase(result),
             comments: [],
         };
     }
