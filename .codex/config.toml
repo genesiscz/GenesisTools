@@ -1,0 +1,2 @@
+# Repo-local Codex overrides to align with Claude instructions.
+project_doc_fallback_filenames = ["CLAUDE.md"]

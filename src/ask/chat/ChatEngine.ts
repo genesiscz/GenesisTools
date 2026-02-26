@@ -23,7 +23,14 @@ export class ChatEngine {
         this.config = config;
     }
 
-    async sendMessage(message: string, tools?: Record<string, unknown>): Promise<ChatResponse> {
+    async sendMessage(
+        message: string,
+        tools?: Record<string, unknown>,
+        callbacks?: {
+            onChunk?: (chunk: string) => void;
+            onThinking?: (text: string) => void;
+        },
+    ): Promise<ChatResponse> {
         // Add user message to history
         const userMessage: ChatMessage = {
             role: "user",
@@ -38,7 +45,7 @@ export class ChatEngine {
             let response: ChatResponse;
 
             if (this.config.streaming) {
-                response = await this.sendStreamingMessage(message, tools);
+                response = await this.sendStreamingMessage(message, tools, callbacks);
             } else {
                 response = await this.sendNonStreamingMessage(message, tools);
             }
@@ -62,7 +69,14 @@ export class ChatEngine {
         }
     }
 
-    private async sendStreamingMessage(message: string, _tools?: Record<string, unknown>): Promise<ChatResponse> {
+    private async sendStreamingMessage(
+        message: string,
+        _tools?: Record<string, unknown>,
+        callbacks?: {
+            onChunk?: (chunk: string) => void;
+            onThinking?: (text: string) => void;
+        },
+    ): Promise<ChatResponse> {
         // Store usage from onFinish callback - this is the most reliable source
         let finishUsage: LanguageModelUsage | undefined;
         let finishCost: number | undefined;
@@ -118,15 +132,22 @@ export class ChatEngine {
 
         // Stream output immediately without artificial delays
         for await (const chunk of result.textStream) {
-            process.stdout.write(chunk);
+            if (callbacks?.onChunk) {
+                callbacks.onChunk(chunk);
+            } else {
+                process.stdout.write(chunk);
+            }
+
             fullResponse += chunk;
         }
 
         const endTime = Date.now();
         const _duration = endTime - startTime;
 
-        // Add a newline after streaming
-        process.stdout.write("\n");
+        // Add a newline after streaming (only for stdout, not callbacks)
+        if (!callbacks?.onChunk) {
+            process.stdout.write("\n");
+        }
 
         // Wait a bit for onFinish callback to complete (it's async)
         await new Promise((resolve) => setTimeout(resolve, 100));
