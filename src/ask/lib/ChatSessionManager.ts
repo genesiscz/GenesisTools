@@ -59,7 +59,7 @@ export class ChatSessionManager implements ChatSessionManagerRef {
     async save(session: ChatSession): Promise<void> {
         const filePath = this.getFilePath(session.id);
         const entries = session.getAllEntries();
-        const content = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
+        const content = `${entries.map((e) => JSON.stringify(e)).join("\n")}\n`;
         await Bun.write(filePath, content);
     }
 

@@ -16,7 +16,7 @@ import type {
 } from "@ask/lib/types";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
-import type { ChatConfig, ProviderChoice } from "@ask/types";
+import type { ChatConfig } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
 
 const DEFAULT_SESSION_DIR = resolve(homedir(), ".genesis-tools/ai-chat/sessions");
@@ -24,7 +24,6 @@ const DEFAULT_SESSION_DIR = resolve(homedir(), ".genesis-tools/ai-chat/sessions"
 export class AIChat {
     private _options: AIChatOptions;
     private _engine: ChatEngine | null = null;
-    private _resolvedChoice: ProviderChoice | null = null;
     private _initPromise: Promise<void> | null = null;
     private _activeTurn: ChatTurn | null = null;
     private _sessionManager: ChatSessionManager | null = null;
@@ -88,8 +87,6 @@ export class AIChat {
                     `Check that the API key is configured and the model ID is valid.`
             );
         }
-
-        this._resolvedChoice = choice;
 
         // Create ChatEngine
         const languageModel = getLanguageModel(choice.provider.provider, choice.model.id);
@@ -266,10 +263,10 @@ export class AIChat {
         return {
             engine: this._engine,
             restore: () => {
-                this._engine!.setTemperature(saved.temperature ?? 0.7);
-                this._engine!.setMaxTokens(saved.maxTokens ?? 4096);
+                this._engine?.setTemperature(saved.temperature ?? 0.7);
+                this._engine?.setMaxTokens(saved.maxTokens ?? 4096);
                 if (saved.systemPrompt !== undefined) {
-                    this._engine!.setSystemPrompt(saved.systemPrompt);
+                    this._engine?.setSystemPrompt(saved.systemPrompt);
                 }
             },
         };
@@ -294,7 +291,6 @@ export class AIChat {
         if (options.provider || options.model) {
             this._engine = null;
             this._initPromise = null;
-            this._resolvedChoice = null;
         }
 
         if (this._engine) {

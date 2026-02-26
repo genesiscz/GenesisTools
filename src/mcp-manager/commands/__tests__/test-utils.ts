@@ -213,10 +213,10 @@ export function createMockServerConfig(name: string = "test-server"): UnifiedMCP
 /**
  * Create a mock Enquirer class that can be used with mock.module()
  */
-export function createMockEnquirer(responses: Record<string, any> = {}) {
+export function createMockEnquirer(responses: Record<string, unknown> = {}) {
     class MockEnquirer {
-        async prompt(promptConfig: any): Promise<any> {
-            const responseKey = promptConfig.name || Object.keys(responses)[0];
+        async prompt(promptConfig: Record<string, unknown>): Promise<unknown> {
+            const responseKey = (promptConfig.name as string) || Object.keys(responses)[0];
             return responses[responseKey] || responses || {};
         }
     }

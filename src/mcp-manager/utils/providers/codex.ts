@@ -44,7 +44,7 @@ export class CodexProvider extends MCPProvider {
             mkdirSync(dir, { recursive: true });
         }
 
-        const newContent = TOML.stringify(config as Record<string, any>);
+        const newContent = TOML.stringify(config as TOML.JsonMap);
 
         // Read old content (empty string if file doesn't exist)
         const oldContent = (await this.configExists()) ? await readFile(this.configPath, "utf-8") : "";
@@ -218,7 +218,7 @@ export class CodexProvider extends MCPProvider {
     }
 
     private codexToUnified(codex: CodexMCPServerConfig): UnifiedMCPServerConfig {
-        let type: "stdio" | "sse" | "http" = (codex.type as any) || "stdio";
+        let type: "stdio" | "sse" | "http" = (codex.type as "stdio" | "sse" | "http") || "stdio";
         if (codex.url && !codex.command) {
             type = "sse";
         }

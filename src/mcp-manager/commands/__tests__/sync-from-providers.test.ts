@@ -9,7 +9,7 @@ const { syncFromProviders } = await import("../sync-from-providers.js");
 
 import logger from "@app/logger";
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
-import type { MCPServerInfo } from "@app/mcp-manager/utils/providers/types.js";
+import type { MCPServerInfo, UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { createMockServerConfig, createMockUnifiedConfig, MockMCPProvider } from "./test-utils.js";
 
 describe("syncFromProviders", () => {
@@ -34,12 +34,14 @@ describe("syncFromProviders", () => {
         };
         mockProvider.listServersResult = [mockServerInfo];
 
-        let capturedConfig: any = null;
+        let capturedConfig: UnifiedMCPConfig | null = null;
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-        spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
-            capturedConfig = config;
-            return true;
-        });
+        spyOn(configUtils, "writeUnifiedConfig").mockImplementation(
+            async (config: UnifiedMCPConfig): Promise<boolean> => {
+                capturedConfig = config;
+                return true;
+            }
+        );
         spyOn(logger, "info");
         spyOn(logger, "debug");
         spyOn(logger, "warn");
@@ -52,7 +54,7 @@ describe("syncFromProviders", () => {
 
         expect(configUtils.writeUnifiedConfig).toHaveBeenCalled();
         expect(capturedConfig).not.toBeNull();
-        expect(capturedConfig.mcpServers["provider-server"]).toBeDefined();
+        expect(capturedConfig!.mcpServers["provider-server"]).toBeDefined();
     });
 
     it("should handle per-project enablement from Claude", async () => {
@@ -73,12 +75,14 @@ describe("syncFromProviders", () => {
         // Provider needs to return projects to trigger per-project enablement
         mockProvider.getProjectsResult = ["/path/to/project1", "/path/to/project2"];
 
-        let capturedConfig: any = null;
+        let capturedConfig: UnifiedMCPConfig | null = null;
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-        spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
-            capturedConfig = config;
-            return true;
-        });
+        spyOn(configUtils, "writeUnifiedConfig").mockImplementation(
+            async (config: UnifiedMCPConfig): Promise<boolean> => {
+                capturedConfig = config;
+                return true;
+            }
+        );
         spyOn(logger, "info");
         spyOn(logger, "debug");
 
@@ -89,7 +93,10 @@ describe("syncFromProviders", () => {
         await syncFromProviders([mockProvider]);
 
         expect(capturedConfig).not.toBeNull();
-        const enabledState = capturedConfig.mcpServers["project-server"]._meta.enabled.claude;
+        const enabledState = capturedConfig!.mcpServers["project-server"]._meta!.enabled.claude as Record<
+            string,
+            boolean
+        >;
         expect(typeof enabledState).toBe("object");
         expect(enabledState["/path/to/project1"]).toBe(true);
         expect(enabledState["/path/to/project2"]).toBe(false);
@@ -127,7 +134,7 @@ describe("syncFromProviders", () => {
     it("should merge enabled state when resolving conflicts", async () => {
         const mockConfig = createMockUnifiedConfig();
         const existingServer = createMockServerConfig("test-server");
-        existingServer._meta?.enabled.gemini = true;
+        existingServer._meta!.enabled.gemini = true;
         mockConfig.mcpServers["test-server"] = existingServer;
 
         const conflictingServer: MCPServerInfo = {
@@ -138,12 +145,14 @@ describe("syncFromProviders", () => {
         };
         mockProvider.listServersResult = [conflictingServer];
 
-        let capturedConfig: any = null;
+        let capturedConfig: UnifiedMCPConfig | null = null;
         spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
-        spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: any): Promise<boolean> => {
-            capturedConfig = config;
-            return true;
-        });
+        spyOn(configUtils, "writeUnifiedConfig").mockImplementation(
+            async (config: UnifiedMCPConfig): Promise<boolean> => {
+                capturedConfig = config;
+                return true;
+            }
+        );
         spyOn(logger, "info");
         spyOn(logger, "warn");
 
@@ -155,7 +164,7 @@ describe("syncFromProviders", () => {
         await syncFromProviders([mockProvider]);
 
         expect(capturedConfig).not.toBeNull();
-        const enabledState = capturedConfig.mcpServers["test-server"]._meta.enabled;
+        const enabledState = capturedConfig!.mcpServers["test-server"]._meta!.enabled;
         expect(enabledState.claude).toBe(true);
         expect(enabledState.gemini).toBe(true); // Should preserve existing
     });

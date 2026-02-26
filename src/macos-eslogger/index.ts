@@ -134,7 +134,7 @@ interface ESLoggerEvent {
         | ESEvent_sudo
         | ESEvent_signal
         | ESEvent_rename
-        | any;
+        | Record<string, unknown>;
 }
 
 // ============================================================================
@@ -468,7 +468,7 @@ function evaluateFilterExpression(event: ESLoggerEvent, expression: string): boo
         }
 
         const [_, path, operator, value] = match;
-        const actualValue = getValueByPath(event, path.trim());
+        const actualValue = getValueByPath(event as unknown as Record<string, unknown>, path.trim());
 
         // Remove quotes from the expected value
         const expectedValue = value.trim().replace(/^["']|["']$/g, "");
@@ -532,19 +532,19 @@ function evaluateFilterExpression(event: ESLoggerEvent, expression: string): boo
  * Get value from object using dot notation path
  * Example: getValueByPath(event, '.event.fork.child.executable.path')
  */
-function getValueByPath(obj: any, path: string): any {
+function getValueByPath(obj: Record<string, unknown>, path: string): unknown {
     // Remove leading dot if present
     const cleanPath = path.replace(/^\./, "");
 
     // Split by dots, but handle escaped dots if needed
     const parts = cleanPath.split(".");
 
-    let current = obj;
+    let current: unknown = obj;
     for (const part of parts) {
-        if (current == null) {
+        if (current == null || typeof current !== "object") {
             return undefined;
         }
-        current = current[part];
+        current = (current as Record<string, unknown>)[part];
     }
 
     return current;
@@ -580,7 +580,7 @@ function formatExecEvent(event: ESLoggerEvent): string {
 
 function formatForkEvent(event: ESLoggerEvent): string {
     const proc = event.process;
-    const forkEvent = event.event as ESEvent_fork | any;
+    const forkEvent = event.event as ESEvent_fork & Record<string, unknown>;
 
     // Fork events from eslogger: process field contains the child process
     // Parent info is in parent_audit_token or ppid
@@ -859,11 +859,13 @@ function monitorWithESF(
                     } else {
                         console.log(formatted);
                     }
-                } catch (formatErr: any) {
+                } catch (formatErr: unknown) {
                     // Formatting error - event parsed but couldn't format it
                     if (!silent) {
                         const eventTypeName = getEventTypeName(event.event_type);
-                        consoleLog.warn(`[FORMAT_ERROR] Failed to format ${eventTypeName}: ${formatErr.message}`);
+                        consoleLog.warn(
+                            `[FORMAT_ERROR] Failed to format ${eventTypeName}: ${formatErr instanceof Error ? formatErr.message : String(formatErr)}`
+                        );
                         if (debug) {
                             consoleLog.warn(`Event data: ${JSON.stringify(event, null, 2)}`);
                         }

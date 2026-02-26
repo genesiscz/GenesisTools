@@ -210,7 +210,7 @@ export class CursorProvider extends MCPProvider {
     }
 
     private cursorToUnified(cursor: CursorMCPServerConfig): UnifiedMCPServerConfig {
-        let type: "stdio" | "sse" | "http" = (cursor.type as any) || "stdio";
+        let type: "stdio" | "sse" | "http" = (cursor.type as "stdio" | "sse" | "http") || "stdio";
         if (cursor.url && !cursor.command) {
             type = "sse";
         }

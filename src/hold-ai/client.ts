@@ -31,12 +31,12 @@ const waitForCompletion = async (): Promise<string> => {
 
                     messages.push(message);
                     // Check if the completion message exists
-                    const completed = messages.some((msg: any) => msg.message === "__COMPLETED__");
+                    const completed = messages.some((msg) => msg.message === "__COMPLETED__");
 
                     // If we received the completion message, resolve with the combined messages
                     if (completed) {
                         // Filter out the special completion message for display
-                        displayMessages = messages.filter((msg: any) => msg.message !== "__COMPLETED__");
+                        displayMessages = messages.filter((msg) => msg.message !== "__COMPLETED__");
 
                         // Join all messages as output
                         const combinedMessages = displayMessages.map((msg) => msg.message).join("\n");

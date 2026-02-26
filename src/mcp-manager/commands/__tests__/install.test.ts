@@ -9,6 +9,7 @@ const { installServer } = await import("../install.js");
 
 import logger from "@app/logger";
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
+import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { createMockUnifiedConfig, MockMCPProvider } from "./test-utils.js";
 
 describe("installServer", () => {
@@ -123,12 +124,12 @@ describe("installServer", () => {
         // Get the last call to writeUnifiedConfig
         const calls = writeUnifiedConfigSpy.mock.calls;
         expect(calls.length).toBeGreaterThan(0);
-        const lastCall = calls[calls.length - 1][0] as any;
+        const lastCall = calls[calls.length - 1][0] as UnifiedMCPConfig;
         const serverConfig = lastCall.mcpServers["new-server"];
         expect(serverConfig).toBeDefined();
         expect(serverConfig.env).toBeDefined();
-        expect(serverConfig.env.KEY1).toBe("value1");
-        expect(serverConfig.env.KEY2).toBe("value2");
+        expect(serverConfig.env!.KEY1).toBe("value1");
+        expect(serverConfig.env!.KEY2).toBe("value2");
     });
 
     it("should return early if no providers available", async () => {
