@@ -2,10 +2,10 @@ import { existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { runLogViewer } from "../interactive/log-viewer";
 import { getLogsBaseDir } from "../lib/config";
 import { DAEMON_STDERR_LOG, DAEMON_STDOUT_LOG } from "../lib/launchd";
 import { listRunsForTask, parseLogFile } from "../lib/log-reader";
-import { runLogViewer } from "../interactive/log-viewer";
 
 export function registerLogsCommand(program: Command): void {
     program

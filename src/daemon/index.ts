@@ -1,17 +1,17 @@
 #!/usr/bin/env bun
 
+import { handleReadmeFlag } from "@app/utils/readme";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
-import { handleReadmeFlag } from "@app/utils/readme";
-import { ensureStorage } from "./lib/config";
-import { registerStartCommand } from "./commands/start";
-import { registerStopCommand } from "./commands/stop";
-import { registerStatusCommand } from "./commands/status";
-import { registerInstallCommand } from "./commands/install";
 import { registerConfigCommand } from "./commands/config";
+import { registerInstallCommand } from "./commands/install";
 import { registerLogsCommand } from "./commands/logs";
+import { registerStartCommand } from "./commands/start";
+import { registerStatusCommand } from "./commands/status";
+import { registerStopCommand } from "./commands/stop";
 import { runInteractiveMenu } from "./interactive/menu";
+import { ensureStorage } from "./lib/config";
 
 handleReadmeFlag(import.meta.url);
 

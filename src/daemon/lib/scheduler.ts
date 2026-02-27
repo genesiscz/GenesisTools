@@ -111,13 +111,10 @@ async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void>
             return;
         }
 
-        log.warn(
-            { task: task.name, exitCode: result.exitCode, attempt, maxAttempts },
-            "Task failed"
-        );
+        log.warn({ task: task.name, exitCode: result.exitCode, attempt, maxAttempts }, "Task failed");
 
         if (attempt < maxAttempts) {
-            const backoffMs = Math.min(Math.pow(2, attempt) * 1000, 60_000);
+            const backoffMs = Math.min(2 ** attempt * 1000, 60_000);
             log.info({ task: task.name, backoffMs }, "Retrying after backoff");
             await Bun.sleep(backoffMs);
         }
@@ -131,10 +128,7 @@ async function executeTask(task: DaemonTask, logsBaseDir: string): Promise<void>
     });
 }
 
-async function initializeTaskStates(
-    taskStates: Map<string, TaskState>,
-    logsBaseDir: string
-): Promise<void> {
+async function initializeTaskStates(taskStates: Map<string, TaskState>, logsBaseDir: string): Promise<void> {
     const config = await loadConfig();
 
     for (const task of config.tasks) {

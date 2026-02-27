@@ -1,10 +1,10 @@
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { getDaemonPid } from "../daemon";
 import { loadConfig } from "../lib/config";
 import { formatInterval } from "../lib/interval";
 import { getDaemonStatus } from "../lib/launchd";
-import { getDaemonPid } from "../daemon";
 
 export function registerStatusCommand(program: Command): void {
     program

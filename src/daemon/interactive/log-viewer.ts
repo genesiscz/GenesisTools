@@ -16,10 +16,7 @@ export async function runLogViewer(): Promise<void> {
 
         const taskName = await p.select({
             message: "Select task",
-            options: [
-                ...tasks.map((t) => ({ value: t, label: t })),
-                { value: "back", label: pc.dim("← Back") },
-            ],
+            options: [...tasks.map((t) => ({ value: t, label: t })), { value: "back", label: pc.dim("← Back") }],
         });
 
         if (p.isCancel(taskName) || taskName === "back") {
@@ -86,11 +83,7 @@ function showLogContent(logFile: string): void {
                 break;
             case "exit": {
                 const color = entry.code === 0 ? pc.green : pc.red;
-                console.log(
-                    color(
-                        `\n[exit ${entry.code ?? "killed"} in ${formatDuration(entry.duration_ms)}]`
-                    )
-                );
+                console.log(color(`\n[exit ${entry.code ?? "killed"} in ${formatDuration(entry.duration_ms)}]`));
                 break;
             }
         }
@@ -106,8 +99,7 @@ function formatRunLabel(
     attempt: number
 ): string {
     const date = startedAt.replace("T", " ").slice(0, 19);
-    const code =
-        exitCode === null ? pc.dim("?") : exitCode === 0 ? pc.green("0") : pc.red(String(exitCode));
+    const code = exitCode === null ? pc.dim("?") : exitCode === 0 ? pc.green("0") : pc.red(String(exitCode));
     const dur = durationMs !== null ? formatDuration(durationMs) : "?";
     const att = attempt > 1 ? pc.dim(` attempt:${attempt}`) : "";
 

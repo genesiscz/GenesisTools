@@ -1,9 +1,9 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
+import { getDaemonPid, startDaemon } from "../daemon";
 import { loadConfig, removeTask, setTaskEnabled, upsertTask } from "../lib/config";
 import { formatInterval } from "../lib/interval";
 import { getDaemonStatus, installLaunchd, uninstallLaunchd } from "../lib/launchd";
-import { getDaemonPid, startDaemon } from "../daemon";
 import { runLogViewer } from "./log-viewer";
 import { runTaskEditor } from "./task-editor";
 
@@ -69,9 +69,7 @@ async function showStatus(): Promise<void> {
 
     const enabled = config.tasks.filter((t) => t.enabled);
     const disabled = config.tasks.filter((t) => !t.enabled);
-    p.log.info(
-        `Tasks: ${pc.green(String(enabled.length))} enabled, ${pc.dim(String(disabled.length))} disabled`
-    );
+    p.log.info(`Tasks: ${pc.green(String(enabled.length))} enabled, ${pc.dim(String(disabled.length))} disabled`);
 
     if (enabled.length > 0) {
         for (const task of enabled) {
@@ -268,5 +266,5 @@ function truncate(s: string, max: number): string {
         return s;
     }
 
-    return s.slice(0, max - 1) + "…";
+    return `${s.slice(0, max - 1)}…`;
 }

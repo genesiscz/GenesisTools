@@ -7,7 +7,7 @@ function safeTimestamp(): string {
 }
 
 function appendJsonl(path: string, data: Record<string, unknown>): void {
-    appendFileSync(path, JSON.stringify(data) + "\n");
+    appendFileSync(path, `${JSON.stringify(data)}\n`);
 }
 
 async function streamLines(
@@ -46,11 +46,7 @@ async function streamLines(
     }
 }
 
-export async function runTask(
-    task: DaemonTask,
-    attempt: number,
-    logsBaseDir: string
-): Promise<RunResult> {
+export async function runTask(task: DaemonTask, attempt: number, logsBaseDir: string): Promise<RunResult> {
     const runId = crypto.randomUUID().slice(0, 8);
     const taskLogDir = join(logsBaseDir, task.name);
     mkdirSync(taskLogDir, { recursive: true });

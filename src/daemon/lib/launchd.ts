@@ -39,10 +39,7 @@ export async function installLaunchd(): Promise<void> {
     mkdirSync(join(homedir(), ".genesis-tools", "daemon", "logs"), { recursive: true });
     await Bun.write(PLIST_PATH, generatePlist());
     const proc = Bun.spawn(["launchctl", "load", PLIST_PATH], { stdio: ["ignore", "pipe", "pipe"] });
-    const [exitCode, stderr] = await Promise.all([
-        proc.exited,
-        new Response(proc.stderr).text(),
-    ]);
+    const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
 
     if (exitCode !== 0) {
         throw new Error(`launchctl load failed: ${stderr}`);

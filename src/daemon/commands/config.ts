@@ -1,9 +1,9 @@
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { runTaskEditor } from "../interactive/task-editor";
 import { loadConfig, removeTask, setTaskEnabled, upsertTask } from "../lib/config";
 import { formatInterval } from "../lib/interval";
-import { runTaskEditor } from "../interactive/task-editor";
 
 export function registerConfigCommand(program: Command): void {
     const config = program.command("config").description("Manage daemon tasks");

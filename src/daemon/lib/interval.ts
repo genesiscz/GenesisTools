@@ -33,9 +33,7 @@ export function parseInterval(interval: string): ParsedInterval {
     const match = interval.match(INTERVAL_PATTERN);
 
     if (!match) {
-        throw new Error(
-            `Invalid interval: "${interval}". Expected "every N minutes", "every day at HH:MM", etc.`
-        );
+        throw new Error(`Invalid interval: "${interval}". Expected "every N minutes", "every day at HH:MM", etc.`);
     }
 
     const value = parseInt(match[1], 10);
