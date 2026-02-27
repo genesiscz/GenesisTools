@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import { useEffect, useState } from "react";
 import type { AccountUsage, UsageBucket } from "@app/claude/lib/usage/api";
-import { BUCKET_LABELS, BUCKET_PERIODS_MS } from "@app/claude/lib/usage/constants";
+import { BUCKET_LABELS, BUCKET_PERIODS_MS, colorForPct } from "@app/claude/lib/usage/constants";
 import { UsageBar } from "./usage-bar";
 
 function formatResetCountdown(resetsAt: string | null): string | null {
@@ -61,32 +61,17 @@ function calcProjection(utilization: number, resetsAt: string | null, bucketKey:
     return Math.round((utilization / elapsed) * periodMs);
 }
 
-function formatResetTime(resetsAt: string | null): string {
-    if (!resetsAt) {
-        return "";
-    }
-
-    const d = new Date(resetsAt);
-    const timeFmt = new Intl.DateTimeFormat("en-US", {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-        timeZoneName: "short",
-    });
-
-    return timeFmt.format(d);
-}
+const NAME_WIDTH = 18;
+const BAR_WIDTH = 30;
+const PCT_WIDTH = 6;
+const PROJ_WIDTH = 12;
 
 interface BucketRowProps {
     bucketKey: string;
     bucket: UsageBucket;
-    prominent: boolean;
 }
 
-function BucketRow({ bucketKey, bucket, prominent }: BucketRowProps) {
+function BucketRow({ bucketKey, bucket }: BucketRowProps) {
     const [, setTick] = useState(0);
 
     useEffect(() => {
@@ -97,29 +82,24 @@ function BucketRow({ bucketKey, bucket, prominent }: BucketRowProps) {
     const label = BUCKET_LABELS[bucketKey] ?? bucketKey.replace(/_/g, " ");
     const countdown = formatResetCountdown(bucket.resets_at);
     const projected = calcProjection(bucket.utilization, bucket.resets_at, bucketKey);
-
     const showProjection = projected !== null && projected >= 100;
-
-    if (prominent) {
-        return (
-            <Box flexDirection="column" marginBottom={1}>
-                <Text bold>{label}</Text>
-                <UsageBar utilization={bucket.utilization} projectedPct={showProjection ? projected : null} />
-                {countdown && (
-                    <Text dimColor>
-                        {"Resets "}
-                        {formatResetTime(bucket.resets_at)}
-                        {` (${countdown})`}
-                    </Text>
-                )}
-            </Box>
-        );
-    }
+    const pct = Math.round(Math.max(0, Math.min(bucket.utilization, 100)));
 
     return (
         <Box>
-            <Text>{`${label.padEnd(18)}`}</Text>
-            <UsageBar utilization={bucket.utilization} width={30} projectedPct={showProjection ? projected : null} />
+            <Text>{label.padEnd(NAME_WIDTH)}</Text>
+            <UsageBar utilization={bucket.utilization} width={BAR_WIDTH} />
+            <Text bold>{`${pct}%`.padStart(PCT_WIDTH)}</Text>
+            {showProjection ? (
+                <Text dimColor color={colorForPct(projected)}>
+                    {`~${Math.round(projected)}%`.padStart(PROJ_WIDTH)}
+                </Text>
+            ) : (
+                <Text>{" ".repeat(PROJ_WIDTH)}</Text>
+            )}
+            {countdown && (
+                <Text dimColor>{`  ⟳ ${countdown}`}</Text>
+            )}
         </Box>
     );
 }
@@ -129,7 +109,7 @@ interface AccountSectionProps {
     prominentBuckets: string[];
 }
 
-export function AccountSection({ account, prominentBuckets }: AccountSectionProps) {
+export function AccountSection({ account }: AccountSectionProps) {
     const header = account.label
         ? `${account.accountName} (${account.label})`
         : account.accountName;
@@ -178,7 +158,6 @@ export function AccountSection({ account, prominentBuckets }: AccountSectionProp
                     key={key}
                     bucketKey={key}
                     bucket={bucket}
-                    prominent={prominentBuckets.includes(key)}
                 />
             ))}
         </Box>
