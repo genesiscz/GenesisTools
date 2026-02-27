@@ -3,11 +3,14 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import logger from "@app/logger";
 
+const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
 export abstract class BaseDatabase {
     protected db: BunDatabase;
 
     constructor(dbPath: string) {
         const dbDir = dirname(dbPath);
+
         if (!existsSync(dbDir)) {
             mkdirSync(dbDir, { recursive: true });
         }
@@ -29,10 +32,15 @@ export abstract class BaseDatabase {
     }
 
     pruneTable(table: string, timestampColumn: string, days: number): number {
+        if (!VALID_IDENTIFIER.test(table) || !VALID_IDENTIFIER.test(timestampColumn)) {
+            throw new Error(`Invalid SQL identifier: table=${table}, column=${timestampColumn}`);
+        }
+
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
         const stmt = this.db.prepare(
-            `DELETE FROM ${table} WHERE ${timestampColumn} < datetime('now', '-' || ? || ' days')`
+            `DELETE FROM ${table} WHERE ${timestampColumn} < ?`
         );
-        const result = stmt.run(days);
+        const result = stmt.run(cutoff);
         const deleted = result.changes;
 
         if (deleted > 0) {

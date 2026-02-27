@@ -141,7 +141,6 @@ export function ChartPanel({ db, accountName, buckets, zoom, width }: ChartPanel
         try {
             const chart = asciichart.plot(allSeries.length === 1 ? allSeries[0] : allSeries, {
                 height: 8,
-                width: chartWidth,
                 min: 0,
                 max: ceilMax,
                 colors: allSeries.length > 1 ? colors : undefined,

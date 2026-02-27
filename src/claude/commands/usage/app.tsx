@@ -1,5 +1,5 @@
 import { Box } from "ink";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
     loadDashboardConfig,
     type UsageDashboardConfig,
@@ -49,6 +49,8 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
             : 10) as PollInterval
     );
 
+    const [paused, setPaused] = useState(false);
+
     const cycleInterval = useCallback(() => {
         setPollInterval((current) => {
             const idx = POLL_INTERVALS.indexOf(current);
@@ -57,12 +59,16 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
     }, []);
 
     const { results, isPolling, lastRefresh, nextRefresh, db, notifications, forceRefresh } =
-        useUsagePoller({ config, accountFilter, paused: false, pollIntervalSeconds: pollInterval });
+        useUsagePoller({ config, accountFilter, paused, pollIntervalSeconds: pollInterval });
 
-    const { paused, showHelp, setShowHelp } = useKeybindings({
-        onForceRefresh: forceRefresh,
+    const forceRefreshRef = useRef(forceRefresh);
+    forceRefreshRef.current = forceRefresh;
+
+    const { showHelp, setShowHelp } = useKeybindings({
+        onForceRefresh: () => forceRefreshRef.current(),
         onDismissAlert: () => notifications?.dismissAll(),
         onCycleInterval: cycleInterval,
+        onTogglePause: () => setPaused((p) => !p),
     });
 
     if (showHelp) {

@@ -1,6 +1,7 @@
 import { Text } from "ink";
 import { useMemo } from "react";
 import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
+import { calculateRate } from "@app/claude/lib/usage/rate-math";
 
 interface RateSparklineProps {
     db: UsageHistoryDb | null;
@@ -16,7 +17,7 @@ export function RateSparkline({ db, accountName, bucket }: RateSparklineProps) {
             return null;
         }
 
-        const snapshots = db.getSnapshots(accountName, bucket, 10);
+        const snapshots = db.getSnapshots(accountName, bucket, 30);
 
         if (snapshots.length < 2) {
             return null;
@@ -27,11 +28,11 @@ export function RateSparkline({ db, accountName, bucket }: RateSparklineProps) {
         for (let i = 1; i < snapshots.length; i++) {
             const prev = snapshots[i - 1];
             const curr = snapshots[i];
-            const diffMs = new Date(curr.timestamp).getTime() - new Date(prev.timestamp).getTime();
-
-            if (diffMs > 0) {
-                rates.push((curr.utilization - prev.utilization) / (diffMs / 60000));
-            }
+            const rate = calculateRate(
+                { timestamp: prev.timestamp, value: prev.utilization },
+                { timestamp: curr.timestamp, value: curr.utilization }
+            );
+            rates.push(rate);
         }
 
         if (rates.length === 0) {

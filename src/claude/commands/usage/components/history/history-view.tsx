@@ -93,7 +93,7 @@ export function HistoryView({ db }: HistoryViewProps) {
         for (const { accountName, bucket } of pairs) {
             const snapshots = db.getSnapshots(accountName, bucket, timeRange);
             const key = `${accountName}:${bucket}`;
-            result.set(key, computeDeltas(snapshots.reverse()));
+            result.set(key, computeDeltas([...snapshots].reverse()));
         }
 
         return result;

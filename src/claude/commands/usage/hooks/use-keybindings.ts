@@ -5,11 +5,11 @@ interface KeybindingsOptions {
     onForceRefresh: () => void;
     onDismissAlert: () => void;
     onCycleInterval: () => void;
+    onTogglePause: () => void;
 }
 
-export function useKeybindings({ onForceRefresh, onDismissAlert, onCycleInterval }: KeybindingsOptions) {
+export function useKeybindings({ onForceRefresh, onDismissAlert, onCycleInterval, onTogglePause }: KeybindingsOptions) {
     const { exit } = useApp();
-    const [paused, setPaused] = useState(false);
     const [showHelp, setShowHelp] = useState(false);
 
     useInput((input) => {
@@ -22,7 +22,7 @@ export function useKeybindings({ onForceRefresh, onDismissAlert, onCycleInterval
         }
 
         if (input === "p") {
-            setPaused((p) => !p);
+            onTogglePause();
         }
 
         if (input === "i") {
@@ -38,5 +38,5 @@ export function useKeybindings({ onForceRefresh, onDismissAlert, onCycleInterval
         }
     });
 
-    return { paused, showHelp, setShowHelp };
+    return { showHelp, setShowHelp };
 }

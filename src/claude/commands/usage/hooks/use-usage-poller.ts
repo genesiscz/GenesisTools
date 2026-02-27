@@ -2,7 +2,6 @@ import { loadConfig, type AccountConfig } from "@app/claude/lib/config";
 import {
     fetchAllAccountsUsage,
     getKeychainCredentials,
-    type AccountUsage,
 } from "@app/claude/lib/usage/api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
@@ -28,6 +27,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
     const accountsRef = useRef<Record<string, AccountConfig>>({});
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const pruneIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const pollingRef = useRef(false);
 
     useEffect(() => {
         dbRef.current = new UsageHistoryDb();
@@ -49,10 +49,11 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
     }, []);
 
     const poll = useCallback(async () => {
-        if (isPolling) {
+        if (pollingRef.current) {
             return;
         }
 
+        pollingRef.current = true;
         setIsPolling(true);
 
         try {
@@ -106,12 +107,16 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                         data.resets_at
                     );
 
-                    notifRef.current?.processUsage(
-                        account.accountName,
-                        bucket,
-                        data.utilization,
-                        data.resets_at
-                    );
+                    try {
+                        notifRef.current?.processUsage(
+                            account.accountName,
+                            bucket,
+                            data.utilization,
+                            data.resets_at
+                        );
+                    } catch {
+                        // Notification failure should not interrupt polling
+                    }
                 }
             }
 
@@ -128,9 +133,10 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                 error: error instanceof Error ? error.message : String(error),
             });
         } finally {
+            pollingRef.current = false;
             setIsPolling(false);
         }
-    }, [isPolling, accountFilter, config, pollIntervalSeconds]);
+    }, [accountFilter, config, pollIntervalSeconds]);
 
     useEffect(() => {
         poll();
