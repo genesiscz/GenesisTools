@@ -84,6 +84,17 @@ function BucketRow({ bucketKey, bucket, barWidth }: BucketRowProps) {
 
     const label = BUCKET_LABELS[bucketKey] ?? bucketKey.replace(/_/g, " ");
     const countdown = formatResetCountdown(bucket.resets_at);
+    const notUsed = !bucket.resets_at && bucket.utilization === 0;
+
+    if (notUsed) {
+        return (
+            <Box>
+                <Text>{label.padEnd(NAME_WIDTH)}</Text>
+                <Text dimColor>{"Not used"}</Text>
+            </Box>
+        );
+    }
+
     const projected = calcProjection(bucket.utilization, bucket.resets_at, bucketKey);
     const pct = Math.round(Math.max(0, Math.min(bucket.utilization, 100)));
 
