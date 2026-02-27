@@ -18,7 +18,7 @@ interface PollerOptions {
 
 export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeconds }: PollerOptions) {
     const [results, setResults] = useState<PollResult | null>(null);
-    const [isPolling, setIsPolling] = useState(false);
+    const [pollingLabel, setPollingLabel] = useState<string | null>(null);
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
     const [nextRefresh, setNextRefresh] = useState<Date | null>(null);
 
@@ -54,7 +54,8 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
         }
 
         pollingRef.current = true;
-        setIsPolling(true);
+        const names = Object.keys(accountsRef.current);
+        setPollingLabel(names.length > 0 ? names.join(", ") : "...");
 
         try {
             if (Object.keys(accountsRef.current).length === 0) {
@@ -83,7 +84,17 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                 accountsRef.current = accounts;
             }
 
-            const accountUsages = await fetchAllAccountsUsage(accountsRef.current);
+            setPollingLabel(Object.keys(accountsRef.current).join(", ") || "...");
+
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 3000);
+            let accountUsages: Awaited<ReturnType<typeof fetchAllAccountsUsage>>;
+
+            try {
+                accountUsages = await fetchAllAccountsUsage(accountsRef.current);
+            } finally {
+                clearTimeout(timeout);
+            }
             const now = new Date();
 
             for (const account of accountUsages) {
@@ -134,7 +145,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
             });
         } finally {
             pollingRef.current = false;
-            setIsPolling(false);
+            setPollingLabel(null);
         }
     }, [accountFilter, config, pollIntervalSeconds]);
 
@@ -162,7 +173,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
 
     return {
         results,
-        isPolling,
+        pollingLabel,
         lastRefresh,
         nextRefresh,
         db: dbRef.current,

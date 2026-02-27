@@ -5,7 +5,7 @@ interface StatusBarProps {
     lastRefresh: Date | null;
     nextRefresh: Date | null;
     paused: boolean;
-    isPolling: boolean;
+    pollingLabel: string | null;
     pollInterval: number;
 }
 
@@ -18,7 +18,7 @@ function formatTime(date: Date): string {
     });
 }
 
-export function StatusBar({ lastRefresh, nextRefresh, paused, isPolling, pollInterval }: StatusBarProps) {
+export function StatusBar({ lastRefresh, nextRefresh, paused, pollingLabel, pollInterval }: StatusBarProps) {
     const [, setTick] = useState(0);
 
     useEffect(() => {
@@ -45,7 +45,7 @@ export function StatusBar({ lastRefresh, nextRefresh, paused, isPolling, pollInt
                     </Text>
                 )}
                 <Text dimColor>{` • ${pollInterval}s interval`}</Text>
-                {isPolling && <Text color="yellow">{" ● Polling"}</Text>}
+                {pollingLabel && <Text color="yellow">{` ● Polling ${pollingLabel}`}</Text>}
                 {paused && <Text color="red">{" ⏸ Paused"}</Text>}
             </Box>
             <Text dimColor>

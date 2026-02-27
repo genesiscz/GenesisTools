@@ -61,7 +61,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
         });
     }, []);
 
-    const { results, isPolling, lastRefresh, nextRefresh, db, notifications, forceRefresh } =
+    const { results, pollingLabel, lastRefresh, nextRefresh, db, notifications, forceRefresh } =
         useUsagePoller({ config, accountFilter, paused, pollIntervalSeconds: pollInterval });
 
     const forceRefreshRef = useRef(forceRefresh);
@@ -97,7 +97,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
                 lastRefresh={lastRefresh}
                 nextRefresh={nextRefresh}
                 paused={paused}
-                isPolling={isPolling}
+                pollingLabel={pollingLabel}
                 pollInterval={pollInterval}
             />
         </Box>
