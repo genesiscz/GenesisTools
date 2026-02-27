@@ -31,11 +31,12 @@ export function AlertBanner({ alerts, onDismiss }: AlertBannerProps) {
 
     return (
         <Box flexDirection="column" paddingX={1}>
-            {alerts.map((alert) => {
+            {alerts.map((alert, i) => {
                 const bgColor = alert.severity === "critical" ? "red" : "yellow";
+                const isLast = i === alerts.length - 1;
 
                 return (
-                    <Box key={alert.id}>
+                    <Box key={alert.id} gap={1}>
                         <Text
                             backgroundColor={visible ? bgColor : undefined}
                             color={visible ? "white" : bgColor}
@@ -43,10 +44,10 @@ export function AlertBanner({ alerts, onDismiss }: AlertBannerProps) {
                         >
                             {` ▲ ${alert.message} `}
                         </Text>
+                        {isLast && <Text dimColor>{"[x] dismiss"}</Text>}
                     </Box>
                 );
             })}
-            <Text dimColor>{" [x] dismiss"}</Text>
         </Box>
     );
 }
