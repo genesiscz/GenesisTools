@@ -1,8 +1,50 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { LogEntry, RunSummary } from "./types";
 
 const VALID_LOG_TYPES = new Set<string>(["meta", "stdout", "stderr", "exit"]);
+
+function readFirstLine(filePath: string): string | null {
+    const fd = openSync(filePath, "r");
+
+    try {
+        const buf = Buffer.alloc(4096);
+        const bytesRead = readSync(fd, buf, 0, buf.length, 0);
+
+        if (bytesRead === 0) {
+            return null;
+        }
+
+        const content = buf.toString("utf-8", 0, bytesRead);
+        const newlineIdx = content.indexOf("\n");
+
+        return newlineIdx >= 0 ? content.slice(0, newlineIdx) : content;
+    } finally {
+        closeSync(fd);
+    }
+}
+
+function readLastLine(filePath: string): string | null {
+    const stat = statSync(filePath);
+
+    if (stat.size === 0) {
+        return null;
+    }
+
+    const fd = openSync(filePath, "r");
+
+    try {
+        const chunkSize = Math.min(4096, stat.size);
+        const buf = Buffer.alloc(chunkSize);
+        const bytesRead = readSync(fd, buf, 0, chunkSize, stat.size - chunkSize);
+        const content = buf.toString("utf-8", 0, bytesRead).trimEnd();
+        const lastNewline = content.lastIndexOf("\n");
+
+        return lastNewline >= 0 ? content.slice(lastNewline + 1) : content;
+    } finally {
+        closeSync(fd);
+    }
+}
 
 export function listTasksWithLogs(logsBaseDir: string): string[] {
     if (!existsSync(logsBaseDir)) {
@@ -33,14 +75,13 @@ export function listRunsForTask(logsBaseDir: string, taskName: string): RunSumma
         const logFile = join(taskDir, file);
 
         try {
-            const content = readFileSync(logFile, "utf-8").trim();
-            const lines = content.split("\n");
+            const firstLine = readFirstLine(logFile);
 
-            if (lines.length === 0) {
+            if (!firstLine) {
                 continue;
             }
 
-            const meta = JSON.parse(lines[0]) as Record<string, unknown>;
+            const meta = JSON.parse(firstLine) as Record<string, unknown>;
 
             if (meta.type !== "meta" || typeof meta.runId !== "string" || typeof meta.startedAt !== "string") {
                 continue;
@@ -49,9 +90,11 @@ export function listRunsForTask(logsBaseDir: string, taskName: string): RunSumma
             let exitCode: number | null = null;
             let duration_ms: number | null = null;
 
-            if (lines.length > 1) {
+            const lastLine = readLastLine(logFile);
+
+            if (lastLine && lastLine !== firstLine) {
                 try {
-                    const last = JSON.parse(lines[lines.length - 1]) as Record<string, unknown>;
+                    const last = JSON.parse(lastLine) as Record<string, unknown>;
 
                     if (last.type === "exit") {
                         exitCode = typeof last.code === "number" ? last.code : null;

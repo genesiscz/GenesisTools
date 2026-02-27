@@ -12,7 +12,14 @@ export interface RegisterTaskOptions {
     overwrite?: boolean;
 }
 
+function validateTaskName(name: string): void {
+    if (!name || /[/\\]|\.\./.test(name)) {
+        throw new Error(`Invalid task name "${name}". Must not contain "/", "\\", or "..".`);
+    }
+}
+
 export async function registerTask(opts: RegisterTaskOptions): Promise<boolean> {
+    validateTaskName(opts.name);
     parseInterval(opts.every);
     await ensureStorage();
 

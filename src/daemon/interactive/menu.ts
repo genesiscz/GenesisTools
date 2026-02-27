@@ -215,6 +215,15 @@ async function handleStart(): Promise<void> {
         return;
     }
 
+    const status = await getDaemonStatus();
+
+    if (status.running) {
+        p.log.warn(
+            `Daemon is already running via launchd (PID ${status.pid}). Use ${pc.cyan("tools daemon uninstall")} first to avoid duplicate execution.`
+        );
+        return;
+    }
+
     p.log.info("Starting daemon in foreground... (Ctrl+C to stop)");
     await startDaemon();
 }

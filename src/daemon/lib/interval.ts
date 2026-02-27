@@ -37,6 +37,11 @@ export function parseInterval(interval: string): ParsedInterval {
     }
 
     const value = parseInt(match[1], 10);
+
+    if (value <= 0) {
+        throw new Error(`Invalid interval: "${interval}". Value must be greater than 0.`);
+    }
+
     const unit = match[2].toLowerCase();
 
     return { intervalMs: value * MULTIPLIERS[unit], isTimeOfDay: false };

@@ -24,6 +24,8 @@ async function streamLines(
             const { done, value } = await reader.read();
 
             if (done) {
+                partial += decoder.decode();
+
                 if (partial) {
                     appendJsonl(logPath, { type, ts: new Date().toISOString(), data: partial });
                 }
@@ -36,9 +38,7 @@ async function streamLines(
             partial = lines.pop() ?? "";
 
             for (const line of lines) {
-                if (line) {
-                    appendJsonl(logPath, { type, ts: new Date().toISOString(), data: line });
-                }
+                appendJsonl(logPath, { type, ts: new Date().toISOString(), data: line });
             }
         }
     } finally {
@@ -48,7 +48,8 @@ async function streamLines(
 
 export async function runTask(task: DaemonTask, attempt: number, logsBaseDir: string): Promise<RunResult> {
     const runId = crypto.randomUUID().slice(0, 8);
-    const taskLogDir = join(logsBaseDir, task.name);
+    const safeTaskName = task.name.replace(/[/\\]/g, "_") || "unnamed-task";
+    const taskLogDir = join(logsBaseDir, safeTaskName);
     mkdirSync(taskLogDir, { recursive: true });
 
     const logFile = join(taskLogDir, `${safeTimestamp()}-${runId}.jsonl`);

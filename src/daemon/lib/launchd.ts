@@ -73,8 +73,18 @@ export async function getDaemonStatus(): Promise<{
         return { installed: true, running: false, pid: null };
     }
 
-    const pidMatch = stdout.match(/^(\d+)/m);
-    const pid = pidMatch ? parseInt(pidMatch[1], 10) : null;
+    let pid: number | null = null;
+    const tablePidMatch = stdout.match(/^\s*(\d+)\b/m);
+
+    if (tablePidMatch?.[1]) {
+        pid = parseInt(tablePidMatch[1], 10);
+    } else {
+        const dictPidMatch = stdout.match(/"PID"\s*=\s*(\d+);?/);
+
+        if (dictPidMatch?.[1]) {
+            pid = parseInt(dictPidMatch[1], 10);
+        }
+    }
 
     return { installed, running: pid != null && pid > 0, pid };
 }
