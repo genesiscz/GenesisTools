@@ -152,9 +152,23 @@ export function AccountSection({ account, prominentBuckets }: AccountSectionProp
         );
     }
 
-    const entries = Object.entries(account.usage).filter(
+    const allEntries = Object.entries(account.usage).filter(
         ([, v]) => v && typeof v === "object" && "utilization" in v
     ) as Array<[string, UsageBucket]>;
+
+    const sessionAt100 = allEntries.some(([k, b]) => k === "five_hour" && b.utilization >= 100);
+    const weeklyAt100 = allEntries.some(([k, b]) => k === "seven_day" && b.utilization >= 100);
+    const showAll = sessionAt100 || weeklyAt100;
+
+    const entries = showAll
+        ? allEntries
+        : allEntries.filter(([key, bucket]) => {
+              if (key === "five_hour" || key === "seven_day") {
+                  return true;
+              }
+
+              return bucket.utilization > 0;
+          });
 
     return (
         <Box flexDirection="column" marginBottom={1}>
