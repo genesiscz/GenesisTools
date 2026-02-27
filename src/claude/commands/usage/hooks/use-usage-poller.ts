@@ -1,0 +1,165 @@
+import { loadConfig, type AccountConfig } from "@app/claude/lib/config";
+import {
+    fetchAllAccountsUsage,
+    getKeychainCredentials,
+    type AccountUsage,
+} from "@app/claude/lib/usage/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
+import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
+import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
+import type { PollResult } from "../types";
+
+interface PollerOptions {
+    config: UsageDashboardConfig;
+    accountFilter?: string;
+    paused: boolean;
+}
+
+export function useUsagePoller({ config, accountFilter, paused }: PollerOptions) {
+    const [results, setResults] = useState<PollResult | null>(null);
+    const [isPolling, setIsPolling] = useState(false);
+    const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+    const [nextRefresh, setNextRefresh] = useState<Date | null>(null);
+
+    const dbRef = useRef<UsageHistoryDb | null>(null);
+    const notifRef = useRef<NotificationManager | null>(null);
+    const accountsRef = useRef<Record<string, AccountConfig>>({});
+    const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const pruneIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    useEffect(() => {
+        dbRef.current = new UsageHistoryDb();
+        notifRef.current = new NotificationManager(config.notifications);
+
+        dbRef.current.pruneOlderThan(config.dataRetentionDays);
+
+        pruneIntervalRef.current = setInterval(() => {
+            dbRef.current?.pruneOlderThan(config.dataRetentionDays);
+        }, 60 * 60 * 1000);
+
+        return () => {
+            dbRef.current?.close();
+
+            if (pruneIntervalRef.current) {
+                clearInterval(pruneIntervalRef.current);
+            }
+        };
+    }, []);
+
+    const poll = useCallback(async () => {
+        if (isPolling) {
+            return;
+        }
+
+        setIsPolling(true);
+
+        try {
+            if (Object.keys(accountsRef.current).length === 0) {
+                const cfg = await loadConfig();
+                let accounts = cfg.accounts;
+
+                if (Object.keys(accounts).length === 0) {
+                    const kc = await getKeychainCredentials();
+
+                    if (kc) {
+                        accounts = {
+                            default: {
+                                accessToken: kc.accessToken,
+                                label: kc.subscriptionType,
+                            },
+                        };
+                    }
+                }
+
+                if (accountFilter) {
+                    accounts = accounts[accountFilter]
+                        ? { [accountFilter]: accounts[accountFilter] }
+                        : accounts;
+                }
+
+                accountsRef.current = accounts;
+            }
+
+            const accountUsages = await fetchAllAccountsUsage(accountsRef.current);
+            const now = new Date();
+
+            for (const account of accountUsages) {
+                if (!account.usage) {
+                    continue;
+                }
+
+                for (const [bucket, data] of Object.entries(account.usage)) {
+                    if (!data || typeof data !== "object" || !("utilization" in data)) {
+                        continue;
+                    }
+
+                    if (data.utilization === null || data.utilization === undefined) {
+                        continue;
+                    }
+
+                    dbRef.current?.recordIfChanged(
+                        account.accountName,
+                        bucket,
+                        data.utilization,
+                        data.resets_at
+                    );
+
+                    notifRef.current?.processUsage(
+                        account.accountName,
+                        bucket,
+                        data.utilization,
+                        data.resets_at
+                    );
+                }
+            }
+
+            notifRef.current?.markFirstPollDone();
+            notifRef.current?.autoDismissOld();
+
+            setResults({ accounts: accountUsages, timestamp: now });
+            setLastRefresh(now);
+            setNextRefresh(new Date(now.getTime() + config.refreshInterval * 1000));
+        } catch (error) {
+            setResults({
+                accounts: [],
+                timestamp: new Date(),
+                error: error instanceof Error ? error.message : String(error),
+            });
+        } finally {
+            setIsPolling(false);
+        }
+    }, [isPolling, accountFilter, config]);
+
+    useEffect(() => {
+        poll();
+    }, []);
+
+    useEffect(() => {
+        if (paused) {
+            if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+                intervalRef.current = null;
+            }
+            return;
+        }
+
+        intervalRef.current = setInterval(poll, config.refreshInterval * 1000);
+
+        return () => {
+            if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+            }
+        };
+    }, [paused, config.refreshInterval, poll]);
+
+    return {
+        results,
+        isPolling,
+        lastRefresh,
+        nextRefresh,
+        db: dbRef.current,
+        notifications: notifRef.current,
+        forceRefresh: poll,
+    };
+}

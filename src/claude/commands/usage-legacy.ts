@@ -5,7 +5,7 @@ import { watchUsage } from "@app/claude/lib/usage/watch";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 
-export function registerUsageCommand(program: Command): void {
+export function registerUsageLegacyCommand(program: Command): void {
     program
         .command("usage")
         .description("Show Claude API usage and quota")
