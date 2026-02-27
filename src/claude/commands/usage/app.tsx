@@ -1,5 +1,5 @@
 import { Box } from "ink";
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
     loadDashboardConfig,
     type UsageDashboardConfig,
@@ -58,7 +58,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
         <Box flexDirection="column">
             <TabBar tabs={tabs} activeIndex={activeIndex} />
             {activeTab === "overview" && (
-                <OverviewView results={results} db={db} config={config} />
+                <OverviewView results={results} config={config} />
             )}
             {activeTab === "timeline" && (
                 <TimelineView db={db} results={results} config={config} />

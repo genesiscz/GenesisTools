@@ -1,6 +1,7 @@
 import { Box, Text, useInput, useStdout } from "ink";
-import React, { useState } from "react";
+import { useState } from "react";
 import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
+import { VISIBLE_BUCKETS } from "@app/claude/lib/usage/constants";
 import type { PollResult, TimelineZoom } from "../../types";
 import { ZOOM_ORDER } from "../../types";
 import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
@@ -11,8 +12,6 @@ interface TimelineViewProps {
     results: PollResult | null;
     config: UsageDashboardConfig;
 }
-
-const VISIBLE_BUCKETS = ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_oauth_apps"];
 
 export function TimelineView({ db, results, config }: TimelineViewProps) {
     const { stdout } = useStdout();

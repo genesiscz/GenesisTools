@@ -1,5 +1,5 @@
-import { Box, Text } from "ink";
-import React, { useMemo } from "react";
+import { Text } from "ink";
+import { useMemo } from "react";
 import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 
 interface RateSparklineProps {

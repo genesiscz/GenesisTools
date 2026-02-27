@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from "ink";
-import React, { useState } from "react";
+import { useState } from "react";
 import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
+import { BUCKET_LABELS, VISIBLE_BUCKETS } from "@app/claude/lib/usage/constants";
 import type { PollResult } from "../../types";
 import { useRateCalculator } from "../../hooks/use-rate-calculator";
 import { RateTable } from "./rate-table";
@@ -10,15 +11,6 @@ interface RatesViewProps {
     db: UsageHistoryDb | null;
     results: PollResult | null;
 }
-
-const VISIBLE_BUCKETS = ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_oauth_apps"];
-const BUCKET_LABELS: Record<string, string> = {
-    five_hour: "Session (5h)",
-    seven_day: "Weekly (all)",
-    seven_day_opus: "Weekly (Opus)",
-    seven_day_sonnet: "Weekly (Sonnet)",
-    seven_day_oauth_apps: "Weekly (OAuth)",
-};
 
 function RateBucketView({
     db,

@@ -1,5 +1,5 @@
 import { Box, Text } from "ink";
-import React from "react";
+import { colorForPct } from "@app/claude/lib/usage/constants";
 
 interface UsageBarProps {
     utilization: number;
@@ -9,18 +9,6 @@ interface UsageBarProps {
 
 const BLOCK_FULL = "\u2588";
 const BLOCK_HALF = "\u258C";
-
-function colorForPct(pct: number): string {
-    if (pct >= 80) {
-        return "red";
-    }
-
-    if (pct >= 50) {
-        return "yellow";
-    }
-
-    return "green";
-}
 
 export function UsageBar({ utilization, width = 40, projectedPct }: UsageBarProps) {
     const pct = Math.max(0, Math.min(utilization, 100));

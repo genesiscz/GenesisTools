@@ -71,28 +71,13 @@ export function projectTimeToLimit(currentPct: number, ratePerMinute: number): n
     return Math.round((100 - currentPct) / ratePerMinute);
 }
 
+import { formatDuration as formatDurationShared } from "@app/utils/format";
+
+/** Format minutes as approximate duration: ~1h 30m */
 export function formatDuration(minutes: number): string {
     if (minutes < 1) {
         return "<1m";
     }
 
-    const days = Math.floor(minutes / 1440);
-    const hours = Math.floor((minutes % 1440) / 60);
-    const mins = Math.round(minutes % 60);
-
-    const parts: string[] = [];
-
-    if (days > 0) {
-        parts.push(`${days}d`);
-    }
-
-    if (hours > 0) {
-        parts.push(`${hours}h`);
-    }
-
-    if (mins > 0 || parts.length === 0) {
-        parts.push(`${mins}m`);
-    }
-
-    return `~${parts.join(" ")}`;
+    return `~${formatDurationShared(minutes, "min", "hm-smart")}`;
 }

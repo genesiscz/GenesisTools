@@ -1,7 +1,8 @@
 import { Box, Text } from "ink";
-import React, { useMemo } from "react";
+import { useMemo } from "react";
 import asciichart from "asciichart";
 import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
+import { BUCKET_LABELS } from "@app/claude/lib/usage/constants";
 import type { TimelineZoom } from "../../types";
 import { ZOOM_MINUTES } from "../../types";
 
@@ -12,14 +13,6 @@ interface ChartPanelProps {
     zoom: TimelineZoom;
     width: number;
 }
-
-const BUCKET_LABELS: Record<string, string> = {
-    five_hour: "Session (5h)",
-    seven_day: "Weekly (all)",
-    seven_day_opus: "Weekly (Opus)",
-    seven_day_sonnet: "Weekly (Sonnet)",
-    seven_day_oauth_apps: "Weekly (OAuth)",
-};
 
 export function ChartPanel({ db, accountName, bucket, zoom, width }: ChartPanelProps) {
     const chartWidth = Math.max(20, width - 12);

@@ -1,5 +1,4 @@
 import { Box, Text } from "ink";
-import React from "react";
 import type { RollingRates } from "@app/claude/lib/usage/rate-math";
 import { formatDuration } from "@app/claude/lib/usage/rate-math";
 
@@ -55,7 +54,7 @@ const WINDOW_MINUTES: Record<string, number> = {
     "30min": 30,
 };
 
-export function RateTable({ rates, projections, currentUtilization }: RateTableProps) {
+export function RateTable({ rates, projections }: RateTableProps) {
     return (
         <Box flexDirection="column">
             <Box>

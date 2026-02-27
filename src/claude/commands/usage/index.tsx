@@ -1,5 +1,4 @@
 import { render } from "ink";
-import React from "react";
 import type { Command } from "commander";
 import { App } from "./app";
 

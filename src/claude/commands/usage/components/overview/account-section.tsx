@@ -1,26 +1,8 @@
 import { Box, Text } from "ink";
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { AccountUsage, UsageBucket } from "@app/claude/lib/usage/api";
-import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
-import { useRateCalculator } from "../../hooks/use-rate-calculator";
-import { formatDuration } from "@app/claude/lib/usage/rate-math";
+import { BUCKET_LABELS, BUCKET_PERIODS_MS } from "@app/claude/lib/usage/constants";
 import { UsageBar } from "./usage-bar";
-
-const BUCKET_LABELS: Record<string, string> = {
-    five_hour: "Session (5h)",
-    seven_day: "Weekly (all)",
-    seven_day_opus: "Weekly (Opus)",
-    seven_day_sonnet: "Weekly (Sonnet)",
-    seven_day_oauth_apps: "Weekly (OAuth)",
-};
-
-const BUCKET_PERIODS_MS: Record<string, number> = {
-    five_hour: 5 * 60 * 60 * 1000,
-    seven_day: 7 * 24 * 60 * 60 * 1000,
-    seven_day_opus: 7 * 24 * 60 * 60 * 1000,
-    seven_day_sonnet: 7 * 24 * 60 * 60 * 1000,
-    seven_day_oauth_apps: 7 * 24 * 60 * 60 * 1000,
-};
 
 function formatResetCountdown(resetsAt: string | null): string | null {
     if (!resetsAt) {
@@ -101,12 +83,10 @@ function formatResetTime(resetsAt: string | null): string {
 interface BucketRowProps {
     bucketKey: string;
     bucket: UsageBucket;
-    accountName: string;
-    db: UsageHistoryDb | null;
     prominent: boolean;
 }
 
-function BucketRow({ bucketKey, bucket, accountName, db, prominent }: BucketRowProps) {
+function BucketRow({ bucketKey, bucket, prominent }: BucketRowProps) {
     const [, setTick] = useState(0);
 
     useEffect(() => {
@@ -144,11 +124,10 @@ function BucketRow({ bucketKey, bucket, accountName, db, prominent }: BucketRowP
 
 interface AccountSectionProps {
     account: AccountUsage;
-    db: UsageHistoryDb | null;
     prominentBuckets: string[];
 }
 
-export function AccountSection({ account, db, prominentBuckets }: AccountSectionProps) {
+export function AccountSection({ account, prominentBuckets }: AccountSectionProps) {
     const header = account.label
         ? `${account.accountName} (${account.label})`
         : account.accountName;
@@ -183,8 +162,6 @@ export function AccountSection({ account, db, prominentBuckets }: AccountSection
                     key={key}
                     bucketKey={key}
                     bucket={bucket}
-                    accountName={account.accountName}
-                    db={db}
                     prominent={prominentBuckets.includes(key)}
                 />
             ))}

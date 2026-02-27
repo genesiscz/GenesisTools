@@ -1,5 +1,5 @@
 import { Box, Text } from "ink";
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { UsageAlert } from "@app/claude/lib/usage/notification-manager";
 
 interface AlertBannerProps {

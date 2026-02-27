@@ -1,5 +1,6 @@
 import { sendNotification } from "@app/utils/macos/notifications";
 import type { UsageDashboardConfig } from "./dashboard-config";
+import { BUCKET_LABELS, BUCKET_THRESHOLD_MAP } from "./constants";
 
 export interface UsageAlert {
     id: string;
@@ -11,22 +12,6 @@ export interface UsageAlert {
     timestamp: Date;
     dismissed: boolean;
 }
-
-const BUCKET_THRESHOLD_MAP: Record<string, "session" | "weekly"> = {
-    five_hour: "session",
-    seven_day: "weekly",
-    seven_day_opus: "weekly",
-    seven_day_sonnet: "weekly",
-    seven_day_oauth_apps: "weekly",
-};
-
-const BUCKET_LABELS: Record<string, string> = {
-    five_hour: "Session",
-    seven_day: "Weekly (all)",
-    seven_day_opus: "Weekly (Opus)",
-    seven_day_sonnet: "Weekly (Sonnet)",
-    seven_day_oauth_apps: "Weekly (OAuth)",
-};
 
 class BucketTracker {
     private lastNotifiedPct: number | null = null;

@@ -1,5 +1,5 @@
 import { Box, Text, useInput, useStdout } from "ink";
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { UsageHistoryDb, UsageSnapshot } from "@app/claude/lib/usage/history-db";
 import { useScroll } from "../../hooks/use-scroll";
 
@@ -7,7 +7,7 @@ interface HistoryViewProps {
     db: UsageHistoryDb | null;
 }
 
-const BUCKET_LABELS: Record<string, string> = {
+const BUCKET_SHORT_LABELS: Record<string, string> = {
     five_hour: "session",
     seven_day: "weekly",
     seven_day_opus: "opus",
@@ -153,7 +153,7 @@ export function HistoryView({ db }: HistoryViewProps) {
                                 </Text>
                             </Box>
                             {visible.map((s, i) => {
-                                const bucketLabel = BUCKET_LABELS[s.bucket] ?? s.bucket;
+                                const bucketLabel = BUCKET_SHORT_LABELS[s.bucket] ?? s.bucket;
 
                                 return (
                                     <Box key={`${s.timestamp}-${s.bucket}-${i}`}>

@@ -1,17 +1,14 @@
 import { Box, Text } from "ink";
-import React from "react";
 import type { PollResult } from "../../types";
-import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { AccountSection } from "./account-section";
 
 interface OverviewViewProps {
     results: PollResult | null;
-    db: UsageHistoryDb | null;
     config: UsageDashboardConfig;
 }
 
-export function OverviewView({ results, db, config }: OverviewViewProps) {
+export function OverviewView({ results, config }: OverviewViewProps) {
     if (!results) {
         return (
             <Box paddingX={1}>
@@ -43,7 +40,6 @@ export function OverviewView({ results, db, config }: OverviewViewProps) {
                 <AccountSection
                     key={account.accountName}
                     account={account}
-                    db={db}
                     prominentBuckets={config.prominentBuckets}
                 />
             ))}
