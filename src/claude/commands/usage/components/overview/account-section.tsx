@@ -98,11 +98,13 @@ function BucketRow({ bucketKey, bucket, prominent }: BucketRowProps) {
     const countdown = formatResetCountdown(bucket.resets_at);
     const projected = calcProjection(bucket.utilization, bucket.resets_at, bucketKey);
 
+    const showProjection = projected !== null && projected >= 100;
+
     if (prominent) {
         return (
             <Box flexDirection="column" marginBottom={1}>
                 <Text bold>{label}</Text>
-                <UsageBar utilization={bucket.utilization} projectedPct={projected} />
+                <UsageBar utilization={bucket.utilization} projectedPct={showProjection ? projected : null} />
                 {countdown && (
                     <Text dimColor>
                         {"Resets "}
@@ -117,7 +119,7 @@ function BucketRow({ bucketKey, bucket, prominent }: BucketRowProps) {
     return (
         <Box>
             <Text>{`${label.padEnd(18)}`}</Text>
-            <UsageBar utilization={bucket.utilization} width={30} projectedPct={projected} />
+            <UsageBar utilization={bucket.utilization} width={30} projectedPct={showProjection ? projected : null} />
         </Box>
     );
 }

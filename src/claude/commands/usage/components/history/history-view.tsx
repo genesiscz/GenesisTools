@@ -25,23 +25,52 @@ function formatTimestamp(ts: string): string {
     });
 }
 
+function formatTimePerPercent(deltaMs: number, deltaPct: number): string {
+    if (deltaPct <= 0) {
+        return "—";
+    }
+
+    const msPerPct = deltaMs / deltaPct;
+    const totalSec = Math.round(msPerPct / 1000);
+
+    if (totalSec < 60) {
+        return `${totalSec}s/1%`;
+    }
+
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+
+    if (min < 60) {
+        return sec > 0 ? `${min}m${sec}s/1%` : `${min}m/1%`;
+    }
+
+    const hr = Math.floor(min / 60);
+    const remMin = min % 60;
+    return remMin > 0 ? `${hr}h${remMin}m/1%` : `${hr}h/1%`;
+}
+
 interface SnapshotWithDelta extends UsageSnapshot {
     delta: number | null;
-    rate: number | null;
+    timePerPct: string | null;
 }
 
 function computeDeltas(snapshots: UsageSnapshot[]): SnapshotWithDelta[] {
     return snapshots.map((s, i) => {
         if (i === 0) {
-            return { ...s, delta: null, rate: null };
+            return { ...s, delta: null, timePerPct: null };
         }
 
         const prev = snapshots[i - 1];
         const delta = s.utilization - prev.utilization;
         const diffMs = new Date(s.timestamp).getTime() - new Date(prev.timestamp).getTime();
-        const rate = diffMs > 0 ? delta / (diffMs / 60000) : null;
 
-        return { ...s, delta, rate };
+        let timePerPct: string | null = null;
+
+        if (diffMs > 0 && delta > 0) {
+            timePerPct = formatTimePerPercent(diffMs, delta);
+        }
+
+        return { ...s, delta, timePerPct };
     });
 }
 
@@ -149,7 +178,7 @@ export function HistoryView({ db }: HistoryViewProps) {
                             <Text bold>{`── ${accountName} ${"─".repeat(40)}`}</Text>
                             <Box>
                                 <Text bold>
-                                    {`${"Time".padEnd(10)}${"Bucket".padEnd(10)}${"Util %".padEnd(10)}${"Δ%".padEnd(8)}Rate`}
+                                    {`${"Time".padEnd(10)}${"Bucket".padEnd(10)}${"Util %".padEnd(10)}${"Δ%".padEnd(8)}Speed`}
                                 </Text>
                             </Box>
                             {visible.map((s, i) => {
@@ -164,7 +193,7 @@ export function HistoryView({ db }: HistoryViewProps) {
                                             {s.delta !== null ? `${s.delta >= 0 ? "+" : ""}${s.delta.toFixed(1)}`.padEnd(8) : "—".padEnd(8)}
                                         </Text>
                                         <Text dimColor>
-                                            {s.rate !== null ? s.rate.toFixed(2) : "—"}
+                                            {s.timePerPct ?? "—"}
                                         </Text>
                                     </Box>
                                 );

@@ -14,9 +14,10 @@ interface PollerOptions {
     config: UsageDashboardConfig;
     accountFilter?: string;
     paused: boolean;
+    pollIntervalSeconds: number;
 }
 
-export function useUsagePoller({ config, accountFilter, paused }: PollerOptions) {
+export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeconds }: PollerOptions) {
     const [results, setResults] = useState<PollResult | null>(null);
     const [isPolling, setIsPolling] = useState(false);
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
@@ -119,7 +120,7 @@ export function useUsagePoller({ config, accountFilter, paused }: PollerOptions)
 
             setResults({ accounts: accountUsages, timestamp: now });
             setLastRefresh(now);
-            setNextRefresh(new Date(now.getTime() + config.refreshInterval * 1000));
+            setNextRefresh(new Date(now.getTime() + pollIntervalSeconds * 1000));
         } catch (error) {
             setResults({
                 accounts: [],
@@ -129,7 +130,7 @@ export function useUsagePoller({ config, accountFilter, paused }: PollerOptions)
         } finally {
             setIsPolling(false);
         }
-    }, [isPolling, accountFilter, config]);
+    }, [isPolling, accountFilter, config, pollIntervalSeconds]);
 
     useEffect(() => {
         poll();
@@ -144,14 +145,14 @@ export function useUsagePoller({ config, accountFilter, paused }: PollerOptions)
             return;
         }
 
-        intervalRef.current = setInterval(poll, config.refreshInterval * 1000);
+        intervalRef.current = setInterval(poll, pollIntervalSeconds * 1000);
 
         return () => {
             if (intervalRef.current) {
                 clearInterval(intervalRef.current);
             }
         };
-    }, [paused, config.refreshInterval, poll]);
+    }, [paused, pollIntervalSeconds, poll]);
 
     return {
         results,

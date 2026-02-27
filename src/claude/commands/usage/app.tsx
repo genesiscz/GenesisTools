@@ -1,9 +1,10 @@
 import { Box } from "ink";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
     loadDashboardConfig,
     type UsageDashboardConfig,
 } from "@app/claude/lib/usage/dashboard-config";
+import { POLL_INTERVALS, type PollInterval } from "@app/claude/lib/usage/constants";
 import { useUsagePoller } from "./hooks/use-usage-poller";
 import { useTabNavigation } from "./hooks/use-tab-navigation";
 import { useKeybindings } from "./hooks/use-keybindings";
@@ -42,12 +43,26 @@ interface DashboardProps {
 function Dashboard({ config, accountFilter }: DashboardProps) {
     const { activeTab, tabs, activeIndex } = useTabNavigation(config.defaultTab);
 
+    const [pollInterval, setPollInterval] = useState<PollInterval>(
+        (POLL_INTERVALS.includes(config.refreshInterval as PollInterval)
+            ? config.refreshInterval
+            : 10) as PollInterval
+    );
+
+    const cycleInterval = useCallback(() => {
+        setPollInterval((current) => {
+            const idx = POLL_INTERVALS.indexOf(current);
+            return POLL_INTERVALS[(idx + 1) % POLL_INTERVALS.length];
+        });
+    }, []);
+
     const { results, isPolling, lastRefresh, nextRefresh, db, notifications, forceRefresh } =
-        useUsagePoller({ config, accountFilter, paused: false });
+        useUsagePoller({ config, accountFilter, paused: false, pollIntervalSeconds: pollInterval });
 
     const { paused, showHelp, setShowHelp } = useKeybindings({
         onForceRefresh: forceRefresh,
         onDismissAlert: () => notifications?.dismissAll(),
+        onCycleInterval: cycleInterval,
     });
 
     if (showHelp) {
@@ -74,6 +89,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
                 nextRefresh={nextRefresh}
                 paused={paused}
                 isPolling={isPolling}
+                pollInterval={pollInterval}
             />
         </Box>
     );

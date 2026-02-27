@@ -1,10 +1,14 @@
-import { Box, Text, useInput } from "ink";
-import { useState } from "react";
+import { Box, Text } from "ink";
+import { useMemo } from "react";
 import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
-import { BUCKET_LABELS, VISIBLE_BUCKETS } from "@app/claude/lib/usage/constants";
+import { BUCKET_LABELS, VISIBLE_BUCKETS, BUCKET_INK_COLORS } from "@app/claude/lib/usage/constants";
+import type { AccountUsage, UsageBucket } from "@app/claude/lib/usage/api";
 import type { PollResult } from "../../types";
-import { useRateCalculator } from "../../hooks/use-rate-calculator";
-import { RateTable } from "./rate-table";
+import {
+    calculateRollingRates,
+    projectTimeToLimit,
+    formatDuration,
+} from "@app/claude/lib/usage/rate-math";
 import { RateSparkline } from "./rate-sparkline";
 
 interface RatesViewProps {
@@ -12,65 +16,110 @@ interface RatesViewProps {
     results: PollResult | null;
 }
 
-function RateBucketView({
+interface BucketRateInfo {
+    utilization: number;
+    rate5min: number | null;
+    projMinutes: number | null;
+}
+
+function computeBucketRate(
+    db: UsageHistoryDb | null,
+    accountName: string,
+    bucket: string,
+    utilization: number
+): BucketRateInfo {
+    if (!db) {
+        return { utilization, rate5min: null, projMinutes: null };
+    }
+
+    const snapshots = db.getSnapshots(accountName, bucket, 30);
+    const data = snapshots.map((s) => ({
+        timestamp: s.timestamp,
+        value: s.utilization,
+    }));
+
+    const rates = calculateRollingRates(data, new Date());
+    const rate5min = rates["5min"];
+    const projMinutes = rate5min !== null ? projectTimeToLimit(utilization, rate5min) : null;
+
+    return { utilization, rate5min, projMinutes };
+}
+
+function formatRate(rate: number | null): string {
+    if (rate === null) {
+        return "—";
+    }
+
+    const sign = rate >= 0 ? "+" : "";
+    return `${sign}${rate.toFixed(2)}/m`;
+}
+
+function formatProj(minutes: number | null): string {
+    if (minutes === null) {
+        return "—";
+    }
+
+    if (minutes === 0) {
+        return "at limit";
+    }
+
+    return formatDuration(minutes);
+}
+
+function AccountRatesRow({
     db,
-    accountName,
-    bucket,
-    utilization,
+    account,
+    activeBuckets,
 }: {
     db: UsageHistoryDb | null;
-    accountName: string;
-    bucket: string;
-    utilization: number;
+    account: AccountUsage;
+    activeBuckets: string[];
 }) {
-    const { rates, projections, currentUtilization } = useRateCalculator(
-        db,
-        accountName,
-        bucket,
-        utilization
-    );
-    const label = BUCKET_LABELS[bucket] ?? bucket;
+    const bucketRates = useMemo(() => {
+        const rates: Record<string, BucketRateInfo> = {};
+
+        for (const bucket of activeBuckets) {
+            const bucketData = account.usage?.[bucket] as UsageBucket | undefined;
+
+            if (bucketData) {
+                rates[bucket] = computeBucketRate(db, account.accountName, bucket, bucketData.utilization);
+            }
+        }
+
+        return rates;
+    }, [db, account, activeBuckets]);
 
     return (
         <Box flexDirection="column" marginBottom={1}>
-            <Text bold>
-                {`${accountName} — ${label}`}
-                <Text dimColor>{`  Current: ${Math.round(currentUtilization)}%`}</Text>
-            </Text>
-            <Box marginLeft={2}>
-                <Text>{"Rate trend: "}</Text>
-                <RateSparkline db={db} accountName={accountName} bucket={bucket} />
-            </Box>
-            <Box marginLeft={2} marginTop={1}>
-                <RateTable
-                    rates={rates}
-                    projections={projections}
-                    currentUtilization={currentUtilization}
-                />
-            </Box>
+            <Text bold>{`── ${account.accountName} ${"─".repeat(Math.max(0, 40 - account.accountName.length))}`}</Text>
+            {activeBuckets.map((bucket) => {
+                const info = bucketRates[bucket];
+
+                if (!info) {
+                    return null;
+                }
+
+                const label = (BUCKET_LABELS[bucket] ?? bucket).padEnd(16);
+                const color = BUCKET_INK_COLORS[bucket] ?? "white";
+
+                return (
+                    <Box key={bucket}>
+                        <Text color={color}>{label}</Text>
+                        <Text bold>{`${Math.round(info.utilization)}%`.padEnd(7)}</Text>
+                        <Text color={info.rate5min !== null && info.rate5min > 0 ? "yellow" : "green"}>
+                            {formatRate(info.rate5min).padEnd(10)}
+                        </Text>
+                        <Text dimColor>{formatProj(info.projMinutes).padEnd(12)}</Text>
+                        <RateSparkline db={db} accountName={account.accountName} bucket={bucket} />
+                    </Box>
+                );
+            })}
         </Box>
     );
 }
 
 export function RatesView({ db, results }: RatesViewProps) {
-    const [selectedAccount, setSelectedAccount] = useState(0);
-    const [selectedBucket, setSelectedBucket] = useState(0);
-
     const accounts = results?.accounts ?? [];
-
-    useInput((input, key) => {
-        if (key.upArrow) {
-            setSelectedAccount((i) => (i > 0 ? i - 1 : accounts.length - 1));
-        }
-
-        if (key.downArrow) {
-            setSelectedAccount((i) => (i < accounts.length - 1 ? i + 1 : 0));
-        }
-
-        if (input === "b") {
-            setSelectedBucket((i) => (i < VISIBLE_BUCKETS.length - 1 ? i + 1 : 0));
-        }
-    });
 
     if (!results || accounts.length === 0) {
         return (
@@ -80,22 +129,11 @@ export function RatesView({ db, results }: RatesViewProps) {
         );
     }
 
-    const account = accounts[selectedAccount];
+    const activeBuckets = VISIBLE_BUCKETS.filter((b) => {
+        return accounts.some((a) => a.usage && b in a.usage && a.usage[b]);
+    });
 
-    if (!account || !account.usage) {
-        return (
-            <Box paddingX={1}>
-                <Text dimColor>{"No usage data available."}</Text>
-            </Box>
-        );
-    }
-
-    const activeBuckets = VISIBLE_BUCKETS.filter(
-        (b) => account.usage && b in account.usage && account.usage[b]
-    );
-    const currentBucket = activeBuckets[selectedBucket % activeBuckets.length];
-
-    if (!currentBucket) {
+    if (activeBuckets.length === 0) {
         return (
             <Box paddingX={1}>
                 <Text dimColor>{"No bucket data."}</Text>
@@ -103,25 +141,28 @@ export function RatesView({ db, results }: RatesViewProps) {
         );
     }
 
-    const bucketData = account.usage[currentBucket];
-
-    if (!bucketData) {
-        return null;
-    }
-
     return (
         <Box flexDirection="column" paddingX={1} paddingY={1}>
-            <RateBucketView
-                db={db}
-                accountName={account.accountName}
-                bucket={currentBucket}
-                utilization={bucketData.utilization}
-            />
             <Box>
-                <Text dimColor>
-                    {"[↑/↓] Switch account  [b] Switch bucket"}
+                <Text bold>
+                    {`${"Bucket".padEnd(16)}${"Use%".padEnd(7)}${"Rate/5m".padEnd(10)}${"Proj limit".padEnd(12)}Trend`}
                 </Text>
             </Box>
+            <Text dimColor>{"─".repeat(60)}</Text>
+            {accounts.map((account) => {
+                if (!account.usage) {
+                    return null;
+                }
+
+                return (
+                    <AccountRatesRow
+                        key={account.accountName}
+                        db={db}
+                        account={account}
+                        activeBuckets={activeBuckets}
+                    />
+                );
+            })}
         </Box>
     );
 }

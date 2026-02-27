@@ -30,6 +30,25 @@ export const VISIBLE_BUCKETS = [
     "seven_day_oauth_apps",
 ];
 
+export const BUCKET_COLORS: Record<string, string> = {
+    five_hour: "\x1b[36m", // cyan
+    seven_day: "\x1b[33m", // yellow
+    seven_day_opus: "\x1b[35m", // magenta
+    seven_day_sonnet: "\x1b[32m", // green
+    seven_day_oauth_apps: "\x1b[34m", // blue
+};
+
+export const BUCKET_INK_COLORS: Record<string, string> = {
+    five_hour: "cyan",
+    seven_day: "yellow",
+    seven_day_opus: "magenta",
+    seven_day_sonnet: "green",
+    seven_day_oauth_apps: "blue",
+};
+
+export const POLL_INTERVALS = [5, 10, 15, 30, 60] as const;
+export type PollInterval = (typeof POLL_INTERVALS)[number];
+
 export function colorForPct(pct: number): "red" | "yellow" | "green" {
     if (pct >= 80) {
         return "red";

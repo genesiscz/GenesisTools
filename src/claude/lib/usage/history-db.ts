@@ -96,14 +96,15 @@ export class UsageHistoryDb {
     }
 
     getSnapshots(accountName: string, bucket: string, lastMinutes: number): UsageSnapshot[] {
+        const cutoff = new Date(Date.now() - lastMinutes * 60_000).toISOString();
         const stmt = this.claudeDb.getDb().prepare(`
             SELECT id, timestamp, account_name, bucket, utilization, resets_at
             FROM usage_snapshots
             WHERE account_name = ? AND bucket = ?
-              AND timestamp >= datetime('now', '-' || ? || ' minutes')
+              AND timestamp >= ?
             ORDER BY timestamp ASC
         `);
-        const rows = stmt.all(accountName, bucket, lastMinutes) as SnapshotRow[];
+        const rows = stmt.all(accountName, bucket, cutoff) as SnapshotRow[];
         return rows.map((row) => this.mapRow(row));
     }
 

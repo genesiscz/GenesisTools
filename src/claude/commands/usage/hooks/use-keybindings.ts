@@ -4,9 +4,10 @@ import { useState } from "react";
 interface KeybindingsOptions {
     onForceRefresh: () => void;
     onDismissAlert: () => void;
+    onCycleInterval: () => void;
 }
 
-export function useKeybindings({ onForceRefresh, onDismissAlert }: KeybindingsOptions) {
+export function useKeybindings({ onForceRefresh, onDismissAlert, onCycleInterval }: KeybindingsOptions) {
     const { exit } = useApp();
     const [paused, setPaused] = useState(false);
     const [showHelp, setShowHelp] = useState(false);
@@ -22,6 +23,10 @@ export function useKeybindings({ onForceRefresh, onDismissAlert }: KeybindingsOp
 
         if (input === "p") {
             setPaused((p) => !p);
+        }
+
+        if (input === "i") {
+            onCycleInterval();
         }
 
         if (input === "x") {
