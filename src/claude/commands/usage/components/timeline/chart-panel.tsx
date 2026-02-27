@@ -1,6 +1,5 @@
 import { Box, Text } from "ink";
 import { useMemo } from "react";
-import asciichart from "asciichart";
 import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import {
     BUCKET_LABELS,
@@ -9,6 +8,7 @@ import {
 } from "@app/claude/lib/usage/constants";
 import type { TimelineZoom } from "../../types";
 import { ZOOM_MINUTES } from "../../types";
+import { renderChart, CHART_MODE_LABELS, type ChartMode, type ChartSeries } from "./chart-renderers";
 
 interface ChartPanelProps {
     db: UsageHistoryDb | null;
@@ -16,6 +16,7 @@ interface ChartPanelProps {
     buckets: string[];
     zoom: TimelineZoom;
     width: number;
+    chartMode: ChartMode;
 }
 
 function resample(values: number[], targetWidth: number): number[] {
@@ -98,7 +99,7 @@ function buildTimeAxis(minutes: number, plotWidth: number): string {
     );
 }
 
-export function ChartPanel({ db, accountName, buckets, zoom, width }: ChartPanelProps) {
+export function ChartPanel({ db, accountName, buckets, zoom, width, chartMode }: ChartPanelProps) {
     const chartWidth = Math.max(20, width - 12);
     const minutes = ZOOM_MINUTES[zoom];
 
@@ -107,57 +108,39 @@ export function ChartPanel({ db, accountName, buckets, zoom, width }: ChartPanel
             return { chartOutput: null, activeBuckets: [] as string[], timeAxis: "" };
         }
 
-        const seriesMap = new Map<string, Array<{ utilization: number }>>();
-        const active: string[] = [];
+        const series: ChartSeries[] = [];
 
         for (const bucket of buckets) {
             const snapshots = db.getSnapshots(accountName, bucket, minutes);
 
             if (snapshots.length > 0) {
-                seriesMap.set(bucket, snapshots);
-                active.push(bucket);
+                const values = snapshots.map((s) => Math.max(0, Math.min(s.utilization, 100)));
+                series.push({
+                    label: BUCKET_LABELS[bucket] ?? bucket,
+                    values: resample(values, chartWidth),
+                    color: BUCKET_COLORS[bucket] ?? "\x1b[37m",
+                    inkColor: BUCKET_INK_COLORS[bucket] ?? "white",
+                });
             }
         }
 
-        if (active.length === 0) {
+        if (series.length === 0) {
             return { chartOutput: null, activeBuckets: [] as string[], timeAxis: "" };
         }
 
-        const allSeries: number[][] = [];
-        const colors: string[] = [];
-
-        for (const bucket of active) {
-            const snapshots = seriesMap.get(bucket)!;
-            const values = snapshots.map((s) => Math.max(0, Math.min(s.utilization, 100)));
-            allSeries.push(resample(values, chartWidth));
-            colors.push(BUCKET_COLORS[bucket] ?? "\x1b[37m");
-        }
-
+        const maxValue = Math.max(...series.flatMap((s) => s.values));
         const axis = buildTimeAxis(minutes, chartWidth);
+        const chart = renderChart(chartMode, { series, maxValue, chartWidth });
+        const active = series.map((s) => buckets.find((b) => (BUCKET_LABELS[b] ?? b) === s.label) ?? s.label);
 
-        const dataMax = Math.max(...allSeries.flat());
-        const ceilMax = Math.min(100, Math.ceil(dataMax / 10) * 10 + 5);
-
-        try {
-            const chart = asciichart.plot(allSeries.length === 1 ? allSeries[0] : allSeries, {
-                height: 8,
-                min: 0,
-                max: ceilMax,
-                colors: allSeries.length > 1 ? colors : undefined,
-                format: (v: number) => `${Math.round(v).toString().padStart(3)}%`,
-            });
-
-            return { chartOutput: chart, activeBuckets: active, timeAxis: axis };
-        } catch {
-            return { chartOutput: null, activeBuckets: active, timeAxis: axis };
-        }
-    }, [db, accountName, buckets, minutes, chartWidth]);
+        return { chartOutput: chart, activeBuckets: active, timeAxis: axis };
+    }, [db, accountName, buckets, minutes, chartWidth, chartMode]);
 
     return (
         <Box flexDirection="column" marginBottom={1}>
             <Text bold>
                 {accountName}
-                <Text dimColor>{`  Last ${zoom}`}</Text>
+                <Text dimColor>{`  Last ${zoom}  (${CHART_MODE_LABELS[chartMode]})`}</Text>
             </Text>
             {chartOutput ? (
                 <Box flexDirection="column">

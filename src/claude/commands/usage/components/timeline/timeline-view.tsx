@@ -6,6 +6,7 @@ import type { PollResult, TimelineZoom } from "../../types";
 import { ZOOM_ORDER } from "../../types";
 import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { ChartPanel } from "./chart-panel";
+import { CHART_MODES, type ChartMode } from "./chart-renderers";
 
 interface TimelineViewProps {
     db: UsageHistoryDb | null;
@@ -20,13 +21,14 @@ export function TimelineView({ db, results, config }: TimelineViewProps) {
         (config.defaultTimelineZoom as TimelineZoom) || "30m"
     );
     const [showAllAccounts, setShowAllAccounts] = useState(true);
+    const [chartMode, setChartMode] = useState<ChartMode>("line");
 
     const accounts = results?.accounts ?? [];
     const allBuckets = VISIBLE_BUCKETS.filter((b) => {
         return accounts.some((a) => a.usage && b in a.usage);
     });
 
-    useInput((input, key) => {
+    useInput((input) => {
         if (input === "+" || input === "=") {
             const idx = ZOOM_ORDER.indexOf(zoom);
 
@@ -45,6 +47,13 @@ export function TimelineView({ db, results, config }: TimelineViewProps) {
 
         if (input === "a") {
             setShowAllAccounts((v) => !v);
+        }
+
+        if (input === "g") {
+            setChartMode((current) => {
+                const idx = CHART_MODES.indexOf(current);
+                return CHART_MODES[(idx + 1) % CHART_MODES.length];
+            });
         }
     });
 
@@ -76,11 +85,12 @@ export function TimelineView({ db, results, config }: TimelineViewProps) {
                     buckets={allBuckets}
                     zoom={zoom}
                     width={termWidth - 4}
+                    chartMode={chartMode}
                 />
             ))}
             <Box>
                 <Text dimColor>
-                    {"[+/-] Zoom  [a] Toggle all accounts"}
+                    {"[+/-] Zoom  [a] All accounts  [g] Graph style"}
                 </Text>
             </Box>
         </Box>

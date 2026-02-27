@@ -16,6 +16,7 @@ const KEYBINDINGS = [
     ["", "Timeline tab:"],
     ["+/-", "Zoom time range"],
     ["a", "Toggle all-accounts overlay"],
+    ["g", "Cycle graph style (line/bar/sparkline)"],
     ["", ""],
     ["", "History tab:"],
     ["j/k", "Scroll up/down"],
