@@ -52,6 +52,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
     );
 
     const [paused, setPaused] = useState(false);
+    const [, forceUpdate] = useState(0);
 
     const cycleInterval = useCallback(() => {
         setPollInterval((current) => {
@@ -68,7 +69,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
 
     const { showHelp, setShowHelp } = useKeybindings({
         onForceRefresh: () => forceRefreshRef.current(),
-        onDismissAlert: () => notifications?.dismissAll(),
+        onDismissAlert: () => { notifications?.dismissAll(); forceUpdate((n) => n + 1); },
         onCycleInterval: cycleInterval,
         onTogglePause: () => setPaused((p) => !p),
     });
@@ -90,7 +91,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
             {activeTab === "history" && <HistoryView db={db} />}
             <AlertBanner
                 alerts={notifications?.alerts ?? []}
-                onDismiss={() => notifications?.dismissAll()}
+                onDismiss={() => { notifications?.dismissAll(); forceUpdate((n) => n + 1); }}
             />
             <StatusBar
                 lastRefresh={lastRefresh}

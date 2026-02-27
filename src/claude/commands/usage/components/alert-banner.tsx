@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from "ink";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { UsageAlert } from "@app/claude/lib/usage/notification-manager";
 
 interface AlertBannerProps {
@@ -8,7 +8,8 @@ interface AlertBannerProps {
 }
 
 export function AlertBanner({ alerts, onDismiss }: AlertBannerProps) {
-    const [visible, setVisible] = useState(true);
+    const [flash, setFlash] = useState(false);
+    const prevCountRef = useRef(alerts.length);
 
     useInput((input) => {
         if (alerts.length > 0 && (input === "x" || input === "X")) {
@@ -17,12 +18,23 @@ export function AlertBanner({ alerts, onDismiss }: AlertBannerProps) {
     });
 
     useEffect(() => {
-        if (alerts.length === 0) {
-            return;
+        if (alerts.length > prevCountRef.current) {
+            setFlash(true);
+            let count = 0;
+            const blink = setInterval(() => {
+                count++;
+                setFlash((v) => !v);
+
+                if (count >= 6) {
+                    clearInterval(blink);
+                    setFlash(false);
+                }
+            }, 300);
+
+            return () => clearInterval(blink);
         }
 
-        const blink = setInterval(() => setVisible((v) => !v), 500);
-        return () => clearInterval(blink);
+        prevCountRef.current = alerts.length;
     }, [alerts.length]);
 
     if (alerts.length === 0) {
@@ -38,8 +50,8 @@ export function AlertBanner({ alerts, onDismiss }: AlertBannerProps) {
                 return (
                     <Box key={alert.id} gap={1}>
                         <Text
-                            backgroundColor={visible ? bgColor : undefined}
-                            color={visible ? "white" : bgColor}
+                            backgroundColor={flash ? undefined : bgColor}
+                            color={flash ? bgColor : "white"}
                             bold
                         >
                             {` ▲ ${alert.message} `}
