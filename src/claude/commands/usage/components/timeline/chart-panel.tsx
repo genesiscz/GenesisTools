@@ -111,7 +111,16 @@ export function ChartPanel({ db, accountName, buckets, zoom, width, chartMode }:
         const series: ChartSeries[] = [];
 
         for (const bucket of buckets) {
-            const snapshots = db.getSnapshots(accountName, bucket, minutes);
+            let snapshots = db.getSnapshots(accountName, bucket, minutes);
+
+            // Fill-forward: if no data in zoom window, use latest known value
+            if (snapshots.length === 0) {
+                const latest = db.getLatest(accountName, bucket);
+
+                if (latest) {
+                    snapshots = [latest];
+                }
+            }
 
             if (snapshots.length > 0) {
                 const values = snapshots.map((s) => Math.max(0, Math.min(s.utilization, 100)));
