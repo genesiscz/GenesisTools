@@ -135,12 +135,15 @@ export function ChartPanel({ db, accountName, buckets, zoom, width }: ChartPanel
 
         const axis = buildTimeAxis(minutes, chartWidth);
 
+        const dataMax = Math.max(...allSeries.flat());
+        const ceilMax = Math.min(100, Math.ceil(dataMax / 10) * 10 + 5);
+
         try {
             const chart = asciichart.plot(allSeries.length === 1 ? allSeries[0] : allSeries, {
                 height: 8,
                 width: chartWidth,
                 min: 0,
-                max: 100,
+                max: ceilMax,
                 colors: allSeries.length > 1 ? colors : undefined,
                 format: (v: number) => `${Math.round(v).toString().padStart(3)}%`,
             });
