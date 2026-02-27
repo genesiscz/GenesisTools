@@ -128,7 +128,7 @@ export function ChartPanel({ db, accountName, buckets, zoom, width }: ChartPanel
 
         for (const bucket of active) {
             const snapshots = seriesMap.get(bucket)!;
-            const values = snapshots.map((s) => s.utilization);
+            const values = snapshots.map((s) => Math.max(0, Math.min(s.utilization, 100)));
             allSeries.push(resample(values, chartWidth));
             colors.push(BUCKET_COLORS[bucket] ?? "\x1b[37m");
         }
