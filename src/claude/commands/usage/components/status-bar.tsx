@@ -31,8 +31,8 @@ export function StatusBar({ lastRefresh, nextRefresh, paused, isPolling, pollInt
         : null;
 
     return (
-        <Box borderStyle="single" borderTop borderBottom={false} borderLeft={false} borderRight={false} paddingX={1}>
-            <Box flexGrow={1}>
+        <Box flexDirection="column" borderStyle="single" borderTop borderBottom={false} borderLeft={false} borderRight={false} paddingX={1}>
+            <Box>
                 {lastRefresh && (
                     <Text dimColor>
                         Last: {formatTime(lastRefresh)}
