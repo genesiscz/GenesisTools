@@ -1,10 +1,11 @@
 import { Box } from "ink";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState, useEffect } from "react";
 import {
     loadDashboardConfig,
     type UsageDashboardConfig,
 } from "@app/claude/lib/usage/dashboard-config";
 import { POLL_INTERVALS, type PollInterval } from "@app/claude/lib/usage/constants";
+import { useTerminalSize } from "@app/utils/ink/hooks/use-terminal-size";
 import { useUsagePoller } from "./hooks/use-usage-poller";
 import { useTabNavigation } from "./hooks/use-tab-navigation";
 import { useKeybindings } from "./hooks/use-keybindings";
@@ -41,6 +42,7 @@ interface DashboardProps {
 }
 
 function Dashboard({ config, accountFilter }: DashboardProps) {
+    useTerminalSize({ clearOnResize: true });
     const { activeTab, tabs, activeIndex } = useTabNavigation(config.defaultTab);
 
     const [pollInterval, setPollInterval] = useState<PollInterval>(
