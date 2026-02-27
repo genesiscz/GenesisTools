@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import { useEffect, useState } from "react";
 import type { AccountUsage, UsageBucket } from "@app/claude/lib/usage/api";
 import { BUCKET_LABELS, BUCKET_PERIODS_MS, colorForPct } from "@app/claude/lib/usage/constants";
+import { useTerminalSize } from "@app/utils/ink/hooks/use-terminal-size";
 import { UsageBar } from "./usage-bar";
 
 function formatResetCountdown(resetsAt: string | null): string | null {
@@ -62,16 +63,18 @@ function calcProjection(utilization: number, resetsAt: string | null, bucketKey:
 }
 
 const NAME_WIDTH = 18;
-const BAR_WIDTH = 30;
 const PCT_WIDTH = 6;
-const PROJ_WIDTH = 12;
+const PROJ_WIDTH = 8;
+const FIXED_OVERHEAD = NAME_WIDTH + PCT_WIDTH + PROJ_WIDTH + 2;
+const MIN_BAR_WIDTH = 10;
 
 interface BucketRowProps {
     bucketKey: string;
     bucket: UsageBucket;
+    barWidth: number;
 }
 
-function BucketRow({ bucketKey, bucket }: BucketRowProps) {
+function BucketRow({ bucketKey, bucket, barWidth }: BucketRowProps) {
     const [, setTick] = useState(0);
 
     useEffect(() => {
@@ -82,23 +85,27 @@ function BucketRow({ bucketKey, bucket }: BucketRowProps) {
     const label = BUCKET_LABELS[bucketKey] ?? bucketKey.replace(/_/g, " ");
     const countdown = formatResetCountdown(bucket.resets_at);
     const projected = calcProjection(bucket.utilization, bucket.resets_at, bucketKey);
-    const showProjection = projected !== null && projected >= 100;
     const pct = Math.round(Math.max(0, Math.min(bucket.utilization, 100)));
 
+    const projStr = projected !== null && projected >= 100 ? `~${Math.round(projected)}%` : "";
+    const projColor = projected !== null ? colorForPct(projected) : undefined;
+
     return (
-        <Box>
-            <Text>{label.padEnd(NAME_WIDTH)}</Text>
-            <UsageBar utilization={bucket.utilization} width={BAR_WIDTH} />
-            <Text bold>{`${pct}%`.padStart(PCT_WIDTH)}</Text>
-            {showProjection ? (
-                <Text dimColor color={colorForPct(projected)}>
-                    {`~${Math.round(projected)}%`.padStart(PROJ_WIDTH)}
-                </Text>
-            ) : (
-                <Text>{" ".repeat(PROJ_WIDTH)}</Text>
-            )}
+        <Box flexDirection="column">
+            <Box>
+                <Text>{label.padEnd(NAME_WIDTH)}</Text>
+                <UsageBar utilization={bucket.utilization} width={barWidth} />
+                <Text bold>{`${pct}%`.padStart(PCT_WIDTH)}</Text>
+                {projStr ? (
+                    <Text dimColor color={projColor}>
+                        {projStr.padStart(PROJ_WIDTH)}
+                    </Text>
+                ) : (
+                    <Text>{" ".repeat(PROJ_WIDTH)}</Text>
+                )}
+            </Box>
             {countdown && (
-                <Text dimColor>{`  ⟳ ${countdown}`}</Text>
+                <Text dimColor>{`${" ".repeat(NAME_WIDTH)}⟳ ${countdown}`}</Text>
             )}
         </Box>
     );
@@ -110,6 +117,9 @@ interface AccountSectionProps {
 }
 
 export function AccountSection({ account }: AccountSectionProps) {
+    const { columns: termWidth } = useTerminalSize();
+    const barWidth = Math.max(MIN_BAR_WIDTH, termWidth - FIXED_OVERHEAD);
+
     const header = account.label
         ? `${account.accountName} (${account.label})`
         : account.accountName;
@@ -158,6 +168,7 @@ export function AccountSection({ account }: AccountSectionProps) {
                     key={key}
                     bucketKey={key}
                     bucket={bucket}
+                    barWidth={barWidth}
                 />
             ))}
         </Box>
