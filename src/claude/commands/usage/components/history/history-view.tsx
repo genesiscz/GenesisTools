@@ -34,19 +34,19 @@ function formatTimePerPercent(deltaMs: number, deltaPct: number): string {
     const totalSec = Math.round(msPerPct / 1000);
 
     if (totalSec < 60) {
-        return `${totalSec}s/1%`;
+        return `${totalSec}s`;
     }
 
     const min = Math.floor(totalSec / 60);
     const sec = totalSec % 60;
 
     if (min < 60) {
-        return sec > 0 ? `${min}m${sec}s/1%` : `${min}m/1%`;
+        return sec > 0 ? `${min}m${sec}s` : `${min}m`;
     }
 
     const hr = Math.floor(min / 60);
     const remMin = min % 60;
-    return remMin > 0 ? `${hr}h${remMin}m/1%` : `${hr}h/1%`;
+    return remMin > 0 ? `${hr}h${remMin}m` : `${hr}h`;
 }
 
 interface SnapshotWithDelta extends UsageSnapshot {
@@ -178,7 +178,7 @@ export function HistoryView({ db }: HistoryViewProps) {
                             <Text bold>{`── ${accountName} ${"─".repeat(40)}`}</Text>
                             <Box>
                                 <Text bold>
-                                    {`${"Time".padEnd(10)}${"Bucket".padEnd(10)}${"Util %".padEnd(10)}${"Δ%".padEnd(8)}Speed`}
+                                    {`${"Time".padEnd(10)}${"Bucket".padEnd(10)}${"Util %".padEnd(10)}${"Δ%".padEnd(8)}Speed / 1%`}
                                 </Text>
                             </Box>
                             {visible.map((s, i) => {
