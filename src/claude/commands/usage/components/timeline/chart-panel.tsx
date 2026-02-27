@@ -19,40 +19,73 @@ interface ChartPanelProps {
     chartMode: ChartMode;
 }
 
-function resample(values: number[], targetWidth: number): number[] {
-    if (values.length === 0) {
+interface TimedValue {
+    timestamp: string;
+    value: number;
+}
+
+/**
+ * Time-aligned resampling: maps each snapshot to its correct column
+ * position based on timestamp within the zoom window, then forward-fills
+ * gaps so the line extends from the earliest data to "now".
+ */
+function resampleTimeAligned(
+    timedValues: TimedValue[],
+    minutes: number,
+    targetWidth: number,
+): number[] {
+    if (timedValues.length === 0) {
         return [];
     }
 
-    if (values.length > targetWidth) {
-        const resampled: number[] = [];
-        const step = values.length / targetWidth;
+    const now = Date.now();
+    const startTime = now - minutes * 60_000;
+    const timeSpan = now - startTime;
+    const result: (number | null)[] = new Array(targetWidth).fill(null);
 
+    // Map each snapshot to its column based on timestamp position
+    for (const tv of timedValues) {
+        const t = new Date(tv.timestamp).getTime();
+        const ratio = (t - startTime) / timeSpan;
+        const col = Math.min(Math.max(0, Math.floor(ratio * targetWidth)), targetWidth - 1);
+
+        // If multiple snapshots map to the same column, keep the latest
+        result[col] = tv.value;
+    }
+
+    // Forward-fill: extend last known value through gaps and to "now"
+    // First, backward-fill positions before the first data point
+    let firstKnown: number | null = null;
+
+    for (const v of result) {
+        if (v !== null) {
+            firstKnown = v;
+            break;
+        }
+    }
+
+    if (firstKnown !== null) {
         for (let i = 0; i < targetWidth; i++) {
-            const idx = Math.min(Math.floor(i * step), values.length - 1);
-            resampled.push(values[idx]);
-        }
+            if (result[i] !== null) {
+                break;
+            }
 
-        return resampled;
+            result[i] = firstKnown;
+        }
     }
 
-    if (values.length < 3) {
-        const resampled: number[] = [];
-        const fillCount = Math.max(targetWidth, 10);
+    // Then forward-fill from left to right (fills gaps + extends to "now")
+    let lastKnown: number | null = null;
 
-        for (let i = 0; i < fillCount; i++) {
-            const ratio = i / (fillCount - 1);
-            const srcIdx = Math.min(
-                Math.floor(ratio * (values.length - 1)),
-                values.length - 1
-            );
-            resampled.push(values[srcIdx]);
+    for (let i = 0; i < targetWidth; i++) {
+        if (result[i] !== null) {
+            lastKnown = result[i];
+        } else if (lastKnown !== null) {
+            result[i] = lastKnown;
         }
-
-        return resampled;
     }
 
-    return values;
+    return result.map((v) => v ?? 0);
 }
 
 function formatTimeLabel(date: Date): string {
@@ -123,10 +156,13 @@ export function ChartPanel({ db, accountName, buckets, zoom, width, chartMode }:
             }
 
             if (snapshots.length > 0) {
-                const values = snapshots.map((s) => Math.max(0, Math.min(s.utilization, 100)));
+                const timedValues = snapshots.map((s) => ({
+                    timestamp: s.timestamp,
+                    value: Math.max(0, Math.min(s.utilization, 100)),
+                }));
                 series.push({
                     label: BUCKET_LABELS[bucket] ?? bucket,
-                    values: resample(values, chartWidth),
+                    values: resampleTimeAligned(timedValues, minutes, chartWidth),
                     color: BUCKET_COLORS[bucket] ?? "\x1b[37m",
                     inkColor: BUCKET_INK_COLORS[bucket] ?? "white",
                 });
