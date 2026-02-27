@@ -99,36 +99,61 @@ export function renderBarChart(data: ChartData): string | null {
     return lines.join("\n");
 }
 
-// ── Sparkline chart ──────────────────────────────────────────────
+// ── Sparkline chart (multi-row block chart) ──────────────────────
 
-const SPARK_CHARS = ["\u2581", "\u2582", "\u2583", "\u2584", "\u2585", "\u2586", "\u2587", "\u2588"];
+const BLOCK_CHARS = [" ", "\u2581", "\u2582", "\u2583", "\u2584", "\u2585", "\u2586", "\u2587", "\u2588"];
 
 export function renderSparklineChart(data: ChartData): string | null {
     if (data.series.length === 0) {
         return null;
     }
 
+    const chartHeight = 10;
     const ceilMax = Math.min(100, Math.ceil(data.maxValue / 10) * 10 + 5);
-    const sparkWidth = Math.max(10, data.chartWidth - 25);
+    const sparkWidth = Math.max(10, data.chartWidth - 8);
     const lines: string[] = [];
 
     for (const series of data.series) {
         const display = series.values.slice(-sparkWidth);
         const latest = series.values[series.values.length - 1] ?? 0;
 
-        const sparkline = display
-            .map((v) => {
-                const idx = Math.min(
-                    Math.floor((v / ceilMax) * (SPARK_CHARS.length - 1)),
-                    SPARK_CHARS.length - 1
-                );
-                return SPARK_CHARS[Math.max(0, idx)];
-            })
-            .join("");
+        // Build a multi-row block chart (top row = highest values)
+        const rows: string[] = [];
 
-        lines.push(
-            `${series.label.padEnd(16)} ${series.color}${sparkline}\x1b[0m  ${Math.round(latest)}%`
-        );
+        for (let row = chartHeight - 1; row >= 0; row--) {
+            const rowThreshold = (row / chartHeight) * ceilMax;
+            const nextThreshold = ((row + 1) / chartHeight) * ceilMax;
+            let rowStr = "";
+
+            for (const v of display) {
+                if (v >= nextThreshold) {
+                    // Full block
+                    rowStr += BLOCK_CHARS[8];
+                } else if (v > rowThreshold) {
+                    // Partial block
+                    const fraction = (v - rowThreshold) / (nextThreshold - rowThreshold);
+                    const idx = Math.min(Math.round(fraction * 8), 8);
+                    rowStr += BLOCK_CHARS[idx];
+                } else {
+                    rowStr += " ";
+                }
+            }
+
+            // Y-axis label on leftmost rows
+            const yLabel = row === chartHeight - 1
+                ? `${Math.round(ceilMax)}%`.padStart(5)
+                : row === Math.floor(chartHeight / 2)
+                    ? `${Math.round(ceilMax / 2)}%`.padStart(5)
+                    : row === 0
+                        ? "  0%".padStart(5)
+                        : "     ";
+
+            rows.push(`${yLabel} ${series.color}${rowStr}\x1b[0m`);
+        }
+
+        lines.push(`${series.color}${series.label}\x1b[0m  ${Math.round(latest)}%`);
+        lines.push(...rows);
+        lines.push("");
     }
 
     return lines.join("\n");
