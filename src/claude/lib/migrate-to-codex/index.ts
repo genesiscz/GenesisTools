@@ -175,6 +175,21 @@ export function buildMigrationPlan(discovered: DiscoveredSources, input: Migrati
                     targetScope === "project"
                         ? join(input.projectRoot, ".agents", "skills")
                         : join(GLOBAL_CODEX_DIR, "skills");
+
+                if (targetScope === "project" && !isInsideDir(source.path, input.projectRoot)) {
+                    warnings.push(
+                        `Skipping project-scope target for out-of-repo skill: ${basename(source.path)} (source: ${source.path})`
+                    );
+                    continue;
+                }
+
+                if (targetScope === "global" && source.scope === "project" && source.origin !== "plugin") {
+                    warnings.push(
+                        `Skipping global target for project-scoped skill: ${basename(source.path)} (source: ${source.path})`
+                    );
+                    continue;
+                }
+
                 const skillName = buildSkillTargetName(source, input.nameStyle, nameUsedByTarget);
                 const targetPath = join(targetBase, skillName);
 
@@ -201,13 +216,28 @@ export function buildMigrationPlan(discovered: DiscoveredSources, input: Migrati
         const commandSources = discovered.commands.filter((item) => sourceScopes.includes(item.scope));
 
         for (const targetScope of targetScopes) {
-            const namespaceUsedByTarget = new Set<string>();
+            const namespaceClaimed = new Map<string, string>();
             for (const source of commandSources) {
                 const targetBase =
                     targetScope === "project"
                         ? join(input.projectRoot, ".codex", "prompts")
                         : join(GLOBAL_CODEX_DIR, "prompts");
-                const namespace = buildCommandNamespace(source, input.nameStyle, namespaceUsedByTarget);
+
+                if (targetScope === "project" && !isInsideDir(source.path, input.projectRoot)) {
+                    warnings.push(
+                        `Skipping project-scope target for out-of-repo command: ${basename(source.path)} (source: ${source.path})`
+                    );
+                    continue;
+                }
+
+                if (targetScope === "global" && source.scope === "project" && source.origin !== "plugin") {
+                    warnings.push(
+                        `Skipping global target for project-scoped command: ${basename(source.path)} (source: ${source.path})`
+                    );
+                    continue;
+                }
+
+                const namespace = buildCommandNamespace(source, input.nameStyle, namespaceClaimed);
                 const targetPath = join(targetBase, namespace, basename(source.path));
 
                 if (seenTargets.has(targetPath)) {
@@ -335,17 +365,12 @@ export function summarizePlan(plan: MigrationPlan): string {
     lines.push(`- commands: ${componentCounts.commands}`);
     lines.push(`- instructions: ${componentCounts.instructions}`);
 
-    const preview = plan.operations.slice(0, 8);
-    if (preview.length > 0) {
+    if (plan.operations.length > 0) {
         lines.push("");
         lines.push("Preview:");
-        for (const item of preview) {
+        for (const item of plan.operations) {
             lines.push(`- [${item.component}] ${item.label}`);
         }
-    }
-
-    if (plan.operations.length > preview.length) {
-        lines.push(`- ... and ${plan.operations.length - preview.length} more`);
     }
 
     return lines.join("\n");
@@ -654,18 +679,20 @@ function buildSkillTargetName(source: SkillSource, style: NameStyle, used: Set<s
     const baseName = basename(source.path);
     let candidate = baseName;
 
-    if (style === "prefixed") {
-        if (source.origin === "plugin" && source.pluginName) {
-            candidate = `${normalizeSegment(source.pluginName)}-${baseName}`;
-        } else {
-            candidate = `${source.scope}-${baseName}`;
-        }
+    if (source.origin === "plugin" && source.pluginName) {
+        candidate = `${normalizeSegment(source.pluginName)}-${baseName}`;
+    } else if (style === "prefixed") {
+        candidate = `${source.scope}-${baseName}`;
     }
 
     return ensureUniqueName(candidate, used);
 }
 
-function buildCommandNamespace(source: CommandSource, style: NameStyle, used: Set<string>): string {
+function buildCommandNamespace(
+    source: CommandSource,
+    style: NameStyle,
+    claimed: Map<string, string>
+): string {
     let namespace = source.namespace;
 
     if (style === "prefixed") {
@@ -676,7 +703,33 @@ function buildCommandNamespace(source: CommandSource, style: NameStyle, used: Se
         }
     }
 
-    return ensureUniqueName(namespace, used);
+    const sourceKey =
+        source.origin === "plugin" && source.pluginName
+            ? `plugin:${source.pluginName}`
+            : `${source.origin}:${source.scope}:${source.namespace}`;
+
+    const normalized = normalizeSegment(namespace);
+    const existingOwner = claimed.get(normalized);
+
+    if (existingOwner === sourceKey) {
+        return normalized;
+    }
+
+    if (!existingOwner) {
+        claimed.set(normalized, sourceKey);
+        return normalized;
+    }
+
+    let candidate = normalized;
+    let counter = 2;
+
+    while (claimed.has(candidate) && claimed.get(candidate) !== sourceKey) {
+        candidate = `${normalized}-${counter}`;
+        counter++;
+    }
+
+    claimed.set(candidate, sourceKey);
+    return candidate;
 }
 
 function ensureUniqueName(name: string, used: Set<string>): string {
@@ -807,6 +860,12 @@ function asObject(value: unknown): Record<string, unknown> | null {
     }
 
     return value as Record<string, unknown>;
+}
+
+function isInsideDir(filePath: string, dirPath: string): boolean {
+    const resolved = resolve(filePath);
+    const resolvedDir = resolve(dirPath) + "/";
+    return resolved.startsWith(resolvedDir);
 }
 
 function sortByPath<T extends { path: string }>(items: T[]): T[] {
