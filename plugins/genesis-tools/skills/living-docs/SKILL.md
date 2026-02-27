@@ -431,6 +431,58 @@ When bootstrapping or auditing docs, these GenesisTools utilities help:
 | Measure doc chunk tokens | `estimateTokens()` from `src/utils/tokens.ts` | Validate against line/token targets |
 | Compact JSON analysis | `cat data.json \| tools json` | Token-efficient structured data reading |
 
+## Parallel Dispatch (subagent_type: living-docs)
+
+This skill has `context: fork` — it is registered as a Task `subagent_type`. Use this when you need multiple independent living-docs agents working in parallel.
+
+**When to dispatch as subagent:**
+- Bootstrapping docs for multiple independent areas simultaneously
+- Validating/updating many doc files at once
+- Analyzing multiple sources (PRs, code areas) for doc proposals
+
+**How to dispatch:**
+```
+Task(
+  subagent_type="living-docs",
+  prompt="<detailed prompt with all context the agent needs>",
+  run_in_background=true
+)
+```
+
+**Prompt requirements — the agent runs in isolation, so provide:**
+1. **Exact file paths** to read (input data, existing docs, CLAUDE.md)
+2. **Exact output path** where to write results
+3. **Operating mode** (bootstrap, validate, update, refine, or custom analysis)
+4. **Scope boundaries** — what files/areas to touch, what to leave alone
+5. **Output format** — reference the templates in this skill or specify custom format
+
+**Example — parallel doc analysis of PR review comments:**
+```
+# Agent 1
+Task(subagent_type="living-docs", prompt="""
+Mode: Refine
+Read: /tmp/pr-comments/pr-151.md (reviewer feedback)
+Read: .claude/docs/smartlocks.md (existing docs)
+Read: CLAUDE.md (project conventions)
+Analyze review comments for recurring mistake patterns.
+Propose doc updates following living-docs format.
+Write output to: .claude/github/pr-151-proposals.md
+""", run_in_background=true)
+
+# Agent 2 (parallel)
+Task(subagent_type="living-docs", prompt="""
+Mode: Refine
+Read: /tmp/pr-comments/pr-180.md
+Read: .claude/docs/notifications-health.md
+...
+""", run_in_background=true)
+```
+
+**Do NOT:**
+- Use `subagent_type="general-purpose"` and tell it to invoke the living-docs Skill tool — the methodology is already loaded in `subagent_type="living-docs"`
+- Dispatch without providing file paths — the agent cannot read your main session context
+- Forget the output path — results must be written to a file for the main session to read
+
 ## The Golden Rule
 
 **Would this doc help someone find what they need in under 30 seconds?** If yes, ship it. If no, add the missing pointer or remove the unnecessary explanation.
