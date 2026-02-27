@@ -14,8 +14,8 @@ export interface UsageAlert {
 }
 
 class BucketTracker {
-    private lastNotifiedPct: number | null = null;
-    private lastResetAt: string | null = null;
+    private lastNotifiedThreshold: number | null = null;
+    private lastResetEpoch: number | null = null;
 
     constructor(
         public readonly accountName: string,
@@ -28,24 +28,32 @@ class BucketTracker {
         thresholds: number[],
         isFirstPoll: boolean
     ): boolean {
-        if (this.lastResetAt !== null && this.lastResetAt !== resetAt) {
-            this.lastNotifiedPct = null;
+        const resetEpoch = resetAt ? new Date(resetAt).getTime() : null;
+
+        if (
+            this.lastResetEpoch !== null &&
+            resetEpoch !== null &&
+            Math.abs(resetEpoch - this.lastResetEpoch) > 10 * 60 * 1000
+        ) {
+            this.lastNotifiedThreshold = null;
         }
 
-        this.lastResetAt = resetAt;
+        this.lastResetEpoch = resetEpoch;
 
-        const crossedThreshold = thresholds.some((t) => currentPct >= t);
-        if (!crossedThreshold) {
+        const crossed = thresholds.filter((t) => currentPct >= t);
+        if (crossed.length === 0) {
             return false;
         }
 
-        if (isFirstPoll || this.lastNotifiedPct === null) {
-            this.lastNotifiedPct = currentPct;
+        const highest = Math.max(...crossed);
+
+        if (isFirstPoll || this.lastNotifiedThreshold === null) {
+            this.lastNotifiedThreshold = highest;
             return true;
         }
 
-        if (currentPct >= this.lastNotifiedPct + 5) {
-            this.lastNotifiedPct = currentPct;
+        if (highest > this.lastNotifiedThreshold) {
+            this.lastNotifiedThreshold = highest;
             return true;
         }
 
@@ -136,7 +144,7 @@ export class NotificationManager {
     }
 
     autoDismissOld(): void {
-        const cutoff = Date.now() - 30_000;
+        const cutoff = Date.now() - 120_000;
         for (const alert of this._alerts) {
             if (!alert.dismissed && alert.timestamp.getTime() < cutoff) {
                 alert.dismissed = true;

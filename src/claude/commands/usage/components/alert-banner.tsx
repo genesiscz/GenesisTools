@@ -1,4 +1,4 @@
-import { Box, Text } from "ink";
+import { Box, Text, useInput } from "ink";
 import { useEffect, useState } from "react";
 import type { UsageAlert } from "@app/claude/lib/usage/notification-manager";
 
@@ -9,6 +9,12 @@ interface AlertBannerProps {
 
 export function AlertBanner({ alerts, onDismiss }: AlertBannerProps) {
     const [visible, setVisible] = useState(true);
+
+    useInput((input) => {
+        if (alerts.length > 0 && (input === "x" || input === "X")) {
+            onDismiss();
+        }
+    });
 
     useEffect(() => {
         if (alerts.length === 0) {
@@ -23,21 +29,23 @@ export function AlertBanner({ alerts, onDismiss }: AlertBannerProps) {
         return null;
     }
 
-    const latest = alerts[alerts.length - 1];
-    const bgColor = latest.severity === "critical" ? "red" : "yellow";
-
     return (
-        <Box paddingX={1}>
-            <Text
-                backgroundColor={visible ? bgColor : undefined}
-                color={visible ? "white" : bgColor}
-                bold
-            >
-                {` ▲ ${latest.message} `}
-            </Text>
-            {alerts.length > 1 && (
-                <Text dimColor>{` (+${alerts.length - 1} more)`}</Text>
-            )}
+        <Box flexDirection="column" paddingX={1}>
+            {alerts.map((alert) => {
+                const bgColor = alert.severity === "critical" ? "red" : "yellow";
+
+                return (
+                    <Box key={alert.id}>
+                        <Text
+                            backgroundColor={visible ? bgColor : undefined}
+                            color={visible ? "white" : bgColor}
+                            bold
+                        >
+                            {` ▲ ${alert.message} `}
+                        </Text>
+                    </Box>
+                );
+            })}
             <Text dimColor>{" [x] dismiss"}</Text>
         </Box>
     );
