@@ -44,6 +44,7 @@ tools watchman ./relative/path
 | Option | Alias | Description | Default |
 |--------|-------|-------------|---------|
 | `--current` | `-c` | Use current working directory | `false` |
+| `--temporary` | `-t` | Remove watch when tool exits | `false` |
 | `--help-full` | `-?` | Show detailed help message | - |
 | `[directory]` | - | Path to directory to watch (positional) | interactive |
 
@@ -74,6 +75,17 @@ tools watchman /Users/me/projects/myapp
 # Relative path
 tools watchman ../other-project
 ```
+
+### Temporary Watch (auto-cleanup)
+```bash
+# Watch a directory temporarily — unwatch on Ctrl+C
+tools watchman -t /path/to/project
+
+# Combine with current directory shorthand
+tools watchman -t -c
+```
+
+> **Note:** If the directory was already in Watchman's watch list before the tool started, `--temporary` will **not** unwatch it on exit to avoid disrupting pre-existing watches.
 
 ---
 
