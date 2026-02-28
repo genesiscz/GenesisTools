@@ -113,11 +113,11 @@ export function discoverMigrationSources(projectRoot: string): DiscoveredSources
     const projectClaudeCommandsDir = join(projectClaudeDir, "commands");
     const projectClaudeMd = join(projectRoot, "CLAUDE.md");
 
-    addSkillDirs(skills, seenSkills, collectSkillDirs(projectClaudeSkillsDir), "project", "claude");
+    addSkillDirs(skills, seenSkills, collectSkillDirs(projectClaudeSkillsDir, true), "project", "claude");
     addCommandFiles(
         commands,
         seenCommands,
-        collectMarkdownFiles(projectClaudeCommandsDir),
+        collectMarkdownFiles(projectClaudeCommandsDir, true),
         "project",
         "claude",
         "claude"
@@ -145,8 +145,8 @@ export function discoverMigrationSources(projectRoot: string): DiscoveredSources
     const globalCommandsDir = join(GLOBAL_CLAUDE_DIR, "commands");
     const globalClaudeMd = join(GLOBAL_CLAUDE_DIR, "CLAUDE.md");
 
-    addSkillDirs(skills, seenSkills, collectSkillDirs(globalSkillsDir), "global", "claude");
-    addCommandFiles(commands, seenCommands, collectMarkdownFiles(globalCommandsDir), "global", "claude", "claude");
+    addSkillDirs(skills, seenSkills, collectSkillDirs(globalSkillsDir, true), "global", "claude");
+    addCommandFiles(commands, seenCommands, collectMarkdownFiles(globalCommandsDir, true), "global", "claude", "claude");
     addInstruction(instructions, seenInstructions, globalClaudeMd, "global");
 
     return {
@@ -170,12 +170,67 @@ export function buildMigrationPlan(discovered: DiscoveredSources, input: Migrati
 
         for (const targetScope of targetScopes) {
             const nameUsedByTarget = new Set<string>();
-            for (const source of skillSources) {
-                const targetBase =
-                    targetScope === "project"
-                        ? join(input.projectRoot, ".agents", "skills")
-                        : join(GLOBAL_CODEX_DIR, "skills");
+            const targetBase =
+                targetScope === "project"
+                    ? join(input.projectRoot, ".agents", "skills")
+                    : join(GLOBAL_CODEX_DIR, "skills");
 
+            // Group plugin skills by plugin name to symlink whole directories
+            const pluginGroups = new Map<string, SkillSource[]>();
+            const nonPluginSkills: SkillSource[] = [];
+
+            for (const source of skillSources) {
+                if (source.origin === "plugin" && source.pluginName) {
+                    const key = source.pluginName;
+                    const group = pluginGroups.get(key) ?? [];
+                    group.push(source);
+                    pluginGroups.set(key, group);
+                } else {
+                    nonPluginSkills.push(source);
+                }
+            }
+
+            // Plugin skills: symlink the whole parent directory
+            for (const [pluginName, group] of pluginGroups) {
+                const commonParent = dirname(group[0].path);
+                const allShareParent = group.every((s) => dirname(s.path) === commonParent);
+
+                if (!allShareParent) {
+                    // Fallback: individual symlinks if skills come from different dirs
+                    nonPluginSkills.push(...group);
+                    continue;
+                }
+
+                if (targetScope === "project" && !isInsideDir(commonParent, input.projectRoot)) {
+                    warnings.push(
+                        `Skipping project-scope target for out-of-repo plugin: ${pluginName} (source: ${commonParent})`
+                    );
+                    continue;
+                }
+
+                const dirName = normalizeSegment(pluginName);
+                const targetPath = join(targetBase, dirName);
+
+                if (seenTargets.has(targetPath)) {
+                    warnings.push(`Skipping duplicate plugin skill target: ${targetPath}`);
+                    continue;
+                }
+
+                seenTargets.add(targetPath);
+                nameUsedByTarget.add(dirName);
+                operations.push({
+                    component: "skills",
+                    mode: input.mode,
+                    sourceScope: group[0].scope,
+                    targetScope,
+                    sourcePath: commonParent,
+                    targetPath,
+                    label: `${pluginName}/ (${group.length} skills) -> ${dirName}/`,
+                });
+            }
+
+            // Non-plugin skills: individual symlinks
+            for (const source of nonPluginSkills) {
                 const skipReason = shouldSkipSource(source, targetScope, input.projectRoot, "skill");
 
                 if (skipReason) {
@@ -210,12 +265,66 @@ export function buildMigrationPlan(discovered: DiscoveredSources, input: Migrati
 
         for (const targetScope of targetScopes) {
             const namespaceClaimed = new Map<string, string>();
-            for (const source of commandSources) {
-                const targetBase =
-                    targetScope === "project"
-                        ? join(input.projectRoot, ".codex", "prompts")
-                        : join(GLOBAL_CODEX_DIR, "prompts");
+            const targetBase =
+                targetScope === "project"
+                    ? join(input.projectRoot, ".codex", "prompts")
+                    : join(GLOBAL_CODEX_DIR, "prompts");
 
+            // Group plugin commands by plugin name to symlink whole directories
+            const pluginGroups = new Map<string, CommandSource[]>();
+            const nonPluginCommands: CommandSource[] = [];
+
+            for (const source of commandSources) {
+                if (source.origin === "plugin" && source.pluginName) {
+                    const key = source.pluginName;
+                    const group = pluginGroups.get(key) ?? [];
+                    group.push(source);
+                    pluginGroups.set(key, group);
+                } else {
+                    nonPluginCommands.push(source);
+                }
+            }
+
+            // Plugin commands: symlink the whole parent directory
+            for (const [pluginName, group] of pluginGroups) {
+                const commonParent = dirname(group[0].path);
+                const allShareParent = group.every((s) => dirname(s.path) === commonParent);
+
+                if (!allShareParent) {
+                    nonPluginCommands.push(...group);
+                    continue;
+                }
+
+                if (targetScope === "project" && !isInsideDir(commonParent, input.projectRoot)) {
+                    warnings.push(
+                        `Skipping project-scope target for out-of-repo plugin commands: ${pluginName} (source: ${commonParent})`
+                    );
+                    continue;
+                }
+
+                const dirName = normalizeSegment(pluginName);
+                const targetPath = join(targetBase, dirName);
+
+                if (seenTargets.has(targetPath)) {
+                    warnings.push(`Skipping duplicate plugin command target: ${targetPath}`);
+                    continue;
+                }
+
+                seenTargets.add(targetPath);
+                namespaceClaimed.set(dirName, `plugin:${pluginName}`);
+                operations.push({
+                    component: "commands",
+                    mode: input.mode,
+                    sourceScope: group[0].scope,
+                    targetScope,
+                    sourcePath: commonParent,
+                    targetPath,
+                    label: `${pluginName}/ (${group.length} commands) -> ${dirName}/`,
+                });
+            }
+
+            // Non-plugin commands: individual symlinks
+            for (const source of nonPluginCommands) {
                 const skipReason = shouldSkipSource(source, targetScope, input.projectRoot, "command");
 
                 if (skipReason) {
@@ -250,6 +359,20 @@ export function buildMigrationPlan(discovered: DiscoveredSources, input: Migrati
 
         for (const source of instructionSources) {
             for (const targetScope of targetScopes) {
+                if (targetScope === "project" && source.scope === "global") {
+                    warnings.push(
+                        `Skipping project target for global instruction: ${source.path}`
+                    );
+                    continue;
+                }
+
+                if (targetScope === "global" && source.scope === "project") {
+                    warnings.push(
+                        `Skipping global target for project instruction: ${source.path}`
+                    );
+                    continue;
+                }
+
                 const targetPath =
                     targetScope === "project"
                         ? join(input.projectRoot, "AGENTS.md")
@@ -607,7 +730,7 @@ function isDirEntry(entry: Dirent, fullPath: string): boolean {
     }
 }
 
-function collectSkillDirs(baseDir: string): string[] {
+function collectSkillDirs(baseDir: string, skipSymlinks = false): string[] {
     if (!existsSync(baseDir)) {
         return [];
     }
@@ -615,6 +738,10 @@ function collectSkillDirs(baseDir: string): string[] {
     const entries = readdirSync(baseDir, { withFileTypes: true });
     const skillDirs: string[] = [];
     for (const entry of entries) {
+        if (skipSymlinks && entry.isSymbolicLink()) {
+            continue;
+        }
+
         const candidate = join(baseDir, entry.name);
         if (!isDirEntry(entry, candidate)) {
             continue;
@@ -628,7 +755,7 @@ function collectSkillDirs(baseDir: string): string[] {
     return uniqueStringPaths(skillDirs);
 }
 
-function collectMarkdownFiles(baseDir: string): string[] {
+function collectMarkdownFiles(baseDir: string, skipSymlinks = false): string[] {
     if (!existsSync(baseDir)) {
         return [];
     }
@@ -637,6 +764,10 @@ function collectMarkdownFiles(baseDir: string): string[] {
     const walk = (currentDir: string): void => {
         const entries = readdirSync(currentDir, { withFileTypes: true });
         for (const entry of entries) {
+            if (skipSymlinks && entry.isSymbolicLink()) {
+                continue;
+            }
+
             const fullPath = join(currentDir, entry.name);
             if (isDirEntry(entry, fullPath)) {
                 walk(fullPath);
@@ -663,11 +794,14 @@ function expandScope(scope: MigrationScope): SingleScope[] {
 
 function buildSkillTargetName(source: SkillSource, style: NameStyle, used: Set<string>): string {
     const baseName = basename(source.path);
-    let candidate = baseName;
 
     if (source.origin === "plugin" && source.pluginName) {
-        candidate = `${normalizeSegment(source.pluginName)}-${baseName}`;
-    } else if (style === "prefixed") {
+        return join(normalizeSegment(source.pluginName), baseName);
+    }
+
+    let candidate = baseName;
+
+    if (style === "prefixed") {
         candidate = `${source.scope}-${baseName}`;
     }
 

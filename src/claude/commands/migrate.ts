@@ -427,7 +427,8 @@ function renderDiscoveryList(discovered: DiscoveredSources): void {
         lines.push("- (none)");
     } else {
         for (const item of projectSkills) {
-            lines.push(`- ${item.path}`);
+            const tag = item.origin === "plugin" ? ` [plugin: ${item.pluginName}]` : "";
+            lines.push(`- ${item.path}${tag}`);
         }
     }
 
@@ -438,7 +439,8 @@ function renderDiscoveryList(discovered: DiscoveredSources): void {
         lines.push("- (none)");
     } else {
         for (const item of globalSkills) {
-            lines.push(`- ${item.path}`);
+            const tag = item.origin === "plugin" ? ` [plugin: ${item.pluginName}]` : "";
+            lines.push(`- ${item.path}${tag}`);
         }
     }
 
@@ -449,7 +451,8 @@ function renderDiscoveryList(discovered: DiscoveredSources): void {
         lines.push("- (none)");
     } else {
         for (const item of projectCommands) {
-            lines.push(`- ${item.path}`);
+            const tag = item.origin === "plugin" ? ` [plugin: ${item.pluginName}]` : "";
+            lines.push(`- ${item.path}${tag}`);
         }
     }
 
@@ -460,7 +463,8 @@ function renderDiscoveryList(discovered: DiscoveredSources): void {
         lines.push("- (none)");
     } else {
         for (const item of globalCommands) {
-            lines.push(`- ${item.path}`);
+            const tag = item.origin === "plugin" ? ` [plugin: ${item.pluginName}]` : "";
+            lines.push(`- ${item.path}${tag}`);
         }
     }
 
