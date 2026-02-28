@@ -1,6 +1,6 @@
 {
     "name": "genesis-tools",
-    "version": "1.0.13",
+    "version": "1.0.14",
     "description": "Skills and utilities for working with GenesisTools CLI toolkit. Provides guidance for discovering, executing, and troubleshooting genesis tools with integrated workflow support.",
     "author": {
         "name": "GenesisTools"
