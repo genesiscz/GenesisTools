@@ -416,6 +416,11 @@ async function runWizard(
     return null;
 }
 
+function formatDiscoveredItem(item: { path: string; origin: string; pluginName?: string }): string {
+    const tag = item.origin === "plugin" && item.pluginName ? ` [plugin: ${item.pluginName}]` : "";
+    return `- ${item.path}${tag}`;
+}
+
 function renderDiscoveryList(discovered: DiscoveredSources): void {
     const lines: string[] = [];
     lines.push(summarizeDiscovery(discovered));
@@ -427,7 +432,7 @@ function renderDiscoveryList(discovered: DiscoveredSources): void {
         lines.push("- (none)");
     } else {
         for (const item of projectSkills) {
-            lines.push(`- ${item.path}`);
+            lines.push(formatDiscoveredItem(item));
         }
     }
 
@@ -438,7 +443,7 @@ function renderDiscoveryList(discovered: DiscoveredSources): void {
         lines.push("- (none)");
     } else {
         for (const item of globalSkills) {
-            lines.push(`- ${item.path}`);
+            lines.push(formatDiscoveredItem(item));
         }
     }
 
@@ -449,7 +454,7 @@ function renderDiscoveryList(discovered: DiscoveredSources): void {
         lines.push("- (none)");
     } else {
         for (const item of projectCommands) {
-            lines.push(`- ${item.path}`);
+            lines.push(formatDiscoveredItem(item));
         }
     }
 
@@ -460,7 +465,7 @@ function renderDiscoveryList(discovered: DiscoveredSources): void {
         lines.push("- (none)");
     } else {
         for (const item of globalCommands) {
-            lines.push(`- ${item.path}`);
+            lines.push(formatDiscoveredItem(item));
         }
     }
 
