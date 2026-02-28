@@ -7,6 +7,7 @@ import { registerHistoryCommand } from "./commands/history";
 import { registerMigrateCommand } from "./commands/migrate";
 import { registerResumeCommand } from "./commands/resume";
 import { registerUsageCommand } from "./commands/usage";
+import { registerDaemonCommand } from "./commands/daemon";
 
 const program = new Command();
 
@@ -21,6 +22,7 @@ registerResumeCommand(program);
 registerDesktopCommand(program);
 registerUsageCommand(program);
 registerConfigCommand(program);
+registerDaemonCommand(program);
 registerMigrateCommand(program);
 
 async function main(): Promise<void> {
