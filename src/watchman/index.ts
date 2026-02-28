@@ -67,12 +67,13 @@ Examples:
     process.exit(0);
 }
 
-async function getWatchedRoots(): Promise<string[]> {
-    return new Promise((resolve, reject) => {
+async function getWatchedRoots(): Promise<string[] | null> {
+    return new Promise((resolve) => {
         // biome-ignore lint/suspicious/noExplicitAny: fb-watchman Client lacks command() in types
         (client as any).command(["watch-list"], (err: unknown, resp: WatchmanResponse) => {
             if (err) {
-                return reject(new Error(`Failed to get watch list from Watchman: ${err}`));
+                logger.warn(`Could not query watch-list: ${err}`);
+                return resolve(null);
             }
             resolve(resp?.roots ?? []);
         });
@@ -104,7 +105,7 @@ async function getDirOfInterest(): Promise<string> {
         }
     }
 
-    const watchedDirs = await getWatchedRoots();
+    const watchedDirs = (await getWatchedRoots()) ?? [];
 
     const allChoices = [
         ...watchedDirs.map((dir) => ({
@@ -201,10 +202,15 @@ function makeSubscription(
     });
 }
 
-async function watchWithRetry(dirOfInterest: string, maxRetries = 15): Promise<watchman.Client> {
+interface WatchResult {
+    client: watchman.Client;
+    watchRoot: string;
+}
+
+async function watchWithRetry(dirOfInterest: string, maxRetries = 15): Promise<WatchResult> {
     let attempt = 0;
     let lastError: unknown = null;
-    let succeededClient: watchman.Client | null = null;
+    let result: WatchResult | null = null;
 
     while (attempt < maxRetries) {
         const retryClient = new watchman.Client();
@@ -254,7 +260,7 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15): Promise<w
                                 `Watch established on ${watchResp.watch} relative_path: ${watchResp.relative_path}`
                             );
                             makeSubscription(retryClient, watchResp.watch, watchResp.relative_path);
-                            succeededClient = retryClient;
+                            result = { client: retryClient, watchRoot: watchResp.watch };
                             resolve();
                         }
                     );
@@ -262,8 +268,8 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15): Promise<w
             );
         });
 
-        if (succeededClient) {
-            return succeededClient;
+        if (result) {
+            return result;
         }
     }
 
@@ -271,7 +277,7 @@ async function watchWithRetry(dirOfInterest: string, maxRetries = 15): Promise<w
     process.exit(1);
 }
 
-function setupCleanup(activeClient: watchman.Client, dirOfInterest: string): void {
+function setupCleanup(activeClient: watchman.Client, watchRoot: string): void {
     let cleaned = false;
 
     const cleanup = () => {
@@ -280,13 +286,13 @@ function setupCleanup(activeClient: watchman.Client, dirOfInterest: string): voi
         }
         cleaned = true;
 
-        logger.info(`Temporary mode: removing watch for ${dirOfInterest}...`);
+        logger.info(`Temporary mode: removing watch for ${watchRoot}...`);
         // biome-ignore lint/suspicious/noExplicitAny: fb-watchman Client lacks command() in types
-        (activeClient as any).command(["watch-del", dirOfInterest], (err: unknown) => {
+        (activeClient as any).command(["watch-del", watchRoot], (err: unknown) => {
             if (err) {
                 logger.error(`Failed to remove watch: ${err}`);
             } else {
-                logger.info(`Watch removed for ${dirOfInterest}`);
+                logger.info(`Watch removed for ${watchRoot}`);
             }
 
             activeClient.end();
@@ -303,17 +309,23 @@ function setupCleanup(activeClient: watchman.Client, dirOfInterest: string): voi
     logger.info(`Directory of interest: ${dirOfInterest}`);
 
     const preExistingRoots = await getWatchedRoots();
-    const wasAlreadyWatched = preExistingRoots.some(
-        (root) => dirOfInterest === root || dirOfInterest.startsWith(root + "/")
-    );
+    client.end();
+
+    const wasAlreadyWatched =
+        preExistingRoots === null ||
+        preExistingRoots.some((root) => dirOfInterest === root || dirOfInterest.startsWith(`${root}/`));
 
     if (options.temporary && wasAlreadyWatched) {
-        logger.info("Directory already watched by Watchman — will NOT unwatch on exit");
+        if (preExistingRoots === null) {
+            logger.warn("Could not determine pre-existing watches — will NOT unwatch on exit (safe default)");
+        } else {
+            logger.info("Directory already watched by Watchman — will NOT unwatch on exit");
+        }
     }
 
-    const activeClient = await watchWithRetry(dirOfInterest);
+    const { client: activeClient, watchRoot } = await watchWithRetry(dirOfInterest);
 
     if (options.temporary && !wasAlreadyWatched) {
-        setupCleanup(activeClient, dirOfInterest);
+        setupCleanup(activeClient, watchRoot);
     }
 })();
