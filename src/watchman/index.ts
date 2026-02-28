@@ -290,7 +290,7 @@ function setupCleanup(activeClient: watchman.Client, dirOfInterest: string): voi
             }
 
             activeClient.end();
-            process.exit(0);
+            process.exit(err ? 1 : 0);
         });
     };
 
