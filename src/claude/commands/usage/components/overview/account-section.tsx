@@ -85,16 +85,6 @@ function BucketRow({ bucketKey, bucket, barWidth }: BucketRowProps) {
     const label = BUCKET_LABELS[bucketKey] ?? bucketKey.replace(/_/g, " ");
     const countdown = formatResetCountdown(bucket.resets_at);
     const notUsed = !bucket.resets_at && bucket.utilization === 0;
-
-    if (notUsed) {
-        return (
-            <Box>
-                <Text>{label.padEnd(NAME_WIDTH)}</Text>
-                <Text dimColor>{"Not used"}</Text>
-            </Box>
-        );
-    }
-
     const projected = calcProjection(bucket.utilization, bucket.resets_at, bucketKey);
     const pct = Math.round(Math.max(0, Math.min(bucket.utilization, 100)));
 
@@ -115,9 +105,11 @@ function BucketRow({ bucketKey, bucket, barWidth }: BucketRowProps) {
                     <Text>{" ".repeat(PROJ_WIDTH)}</Text>
                 )}
             </Box>
-            {countdown && (
+            {notUsed ? (
+                <Text dimColor>{`${" ".repeat(NAME_WIDTH)}Not used`}</Text>
+            ) : countdown ? (
                 <Text dimColor>{`${" ".repeat(NAME_WIDTH)}⟳ ${countdown}`}</Text>
-            )}
+            ) : null}
         </Box>
     );
 }
@@ -127,7 +119,7 @@ interface AccountSectionProps {
     prominentBuckets: string[];
 }
 
-export function AccountSection({ account }: AccountSectionProps) {
+export function AccountSection({ account, prominentBuckets }: AccountSectionProps) {
     const { columns: termWidth } = useTerminalSize();
     const barWidth = Math.max(MIN_BAR_WIDTH, termWidth - FIXED_OVERHEAD);
 
@@ -164,7 +156,7 @@ export function AccountSection({ account }: AccountSectionProps) {
     const entries = showAll
         ? allEntries
         : allEntries.filter(([key, bucket]) => {
-              if (key === "five_hour" || key === "seven_day") {
+              if (prominentBuckets.includes(key)) {
                   return true;
               }
 

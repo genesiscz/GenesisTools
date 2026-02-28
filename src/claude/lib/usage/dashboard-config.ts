@@ -23,7 +23,7 @@ export interface UsageDashboardConfig {
 
 const DEFAULTS: UsageDashboardConfig = {
     refreshInterval: 15,
-    prominentBuckets: ["five_hour", "seven_day"],
+    prominentBuckets: ["five_hour", "seven_day", "seven_day_sonnet"],
     hiddenBuckets: [],
     hiddenAccounts: [],
     defaultTab: 0,
