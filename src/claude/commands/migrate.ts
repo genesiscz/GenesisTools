@@ -416,6 +416,11 @@ async function runWizard(
     return null;
 }
 
+function formatDiscoveredItem(item: { path: string; origin: string; pluginName?: string }): string {
+    const tag = item.origin === "plugin" && item.pluginName ? ` [plugin: ${item.pluginName}]` : "";
+    return `- ${item.path}${tag}`;
+}
+
 function renderDiscoveryList(discovered: DiscoveredSources): void {
     const lines: string[] = [];
     lines.push(summarizeDiscovery(discovered));
@@ -427,8 +432,7 @@ function renderDiscoveryList(discovered: DiscoveredSources): void {
         lines.push("- (none)");
     } else {
         for (const item of projectSkills) {
-            const tag = item.origin === "plugin" ? ` [plugin: ${item.pluginName}]` : "";
-            lines.push(`- ${item.path}${tag}`);
+            lines.push(formatDiscoveredItem(item));
         }
     }
 
@@ -439,8 +443,7 @@ function renderDiscoveryList(discovered: DiscoveredSources): void {
         lines.push("- (none)");
     } else {
         for (const item of globalSkills) {
-            const tag = item.origin === "plugin" ? ` [plugin: ${item.pluginName}]` : "";
-            lines.push(`- ${item.path}${tag}`);
+            lines.push(formatDiscoveredItem(item));
         }
     }
 
@@ -451,8 +454,7 @@ function renderDiscoveryList(discovered: DiscoveredSources): void {
         lines.push("- (none)");
     } else {
         for (const item of projectCommands) {
-            const tag = item.origin === "plugin" ? ` [plugin: ${item.pluginName}]` : "";
-            lines.push(`- ${item.path}${tag}`);
+            lines.push(formatDiscoveredItem(item));
         }
     }
 
@@ -463,8 +465,7 @@ function renderDiscoveryList(discovered: DiscoveredSources): void {
         lines.push("- (none)");
     } else {
         for (const item of globalCommands) {
-            const tag = item.origin === "plugin" ? ` [plugin: ${item.pluginName}]` : "";
-            lines.push(`- ${item.path}${tag}`);
+            lines.push(formatDiscoveredItem(item));
         }
     }
 
