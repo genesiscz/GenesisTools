@@ -68,13 +68,13 @@ Examples:
 }
 
 async function getWatchedRoots(): Promise<string[]> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
         // biome-ignore lint/suspicious/noExplicitAny: fb-watchman Client lacks command() in types
         (client as any).command(["watch-list"], (err: unknown, resp: WatchmanResponse) => {
-            if (err || !resp?.roots) {
-                return resolve([]);
+            if (err) {
+                return reject(new Error(`Failed to get watch list from Watchman: ${err}`));
             }
-            resolve(resp.roots);
+            resolve(resp?.roots ?? []);
         });
     });
 }
