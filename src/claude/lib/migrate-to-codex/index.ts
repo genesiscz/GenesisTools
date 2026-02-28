@@ -176,17 +176,10 @@ export function buildMigrationPlan(discovered: DiscoveredSources, input: Migrati
                         ? join(input.projectRoot, ".agents", "skills")
                         : join(GLOBAL_CODEX_DIR, "skills");
 
-                if (targetScope === "project" && !isInsideDir(source.path, input.projectRoot)) {
-                    warnings.push(
-                        `Skipping project-scope target for out-of-repo skill: ${basename(source.path)} (source: ${source.path})`
-                    );
-                    continue;
-                }
+                const skipReason = shouldSkipSource(source, targetScope, input.projectRoot, "skill");
 
-                if (targetScope === "global" && source.scope === "project" && source.origin !== "plugin") {
-                    warnings.push(
-                        `Skipping global target for project-scoped skill: ${basename(source.path)} (source: ${source.path})`
-                    );
+                if (skipReason) {
+                    warnings.push(skipReason);
                     continue;
                 }
 
@@ -223,17 +216,10 @@ export function buildMigrationPlan(discovered: DiscoveredSources, input: Migrati
                         ? join(input.projectRoot, ".codex", "prompts")
                         : join(GLOBAL_CODEX_DIR, "prompts");
 
-                if (targetScope === "project" && !isInsideDir(source.path, input.projectRoot)) {
-                    warnings.push(
-                        `Skipping project-scope target for out-of-repo command: ${basename(source.path)} (source: ${source.path})`
-                    );
-                    continue;
-                }
+                const skipReason = shouldSkipSource(source, targetScope, input.projectRoot, "command");
 
-                if (targetScope === "global" && source.scope === "project" && source.origin !== "plugin") {
-                    warnings.push(
-                        `Skipping global target for project-scoped command: ${basename(source.path)} (source: ${source.path})`
-                    );
+                if (skipReason) {
+                    warnings.push(skipReason);
                     continue;
                 }
 
@@ -863,9 +849,25 @@ function asObject(value: unknown): Record<string, unknown> | null {
 }
 
 function isInsideDir(filePath: string, dirPath: string): boolean {
-    const resolved = resolve(filePath);
-    const resolvedDir = resolve(dirPath) + "/";
-    return resolved.startsWith(resolvedDir);
+    const relation = relative(resolve(dirPath), resolve(filePath));
+    return relation !== "" && !relation.startsWith("..") && !relation.startsWith("/");
+}
+
+function shouldSkipSource(
+    source: { path: string; scope: SingleScope; origin: SourceOrigin },
+    targetScope: SingleScope,
+    projectRoot: string,
+    componentLabel: string,
+): string | null {
+    if (targetScope === "project" && !isInsideDir(source.path, projectRoot)) {
+        return `Skipping project-scope target for out-of-repo ${componentLabel}: ${basename(source.path)} (source: ${source.path})`;
+    }
+
+    if (targetScope === "global" && source.scope === "project" && source.origin !== "plugin") {
+        return `Skipping global target for project-scoped ${componentLabel}: ${basename(source.path)} (source: ${source.path})`;
+    }
+
+    return null;
 }
 
 function sortByPath<T extends { path: string }>(items: T[]): T[] {
