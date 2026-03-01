@@ -16,6 +16,7 @@ import type {
     QueryMessagesOptions,
     SearchOptions,
     SearchResult,
+    SuggestionFeedbackRow,
     SyncSegmentRow,
     SyncStateRow,
 } from "./types";
@@ -247,6 +248,24 @@ export class TelegramHistoryStore {
         db.run(`
             CREATE INDEX IF NOT EXISTS idx_sync_segments_chat_range
             ON sync_segments(chat_id, start_unix, end_unix)
+        `);
+
+        db.run(`
+            CREATE TABLE IF NOT EXISTS suggestion_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id TEXT NOT NULL,
+                incoming_message_id INTEGER,
+                suggestion_text TEXT NOT NULL,
+                edited_text TEXT,
+                sent_text TEXT NOT NULL,
+                was_edited INTEGER NOT NULL DEFAULT 0,
+                created_at_iso TEXT NOT NULL
+            )
+        `);
+
+        db.run(`
+            CREATE INDEX IF NOT EXISTS idx_suggestion_feedback_chat_time
+            ON suggestion_feedback(chat_id, created_at_iso DESC)
         `);
     }
 
@@ -661,6 +680,55 @@ export class TelegramHistoryStore {
                 )
                 .get(locator.chatId, locator.messageId, locator.attachmentIndex) as AttachmentRow | null) ?? null
         );
+    }
+
+    recordSuggestionFeedback(options: {
+        chatId: string;
+        incomingMessageId?: number;
+        suggestionText: string;
+        sentText: string;
+        editedText?: string;
+    }): void {
+        const db = this.getDb();
+        const wasEdited = options.editedText !== undefined && options.editedText !== options.suggestionText;
+
+        db.run(
+            `
+            INSERT INTO suggestion_feedback (
+                chat_id,
+                incoming_message_id,
+                suggestion_text,
+                edited_text,
+                sent_text,
+                was_edited,
+                created_at_iso
+            ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+            `,
+            [
+                options.chatId,
+                options.incomingMessageId ?? null,
+                options.suggestionText,
+                options.editedText ?? null,
+                options.sentText,
+                wasEdited ? 1 : 0,
+            ]
+        );
+    }
+
+    getSuggestionFeedback(chatId: string, limit = 40): SuggestionFeedbackRow[] {
+        const db = this.getDb();
+
+        return db
+            .query(
+                `
+                SELECT *
+                FROM suggestion_feedback
+                WHERE chat_id = ?
+                ORDER BY created_at_iso DESC
+                LIMIT ?
+                `
+            )
+            .all(chatId, limit) as SuggestionFeedbackRow[];
     }
 
     // ── Embeddings ────────────────────────────────────────────────────

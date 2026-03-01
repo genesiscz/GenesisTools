@@ -220,6 +220,17 @@ export interface AttachmentRow {
     updated_at_iso: string;
 }
 
+export interface SuggestionFeedbackRow {
+    id: number;
+    chat_id: string;
+    incoming_message_id: number | null;
+    suggestion_text: string;
+    edited_text: string | null;
+    sent_text: string;
+    was_edited: number;
+    created_at_iso: string;
+}
+
 export interface SyncStateRow {
     chat_id: string;
     last_synced_id: number;

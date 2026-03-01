@@ -161,6 +161,7 @@ export class AIChat {
         let fullContent = "";
         let thinkingContent = "";
         const startTime = Date.now();
+        const toolsForTurn = options?.override?.tools ?? this._options.tools;
 
         // Bridge push-based onChunk to pull-based async generator via ReadableStream
         const stream = new ReadableStream<ChatEvent>({
@@ -168,7 +169,7 @@ export class AIChat {
                 try {
                     const engineResponse = await engine.sendMessage(
                         message,
-                        undefined, // tools — TODO: wire AIChatTool → AI SDK tools
+                        toolsForTurn,
                         {
                             onChunk: (chunk: string) => {
                                 controller.enqueue(ChatEvent.text(chunk));

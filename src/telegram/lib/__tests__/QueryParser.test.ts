@@ -24,4 +24,14 @@ describe("QueryParser", () => {
         expect(result.until).toBe("2025-02-28");
         expect(result.sender).toBe("any");
     });
+
+    it("supports natural-language date phrases", () => {
+        const parser = new QueryParser();
+        const reference = new Date("2026-03-01T12:00:00.000Z");
+        const parsed = parser.parseNaturalLanguage("messages from Alice since last week until yesterday", reference);
+
+        expect(parsed.from).toBe("Alice");
+        expect(parsed.since).toBeTruthy();
+        expect(parsed.until).toBeTruthy();
+    });
 });

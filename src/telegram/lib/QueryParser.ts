@@ -1,13 +1,45 @@
+import * as chrono from "chrono-node";
 import type { QueryRequest } from "./types";
 
-const DATE_PATTERN = /(\d{4}-\d{2}-\d{2})/g;
+const ISO_DATE_PATTERN = /(\d{4}-\d{2}-\d{2})/g;
+
+function toIsoDate(date: Date): string {
+    return date.toISOString().slice(0, 10);
+}
+
+function parseDatePhrase(phrase: string, referenceDate: Date): string | undefined {
+    const parsed = chrono.parseDate(phrase.trim(), referenceDate);
+
+    if (!parsed) {
+        return undefined;
+    }
+
+    return toIsoDate(parsed);
+}
 
 export class QueryParser {
     parseFromFlags(request: QueryRequest): QueryRequest {
         const parsed = { ...request };
+        const now = new Date();
+
+        if (parsed.since) {
+            const normalizedSince = parseDatePhrase(parsed.since, now);
+
+            if (normalizedSince) {
+                parsed.since = normalizedSince;
+            }
+        }
+
+        if (parsed.until) {
+            const normalizedUntil = parseDatePhrase(parsed.until, now);
+
+            if (normalizedUntil) {
+                parsed.until = normalizedUntil;
+            }
+        }
 
         if (request.nl) {
-            const extracted = this.parseNaturalLanguage(request.nl);
+            const extracted = this.parseNaturalLanguage(request.nl, now);
 
             if (!parsed.from && extracted.from) {
                 parsed.from = extracted.from;
@@ -37,7 +69,7 @@ export class QueryParser {
         return parsed;
     }
 
-    parseNaturalLanguage(input: string): Partial<QueryRequest> {
+    parseNaturalLanguage(input: string, referenceDate: Date = new Date()): Partial<QueryRequest> {
         const normalized = input.trim();
         const result: Partial<QueryRequest> = {};
 
@@ -47,26 +79,51 @@ export class QueryParser {
             result.from = fromMatch[1].trim();
         }
 
-        const sinceMatch = normalized.match(/since\s+(\d{4}-\d{2}-\d{2})/i);
+        const sincePhraseMatch = normalized.match(/since\s+(.+?)(?:\s+until|\s+text|\s+matching|$)/i);
+        const untilPhraseMatch = normalized.match(/until\s+(.+?)(?:\s+since|\s+text|\s+matching|$)/i);
 
-        if (sinceMatch) {
-            result.since = sinceMatch[1];
+        if (sincePhraseMatch) {
+            const parsed = parseDatePhrase(sincePhraseMatch[1], referenceDate);
+
+            if (parsed) {
+                result.since = parsed;
+            }
         }
 
-        const untilMatch = normalized.match(/until\s+(\d{4}-\d{2}-\d{2})/i);
+        if (untilPhraseMatch) {
+            const parsed = parseDatePhrase(untilPhraseMatch[1], referenceDate);
 
-        if (untilMatch) {
-            result.until = untilMatch[1];
+            if (parsed) {
+                result.until = parsed;
+            }
         }
 
-        const dates = [...normalized.matchAll(DATE_PATTERN)].map((match) => match[1]);
+        if (!result.since || !result.until) {
+            const chronoResults = chrono.parse(normalized, referenceDate, { forwardDate: false });
 
-        if (!result.since && dates.length > 0) {
-            result.since = dates[0];
+            for (const chronoResult of chronoResults) {
+                if (!result.since && chronoResult.start) {
+                    result.since = toIsoDate(chronoResult.start.date());
+                }
+
+                if (!result.until) {
+                    if (chronoResult.end) {
+                        result.until = toIsoDate(chronoResult.end.date());
+                    } else if (chronoResult.start) {
+                        result.until = toIsoDate(chronoResult.start.date());
+                    }
+                }
+            }
         }
 
-        if (!result.until && dates.length > 1) {
-            result.until = dates[1];
+        const isoDates = [...normalized.matchAll(ISO_DATE_PATTERN)].map((match) => match[1]);
+
+        if (!result.since && isoDates.length > 0) {
+            result.since = isoDates[0];
+        }
+
+        if (!result.until && isoDates.length > 1) {
+            result.until = isoDates[1];
         }
 
         if (/\bfrom\s+me\b/i.test(normalized) || /\bmy messages\b/i.test(normalized)) {
