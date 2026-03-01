@@ -6,7 +6,7 @@ import { ContactList } from "./components/ContactList";
 import { InputBar } from "./components/InputBar";
 import { MessageList } from "./components/MessageList";
 import { StatusBar } from "./components/StatusBar";
-import { SystemOutput, type SystemLine } from "./components/SystemOutput";
+import { type SystemLine, SystemOutput } from "./components/SystemOutput";
 
 type View = "chat" | "contacts";
 
@@ -24,6 +24,17 @@ export function WatchInkApp({ session }: WatchInkAppProps) {
         const unsub = session.subscribe(() => {
             setMessages([...session.getMessages()]);
         });
+
+        session.onAutoSuggest((suggestions) => {
+            setSystemLines(
+                suggestions.map((s, i) => ({
+                    text: `  ${i + 1}. ${s}`,
+                    type: "suggestion" as const,
+                })),
+            );
+            setTimeout(() => setSystemLines([]), 30000);
+        });
+
         return unsub;
     }, [session]);
 
@@ -74,7 +85,7 @@ export function WatchInkApp({ session }: WatchInkAppProps) {
                 ]);
             }
         },
-        [session, exit, clearSystemLines],
+        [session, exit, clearSystemLines]
     );
 
     const handleContactSelect = useCallback(
@@ -82,7 +93,7 @@ export function WatchInkApp({ session }: WatchInkAppProps) {
             await session.switchContact(contact);
             setView("chat");
         },
-        [session],
+        [session]
     );
 
     if (view === "contacts") {
@@ -99,11 +110,7 @@ export function WatchInkApp({ session }: WatchInkAppProps) {
 
     return (
         <Box flexDirection="column" height="100%">
-            <StatusBar
-                contact={session.currentContact}
-                messageCount={messages.length}
-                inputMode={session.inputMode}
-            />
+            <StatusBar contact={session.currentContact} messageCount={messages.length} inputMode={session.inputMode} />
             <Box flexDirection="column" flexGrow={1}>
                 <MessageList messages={messages} contactName={session.currentContact.displayName} />
             </Box>
