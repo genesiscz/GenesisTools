@@ -214,3 +214,122 @@ export interface SuggestionEditRow {
     sent_text: string;
     created_at: string;
 }
+
+// ── V2 Config Types ──────────────────────────────────────────────────
+
+export type TelegramRuntimeMode = "daemon" | "light" | "ink";
+
+export interface AskModeConfig {
+    enabled: boolean;
+    provider?: string;
+    model?: string;
+    systemPrompt?: string;
+    temperature?: number;
+    maxTokens?: number;
+}
+
+export interface SuggestionModeConfig extends AskModeConfig {
+    count: number;
+    trigger: "manual" | "auto" | "hybrid";
+    autoDelayMs: number;
+    allowAutoSend: boolean;
+}
+
+export interface StyleSourceRule {
+    id: string;
+    sourceChatId: string;
+    direction: "outgoing" | "incoming";
+    limit?: number;
+    since?: string;
+    until?: string;
+    regex?: string;
+}
+
+export interface StyleProfileConfig {
+    enabled: boolean;
+    refresh: "incremental";
+    rules: StyleSourceRule[];
+    previewInWatch: boolean;
+}
+
+export interface WatchConfig {
+    enabled: boolean;
+    contextLength: number;
+    runtimeMode: TelegramRuntimeMode;
+}
+
+export interface ContactModesConfig {
+    autoReply: AskModeConfig;
+    assistant: AskModeConfig;
+    suggestions: SuggestionModeConfig;
+}
+
+export interface TelegramContactV2 {
+    userId: string;
+    displayName: string;
+    username?: string;
+    chatType: ChatType;
+    actions: ActionType[];
+    watch: WatchConfig;
+    modes: ContactModesConfig;
+    styleProfile: StyleProfileConfig;
+    replyDelayMin: number;
+    replyDelayMax: number;
+}
+
+export interface TelegramConfigDataV2 {
+    version: 2;
+    apiId: number;
+    apiHash: string;
+    session: string;
+    me?: {
+        firstName: string;
+        username?: string;
+        phone?: string;
+    };
+    contacts: TelegramContactV2[];
+    globalDefaults: {
+        modes: ContactModesConfig;
+        watch: WatchConfig;
+        styleProfile: StyleProfileConfig;
+    };
+    configuredAt: string;
+}
+
+export const DEFAULT_MODE_CONFIG: ContactModesConfig = {
+    autoReply: {
+        enabled: false,
+        provider: undefined,
+        model: undefined,
+        systemPrompt: undefined,
+    },
+    assistant: {
+        enabled: true,
+        provider: undefined,
+        model: undefined,
+        systemPrompt: undefined,
+    },
+    suggestions: {
+        enabled: true,
+        provider: undefined,
+        model: undefined,
+        systemPrompt: undefined,
+        count: 3,
+        trigger: "manual",
+        autoDelayMs: 5000,
+        allowAutoSend: false,
+    },
+};
+
+export const DEFAULT_WATCH_CONFIG: WatchConfig = {
+    enabled: true,
+    contextLength: 30,
+    runtimeMode: "ink",
+};
+
+export const DEFAULT_STYLE_PROFILE: StyleProfileConfig = {
+    enabled: false,
+    refresh: "incremental",
+    rules: [],
+    previewInWatch: false,
+};
