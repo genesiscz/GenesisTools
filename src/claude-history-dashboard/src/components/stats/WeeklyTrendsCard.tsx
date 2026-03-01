@@ -14,20 +14,32 @@ interface WeeklyTrendsCardProps {
 }
 
 function getTrendIcon(percent: number) {
-	if (percent > 5) return <TrendingUp className="w-4 h-4 text-green-500" />;
-	if (percent < -5) return <TrendingDown className="w-4 h-4 text-red-500" />;
+	if (percent > 5) {
+		return <TrendingUp className="w-4 h-4 text-green-500" />;
+	}
+	if (percent < -5) {
+		return <TrendingDown className="w-4 h-4 text-red-500" />;
+	}
 	return <Minus className="w-4 h-4 text-muted-foreground" />;
 }
 
 function getTrendColor(percent: number): string {
-	if (percent > 5) return "text-green-500";
-	if (percent < -5) return "text-red-500";
+	if (percent > 5) {
+		return "text-green-500";
+	}
+	if (percent < -5) {
+		return "text-red-500";
+	}
 	return "text-muted-foreground";
 }
 
 function formatNumber(n: number): string {
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-	if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+	if (n >= 1_000_000) {
+		return `${(n / 1_000_000).toFixed(1)}M`;
+	}
+	if (n >= 1_000) {
+		return `${(n / 1_000).toFixed(0)}K`;
+	}
 	return n.toString();
 }
 
@@ -123,17 +135,13 @@ export function WeeklyTrendsCard({ dailyActivity, dailyTokens }: WeeklyTrendsCar
 							{getTrendIcon(stats.messageChange)}
 						</div>
 						<div className="flex items-baseline gap-2">
-							<span className="text-2xl font-bold text-foreground">
-								{formatNumber(stats.thisWeekMessages)}
-							</span>
+							<span className="text-2xl font-bold text-foreground">{formatNumber(stats.thisWeekMessages)}</span>
 							<span className={`text-sm font-medium ${getTrendColor(stats.messageChange)}`}>
 								{stats.messageChange > 0 ? "+" : ""}
 								{stats.messageChange.toFixed(0)}%
 							</span>
 						</div>
-						<div className="text-xs text-muted-foreground">
-							vs {formatNumber(stats.lastWeekMessages)} last week
-						</div>
+						<div className="text-xs text-muted-foreground">vs {formatNumber(stats.lastWeekMessages)} last week</div>
 					</div>
 
 					{/* Tokens This Week */}
@@ -143,32 +151,24 @@ export function WeeklyTrendsCard({ dailyActivity, dailyTokens }: WeeklyTrendsCar
 							{getTrendIcon(stats.tokenChange)}
 						</div>
 						<div className="flex items-baseline gap-2">
-							<span className="text-2xl font-bold text-foreground">
-								{formatNumber(stats.thisWeekTokens)}
-							</span>
+							<span className="text-2xl font-bold text-foreground">{formatNumber(stats.thisWeekTokens)}</span>
 							<span className={`text-sm font-medium ${getTrendColor(stats.tokenChange)}`}>
 								{stats.tokenChange > 0 ? "+" : ""}
 								{stats.tokenChange.toFixed(0)}%
 							</span>
 						</div>
-						<div className="text-xs text-muted-foreground">
-							vs {formatNumber(stats.lastWeekTokens)} last week
-						</div>
+						<div className="text-xs text-muted-foreground">vs {formatNumber(stats.lastWeekTokens)} last week</div>
 					</div>
 
 					{/* Daily Average */}
 					<div className="col-span-2 pt-3 border-t border-border/50">
 						<div className="flex justify-between text-sm">
 							<span className="text-muted-foreground">Avg messages/day this week:</span>
-							<span className="font-medium text-foreground">
-								{stats.avgMessagesThisWeek.toLocaleString()}
-							</span>
+							<span className="font-medium text-foreground">{stats.avgMessagesThisWeek.toLocaleString()}</span>
 						</div>
 						<div className="flex justify-between text-sm mt-1">
 							<span className="text-muted-foreground">Avg messages/day last week:</span>
-							<span className="font-medium text-muted-foreground">
-								{stats.avgMessagesLastWeek.toLocaleString()}
-							</span>
+							<span className="font-medium text-muted-foreground">{stats.avgMessagesLastWeek.toLocaleString()}</span>
 						</div>
 					</div>
 				</div>

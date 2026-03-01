@@ -1,0 +1,6 @@
+#!/bin/sh
+
+# Autofix staged files with biome before committing.
+# Biome's --staged flag processes only staged files and re-stages the fixes.
+
+bunx biome check --write --staged

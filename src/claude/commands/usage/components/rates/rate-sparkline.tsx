@@ -1,7 +1,7 @@
-import { Text } from "ink";
-import { useMemo } from "react";
 import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { calculateRate } from "@app/claude/lib/usage/rate-math";
+import { Text } from "ink";
+import { useMemo } from "react";
 
 interface RateSparklineProps {
     db: UsageHistoryDb | null;

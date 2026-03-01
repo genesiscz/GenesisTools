@@ -1,14 +1,10 @@
+import type { AccountUsage, UsageBucket } from "@app/claude/lib/usage/api";
+import { BUCKET_INK_COLORS, BUCKET_LABELS, VISIBLE_BUCKETS } from "@app/claude/lib/usage/constants";
+import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
+import { calculateRollingRates, formatDuration, projectTimeToLimit } from "@app/claude/lib/usage/rate-math";
 import { Box, Text } from "ink";
 import { useMemo } from "react";
-import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
-import { BUCKET_LABELS, VISIBLE_BUCKETS, BUCKET_INK_COLORS } from "@app/claude/lib/usage/constants";
-import type { AccountUsage, UsageBucket } from "@app/claude/lib/usage/api";
 import type { PollResult } from "../../types";
-import {
-    calculateRollingRates,
-    projectTimeToLimit,
-    formatDuration,
-} from "@app/claude/lib/usage/rate-math";
 import { RateSparkline } from "./rate-sparkline";
 
 interface RatesViewProps {

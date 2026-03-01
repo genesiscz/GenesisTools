@@ -1,10 +1,6 @@
-import { useMemo } from "react";
 import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
-import {
-    calculateRollingRates,
-    projectTimeToLimit,
-    type RollingRates,
-} from "@app/claude/lib/usage/rate-math";
+import { calculateRollingRates, projectTimeToLimit, type RollingRates } from "@app/claude/lib/usage/rate-math";
+import { useMemo } from "react";
 
 interface RateResult {
     rates: RollingRates;

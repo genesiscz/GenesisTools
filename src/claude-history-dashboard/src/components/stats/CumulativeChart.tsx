@@ -15,8 +15,12 @@ interface CumulativeChartProps {
 }
 
 function formatNumber(n: number): string {
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-	if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+	if (n >= 1_000_000) {
+		return `${(n / 1_000_000).toFixed(1)}M`;
+	}
+	if (n >= 1_000) {
+		return `${(n / 1_000).toFixed(0)}K`;
+	}
 	return n.toString();
 }
 
@@ -31,10 +35,7 @@ export function CumulativeChart({ dailyActivity, dailyTokens, title = "Cumulativ
 
 			const dayTokens = dailyTokens?.[date];
 			const totalDayTokens = dayTokens
-				? dayTokens.inputTokens +
-					dayTokens.outputTokens +
-					dayTokens.cacheCreateTokens +
-					dayTokens.cacheReadTokens
+				? dayTokens.inputTokens + dayTokens.outputTokens + dayTokens.cacheCreateTokens + dayTokens.cacheReadTokens
 				: 0;
 
 			acc.push({
@@ -106,11 +107,8 @@ export function CumulativeChart({ dailyActivity, dailyTokens, title = "Cumulativ
 				{/* Chart */}
 				<div className="relative h-32">
 					{/* Messages area */}
-					<svg
-						viewBox={`0 0 ${displayData.length * 10} 100`}
-						className="w-full h-full"
-						preserveAspectRatio="none"
-					>
+					<svg viewBox={`0 0 ${displayData.length * 10} 100`} className="w-full h-full" preserveAspectRatio="none">
+						<title>Cumulative usage chart</title>
 						{/* Messages gradient fill */}
 						<defs>
 							<linearGradient id="messagesGradient" x1="0" y1="0" x2="0" y2="1">
@@ -129,12 +127,12 @@ export function CumulativeChart({ dailyActivity, dailyTokens, title = "Cumulativ
 								d={`
                   M 0 100
                   ${displayData
-						.map((d, i) => {
-							const x = i * 10;
-							const y = 100 - (d.cumulativeTokens / maxTokens) * 95;
-							return `L ${x} ${y}`;
-						})
-						.join(" ")}
+										.map((d, i) => {
+											const x = i * 10;
+											const y = 100 - (d.cumulativeTokens / maxTokens) * 95;
+											return `L ${x} ${y}`;
+										})
+										.join(" ")}
                   L ${(displayData.length - 1) * 10} 100
                   Z
                 `}
@@ -147,12 +145,12 @@ export function CumulativeChart({ dailyActivity, dailyTokens, title = "Cumulativ
 							d={`
                 M 0 100
                 ${displayData
-					.map((d, i) => {
-						const x = i * 10;
-						const y = 100 - (d.cumulativeMessages / maxMessages) * 95;
-						return `L ${x} ${y}`;
-					})
-					.join(" ")}
+									.map((d, i) => {
+										const x = i * 10;
+										const y = 100 - (d.cumulativeMessages / maxMessages) * 95;
+										return `L ${x} ${y}`;
+									})
+									.join(" ")}
                 L ${(displayData.length - 1) * 10} 100
                 Z
               `}

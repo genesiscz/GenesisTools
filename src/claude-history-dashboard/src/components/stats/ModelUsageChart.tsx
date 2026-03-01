@@ -52,6 +52,7 @@ export function ModelUsageChart({ modelCounts }: ModelUsageChartProps) {
 					{/* Donut Chart */}
 					<div className="relative w-28 h-28 shrink-0">
 						<svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+							<title>Model usage chart</title>
 							{sortedModels.map(([model, count]) => {
 								const percent = (count / total) * 100;
 								const startPercent = cumulativePercent;
@@ -97,9 +98,7 @@ export function ModelUsageChart({ modelCounts }: ModelUsageChartProps) {
 									<div className={`w-3 h-3 rounded-sm ${bg}`} />
 									<span className="text-sm text-foreground flex-1">{label}</span>
 									<span className="text-xs text-muted-foreground">{count.toLocaleString()}</span>
-									<span className="text-xs font-mono text-foreground w-12 text-right">
-										{percent.toFixed(1)}%
-									</span>
+									<span className="text-xs font-mono text-foreground w-12 text-right">{percent.toFixed(1)}%</span>
 								</div>
 							);
 						})}

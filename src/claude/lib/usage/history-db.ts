@@ -22,9 +22,7 @@ export class UsageHistoryDb {
     private claudeDb: ClaudeDatabase;
 
     constructor(dbPath?: string) {
-        this.claudeDb = dbPath
-            ? new ClaudeDatabase(dbPath)
-            : ClaudeDatabase.getInstance();
+        this.claudeDb = dbPath ? new ClaudeDatabase(dbPath) : ClaudeDatabase.getInstance();
         this.ensureSchema();
     }
 
@@ -63,12 +61,7 @@ export class UsageHistoryDb {
         return Number(result.lastInsertRowid);
     }
 
-    recordIfChanged(
-        accountName: string,
-        bucket: string,
-        utilization: number,
-        resetsAt: string | null
-    ): boolean {
+    recordIfChanged(accountName: string, bucket: string, utilization: number, resetsAt: string | null): boolean {
         const latest = this.getLatest(accountName, bucket);
         if (latest && latest.utilization === utilization) {
             return false;

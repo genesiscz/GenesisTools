@@ -71,7 +71,9 @@ export function renderBarChart(data: ChartData): string | null {
             BAR_FULL.repeat(filled) +
             (hasHalf ? BAR_HALF : "") +
             "\x1b[0m" +
-            "\x1b[2m" + "\u2591".repeat(empty) + "\x1b[0m";
+            "\x1b[2m" +
+            "\u2591".repeat(empty) +
+            "\x1b[0m";
 
         lines.push(`${series.label.padEnd(16)} ${bar}  ${Math.round(latest)}%`);
 
@@ -83,10 +85,7 @@ export function renderBarChart(data: ChartData): string | null {
         if (history.length >= 2) {
             const sparkline = history
                 .map((v) => {
-                    const idx = Math.min(
-                        Math.floor((v / ceilMax) * (sparkChars.length - 1)),
-                        sparkChars.length - 1
-                    );
+                    const idx = Math.min(Math.floor((v / ceilMax) * (sparkChars.length - 1)), sparkChars.length - 1);
                     return sparkChars[Math.max(0, idx)];
                 })
                 .join("");
@@ -140,11 +139,12 @@ export function renderSparklineChart(data: ChartData): string | null {
             }
 
             // Y-axis label on leftmost rows
-            const yLabel = row === chartHeight - 1
-                ? `${Math.round(ceilMax)}%`.padStart(5)
-                : row === Math.floor(chartHeight / 2)
-                    ? `${Math.round(ceilMax / 2)}%`.padStart(5)
-                    : row === 0
+            const yLabel =
+                row === chartHeight - 1
+                    ? `${Math.round(ceilMax)}%`.padStart(5)
+                    : row === Math.floor(chartHeight / 2)
+                      ? `${Math.round(ceilMax / 2)}%`.padStart(5)
+                      : row === 0
                         ? "  0%".padStart(5)
                         : "     ";
 

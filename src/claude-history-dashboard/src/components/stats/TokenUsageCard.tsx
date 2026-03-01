@@ -20,9 +20,15 @@ const TOKEN_PRICES = {
 };
 
 function formatTokens(n: number): string {
-	if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	if (n >= 1_000_000_000) {
+		return `${(n / 1_000_000_000).toFixed(1)}B`;
+	}
+	if (n >= 1_000_000) {
+		return `${(n / 1_000_000).toFixed(1)}M`;
+	}
+	if (n >= 1_000) {
+		return `${(n / 1_000).toFixed(1)}K`;
+	}
 	return n.toString();
 }
 
@@ -91,30 +97,22 @@ export function TokenUsageCard({ tokenUsage }: TokenUsageCardProps) {
 					<div className="flex items-center gap-2">
 						<ArrowDown className="w-3 h-3 text-cyan-500" />
 						<span className="text-muted-foreground">Input</span>
-						<span className="ml-auto font-mono text-foreground">
-							{formatTokens(tokenUsage.inputTokens)}
-						</span>
+						<span className="ml-auto font-mono text-foreground">{formatTokens(tokenUsage.inputTokens)}</span>
 					</div>
 					<div className="flex items-center gap-2">
 						<ArrowUp className="w-3 h-3 text-amber-500" />
 						<span className="text-muted-foreground">Output</span>
-						<span className="ml-auto font-mono text-foreground">
-							{formatTokens(tokenUsage.outputTokens)}
-						</span>
+						<span className="ml-auto font-mono text-foreground">{formatTokens(tokenUsage.outputTokens)}</span>
 					</div>
 					<div className="flex items-center gap-2">
 						<Database className="w-3 h-3 text-purple-500" />
 						<span className="text-muted-foreground">Cache Create</span>
-						<span className="ml-auto font-mono text-foreground">
-							{formatTokens(tokenUsage.cacheCreateTokens)}
-						</span>
+						<span className="ml-auto font-mono text-foreground">{formatTokens(tokenUsage.cacheCreateTokens)}</span>
 					</div>
 					<div className="flex items-center gap-2">
 						<Zap className="w-3 h-3 text-green-500" />
 						<span className="text-muted-foreground">Cache Read</span>
-						<span className="ml-auto font-mono text-foreground">
-							{formatTokens(tokenUsage.cacheReadTokens)}
-						</span>
+						<span className="ml-auto font-mono text-foreground">{formatTokens(tokenUsage.cacheReadTokens)}</span>
 					</div>
 				</div>
 			</CardContent>

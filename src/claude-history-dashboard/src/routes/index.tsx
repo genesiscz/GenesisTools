@@ -18,7 +18,9 @@ function IndexPage() {
 	const [search, setSearch] = useState("");
 
 	const filteredConversations = conversations.filter((conv) => {
-		if (!search) return true;
+		if (!search) {
+			return true;
+		}
 		const searchLower = search.toLowerCase();
 		return (
 			conv.project.toLowerCase().includes(searchLower) ||
@@ -50,11 +52,9 @@ function IndexPage() {
 								</div>
 							</div>
 							<div>
-								<CardTitle className="text-4xl font-black tracking-tight gradient-text">
-									CLAUDE HISTORY
-								</CardTitle>
+								<CardTitle className="text-4xl font-black tracking-tight gradient-text">CLAUDE HISTORY</CardTitle>
 								<CardDescription className="text-gray-400 font-light tracking-wide mt-1">
-									Neural conversation archive // All projects
+									{"Neural conversation archive // All projects"}
 								</CardDescription>
 							</div>
 						</CardHeader>
@@ -92,12 +92,7 @@ function IndexPage() {
 						<div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
 						<span className="text-xs font-mono text-amber-500/80 tracking-wider">ACTIVE SESSIONS</span>
 					</div>
-					<Button
-						variant="ghost"
-						size="sm"
-						asChild
-						className="text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10"
-					>
+					<Button variant="ghost" size="sm" asChild className="text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10">
 						<Link to="/stats" className="flex items-center gap-2 font-mono text-xs">
 							<Zap className="w-3 h-3" />
 							VIEW ANALYTICS
@@ -130,9 +125,7 @@ function IndexPage() {
 											<div className="flex-1 min-w-0">
 												<CardTitle className="text-base text-gray-100 font-medium truncate group-hover:text-amber-200 transition-colors">
 													{conv.customTitle || conv.summary?.slice(0, 70) || (
-														<span className="font-mono text-sm text-gray-500">
-															{conv.sessionId.slice(0, 8)}...
-														</span>
+														<span className="font-mono text-sm text-gray-500">{conv.sessionId.slice(0, 8)}...</span>
 													)}
 												</CardTitle>
 												{conv.summary && conv.customTitle && (

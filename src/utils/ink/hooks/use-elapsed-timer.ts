@@ -8,35 +8,35 @@
  *   <Text>{formatDuration(elapsed)}</Text>
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from "react";
 
 interface UseElapsedTimerOptions {
-  active: boolean;
+    active: boolean;
 }
 
 export function useElapsedTimer({ active }: UseElapsedTimerOptions): number {
-  const [elapsed, setElapsed] = useState(0);
-  const startTimeRef = useRef<number | null>(null);
+    const [elapsed, setElapsed] = useState(0);
+    const startTimeRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    if (!active) {
-      startTimeRef.current = null;
-      return;
-    }
+    useEffect(() => {
+        if (!active) {
+            startTimeRef.current = null;
+            return;
+        }
 
-    startTimeRef.current = Date.now();
-    setElapsed(0);
+        startTimeRef.current = Date.now();
+        setElapsed(0);
 
-    const interval = setInterval(() => {
-      if (startTimeRef.current !== null) {
-        setElapsed(Date.now() - startTimeRef.current);
-      }
-    }, 100);
+        const interval = setInterval(() => {
+            if (startTimeRef.current !== null) {
+                setElapsed(Date.now() - startTimeRef.current);
+            }
+        }, 100);
 
-    return () => {
-      clearInterval(interval);
-    };
-  }, [active]);
+        return () => {
+            clearInterval(interval);
+        };
+    }, [active]);
 
-  return elapsed;
+    return elapsed;
 }

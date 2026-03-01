@@ -1,12 +1,9 @@
-import { loadConfig, type AccountConfig } from "@app/claude/lib/config";
-import {
-    fetchAllAccountsUsage,
-    getKeychainCredentials,
-} from "@app/claude/lib/usage/api";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type AccountConfig, loadConfig } from "@app/claude/lib/config";
+import { fetchAllAccountsUsage, getKeychainCredentials } from "@app/claude/lib/usage/api";
+import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
-import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PollResult } from "../types";
 
 interface PollerOptions {
@@ -35,9 +32,12 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
 
         dbRef.current.pruneOlderThan(config.dataRetentionDays);
 
-        pruneIntervalRef.current = setInterval(() => {
-            dbRef.current?.pruneOlderThan(config.dataRetentionDays);
-        }, 60 * 60 * 1000);
+        pruneIntervalRef.current = setInterval(
+            () => {
+                dbRef.current?.pruneOlderThan(config.dataRetentionDays);
+            },
+            60 * 60 * 1000
+        );
 
         return () => {
             dbRef.current?.close();
@@ -46,7 +46,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                 clearInterval(pruneIntervalRef.current);
             }
         };
-    }, []);
+    }, [config.dataRetentionDays, config.notifications]);
 
     const poll = useCallback(async () => {
         if (pollingRef.current) {
@@ -76,9 +76,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                 }
 
                 if (accountFilter) {
-                    accounts = accounts[accountFilter]
-                        ? { [accountFilter]: accounts[accountFilter] }
-                        : accounts;
+                    accounts = accounts[accountFilter] ? { [accountFilter]: accounts[accountFilter] } : accounts;
                 }
 
                 accountsRef.current = accounts;
@@ -111,20 +109,10 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                         continue;
                     }
 
-                    dbRef.current?.recordIfChanged(
-                        account.accountName,
-                        bucket,
-                        data.utilization,
-                        data.resets_at
-                    );
+                    dbRef.current?.recordIfChanged(account.accountName, bucket, data.utilization, data.resets_at);
 
                     try {
-                        notifRef.current?.processUsage(
-                            account.accountName,
-                            bucket,
-                            data.utilization,
-                            data.resets_at
-                        );
+                        notifRef.current?.processUsage(account.accountName, bucket, data.utilization, data.resets_at);
                     } catch {
                         // Notification failure should not interrupt polling
                     }
@@ -147,11 +135,11 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
             pollingRef.current = false;
             setPollingLabel(null);
         }
-    }, [accountFilter, config, pollIntervalSeconds]);
+    }, [accountFilter, pollIntervalSeconds]);
 
     useEffect(() => {
         poll();
-    }, []);
+    }, [poll]);
 
     useEffect(() => {
         if (paused) {

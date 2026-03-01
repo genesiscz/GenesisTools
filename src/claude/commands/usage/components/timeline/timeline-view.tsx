@@ -1,10 +1,10 @@
+import { VISIBLE_BUCKETS } from "@app/claude/lib/usage/constants";
+import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
+import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useState } from "react";
-import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
-import { VISIBLE_BUCKETS } from "@app/claude/lib/usage/constants";
 import type { PollResult, TimelineZoom } from "../../types";
 import { ZOOM_ORDER } from "../../types";
-import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { ChartPanel } from "./chart-panel";
 import { CHART_MODES, type ChartMode } from "./chart-renderers";
 
@@ -17,9 +17,7 @@ interface TimelineViewProps {
 export function TimelineView({ db, results, config }: TimelineViewProps) {
     const { stdout } = useStdout();
     const termWidth = stdout?.columns ?? 80;
-    const [zoom, setZoom] = useState<TimelineZoom>(
-        (config.defaultTimelineZoom as TimelineZoom) || "30m"
-    );
+    const [zoom, setZoom] = useState<TimelineZoom>((config.defaultTimelineZoom as TimelineZoom) || "30m");
     const [showAllAccounts, setShowAllAccounts] = useState(true);
     const [chartMode, setChartMode] = useState<ChartMode>("line");
 
@@ -89,9 +87,7 @@ export function TimelineView({ db, results, config }: TimelineViewProps) {
                 />
             ))}
             <Box>
-                <Text dimColor>
-                    {"[+/-] Zoom  [a] All accounts  [g] Graph style"}
-                </Text>
+                <Text dimColor>{"[+/-] Zoom  [a] All accounts  [g] Graph style"}</Text>
             </Box>
         </Box>
     );

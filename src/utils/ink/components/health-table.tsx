@@ -10,44 +10,44 @@
  *   ]} />
  */
 
-import React from 'react';
-import { Text, Box } from 'ink';
-import { theme, symbols } from '../lib/theme.js';
-import type { HealthCheckResult } from '../lib/types.js';
+import { Box, Text } from "ink";
+import { symbols, theme } from "../lib/theme.js";
+import type { HealthCheckResult } from "../lib/types.js";
 
 interface HealthTableProps {
-  results: HealthCheckResult[];
+    results: HealthCheckResult[];
 }
 
 export function HealthTable({ results }: HealthTableProps) {
-  if (results.length === 0) {
-    return <Text color={theme.muted}>No health check results.</Text>;
-  }
+    if (results.length === 0) {
+        return <Text color={theme.muted}>No health check results.</Text>;
+    }
 
-  return (
-    <Box flexDirection="column">
-      {results.map((result, i) => {
-        const icon = result.ok ? symbols.success : symbols.error;
-        const iconColor = result.ok ? theme.success : theme.error;
-        const statusColor = result.ok ? theme.success : theme.error;
-        const timeColor =
-          result.responseTime < 300
-            ? theme.success
-            : result.responseTime < 1000
-              ? theme.warning
-              : theme.error;
+    return (
+        <Box flexDirection="column">
+            {results.map((result, i) => {
+                const icon = result.ok ? symbols.success : symbols.error;
+                const iconColor = result.ok ? theme.success : theme.error;
+                const statusColor = result.ok ? theme.success : theme.error;
+                const timeColor =
+                    result.responseTime < 300
+                        ? theme.success
+                        : result.responseTime < 1000
+                          ? theme.warning
+                          : theme.error;
 
-        return (
-          <Box key={i} gap={1}>
-            <Text color={iconColor}>{icon}</Text>
-            <Text color={statusColor} bold>
-              {result.status}
-            </Text>
-            <Text>{result.url}</Text>
-            <Text color={timeColor}>({result.responseTime}ms)</Text>
-          </Box>
-        );
-      })}
-    </Box>
-  );
+                return (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: static list rendering
+                    <Box key={i} gap={1}>
+                        <Text color={iconColor}>{icon}</Text>
+                        <Text color={statusColor} bold>
+                            {result.status}
+                        </Text>
+                        <Text>{result.url}</Text>
+                        <Text color={timeColor}>({result.responseTime}ms)</Text>
+                    </Box>
+                );
+            })}
+        </Box>
+    );
 }

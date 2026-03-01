@@ -36,22 +36,20 @@ export function HelpOverlay({ onClose }: HelpOverlayProps) {
     });
 
     return (
-        <Box
-            flexDirection="column"
-            borderStyle="double"
-            borderColor="cyan"
-            paddingX={2}
-            paddingY={1}
-        >
-            <Text bold color="cyan">{"  Keybindings"}</Text>
+        <Box flexDirection="column" borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1}>
+            <Text bold color="cyan">
+                {"  Keybindings"}
+            </Text>
             <Text>{""}</Text>
             {KEYBINDINGS.map(([key, desc], i) => {
                 if (!key && !desc) {
+                    // biome-ignore lint/suspicious/noArrayIndexKey: static list rendering
                     return <Text key={i}>{""}</Text>;
                 }
 
                 if (!key) {
                     return (
+                        // biome-ignore lint/suspicious/noArrayIndexKey: static list rendering
                         <Text key={i} bold underline>
                             {desc}
                         </Text>
@@ -59,8 +57,11 @@ export function HelpOverlay({ onClose }: HelpOverlayProps) {
                 }
 
                 return (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: static list rendering
                     <Box key={i}>
-                        <Text bold color="yellow">{key.padEnd(12)}</Text>
+                        <Text bold color="yellow">
+                            {key.padEnd(12)}
+                        </Text>
                         <Text>{desc}</Text>
                     </Box>
                 );

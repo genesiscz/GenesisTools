@@ -8,27 +8,26 @@
  *   <EnvBadge env="prod" />
  */
 
-import React from 'react';
-import { Text } from 'ink';
-import { type EnvironmentName, getEnvColor } from '../lib/theme.js';
+import { Text } from "ink";
+import { type EnvironmentName, getEnvColor } from "../lib/theme.js";
 
 interface EnvBadgeProps {
-  env: EnvironmentName;
+    env: EnvironmentName;
 }
 
 const LABELS: Record<EnvironmentName, string> = {
-  dev: 'DEV',
-  staging: 'STAGING',
-  prod: 'PROD',
+    dev: "DEV",
+    staging: "STAGING",
+    prod: "PROD",
 };
 
 export function EnvBadge({ env }: EnvBadgeProps) {
-  const color = getEnvColor(env);
-  const isProd = env === 'prod';
+    const color = getEnvColor(env);
+    const isProd = env === "prod";
 
-  return (
-    <Text color={color} bold={isProd}>
-      [{LABELS[env]}]
-    </Text>
-  );
+    return (
+        <Text color={color} bold={isProd}>
+            [{LABELS[env]}]
+        </Text>
+    );
 }

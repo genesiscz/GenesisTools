@@ -146,7 +146,14 @@ export function discoverMigrationSources(projectRoot: string): DiscoveredSources
     const globalClaudeMd = join(GLOBAL_CLAUDE_DIR, "CLAUDE.md");
 
     addSkillDirs(skills, seenSkills, collectSkillDirs(globalSkillsDir, true), "global", "claude");
-    addCommandFiles(commands, seenCommands, collectMarkdownFiles(globalCommandsDir, true), "global", "claude", "claude");
+    addCommandFiles(
+        commands,
+        seenCommands,
+        collectMarkdownFiles(globalCommandsDir, true),
+        "global",
+        "claude",
+        "claude"
+    );
     addInstruction(instructions, seenInstructions, globalClaudeMd, "global");
 
     return {
@@ -360,16 +367,12 @@ export function buildMigrationPlan(discovered: DiscoveredSources, input: Migrati
         for (const source of instructionSources) {
             for (const targetScope of targetScopes) {
                 if (targetScope === "project" && source.scope === "global") {
-                    warnings.push(
-                        `Skipping project target for global instruction: ${source.path}`
-                    );
+                    warnings.push(`Skipping project target for global instruction: ${source.path}`);
                     continue;
                 }
 
                 if (targetScope === "global" && source.scope === "project") {
-                    warnings.push(
-                        `Skipping global target for project instruction: ${source.path}`
-                    );
+                    warnings.push(`Skipping global target for project instruction: ${source.path}`);
                     continue;
                 }
 
@@ -808,11 +811,7 @@ function buildSkillTargetName(source: SkillSource, style: NameStyle, used: Set<s
     return ensureUniqueName(candidate, used);
 }
 
-function buildCommandNamespace(
-    source: CommandSource,
-    style: NameStyle,
-    claimed: Map<string, string>
-): string {
+function buildCommandNamespace(source: CommandSource, style: NameStyle, claimed: Map<string, string>): string {
     let namespace = source.namespace;
 
     if (style === "prefixed") {
@@ -991,7 +990,7 @@ function shouldSkipSource(
     source: { path: string; scope: SingleScope; origin: SourceOrigin },
     targetScope: SingleScope,
     projectRoot: string,
-    componentLabel: string,
+    componentLabel: string
 ): string | null {
     if (targetScope === "project" && !isInsideDir(source.path, projectRoot)) {
         return `Skipping project-scope target for out-of-repo ${componentLabel}: ${basename(source.path)} (source: ${source.path})`;

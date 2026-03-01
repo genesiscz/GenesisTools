@@ -8,75 +8,68 @@
  *   <LogViewer lines={logLines} maxLines={20} />
  */
 
-import React from 'react';
-import { Text, Box } from 'ink';
-import { theme } from '../lib/theme.js';
+import { Box, Text } from "ink";
+import { theme } from "../lib/theme.js";
 
 export interface LogLine {
-  timestamp?: string;
-  level: 'info' | 'warn' | 'error' | 'debug';
-  message: string;
-  service?: string;
+    timestamp?: string;
+    level: "info" | "warn" | "error" | "debug";
+    message: string;
+    service?: string;
 }
 
 interface LogViewerProps {
-  lines: LogLine[];
-  maxLines?: number;
+    lines: LogLine[];
+    maxLines?: number;
 }
 
-const LEVEL_COLORS: Record<LogLine['level'], string | undefined> = {
-  info: undefined, // default white
-  warn: theme.warning,
-  error: theme.error,
-  debug: theme.muted,
+const LEVEL_COLORS: Record<LogLine["level"], string | undefined> = {
+    info: undefined, // default white
+    warn: theme.warning,
+    error: theme.error,
+    debug: theme.muted,
 };
 
-const LEVEL_LABELS: Record<LogLine['level'], string> = {
-  info: 'INF',
-  warn: 'WRN',
-  error: 'ERR',
-  debug: 'DBG',
+const LEVEL_LABELS: Record<LogLine["level"], string> = {
+    info: "INF",
+    warn: "WRN",
+    error: "ERR",
+    debug: "DBG",
 };
 
 export function LogViewer({ lines, maxLines }: LogViewerProps) {
-  const visibleLines =
-    maxLines && lines.length > maxLines
-      ? lines.slice(-maxLines)
-      : lines;
+    const visibleLines = maxLines && lines.length > maxLines ? lines.slice(-maxLines) : lines;
 
-  if (visibleLines.length === 0) {
-    return <Text color={theme.muted}>No log output.</Text>;
-  }
+    if (visibleLines.length === 0) {
+        return <Text color={theme.muted}>No log output.</Text>;
+    }
 
-  return (
-    <Box flexDirection="column">
-      {visibleLines.map((line, i) => {
-        const color = LEVEL_COLORS[line.level];
-        const label = LEVEL_LABELS[line.level];
+    return (
+        <Box flexDirection="column">
+            {visibleLines.map((line, i) => {
+                const color = LEVEL_COLORS[line.level];
+                const label = LEVEL_LABELS[line.level];
 
-        return (
-          <Box key={i} gap={0}>
-            {/* Timestamp */}
-            {line.timestamp && (
-              <Text color={theme.muted}>{line.timestamp} </Text>
-            )}
+                return (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: static list rendering
+                    <Box key={i} gap={0}>
+                        {/* Timestamp */}
+                        {line.timestamp && <Text color={theme.muted}>{line.timestamp} </Text>}
 
-            {/* Level badge */}
-            <Text color={color} bold>
-              {label}
-            </Text>
-            <Text> </Text>
+                        {/* Level badge */}
+                        <Text color={color} bold>
+                            {label}
+                        </Text>
+                        <Text> </Text>
 
-            {/* Service tag */}
-            {line.service && (
-              <Text color={theme.primary}>[{line.service}] </Text>
-            )}
+                        {/* Service tag */}
+                        {line.service && <Text color={theme.primary}>[{line.service}] </Text>}
 
-            {/* Message */}
-            <Text color={color}>{line.message}</Text>
-          </Box>
-        );
-      })}
-    </Box>
-  );
+                        {/* Message */}
+                        <Text color={color}>{line.message}</Text>
+                    </Box>
+                );
+            })}
+        </Box>
+    );
 }

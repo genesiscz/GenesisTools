@@ -46,7 +46,9 @@ const TOOL_CATEGORIES: Record<string, { pattern: RegExp | string[]; color: strin
 
 function categorize(toolName: string): string {
 	for (const [category, { pattern }] of Object.entries(TOOL_CATEGORIES)) {
-		if (category === "Other") continue;
+		if (category === "Other") {
+			continue;
+		}
 		if (Array.isArray(pattern)) {
 			if (pattern.some((p) => toolName === p || toolName.startsWith(p))) {
 				return category;

@@ -1,12 +1,8 @@
-import {
-    isTaskRegistered,
-    registerTask,
-    unregisterTask,
-} from "@app/daemon/lib/register";
+import { resolve } from "node:path";
 import { getDaemonStatus } from "@app/daemon/lib/launchd";
+import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
-import { resolve } from "node:path";
 import pc from "picocolors";
 
 const TASK_NAME = "claude-usage-poll";
@@ -17,9 +13,7 @@ function bunPath(): string {
 }
 
 export function registerDaemonCommand(program: Command): void {
-    const daemon = program
-        .command("daemon")
-        .description("Manage background usage polling via the daemon scheduler");
+    const daemon = program.command("daemon").description("Manage background usage polling via the daemon scheduler");
 
     daemon
         .command("register")
@@ -45,7 +39,7 @@ export function registerDaemonCommand(program: Command): void {
 
             if (!status.running) {
                 p.log.warn(
-                    `Daemon is not running. Start it with: ${pc.cyan("tools daemon start")} or ${pc.cyan("tools daemon install")}`,
+                    `Daemon is not running. Start it with: ${pc.cyan("tools daemon start")} or ${pc.cyan("tools daemon install")}`
                 );
             }
         });
@@ -74,7 +68,7 @@ export function registerDaemonCommand(program: Command): void {
                 p.log.success(`Task ${pc.cyan(TASK_NAME)} is registered`);
             } else {
                 p.log.warn(
-                    `Task ${pc.cyan(TASK_NAME)} is not registered. Run: ${pc.cyan("tools claude daemon register")}`,
+                    `Task ${pc.cyan(TASK_NAME)} is not registered. Run: ${pc.cyan("tools claude daemon register")}`
                 );
             }
 
@@ -83,9 +77,7 @@ export function registerDaemonCommand(program: Command): void {
             } else if (daemonStatus.installed) {
                 p.log.warn("Daemon installed but not running");
             } else {
-                p.log.info(
-                    `Daemon not installed. Run: ${pc.cyan("tools daemon install")}`,
-                );
+                p.log.info(`Daemon not installed. Run: ${pc.cyan("tools daemon install")}`);
             }
         });
 }

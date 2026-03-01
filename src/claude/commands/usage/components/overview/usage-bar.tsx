@@ -1,5 +1,5 @@
-import { Text } from "ink";
 import { colorForPct } from "@app/claude/lib/usage/constants";
+import { Text } from "ink";
 
 interface UsageBarProps {
     utilization: number;
@@ -22,9 +22,7 @@ export function UsageBar({ utilization, width = 30 }: UsageBarProps) {
                 {BLOCK_FULL.repeat(filled)}
                 {hasHalf ? BLOCK_HALF : ""}
             </Text>
-            <Text dimColor>
-                {"\u2591".repeat(Math.max(0, emptyCount))}
-            </Text>
+            <Text dimColor>{"\u2591".repeat(Math.max(0, emptyCount))}</Text>
         </Text>
     );
 }

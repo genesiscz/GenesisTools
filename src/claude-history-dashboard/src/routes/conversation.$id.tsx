@@ -74,6 +74,7 @@ function ConversationPage() {
 						{conversation.messages
 							.filter((msg) => msg.type === "user" || msg.type === "assistant")
 							.map((msg, idx) => (
+								/* biome-ignore lint/suspicious/noArrayIndexKey: messages have no stable unique id */
 								<MessageCard key={idx} message={msg} />
 							))}
 					</div>
@@ -196,20 +197,17 @@ function MessageCard({
 							const isShort = countLines(inputJson) <= 10;
 
 							return (
+								/* biome-ignore lint/suspicious/noArrayIndexKey: tool uses have no stable unique id */
 								<details key={i} className="group" open={isShort}>
 									<summary className="flex items-center gap-2 cursor-pointer list-none text-sm text-muted-foreground hover:text-foreground">
 										<ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90" />
 										<Wrench className="w-3 h-3" />
 										<span className="font-mono text-xs">{formatted.title}</span>
 										{formatted.subtitle && (
-											<span className="text-xs text-muted-foreground/70 ml-1">
-												— {formatted.subtitle}
-											</span>
+											<span className="text-xs text-muted-foreground/70 ml-1">— {formatted.subtitle}</span>
 										)}
 									</summary>
-									<pre className="text-xs bg-muted p-2 rounded mt-2 ml-6 overflow-auto">
-										{inputJson}
-									</pre>
+									<pre className="text-xs bg-muted p-2 rounded mt-2 ml-6 overflow-auto">{inputJson}</pre>
 								</details>
 							);
 						})}
@@ -223,6 +221,7 @@ function MessageCard({
 							const isShort = countLines(result.content) <= 10;
 
 							return (
+								/* biome-ignore lint/suspicious/noArrayIndexKey: tool results have no stable unique id */
 								<details key={i} className="group" open={isShort}>
 									<summary
 										className={`flex items-center gap-2 cursor-pointer list-none text-sm hover:text-foreground ${result.isError ? "text-red-500" : "text-muted-foreground"}`}

@@ -1,14 +1,10 @@
+import { BUCKET_COLORS, BUCKET_INK_COLORS, BUCKET_LABELS } from "@app/claude/lib/usage/constants";
+import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { Box, Text } from "ink";
 import { useMemo } from "react";
-import type { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
-import {
-    BUCKET_LABELS,
-    BUCKET_COLORS,
-    BUCKET_INK_COLORS,
-} from "@app/claude/lib/usage/constants";
 import type { TimelineZoom } from "../../types";
 import { ZOOM_MINUTES } from "../../types";
-import { renderChart, CHART_MODE_LABELS, type ChartMode, type ChartSeries } from "./chart-renderers";
+import { CHART_MODE_LABELS, type ChartMode, type ChartSeries, renderChart } from "./chart-renderers";
 
 interface ChartPanelProps {
     db: UsageHistoryDb | null;
@@ -29,11 +25,7 @@ interface TimedValue {
  * position based on timestamp within the zoom window, then forward-fills
  * gaps so the line extends from the earliest data to "now".
  */
-function resampleTimeAligned(
-    timedValues: TimedValue[],
-    minutes: number,
-    targetWidth: number,
-): number[] {
+function resampleTimeAligned(timedValues: TimedValue[], minutes: number, targetWidth: number): number[] {
     if (timedValues.length === 0) {
         return [];
     }
@@ -193,9 +185,7 @@ export function ChartPanel({ db, accountName, buckets, zoom, width, chartMode }:
                     {timeAxis && <Text dimColor>{timeAxis}</Text>}
                 </Box>
             ) : (
-                <Text dimColor>
-                    {"  No data yet. Snapshots will appear after a few polls."}
-                </Text>
+                <Text dimColor>{"  No data yet. Snapshots will appear after a few polls."}</Text>
             )}
             {activeBuckets.length > 0 && (
                 <Box gap={2}>

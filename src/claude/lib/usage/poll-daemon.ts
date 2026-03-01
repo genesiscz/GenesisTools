@@ -1,12 +1,9 @@
+import type { AccountConfig } from "@app/claude/lib/config";
 import { loadConfig } from "@app/claude/lib/config";
-import {
-    fetchAllAccountsUsage,
-    getKeychainCredentials,
-} from "@app/claude/lib/usage/api";
+import { fetchAllAccountsUsage, getKeychainCredentials } from "@app/claude/lib/usage/api";
+import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
-import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
-import type { AccountConfig } from "@app/claude/lib/config";
 
 async function main(): Promise<void> {
     const dashConfig = await loadDashboardConfig();
@@ -51,20 +48,10 @@ async function main(): Promise<void> {
                     continue;
                 }
 
-                db.recordIfChanged(
-                    account.accountName,
-                    bucket,
-                    data.utilization,
-                    data.resets_at,
-                );
+                db.recordIfChanged(account.accountName, bucket, data.utilization, data.resets_at);
 
                 try {
-                    notifManager.processUsage(
-                        account.accountName,
-                        bucket,
-                        data.utilization,
-                        data.resets_at,
-                    );
+                    notifManager.processUsage(account.accountName, bucket, data.utilization, data.resets_at);
                 } catch {
                     // Notification failure should not interrupt polling
                 }
@@ -77,7 +64,7 @@ async function main(): Promise<void> {
         const accountNames = results.map((r) => r.accountName).join(", ");
         const errorCount = results.filter((r) => r.error).length;
         console.log(
-            `Polled ${results.length} account(s): ${accountNames}${errorCount > 0 ? ` (${errorCount} error(s))` : ""}`,
+            `Polled ${results.length} account(s): ${accountNames}${errorCount > 0 ? ` (${errorCount} error(s))` : ""}`
         );
     } finally {
         db.close();

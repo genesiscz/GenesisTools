@@ -22,13 +22,7 @@ export const BUCKET_THRESHOLD_MAP: Record<string, "session" | "weekly"> = {
     seven_day_oauth_apps: "weekly",
 };
 
-export const VISIBLE_BUCKETS = [
-    "five_hour",
-    "seven_day",
-    "seven_day_opus",
-    "seven_day_sonnet",
-    "seven_day_oauth_apps",
-];
+export const VISIBLE_BUCKETS = ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_oauth_apps"];
 
 export const BUCKET_COLORS: Record<string, string> = {
     five_hour: "\x1b[36m", // cyan
