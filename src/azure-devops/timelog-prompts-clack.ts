@@ -16,7 +16,7 @@ export async function runInteractiveAddClack(
 ): Promise<void> {
     p.intro(pc.bgCyan(pc.black(" TimeLog - Add Entry ")));
 
-    const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog?.functionsKey, user);
+    const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
 
     // Fetch time types
     const spinner = p.spinner();

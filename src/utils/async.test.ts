@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from "bun:test";
 import { concurrentMap, debounce, retry, throttle, withTimeout } from "./async";
 
+// Bun supports advanceTimersByTime at runtime but the type definitions are incomplete
+declare module "bun:test" {
+    namespace jest {
+        function advanceTimersByTime(ms: number): void;
+    }
+}
+
 describe("retry", () => {
     it("resolves on first try", async () => {
         expect(await retry(async () => "success")).toBe("success");

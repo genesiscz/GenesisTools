@@ -169,7 +169,7 @@ function extractToolResults(msg: {
  * Get conversations with optional search/filtering
  */
 export const getConversations = createServerFn({ method: "GET" })
-	.inputValidator((filters: SearchFilters) => filters)
+	.inputValidator((filters: Omit<SearchFilters, "onProgress">) => filters)
 	.handler(async ({ data: filters }) => {
 		const results = filters.query
 			? await searchConversations(filters)

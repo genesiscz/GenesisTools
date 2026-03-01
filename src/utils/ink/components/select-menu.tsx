@@ -6,8 +6,14 @@
  */
 
 import { Box, Text } from "ink";
-import SelectInput, { type Item } from "ink-select-input";
+import SelectInput from "ink-select-input";
 import { useMemo, useState } from "react";
+
+interface SelectInputItem<V> {
+    key?: string;
+    label: string;
+    value: V;
+}
 
 export interface SelectItem {
     label: string;
@@ -69,7 +75,7 @@ export function SelectMenu({ items, onSelect, title }: SelectMenuProps) {
     const itemsMap = useMemo(() => new Map(items.map((item) => [item.label, item])), [items]);
 
     // Convert to ink-select-input format
-    const selectItems: Array<Item<string>> = useMemo(
+    const selectItems: Array<SelectInputItem<string>> = useMemo(
         () =>
             items.map((item) => ({
                 label: item.label,
@@ -78,11 +84,11 @@ export function SelectMenu({ items, onSelect, title }: SelectMenuProps) {
         [items]
     );
 
-    const handleSelect = (item: Item<string>) => {
+    const handleSelect = (item: SelectInputItem<string>) => {
         onSelect(item.value);
     };
 
-    const handleHighlight = (item: Item<string>) => {
+    const handleHighlight = (item: SelectInputItem<string>) => {
         setHighlightedValue(item.value);
     };
 
