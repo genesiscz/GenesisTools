@@ -8,7 +8,7 @@ import { TelegramContact } from "./TelegramContact";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
 import { TelegramMessage } from "./TelegramMessage";
 import type { TGClient } from "./TGClient";
-import type { ContactConfig } from "./types";
+import type { TelegramContactV2 } from "./types";
 import { DEFAULTS } from "./types";
 
 const processedIds = new Set<number>();
@@ -64,7 +64,7 @@ class ConversationContext {
 }
 
 export interface HandlerOptions {
-    contacts: ContactConfig[];
+    contacts: TelegramContactV2[];
     myName: string;
     initialHistory?: Map<string, string[]>;
     store: TelegramHistoryStore;
