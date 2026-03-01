@@ -1,5 +1,7 @@
 import bigInt from "big-integer";
 import { Api, TelegramClient } from "telegram";
+import { DeletedMessage, type DeletedMessageEvent } from "telegram/events/DeletedMessage";
+import { EditedMessage, type EditedMessageEvent } from "telegram/events/EditedMessage";
 import { NewMessage, type NewMessageEvent } from "telegram/events";
 import { StringSession } from "telegram/sessions";
 import type { Dialog } from "telegram/tl/custom/dialog";
@@ -55,8 +57,8 @@ export class TGClient {
         return this.client.getDialogs({ limit });
     }
 
-    async sendMessage(userId: string, text: string): Promise<void> {
-        await this.client.sendMessage(userId, { message: text });
+    async sendMessage(userId: string, text: string): Promise<Api.Message> {
+        return this.client.sendMessage(userId, { message: text });
     }
 
     async sendTyping(userId: string): Promise<void> {
@@ -98,6 +100,14 @@ export class TGClient {
 
     onNewMessage(handler: (event: NewMessageEvent) => Promise<void>): void {
         this.client.addEventHandler(handler, new NewMessage({}));
+    }
+
+    onEditedMessage(handler: (event: EditedMessageEvent) => Promise<void>): void {
+        this.client.addEventHandler(handler, new EditedMessage({}));
+    }
+
+    onDeletedMessage(handler: (event: DeletedMessageEvent) => Promise<void>): void {
+        this.client.addEventHandler(handler, new DeletedMessage({}));
     }
 
     get raw(): TelegramClient {
