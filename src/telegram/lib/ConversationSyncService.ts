@@ -1,10 +1,10 @@
 import type { Api } from "telegram";
 import { AttachmentIndexer } from "./AttachmentIndexer";
 import { SyncRangePlanner } from "./SyncRangePlanner";
-import type { TGClient } from "./TGClient";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
 import type { SerializedMessage } from "./TelegramMessage";
 import { TelegramMessage } from "./TelegramMessage";
+import type { TGClient } from "./TGClient";
 
 const BATCH_SIZE = 100;
 const MAX_RETRIES = 5;
@@ -14,7 +14,7 @@ interface SyncOptions {
     onProgress?: (synced: number, total: number | null) => void;
 }
 
-interface SyncResult {
+export interface SyncResult {
     synced: number;
     attachmentsIndexed: number;
     segments: number;
@@ -23,7 +23,7 @@ interface SyncResult {
 export class ConversationSyncService {
     constructor(
         private client: TGClient,
-        private store: TelegramHistoryStore,
+        private store: TelegramHistoryStore
     ) {}
 
     async syncLatest(chatId: string, options?: SyncOptions): Promise<SyncResult> {
@@ -108,7 +108,7 @@ export class ConversationSyncService {
         const gaps = SyncRangePlanner.plan(
             segments.map((s) => ({ from_date_unix: s.from_date_unix, to_date_unix: s.to_date_unix })),
             sinceUnix,
-            untilUnix,
+            untilUnix
         );
 
         if (gaps.length === 0) {
@@ -138,7 +138,7 @@ export class ConversationSyncService {
             textPattern?: string;
             limit?: number;
             localOnly?: boolean;
-        },
+        }
     ) {
         if (!options.localOnly && (options.since || options.until)) {
             const since = options.since ?? new Date(0);
@@ -159,7 +159,7 @@ export class ConversationSyncService {
         chatId: string,
         fromUnix: number,
         toUnix: number,
-        options?: SyncOptions,
+        options?: SyncOptions
     ): Promise<SyncResult> {
         let synced = 0;
         let attachmentsIndexed = 0;
