@@ -10,6 +10,8 @@ import type {
     ActionType,
     AskModeConfig,
     ContactConfig,
+    StyleProfileConfig,
+    StyleSourceRule,
     SuggestionModeConfig,
     TelegramConfigData,
     TelegramDialogType,
@@ -420,7 +422,226 @@ async function promptSuggestionModeConfig(
     return result;
 }
 
-async function configureContact(option: DialogOption, existing?: ContactConfig): Promise<ContactConfig | null> {
+function parseOptionalIsoDateInput(raw: string): string | undefined {
+    const value = raw.trim();
+
+    if (!value) {
+        return undefined;
+    }
+
+    const parsed = new Date(value);
+
+    if (Number.isNaN(parsed.getTime())) {
+        return undefined;
+    }
+
+    return parsed.toISOString();
+}
+
+function buildDefaultStyleRule(dialogId: string): StyleSourceRule {
+    return {
+        id: "self-outgoing-500",
+        sourceChatId: dialogId,
+        direction: "outgoing",
+        limit: 500,
+    };
+}
+
+async function promptStyleProfileConfig(
+    currentDialog: DialogOption,
+    allDialogs: DialogOption[],
+    existing: StyleProfileConfig | undefined
+): Promise<StyleProfileConfig | null> {
+    const enabled = await p.confirm({
+        message: "Enable style profile?",
+        initialValue: existing?.enabled ?? false,
+    });
+
+    if (p.isCancel(enabled)) {
+        return null;
+    }
+
+    const base: StyleProfileConfig = {
+        ...DEFAULT_STYLE_PROFILE,
+        ...existing,
+        enabled,
+    };
+
+    if (!enabled) {
+        return {
+            ...base,
+            rules: existing?.rules ?? [],
+        };
+    }
+
+    const previewInWatch = await p.confirm({
+        message: "Preview derived style prompt in watch mode?",
+        initialValue: base.previewInWatch,
+    });
+
+    if (p.isCancel(previewInWatch)) {
+        return null;
+    }
+
+    const seedRules = existing?.rules.length ? existing.rules : [buildDefaultStyleRule(currentDialog.id)];
+    const ruleCountInput = await p.text({
+        message: "How many style rules?",
+        initialValue: String(seedRules.length),
+        validate: (value) => {
+            const parsed = Number(value);
+
+            if (!Number.isInteger(parsed) || parsed < 1 || parsed > 10) {
+                return "Enter integer from 1 to 10";
+            }
+        },
+    });
+
+    if (p.isCancel(ruleCountInput)) {
+        return null;
+    }
+
+    const desiredRuleCount = Number(ruleCountInput);
+    const rules: StyleSourceRule[] = [];
+
+    for (let i = 0; i < desiredRuleCount; i++) {
+        const seed = seedRules[i] ?? buildDefaultStyleRule(currentDialog.id);
+        const sourceChatId = await p.select({
+            message: `Rule ${i + 1}: source chat`,
+            options: allDialogs.map((dialog) => ({
+                value: dialog.id,
+                label: dialog.label,
+                hint: dialog.hint ?? dialog.dialogType,
+            })),
+            initialValue: seed.sourceChatId,
+        });
+
+        if (p.isCancel(sourceChatId)) {
+            return null;
+        }
+
+        const direction = await p.select({
+            message: `Rule ${i + 1}: direction`,
+            options: [
+                { value: "outgoing" as const, label: "outgoing (my messages)" },
+                { value: "incoming" as const, label: "incoming (their messages)" },
+            ],
+            initialValue: seed.direction,
+        });
+
+        if (p.isCancel(direction)) {
+            return null;
+        }
+
+        const limitInput = await p.text({
+            message: `Rule ${i + 1}: max messages (empty = unlimited)`,
+            initialValue: seed.limit !== undefined ? String(seed.limit) : "",
+            validate: (value) => {
+                const trimmed = (value ?? "").trim();
+
+                if (!trimmed) {
+                    return;
+                }
+
+                const parsed = Number(trimmed);
+
+                if (!Number.isInteger(parsed) || parsed < 1) {
+                    return "Enter a positive integer or leave empty";
+                }
+            },
+        });
+
+        if (p.isCancel(limitInput)) {
+            return null;
+        }
+
+        const sinceInput = await p.text({
+            message: `Rule ${i + 1}: since (optional, e.g. 2025-01-01)`,
+            initialValue: seed.since ?? "",
+            validate: (value) => {
+                const trimmed = (value ?? "").trim();
+
+                if (!trimmed) {
+                    return;
+                }
+
+                if (!parseOptionalIsoDateInput(trimmed)) {
+                    return "Use a valid date/time or leave empty";
+                }
+            },
+        });
+
+        if (p.isCancel(sinceInput)) {
+            return null;
+        }
+
+        const untilInput = await p.text({
+            message: `Rule ${i + 1}: until (optional, e.g. 2025-12-31)`,
+            initialValue: seed.until ?? "",
+            validate: (value) => {
+                const trimmed = (value ?? "").trim();
+
+                if (!trimmed) {
+                    return;
+                }
+
+                if (!parseOptionalIsoDateInput(trimmed)) {
+                    return "Use a valid date/time or leave empty";
+                }
+            },
+        });
+
+        if (p.isCancel(untilInput)) {
+            return null;
+        }
+
+        const regexInput = await p.text({
+            message: `Rule ${i + 1}: regex filter (optional)`,
+            initialValue: seed.regex ?? "",
+            validate: (value) => {
+                const trimmed = (value ?? "").trim();
+
+                if (!trimmed) {
+                    return;
+                }
+
+                try {
+                    new RegExp(trimmed);
+                } catch {
+                    return "Invalid regex";
+                }
+            },
+        });
+
+        if (p.isCancel(regexInput)) {
+            return null;
+        }
+
+        const limitValue = (limitInput as string).trim();
+
+        rules.push({
+            id: seed.id || `rule-${i + 1}`,
+            sourceChatId: sourceChatId as string,
+            direction,
+            limit: limitValue ? Number(limitValue) : undefined,
+            since: parseOptionalIsoDateInput(sinceInput as string),
+            until: parseOptionalIsoDateInput(untilInput as string),
+            regex: (regexInput as string).trim() || undefined,
+        });
+    }
+
+    return {
+        ...base,
+        enabled: true,
+        previewInWatch,
+        rules,
+    };
+}
+
+async function configureContact(
+    option: DialogOption,
+    dialogOptions: DialogOption[],
+    existing?: ContactConfig
+): Promise<ContactConfig | null> {
     p.log.step(pc.bold(option.label));
 
     const actions = await p.multiselect({
@@ -496,6 +717,12 @@ async function configureContact(option: DialogOption, existing?: ContactConfig):
         return null;
     }
 
+    const styleProfile = await promptStyleProfileConfig(option, dialogOptions, existing?.styleProfile);
+
+    if (!styleProfile) {
+        return null;
+    }
+
     return {
         userId: option.id,
         displayName: option.label,
@@ -512,7 +739,7 @@ async function configureContact(option: DialogOption, existing?: ContactConfig):
             contextLength: Number(contextLengthInput),
             runtimeMode,
         },
-        styleProfile: existing?.styleProfile ?? { ...DEFAULT_STYLE_PROFILE },
+        styleProfile,
         replyDelayMin: existing?.replyDelayMin ?? DEFAULTS.replyDelayMin,
         replyDelayMax: existing?.replyDelayMax ?? DEFAULTS.replyDelayMax,
         askProvider: autoReply.provider,
@@ -616,7 +843,7 @@ export function registerConfigureCommand(program: Command): void {
                 }
 
                 const existingContact = existing?.contacts.find((contact) => contact.userId === id);
-                const configured = await configureContact(option, existingContact);
+                const configured = await configureContact(option, dialogOptions, existingContact);
 
                 if (!configured) {
                     await client.disconnect();

@@ -54,7 +54,10 @@ export class AssistantEngine {
         return chat;
     }
 
-    private buildTools(store: TelegramHistoryStore | undefined, chatId: string | undefined): Record<string, AIChatTool> {
+    private buildTools(
+        store: TelegramHistoryStore | undefined,
+        chatId: string | undefined
+    ): Record<string, AIChatTool> {
         if (!store || !chatId) {
             return {};
         }

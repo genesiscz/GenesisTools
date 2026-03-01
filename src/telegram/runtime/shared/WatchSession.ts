@@ -1,8 +1,8 @@
 import { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
 import logger from "@app/logger";
-import * as p from "@clack/prompts";
 import { modelSelector } from "@ask/providers/ModelSelector";
+import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { assistantEngine } from "../../lib/AssistantEngine";
 import { attachmentDownloader } from "../../lib/AttachmentDownloader";
@@ -79,7 +79,12 @@ export class WatchSession {
         for (const config of options.contacts) {
             const contact = TelegramContact.fromConfig(config);
             const contextLength = options.contextLengthOverride ?? contact.contextLength;
-            const rows = this.options.store.getByDateRange(contact.userId, undefined, undefined, Math.max(contextLength, 200));
+            const rows = this.options.store.getByDateRange(
+                contact.userId,
+                undefined,
+                undefined,
+                Math.max(contextLength, 200)
+            );
             const historyLines = rows
                 .map((row) => {
                     const content = row.text ?? row.media_desc ?? "";
@@ -261,7 +266,11 @@ export class WatchSession {
         };
     }
 
-    private async sendText(state: ContactState, text: string, feedback?: { suggestionText: string; incomingMessageId?: number }): Promise<void> {
+    private async sendText(
+        state: ContactState,
+        text: string,
+        feedback?: { suggestionText: string; incomingMessageId?: number }
+    ): Promise<void> {
         const sent = await this.options.client.sendMessage(state.contact.userId, text);
         const timestampUnix = sent.date ? sent.date : Math.floor(Date.now() / 1000);
         const timestampIso = new Date(timestampUnix * 1000).toISOString();
@@ -524,7 +533,10 @@ export class WatchSession {
                 return { output: `No suggestion at index ${index}` };
             }
 
-            const inlineEditedText = args.slice(target.consumed + 1).join(" ").trim();
+            const inlineEditedText = args
+                .slice(target.consumed + 1)
+                .join(" ")
+                .trim();
             let sendText = inlineEditedText;
 
             if (!sendText) {
@@ -616,7 +628,8 @@ export class WatchSession {
             const messageIdRaw = args[target.consumed];
             const attachmentIndexRaw = args[target.consumed + 1];
             const messageId = messageIdRaw ? Number(messageIdRaw) : Number.NaN;
-            const attachmentIndex = attachmentIndexRaw && /^\d+$/.test(attachmentIndexRaw) ? Number(attachmentIndexRaw) : 0;
+            const attachmentIndex =
+                attachmentIndexRaw && /^\d+$/.test(attachmentIndexRaw) ? Number(attachmentIndexRaw) : 0;
 
             if (!Number.isInteger(messageId) || messageId <= 0) {
                 return { output: "Usage: /attachment [contact] <messageId> [attachmentIndex] [outputPath]" };
@@ -681,7 +694,9 @@ export class WatchSession {
 
             mode.provider = choice.provider.name;
             mode.model = choice.model.id;
-            return { output: `Updated ${target.state.contact.displayName} ${modeArg} -> ${mode.provider}/${mode.model}` };
+            return {
+                output: `Updated ${target.state.contact.displayName} ${modeArg} -> ${mode.provider}/${mode.model}`,
+            };
         }
 
         if (command === "/style" && args[0] === "derive") {

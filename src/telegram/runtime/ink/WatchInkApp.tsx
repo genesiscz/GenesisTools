@@ -84,7 +84,10 @@ function WatchInkRoot({ session }: WatchInkRootProps) {
                 <Box marginTop={1} flexDirection="column">
                     <Text color="yellow">Pending suggestions:</Text>
                     {view.pendingSuggestions.map((suggestion, index) => (
-                        <Text key={`${index + 1}-${suggestion}`}>  {index + 1}. {suggestion}</Text>
+                        <Text key={`${index + 1}-${suggestion}`}>
+                            {" "}
+                            {index + 1}. {suggestion}
+                        </Text>
                     ))}
                 </Box>
             ) : null}

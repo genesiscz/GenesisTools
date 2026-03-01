@@ -328,14 +328,27 @@ function registerQueryCommand(history: Command): void {
                 store.open();
 
                 try {
-                    if (!parsed.localOnly && since && until) {
+                    if (!parsed.localOnly) {
                         const client = await ensureClient(config);
 
                         if (client) {
                             try {
-                                await conversationSyncService.ensureRange(client, store, contact.userId, since, until, {
-                                    limit: opts.limit,
-                                });
+                                if (since || until) {
+                                    await conversationSyncService.ensureRange(
+                                        client,
+                                        store,
+                                        contact.userId,
+                                        since ?? new Date(0),
+                                        until ?? new Date(),
+                                        {
+                                            limit: opts.limit,
+                                        }
+                                    );
+                                } else {
+                                    await conversationSyncService.syncIncremental(client, store, contact.userId, {
+                                        limit: opts.limit,
+                                    });
+                                }
                             } finally {
                                 await client.disconnect();
                             }
