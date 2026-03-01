@@ -6,6 +6,9 @@ import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { AttachmentDownloader } from "../lib/AttachmentDownloader";
+import { ConversationSyncService } from "../lib/ConversationSyncService";
+import { parseDate as parseDateNatural } from "../lib/DateParser";
 import { downloadContact, embedMessages } from "../lib/download";
 import { type ExportFormat, formatMessages, VALID_EXPORT_FORMATS } from "../lib/export";
 import { displayResults } from "../lib/search";
@@ -564,6 +567,233 @@ function registerStatsCommand(history: Command): void {
         });
 }
 
+// ── Query Command ─────────────────────────────────────────────────────
+
+function registerQueryCommand(history: Command): void {
+    history
+        .command("query")
+        .description("Query messages with filters, auto-fetching missing ranges")
+        .requiredOption("--from <contact>", "Contact name or ID")
+        .option("--since <date>", "Start date (natural language or YYYY-MM-DD)")
+        .option("--until <date>", "End date (natural language or YYYY-MM-DD)")
+        .option("--sender <who>", "Filter by sender: me, them, any", "any")
+        .option("--text <pattern>", "Text pattern to search")
+        .option("--local-only", "Don't fetch from Telegram, only search local DB")
+        .option("--limit <n>", "Max results", parseInt)
+        .action(
+            async (opts: {
+                from: string;
+                since?: string;
+                until?: string;
+                sender: string;
+                text?: string;
+                localOnly?: boolean;
+                limit?: number;
+            }) => {
+                const config = new TelegramToolConfig();
+                const data = await config.load();
+
+                if (!data) {
+                    p.log.error("Not configured. Run: tools telegram configure");
+                    return;
+                }
+
+                const contact = resolveContact(data.contacts, opts.from);
+
+                if (!contact) {
+                    p.log.error(
+                        `Contact "${opts.from}" not found. Available: ${data.contacts.map((c) => c.displayName).join(", ")}`
+                    );
+                    return;
+                }
+
+                const since = opts.since ? (parseDateNatural(opts.since) ?? undefined) : undefined;
+                const until = opts.until ? (parseDateNatural(opts.until) ?? undefined) : undefined;
+
+                const store = new TelegramHistoryStore();
+                store.open();
+
+                try {
+                    if (!opts.localOnly) {
+                        const client = await ensureClient(config);
+
+                        if (!client) {
+                            return;
+                        }
+
+                        const syncService = new ConversationSyncService(client, store);
+                        const results = await syncService.queryWithAutoFetch(contact.userId, {
+                            sender: opts.sender as "me" | "them" | "any",
+                            since,
+                            until,
+                            textPattern: opts.text,
+                            limit: opts.limit,
+                            localOnly: opts.localOnly,
+                        });
+
+                        for (const msg of results) {
+                            const direction = msg.is_outgoing ? "\u2192" : "\u2190";
+                            const date = new Date(msg.date_unix * 1000).toLocaleString();
+                            const text = msg.text ?? "[media]";
+                            console.log(`${date} ${direction} ${text}`);
+                        }
+
+                        console.log(`\n${results.length} message(s) found`);
+                        await client.disconnect();
+                    } else {
+                        const results = store.queryMessages(contact.userId, {
+                            sender: opts.sender as "me" | "them" | "any",
+                            since,
+                            until,
+                            textPattern: opts.text,
+                            limit: opts.limit,
+                        });
+
+                        for (const msg of results) {
+                            const direction = msg.is_outgoing ? "\u2192" : "\u2190";
+                            const date = new Date(msg.date_unix * 1000).toLocaleString();
+                            const text = msg.text ?? "[media]";
+                            console.log(`${date} ${direction} ${text}`);
+                        }
+
+                        console.log(`\n${results.length} message(s) found`);
+                    }
+                } finally {
+                    store.close();
+                }
+            }
+        );
+}
+
+// ── Attachments Commands ──────────────────────────────────────────────
+
+function registerAttachmentsCommand(history: Command): void {
+    const attachments = history.command("attachments").description("Manage message attachments");
+
+    attachments
+        .command("list")
+        .description("List attachment metadata for a contact")
+        .requiredOption("--from <contact>", "Contact name or ID")
+        .option("--since <date>", "Start date")
+        .option("--until <date>", "End date")
+        .option("--message-id <id>", "Specific message ID", parseInt)
+        .action(
+            async (opts: {
+                from: string;
+                since?: string;
+                until?: string;
+                messageId?: number;
+            }) => {
+                const config = new TelegramToolConfig();
+                const data = await config.load();
+
+                if (!data) {
+                    p.log.error("Not configured. Run: tools telegram configure");
+                    return;
+                }
+
+                const contact = resolveContact(data.contacts, opts.from);
+
+                if (!contact) {
+                    p.log.error(
+                        `Contact "${opts.from}" not found. Available: ${data.contacts.map((c) => c.displayName).join(", ")}`
+                    );
+                    return;
+                }
+
+                const store = new TelegramHistoryStore();
+                store.open();
+
+                try {
+                    if (opts.messageId) {
+                        const atts = store.getAttachments(contact.userId, opts.messageId);
+
+                        for (const att of atts) {
+                            const dl = att.is_downloaded ? "dl" : "--";
+                            console.log(
+                                `  [${dl}] ${att.kind} idx=${att.attachment_index} ${att.file_name ?? ""} ${att.file_size ? `(${att.file_size}b)` : ""}`
+                            );
+                        }
+                    } else {
+                        const since = opts.since ? (parseDateNatural(opts.since) ?? undefined) : undefined;
+                        const until = opts.until ? (parseDateNatural(opts.until) ?? undefined) : undefined;
+                        const atts = store.listAttachments(contact.userId, { since, until });
+
+                        for (const att of atts) {
+                            const dl = att.is_downloaded ? "dl" : "--";
+                            console.log(
+                                `msg:${att.message_id} [${dl}] ${att.kind} idx=${att.attachment_index} ${att.file_name ?? ""}`
+                            );
+                        }
+
+                        console.log(`\n${atts.length} attachment(s)`);
+                    }
+                } finally {
+                    store.close();
+                }
+            }
+        );
+
+    attachments
+        .command("fetch")
+        .description("Download a specific attachment")
+        .requiredOption("--from <contact>", "Contact name or ID")
+        .requiredOption("--message-id <id>", "Message ID", parseInt)
+        .option("--attachment-index <n>", "Attachment index (default 0)", parseInt, 0)
+        .option("--output <path>", "Output file path")
+        .action(
+            async (opts: {
+                from: string;
+                messageId: number;
+                attachmentIndex: number;
+                output?: string;
+            }) => {
+                const config = new TelegramToolConfig();
+                const data = await config.load();
+
+                if (!data) {
+                    p.log.error("Not configured. Run: tools telegram configure");
+                    return;
+                }
+
+                const contact = resolveContact(data.contacts, opts.from);
+
+                if (!contact) {
+                    p.log.error(
+                        `Contact "${opts.from}" not found. Available: ${data.contacts.map((c) => c.displayName).join(", ")}`
+                    );
+                    return;
+                }
+
+                const client = await ensureClient(config);
+
+                if (!client) {
+                    return;
+                }
+
+                const store = new TelegramHistoryStore();
+                store.open();
+
+                try {
+                    const downloader = new AttachmentDownloader(client, store);
+                    const result = await downloader.download(
+                        contact.userId,
+                        opts.messageId,
+                        opts.attachmentIndex,
+                        opts.output
+                    );
+
+                    console.log(`Downloaded to: ${result.path}`);
+                    console.log(`Size: ${result.size} bytes`);
+                    console.log(`SHA-256: ${result.sha256}`);
+                } finally {
+                    store.close();
+                    await client.disconnect();
+                }
+            }
+        );
+}
+
 // ── Registration ──────────────────────────────────────────────────────
 
 export function registerHistoryCommand(program: Command): void {
@@ -574,4 +804,6 @@ export function registerHistoryCommand(program: Command): void {
     registerSearchCommand(history);
     registerExportCommand(history);
     registerStatsCommand(history);
+    registerQueryCommand(history);
+    registerAttachmentsCommand(history);
 }
