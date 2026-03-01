@@ -1,71 +1,15 @@
-import logger from "@app/logger";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
-import pc from "picocolors";
-import { registerHandler } from "../lib/handler";
+import { conversationSyncService } from "../lib/ConversationSyncService";
 import { TelegramHistoryStore } from "../lib/TelegramHistoryStore";
-import { TelegramMessage } from "../lib/TelegramMessage";
 import { TelegramToolConfig } from "../lib/TelegramToolConfig";
 import { TGClient } from "../lib/TGClient";
-import type { ContactConfig } from "../lib/types";
-import { DEFAULTS } from "../lib/types";
-
-async function syncAndLoadHistory(
-    client: TGClient,
-    store: TelegramHistoryStore,
-    contacts: ContactConfig[],
-    myName: string
-): Promise<Map<string, string[]>> {
-    const historyMap = new Map<string, string[]>();
-
-    for (const contact of contacts) {
-        try {
-            // Fetch recent messages from Telegram API and persist to DB
-            const fetched = [];
-
-            for await (const rawMsg of client.getMessages(contact.userId, { limit: DEFAULTS.historyFetchLimit })) {
-                fetched.push(new TelegramMessage(rawMsg));
-            }
-
-            if (fetched.length > 0) {
-                const serialized = fetched.map((m) => m.toJSON());
-                const inserted = store.insertMessages(contact.userId, serialized);
-
-                if (inserted > 0) {
-                    logger.info(`  ${pc.cyan(contact.displayName)}: ${inserted} new messages stored`);
-                }
-            }
-
-            // Read back from DB for context (chronological order, last N)
-            const messages = store.getByDateRange(contact.userId).slice(-DEFAULTS.historyFetchLimit);
-            const lines: string[] = [];
-
-            for (const msg of messages) {
-                const content = msg.text || msg.media_desc;
-
-                if (!content) {
-                    continue;
-                }
-
-                const name = msg.is_outgoing ? myName : contact.displayName;
-                lines.push(`${name}: ${content}`);
-            }
-
-            historyMap.set(contact.userId, lines);
-            logger.info(`  ${pc.cyan(contact.displayName)}: ${lines.length} messages loaded for context`);
-        } catch (err) {
-            logger.warn(`  ${pc.cyan(contact.displayName)}: failed to sync history: ${err}`);
-            historyMap.set(contact.userId, []);
-        }
-    }
-
-    return historyMap;
-}
+import { runWatchRuntime } from "../runtime/light/WatchRuntime";
 
 export function registerListenCommand(program: Command): void {
     program
         .command("listen")
-        .description("Start listening for messages from configured contacts")
+        .description("Backward-compatible alias for watch daemon mode")
         .action(async () => {
             const config = new TelegramToolConfig();
             const data = await config.load();
@@ -80,46 +24,24 @@ export function registerListenCommand(program: Command): void {
                 process.exit(1);
             }
 
-            const spinner = p.spinner();
-            spinner.start("Connecting to Telegram...");
-
             const client = TGClient.fromConfig(config);
             const authorized = await client.connect();
 
             if (!authorized) {
-                spinner.stop("Session expired");
                 p.log.error("Session expired. Run: tools telegram configure");
                 process.exit(1);
             }
 
             const me = await client.getMe();
             const myName = me.firstName || "Me";
-            spinner.stop(`Connected as ${myName}`);
-
             const store = new TelegramHistoryStore();
             store.open();
 
-            const historySpinner = p.spinner();
-            historySpinner.start("Syncing conversation history...");
-
-            const initialHistory = await syncAndLoadHistory(client, store, data.contacts, myName);
-
-            historySpinner.stop("Conversation history synced");
-
-            for (const c of data.contacts) {
-                logger.info(`Watching: ${pc.cyan(c.displayName)} → [${c.actions.map((a) => pc.yellow(a)).join(", ")}]`);
+            for (const contact of data.contacts) {
+                await conversationSyncService.syncIncremental(client, store, contact.userId, { limit: 200 });
             }
 
-            registerHandler(client, {
-                contacts: data.contacts,
-                myName,
-                initialHistory,
-                store,
-            });
-            logger.info(`Press ${pc.dim("Ctrl+C")} to stop.`);
-
             const shutdown = async () => {
-                logger.info("Shutting down...");
                 store.close();
 
                 try {
@@ -134,6 +56,12 @@ export function registerListenCommand(program: Command): void {
             process.on("SIGINT", shutdown);
             process.on("SIGTERM", shutdown);
 
-            await new Promise(() => {});
+            await runWatchRuntime({
+                contacts: data.contacts,
+                myName,
+                client,
+                store,
+                daemon: true,
+            });
         });
 }
