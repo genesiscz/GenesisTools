@@ -1,6 +1,8 @@
 import logger from "@app/logger";
 import pc from "picocolors";
 import type { NewMessageEvent } from "telegram/events";
+import type { DeletedMessageEvent } from "telegram/events/DeletedMessage";
+import type { EditedMessageEvent } from "telegram/events/EditedMessage";
 import { executeActions } from "./actions";
 import { TelegramContact } from "./TelegramContact";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
@@ -132,15 +134,13 @@ export function registerHandler(client: TGClient, options: HandlerOptions): void
                     const extra = r.reply ? ` "${r.reply.slice(0, 60)}${r.reply.length > 60 ? "..." : ""}"` : "";
                     logger.info(`  ${pc.green(`[${r.action}]`)} OK${pc.dim(extra)}`);
 
-                    // Append our reply to the conversation context
                     if (r.action === "ask" && r.reply && ctx) {
                         ctx.append(options.myName, r.reply);
 
-                        // Persist outgoing reply to history store
                         try {
                             options.store.insertMessages(senderId, [
                                 {
-                                    id: Date.now(),
+                                    id: r.replyMessageId ?? Date.now(),
                                     senderId: undefined,
                                     text: r.reply,
                                     mediaDescription: undefined,
@@ -159,6 +159,63 @@ export function registerHandler(client: TGClient, options: HandlerOptions): void
             }
         } catch (err) {
             logger.error(`Handler error: ${err}`);
+        }
+    });
+
+    client.onEditedMessage(async (event: EditedMessageEvent) => {
+        try {
+            const message = event.message;
+
+            if (!message) {
+                return;
+            }
+
+            const msg = new TelegramMessage(message);
+            const chatId =
+                msg.senderId ??
+                String(
+                    message.peerId &&
+                        ("userId" in message.peerId
+                            ? message.peerId.userId
+                            : "chatId" in message.peerId
+                              ? message.peerId.chatId
+                              : "channelId" in message.peerId
+                                ? message.peerId.channelId
+                                : null)
+                );
+
+            if (!chatId) {
+                return;
+            }
+
+            options.store.upsertMessageWithRevision(chatId, {
+                id: msg.id,
+                senderId: msg.senderId,
+                text: msg.text,
+                mediaDescription: msg.mediaDescription,
+                isOutgoing: msg.isOutgoing,
+                date: msg.date.toISOString(),
+                dateUnix: Math.floor(msg.date.getTime() / 1000),
+                editedDateUnix: message.editDate ?? Math.floor(Date.now() / 1000),
+            });
+        } catch (err) {
+            logger.error({ err }, "Error handling edited message");
+        }
+    });
+
+    client.onDeletedMessage(async (event: DeletedMessageEvent) => {
+        try {
+            const deletedIds: number[] = event.deletedIds ?? [];
+
+            for (const msgId of deletedIds) {
+                const row = options.store.findMessageById(msgId);
+
+                if (row) {
+                    options.store.markMessageDeleted(row.chat_id, msgId);
+                }
+            }
+        } catch (err) {
+            logger.error({ err }, "Error handling deleted message");
         }
     });
 

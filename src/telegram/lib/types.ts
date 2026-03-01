@@ -25,6 +25,7 @@ export interface ActionResult {
     action: ActionType;
     success: boolean;
     reply?: string;
+    replyMessageId?: number;
     duration: number;
     error?: unknown;
 }
