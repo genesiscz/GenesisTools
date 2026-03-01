@@ -223,6 +223,16 @@ export class WatchSession {
         return state.historyLines.join("\n");
     }
 
+    private refreshStyleSamples(state: ContactState): void {
+        const styleProfile = state.contact.config.styleProfile;
+
+        if (!styleProfile || !styleProfile.enabled) {
+            return;
+        }
+
+        state.rawStyleSamples = styleProfileEngine.getRawStyleSamples(state.contact, this.options.store, 120);
+    }
+
     private findState(target: string): ContactState | null {
         const lower = target.toLowerCase();
 
@@ -307,6 +317,7 @@ export class WatchSession {
             text,
             timestampIso,
         });
+        this.refreshStyleSamples(state);
 
         logger.info(`${pc.green("You")} → ${pc.cyan(state.contact.displayName)}: ${text}`);
         this.notifyViewUpdate();
@@ -419,6 +430,7 @@ export class WatchSession {
                     text: content,
                     timestampIso: new Date(message.date.getTime()).toISOString(),
                 });
+                this.refreshStyleSamples(state);
             }
 
             if (state.contact.userId !== this.activeChatId) {
