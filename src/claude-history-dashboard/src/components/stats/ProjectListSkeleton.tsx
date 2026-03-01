@@ -18,6 +18,7 @@ export function ProjectListSkeleton() {
 			<CardContent>
 				<div className="space-y-3">
 					{Array.from({ length: 5 }).map((_, i) => (
+						/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
 						<div key={i} className="flex items-center gap-3">
 							<div className="flex-1">
 								<div className="flex items-center justify-between mb-1">
@@ -62,6 +63,7 @@ export function ToolBadgesSkeleton() {
 				<div className="flex flex-wrap gap-2">
 					{Array.from({ length: 12 }).map((_, i) => (
 						<Skeleton
+							// biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list
 							key={i}
 							className="h-6 rounded-full"
 							style={{

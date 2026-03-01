@@ -31,16 +31,18 @@ export function BranchActivityChart({ branchCounts }: BranchActivityChartProps) 
 
 	// Function to truncate long branch names
 	const truncateBranch = (name: string, maxLen = 25) => {
-		if (name.length <= maxLen) return name;
+		if (name.length <= maxLen) {
+			return name;
+		}
 		// Keep the last part after the last slash
 		const parts = name.split("/");
 		if (parts.length > 1) {
 			const lastPart = parts[parts.length - 1];
 			if (lastPart.length <= maxLen - 3) {
-				return "..." + lastPart;
+				return `...${lastPart}`;
 			}
 		}
-		return name.slice(0, maxLen - 3) + "...";
+		return `${name.slice(0, maxLen - 3)}...`;
 	};
 
 	return (
@@ -66,9 +68,7 @@ export function BranchActivityChart({ branchCounts }: BranchActivityChartProps) 
 									>
 										{truncateBranch(branch)}
 									</span>
-									<span className="text-xs text-muted-foreground font-mono">
-										{count.toLocaleString()}
-									</span>
+									<span className="text-xs text-muted-foreground font-mono">{count.toLocaleString()}</span>
 								</div>
 								<div className="h-1.5 bg-muted/30 rounded-full overflow-hidden">
 									<div

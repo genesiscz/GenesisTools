@@ -10,7 +10,8 @@ interface InputProps extends React.ComponentProps<"input"> {
 
 const inputVariants: Record<InputVariant, string> = {
 	default: "border-input dark:bg-input/30 focus-visible:border-ring focus-visible:ring-ring/50",
-	cyber: "glass-card neon-border border-primary/30 bg-transparent text-foreground placeholder:text-muted-foreground focus-visible:border-primary/50 focus-visible:ring-primary/30",
+	cyber:
+		"glass-card neon-border border-primary/30 bg-transparent text-foreground placeholder:text-muted-foreground focus-visible:border-primary/50 focus-visible:ring-primary/30",
 };
 
 function Input({ className, type, variant = "cyber", ...props }: InputProps) {

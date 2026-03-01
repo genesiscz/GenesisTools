@@ -97,14 +97,12 @@ function StatsPage() {
 			<header className="border-b border-border">
 				<div className="max-w-7xl mx-auto px-6 py-6">
 					<div className="flex items-center justify-between mb-4">
-						<Link
-							to="/"
-							className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-						>
+						<Link to="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
 							<ArrowLeft className="w-4 h-4" />
 							Back to conversations
 						</Link>
 						<button
+							type="button"
 							onClick={handleRefresh}
 							disabled={isRefreshing}
 							className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"
@@ -158,9 +156,7 @@ function StatsPage() {
 						<TopProjectsCard projectCounts={filteredStats.projectCounts} />
 					) : (
 						<Suspense fallback={<ProjectListSkeleton />}>
-							<Await promise={fullStats}>
-								{(stats) => <TopProjectsCard projectCounts={stats.projectCounts} />}
-							</Await>
+							<Await promise={fullStats}>{(stats) => <TopProjectsCard projectCounts={stats.projectCounts} />}</Await>
 						</Suspense>
 					)}
 
@@ -169,9 +165,7 @@ function StatsPage() {
 						<TopToolsCard toolCounts={filteredStats.toolCounts} />
 					) : (
 						<Suspense fallback={<ToolBadgesSkeleton />}>
-							<Await promise={fullStats}>
-								{(stats) => <TopToolsCard toolCounts={stats.toolCounts} />}
-							</Await>
+							<Await promise={fullStats}>{(stats) => <TopToolsCard toolCounts={stats.toolCounts} />}</Await>
 						</Suspense>
 					)}
 				</div>
@@ -180,19 +174,11 @@ function StatsPage() {
 				<div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
 					{/* Weekly Trends - Deferred or filtered */}
 					{filteredStats ? (
-						<WeeklyTrendsCard
-							dailyActivity={filteredStats.dailyActivity}
-							dailyTokens={filteredStats.dailyTokens}
-						/>
+						<WeeklyTrendsCard dailyActivity={filteredStats.dailyActivity} dailyTokens={filteredStats.dailyTokens} />
 					) : (
 						<Suspense fallback={<WeeklyTrendsSkeleton />}>
 							<Await promise={fullStats}>
-								{(stats) => (
-									<WeeklyTrendsCard
-										dailyActivity={stats.dailyActivity}
-										dailyTokens={stats.dailyTokens}
-									/>
-								)}
+								{(stats) => <WeeklyTrendsCard dailyActivity={stats.dailyActivity} dailyTokens={stats.dailyTokens} />}
 							</Await>
 						</Suspense>
 					)}
@@ -202,9 +188,7 @@ function StatsPage() {
 						<TokenUsageCard tokenUsage={filteredStats.tokenUsage} />
 					) : (
 						<Suspense fallback={<TokenUsageSkeleton />}>
-							<Await promise={fullStats}>
-								{(stats) => <TokenUsageCard tokenUsage={stats.tokenUsage} />}
-							</Await>
+							<Await promise={fullStats}>{(stats) => <TokenUsageCard tokenUsage={stats.tokenUsage} />}</Await>
 						</Suspense>
 					)}
 				</div>
@@ -212,20 +196,14 @@ function StatsPage() {
 				{/* Cumulative Growth Chart */}
 				{filteredStats ? (
 					<div className="mb-8">
-						<CumulativeChart
-							dailyActivity={filteredStats.dailyActivity}
-							dailyTokens={filteredStats.dailyTokens}
-						/>
+						<CumulativeChart dailyActivity={filteredStats.dailyActivity} dailyTokens={filteredStats.dailyTokens} />
 					</div>
 				) : (
 					<Suspense fallback={<ActivityChartSkeleton />}>
 						<Await promise={fullStats}>
 							{(stats) => (
 								<div className="mb-8">
-									<CumulativeChart
-										dailyActivity={stats.dailyActivity}
-										dailyTokens={stats.dailyTokens}
-									/>
+									<CumulativeChart dailyActivity={stats.dailyActivity} dailyTokens={stats.dailyTokens} />
 								</div>
 							)}
 						</Await>
@@ -239,9 +217,7 @@ function StatsPage() {
 						<ModelUsageChart modelCounts={filteredStats.modelCounts} />
 					) : (
 						<Suspense fallback={<ModelUsageSkeleton />}>
-							<Await promise={fullStats}>
-								{(stats) => <ModelUsageChart modelCounts={stats.modelCounts} />}
-							</Await>
+							<Await promise={fullStats}>{(stats) => <ModelUsageChart modelCounts={stats.modelCounts} />}</Await>
 						</Suspense>
 					)}
 
@@ -250,9 +226,7 @@ function StatsPage() {
 						<ToolCategoriesChart toolCounts={filteredStats.toolCounts} />
 					) : (
 						<Suspense fallback={<ToolCategoriesSkeleton />}>
-							<Await promise={fullStats}>
-								{(stats) => <ToolCategoriesChart toolCounts={stats.toolCounts} />}
-							</Await>
+							<Await promise={fullStats}>{(stats) => <ToolCategoriesChart toolCounts={stats.toolCounts} />}</Await>
 						</Suspense>
 					)}
 				</div>
@@ -264,9 +238,7 @@ function StatsPage() {
 						<HourlyHeatmap hourlyActivity={filteredStats.hourlyActivity} />
 					) : (
 						<Suspense fallback={<HourlyHeatmapSkeleton />}>
-							<Await promise={fullStats}>
-								{(stats) => <HourlyHeatmap hourlyActivity={stats.hourlyActivity} />}
-							</Await>
+							<Await promise={fullStats}>{(stats) => <HourlyHeatmap hourlyActivity={stats.hourlyActivity} />}</Await>
 						</Suspense>
 					)}
 
@@ -275,9 +247,7 @@ function StatsPage() {
 						<BranchActivityChart branchCounts={filteredStats.branchCounts} />
 					) : (
 						<Suspense fallback={<BranchActivitySkeleton />}>
-							<Await promise={fullStats}>
-								{(stats) => <BranchActivityChart branchCounts={stats.branchCounts} />}
-							</Await>
+							<Await promise={fullStats}>{(stats) => <BranchActivityChart branchCounts={stats.branchCounts} />}</Await>
 						</Suspense>
 					)}
 				</div>
@@ -290,9 +260,7 @@ function StatsPage() {
 					) : (
 						<Suspense fallback={<ConversationLengthSkeleton />}>
 							<Await promise={fullStats}>
-								{(stats) => (
-									<ConversationLengthHistogram conversationLengths={stats.conversationLengths} />
-								)}
+								{(stats) => <ConversationLengthHistogram conversationLengths={stats.conversationLengths} />}
 							</Await>
 						</Suspense>
 					)}
@@ -321,12 +289,7 @@ function QuickStatCards({ stats }: { stats: QuickStatsResponse }) {
 				value={stats.totalMessages}
 				color="secondary"
 			/>
-			<StatCard
-				icon={<FolderOpen className="w-5 h-5" />}
-				label="Projects"
-				value={stats.projectCount}
-				color="primary"
-			/>
+			<StatCard icon={<FolderOpen className="w-5 h-5" />} label="Projects" value={stats.projectCount} color="primary" />
 			<StatCard
 				icon={<Bot className="w-5 h-5" />}
 				label="Subagent Sessions"
@@ -350,8 +313,12 @@ function FilteredStatCards({ stats, isFiltered }: { stats: SerializableStats; is
 
 	// Format tokens with K/M suffix
 	const formatTokens = (n: number) => {
-		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-		if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+		if (n >= 1_000_000) {
+			return `${(n / 1_000_000).toFixed(1)}M`;
+		}
+		if (n >= 1_000) {
+			return `${(n / 1_000).toFixed(0)}K`;
+		}
 		return n.toString();
 	};
 
@@ -568,17 +535,15 @@ function HourlyHeatmapSkeleton() {
 			<CardContent>
 				<div className="grid grid-cols-12 gap-1 mb-4">
 					{Array.from({ length: 24 }).map((_, i) => (
-						<Skeleton
-							key={i}
-							className="aspect-square rounded-sm"
-							style={{ animationDelay: `${i * 50}ms` }}
-						/>
+						/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
+						<Skeleton key={i} className="aspect-square rounded-sm" style={{ animationDelay: `${i * 50}ms` }} />
 					))}
 				</div>
 				<div className="flex items-center justify-end gap-2">
 					<Skeleton className="h-3 w-8" />
 					<div className="flex gap-0.5">
 						{Array.from({ length: 5 }).map((_, i) => (
+							/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
 							<Skeleton key={i} className="w-3 h-3 rounded-sm" />
 						))}
 					</div>
@@ -602,6 +567,7 @@ function ToolCategoriesSkeleton() {
 				<Skeleton className="h-8 w-full rounded-lg mb-4" variant="data-stream" />
 				<div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
 					{Array.from({ length: 6 }).map((_, i) => (
+						/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
 						<div key={i} className="flex items-center gap-2">
 							<Skeleton className="w-3 h-3 rounded-sm" />
 							<Skeleton className="h-3 flex-1" style={{ animationDelay: `${i * 100}ms` }} />
@@ -657,6 +623,7 @@ function TokenUsageSkeleton() {
 				<Skeleton className="h-3 w-full rounded-full mb-4" />
 				<div className="grid grid-cols-2 gap-2">
 					{Array.from({ length: 4 }).map((_, i) => (
+						/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
 						<Skeleton key={i} className="h-4 w-full" style={{ animationDelay: `${i * 75}ms` }} />
 					))}
 				</div>
@@ -679,6 +646,7 @@ function ModelUsageSkeleton() {
 					<Skeleton className="w-28 h-28 rounded-full" />
 					<div className="flex-1 space-y-2">
 						{Array.from({ length: 3 }).map((_, i) => (
+							/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
 							<Skeleton key={i} className="h-5 w-full" style={{ animationDelay: `${i * 100}ms` }} />
 						))}
 					</div>
@@ -700,6 +668,7 @@ function BranchActivitySkeleton() {
 			<CardContent>
 				<div className="space-y-3">
 					{Array.from({ length: 6 }).map((_, i) => (
+						/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
 						<div key={i} className="space-y-1">
 							<div className="flex justify-between">
 								<Skeleton className="h-3 w-32" />
@@ -734,6 +703,7 @@ function ConversationLengthSkeleton() {
 				<div className="flex items-end gap-2 h-24 mb-2">
 					{Array.from({ length: 6 }).map((_, i) => (
 						<Skeleton
+							// biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list
 							key={i}
 							className="flex-1 rounded-t"
 							style={{ height: `${CONVERSATION_LENGTH_HEIGHTS[i]}%`, animationDelay: `${i * 75}ms` }}
@@ -742,6 +712,7 @@ function ConversationLengthSkeleton() {
 				</div>
 				<div className="flex gap-2">
 					{Array.from({ length: 6 }).map((_, i) => (
+						/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
 						<Skeleton key={i} className="flex-1 h-3" />
 					))}
 				</div>

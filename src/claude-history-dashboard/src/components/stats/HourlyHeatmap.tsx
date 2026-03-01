@@ -17,18 +17,32 @@ export function HourlyHeatmap({ hourlyActivity }: HourlyHeatmapProps) {
 	// Helper to get intensity class based on count
 	const getIntensity = (count: number): string => {
 		const ratio = count / maxCount;
-		if (ratio === 0) return "bg-muted/30";
-		if (ratio < 0.25) return "bg-primary/20";
-		if (ratio < 0.5) return "bg-primary/40";
-		if (ratio < 0.75) return "bg-primary/60";
+		if (ratio === 0) {
+			return "bg-muted/30";
+		}
+		if (ratio < 0.25) {
+			return "bg-primary/20";
+		}
+		if (ratio < 0.5) {
+			return "bg-primary/40";
+		}
+		if (ratio < 0.75) {
+			return "bg-primary/60";
+		}
 		return "bg-primary/80 neon-glow";
 	};
 
 	// Format hour label
 	const formatHour = (hour: number): string => {
-		if (hour === 0) return "12am";
-		if (hour === 12) return "12pm";
-		if (hour < 12) return `${hour}am`;
+		if (hour === 0) {
+			return "12am";
+		}
+		if (hour === 12) {
+			return "12pm";
+		}
+		if (hour < 12) {
+			return `${hour}am`;
+		}
 		return `${hour - 12}pm`;
 	};
 

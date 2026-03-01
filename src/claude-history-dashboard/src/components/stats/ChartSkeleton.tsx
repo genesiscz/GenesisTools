@@ -17,6 +17,7 @@ export function ActivityChartSkeleton() {
 			<CardContent>
 				<div className="flex items-end gap-1 h-32">
 					{Array.from({ length: 14 }).map((_, i) => (
+						/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
 						<div key={i} className="flex-1 flex flex-col items-center justify-end h-full gap-1">
 							<Skeleton
 								variant="data-stream"

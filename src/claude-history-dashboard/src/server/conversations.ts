@@ -93,7 +93,9 @@ function serializeResult(result: Awaited<ReturnType<typeof getAllConversations>>
 function extractMessageContent(msg: { type: string; message?: { content: unknown } }): string {
 	if (msg.type === "user" || msg.type === "assistant") {
 		const content = (msg as { message?: { content: unknown } }).message?.content;
-		if (typeof content === "string") return content;
+		if (typeof content === "string") {
+			return content;
+		}
 		if (Array.isArray(content)) {
 			return content
 				.filter(
@@ -101,8 +103,12 @@ function extractMessageContent(msg: { type: string; message?: { content: unknown
 						typeof b === "object" && b !== null && "type" in b
 				)
 				.map((b) => {
-					if (b.type === "text") return b.text || "";
-					if (b.type === "thinking") return b.thinking || "";
+					if (b.type === "text") {
+						return b.text || "";
+					}
+					if (b.type === "thinking") {
+						return b.thinking || "";
+					}
 					// tool_use and tool_result are handled separately - no warning needed
 					return "";
 				})
@@ -120,9 +126,13 @@ function extractToolUses(msg: {
 	type: string;
 	message?: { content: unknown };
 }): Array<{ name: string; input?: object }> {
-	if (msg.type !== "assistant") return [];
+	if (msg.type !== "assistant") {
+		return [];
+	}
 	const content = (msg as { message?: { content: unknown } }).message?.content;
-	if (!Array.isArray(content)) return [];
+	if (!Array.isArray(content)) {
+		return [];
+	}
 	return content
 		.filter(
 			(b): b is { type: "tool_use"; name: string; input?: object } =>
@@ -136,9 +146,13 @@ function extractToolResults(msg: {
 	type: string;
 	message?: { content: unknown };
 }): Array<{ toolUseId: string; content: string; isError?: boolean }> {
-	if (msg.type !== "user") return [];
+	if (msg.type !== "user") {
+		return [];
+	}
 	const content = (msg as { message?: { content: unknown } }).message?.content;
-	if (!Array.isArray(content)) return [];
+	if (!Array.isArray(content)) {
+		return [];
+	}
 	return content
 		.filter(
 			(b): b is { type: "tool_result"; tool_use_id: string; content: string | unknown[]; is_error?: boolean } =>
@@ -170,7 +184,9 @@ export const getConversation = createServerFn({ method: "GET" })
 	.inputValidator((id: string) => id)
 	.handler(async ({ data: id }) => {
 		const result = await getConversationBySessionId(id);
-		if (!result) return null;
+		if (!result) {
+			return null;
+		}
 
 		const detail: SerializableConversationDetail = {
 			...serializeResult(result),
@@ -236,13 +252,13 @@ export interface QuickStatsResponse {
 function validateDateRange(from?: string, to?: string): { valid: boolean; error?: string } {
 	if (from) {
 		const fromDate = new Date(from);
-		if (isNaN(fromDate.getTime())) {
+		if (Number.isNaN(fromDate.getTime())) {
 			return { valid: false, error: `Invalid 'from' date: ${from}` };
 		}
 	}
 	if (to) {
 		const toDate = new Date(to);
-		if (isNaN(toDate.getTime())) {
+		if (Number.isNaN(toDate.getTime())) {
 			return { valid: false, error: `Invalid 'to' date: ${to}` };
 		}
 	}

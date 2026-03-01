@@ -10,10 +10,10 @@
         "tsc": "tsgo --noEmit",
         "lint": "biome check .",
         "lint:fix": "biome check --write .",
-        "lint:dashboard": "biome check src/claude-history-dashboard",
-        "lint:dashboard:fix": "biome check --write src/claude-history-dashboard",
+        "lint:dashboard": "cd src/claude-history-dashboard && biome check .",
+        "lint:dashboard:fix": "cd src/claude-history-dashboard && biome check --write .",
         "format": "biome format --write .",
-        "format:dashboard": "biome format --write src/claude-history-dashboard"
+        "format:dashboard": "cd src/claude-history-dashboard && biome format --write ."
     },
     "devDependencies": {
         "@anthropic-ai/claude-code": "^2.1.45",

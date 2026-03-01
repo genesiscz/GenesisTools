@@ -5,7 +5,9 @@ interface LoadingProgressProps {
 }
 
 export function LoadingProgress({ loadedDays, totalDays, isLoading }: LoadingProgressProps) {
-	if (!isLoading) return null;
+	if (!isLoading) {
+		return null;
+	}
 
 	const percentage = totalDays > 0 ? (loadedDays / totalDays) * 100 : 0;
 

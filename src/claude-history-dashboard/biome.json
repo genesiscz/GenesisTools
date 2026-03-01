@@ -1,7 +1,5 @@
 {
-	"root": false,
 	"$schema": "https://biomejs.dev/schemas/2.3.12/schema.json",
-	"extends": ["../../biome.json"],
 	"vcs": {
 		"enabled": false,
 		"clientKind": "git",
@@ -20,18 +18,47 @@
 	},
 	"formatter": {
 		"enabled": true,
-		"indentStyle": "tab"
+		"indentStyle": "tab",
+		"lineWidth": 120,
+		"lineEnding": "lf"
 	},
-	"assist": { "actions": { "source": { "organizeImports": "on" } } },
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true
+			"recommended": true,
+			"correctness": {
+				"noUnusedVariables": "error",
+				"noUnusedImports": "error"
+			},
+			"style": {
+				"useConst": "error",
+				"useBlockStatements": "error",
+				"noNonNullAssertion": "off"
+			},
+			"complexity": {
+				"noStaticOnlyClass": "off"
+			},
+			"suspicious": {
+				"noExplicitAny": "warn",
+				"noTemplateCurlyInString": "off"
+			}
 		}
 	},
 	"javascript": {
 		"formatter": {
-			"quoteStyle": "double"
+			"quoteStyle": "double",
+			"trailingCommas": "es5",
+			"semicolons": "always",
+			"arrowParentheses": "always",
+			"bracketSpacing": true
+		}
+	},
+	"assist": {
+		"enabled": true,
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
 		}
 	}
 }

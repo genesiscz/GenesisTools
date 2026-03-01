@@ -81,10 +81,7 @@ export function ConversationLengthHistogram({ conversationLengths }: Conversatio
 						const percentage = total > 0 ? (bucket.count / total) * 100 : 0;
 
 						return (
-							<div
-								key={bucket.label}
-								className="flex-1 flex flex-col items-center justify-end h-full group"
-							>
+							<div key={bucket.label} className="flex-1 flex flex-col items-center justify-end h-full group">
 								{/* Bar */}
 								<div
 									className={`w-full rounded-t transition-all duration-300 cursor-pointer hover:brightness-110 ${
