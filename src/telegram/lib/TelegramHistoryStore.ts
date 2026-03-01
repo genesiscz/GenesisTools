@@ -567,6 +567,15 @@ export class TelegramHistoryStore {
         return db.query(sql).all(...params) as MessageRowV2[];
     }
 
+    findMessageById(messageId: number): { chat_id: string } | null {
+        const db = this.getDb();
+        return (
+            (db.query("SELECT chat_id FROM messages WHERE id = ? LIMIT 1").get(messageId) as {
+                chat_id: string;
+            }) ?? null
+        );
+    }
+
     markMessageDeleted(chatId: string, messageId: number): void {
         const db = this.getDb();
         const now = new Date();
