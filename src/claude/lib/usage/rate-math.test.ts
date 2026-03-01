@@ -1,10 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-    calculateRate,
-    calculateRollingRates,
-    projectTimeToLimit,
-    type TimestampedValue,
-} from "./rate-math";
+import { calculateRate, calculateRollingRates, projectTimeToLimit, type TimestampedValue } from "./rate-math";
 
 describe("calculateRate", () => {
     test("returns rate per minute from two points", () => {

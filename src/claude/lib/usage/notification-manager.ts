@@ -1,6 +1,6 @@
 import { sendNotification } from "@app/utils/macos/notifications";
-import type { UsageDashboardConfig } from "./dashboard-config";
 import { BUCKET_LABELS, BUCKET_THRESHOLD_MAP } from "./constants";
+import type { UsageDashboardConfig } from "./dashboard-config";
 
 export interface UsageAlert {
     id: string;
@@ -22,12 +22,7 @@ class BucketTracker {
         public readonly bucketName: string
     ) {}
 
-    shouldNotify(
-        currentPct: number,
-        resetAt: string | null,
-        thresholds: number[],
-        isFirstPoll: boolean
-    ): boolean {
+    shouldNotify(currentPct: number, resetAt: string | null, thresholds: number[], isFirstPoll: boolean): boolean {
         const resetEpoch = resetAt ? new Date(resetAt).getTime() : null;
 
         if (
@@ -73,12 +68,7 @@ export class NotificationManager {
         return this._alerts.filter((a) => !a.dismissed);
     }
 
-    processUsage(
-        accountName: string,
-        bucket: string,
-        utilization: number,
-        resetsAt: string | null
-    ): void {
+    processUsage(accountName: string, bucket: string, utilization: number, resetsAt: string | null): void {
         if (!this.config.enabled) {
             return;
         }

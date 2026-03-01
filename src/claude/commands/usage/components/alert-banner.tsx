@@ -1,6 +1,6 @@
+import type { UsageAlert } from "@app/claude/lib/usage/notification-manager";
 import { Box, Text, useInput } from "ink";
 import { useEffect, useRef, useState } from "react";
-import type { UsageAlert } from "@app/claude/lib/usage/notification-manager";
 
 interface AlertBannerProps {
     alerts: UsageAlert[];
@@ -49,11 +49,7 @@ export function AlertBanner({ alerts, onDismiss }: AlertBannerProps) {
 
                 return (
                     <Box key={alert.id} gap={1}>
-                        <Text
-                            backgroundColor={flash ? undefined : bgColor}
-                            color={flash ? bgColor : "white"}
-                            bold
-                        >
+                        <Text backgroundColor={flash ? undefined : bgColor} color={flash ? bgColor : "white"} bold>
                             {` ▲ ${alert.message} `}
                         </Text>
                         {isLast && <Text dimColor>{"[x] dismiss"}</Text>}

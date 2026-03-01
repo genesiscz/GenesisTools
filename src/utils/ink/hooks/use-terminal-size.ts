@@ -1,53 +1,53 @@
-import { useState, useEffect, useRef } from 'react';
-import { useStdout } from 'ink';
+import { useStdout } from "ink";
+import { useEffect, useRef, useState } from "react";
 
 export interface TerminalSize {
-  columns: number;
-  rows: number;
+    columns: number;
+    rows: number;
 }
 
 const DEFAULT_SIZE: TerminalSize = { columns: 80, rows: 24 };
 
 export function useTerminalSize({ clearOnResize = false } = {}): TerminalSize {
-  const { stdout } = useStdout();
-  const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const { stdout } = useStdout();
+    const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [size, setSize] = useState<TerminalSize>(() => ({
-    columns: stdout?.columns ?? DEFAULT_SIZE.columns,
-    rows: stdout?.rows ?? DEFAULT_SIZE.rows,
-  }));
+    const [size, setSize] = useState<TerminalSize>(() => ({
+        columns: stdout?.columns ?? DEFAULT_SIZE.columns,
+        rows: stdout?.rows ?? DEFAULT_SIZE.rows,
+    }));
 
-  useEffect(() => {
-    if (!stdout) {
-      return;
-    }
-
-    const onResize = () => {
-      setSize({
-        columns: stdout.columns ?? DEFAULT_SIZE.columns,
-        rows: stdout.rows ?? DEFAULT_SIZE.rows,
-      });
-
-      if (clearOnResize) {
-        if (clearTimerRef.current) {
-          clearTimeout(clearTimerRef.current);
+    useEffect(() => {
+        if (!stdout) {
+            return;
         }
 
-        clearTimerRef.current = setTimeout(() => {
-          stdout.write("\x1b[2J\x1b[H");
-        }, 500);
-      }
-    };
+        const onResize = () => {
+            setSize({
+                columns: stdout.columns ?? DEFAULT_SIZE.columns,
+                rows: stdout.rows ?? DEFAULT_SIZE.rows,
+            });
 
-    stdout.on('resize', onResize);
-    return () => {
-      stdout.off('resize', onResize);
+            if (clearOnResize) {
+                if (clearTimerRef.current) {
+                    clearTimeout(clearTimerRef.current);
+                }
 
-      if (clearTimerRef.current) {
-        clearTimeout(clearTimerRef.current);
-      }
-    };
-  }, [stdout, clearOnResize]);
+                clearTimerRef.current = setTimeout(() => {
+                    stdout.write("\x1b[2J\x1b[H");
+                }, 500);
+            }
+        };
 
-  return size;
+        stdout.on("resize", onResize);
+        return () => {
+            stdout.off("resize", onResize);
+
+            if (clearTimerRef.current) {
+                clearTimeout(clearTimerRef.current);
+            }
+        };
+    }, [stdout, clearOnResize]);
+
+    return size;
 }

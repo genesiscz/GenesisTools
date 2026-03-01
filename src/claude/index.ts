@@ -2,12 +2,12 @@
 import logger from "@app/logger";
 import { Command } from "commander";
 import { registerConfigCommand } from "./commands/config";
+import { registerDaemonCommand } from "./commands/daemon";
 import { registerDesktopCommand } from "./commands/desktop";
 import { registerHistoryCommand } from "./commands/history";
 import { registerMigrateCommand } from "./commands/migrate";
 import { registerResumeCommand } from "./commands/resume";
 import { registerUsageCommand } from "./commands/usage";
-import { registerDaemonCommand } from "./commands/daemon";
 
 const program = new Command();
 

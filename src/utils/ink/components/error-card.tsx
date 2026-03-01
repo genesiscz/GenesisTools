@@ -15,55 +15,47 @@
  *   />
  */
 
-import React from 'react';
-import { Text, Box } from 'ink';
-import { theme, symbols } from '../lib/theme.js';
+import { Box, Text } from "ink";
+import { symbols, theme } from "../lib/theme.js";
 
 interface ErrorAction {
-  label: string;
-  key: string;
-  description: string;
+    label: string;
+    key: string;
+    description: string;
 }
 
 interface ErrorCardProps {
-  title: string;
-  message: string;
-  actions?: ErrorAction[];
+    title: string;
+    message: string;
+    actions?: ErrorAction[];
 }
 
 export function ErrorCard({ title, message, actions }: ErrorCardProps) {
-  return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.error}
-      paddingX={2}
-      paddingY={1}
-      gap={1}
-    >
-      {/* Title */}
-      <Text color={theme.error} bold>
-        {symbols.error} {title}
-      </Text>
+    return (
+        <Box flexDirection="column" borderStyle="round" borderColor={theme.error} paddingX={2} paddingY={1} gap={1}>
+            {/* Title */}
+            <Text color={theme.error} bold>
+                {symbols.error} {title}
+            </Text>
 
-      {/* Message */}
-      <Text>{message}</Text>
+            {/* Message */}
+            <Text>{message}</Text>
 
-      {/* Actions */}
-      {actions && actions.length > 0 && (
-        <Box gap={2} marginTop={1}>
-          {actions.map((action) => (
-            <Box key={action.key}>
-              <Text color={theme.muted}>[</Text>
-              <Text color={theme.accent} bold>
-                {action.key}
-              </Text>
-              <Text color={theme.muted}>]</Text>
-              <Text> {action.label}</Text>
-            </Box>
-          ))}
+            {/* Actions */}
+            {actions && actions.length > 0 && (
+                <Box gap={2} marginTop={1}>
+                    {actions.map((action) => (
+                        <Box key={action.key}>
+                            <Text color={theme.muted}>[</Text>
+                            <Text color={theme.accent} bold>
+                                {action.key}
+                            </Text>
+                            <Text color={theme.muted}>]</Text>
+                            <Text> {action.label}</Text>
+                        </Box>
+                    ))}
+                </Box>
+            )}
         </Box>
-      )}
-    </Box>
-  );
+    );
 }

@@ -1,22 +1,19 @@
-import { Box } from "ink";
-import { useCallback, useRef, useState, useEffect } from "react";
-import {
-    loadDashboardConfig,
-    type UsageDashboardConfig,
-} from "@app/claude/lib/usage/dashboard-config";
 import { POLL_INTERVALS, type PollInterval } from "@app/claude/lib/usage/constants";
+import { loadDashboardConfig, type UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { useTerminalSize } from "@app/utils/ink/hooks/use-terminal-size";
-import { useUsagePoller } from "./hooks/use-usage-poller";
-import { useTabNavigation } from "./hooks/use-tab-navigation";
-import { useKeybindings } from "./hooks/use-keybindings";
-import { TabBar } from "./components/tab-bar";
-import { StatusBar } from "./components/status-bar";
+import { Box } from "ink";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertBanner } from "./components/alert-banner";
-import { OverviewView } from "./components/overview/overview-view";
-import { TimelineView } from "./components/timeline/timeline-view";
-import { RatesView } from "./components/rates/rates-view";
-import { HistoryView } from "./components/history/history-view";
 import { HelpOverlay } from "./components/help-overlay";
+import { HistoryView } from "./components/history/history-view";
+import { OverviewView } from "./components/overview/overview-view";
+import { RatesView } from "./components/rates/rates-view";
+import { StatusBar } from "./components/status-bar";
+import { TabBar } from "./components/tab-bar";
+import { TimelineView } from "./components/timeline/timeline-view";
+import { useKeybindings } from "./hooks/use-keybindings";
+import { useTabNavigation } from "./hooks/use-tab-navigation";
+import { useUsagePoller } from "./hooks/use-usage-poller";
 
 interface AppProps {
     accountFilter?: string;
@@ -46,9 +43,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
     const { activeTab, tabs, activeIndex } = useTabNavigation(config.defaultTab);
 
     const [pollInterval, setPollInterval] = useState<PollInterval>(
-        (POLL_INTERVALS.includes(config.refreshInterval as PollInterval)
-            ? config.refreshInterval
-            : 10) as PollInterval
+        (POLL_INTERVALS.includes(config.refreshInterval as PollInterval) ? config.refreshInterval : 10) as PollInterval
     );
 
     const [paused, setPaused] = useState(false);
@@ -61,15 +56,22 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
         });
     }, []);
 
-    const { results, pollingLabel, lastRefresh, nextRefresh, db, notifications, forceRefresh } =
-        useUsagePoller({ config, accountFilter, paused, pollIntervalSeconds: pollInterval });
+    const { results, pollingLabel, lastRefresh, nextRefresh, db, notifications, forceRefresh } = useUsagePoller({
+        config,
+        accountFilter,
+        paused,
+        pollIntervalSeconds: pollInterval,
+    });
 
     const forceRefreshRef = useRef(forceRefresh);
     forceRefreshRef.current = forceRefresh;
 
     const { showHelp, setShowHelp } = useKeybindings({
         onForceRefresh: () => forceRefreshRef.current(),
-        onDismissAlert: () => { notifications?.dismissAll(); forceUpdate((n) => n + 1); },
+        onDismissAlert: () => {
+            notifications?.dismissAll();
+            forceUpdate((n) => n + 1);
+        },
         onCycleInterval: cycleInterval,
         onTogglePause: () => setPaused((p) => !p),
     });
@@ -81,17 +83,16 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
     return (
         <Box flexDirection="column">
             <TabBar tabs={tabs} activeIndex={activeIndex} />
-            {activeTab === "overview" && (
-                <OverviewView results={results} config={config} />
-            )}
-            {activeTab === "timeline" && (
-                <TimelineView db={db} results={results} config={config} />
-            )}
+            {activeTab === "overview" && <OverviewView results={results} config={config} />}
+            {activeTab === "timeline" && <TimelineView db={db} results={results} config={config} />}
             {activeTab === "rates" && <RatesView db={db} results={results} />}
             {activeTab === "history" && <HistoryView db={db} />}
             <AlertBanner
                 alerts={notifications?.alerts ?? []}
-                onDismiss={() => { notifications?.dismissAll(); forceUpdate((n) => n + 1); }}
+                onDismiss={() => {
+                    notifications?.dismissAll();
+                    forceUpdate((n) => n + 1);
+                }}
             />
             <StatusBar
                 lastRefresh={lastRefresh}

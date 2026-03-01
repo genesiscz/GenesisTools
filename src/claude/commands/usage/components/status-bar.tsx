@@ -26,18 +26,20 @@ export function StatusBar({ lastRefresh, nextRefresh, paused, pollingLabel, poll
         return () => clearInterval(timer);
     }, []);
 
-    const countdown = nextRefresh
-        ? Math.max(0, Math.round((nextRefresh.getTime() - Date.now()) / 1000))
-        : null;
+    const countdown = nextRefresh ? Math.max(0, Math.round((nextRefresh.getTime() - Date.now()) / 1000)) : null;
 
     return (
-        <Box flexDirection="column" borderStyle="single" borderTop borderBottom={false} borderLeft={false} borderRight={false} paddingX={1}>
+        <Box
+            flexDirection="column"
+            borderStyle="single"
+            borderTop
+            borderBottom={false}
+            borderLeft={false}
+            borderRight={false}
+            paddingX={1}
+        >
             <Box>
-                {lastRefresh && (
-                    <Text dimColor>
-                        Last: {formatTime(lastRefresh)}
-                    </Text>
-                )}
+                {lastRefresh && <Text dimColor>Last: {formatTime(lastRefresh)}</Text>}
                 {nextRefresh && !paused && (
                     <Text dimColor>
                         {" • Next: "}
@@ -48,9 +50,7 @@ export function StatusBar({ lastRefresh, nextRefresh, paused, pollingLabel, poll
                 {pollingLabel && <Text color="yellow">{` ● Polling ${pollingLabel}`}</Text>}
                 {paused && <Text color="red">{" ⏸ Paused"}</Text>}
             </Box>
-            <Text dimColor>
-                {"[q]uit [r]efresh [p]ause [i]nterval [?]help"}
-            </Text>
+            <Text dimColor>{"[q]uit [r]efresh [p]ause [i]nterval [?]help"}</Text>
         </Box>
     );
 }

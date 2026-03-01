@@ -1,5 +1,5 @@
-import { render } from "ink";
 import type { Command } from "commander";
+import { render } from "ink";
 import { App } from "./app";
 
 export function registerUsageCommand(program: Command): void {
@@ -15,10 +15,10 @@ export function registerUsageCommand(program: Command): void {
         .action(async (accountArg: string | undefined, opts: Record<string, string | boolean | undefined>) => {
             if (opts.tui === false || opts.json || opts.token || opts.watch) {
                 const { loadConfig } = await import("@app/claude/lib/config");
-                const { fetchAllAccountsUsage, fetchUsage, getKeychainCredentials } =
-                    await import("@app/claude/lib/usage/api");
-                const { renderAllAccounts, renderAccountUsage } =
-                    await import("@app/claude/lib/usage/display");
+                const { fetchAllAccountsUsage, fetchUsage, getKeychainCredentials } = await import(
+                    "@app/claude/lib/usage/api"
+                );
+                const { renderAllAccounts, renderAccountUsage } = await import("@app/claude/lib/usage/display");
 
                 if (opts.token && typeof opts.token === "string") {
                     const usage = await fetchUsage(opts.token);

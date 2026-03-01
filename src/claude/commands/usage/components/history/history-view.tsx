@@ -1,6 +1,6 @@
+import type { UsageHistoryDb, UsageSnapshot } from "@app/claude/lib/usage/history-db";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useMemo, useState } from "react";
-import type { UsageHistoryDb, UsageSnapshot } from "@app/claude/lib/usage/history-db";
 import { useScroll } from "../../hooks/use-scroll";
 
 interface HistoryViewProps {
@@ -147,11 +147,7 @@ export function HistoryView({ db }: HistoryViewProps) {
     }
 
     const rangeLabel =
-        timeRange <= 60
-            ? `${timeRange}m`
-            : timeRange <= 1440
-              ? `${timeRange / 60}h`
-              : `${timeRange / 1440}d`;
+        timeRange <= 60 ? `${timeRange}m` : timeRange <= 1440 ? `${timeRange / 60}h` : `${timeRange / 1440}d`;
 
     if (layout === "stacked") {
         // Group by account
@@ -190,11 +186,11 @@ export function HistoryView({ db }: HistoryViewProps) {
                                         <Text>{bucketLabel.padEnd(10)}</Text>
                                         <Text>{`${s.utilization.toFixed(1)}%`.padEnd(10)}</Text>
                                         <Text color={s.delta !== null && s.delta > 0 ? "yellow" : "green"}>
-                                            {s.delta !== null ? `${s.delta >= 0 ? "+" : ""}${s.delta.toFixed(1)}`.padEnd(8) : "—".padEnd(8)}
+                                            {s.delta !== null
+                                                ? `${s.delta >= 0 ? "+" : ""}${s.delta.toFixed(1)}`.padEnd(8)
+                                                : "—".padEnd(8)}
                                         </Text>
-                                        <Text dimColor>
-                                            {s.timePerPct ?? "—"}
-                                        </Text>
+                                        <Text dimColor>{s.timePerPct ?? "—"}</Text>
                                     </Box>
                                 );
                             })}

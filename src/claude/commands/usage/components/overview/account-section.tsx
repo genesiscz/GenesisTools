@@ -1,8 +1,8 @@
-import { Box, Text } from "ink";
-import { useEffect, useState } from "react";
 import type { AccountUsage, UsageBucket } from "@app/claude/lib/usage/api";
 import { BUCKET_LABELS, BUCKET_PERIODS_MS, colorForPct } from "@app/claude/lib/usage/constants";
 import { useTerminalSize } from "@app/utils/ink/hooks/use-terminal-size";
+import { Box, Text } from "ink";
+import { useEffect, useState } from "react";
 import { UsageBar } from "./usage-bar";
 
 function formatResetCountdown(resetsAt: string | null): string | null {
@@ -123,9 +123,7 @@ export function AccountSection({ account, prominentBuckets }: AccountSectionProp
     const { columns: termWidth } = useTerminalSize();
     const barWidth = Math.max(MIN_BAR_WIDTH, termWidth - FIXED_OVERHEAD);
 
-    const header = account.label
-        ? `${account.accountName} (${account.label})`
-        : account.accountName;
+    const header = account.label ? `${account.accountName} (${account.label})` : account.accountName;
 
     if (account.error) {
         return (
@@ -167,12 +165,7 @@ export function AccountSection({ account, prominentBuckets }: AccountSectionProp
         <Box flexDirection="column" marginBottom={1}>
             <Text bold>{`── ${header} ${"─".repeat(Math.max(0, 40 - header.length))}`}</Text>
             {entries.map(([key, bucket]) => (
-                <BucketRow
-                    key={key}
-                    bucketKey={key}
-                    bucket={bucket}
-                    barWidth={barWidth}
-                />
+                <BucketRow key={key} bucketKey={key} bucket={bucket} barWidth={barWidth} />
             ))}
         </Box>
     );

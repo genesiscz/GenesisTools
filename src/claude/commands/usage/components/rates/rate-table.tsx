@@ -1,6 +1,6 @@
-import { Box, Text } from "ink";
 import type { RollingRates } from "@app/claude/lib/usage/rate-math";
 import { formatDuration } from "@app/claude/lib/usage/rate-math";
+import { Box, Text } from "ink";
 
 interface RateTableProps {
     rates: RollingRates;

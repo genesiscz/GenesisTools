@@ -1,6 +1,6 @@
+import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { Box, Text } from "ink";
 import type { PollResult } from "../../types";
-import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { AccountSection } from "./account-section";
 
 interface OverviewViewProps {
@@ -20,7 +20,9 @@ export function OverviewView({ results, config }: OverviewViewProps) {
     if (results.error) {
         return (
             <Box paddingX={1} flexDirection="column">
-                <Text color="red" bold>{"Error"}</Text>
+                <Text color="red" bold>
+                    {"Error"}
+                </Text>
                 <Text color="red">{results.error}</Text>
             </Box>
         );
