@@ -24,10 +24,11 @@ export function registerContactsCommand(program: Command): void {
             p.intro(pc.bgMagenta(pc.white(" telegram contacts ")));
 
             for (const c of data.contacts) {
+                const autoReplyPrompt = c.modes?.autoReply?.systemPrompt;
                 p.log.info(
                     `${pc.bold(c.displayName)} ${c.username ? pc.dim(`@${c.username}`) : ""}\n` +
-                        `  Actions: [${c.actions.join(", ")}]` +
-                        (c.askSystemPrompt ? `\n  Prompt: "${c.askSystemPrompt}"` : "")
+                        `  Type: ${c.chatType} | Actions: [${c.actions.join(", ")}]` +
+                        (autoReplyPrompt ? `\n  Prompt: "${autoReplyPrompt}"` : "")
                 );
             }
 
