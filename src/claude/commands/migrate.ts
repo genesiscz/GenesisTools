@@ -254,24 +254,22 @@ async function runWizard(
                 message: "Select components to migrate:",
                 options: [
                     {
-                        value: "skills",
+                        value: "skills" as const,
                         label: "Skills",
                         hint: "Claude SKILL.md folders -> Codex skill folders",
-                        selected: state.components.includes("skills"),
                     },
                     {
-                        value: "commands",
+                        value: "commands" as const,
                         label: "Commands",
                         hint: "Claude command markdown -> Codex prompt files",
-                        selected: state.components.includes("commands"),
                     },
                     {
-                        value: "instructions",
+                        value: "instructions" as const,
                         label: "Instructions",
                         hint: "CLAUDE.md -> AGENTS.md (copy or symlink)",
-                        selected: state.components.includes("instructions"),
                     },
                 ],
+                initialValues: state.components,
                 required: false,
             });
 

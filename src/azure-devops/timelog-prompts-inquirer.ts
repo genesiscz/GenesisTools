@@ -15,7 +15,7 @@ export async function runInteractiveAddInquirer(
     console.log("\n📝 TimeLog - Add Entry\n");
 
     try {
-        const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog?.functionsKey, user);
+        const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
 
         // Fetch time types
         console.log("Loading time types...");

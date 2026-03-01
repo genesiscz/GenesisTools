@@ -41,6 +41,21 @@ export const symbols = {
     seed: "\uD83C\uDF31", // 🌱
     target: "\uD83C\uDFAF", // 🎯
     summary: "\uD83D\uDCCA", // 📊
+    corner: "\u2514", // └
+    branch: "\u251C", // ├
+    dash: "\u2500", // ─
+    changelog: "\uD83D\uDCDD", // 📝
+} as const;
+
+/**
+ * Unified theme object wrapping colors and symbols for convenience.
+ * Usage: theme.success, theme.arrow, etc.
+ */
+export const theme = {
+    ...colors,
+    // Additional semantic aliases
+    primary: "cyan",
+    accent: "magenta",
 } as const;
 
 export type RiskLevel = "safe" | "new" | "destructive";
@@ -59,4 +74,30 @@ export const riskBadges: Record<RiskLevel, RiskBadge> = {
 
 export function getRiskBadge(risk: RiskLevel): RiskBadge {
     return riskBadges[risk] ?? riskBadges.safe;
+}
+
+export type BumpType = "major" | "minor" | "patch";
+
+export function getBumpColor(bump: BumpType): string {
+    switch (bump) {
+        case "major":
+            return "red";
+        case "minor":
+            return "yellow";
+        case "patch":
+            return "green";
+    }
+}
+
+export type EnvironmentName = "dev" | "staging" | "prod";
+
+export function getEnvColor(env: EnvironmentName): string {
+    switch (env) {
+        case "dev":
+            return "blue";
+        case "staging":
+            return "yellow";
+        case "prod":
+            return "red";
+    }
 }

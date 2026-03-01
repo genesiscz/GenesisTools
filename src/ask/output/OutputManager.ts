@@ -12,6 +12,13 @@ export interface ResponseMetadata {
     cost?: number;
     tokens?: number;
     timestamp?: string | number;
+    processingTime?: number;
+    usage?: {
+        inputTokens: number;
+        outputTokens: number;
+        totalTokens: number;
+        cachedInputTokens?: number;
+    };
 }
 
 export interface FormattedResponse {
