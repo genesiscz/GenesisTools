@@ -174,20 +174,26 @@ export function registerHandler(client: TGClient, options: HandlerOptions): void
                     if (result.action === "ask" && result.reply && context) {
                         context.append(options.myName, result.reply);
 
-                        options.store.upsertMessageWithRevision(
-                            targetChatId,
-                            {
-                                id: result.sentMessageId ?? Date.now(),
-                                senderId: undefined,
-                                text: result.reply,
-                                mediaDescription: undefined,
-                                isOutgoing: true,
-                                date: new Date().toISOString(),
-                                dateUnix: Math.floor(Date.now() / 1000),
-                                attachments: [],
-                            },
-                            "create"
-                        );
+                        if (result.sentMessageId) {
+                            options.store.upsertMessageWithRevision(
+                                targetChatId,
+                                {
+                                    id: result.sentMessageId,
+                                    senderId: undefined,
+                                    text: result.reply,
+                                    mediaDescription: undefined,
+                                    isOutgoing: true,
+                                    date: new Date().toISOString(),
+                                    dateUnix: Math.floor(Date.now() / 1000),
+                                    attachments: [],
+                                },
+                                "create"
+                            );
+                        } else {
+                            logger.warn(
+                                `Auto-reply message id missing for ${targetChatId}; skipping outgoing persistence.`
+                            );
+                        }
                     }
                 } else {
                     logger.warn(`  ${pc.red(`[${result.action}]`)} FAILED: ${result.error}`);
