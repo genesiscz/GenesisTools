@@ -161,25 +161,22 @@ export class AIChat {
         let fullContent = "";
         let thinkingContent = "";
         const startTime = Date.now();
+        const toolsForTurn = options?.override?.tools ?? this._options.tools;
 
         // Bridge push-based onChunk to pull-based async generator via ReadableStream
         const stream = new ReadableStream<ChatEvent>({
             start: async (controller) => {
                 try {
-                    const engineResponse = await engine.sendMessage(
-                        message,
-                        undefined, // tools — TODO: wire AIChatTool → AI SDK tools
-                        {
-                            onChunk: (chunk: string) => {
-                                controller.enqueue(ChatEvent.text(chunk));
-                                fullContent += chunk;
-                            },
-                            onThinking: (text: string) => {
-                                controller.enqueue(ChatEvent.thinking(text));
-                                thinkingContent += text;
-                            },
-                        }
-                    );
+                    const engineResponse = await engine.sendMessage(message, toolsForTurn, {
+                        onChunk: (chunk: string) => {
+                            controller.enqueue(ChatEvent.text(chunk));
+                            fullContent += chunk;
+                        },
+                        onThinking: (text: string) => {
+                            controller.enqueue(ChatEvent.thinking(text));
+                            thinkingContent += text;
+                        },
+                    });
 
                     const duration = Date.now() - startTime;
                     const response: ChatResponse = {

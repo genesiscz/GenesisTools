@@ -1,6 +1,8 @@
 import bigInt from "big-integer";
 import { Api, TelegramClient } from "telegram";
-import { NewMessage, type NewMessageEvent } from "telegram/events";
+import { DeletedMessage, type DeletedMessageEvent } from "telegram/events/DeletedMessage";
+import { EditedMessage, type EditedMessageEvent } from "telegram/events/EditedMessage";
+import { NewMessage, type NewMessageEvent } from "telegram/events/NewMessage";
 import { StringSession } from "telegram/sessions";
 import type { Dialog } from "telegram/tl/custom/dialog";
 import type { TelegramToolConfig } from "./TelegramToolConfig";
@@ -10,6 +12,11 @@ export interface AuthCallbacks {
     phoneNumber: () => Promise<string>;
     phoneCode: () => Promise<string>;
     password: () => Promise<string>;
+}
+
+export interface DownloadMediaOptions {
+    outputFile?: string;
+    thumb?: number | Api.TypePhotoSize;
 }
 
 export class TGClient {
@@ -55,8 +62,8 @@ export class TGClient {
         return this.client.getDialogs({ limit });
     }
 
-    async sendMessage(userId: string, text: string): Promise<void> {
-        await this.client.sendMessage(userId, { message: text });
+    async sendMessage(userId: string, text: string): Promise<Api.Message> {
+        return (await this.client.sendMessage(userId, { message: text })) as Api.Message;
     }
 
     async sendTyping(userId: string): Promise<void> {
@@ -100,30 +107,59 @@ export class TGClient {
         this.client.addEventHandler(handler, new NewMessage({}));
     }
 
+    onEditedMessage(handler: (event: EditedMessageEvent) => Promise<void>): void {
+        this.client.addEventHandler(handler, new EditedMessage({}));
+    }
+
+    onDeletedMessage(handler: (event: DeletedMessageEvent) => Promise<void>): void {
+        this.client.addEventHandler(handler, new DeletedMessage({}));
+    }
+
+    async downloadMedia(
+        messageOrMedia: Api.Message | Api.TypeMessageMedia,
+        options: DownloadMediaOptions = {}
+    ): Promise<string | Buffer | undefined> {
+        return this.client.downloadMedia(messageOrMedia, {
+            outputFile: options.outputFile,
+            thumb: options.thumb,
+        });
+    }
+
     get raw(): TelegramClient {
         return this.client;
     }
 
-    // ── History methods (Phase 2 preparation) ──────────────────────────
+    // ── History methods ──────────────────────────────────────────────
 
     async *getMessages(
-        userId: string,
-        options: { limit?: number; offsetDate?: number; minId?: number; maxId?: number } = {}
+        chatId: string,
+        options: {
+            limit?: number;
+            offsetDate?: number;
+            minId?: number;
+            maxId?: number;
+            reverse?: boolean;
+        } = {}
     ): AsyncGenerator<Api.Message> {
-        for await (const message of this.client.iterMessages(userId, {
+        for await (const message of this.client.iterMessages(chatId, {
             limit: options.limit,
             offsetDate: options.offsetDate,
             minId: options.minId,
             maxId: options.maxId,
+            reverse: options.reverse,
         })) {
+            if (message.className !== "Message") {
+                continue;
+            }
+
             yield message;
         }
     }
 
-    async getMessageCount(userId: string): Promise<number> {
+    async getMessageCount(chatId: string): Promise<number> {
         const result = await this.client.invoke(
             new Api.messages.Search({
-                peer: await this.client.getInputEntity(userId),
+                peer: await this.client.getInputEntity(chatId),
                 q: "",
                 filter: new Api.InputMessagesFilterEmpty(),
                 minDate: 0,
@@ -142,5 +178,19 @@ export class TGClient {
         }
 
         return 0;
+    }
+
+    async getMessageById(chatId: string, messageId: number): Promise<Api.Message | null> {
+        for await (const message of this.getMessages(chatId, {
+            minId: Math.max(0, messageId - 1),
+            maxId: messageId + 1,
+            limit: 10,
+        })) {
+            if (message.id === messageId) {
+                return message;
+            }
+        }
+
+        return null;
     }
 }

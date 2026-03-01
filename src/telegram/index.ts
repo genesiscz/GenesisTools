@@ -4,6 +4,7 @@ import { registerConfigureCommand } from "./commands/configure";
 import { registerContactsCommand } from "./commands/contacts";
 import { registerHistoryCommand } from "./commands/history";
 import { registerListenCommand } from "./commands/listen";
+import { registerWatchCommand } from "./commands/watch";
 
 handleReadmeFlag(import.meta.url);
 
@@ -15,6 +16,7 @@ program
     .showHelpAfterError(true);
 
 registerConfigureCommand(program);
+registerWatchCommand(program);
 registerListenCommand(program);
 registerContactsCommand(program);
 registerHistoryCommand(program);
