@@ -7,7 +7,7 @@ import { Command } from "commander";
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
-type Format = "json" | "jsonl" | "toon" | "unknown";
+type Format = "json" | "jsonl" | "toon" | "embedded-json" | "unknown";
 
 function parseJSONL(input: string): unknown[] | null {
     const trimmed = input.trim();
@@ -79,6 +79,40 @@ function parseJSONL(input: string): unknown[] | null {
     return objects.length > 0 ? objects : null;
 }
 
+/**
+ * Try to extract a JSON object/array from mixed text input (e.g. "Error 400: {...}").
+ * Returns the extracted JSON string or null if none found.
+ */
+function extractEmbeddedJson(input: string): string | null {
+    // Find the first { or [ that could start a JSON value
+    for (const startChar of ["{", "["]) {
+        const startIdx = input.indexOf(startChar);
+
+        if (startIdx < 0) {
+            continue;
+        }
+
+        const endChar = startChar === "{" ? "}" : "]";
+        // Find the matching closing bracket from the end
+        const endIdx = input.lastIndexOf(endChar);
+
+        if (endIdx <= startIdx) {
+            continue;
+        }
+
+        const candidate = input.slice(startIdx, endIdx + 1);
+
+        try {
+            JSON.parse(candidate);
+            return candidate;
+        } catch {
+            // Not valid JSON, try next
+        }
+    }
+
+    return null;
+}
+
 function detectFormat(input: string): Format {
     // Try JSON first
     try {
@@ -90,7 +124,14 @@ function detectFormat(input: string): Format {
         if (jsonlData && jsonlData.length > 0) {
             return "jsonl";
         }
-        // Not JSON or JSONL, try TOON
+        // Try extracting embedded JSON from mixed text
+        // (before TOON, since TOON's colon syntax produces false positives
+        // on text like "API 400: {"success": false}")
+        if (extractEmbeddedJson(input)) {
+            return "embedded-json";
+        }
+
+        // Not JSON or JSONL or embedded JSON, try TOON
         try {
             decode(input);
             return "toon";
@@ -244,11 +285,21 @@ async function main(): Promise<void> {
             }
 
             jsonData = jsonlData;
+        } else if (detectedFormat === "embedded-json") {
+            const extracted = extractEmbeddedJson(input);
+            jsonData = JSON.parse(extracted!);
         } else if (detectedFormat === "json") {
             jsonData = JSON.parse(input);
         }
 
-        const formatLabel = detectedFormat === "jsonl" ? "JSONL" : detectedFormat === "toon" ? "TOON" : "JSON";
+        const formatLabel =
+            detectedFormat === "jsonl"
+                ? "JSONL"
+                : detectedFormat === "toon"
+                  ? "TOON"
+                  : detectedFormat === "embedded-json"
+                    ? "Embedded JSON"
+                    : "JSON";
 
         // Handle forced conversion to TOON
         if (forceToToon) {
