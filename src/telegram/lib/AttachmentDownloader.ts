@@ -5,7 +5,7 @@ import type { TelegramHistoryStore } from "./TelegramHistoryStore";
 import type { TGClient } from "./TGClient";
 import type { AttachmentLocator } from "./types";
 
-const DEFAULT_ATTACHMENTS_DIR = join(homedir(), ".genesis-tools", "telegram", "attachments");
+const DEFAULT_CHATS_DIR = join(homedir(), ".genesis-tools", "telegram", "chats");
 
 export interface DownloadAttachmentOptions {
     outputPath?: string;
@@ -37,8 +37,16 @@ export class AttachmentDownloader {
             throw new Error(`Telegram message ${locator.messageId} has no downloadable media`);
         }
 
-        const baseName = attachment.file_name ?? `${locator.messageId}-${locator.attachmentIndex}`;
-        const fallbackPath = join(DEFAULT_ATTACHMENTS_DIR, locator.chatId, baseName);
+        const safeFileName = (attachment.file_name ?? `${locator.messageId}-${locator.attachmentIndex}`).replace(
+            /[\\/:*?"<>|]/g,
+            "_"
+        );
+        const fallbackPath = join(
+            DEFAULT_CHATS_DIR,
+            locator.chatId,
+            "attachments",
+            `${locator.messageId}-${locator.attachmentIndex}-${safeFileName}`
+        );
         const outputPath = options.outputPath ?? fallbackPath;
         const outputDir = dirname(outputPath);
 

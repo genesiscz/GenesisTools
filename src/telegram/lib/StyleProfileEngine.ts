@@ -8,19 +8,24 @@ export interface DerivedStyleResult {
     prompt: string;
     sampleCount: number;
     generatedAt: string;
+    rawSamples: string[];
 }
 
 export class StyleProfileEngine {
-    async deriveStylePrompt(contact: TelegramContact, store: TelegramHistoryStore): Promise<DerivedStyleResult | null> {
+    getRawStyleSamples(contact: TelegramContact, store: TelegramHistoryStore, limit = 200): string[] {
         const styleConfig = contact.config.styleProfile;
 
         if (!styleConfig || !styleConfig.enabled || styleConfig.rules.length === 0) {
-            return null;
+            return [];
         }
 
-        const lines = styleRuleResolver.resolveRules(store, styleConfig.rules).slice(-500);
+        return styleRuleResolver.resolveRules(store, styleConfig.rules).slice(-limit);
+    }
 
-        if (lines.length === 0) {
+    async deriveStylePrompt(contact: TelegramContact, store: TelegramHistoryStore): Promise<DerivedStyleResult | null> {
+        const rawSamples = this.getRawStyleSamples(contact, store, 500);
+
+        if (rawSamples.length === 0) {
             return null;
         }
 
@@ -34,7 +39,7 @@ export class StyleProfileEngine {
             "You are deriving a style profile for one user's outbound Telegram writing. " +
             "Output a concise system prompt that captures tone, pacing, sentence length, greeting habits, and conflict de-escalation style. " +
             "Return only the final system prompt.\n\n" +
-            `Samples:\n${lines.join("\n")}`;
+            `Samples:\n${rawSamples.join("\n")}`;
 
         const prompt = await assistantEngine.ask({
             sessionId: `style-${contact.userId}`,
@@ -44,8 +49,9 @@ export class StyleProfileEngine {
 
         return {
             prompt: prompt.trim(),
-            sampleCount: lines.length,
+            sampleCount: rawSamples.length,
             generatedAt: new Date().toISOString(),
+            rawSamples: rawSamples.slice(-120),
         };
     }
 }
