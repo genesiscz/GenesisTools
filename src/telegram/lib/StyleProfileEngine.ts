@@ -45,7 +45,7 @@ export class StyleProfileEngine {
         return this.analyzeStyleFromTexts(texts);
     }
 
-    buildStylePrompt(chatId: string, options: StylePromptOptions): string {
+    buildStylePrompt(_chatId: string, options: StylePromptOptions): string {
         const messages = this.ruleResolver.resolveMessages(options.rules);
         const texts = messages.map((m) => m.text ?? "").filter(Boolean);
 
@@ -94,7 +94,7 @@ export class StyleProfileEngine {
         const avgWords = texts.reduce((s, t) => s + t.split(/\s+/).length, 0) / texts.length;
         const emojiCount = texts.reduce(
             (s, t) => s + (t.match(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu) ?? []).length,
-            0,
+            0
         );
         const emojiFreq = emojiCount / texts.length;
 
