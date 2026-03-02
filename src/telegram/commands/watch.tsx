@@ -127,6 +127,10 @@ export function registerWatchCommand(program: Command): void {
             });
 
             p.log.info(`Watching ${activeContact.displayName}. Tab to switch contacts, /help for commands.`);
+
+            // Clack prompts leave stdin paused after readline.close(); resume so Ink can read input
+            process.stdin.resume();
+
             const { waitUntilExit } = render(<WatchInkApp session={session} />);
 
             await waitUntilExit();
