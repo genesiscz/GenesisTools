@@ -557,14 +557,22 @@ export class TelegramHistoryStore {
             params.push(`%${options.textPattern}%`);
         }
 
-        let sql = `SELECT * FROM messages WHERE ${conditions.join(" AND ")} ORDER BY date_unix ASC`;
+        const order = options.limit ? "DESC" : "ASC";
+        let sql = `SELECT * FROM messages WHERE ${conditions.join(" AND ")} ORDER BY date_unix ${order}`;
 
         if (options.limit) {
             sql += " LIMIT ?";
             params.push(options.limit);
         }
 
-        return db.query(sql).all(...params) as MessageRowV2[];
+        const rows = db.query(sql).all(...params) as MessageRowV2[];
+
+        // DESC + LIMIT gives us the *last* N rows; reverse back to chronological for display
+        if (options.limit) {
+            rows.reverse();
+        }
+
+        return rows;
     }
 
     findMessageById(messageId: number): { chat_id: string } | null {
