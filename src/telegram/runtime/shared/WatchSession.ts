@@ -35,7 +35,7 @@ export class WatchSession {
         private store: TelegramHistoryStore,
         private myName: string,
         contact: TelegramContactV2,
-        private allContacts: TelegramContactV2[],
+        private allContacts: TelegramContactV2[]
     ) {
         this._currentContact = contact;
         this.assistantEngine = new AssistantEngine(store, contact, myName);
@@ -241,7 +241,7 @@ export class WatchSession {
                 const list = atts
                     .map(
                         (a) =>
-                            `  [${a.attachment_index}] ${a.kind} ${a.file_name ?? ""} ${a.is_downloaded ? "downloaded" : "not downloaded"}`,
+                            `  [${a.attachment_index}] ${a.kind} ${a.file_name ?? ""} ${a.is_downloaded ? "downloaded" : "not downloaded"}`
                     )
                     .join("\n");
                 return { handled: true, output: `Attachments:\n${list}` };

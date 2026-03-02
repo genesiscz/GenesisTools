@@ -677,62 +677,55 @@ function registerAttachmentsCommand(history: Command): void {
         .option("--since <date>", "Start date")
         .option("--until <date>", "End date")
         .option("--message-id <id>", "Specific message ID", parseInt)
-        .action(
-            async (opts: {
-                from: string;
-                since?: string;
-                until?: string;
-                messageId?: number;
-            }) => {
-                const config = new TelegramToolConfig();
-                const data = await config.load();
+        .action(async (opts: { from: string; since?: string; until?: string; messageId?: number }) => {
+            const config = new TelegramToolConfig();
+            const data = await config.load();
 
-                if (!data) {
-                    p.log.error("Not configured. Run: tools telegram configure");
-                    return;
-                }
-
-                const contact = resolveContact(data.contacts, opts.from);
-
-                if (!contact) {
-                    p.log.error(
-                        `Contact "${opts.from}" not found. Available: ${data.contacts.map((c) => c.displayName).join(", ")}`
-                    );
-                    return;
-                }
-
-                const store = new TelegramHistoryStore();
-                store.open();
-
-                try {
-                    if (opts.messageId) {
-                        const atts = store.getAttachments(contact.userId, opts.messageId);
-
-                        for (const att of atts) {
-                            const dl = att.is_downloaded ? "dl" : "--";
-                            console.log(
-                                `  [${dl}] ${att.kind} idx=${att.attachment_index} ${att.file_name ?? ""} ${att.file_size ? `(${att.file_size}b)` : ""}`
-                            );
-                        }
-                    } else {
-                        const since = opts.since ? (parseDateNatural(opts.since) ?? undefined) : undefined;
-                        const until = opts.until ? (parseDateNatural(opts.until) ?? undefined) : undefined;
-                        const atts = store.listAttachments(contact.userId, { since, until });
-
-                        for (const att of atts) {
-                            const dl = att.is_downloaded ? "dl" : "--";
-                            console.log(
-                                `msg:${att.message_id} [${dl}] ${att.kind} idx=${att.attachment_index} ${att.file_name ?? ""}`
-                            );
-                        }
-
-                        console.log(`\n${atts.length} attachment(s)`);
-                    }
-                } finally {
-                    store.close();
-                }
+            if (!data) {
+                p.log.error("Not configured. Run: tools telegram configure");
+                return;
             }
-        );
+
+            const contact = resolveContact(data.contacts, opts.from);
+
+            if (!contact) {
+                p.log.error(
+                    `Contact "${opts.from}" not found. Available: ${data.contacts.map((c) => c.displayName).join(", ")}`
+                );
+                return;
+            }
+
+            const store = new TelegramHistoryStore();
+            store.open();
+
+            try {
+                if (opts.messageId) {
+                    const atts = store.getAttachments(contact.userId, opts.messageId);
+
+                    for (const att of atts) {
+                        const dl = att.is_downloaded ? "dl" : "--";
+                        console.log(
+                            `  [${dl}] ${att.kind} idx=${att.attachment_index} ${att.file_name ?? ""} ${att.file_size ? `(${att.file_size}b)` : ""}`
+                        );
+                    }
+                } else {
+                    const since = opts.since ? (parseDateNatural(opts.since) ?? undefined) : undefined;
+                    const until = opts.until ? (parseDateNatural(opts.until) ?? undefined) : undefined;
+                    const atts = store.listAttachments(contact.userId, { since, until });
+
+                    for (const att of atts) {
+                        const dl = att.is_downloaded ? "dl" : "--";
+                        console.log(
+                            `msg:${att.message_id} [${dl}] ${att.kind} idx=${att.attachment_index} ${att.file_name ?? ""}`
+                        );
+                    }
+
+                    console.log(`\n${atts.length} attachment(s)`);
+                }
+            } finally {
+                store.close();
+            }
+        });
 
     attachments
         .command("fetch")
@@ -741,57 +734,50 @@ function registerAttachmentsCommand(history: Command): void {
         .requiredOption("--message-id <id>", "Message ID", parseInt)
         .option("--attachment-index <n>", "Attachment index (default 0)", parseInt, 0)
         .option("--output <path>", "Output file path")
-        .action(
-            async (opts: {
-                from: string;
-                messageId: number;
-                attachmentIndex: number;
-                output?: string;
-            }) => {
-                const config = new TelegramToolConfig();
-                const data = await config.load();
+        .action(async (opts: { from: string; messageId: number; attachmentIndex: number; output?: string }) => {
+            const config = new TelegramToolConfig();
+            const data = await config.load();
 
-                if (!data) {
-                    p.log.error("Not configured. Run: tools telegram configure");
-                    return;
-                }
-
-                const contact = resolveContact(data.contacts, opts.from);
-
-                if (!contact) {
-                    p.log.error(
-                        `Contact "${opts.from}" not found. Available: ${data.contacts.map((c) => c.displayName).join(", ")}`
-                    );
-                    return;
-                }
-
-                const client = await ensureClient(config);
-
-                if (!client) {
-                    return;
-                }
-
-                const store = new TelegramHistoryStore();
-                store.open();
-
-                try {
-                    const downloader = new AttachmentDownloader(client, store);
-                    const result = await downloader.download(
-                        contact.userId,
-                        opts.messageId,
-                        opts.attachmentIndex,
-                        opts.output
-                    );
-
-                    console.log(`Downloaded to: ${result.path}`);
-                    console.log(`Size: ${result.size} bytes`);
-                    console.log(`SHA-256: ${result.sha256}`);
-                } finally {
-                    store.close();
-                    await client.disconnect();
-                }
+            if (!data) {
+                p.log.error("Not configured. Run: tools telegram configure");
+                return;
             }
-        );
+
+            const contact = resolveContact(data.contacts, opts.from);
+
+            if (!contact) {
+                p.log.error(
+                    `Contact "${opts.from}" not found. Available: ${data.contacts.map((c) => c.displayName).join(", ")}`
+                );
+                return;
+            }
+
+            const client = await ensureClient(config);
+
+            if (!client) {
+                return;
+            }
+
+            const store = new TelegramHistoryStore();
+            store.open();
+
+            try {
+                const downloader = new AttachmentDownloader(client, store);
+                const result = await downloader.download(
+                    contact.userId,
+                    opts.messageId,
+                    opts.attachmentIndex,
+                    opts.output
+                );
+
+                console.log(`Downloaded to: ${result.path}`);
+                console.log(`Size: ${result.size} bytes`);
+                console.log(`SHA-256: ${result.sha256}`);
+            } finally {
+                store.close();
+                await client.disconnect();
+            }
+        });
 }
 
 // ── Registration ──────────────────────────────────────────────────────

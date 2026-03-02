@@ -22,7 +22,14 @@ export function SystemOutput({ lines }: SystemOutputProps) {
     }
 
     return (
-        <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingLeft={1} marginTop={1} marginBottom={1}>
+        <Box
+            flexDirection="column"
+            borderStyle="round"
+            borderColor="gray"
+            paddingLeft={1}
+            marginTop={1}
+            marginBottom={1}
+        >
             {lines.map((line, i) => (
                 <Text key={`sys-${i}-${line.type}`} color={colorMap[line.type]}>
                     {line.text}

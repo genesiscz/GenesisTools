@@ -24,13 +24,7 @@ export function StatusBar({ contact, messageCount, inputMode, systemMessage }: S
     const icon = chatTypeIcon(contact.chatType);
 
     return (
-        <Box
-            borderStyle="single"
-            borderColor="blue"
-            justifyContent="space-between"
-            paddingLeft={1}
-            paddingRight={1}
-        >
+        <Box borderStyle="single" borderColor="blue" justifyContent="space-between" paddingLeft={1} paddingRight={1}>
             <Text color="blue" bold>
                 {icon} {contact.displayName}
                 {contact.username ? ` (@${contact.username})` : ""}

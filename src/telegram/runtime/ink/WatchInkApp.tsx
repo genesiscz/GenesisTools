@@ -30,7 +30,7 @@ export function WatchInkApp({ session }: WatchInkAppProps) {
                 suggestions.map((s, i) => ({
                     text: `  ${i + 1}. ${s}`,
                     type: "suggestion" as const,
-                })),
+                }))
             );
             setTimeout(() => setSystemLines([]), 30000);
         });

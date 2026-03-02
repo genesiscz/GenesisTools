@@ -1,11 +1,11 @@
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { render } from "ink";
-import { TGClient } from "../lib/TGClient";
+import { ConversationSyncService } from "../lib/ConversationSyncService";
 import { TelegramHistoryStore } from "../lib/TelegramHistoryStore";
 import { TelegramMessage } from "../lib/TelegramMessage";
 import { TelegramToolConfig } from "../lib/TelegramToolConfig";
-import { ConversationSyncService } from "../lib/ConversationSyncService";
+import { TGClient } from "../lib/TGClient";
 import { WatchInkApp } from "../runtime/ink/WatchInkApp";
 import { WatchSession } from "../runtime/shared/WatchSession";
 
@@ -52,14 +52,13 @@ export function registerWatchCommand(program: Command): void {
                       (c) =>
                           c.displayName.toLowerCase() === contactArg.toLowerCase() ||
                           c.userId === contactArg ||
-                          c.username?.toLowerCase() === contactArg.toLowerCase(),
+                          c.username?.toLowerCase() === contactArg.toLowerCase()
                   )
                 : undefined;
 
             if (!contact) {
                 const choices = data.contacts.map((c) => {
-                    const icon =
-                        c.chatType === "group" ? "[group]" : c.chatType === "channel" ? "[channel]" : "[user]";
+                    const icon = c.chatType === "group" ? "[group]" : c.chatType === "channel" ? "[channel]" : "[user]";
                     return { value: c.userId, label: `${icon} ${c.displayName}` };
                 });
 
@@ -110,7 +109,7 @@ export function registerWatchCommand(program: Command): void {
                                 ? peer.chatId
                                 : "channelId" in peer
                                   ? peer.channelId
-                                  : "",
+                                  : ""
                       )
                     : "";
 
@@ -118,9 +117,7 @@ export function registerWatchCommand(program: Command): void {
                     store.insertMessages(activeContact.userId, [msg.toJSON()]);
                     session.addIncoming(msg);
                 } else {
-                    const matchedContact = data.contacts.find(
-                        (c) => c.userId === senderId || c.userId === peerId,
-                    );
+                    const matchedContact = data.contacts.find((c) => c.userId === senderId || c.userId === peerId);
 
                     if (matchedContact) {
                         store.insertMessages(matchedContact.userId, [msg.toJSON()]);
