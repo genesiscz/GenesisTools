@@ -2,22 +2,22 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import type { TGClient } from "./TGClient";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
+import type { TGClient } from "./TGClient";
 
 const ATTACHMENTS_BASE = resolve(homedir(), ".genesis-tools/telegram/chats");
 
 export class AttachmentDownloader {
     constructor(
         private client: TGClient,
-        private store: TelegramHistoryStore,
+        private store: TelegramHistoryStore
     ) {}
 
     async download(
         chatId: string,
         messageId: number,
         attachmentIndex: number,
-        outputPath?: string,
+        outputPath?: string
     ): Promise<{ path: string; size: number; sha256: string }> {
         const attachments = this.store.getAttachments(chatId, messageId);
         const attachment = attachments.find((a) => a.attachment_index === attachmentIndex);
