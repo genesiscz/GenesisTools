@@ -371,6 +371,21 @@ export class Storage {
     }
 
     // ============================================
+    // Locking
+    // ============================================
+
+    /**
+     * Execute a function while holding an exclusive lock on this tool's config file.
+     * Prevents concurrent writes from multiple processes (e.g. token refresh races).
+     *
+     * @param fn - Async function to execute while holding the lock
+     * @param timeout - Maximum time in ms to wait for lock acquisition (default: 5000)
+     */
+    async withConfigLock<T>(fn: () => Promise<T>, timeout?: number): Promise<T> {
+        return withFileLock(`${this.configPath}.lock`, fn, timeout);
+    }
+
+    // ============================================
     // Atomic Operations
     // ============================================
 

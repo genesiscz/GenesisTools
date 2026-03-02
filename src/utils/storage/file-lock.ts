@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import logger from "@app/logger";
 
@@ -17,35 +18,58 @@ function isProcessAlive(pid: number): boolean {
     }
 }
 
+function isEexist(err: unknown): boolean {
+    return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST";
+}
+
 /**
- * Try to acquire a lock file. Returns true if acquired, false if already held by a live process.
+ * Try to acquire a lock file atomically.
+ * Uses O_CREAT|O_EXCL semantics (writeFile flag:'wx') so two processes
+ * cannot both "acquire" the lock simultaneously.
  */
 async function tryAcquireLock(lockPath: string): Promise<boolean> {
+    const dir = dirname(lockPath);
+
+    if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+    }
+
+    // Atomic exclusive create — fails with EEXIST if another process holds it
     try {
-        if (existsSync(lockPath)) {
-            const content = await Bun.file(lockPath).text();
-            const lockPid = parseInt(content.trim(), 10);
-
-            if (!Number.isNaN(lockPid) && isProcessAlive(lockPid)) {
-                return false;
-            }
-
-            // Stale lock (process is dead) - steal it
-            logger.debug(`Stealing stale lock at ${lockPath} (PID ${lockPid} is dead)`);
-        }
-
-        // Ensure parent directory exists
-        const dir = dirname(lockPath);
-
-        if (!existsSync(dir)) {
-            mkdirSync(dir, { recursive: true });
-        }
-
-        await Bun.write(lockPath, String(process.pid));
+        await writeFile(lockPath, String(process.pid), { flag: "wx" });
         return true;
-    } catch (error) {
-        logger.error(`Failed to acquire lock at ${lockPath}: ${error}`);
-        return false;
+    } catch (err) {
+        if (!isEexist(err)) {
+            logger.error(`Failed to acquire lock at ${lockPath}: ${err}`);
+            return false;
+        }
+
+        // Lock file exists — check if the owning process is still alive
+        let lockPid: number;
+
+        try {
+            const content = await Bun.file(lockPath).text();
+            lockPid = parseInt(content.trim(), 10);
+        } catch {
+            // Can't read the lock file — assume it's held
+            return false;
+        }
+
+        if (Number.isNaN(lockPid) || isProcessAlive(lockPid)) {
+            return false;
+        }
+
+        // Stale lock (process is dead) — steal it
+        logger.debug(`Stealing stale lock at ${lockPath} (PID ${lockPid} is dead)`);
+
+        try {
+            await unlink(lockPath);
+            await writeFile(lockPath, String(process.pid), { flag: "wx" });
+            return true;
+        } catch {
+            // Another process stole it between our unlink and write
+            return false;
+        }
     }
 }
 
@@ -72,7 +96,7 @@ function sleep(ms: number): Promise<void> {
 /**
  * Execute a function while holding a file lock.
  *
- * Creates a `.lock` file at lockPath with the current PID.
+ * Uses atomic O_CREAT|O_EXCL to guarantee mutual exclusion between processes.
  * If another live process holds the lock, waits up to `timeout` ms.
  * If the lock is stale (owning process is dead), steals it.
  *

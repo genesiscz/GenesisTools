@@ -1,7 +1,6 @@
 import type { AccountConfig } from "@app/claude/lib/config";
-import { CONFIG_LOCK_PATH, loadConfig, saveConfig } from "@app/claude/lib/config";
+import { loadConfig, saveConfig, withConfigLock } from "@app/claude/lib/config";
 import { refreshOAuthToken } from "@app/utils/claude/auth";
-import { withFileLock } from "@app/utils/storage/file-lock";
 
 export type { AccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
 
@@ -66,55 +65,51 @@ async function ensureValidToken(
     }
 
     // Token expired or expiring soon — refresh under file lock
-    return withFileLock(
-        CONFIG_LOCK_PATH,
-        async () => {
-            // Re-read config from disk (another process may have refreshed)
-            const freshConfig = await loadConfig();
-            const diskAccount = freshConfig.accounts[accountName];
+    return withConfigLock(async () => {
+        // Re-read config from disk (another process may have refreshed)
+        const freshConfig = await loadConfig();
+        const diskAccount = freshConfig.accounts[accountName];
 
-            if (!diskAccount?.refreshToken) {
-                return { accessToken: account.accessToken, refreshed: false };
+        if (!diskAccount?.refreshToken) {
+            return { accessToken: account.accessToken, refreshed: false };
+        }
+
+        // Another process already refreshed — use their tokens
+        if (diskAccount.expiresAt && diskAccount.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
+            account.accessToken = diskAccount.accessToken;
+            account.refreshToken = diskAccount.refreshToken;
+            account.expiresAt = diskAccount.expiresAt;
+            return { accessToken: diskAccount.accessToken, refreshed: true };
+        }
+
+        // Refresh using the on-disk token (in-memory might be stale)
+        let refreshed: Awaited<ReturnType<typeof refreshOAuthToken>>;
+        try {
+            refreshed = await refreshOAuthToken(diskAccount.refreshToken);
+        } catch (err) {
+            if (String(err).includes("invalid_grant")) {
+                throw new Error(`Token expired (invalid_grant). Run: tools claude login ${accountName}`);
             }
 
-            // Another process already refreshed — use their tokens
-            if (diskAccount.expiresAt && diskAccount.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
-                account.accessToken = diskAccount.accessToken;
-                account.refreshToken = diskAccount.refreshToken;
-                account.expiresAt = diskAccount.expiresAt;
-                return { accessToken: diskAccount.accessToken, refreshed: true };
-            }
+            throw err;
+        }
 
-            // Refresh using the on-disk token (in-memory might be stale)
-            let refreshed: Awaited<ReturnType<typeof refreshOAuthToken>>;
-            try {
-                refreshed = await refreshOAuthToken(diskAccount.refreshToken);
-            } catch (err) {
-                if (String(err).includes("invalid_grant")) {
-                    throw new Error(`Token expired (invalid_grant). Run: tools claude login ${accountName}`);
-                }
+        // Persist immediately BEFORE using the new token
+        freshConfig.accounts[accountName] = {
+            ...diskAccount,
+            accessToken: refreshed.accessToken,
+            refreshToken: refreshed.refreshToken,
+            expiresAt: refreshed.expiresAt,
+        };
+        await saveConfig(freshConfig);
 
-                throw err;
-            }
+        // Update in-memory account
+        account.accessToken = refreshed.accessToken;
+        account.refreshToken = refreshed.refreshToken;
+        account.expiresAt = refreshed.expiresAt;
 
-            // Persist immediately BEFORE using the new token
-            freshConfig.accounts[accountName] = {
-                ...diskAccount,
-                accessToken: refreshed.accessToken,
-                refreshToken: refreshed.refreshToken,
-                expiresAt: refreshed.expiresAt,
-            };
-            await saveConfig(freshConfig);
-
-            // Update in-memory account
-            account.accessToken = refreshed.accessToken;
-            account.refreshToken = refreshed.refreshToken;
-            account.expiresAt = refreshed.expiresAt;
-
-            return { accessToken: refreshed.accessToken, refreshed: true };
-        },
-        60_000
-    ); // 60s timeout for acquiring the config lock; refresh holds the lock while running
+        return { accessToken: refreshed.accessToken, refreshed: true };
+    }, 60_000); // 60s timeout for acquiring the config lock; refresh holds the lock while running
 }
 
 export async function fetchAllAccountsUsage(accounts: Record<string, AccountConfig>): Promise<AccountUsage[]> {
