@@ -8,7 +8,7 @@ import { NotificationManager } from "@app/claude/lib/usage/notification-manager"
 async function main(): Promise<void> {
     const dashConfig = await loadDashboardConfig();
     const cfg = await loadConfig();
-    let accounts: Record<string, AccountConfig> = cfg.accounts;
+    const accounts: Record<string, AccountConfig> = cfg.accounts;
 
     if (Object.keys(accounts).length === 0) {
         console.error("No accounts configured. Run: tools claude login");

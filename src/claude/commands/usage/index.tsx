@@ -34,7 +34,12 @@ export function registerUsageCommand(program: Command): void {
                 const config = await loadConfig();
                 let accounts = config.accounts;
 
-                if (accountArg && accounts[accountArg]) {
+                if (accountArg) {
+                    if (!accounts[accountArg]) {
+                        console.error(`Unknown account: ${accountArg}`);
+                        process.exit(1);
+                    }
+
                     accounts = { [accountArg]: accounts[accountArg] };
                 }
 

@@ -70,16 +70,16 @@ async function ensureValidToken(
         const freshConfig = await loadConfig();
         const diskAccount = freshConfig.accounts[accountName];
 
-        if (!diskAccount?.refreshToken) {
-            return { accessToken: account.accessToken, refreshed: false };
-        }
-
-        // Another process already refreshed — use their tokens
-        if (diskAccount.expiresAt && diskAccount.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
+        // Another process already refreshed — use their tokens (check before missing refreshToken)
+        if (diskAccount?.expiresAt && diskAccount.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
             account.accessToken = diskAccount.accessToken;
             account.refreshToken = diskAccount.refreshToken;
             account.expiresAt = diskAccount.expiresAt;
             return { accessToken: diskAccount.accessToken, refreshed: true };
+        }
+
+        if (!diskAccount?.refreshToken) {
+            return { accessToken: account.accessToken, refreshed: false };
         }
 
         // Refresh using the on-disk token (in-memory might be stale)
