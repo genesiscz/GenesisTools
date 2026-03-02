@@ -1,6 +1,7 @@
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { render } from "ink";
+import { ReadStream } from "tty";
 import { ConversationSyncService } from "../lib/ConversationSyncService";
 import { TelegramHistoryStore } from "../lib/TelegramHistoryStore";
 import { TelegramMessage } from "../lib/TelegramMessage";
@@ -128,10 +129,11 @@ export function registerWatchCommand(program: Command): void {
 
             p.log.info(`Watching ${activeContact.displayName}. Tab to switch contacts, /help for commands.`);
 
-            // Clack prompts leave stdin paused after readline.close(); resume so Ink can read input
-            process.stdin.resume();
+            // Clack prompts permanently damage process.stdin (readline internals).
+            // Create a fresh TTY stream on fd 0 so Ink gets clean input.
+            const freshStdin = new ReadStream(0);
 
-            const { waitUntilExit } = render(<WatchInkApp session={session} />);
+            const { waitUntilExit } = render(<WatchInkApp session={session} />, { stdin: freshStdin });
 
             await waitUntilExit();
 
