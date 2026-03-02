@@ -44,10 +44,6 @@ export function WatchInkApp({ session }: WatchInkAppProps) {
         }
     });
 
-    const clearSystemLines = useCallback(() => {
-        setTimeout(() => setSystemLines([]), 10000);
-    }, []);
-
     const handleSubmit = useCallback(
         async (text: string) => {
             setSystemLines([]);
@@ -62,7 +58,6 @@ export function WatchInkApp({ session }: WatchInkAppProps) {
 
                 if (result.handled && result.output) {
                     setSystemLines([{ text: result.output, type: "info" }]);
-                    clearSystemLines();
                 }
 
                 return;
@@ -70,7 +65,6 @@ export function WatchInkApp({ session }: WatchInkAppProps) {
 
             if (session.inputMode === "careful") {
                 setSystemLines([{ text: "Careful mode: use /send <message> to send", type: "info" }]);
-                clearSystemLines();
                 return;
             }
 
@@ -85,7 +79,7 @@ export function WatchInkApp({ session }: WatchInkAppProps) {
                 ]);
             }
         },
-        [session, exit, clearSystemLines]
+        [session, exit]
     );
 
     const handleContactSelect = useCallback(
