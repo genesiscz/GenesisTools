@@ -1,12 +1,16 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { AccountConfig } from "@app/claude/lib/config";
 import { loadConfig, saveConfig } from "@app/claude/lib/config";
 import { refreshOAuthToken } from "@app/utils/claude/auth";
+import { withFileLock } from "@app/utils/storage/file-lock";
 
 export type { AccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
 export { getKeychainCredentials } from "@app/utils/claude/auth";
 
 // Refresh tokens 5 minutes before expiry to avoid edge cases
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
+const CONFIG_LOCK_PATH = join(homedir(), ".genesis-tools", "claude", "config.json.lock");
 
 export interface UsageBucket {
     utilization: number;
@@ -48,30 +52,60 @@ export async function fetchUsage(accessToken: string): Promise<UsageResponse> {
 
 /**
  * Check if an account's token needs refresh and refresh if possible.
- * Returns the (possibly updated) access token.
+ * Persists new tokens to disk immediately under a file lock to prevent
+ * token loss on crash (refresh tokens are single-use).
  */
-async function ensureValidToken(account: AccountConfig): Promise<{ accessToken: string; refreshed: boolean }> {
+async function ensureValidToken(
+    accountName: string,
+    account: AccountConfig
+): Promise<{ accessToken: string; refreshed: boolean }> {
     // No refresh token? Can't auto-refresh
     if (!account.refreshToken) {
         return { accessToken: account.accessToken, refreshed: false };
     }
 
     // Token still valid? No refresh needed
-    const now = Date.now();
-    if (account.expiresAt && account.expiresAt > now + EXPIRY_BUFFER_MS) {
+    if (account.expiresAt && account.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
         return { accessToken: account.accessToken, refreshed: false };
     }
 
-    // Token expired or expiring soon — refresh it
-    const refreshed = await refreshOAuthToken(account.refreshToken);
+    // Token expired or expiring soon — refresh under file lock
+    return withFileLock(CONFIG_LOCK_PATH, async () => {
+        // Re-read config from disk (another process may have refreshed)
+        const freshConfig = await loadConfig();
+        const diskAccount = freshConfig.accounts[accountName];
 
-    // Update in-memory account so subsequent polls use fresh tokens
-    // (Critical: refresh tokens are single-use, old RT is now invalid)
-    account.accessToken = refreshed.accessToken;
-    account.refreshToken = refreshed.refreshToken;
-    account.expiresAt = refreshed.expiresAt;
+        if (!diskAccount?.refreshToken) {
+            return { accessToken: account.accessToken, refreshed: false };
+        }
 
-    return { accessToken: refreshed.accessToken, refreshed: true };
+        // Another process already refreshed — use their tokens
+        if (diskAccount.expiresAt && diskAccount.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
+            account.accessToken = diskAccount.accessToken;
+            account.refreshToken = diskAccount.refreshToken;
+            account.expiresAt = diskAccount.expiresAt;
+            return { accessToken: diskAccount.accessToken, refreshed: true };
+        }
+
+        // Refresh using the on-disk token (in-memory might be stale)
+        const refreshed = await refreshOAuthToken(diskAccount.refreshToken);
+
+        // Persist immediately BEFORE using the new token
+        freshConfig.accounts[accountName] = {
+            ...diskAccount,
+            accessToken: refreshed.accessToken,
+            refreshToken: refreshed.refreshToken,
+            expiresAt: refreshed.expiresAt,
+        };
+        await saveConfig(freshConfig);
+
+        // Update in-memory account
+        account.accessToken = refreshed.accessToken;
+        account.refreshToken = refreshed.refreshToken;
+        account.expiresAt = refreshed.expiresAt;
+
+        return { accessToken: refreshed.accessToken, refreshed: true };
+    }, 15_000); // 15s timeout — refresh API call can be slow
 }
 
 export async function fetchAllAccountsUsage(accounts: Record<string, AccountConfig>): Promise<AccountUsage[]> {
@@ -82,30 +116,11 @@ export async function fetchAllAccountsUsage(accounts: Record<string, AccountConf
 
     const results = await Promise.allSettled(
         entries.map(async ([name, account]) => {
-            // Auto-refresh expired tokens
-            const { accessToken } = await ensureValidToken(account);
+            const { accessToken } = await ensureValidToken(name, account);
             const usage = await fetchUsage(accessToken);
             return { accountName: name, label: account.label, usage } satisfies AccountUsage;
         })
     );
-
-    // Persist any refreshed tokens to disk in a single write (avoids race conditions)
-    const config = await loadConfig();
-    let dirty = false;
-    for (const [name, account] of entries) {
-        if (account.refreshToken && config.accounts[name]) {
-            const stored = config.accounts[name];
-            if (stored.accessToken !== account.accessToken) {
-                stored.accessToken = account.accessToken;
-                stored.refreshToken = account.refreshToken;
-                stored.expiresAt = account.expiresAt;
-                dirty = true;
-            }
-        }
-    }
-    if (dirty) {
-        await saveConfig(config);
-    }
 
     return results.map((r, i) =>
         r.status === "fulfilled"
