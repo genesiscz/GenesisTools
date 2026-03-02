@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:f
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import logger from "@app/logger";
-import { withFileLock } from "./file-lock";
+import { withFileLock as acquireFileLock } from "./file-lock";
 
 /**
  * TTL string format: "<number> <unit>" or "<number><unit>"
@@ -375,14 +375,46 @@ export class Storage {
     // ============================================
 
     /**
-     * Execute a function while holding an exclusive lock on this tool's config file.
-     * Prevents concurrent writes from multiple processes (e.g. token refresh races).
+     * Execute a function while holding a file-based exclusive lock.
      *
-     * @param fn - Async function to execute while holding the lock
-     * @param timeout - Maximum time in ms to wait for lock acquisition (default: 5000)
+     * The lock file is created at `<file>.lock` using O_CREAT|O_EXCL for true atomicity.
+     * If another live process holds the lock, waits up to `timeout` ms (default: 5000).
+     * If the lock is stale (owning process is dead), it is stolen.
+     *
+     * @example
+     * await storage.withFileLock({
+     *     file: storage.getConfigPath(),
+     *     fn: async () => { ... },
+     *     timeout: 60_000,
+     *     onTimeout: (err) => { throw new Error(`Lock timed out: ${err.message}`); },
+     * });
+     */
+    async withFileLock<T>(options: {
+        /** Absolute path of the file to lock; `.lock` is appended for the lock file */
+        file: string;
+        /** Async function to execute while holding the lock */
+        fn: () => Promise<T>;
+        /** Max ms to wait for lock acquisition (default: 5000) */
+        timeout?: number;
+        /** Called when lock cannot be acquired within timeout; may return a fallback or re-throw */
+        onTimeout?: (err: Error) => T | Promise<T>;
+    }): Promise<T> {
+        try {
+            return await acquireFileLock(`${options.file}.lock`, options.fn, options.timeout);
+        } catch (err) {
+            if (options.onTimeout && err instanceof Error && err.message.startsWith("Failed to acquire file lock")) {
+                return options.onTimeout(err);
+            }
+
+            throw err;
+        }
+    }
+
+    /**
+     * Convenience shorthand: lock this tool's config file.
      */
     async withConfigLock<T>(fn: () => Promise<T>, timeout?: number): Promise<T> {
-        return withFileLock(`${this.configPath}.lock`, fn, timeout);
+        return this.withFileLock({ file: this.configPath, fn, timeout });
     }
 
     // ============================================
@@ -402,37 +434,35 @@ export class Storage {
     async atomicUpdate<T>(relativePath: string, updater: (current: T | null) => T): Promise<T> {
         await this.ensureDirs();
         const filePath = this.getCacheFilePath(relativePath);
-        const lockPath = `${filePath}.lock`;
 
-        return withFileLock(lockPath, async () => {
-            // Read current value
-            let current: T | null = null;
+        return this.withFileLock({
+            file: filePath,
+            fn: async () => {
+                let current: T | null = null;
 
-            try {
-                if (existsSync(filePath)) {
-                    const content = await Bun.file(filePath).text();
-                    current = JSON.parse(content) as T;
+                try {
+                    if (existsSync(filePath)) {
+                        const content = await Bun.file(filePath).text();
+                        current = JSON.parse(content) as T;
+                    }
+                } catch (error) {
+                    logger.debug(`atomicUpdate: Could not read existing file at ${filePath}: ${error}`);
+                    current = null;
                 }
-            } catch (error) {
-                logger.debug(`atomicUpdate: Could not read existing file at ${filePath}: ${error}`);
-                current = null;
-            }
 
-            // Apply updater
-            const updated = updater(current);
+                const updated = updater(current);
 
-            // Ensure parent directory exists
-            const dir = dirname(filePath);
+                const dir = dirname(filePath);
 
-            if (!existsSync(dir)) {
-                mkdirSync(dir, { recursive: true });
-            }
+                if (!existsSync(dir)) {
+                    mkdirSync(dir, { recursive: true });
+                }
 
-            // Write new value
-            await Bun.write(filePath, JSON.stringify(updated, null, 2));
-            logger.debug(`Atomic update complete: ${filePath}`);
+                await Bun.write(filePath, JSON.stringify(updated, null, 2));
+                logger.debug(`Atomic update complete: ${filePath}`);
 
-            return updated;
+                return updated;
+            },
         });
     }
 
