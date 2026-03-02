@@ -1,10 +1,17 @@
-import { existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import logger from "@app/logger";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 50;
+
+export class LockTimeoutError extends Error {
+    constructor(lockPath: string, timeout: number) {
+        super(`Failed to acquire file lock at ${lockPath} within ${timeout}ms. Another process may be holding it.`);
+        this.name = "LockTimeoutError";
+    }
+}
 
 /**
  * Check if a process with the given PID is still alive.
@@ -86,7 +93,14 @@ async function tryAcquireLock(lockPath: string): Promise<boolean> {
  */
 function releaseLock(lockPath: string): void {
     try {
-        if (existsSync(lockPath)) {
+        if (!existsSync(lockPath)) {
+            return;
+        }
+
+        // Only delete if we still own it (our PID is in the file)
+        const content = readFileSync(lockPath, "utf-8").trim();
+
+        if (content === String(process.pid)) {
             unlinkSync(lockPath);
         }
     } catch (error) {
@@ -124,9 +138,7 @@ export async function withFileLock<T>(
         const elapsed = Date.now() - startTime;
 
         if (elapsed >= timeout) {
-            throw new Error(
-                `Failed to acquire file lock at ${lockPath} within ${timeout}ms. Another process may be holding it.`
-            );
+            throw new LockTimeoutError(lockPath, timeout);
         }
 
         await sleep(POLL_INTERVAL_MS);

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:f
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import logger from "@app/logger";
-import { withFileLock as acquireFileLock } from "./file-lock";
+import { LockTimeoutError, withFileLock as acquireFileLock } from "./file-lock";
 
 /**
  * TTL string format: "<number> <unit>" or "<number><unit>"
@@ -402,7 +402,7 @@ export class Storage {
         try {
             return await acquireFileLock(`${options.file}.lock`, options.fn, options.timeout);
         } catch (err) {
-            if (options.onTimeout && err instanceof Error && err.message.startsWith("Failed to acquire file lock")) {
+            if (options.onTimeout && err instanceof LockTimeoutError) {
                 return options.onTimeout(err);
             }
 
