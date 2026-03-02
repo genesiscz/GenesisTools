@@ -1,8 +1,8 @@
 import bigInt from "big-integer";
 import { Api, TelegramClient } from "telegram";
+import { NewMessage, type NewMessageEvent } from "telegram/events";
 import { DeletedMessage, type DeletedMessageEvent } from "telegram/events/DeletedMessage";
 import { EditedMessage, type EditedMessageEvent } from "telegram/events/EditedMessage";
-import { NewMessage, type NewMessageEvent } from "telegram/events";
 import { StringSession } from "telegram/sessions";
 import type { Dialog } from "telegram/tl/custom/dialog";
 import type { TelegramToolConfig } from "./TelegramToolConfig";
