@@ -43,6 +43,7 @@ tools azure-devops timelog import <file>         # Bulk import time logs (with p
 | `--attachments-prefix <prefix>` | Only attachments starting with this name |
 | `--attachments-suffix <suffix>` | Only attachments ending with this (e.g. .har) |
 | `--output-dir <path>` | Custom directory for downloaded attachments |
+| `--images` | Download inline images from description/comments |
 
 ### Output Paths
 
@@ -57,6 +58,16 @@ Attachments are downloaded when any `--attachments-*` filter flag is provided. W
 - **Default**: Same folder as task file: `.claude/azure/tasks/<taskid>-<attachment-name>`
 - With `--task-folders`: `.claude/azure/tasks/<id>/<taskid>-<attachment-name>`
 - With `--output-dir /custom/path`: `/custom/path/<taskid>-<attachment-name>`
+
+### Inline Image Output Paths
+
+Inline images (screenshots embedded in description/comments HTML) are downloaded when `--images` is provided.
+
+- **Default**: Same folder as task file: `.claude/azure/tasks/<taskid>-<imagename>.png`
+- With `--task-folders`: `.claude/azure/tasks/<id>/<taskid>-<imagename>.png`
+- Images are referenced in the `.md` file with relative paths
+
+**Recommended**: Use `--task-folders --images` together to keep each work item's files organized in its own directory.
 
 ## Operations
 
@@ -100,14 +111,23 @@ tools azure-devops query "Active Tasks" --download-workitems --category react19
 
 When user says "analyze workitem/task X" or "analyze tasks from query Y":
 
-1. Fetch work item(s):
+1. Fetch work item(s) with images:
    ```bash
-   tools azure-devops workitem <ids> --category <cat> --task-folders
+   tools azure-devops workitem <ids> --category <cat> --task-folders --images
    ```
 
 2. Read the generated `.md` file for each work item
 
-3. Spawn **Explore agent** (Task tool with `subagent_type: "Explore"`) for each:
+3. **Read inline images** - Check if the work item directory contains image files:
+   ```bash
+   ls .claude/azure/tasks/<category>/<id>/<id>-*.{png,jpg,gif,jpeg} 2>/dev/null
+   ```
+   If images exist, use the **Read tool** to view each image file. This gives visual context for:
+   - Bug screenshots showing the issue
+   - Design mockups showing expected behavior
+   - UI comparisons (current vs expected)
+
+4. Spawn **Explore agent** (Task tool with `subagent_type: "Explore"`) for each:
 
    ```
    Analyze codebase for Azure DevOps work item:
@@ -116,6 +136,7 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
    State: {state} | Severity: {severity}
 
    **Description:** {description}
+   **Visual Context:** {describe what the inline images show, if any}
    **Comments:** {comments}
 
    Find:
@@ -173,6 +194,8 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 | "Download .har files from task 12345" | `tools azure-devops workitem 12345 --attachments-suffix .har` |
 | "Get attachments from last hour for 12345" | Compute datetime 1h ago, then `tools azure-devops workitem 12345 --attachments-from "2026-02-12T10:00:00"` |
 | "Download all attachments for task 12345" | `tools azure-devops workitem 12345 --attachments-from 2000-01-01` |
+| "Get task 261575 with screenshots" | `tools azure-devops workitem 261575 --task-folders --images` |
+| "Analyze bug with images" | Fetch with `--images` → Read images → Explore agent with visual context |
 
 ## Creating Work Items
 

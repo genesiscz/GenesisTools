@@ -188,7 +188,9 @@ export type WorkItemHandler = (
     category?: string,
     taskFolders?: boolean,
     queryMetadata?: Map<number, QueryItemMetadata>,
-    fetchOptions?: { comments?: boolean; updates?: boolean }
+    fetchOptions?: { comments?: boolean; updates?: boolean },
+    attachmentFilter?: undefined,
+    downloadImages?: boolean
 ) => Promise<void>;
 
 let workItemHandler: WorkItemHandler | null = null;
@@ -213,6 +215,7 @@ interface QueryOptions {
     downloadWorkitems?: boolean;
     category?: string;
     taskFolders?: boolean;
+    images?: boolean;
 }
 
 /**
@@ -225,7 +228,8 @@ export async function handleQuery(
     filters?: QueryFilters,
     downloadWorkitems?: boolean,
     category?: string,
-    taskFolders?: boolean
+    taskFolders?: boolean,
+    downloadImages?: boolean
 ): Promise<void> {
     silentMode = format === "json"; // Suppress progress messages for JSON output
     logger.debug(`[query] Starting with input: ${input}, force=${forceRefresh}`);
@@ -361,7 +365,7 @@ export async function handleQuery(
         // Pass queryMetadata for smart comparison (ignores forceRefresh when metadata available)
         await workItemHandler(ids, format, false, effectiveCategory, effectiveTaskFolders, queryMetadata, {
             comments: true,
-        });
+        }, undefined, downloadImages);
     }
 }
 
@@ -383,6 +387,7 @@ export function registerQueryCommand(program: Command): void {
         .option("--download-workitems", "Download all work items to tasks/")
         .option("--category <name>", "Save to tasks/<category>/")
         .option("--task-folders", "Save in tasks/<id>/ subfolder")
+        .option("--images", "Download inline images from description and comments")
         .action(async (input: string, options: QueryOptions) => {
             // Parse filters from options
             const filters: QueryFilters = {};
@@ -419,7 +424,8 @@ export function registerQueryCommand(program: Command): void {
                 filters,
                 options.downloadWorkitems,
                 options.category,
-                options.taskFolders
+                options.taskFolders,
+                options.images
             );
         });
 }
