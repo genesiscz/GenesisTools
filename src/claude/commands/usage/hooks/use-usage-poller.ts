@@ -58,29 +58,28 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
         setPollingLabel(names.length > 0 ? names.join(", ") : "...");
 
         try {
-            if (Object.keys(accountsRef.current).length === 0) {
-                const cfg = await loadConfig();
-                let accounts = cfg.accounts;
+            // Always reload config — tokens may have been refreshed by daemon or another process
+            const cfg = await loadConfig();
+            let accounts = cfg.accounts;
 
-                if (Object.keys(accounts).length === 0) {
-                    const kc = await getKeychainCredentials();
+            if (Object.keys(accounts).length === 0) {
+                const kc = await getKeychainCredentials();
 
-                    if (kc) {
-                        accounts = {
-                            default: {
-                                accessToken: kc.accessToken,
-                                label: kc.subscriptionType,
-                            },
-                        };
-                    }
+                if (kc) {
+                    accounts = {
+                        default: {
+                            accessToken: kc.accessToken,
+                            label: kc.subscriptionType,
+                        },
+                    };
                 }
-
-                if (accountFilter) {
-                    accounts = accounts[accountFilter] ? { [accountFilter]: accounts[accountFilter] } : accounts;
-                }
-
-                accountsRef.current = accounts;
             }
+
+            if (accountFilter) {
+                accounts = accounts[accountFilter] ? { [accountFilter]: accounts[accountFilter] } : accounts;
+            }
+
+            accountsRef.current = accounts;
 
             setPollingLabel(Object.keys(accountsRef.current).join(", ") || "...");
 

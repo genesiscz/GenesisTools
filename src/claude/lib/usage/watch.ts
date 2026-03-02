@@ -161,6 +161,13 @@ export async function watchUsage(
     const watcher = new UsageWatcher(notifications);
     const intervalMs = (notifications.watchInterval || 60) * 1000;
 
+    const cleanup = () => {
+        console.log("\nStopping watch mode...");
+        process.exit(0);
+    };
+    process.on("SIGINT", cleanup);
+    process.on("SIGTERM", cleanup);
+
     while (true) {
         // Fetch while showing old data, then clear and render
         const results = await fetchAllAccountsUsage(accounts);
