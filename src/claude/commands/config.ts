@@ -1,6 +1,6 @@
 import { type ClaudeConfig, loadConfig, saveConfig } from "@app/claude/lib/config";
-import { fetchUsage, getKeychainCredentials } from "@app/claude/lib/usage/api";
-import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount, refreshOAuthToken } from "@app/utils/claude/auth";
+import { fetchUsage } from "@app/claude/lib/usage/api";
+import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@app/utils/claude/auth";
 import { copyToClipboard } from "@app/utils/clipboard";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -239,7 +239,6 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
         message: "Account action:",
         options: [
             { value: "add-oauth", label: "Login with OAuth (recommended)" },
-            { value: "add-keychain", label: "Add from Keychain (forks Claude Code's token)" },
             { value: "add-manual", label: "Add with manual token" },
             ...(Object.keys(config.accounts).length > 0 ? [{ value: "remove", label: "Remove an account" }] : []),
             { value: "back", label: "Back" },
@@ -252,114 +251,6 @@ async function manageAccounts(config: ClaudeConfig): Promise<void> {
 
     if (action === "add-oauth") {
         await addAccountViaOAuth(config);
-    } else if (action === "add-keychain") {
-        const spinner = p.spinner();
-        spinner.start("Reading Keychain & fetching profile...");
-        const kc = await getKeychainCredentials();
-        if (!kc) {
-            spinner.stop("No credentials found in Keychain.");
-            p.log.warn("Make sure you're logged into Claude Code first.");
-            return;
-        }
-        spinner.stop("Credentials found.");
-
-        const api = kc.account.api;
-        const cj = kc.account.claudeJson;
-        const email = api?.account.email ?? cj?.emailAddress;
-
-        const infoLines: string[] = [];
-        if (api) {
-            const a = api.account;
-            const o = api.organization;
-            infoLines.push(`${pc.dim("API:")} ${pc.green(a.display_name)} <${pc.cyan(a.email)}>`);
-            infoLines.push(`     ${o.organization_type} — ${o.billing_type} (${o.rate_limit_tier})`);
-            infoLines.push(
-                `     subscription: ${o.subscription_status}, extra usage: ${o.has_extra_usage_enabled ? "enabled" : "disabled"}`
-            );
-        }
-        if (cj) {
-            infoLines.push(
-                `${pc.dim(".claude.json:")} ${cj.displayName ?? "?"} <${pc.cyan(cj.emailAddress ?? "?")}> — ${cj.billingType ?? "?"}`
-            );
-        }
-        infoLines.push(
-            `${pc.dim("Token:")} ${pc.dim(maskToken(kc.accessToken))}${kc.subscriptionType ? ` — ${pc.cyan(kc.subscriptionType)}` : ""}${kc.rateLimitTier ? pc.dim(` (${kc.rateLimitTier})`) : ""}`
-        );
-        if (kc.refreshToken) {
-            infoLines.push(`${pc.dim("Refresh:")} ${pc.green("available")} — token can be auto-refreshed`);
-        } else {
-            infoLines.push(
-                `${pc.dim("Refresh:")} ${pc.yellow("not available")} — token cannot be refreshed after expiry`
-            );
-        }
-
-        p.note(infoLines.join("\n"), "Found Account");
-
-        const name = await p.text({
-            message: "Name for this account:",
-            placeholder: email?.split("@")[0]?.toLowerCase() ?? "personal",
-            validate: (val) => {
-                if (!val?.trim()) {
-                    return "Name is required";
-                }
-                if (config.accounts[val]) {
-                    return `Account "${val}" already exists`;
-                }
-            },
-        });
-        if (p.isCancel(name)) {
-            return;
-        }
-
-        // If refresh token available, "fork" it so we have our own copy
-        // This prevents conflicts with Claude Code's token management
-        let accessToken = kc.accessToken;
-        let refreshToken = kc.refreshToken;
-        let expiresAt = kc.expiresAt;
-
-        if (kc.refreshToken) {
-            const forkSpinner = p.spinner();
-            forkSpinner.start("Forking token (creating independent copy for this tool)...");
-            try {
-                const forked = await refreshOAuthToken(kc.refreshToken);
-                accessToken = forked.accessToken;
-                refreshToken = forked.refreshToken;
-                expiresAt = forked.expiresAt;
-                forkSpinner.stop("Token forked — this account has its own refresh token.");
-                p.log.info(pc.dim("Note: Claude Code will need to re-login (its token was used to create this fork)."));
-            } catch (err) {
-                forkSpinner.stop(`Token fork failed: ${err}`);
-                p.log.warn("Saving without refresh capability. Token will expire and require manual update.");
-            }
-        }
-
-        const validateSpinner = p.spinner();
-        validateSpinner.start("Validating token...");
-        try {
-            await fetchUsage(accessToken);
-            validateSpinner.stop("Token is valid.");
-        } catch (err) {
-            validateSpinner.stop(`Token validation failed: ${err}`);
-            const proceed = await p.confirm({
-                message: "Save anyway?",
-                initialValue: false,
-            });
-            if (p.isCancel(proceed) || !proceed) {
-                return;
-            }
-        }
-
-        config.accounts[name as string] = {
-            accessToken,
-            refreshToken,
-            expiresAt,
-            label: kc.subscriptionType,
-        };
-        if (!config.defaultAccount) {
-            config.defaultAccount = name as string;
-        }
-        await saveConfig(config);
-        p.log.success(`Account "${name}" saved${refreshToken ? " with auto-refresh support" : ""}.`);
     } else if (action === "add-manual") {
         const name = await p.text({
             message: "Name for this account:",
@@ -570,63 +461,26 @@ export function registerConfigCommand(program: Command): void {
 
     configCmd
         .command("add <name>")
-        .description("Add an account (reads from Keychain by default)")
-        .option("--token <token>", "OAuth access token (instead of Keychain)")
-        .option("--no-fork", "Don't fork the token (keeps Claude Code's token valid)")
-        .action(async (name: string, opts) => {
+        .description("Add an account with a manual token (use `tools claude login` for OAuth)")
+        .option("--token <token>", "OAuth access token")
+        .action(async (name: string, opts: { token?: string }) => {
             const config = await loadConfig();
             if (config.accounts[name]) {
                 p.log.error(`Account "${name}" already exists.`);
                 process.exit(1);
             }
 
-            let accessToken: string;
-            let refreshToken: string | undefined;
-            let expiresAt: number | undefined;
-            let label: string | undefined;
-
-            if (opts.token) {
-                accessToken = opts.token;
-            } else {
-                const kc = await getKeychainCredentials();
-                if (!kc) {
-                    p.log.error("No credentials found in Keychain. Use --token to provide manually.");
-                    process.exit(1);
-                }
-                accessToken = kc.accessToken;
-                refreshToken = kc.refreshToken;
-                expiresAt = kc.expiresAt;
-                label = kc.subscriptionType;
-                const who = kc.account.api?.account.display_name ?? kc.account.claudeJson?.displayName;
-                p.log.info(
-                    `Using Keychain credentials: ${pc.cyan(label ?? "unknown plan")}${who ? ` — ${pc.green(who)}` : ""}`
-                );
-
-                // Fork the token unless --no-fork is specified
-                if (opts.fork !== false && kc.refreshToken) {
-                    p.log.step("Forking token (creating independent copy)...");
-                    try {
-                        const forked = await refreshOAuthToken(kc.refreshToken);
-                        accessToken = forked.accessToken;
-                        refreshToken = forked.refreshToken;
-                        expiresAt = forked.expiresAt;
-                        p.log.success("Token forked — account has its own refresh token.");
-                        p.log.warn("Claude Code will need to re-login.");
-                    } catch (err) {
-                        p.log.error(`Token fork failed: ${err}`);
-                        p.log.warn("Saving without refresh capability.");
-                        refreshToken = undefined;
-                        expiresAt = undefined;
-                    }
-                }
+            if (!opts.token) {
+                p.log.error("--token is required. Use `tools claude login` for OAuth with auto-refresh.");
+                process.exit(1);
             }
 
-            config.accounts[name] = { accessToken, refreshToken, expiresAt, label };
+            config.accounts[name] = { accessToken: opts.token };
             if (!config.defaultAccount) {
                 config.defaultAccount = name;
             }
             await saveConfig(config);
-            p.log.success(`Account "${name}" added${refreshToken ? " with auto-refresh" : ""}.`);
+            p.log.success(`Account "${name}" added.`);
         });
 
     configCmd
