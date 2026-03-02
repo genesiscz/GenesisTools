@@ -1,8 +1,8 @@
 import { AIChat } from "@app/ask/index.lib";
 import { StyleProfileEngine } from "./StyleProfileEngine";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
-import { DEFAULTS } from "./types";
 import type { SuggestionModeConfig, TelegramContactV2 } from "./types";
+import { DEFAULTS } from "./types";
 
 interface SuggestionPromptInput {
     contactName: string;
@@ -19,7 +19,7 @@ export class SuggestionEngine {
     constructor(
         private store: TelegramHistoryStore,
         private contact: TelegramContactV2,
-        private myName: string,
+        private myName: string
     ) {
         this.styleEngine = new StyleProfileEngine(store);
     }
@@ -28,10 +28,7 @@ export class SuggestionEngine {
         return this.contact.modes.suggestions;
     }
 
-    async suggest(
-        recentMessages: Array<{ sender: string; text: string }>,
-        customPrompt?: string,
-    ): Promise<string[]> {
+    async suggest(recentMessages: Array<{ sender: string; text: string }>, customPrompt?: string): Promise<string[]> {
         const config = this.getConfig();
         const count = config.count ?? 3;
 
@@ -89,7 +86,7 @@ export class SuggestionEngine {
 
     scheduleAutoSuggest(
         recentMessages: Array<{ sender: string; text: string }>,
-        onSuggestions: (suggestions: string[]) => void,
+        onSuggestions: (suggestions: string[]) => void
     ): void {
         const config = this.getConfig();
 
@@ -155,7 +152,7 @@ export class SuggestionEngine {
         const suggestions: string[] = [];
 
         for (const line of lines) {
-            const match = line.match(/^\d+[.):\-]\s*(.+)/);
+            const match = line.match(/^\d+[.):-]\s*(.+)/);
 
             if (match) {
                 suggestions.push(match[1].trim());

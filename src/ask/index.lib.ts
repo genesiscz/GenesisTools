@@ -4,8 +4,6 @@ export { ChatLog } from "./lib/ChatLog";
 export { ChatSession } from "./lib/ChatSession";
 export { ChatSessionManager } from "./lib/ChatSessionManager";
 export { ChatTurn } from "./lib/ChatTurn";
-export { ModelSelector } from "./providers/ModelSelector";
-export { ProviderManager } from "./providers/ProviderManager";
 export type {
     AIChatOptions,
     AIChatSelection,
@@ -18,4 +16,6 @@ export type {
     SessionStats,
     ToolCallResult,
 } from "./lib/types";
+export { ModelSelector } from "./providers/ModelSelector";
+export { ProviderManager } from "./providers/ProviderManager";
 export type { DetectedProvider, ModelInfo, ProviderChoice } from "./types";

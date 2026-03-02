@@ -2,8 +2,8 @@ import { AIChat } from "@app/ask/index.lib";
 import { z } from "zod";
 import { parseDate } from "./DateParser";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
-import { DEFAULTS } from "./types";
 import type { AskModeConfig, TelegramContactV2 } from "./types";
+import { DEFAULTS } from "./types";
 
 const searchMessagesSchema = z.object({
     query: z.string().optional().describe("Text to search for"),
@@ -54,7 +54,7 @@ export class AssistantEngine {
     constructor(
         private store: TelegramHistoryStore,
         private contact: TelegramContactV2,
-        private myName: string,
+        private myName: string
     ) {}
 
     private getConfig(): AskModeConfig {
@@ -81,12 +81,15 @@ export class AssistantEngine {
     }
 
     private buildSystemPrompt(config: AskModeConfig): string {
-        return config.systemPrompt ?? [
-            `You are a helpful assistant analyzing a Telegram conversation between "${this.myName}" and "${this.contact.displayName}".`,
-            "You have access to tools that let you search the full message history.",
-            "Use the tools to find relevant messages before answering questions.",
-            "Be concise but thorough. Reference specific messages when relevant.",
-        ].join("\n");
+        return (
+            config.systemPrompt ??
+            [
+                `You are a helpful assistant analyzing a Telegram conversation between "${this.myName}" and "${this.contact.displayName}".`,
+                "You have access to tools that let you search the full message history.",
+                "Use the tools to find relevant messages before answering questions.",
+                "Be concise but thorough. Reference specific messages when relevant.",
+            ].join("\n")
+        );
     }
 
     buildTools() {
@@ -100,8 +103,8 @@ export class AssistantEngine {
                 execute: async (input: SearchMessagesInput) => {
                     const results = store.queryMessages(contactId, {
                         textPattern: input.query,
-                        since: input.since ? parseDate(input.since) ?? undefined : undefined,
-                        until: input.until ? parseDate(input.until) ?? undefined : undefined,
+                        since: input.since ? (parseDate(input.since) ?? undefined) : undefined,
+                        until: input.until ? (parseDate(input.until) ?? undefined) : undefined,
                         sender: input.sender ?? "any",
                         limit: input.limit ?? 20,
                     });
@@ -120,8 +123,8 @@ export class AssistantEngine {
                 parameters: messageCountSchema,
                 execute: async (input: MessageCountInput) => {
                     const results = store.queryMessages(contactId, {
-                        since: input.since ? parseDate(input.since) ?? undefined : undefined,
-                        until: input.until ? parseDate(input.until) ?? undefined : undefined,
+                        since: input.since ? (parseDate(input.since) ?? undefined) : undefined,
+                        until: input.until ? (parseDate(input.until) ?? undefined) : undefined,
                         sender: input.sender ?? "any",
                     });
                     return { count: results.length };
@@ -134,7 +137,7 @@ export class AssistantEngine {
                 execute: async (input: ConversationSummaryInput) => {
                     const results = store.queryMessages(contactId, {
                         since: parseDate(input.since) ?? undefined,
-                        until: input.until ? parseDate(input.until) ?? undefined : undefined,
+                        until: input.until ? (parseDate(input.until) ?? undefined) : undefined,
                         limit: input.limit ?? 50,
                     });
 
@@ -155,14 +158,15 @@ export class AssistantEngine {
                     }
 
                     return store.listAttachments(contactId, {
-                        since: input.since ? parseDate(input.since) ?? undefined : undefined,
-                        until: input.until ? parseDate(input.until) ?? undefined : undefined,
+                        since: input.since ? (parseDate(input.since) ?? undefined) : undefined,
+                        until: input.until ? (parseDate(input.until) ?? undefined) : undefined,
                     });
                 },
             },
 
             get_style_analysis: {
-                description: "Analyze writing style patterns for a sender (message length, emoji usage, common phrases)",
+                description:
+                    "Analyze writing style patterns for a sender (message length, emoji usage, common phrases)",
                 parameters: styleAnalysisSchema,
                 execute: async (input: StyleAnalysisInput) => {
                     const messages = store.queryMessages(contactId, {
@@ -191,7 +195,13 @@ export class AssistantEngine {
                 parameters: searchAcrossChatsSchema,
                 execute: async (input: SearchAcrossChatsInput) => {
                     const chats = store.listChats();
-                    const allResults: Array<{ chatId: string; chatTitle: string; date: string; sender: string; text: string }> = [];
+                    const allResults: Array<{
+                        chatId: string;
+                        chatTitle: string;
+                        date: string;
+                        sender: string;
+                        text: string;
+                    }> = [];
 
                     for (const chat of chats) {
                         const results = store.queryMessages(chat.chat_id, {
@@ -224,7 +234,9 @@ export class AssistantEngine {
 
     static getToolDefinitions() {
         return {
-            search_messages: { parameters: { query: "string", since: "string", until: "string", sender: "string", limit: "number" } },
+            search_messages: {
+                parameters: { query: "string", since: "string", until: "string", sender: "string", limit: "number" },
+            },
             get_message_count: { parameters: { since: "string", until: "string", sender: "string" } },
             get_conversation_summary: { parameters: { since: "string", until: "string", limit: "number" } },
             get_attachments: { parameters: { messageId: "number", since: "string", until: "string" } },

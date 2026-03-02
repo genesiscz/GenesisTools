@@ -19,11 +19,46 @@ describe("StyleProfileEngine", () => {
         store.open(dbPath);
 
         const messages = [
-            { id: 1, senderId: "me", text: "hey whats up", isOutgoing: true, date: "2024-01-10T10:00:00Z", dateUnix: 1704880800 },
-            { id: 2, senderId: "me", text: "lol yea that was crazy", isOutgoing: true, date: "2024-01-10T10:01:00Z", dateUnix: 1704880860 },
-            { id: 3, senderId: "me", text: "nah im good thanks tho", isOutgoing: true, date: "2024-01-10T10:02:00Z", dateUnix: 1704880920 },
-            { id: 4, senderId: "me", text: "wanna grab coffee tmrw?", isOutgoing: true, date: "2024-01-10T10:03:00Z", dateUnix: 1704880980 },
-            { id: 5, senderId: "me", text: "k cool see ya", isOutgoing: true, date: "2024-01-10T10:04:00Z", dateUnix: 1704881040 },
+            {
+                id: 1,
+                senderId: "me",
+                text: "hey whats up",
+                isOutgoing: true,
+                date: "2024-01-10T10:00:00Z",
+                dateUnix: 1704880800,
+            },
+            {
+                id: 2,
+                senderId: "me",
+                text: "lol yea that was crazy",
+                isOutgoing: true,
+                date: "2024-01-10T10:01:00Z",
+                dateUnix: 1704880860,
+            },
+            {
+                id: 3,
+                senderId: "me",
+                text: "nah im good thanks tho",
+                isOutgoing: true,
+                date: "2024-01-10T10:02:00Z",
+                dateUnix: 1704880920,
+            },
+            {
+                id: 4,
+                senderId: "me",
+                text: "wanna grab coffee tmrw?",
+                isOutgoing: true,
+                date: "2024-01-10T10:03:00Z",
+                dateUnix: 1704880980,
+            },
+            {
+                id: 5,
+                senderId: "me",
+                text: "k cool see ya",
+                isOutgoing: true,
+                date: "2024-01-10T10:04:00Z",
+                dateUnix: 1704881040,
+            },
         ];
 
         for (const msg of messages) {
@@ -52,9 +87,7 @@ describe("StyleProfileEngine", () => {
     it("builds a hybrid style prompt", () => {
         const engine = new StyleProfileEngine(store);
         const prompt = engine.buildStylePrompt("chat1", {
-            rules: [
-                { id: "r1", sourceChatId: "chat1", direction: "outgoing", limit: 100 },
-            ],
+            rules: [{ id: "r1", sourceChatId: "chat1", direction: "outgoing", limit: 100 }],
             exampleCount: 5,
         });
 
@@ -67,13 +100,19 @@ describe("StyleProfileEngine", () => {
         const engine = new StyleProfileEngine(store);
 
         store.insertMessages("chat1", [
-            { id: 10, senderId: "other", text: "How are you?", mediaDescription: undefined, isOutgoing: false, date: "2024-01-10T10:05:00Z", dateUnix: 1704881100 },
+            {
+                id: 10,
+                senderId: "other",
+                text: "How are you?",
+                mediaDescription: undefined,
+                isOutgoing: false,
+                date: "2024-01-10T10:05:00Z",
+                dateUnix: 1704881100,
+            },
         ]);
 
         const prompt = engine.buildStylePrompt("chat1", {
-            rules: [
-                { id: "r1", sourceChatId: "chat1", direction: "outgoing", limit: 100 },
-            ],
+            rules: [{ id: "r1", sourceChatId: "chat1", direction: "outgoing", limit: 100 }],
             exampleCount: 5,
         });
 
