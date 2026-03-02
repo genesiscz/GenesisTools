@@ -40,6 +40,11 @@ const DEFAULT_CONFIG: ClaudeConfig = {
 
 const storage = new Storage("claude");
 
+/** Execute fn while holding an exclusive lock on the claude config file. */
+export function withConfigLock<T>(fn: () => Promise<T>, timeout?: number): Promise<T> {
+    return storage.withConfigLock(fn, timeout);
+}
+
 export async function loadConfig(): Promise<ClaudeConfig> {
     const saved = await storage.getConfig<Partial<ClaudeConfig>>();
     if (!saved) {

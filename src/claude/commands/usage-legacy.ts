@@ -1,5 +1,5 @@
 import { loadConfig } from "@app/claude/lib/config";
-import { fetchAllAccountsUsage, fetchUsage, getKeychainCredentials } from "@app/claude/lib/usage/api";
+import { fetchAllAccountsUsage, fetchUsage } from "@app/claude/lib/usage/api";
 import { renderAccountUsage, renderAllAccounts } from "@app/claude/lib/usage/display";
 import { watchUsage } from "@app/claude/lib/usage/watch";
 import * as p from "@clack/prompts";
@@ -32,14 +32,8 @@ export function registerUsageLegacyCommand(program: Command): void {
             // Resolve accounts
             let accounts = config.accounts;
             if (Object.keys(accounts).length === 0) {
-                // Try keychain auto-detect
-                const kc = await getKeychainCredentials();
-                if (kc) {
-                    accounts = { default: { accessToken: kc.accessToken, label: kc.subscriptionType } };
-                } else {
-                    p.log.warn("No accounts configured. Run: tools claude config");
-                    process.exit(1);
-                }
+                p.log.warn("No accounts configured. Run: tools claude login");
+                process.exit(1);
             }
 
             // Filter to specific account

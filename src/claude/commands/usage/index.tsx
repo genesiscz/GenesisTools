@@ -15,9 +15,7 @@ export function registerUsageCommand(program: Command): void {
         .action(async (accountArg: string | undefined, opts: Record<string, string | boolean | undefined>) => {
             if (opts.tui === false || opts.json || opts.token || opts.watch) {
                 const { loadConfig } = await import("@app/claude/lib/config");
-                const { fetchAllAccountsUsage, fetchUsage, getKeychainCredentials } = await import(
-                    "@app/claude/lib/usage/api"
-                );
+                const { fetchAllAccountsUsage, fetchUsage } = await import("@app/claude/lib/usage/api");
                 const { renderAllAccounts, renderAccountUsage } = await import("@app/claude/lib/usage/display");
 
                 if (opts.token && typeof opts.token === "string") {
@@ -36,20 +34,12 @@ export function registerUsageCommand(program: Command): void {
                 const config = await loadConfig();
                 let accounts = config.accounts;
 
-                if (Object.keys(accounts).length === 0) {
-                    const kc = await getKeychainCredentials();
-
-                    if (kc) {
-                        accounts = {
-                            default: {
-                                accessToken: kc.accessToken,
-                                label: kc.subscriptionType,
-                            },
-                        };
+                if (accountArg) {
+                    if (!accounts[accountArg]) {
+                        console.error(`Unknown account: ${accountArg}`);
+                        process.exit(1);
                     }
-                }
 
-                if (accountArg && accounts[accountArg]) {
                     accounts = { [accountArg]: accounts[accountArg] };
                 }
 
