@@ -1,16 +1,12 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { AccountConfig } from "@app/claude/lib/config";
-import { loadConfig, saveConfig } from "@app/claude/lib/config";
+import { CONFIG_LOCK_PATH, loadConfig, saveConfig } from "@app/claude/lib/config";
 import { refreshOAuthToken } from "@app/utils/claude/auth";
 import { withFileLock } from "@app/utils/storage/file-lock";
 
 export type { AccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
-export { getKeychainCredentials } from "@app/utils/claude/auth";
 
 // Refresh tokens 5 minutes before expiry to avoid edge cases
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
-const CONFIG_LOCK_PATH = join(homedir(), ".genesis-tools", "claude", "config.json.lock");
 
 export interface UsageBucket {
     utilization: number;

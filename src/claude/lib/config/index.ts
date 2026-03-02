@@ -40,6 +40,9 @@ const DEFAULT_CONFIG: ClaudeConfig = {
 
 const storage = new Storage("claude");
 
+/** Lock path for atomic config updates (token refresh, etc.) */
+export const CONFIG_LOCK_PATH = `${storage.getConfigPath()}.lock`;
+
 export async function loadConfig(): Promise<ClaudeConfig> {
     const saved = await storage.getConfig<Partial<ClaudeConfig>>();
     if (!saved) {
