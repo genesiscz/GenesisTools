@@ -70,42 +70,90 @@ async function ensureValidToken(
     }
 
     // Token expired or expiring soon — refresh under file lock
-    return withFileLock(CONFIG_LOCK_PATH, async () => {
-        // Re-read config from disk (another process may have refreshed)
-        const freshConfig = await loadConfig();
-        const diskAccount = freshConfig.accounts[accountName];
+    return withFileLock(
+        CONFIG_LOCK_PATH,
+        async () => {
+            // Re-read config from disk (another process may have refreshed)
+            const freshConfig = await loadConfig();
+            const diskAccount = freshConfig.accounts[accountName];
 
-        if (!diskAccount?.refreshToken) {
-            return { accessToken: account.accessToken, refreshed: false };
+            if (!diskAccount?.refreshToken) {
+                return { accessToken: account.accessToken, refreshed: false };
+            }
+
+            // Another process already refreshed — use their tokens
+            if (diskAccount.expiresAt && diskAccount.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
+                account.accessToken = diskAccount.accessToken;
+                account.refreshToken = diskAccount.refreshToken;
+                account.expiresAt = diskAccount.expiresAt;
+                return { accessToken: diskAccount.accessToken, refreshed: true };
+            }
+
+            // Refresh using the on-disk token (in-memory might be stale)
+            let refreshed: Awaited<ReturnType<typeof refreshOAuthToken>>;
+            try {
+                refreshed = await refreshOAuthToken(diskAccount.refreshToken);
+            } catch (err) {
+                if (String(err).includes("invalid_grant")) {
+                    const recovered = await tryKeychainRecovery();
+                    if (recovered) {
+                        freshConfig.accounts[accountName] = { ...diskAccount, ...recovered };
+                        await saveConfig(freshConfig);
+                        account.accessToken = recovered.accessToken;
+                        account.refreshToken = recovered.refreshToken;
+                        account.expiresAt = recovered.expiresAt;
+                        return { accessToken: recovered.accessToken, refreshed: true };
+                    }
+
+                    throw new Error(`Token expired (invalid_grant). Run: tools claude login ${accountName}`);
+                }
+
+                throw err;
+            }
+
+            // Persist immediately BEFORE using the new token
+            freshConfig.accounts[accountName] = {
+                ...diskAccount,
+                accessToken: refreshed.accessToken,
+                refreshToken: refreshed.refreshToken,
+                expiresAt: refreshed.expiresAt,
+            };
+            await saveConfig(freshConfig);
+
+            // Update in-memory account
+            account.accessToken = refreshed.accessToken;
+            account.refreshToken = refreshed.refreshToken;
+            account.expiresAt = refreshed.expiresAt;
+
+            return { accessToken: refreshed.accessToken, refreshed: true };
+        },
+        15_000
+    ); // 15s timeout — refresh API call can be slow
+}
+
+/**
+ * Attempt to recover from invalid_grant by checking if Claude Code's
+ * keychain has a valid token we can use.
+ */
+async function tryKeychainRecovery(): Promise<Pick<AccountConfig, "accessToken" | "refreshToken" | "expiresAt"> | null> {
+    try {
+        const { getKeychainCredentials } = await import("@app/utils/claude/auth");
+        const kc = await getKeychainCredentials();
+        if (!kc?.accessToken) {
+            return null;
         }
 
-        // Another process already refreshed — use their tokens
-        if (diskAccount.expiresAt && diskAccount.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
-            account.accessToken = diskAccount.accessToken;
-            account.refreshToken = diskAccount.refreshToken;
-            account.expiresAt = diskAccount.expiresAt;
-            return { accessToken: diskAccount.accessToken, refreshed: true };
-        }
+        // Validate the keychain token actually works
+        await fetchUsage(kc.accessToken);
 
-        // Refresh using the on-disk token (in-memory might be stale)
-        const refreshed = await refreshOAuthToken(diskAccount.refreshToken);
-
-        // Persist immediately BEFORE using the new token
-        freshConfig.accounts[accountName] = {
-            ...diskAccount,
-            accessToken: refreshed.accessToken,
-            refreshToken: refreshed.refreshToken,
-            expiresAt: refreshed.expiresAt,
+        return {
+            accessToken: kc.accessToken,
+            refreshToken: kc.refreshToken,
+            expiresAt: kc.expiresAt,
         };
-        await saveConfig(freshConfig);
-
-        // Update in-memory account
-        account.accessToken = refreshed.accessToken;
-        account.refreshToken = refreshed.refreshToken;
-        account.expiresAt = refreshed.expiresAt;
-
-        return { accessToken: refreshed.accessToken, refreshed: true };
-    }, 15_000); // 15s timeout — refresh API call can be slow
+    } catch {
+        return null;
+    }
 }
 
 export async function fetchAllAccountsUsage(accounts: Record<string, AccountConfig>): Promise<AccountUsage[]> {
