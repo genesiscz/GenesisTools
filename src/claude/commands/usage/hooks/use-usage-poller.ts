@@ -63,7 +63,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
             let accounts = cfg.accounts;
 
             if (accountFilter) {
-                accounts = accounts[accountFilter] ? { [accountFilter]: accounts[accountFilter] } : accounts;
+                accounts = accounts[accountFilter] ? { [accountFilter]: accounts[accountFilter] } : {};
             }
 
             accountsRef.current = accounts;

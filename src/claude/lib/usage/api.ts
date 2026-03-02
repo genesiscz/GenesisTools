@@ -113,8 +113,8 @@ async function ensureValidToken(
 
             return { accessToken: refreshed.accessToken, refreshed: true };
         },
-        15_000
-    ); // 15s timeout — refresh API call can be slow
+        60_000
+    ); // 60s timeout for acquiring the config lock; refresh holds the lock while running
 }
 
 export async function fetchAllAccountsUsage(accounts: Record<string, AccountConfig>): Promise<AccountUsage[]> {
