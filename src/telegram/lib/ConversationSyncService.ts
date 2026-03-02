@@ -7,6 +7,7 @@ import { TelegramMessage } from "./TelegramMessage";
 import type { TGClient } from "./TGClient";
 
 const BATCH_SIZE = 100;
+const INITIAL_SYNC_LIMIT = 100;
 const MAX_RETRIES = 5;
 
 interface SyncOptions {
@@ -39,6 +40,10 @@ export class ConversationSyncService {
 
         if (lastSyncedId) {
             iterOptions.minId = lastSyncedId;
+        } else {
+            // First sync — only fetch the most recent messages, not the entire history.
+            // Use syncRange() to backfill older messages on demand.
+            iterOptions.limit = options?.limit ?? INITIAL_SYNC_LIMIT;
         }
 
         if (options?.limit) {
