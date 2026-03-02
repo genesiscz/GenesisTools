@@ -95,16 +95,6 @@ async function ensureValidToken(
                 refreshed = await refreshOAuthToken(diskAccount.refreshToken);
             } catch (err) {
                 if (String(err).includes("invalid_grant")) {
-                    const recovered = await tryKeychainRecovery();
-                    if (recovered) {
-                        freshConfig.accounts[accountName] = { ...diskAccount, ...recovered };
-                        await saveConfig(freshConfig);
-                        account.accessToken = recovered.accessToken;
-                        account.refreshToken = recovered.refreshToken;
-                        account.expiresAt = recovered.expiresAt;
-                        return { accessToken: recovered.accessToken, refreshed: true };
-                    }
-
                     throw new Error(`Token expired (invalid_grant). Run: tools claude login ${accountName}`);
                 }
 
@@ -129,31 +119,6 @@ async function ensureValidToken(
         },
         15_000
     ); // 15s timeout — refresh API call can be slow
-}
-
-/**
- * Attempt to recover from invalid_grant by checking if Claude Code's
- * keychain has a valid token we can use.
- */
-async function tryKeychainRecovery(): Promise<Pick<AccountConfig, "accessToken" | "refreshToken" | "expiresAt"> | null> {
-    try {
-        const { getKeychainCredentials } = await import("@app/utils/claude/auth");
-        const kc = await getKeychainCredentials();
-        if (!kc?.accessToken) {
-            return null;
-        }
-
-        // Validate the keychain token actually works
-        await fetchUsage(kc.accessToken);
-
-        return {
-            accessToken: kc.accessToken,
-            refreshToken: kc.refreshToken,
-            expiresAt: kc.expiresAt,
-        };
-    } catch {
-        return null;
-    }
 }
 
 export async function fetchAllAccountsUsage(accounts: Record<string, AccountConfig>): Promise<AccountUsage[]> {
