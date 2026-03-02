@@ -40,8 +40,8 @@ async function tryAcquireLock(lockPath: string): Promise<boolean> {
         return true;
     } catch (err) {
         if (!isEexist(err)) {
-            logger.error(`Failed to acquire lock at ${lockPath}: ${err}`);
-            return false;
+            // Real I/O error (EACCES, ENOSPC, etc.) — fail fast rather than timing out
+            throw err;
         }
 
         // Lock file exists — check if the owning process is still alive
@@ -63,11 +63,19 @@ async function tryAcquireLock(lockPath: string): Promise<boolean> {
         logger.debug(`Stealing stale lock at ${lockPath} (PID ${lockPid} is dead)`);
 
         try {
+            // Re-read before unlinking to confirm ownership hasn't changed
+            const confirmContent = await Bun.file(lockPath).text();
+
+            if (confirmContent.trim() !== String(lockPid)) {
+                // Another process already rewrote the lock — don't steal it
+                return false;
+            }
+
             await unlink(lockPath);
             await writeFile(lockPath, String(process.pid), { flag: "wx" });
             return true;
         } catch {
-            // Another process stole it between our unlink and write
+            // Another process stole it between our read and write
             return false;
         }
     }
