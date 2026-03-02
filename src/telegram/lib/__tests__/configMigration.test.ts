@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { migrateContactV1toV2, migrateConfigV1toV2 } from "../TelegramToolConfig";
+import { migrateConfigV1toV2, migrateContactV1toV2 } from "../TelegramToolConfig";
 import type { ContactConfig, TelegramConfigData, TelegramConfigDataV2 } from "../types";
 
 describe("V1 -> V2 config migration", () => {
@@ -53,9 +53,7 @@ describe("V1 -> V2 config migration", () => {
             apiId: 12345,
             apiHash: "abc",
             session: "session",
-            contacts: [
-                { userId: "1", displayName: "A", actions: ["ask"], replyDelayMin: 2000, replyDelayMax: 5000 },
-            ],
+            contacts: [{ userId: "1", displayName: "A", actions: ["ask"], replyDelayMin: 2000, replyDelayMax: 5000 }],
             configuredAt: "2024-01-01",
         };
 
@@ -78,7 +76,13 @@ describe("V1 -> V2 config migration", () => {
                 modes: {
                     autoReply: { enabled: false },
                     assistant: { enabled: true },
-                    suggestions: { enabled: true, count: 3, trigger: "manual", autoDelayMs: 5000, allowAutoSend: false },
+                    suggestions: {
+                        enabled: true,
+                        count: 3,
+                        trigger: "manual",
+                        autoDelayMs: 5000,
+                        allowAutoSend: false,
+                    },
                 },
                 watch: { enabled: true, contextLength: 30, runtimeMode: "ink" },
                 styleProfile: { enabled: false, refresh: "incremental", rules: [], previewInWatch: false },

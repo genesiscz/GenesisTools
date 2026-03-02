@@ -14,12 +14,7 @@ import type {
     TelegramContactV2,
     WatchConfig,
 } from "../lib/types";
-import {
-    DEFAULT_MODE_CONFIG,
-    DEFAULT_STYLE_PROFILE,
-    DEFAULT_WATCH_CONFIG,
-    DEFAULTS,
-} from "../lib/types";
+import { DEFAULT_MODE_CONFIG, DEFAULT_STYLE_PROFILE, DEFAULT_WATCH_CONFIG, DEFAULTS } from "../lib/types";
 
 function isUser(entity: unknown): entity is Api.User {
     return (
@@ -181,10 +176,7 @@ async function fetchDialogOptions(client: TGClient): Promise<DialogOption[]> {
     return options;
 }
 
-async function selectDialogs(
-    options: DialogOption[],
-    existingContacts: TelegramContactV2[]
-): Promise<string[] | null> {
+async function selectDialogs(options: DialogOption[], existingContacts: TelegramContactV2[]): Promise<string[] | null> {
     const existingIds = new Set(existingContacts.map((c) => c.userId));
 
     const selected = await p.multiselect({
@@ -210,7 +202,11 @@ async function configureContactModes(
         options: [
             { value: "autoReply" as const, label: "Auto-Reply", hint: "Automatically respond to messages" },
             { value: "assistant" as const, label: "Chat Assistant", hint: "Ask questions about the conversation" },
-            { value: "suggestions" as const, label: "Message Suggestions", hint: "Get suggested replies to pick/edit/send" },
+            {
+                value: "suggestions" as const,
+                label: "Message Suggestions",
+                hint: "Get suggested replies to pick/edit/send",
+            },
         ],
         initialValues: getExistingEnabledModes(existing),
         required: false,

@@ -12,8 +12,8 @@ export class StyleRuleResolver {
             const sender = rule.direction === "outgoing" ? "me" : "them";
             const messages = this.store.queryMessages(rule.sourceChatId, {
                 sender,
-                since: rule.since ? parseDate(rule.since) ?? undefined : undefined,
-                until: rule.until ? parseDate(rule.until) ?? undefined : undefined,
+                since: rule.since ? (parseDate(rule.since) ?? undefined) : undefined,
+                until: rule.until ? (parseDate(rule.until) ?? undefined) : undefined,
                 limit: rule.limit ?? 500,
             });
 

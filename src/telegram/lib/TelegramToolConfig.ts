@@ -1,17 +1,7 @@
 import { chmodSync } from "node:fs";
 import { Storage } from "@app/utils/storage/storage";
-import type {
-    ContactConfig,
-    TelegramConfigData,
-    TelegramConfigDataV2,
-    TelegramContactV2,
-} from "./types";
-import {
-    DEFAULT_MODE_CONFIG,
-    DEFAULT_STYLE_PROFILE,
-    DEFAULT_WATCH_CONFIG,
-    DEFAULTS,
-} from "./types";
+import type { ContactConfig, TelegramConfigData, TelegramConfigDataV2, TelegramContactV2 } from "./types";
+import { DEFAULT_MODE_CONFIG, DEFAULT_STYLE_PROFILE, DEFAULT_WATCH_CONFIG, DEFAULTS } from "./types";
 
 export function migrateContactV1toV2(v1: ContactConfig): TelegramContactV2 {
     const hasAsk = v1.actions.includes("ask");
