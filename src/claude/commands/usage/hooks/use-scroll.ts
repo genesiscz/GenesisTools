@@ -5,10 +5,11 @@ interface ScrollOptions {
     totalItems: number;
     pageSize: number;
     enabled: boolean;
+    initialOffset?: number;
 }
 
-export function useScroll({ totalItems, pageSize, enabled }: ScrollOptions) {
-    const [offset, setOffset] = useState(0);
+export function useScroll({ totalItems, pageSize, enabled, initialOffset }: ScrollOptions) {
+    const [offset, setOffset] = useState(initialOffset ?? 0);
 
     useInput(
         (input, key) => {
