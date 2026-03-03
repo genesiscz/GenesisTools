@@ -18,6 +18,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
     const [pollingLabel, setPollingLabel] = useState<string | null>(null);
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
     const [nextRefresh, setNextRefresh] = useState<Date | null>(null);
+    const [dbVersion, setDbVersion] = useState(0);
 
     const dbRef = useRef<UsageHistoryDb | null>(null);
     const notifRef = useRef<NotificationManager | null>(null);
@@ -109,6 +110,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
             notifRef.current?.autoDismissOld();
 
             setResults({ accounts: accountUsages, timestamp: now });
+            setDbVersion((v) => v + 1);
             setLastRefresh(now);
             setNextRefresh(new Date(now.getTime() + pollIntervalSeconds * 1000));
         } catch (error) {
@@ -151,6 +153,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
         lastRefresh,
         nextRefresh,
         db: dbRef.current,
+        dbVersion,
         notifications: notifRef.current,
         forceRefresh: poll,
     };
