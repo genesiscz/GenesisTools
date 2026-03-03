@@ -10,6 +10,7 @@ import { RateSparkline } from "./rate-sparkline";
 interface RatesViewProps {
     db: UsageHistoryDb | null;
     results: PollResult | null;
+    dbVersion: number;
 }
 
 interface BucketRateInfo {
@@ -66,11 +67,14 @@ function AccountRatesRow({
     db,
     account,
     activeBuckets,
+    dbVersion,
 }: {
     db: UsageHistoryDb | null;
     account: AccountUsage;
     activeBuckets: string[];
+    dbVersion: number;
 }) {
+    // biome-ignore lint/correctness/useExhaustiveDependencies: dbVersion is an intentional cache-busting dep — db ref is stable but DB contents change on each poll
     const bucketRates = useMemo(() => {
         const rates: Record<string, BucketRateInfo> = {};
 
@@ -83,7 +87,7 @@ function AccountRatesRow({
         }
 
         return rates;
-    }, [db, account, activeBuckets]);
+    }, [db, account, activeBuckets, dbVersion]);
 
     return (
         <Box flexDirection="column" marginBottom={1}>
@@ -106,7 +110,7 @@ function AccountRatesRow({
                             {formatRate(info.rate5min).padEnd(10)}
                         </Text>
                         <Text dimColor>{formatProj(info.projMinutes).padEnd(12)}</Text>
-                        <RateSparkline db={db} accountName={account.accountName} bucket={bucket} />
+                        <RateSparkline db={db} accountName={account.accountName} bucket={bucket} dbVersion={dbVersion} />
                     </Box>
                 );
             })}
@@ -114,7 +118,7 @@ function AccountRatesRow({
     );
 }
 
-export function RatesView({ db, results }: RatesViewProps) {
+export function RatesView({ db, results, dbVersion }: RatesViewProps) {
     const accounts = results?.accounts ?? [];
 
     if (!results || accounts.length === 0) {
@@ -156,6 +160,7 @@ export function RatesView({ db, results }: RatesViewProps) {
                         db={db}
                         account={account}
                         activeBuckets={activeBuckets}
+                        dbVersion={dbVersion}
                     />
                 );
             })}

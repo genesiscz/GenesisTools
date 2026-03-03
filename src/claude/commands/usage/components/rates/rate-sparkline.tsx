@@ -7,11 +7,13 @@ interface RateSparklineProps {
     db: UsageHistoryDb | null;
     accountName: string;
     bucket: string;
+    dbVersion: number;
 }
 
 const SPARK_CHARS = ["\u2581", "\u2582", "\u2583", "\u2584", "\u2585", "\u2586", "\u2587", "\u2588"];
 
-export function RateSparkline({ db, accountName, bucket }: RateSparklineProps) {
+export function RateSparkline({ db, accountName, bucket, dbVersion }: RateSparklineProps) {
+    // biome-ignore lint/correctness/useExhaustiveDependencies: dbVersion is an intentional cache-busting dep — db ref is stable but DB contents change on each poll
     const sparkline = useMemo(() => {
         if (!db) {
             return null;
@@ -52,7 +54,7 @@ export function RateSparkline({ db, accountName, bucket }: RateSparklineProps) {
                 return SPARK_CHARS[idx];
             })
             .join("");
-    }, [db, accountName, bucket]);
+    }, [db, accountName, bucket, dbVersion]);
 
     if (!sparkline) {
         return <Text dimColor>{"—"}</Text>;
