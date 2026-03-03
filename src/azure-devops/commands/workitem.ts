@@ -6,10 +6,11 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { Api } from "@app/azure-devops/api";
 import { formatJSON, loadWorkItemCache, saveWorkItemCache, WORKITEM_FRESHNESS_MINUTES } from "@app/azure-devops/cache";
 import { downloadAttachments } from "@app/azure-devops/commands/attachments";
+import { downloadInlineImages, extractInlineImageUrls, rewriteImageUrls } from "@app/azure-devops/inline-images";
 import type {
     AttachmentFilter,
     AttachmentInfo,
@@ -50,7 +51,8 @@ function formatWorkItemAI(
     item: WorkItemFull,
     taskPath: string,
     cacheTime?: Date,
-    downloadedAttachments?: AttachmentInfo[]
+    downloadedAttachments?: AttachmentInfo[],
+    inlineImages?: Map<string, string>
 ): string {
     const lines: string[] = [];
 
@@ -140,10 +142,19 @@ function formatWorkItemAI(
         }
     }
 
+    if (inlineImages && inlineImages.size > 0) {
+        const taskDir = dirname(taskPath);
+        lines.push("");
+        lines.push(`## Inline Images (${inlineImages.size} downloaded)`);
+        for (const [, localFile] of inlineImages) {
+            lines.push(`- ${localFile} → ${join(taskDir, localFile)}`);
+        }
+    }
+
     return lines.join("\n");
 }
 
-function generateWorkItemMarkdown(item: WorkItemFull): string {
+function generateWorkItemMarkdown(item: WorkItemFull, imageMap?: Map<string, string>): string {
     const lines: string[] = [];
 
     lines.push(`# #${item.id}: ${item.title}`);
@@ -166,7 +177,8 @@ function generateWorkItemMarkdown(item: WorkItemFull): string {
         lines.push("");
         lines.push("## Description");
         lines.push("");
-        lines.push(htmlToMarkdown(item.description));
+        const descHtml = imageMap ? rewriteImageUrls(item.description, imageMap) : item.description;
+        lines.push(htmlToMarkdown(descHtml));
     }
 
     if (item.relations && item.relations.length > 0) {
@@ -204,7 +216,8 @@ function generateWorkItemMarkdown(item: WorkItemFull): string {
         for (const comment of item.comments) {
             lines.push(`### ${comment.author} - ${new Date(comment.date).toLocaleString()}`);
             lines.push("");
-            lines.push(htmlToMarkdown(comment.text));
+            const commentHtml = imageMap ? rewriteImageUrls(comment.text, imageMap) : comment.text;
+            lines.push(htmlToMarkdown(commentHtml));
             lines.push("");
         }
     }
@@ -232,7 +245,8 @@ export async function handleWorkItem(
     taskFoldersArg?: boolean,
     queryMetadata?: Map<number, QueryItemMetadata>,
     fetchOptions?: { comments?: boolean; updates?: boolean },
-    attachmentFilter?: AttachmentFilter
+    attachmentFilter?: AttachmentFilter,
+    downloadImages?: boolean
 ): Promise<void> {
     silentMode = format === "json";
     logger.debug(
@@ -347,6 +361,39 @@ export async function handleWorkItem(
         }
     }
 
+    // Phase 2.6: Download inline images if requested
+    const inlineImageMaps = new Map<number, Map<string, string>>();
+    if (downloadImages) {
+        const allItems = new Map<number, WorkItemFull>([...cachedResults, ...fetchedItems]);
+
+        for (const [id, item] of allItems) {
+            const settings = settingsMap.get(id);
+
+            if (!settings) {
+                continue;
+            }
+
+            const imageRefs = [
+                ...extractInlineImageUrls(item.description ?? "", id),
+                ...(item.comments ?? []).flatMap((c) => extractInlineImageUrls(c.text, id)),
+            ];
+
+            if (imageRefs.length === 0) {
+                continue;
+            }
+
+            const outputDir = dirname(getTaskFilePath(id, item.title, "md", settings.category, settings.taskFolder));
+
+            if (!existsSync(outputDir)) {
+                mkdirSync(outputDir, { recursive: true });
+            }
+
+            log(`   Downloading ${imageRefs.length} inline image(s) for #${id}...`);
+            const urlMap = await downloadInlineImages(api, imageRefs, outputDir);
+            inlineImageMaps.set(id, urlMap);
+        }
+    }
+
     // Phase 3: Save fetched items to disk + update cache
     for (const [id, item] of fetchedItems) {
         const existingJsonPath = existingFilePaths.get(id) ?? null;
@@ -380,8 +427,9 @@ export async function handleWorkItem(
 
         logger.debug(`[workitem] #${id} saving JSON: ${jsonPath}`);
         writeFileSync(jsonPath, JSON.stringify(item, null, 2));
+        const imageMap = inlineImageMaps.get(id);
         logger.debug(`[workitem] #${id} saving MD: ${mdPath}`);
-        writeFileSync(mdPath, generateWorkItemMarkdown(item));
+        writeFileSync(mdPath, generateWorkItemMarkdown(item, imageMap));
 
         logger.debug(`[workitem] #${id} updating workitem cache`);
         const now = new Date().toISOString();
@@ -405,6 +453,22 @@ export async function handleWorkItem(
             comments: commentsFetched ? item.comments : existingCache?.comments,
         };
         await saveWorkItemCache(id, cacheData);
+    }
+
+    // Phase 3.5: Handle cached items that need image download + markdown regeneration
+    if (downloadImages) {
+        for (const [id, item] of cachedResults) {
+            const imageMap = inlineImageMaps.get(id);
+
+            if (!imageMap || imageMap.size === 0) {
+                continue;
+            }
+
+            const settings = settingsMap.get(id)!;
+            const mdPath = getTaskFilePath(id, item.title, "md", settings.category, settings.taskFolder);
+            writeFileSync(mdPath, generateWorkItemMarkdown(item, imageMap));
+            log(`   Regenerated markdown for #${id} with ${imageMap.size} inline image(s)`);
+        }
     }
 
     // Build results in original ID order
@@ -440,7 +504,15 @@ export async function handleWorkItem(
 
         switch (format) {
             case "ai":
-                console.log(formatWorkItemAI(item, taskPath, cacheTime, attachmentsMap.get(item.id)));
+                console.log(
+                    formatWorkItemAI(
+                        item,
+                        taskPath,
+                        cacheTime,
+                        attachmentsMap.get(item.id),
+                        inlineImageMaps.get(item.id)
+                    )
+                );
                 break;
             case "md":
                 console.log(
@@ -473,6 +545,7 @@ export function registerWorkitemCommand(program: Command): void {
         .option("--attachments-prefix <prefix>", "Only attachments starting with this name")
         .option("--attachments-suffix <suffix>", "Only attachments ending with this (e.g. .har)")
         .option("--output-dir <path>", "Custom directory for downloaded attachments")
+        .option("--images", "Download inline images from description and comments")
         .action(
             async (
                 input: string,
@@ -486,6 +559,7 @@ export function registerWorkitemCommand(program: Command): void {
                     attachmentsPrefix?: string;
                     attachmentsSuffix?: string;
                     outputDir?: string;
+                    images?: boolean;
                 }
             ) => {
                 const hasAttachmentFilter =
@@ -524,7 +598,8 @@ export function registerWorkitemCommand(program: Command): void {
                     options.taskFolders,
                     undefined,
                     undefined,
-                    attachmentFilter
+                    attachmentFilter,
+                    options.images
                 );
             }
         );
