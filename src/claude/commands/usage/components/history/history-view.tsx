@@ -115,10 +115,10 @@ export function HistoryView({ db, dbVersion }: HistoryViewProps) {
         return rows;
     }, [allData]);
 
-    // Chrome overhead: TabBar(1) + StatusBar(3) + HistoryView paddingY(2) + hint(1) + colHeader(1) = 8
+    // Chrome: TabBar(1) + StatusBar(3) + paddingY(2) + hint(1) + colHeader(1) = 8
     // Account separator headers: first = 1 line, subsequent = 2 lines (marginTop=1)
-    const numAccountGroups = allData.size;
-    const separatorLines = numAccountGroups > 0 ? 1 + (numAccountGroups - 1) * 2 : 0;
+    const uniqueAccounts = new Set(Array.from(allData.keys()).map((k) => k.split(":")[0])).size;
+    const separatorLines = uniqueAccounts > 0 ? 1 + (uniqueAccounts - 1) * 2 : 0;
     const pageSize = Math.max(3, termHeight - 8 - separatorLines);
 
     const { offset, setOffset } = useScroll({
