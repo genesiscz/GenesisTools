@@ -3,7 +3,7 @@
  */
 
 import { existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { Api } from "@app/azure-devops/api";
 import logger from "@app/logger";
 import { concurrentMap } from "@app/utils/async";
@@ -47,7 +47,7 @@ export function extractInlineImageUrls(html: string, workItemId: number): Inline
 
         const attachmentId = attachmentMatch[1];
         const fileName = extractFileName(url, attachmentId);
-        const localFileName = `${workItemId}-${fileName}`;
+        const localFileName = `${workItemId}-${attachmentId.slice(0, 8)}-${fileName}`;
 
         images.push({ originalUrl: url, attachmentId, fileName, localFileName });
     }
@@ -71,15 +71,17 @@ function extractFileName(url: string, attachmentId: string): string {
     return `image-${attachmentId.slice(0, 8)}.png`;
 }
 
-/** Sanitize filename for filesystem */
+/** Sanitize filename for filesystem — strips path components and dangerous characters */
 function sanitizeFileName(name: string): string {
+    const base = basename(name);
     // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional control char removal
-    return name.replace(/[<>:"|?*\x00-\x1f]/g, "_");
+    const safe = base.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/^\.+/, "_");
+    return safe || "image.png";
 }
 
 /**
  * Download inline images to the output directory.
- * Skips already-existing files with matching content.
+ * Skips already-existing non-empty files (does not verify content).
  * Returns map of originalUrl -> localFileName for URL rewriting.
  */
 export async function downloadInlineImages(

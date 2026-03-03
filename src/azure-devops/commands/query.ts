@@ -7,6 +7,7 @@
 import { Api } from "@app/azure-devops/api";
 import { CACHE_TTL, formatJSON, loadGlobalCache, saveGlobalCache, storage } from "@app/azure-devops/cache";
 import type {
+    AttachmentFilter,
     AzureConfig,
     ChangeInfo,
     OutputFormat,
@@ -189,7 +190,7 @@ export type WorkItemHandler = (
     taskFolders?: boolean,
     queryMetadata?: Map<number, QueryItemMetadata>,
     fetchOptions?: { comments?: boolean; updates?: boolean },
-    attachmentFilter?: undefined,
+    attachmentFilter?: AttachmentFilter,
     downloadImages?: boolean
 ) => Promise<void>;
 
@@ -363,9 +364,19 @@ export async function handleQuery(
         );
         const ids = items.map((item) => item.id).join(",");
         // Pass queryMetadata for smart comparison (ignores forceRefresh when metadata available)
-        await workItemHandler(ids, format, false, effectiveCategory, effectiveTaskFolders, queryMetadata, {
-            comments: true,
-        }, undefined, downloadImages);
+        await workItemHandler(
+            ids,
+            format,
+            false,
+            effectiveCategory,
+            effectiveTaskFolders,
+            queryMetadata,
+            {
+                comments: true,
+            },
+            undefined,
+            downloadImages
+        );
     }
 }
 

@@ -375,7 +375,7 @@ export async function handleWorkItem(
 
             const imageRefs = [
                 ...extractInlineImageUrls(item.description ?? "", id),
-                ...item.comments.flatMap((c) => extractInlineImageUrls(c.text, id)),
+                ...(item.comments ?? []).flatMap((c) => extractInlineImageUrls(c.text, id)),
             ];
 
             if (imageRefs.length === 0) {
@@ -505,7 +505,13 @@ export async function handleWorkItem(
         switch (format) {
             case "ai":
                 console.log(
-                    formatWorkItemAI(item, taskPath, cacheTime, attachmentsMap.get(item.id), inlineImageMaps.get(item.id))
+                    formatWorkItemAI(
+                        item,
+                        taskPath,
+                        cacheTime,
+                        attachmentsMap.get(item.id),
+                        inlineImageMaps.get(item.id)
+                    )
                 );
                 break;
             case "md":

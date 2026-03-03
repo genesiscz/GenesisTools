@@ -118,9 +118,9 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 
 2. Read the generated `.md` file for each work item
 
-3. **Read inline images** - Check if the work item directory contains image files:
+3. **Read inline images** - Check for image files next to the work item's `.md` file:
    ```bash
-   ls .claude/azure/tasks/<category>/<id>/<id>-*.{png,jpg,gif,jpeg} 2>/dev/null
+   ls $(dirname <path-to-workitem.md>)/<id>-*.{png,jpg,gif,jpeg} 2>/dev/null
    ```
    If images exist, use the **Read tool** to view each image file. This gives visual context for:
    - Bug screenshots showing the issue
@@ -149,7 +149,7 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
    Return: files found, current implementation, recommended approach, considerations, complexity (Low/Medium/High)
    ```
 
-4. Write `.analysis.md` next to the work item file:
+5. Write `.analysis.md` next to the work item file:
    - Work item: `.claude/azure/tasks/261575-Title.md`
    - Analysis: `.claude/azure/tasks/261575-Title.analysis.md`
 
