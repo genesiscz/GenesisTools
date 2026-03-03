@@ -174,12 +174,15 @@ export function HistoryView({ db, dbVersion }: HistoryViewProps) {
     const rangeLabel =
         timeRange <= 60 ? `${timeRange}m` : timeRange <= 1440 ? `${timeRange / 60}h` : `${timeRange / 1440}d`;
 
+    // Cap history view height so Ink never renders beyond the terminal
+    const maxHeight = Math.max(8, termHeight - 4);
+
     if (layout === "stacked") {
         const visibleRows = allRows.slice(offset, offset + pageSize);
         let lastKey = "";
 
         return (
-            <Box flexDirection="column" paddingX={1} paddingY={1}>
+            <Box flexDirection="column" paddingX={1} paddingY={1} height={maxHeight} overflow="hidden">
                 <Text
                     dimColor
                 >{`Showing last ${rangeLabel}  [f] cycle range  [l] layout  [j/k] scroll  (${allRows.length > 0 ? offset + 1 : 0}-${Math.min(offset + pageSize, allRows.length)} of ${allRows.length})`}</Text>

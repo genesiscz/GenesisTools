@@ -39,7 +39,7 @@ interface DashboardProps {
 }
 
 function Dashboard({ config, accountFilter }: DashboardProps) {
-    const { rows: termHeight } = useTerminalSize({ clearOnResize: true });
+    useTerminalSize({ clearOnResize: true });
     const { activeTab, tabs, activeIndex } = useTabNavigation(config.defaultTab);
 
     const [pollInterval, setPollInterval] = useState<PollInterval>(
@@ -82,7 +82,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
     }
 
     return (
-        <Box flexDirection="column" height={termHeight} overflow="hidden">
+        <Box flexDirection="column">
             <TabBar tabs={tabs} activeIndex={activeIndex} />
             {activeTab === "overview" && <OverviewView results={results} config={config} />}
             {activeTab === "timeline" && <TimelineView db={db} results={results} config={config} />}
