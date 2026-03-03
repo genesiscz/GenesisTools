@@ -84,7 +84,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
     return (
         <Box flexDirection="column" height={termHeight} overflow="hidden">
             <TabBar tabs={tabs} activeIndex={activeIndex} />
-            <Box flexDirection="column" overflow="hidden">
+            <Box flexDirection="column">
                 {activeTab === "overview" && <OverviewView results={results} config={config} />}
                 {activeTab === "timeline" && <TimelineView db={db} results={results} config={config} />}
                 {activeTab === "rates" && <RatesView db={db} results={results} dbVersion={dbVersion} />}
