@@ -81,7 +81,6 @@ function computeDeltas(snapshots: UsageSnapshot[]): SnapshotWithDelta[] {
 export function HistoryView({ db, dbVersion }: HistoryViewProps) {
     const { stdout } = useStdout();
     const termHeight = stdout?.rows ?? 24;
-    const pageSize = Math.max(5, termHeight - 10);
 
     const [layout, setLayout] = useState<"stacked" | "side-by-side">("stacked");
     const [timeRange, setTimeRange] = useState(60); // minutes
@@ -115,6 +114,12 @@ export function HistoryView({ db, dbVersion }: HistoryViewProps) {
 
         return rows;
     }, [allData]);
+
+    // Chrome overhead: TabBar(1) + StatusBar(3) + HistoryView paddingY(2) + hint(1) + colHeader(1) = 8
+    // Account separator headers: first = 1 line, subsequent = 2 lines (marginTop=1)
+    const numAccountGroups = allData.size;
+    const separatorLines = numAccountGroups > 0 ? 1 + (numAccountGroups - 1) * 2 : 0;
+    const pageSize = Math.max(3, termHeight - 8 - separatorLines);
 
     const { offset, setOffset } = useScroll({
         totalItems: allRows.length,

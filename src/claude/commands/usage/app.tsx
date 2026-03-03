@@ -39,7 +39,7 @@ interface DashboardProps {
 }
 
 function Dashboard({ config, accountFilter }: DashboardProps) {
-    useTerminalSize({ clearOnResize: true });
+    const { rows: termHeight } = useTerminalSize({ clearOnResize: true });
     const { activeTab, tabs, activeIndex } = useTabNavigation(config.defaultTab);
 
     const [pollInterval, setPollInterval] = useState<PollInterval>(
@@ -56,12 +56,13 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
         });
     }, []);
 
-    const { results, pollingLabel, lastRefresh, nextRefresh, db, dbVersion, notifications, forceRefresh } = useUsagePoller({
-        config,
-        accountFilter,
-        paused,
-        pollIntervalSeconds: pollInterval,
-    });
+    const { results, pollingLabel, lastRefresh, nextRefresh, db, dbVersion, notifications, forceRefresh } =
+        useUsagePoller({
+            config,
+            accountFilter,
+            paused,
+            pollIntervalSeconds: pollInterval,
+        });
 
     const forceRefreshRef = useRef(forceRefresh);
     forceRefreshRef.current = forceRefresh;
@@ -81,12 +82,14 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
     }
 
     return (
-        <Box flexDirection="column">
+        <Box flexDirection="column" height={termHeight} overflow="hidden">
             <TabBar tabs={tabs} activeIndex={activeIndex} />
-            {activeTab === "overview" && <OverviewView results={results} config={config} />}
-            {activeTab === "timeline" && <TimelineView db={db} results={results} config={config} />}
-            {activeTab === "rates" && <RatesView db={db} results={results} dbVersion={dbVersion} />}
-            {activeTab === "history" && <HistoryView db={db} dbVersion={dbVersion} />}
+            <Box flexGrow={1} flexDirection="column" overflow="hidden">
+                {activeTab === "overview" && <OverviewView results={results} config={config} />}
+                {activeTab === "timeline" && <TimelineView db={db} results={results} config={config} />}
+                {activeTab === "rates" && <RatesView db={db} results={results} dbVersion={dbVersion} />}
+                {activeTab === "history" && <HistoryView db={db} dbVersion={dbVersion} />}
+            </Box>
             <AlertBanner
                 alerts={notifications?.alerts ?? []}
                 onDismiss={() => {
