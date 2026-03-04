@@ -78,12 +78,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                     dbRef.current?.recordIfChanged(account.accountName, bucket, data.utilization, data.resets_at);
 
                     try {
-                        notifRef.current?.processUsage(
-                            account.accountName,
-                            bucket,
-                            data.utilization,
-                            data.resets_at
-                        );
+                        notifRef.current?.processUsage(account.accountName, bucket, data.utilization, data.resets_at);
                     } catch {
                         // Notification failure should not interrupt polling
                     }
@@ -148,7 +143,11 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
             const now = new Date();
 
             // Persist for other instances to reuse within the same interval
-            await storage.putCacheFile<PollCache>(cacheKey, { timestamp: now.toISOString(), accounts: accountUsages }, `${pollIntervalSeconds} seconds`);
+            await storage.putCacheFile<PollCache>(
+                cacheKey,
+                { timestamp: now.toISOString(), accounts: accountUsages },
+                `${pollIntervalSeconds} seconds`
+            );
 
             processAccountUsages(accountUsages, now);
         } catch (error) {
