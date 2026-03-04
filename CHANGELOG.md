@@ -4,6 +4,40 @@ All notable changes to GenesisTools will be documented in this file.
 
 Version format: `YYYY.MM.DD.revision` (e.g., `2026.02.18.1`)
 
+## 2026.03.03.1
+
+### claude
+- Added interactive Ink TUI dashboard for usage monitoring with 4 tabs (Overview, Timeline, Rates, History), SQLite persistence, rate calculation, and macOS notifications
+- Fixed OAuth token loss on crash — tokens now persisted atomically with file lock immediately after refresh
+- Added keychain fallback recovery for permanently invalid refresh tokens
+
+### daemon
+- Added general-purpose background task scheduler with interval scheduling, retry on crash, JSONL log capture, macOS launchd integration, and interactive clack UI
+
+### azure-devops
+- Added `--images` flag to download inline images from work item descriptions and comments, with local path rewriting in generated markdown
+
+### watchman
+- Added `--temporary` flag to auto-unwatch paths on process exit
+
+### migrate-to-codex
+- Overhauled scope detection, plugin directory symlinks, and namespace handling
+- Improved edge case handling for plugin migration
+
+### Skills & Commands
+- Added `/question` command for answer-only mode with refinement loop
+- Added writing-plans skill
+- Added living-docs parallel dispatch documentation
+- Moved debugging-master skill into genesis-tools plugin
+
+### json
+- Improved format detection matching
+
+### Core
+- Resolved all TypeScript errors across codebase
+- Resolved all Biome lint/format errors and added pre-commit hook
+- Added shared Ink component library (`src/utils/ink/`) with reusable UI components and hooks
+
 ## 2026.02.26.3
 
 ### ask (AIChat SDK)

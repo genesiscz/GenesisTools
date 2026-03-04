@@ -56,12 +56,13 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
         });
     }, []);
 
-    const { results, pollingLabel, lastRefresh, nextRefresh, db, notifications, forceRefresh } = useUsagePoller({
-        config,
-        accountFilter,
-        paused,
-        pollIntervalSeconds: pollInterval,
-    });
+    const { results, pollingLabel, lastRefresh, nextRefresh, db, dbVersion, notifications, forceRefresh } =
+        useUsagePoller({
+            config,
+            accountFilter,
+            paused,
+            pollIntervalSeconds: pollInterval,
+        });
 
     const forceRefreshRef = useRef(forceRefresh);
     forceRefreshRef.current = forceRefresh;
@@ -85,8 +86,8 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
             <TabBar tabs={tabs} activeIndex={activeIndex} />
             {activeTab === "overview" && <OverviewView results={results} config={config} />}
             {activeTab === "timeline" && <TimelineView db={db} results={results} config={config} />}
-            {activeTab === "rates" && <RatesView db={db} results={results} />}
-            {activeTab === "history" && <HistoryView db={db} />}
+            {activeTab === "rates" && <RatesView db={db} results={results} dbVersion={dbVersion} />}
+            {activeTab === "history" && <HistoryView db={db} dbVersion={dbVersion} />}
             <AlertBanner
                 alerts={notifications?.alerts ?? []}
                 onDismiss={() => {
