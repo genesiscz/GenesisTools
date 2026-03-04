@@ -110,7 +110,12 @@ function AccountRatesRow({
                             {formatRate(info.rate5min).padEnd(10)}
                         </Text>
                         <Text dimColor>{formatProj(info.projMinutes).padEnd(12)}</Text>
-                        <RateSparkline db={db} accountName={account.accountName} bucket={bucket} dbVersion={dbVersion} />
+                        <RateSparkline
+                            db={db}
+                            accountName={account.accountName}
+                            bucket={bucket}
+                            dbVersion={dbVersion}
+                        />
                     </Box>
                 );
             })}
