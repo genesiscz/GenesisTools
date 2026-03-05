@@ -1,7 +1,7 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
-import { Badge } from "@ui/components/badge";
-import { Link2, ArrowDownToLine, ArrowUpFromLine, Settings } from "lucide-react";
 import { useRouter } from "@tanstack/react-router";
+import { Badge } from "@ui/components/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
+import { ArrowDownToLine, ArrowUpFromLine, Link2, Settings } from "lucide-react";
 
 export function IndexPage() {
     const router = useRouter();

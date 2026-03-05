@@ -1,18 +1,18 @@
 import {
-    Outlet,
-    RouterProvider,
     createHashHistory,
-    createRouter,
     createRootRoute,
     createRoute,
+    createRouter,
+    Outlet,
+    RouterProvider,
     useRouterState,
 } from "@tanstack/react-router";
 import { DashboardLayout } from "@ui/layouts/DashboardLayout";
-import { Settings, ArrowDownToLine, ArrowUpFromLine, Link2 } from "lucide-react";
-import { IndexPage } from "./routes/index";
-import { MappingsPage } from "./routes/mappings";
+import { ArrowDownToLine, ArrowUpFromLine, Link2, Settings } from "lucide-react";
 import { ExportPage } from "./routes/export";
 import { ImportPage } from "./routes/import";
+import { IndexPage } from "./routes/index";
+import { MappingsPage } from "./routes/mappings";
 import { SettingsPage } from "./routes/settings";
 
 const navLinks = [
@@ -71,13 +71,7 @@ const settingsRoute = createRoute({
     component: SettingsPage,
 });
 
-const routeTree = rootRoute.addChildren([
-    indexRoute,
-    mappingsRoute,
-    exportRoute,
-    importRoute,
-    settingsRoute,
-]);
+const routeTree = rootRoute.addChildren([indexRoute, mappingsRoute, exportRoute, importRoute, settingsRoute]);
 
 const hashHistory = createHashHistory();
 
