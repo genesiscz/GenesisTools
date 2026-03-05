@@ -1,10 +1,10 @@
-import { parseCurl } from "@app/utils/curl";
 import { ClarityApi } from "@app/utils/clarity";
-import { getConfig, saveConfig } from "../config.js";
-import type { ClarityConfig, ClarityMapping } from "../config.js";
+import { parseCurl } from "@app/utils/curl";
 import * as clack from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
+import type { ClarityConfig } from "../config.js";
+import { getConfig, saveConfig } from "../config.js";
 
 async function runInteractiveSetup(): Promise<void> {
     clack.intro(pc.bgCyan(pc.black(" Clarity PPM Configuration ")));
@@ -58,7 +58,7 @@ async function runInteractiveSetup(): Promise<void> {
     const spinner = clack.spinner();
     spinner.start("Parsing cURL command...");
 
-    let parsed;
+    let parsed: ReturnType<typeof parseCurl>;
 
     try {
         parsed = parseCurl(curlInput);
@@ -170,12 +170,8 @@ async function manageMappings(): Promise<void> {
     console.log("\nCurrent Mappings:");
 
     for (const [i, m] of config.mappings.entries()) {
-        console.log(
-            `  ${i + 1}. ADO #${m.adoWorkItemId} (${m.adoWorkItemTitle})`
-        );
-        console.log(
-            `     -> ${m.clarityTaskName} [${m.clarityInvestmentName}]`
-        );
+        console.log(`  ${i + 1}. ADO #${m.adoWorkItemId} (${m.adoWorkItemTitle})`);
+        console.log(`     -> ${m.clarityTaskName} [${m.clarityInvestmentName}]`);
     }
 
     const action = await clack.select({
@@ -230,9 +226,7 @@ async function manageMappings(): Promise<void> {
 }
 
 export function registerConfigureCommand(program: Command): void {
-    const cmd = program
-        .command("configure")
-        .description("Configure Clarity PPM connection and mappings");
+    const cmd = program.command("configure").description("Configure Clarity PPM connection and mappings");
 
     cmd.command("auth")
         .description("Set up authentication (interactive cURL paste)")
