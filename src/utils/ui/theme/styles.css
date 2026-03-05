@@ -4,7 +4,7 @@
    TYPOGRAPHY & BASE STYLES
    ============================================================================ */
 body {
-  @apply m-0;
+  margin: 0;
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu',
     'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
@@ -275,7 +275,8 @@ code {
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    border-color: var(--color-border, var(--border));
+    outline-color: color-mix(in oklch, var(--color-ring, var(--ring)), transparent 50%);
   }
 
   html {
@@ -283,31 +284,37 @@ code {
   }
 
   body {
-    @apply bg-background text-foreground;
+    background-color: var(--color-background, var(--background));
+    color: var(--color-foreground, var(--foreground));
   }
 
   h1, h2, h3, h4, h5, h6 {
-    @apply font-semibold tracking-tight;
+    font-weight: 600;
+    letter-spacing: -0.025em;
   }
 
   h1 {
-    @apply text-3xl;
+    font-size: 1.875rem;
+    line-height: 2.25rem;
   }
 
   h2 {
-    @apply text-2xl;
+    font-size: 1.5rem;
+    line-height: 2rem;
   }
 
   h3 {
-    @apply text-xl;
+    font-size: 1.25rem;
+    line-height: 1.75rem;
   }
 
   p {
-    @apply leading-7;
+    line-height: 1.75rem;
   }
 
   a {
-    @apply transition-colors duration-200;
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+    transition-duration: 200ms;
   }
 }
 
@@ -367,10 +374,12 @@ code {
   }
 
   h1 {
-    @apply text-2xl;
+    font-size: 1.5rem;
+    line-height: 2rem;
   }
 
   h2 {
-    @apply text-xl;
+    font-size: 1.25rem;
+    line-height: 1.75rem;
   }
 }

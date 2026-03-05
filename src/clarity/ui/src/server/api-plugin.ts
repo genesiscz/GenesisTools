@@ -1,28 +1,50 @@
 import type { Plugin } from "vite";
-import { getExportData } from "./export";
-import { executeFill, getFillPreview } from "./fill";
-import { addMapping, getMappings, removeMapping } from "./mappings";
-import { getStatus, testConnection, updateAuth } from "./settings";
 
 type ApiHandler = (body: Record<string, unknown>) => Promise<unknown>;
-
-const routes: Record<string, ApiHandler> = {
-    "GET /api/mappings": () => getMappings(),
-    "POST /api/mappings": (body) => addMapping(body),
-    "DELETE /api/mappings": (body) => removeMapping(body.adoWorkItemId as number),
-    "POST /api/export": (body) => getExportData(body.month as number, body.year as number),
-    "POST /api/fill/preview": (body) => getFillPreview(body.month as number, body.year as number),
-    "POST /api/fill/execute": (body) =>
-        executeFill(body.month as number, body.year as number, body.weekIds as number[]),
-    "GET /api/status": () => getStatus(),
-    "POST /api/test-connection": () => testConnection(),
-    "POST /api/update-auth": (body) => updateAuth(body.curl as string),
-};
 
 export function apiPlugin(): Plugin {
     return {
         name: "clarity-api",
         configureServer(server) {
+            const routes: Record<string, ApiHandler> = {
+                "GET /api/mappings": async () => {
+                    const { getMappings } = await import("./mappings");
+                    return getMappings();
+                },
+                "POST /api/mappings": async (body) => {
+                    const { addMapping } = await import("./mappings");
+                    return addMapping(body);
+                },
+                "DELETE /api/mappings": async (body) => {
+                    const { removeMapping } = await import("./mappings");
+                    return removeMapping(body.adoWorkItemId as number);
+                },
+                "POST /api/export": async (body) => {
+                    const { getExportData } = await import("./export");
+                    return getExportData(body.month as number, body.year as number);
+                },
+                "POST /api/fill/preview": async (body) => {
+                    const { getFillPreview } = await import("./fill");
+                    return getFillPreview(body.month as number, body.year as number);
+                },
+                "POST /api/fill/execute": async (body) => {
+                    const { executeFill } = await import("./fill");
+                    return executeFill(body.month as number, body.year as number, body.weekIds as number[]);
+                },
+                "GET /api/status": async () => {
+                    const { getStatus } = await import("./settings");
+                    return getStatus();
+                },
+                "POST /api/test-connection": async () => {
+                    const { testConnection } = await import("./settings");
+                    return testConnection();
+                },
+                "POST /api/update-auth": async (body) => {
+                    const { updateAuth } = await import("./settings");
+                    return updateAuth(body.curl as string);
+                },
+            };
+
             server.middlewares.use(async (req, res, next) => {
                 const url = req.url;
 
