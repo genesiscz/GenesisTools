@@ -4,6 +4,7 @@ import { registerConfigureSubcommand } from "./timelog/configure";
 import { registerDeleteSubcommand } from "./timelog/delete";
 import { registerImportSubcommand } from "./timelog/import";
 import { registerListSubcommand } from "./timelog/list";
+import { registerExportMonthSubcommand } from "./timelog/export-month";
 import { registerPrepareImportSubcommand } from "./timelog/prepare-import";
 import { registerTypesSubcommand } from "./timelog/types";
 
@@ -64,4 +65,5 @@ export function registerTimelogCommand(program: Command): void {
     registerDeleteSubcommand(timelog);
     registerConfigureSubcommand(timelog);
     registerPrepareImportSubcommand(timelog);
+    registerExportMonthSubcommand(timelog);
 }
