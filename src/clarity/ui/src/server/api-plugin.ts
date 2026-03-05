@@ -1,7 +1,7 @@
 import type { Plugin } from "vite";
-import { getMappings, addMapping, removeMapping } from "./mappings";
 import { getExportData } from "./export";
-import { getFillPreview, executeFill } from "./fill";
+import { executeFill, getFillPreview } from "./fill";
+import { addMapping, getMappings, removeMapping } from "./mappings";
 import { getStatus, testConnection, updateAuth } from "./settings";
 
 type ApiHandler = (body: Record<string, unknown>) => Promise<unknown>;

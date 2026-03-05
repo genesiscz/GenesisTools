@@ -1,13 +1,6 @@
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from "@ui/components/table";
-import { Button } from "@ui/components/button";
 import { Badge } from "@ui/components/badge";
+import { Button } from "@ui/components/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/components/table";
 import { Unlink } from "lucide-react";
 
 interface MappingRow {
@@ -30,8 +23,8 @@ export function MappingTable({ mappings, onRemove }: MappingTableProps) {
     if (mappings.length === 0) {
         return (
             <div className="text-center py-12 text-gray-500 font-mono text-sm">
-                No mappings configured. Use{" "}
-                <code className="text-amber-400">tools clarity link-workitems</code> to create mappings.
+                No mappings configured. Use <code className="text-amber-400">tools clarity link-workitems</code> to
+                create mappings.
             </div>
         );
     }

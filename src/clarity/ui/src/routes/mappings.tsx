@@ -1,6 +1,6 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@ui/components/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
 import { MappingTable } from "../components/MappingTable";
 
@@ -82,12 +82,7 @@ export function MappingsPage() {
                         </div>
                     )}
 
-                    {data && (
-                        <MappingTable
-                            mappings={data.mappings}
-                            onRemove={(id) => removeMutation.mutate(id)}
-                        />
-                    )}
+                    {data && <MappingTable mappings={data.mappings} onRemove={(id) => removeMutation.mutate(id)} />}
                 </CardContent>
             </Card>
 

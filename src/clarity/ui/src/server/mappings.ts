@@ -1,5 +1,5 @@
-import { getConfig, saveConfig } from "../../../config";
 import type { ClarityMapping } from "../../../config";
+import { getConfig, saveConfig } from "../../../config";
 
 export async function getMappings(): Promise<{ mappings: ClarityMapping[]; configured: boolean }> {
     const config = await getConfig();

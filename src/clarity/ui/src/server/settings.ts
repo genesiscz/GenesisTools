@@ -1,5 +1,5 @@
-import { parseCurl } from "../../../../utils/curl";
 import { ClarityApi } from "../../../../utils/clarity";
+import { parseCurl } from "../../../../utils/curl";
 import { getConfig, saveConfig } from "../../../config";
 
 export interface StatusResult {

@@ -3,7 +3,7 @@ import { TimeLogApi } from "../../../../azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "../../../../azure-devops/utils";
 import type { TimeEntryRecord, TimeSegment, TimeSeriesValue } from "../../../../utils/clarity";
 import { ClarityApi } from "../../../../utils/clarity";
-import { getMappingForWorkItem, requireConfig, type ClarityMapping } from "../../../config";
+import { type ClarityMapping, getMappingForWorkItem, requireConfig } from "../../../config";
 
 interface FillEntry {
     mapping: ClarityMapping;
@@ -80,9 +80,13 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
         fill.totalMinutes += entry.minutes;
     }
 
-    const allDates = Object.keys(
-        [...fillMap.values()].reduce((acc, f) => ({ ...acc, ...f.dayMinutes }), {} as Record<string, number>)
-    ).sort();
+    const allDatesSet = new Set<string>();
+    for (const fill of fillMap.values()) {
+        for (const date of Object.keys(fill.dayMinutes)) {
+            allDatesSet.add(date);
+        }
+    }
+    const allDates = [...allDatesSet].sort();
 
     const weeksSeen = new Set<string>();
     const weeks: Array<{ start: Date; end: Date }> = [];
@@ -246,9 +250,7 @@ export async function executeFill(
                 success++;
             } catch (err) {
                 failed++;
-                errors.push(
-                    `${fill.mapping.clarityTaskName}: ${err instanceof Error ? err.message : String(err)}`
-                );
+                errors.push(`${fill.mapping.clarityTaskName}: ${err instanceof Error ? err.message : String(err)}`);
             }
         }
     }
