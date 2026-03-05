@@ -1,10 +1,13 @@
+@reference "tailwindcss";
 @import '@ui/theme/cyberpunk.css';
+
+@custom-variant dark (&:is(.dark *));
 
 /* ============================================================================
    TYPOGRAPHY & BASE STYLES
    ============================================================================ */
 body {
-  margin: 0;
+  @apply m-0;
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu',
     'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
@@ -275,8 +278,7 @@ code {
 
 @layer base {
   * {
-    border-color: var(--color-border, var(--border));
-    outline-color: color-mix(in oklch, var(--color-ring, var(--ring)), transparent 50%);
+    @apply border-border outline-ring/50;
   }
 
   html {
@@ -284,37 +286,31 @@ code {
   }
 
   body {
-    background-color: var(--color-background, var(--background));
-    color: var(--color-foreground, var(--foreground));
+    @apply bg-background text-foreground;
   }
 
   h1, h2, h3, h4, h5, h6 {
-    font-weight: 600;
-    letter-spacing: -0.025em;
+    @apply font-semibold tracking-tight;
   }
 
   h1 {
-    font-size: 1.875rem;
-    line-height: 2.25rem;
+    @apply text-3xl;
   }
 
   h2 {
-    font-size: 1.5rem;
-    line-height: 2rem;
+    @apply text-2xl;
   }
 
   h3 {
-    font-size: 1.25rem;
-    line-height: 1.75rem;
+    @apply text-xl;
   }
 
   p {
-    line-height: 1.75rem;
+    @apply leading-7;
   }
 
   a {
-    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
-    transition-duration: 200ms;
+    @apply transition-colors duration-200;
   }
 }
 
@@ -374,12 +370,10 @@ code {
   }
 
   h1 {
-    font-size: 1.5rem;
-    line-height: 2rem;
+    @apply text-2xl;
   }
 
   h2 {
-    font-size: 1.25rem;
-    line-height: 1.75rem;
+    @apply text-xl;
   }
 }
