@@ -1,12 +1,12 @@
-import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
-import { Button } from "@ui/components/button";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Badge } from "@ui/components/badge";
+import { Button } from "@ui/components/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
-import { MonthPicker } from "../components/MonthPicker";
+import { AlertTriangle, CheckCircle, Play, XCircle } from "lucide-react";
+import { useState } from "react";
 import { FillWeekCard } from "../components/FillWeekCard";
-import { AlertTriangle, Play, CheckCircle, XCircle } from "lucide-react";
+import { MonthPicker } from "../components/MonthPicker";
 
 async function fetchFillPreview(month: number, year: number) {
     const res = await fetch("/api/fill/preview", {
@@ -43,7 +43,11 @@ export function ImportPage() {
     const [selectedWeeks, setSelectedWeeks] = useState<Set<number>>(new Set());
     const [showConfirm, setShowConfirm] = useState(false);
 
-    const { data: preview, isLoading, error } = useQuery({
+    const {
+        data: preview,
+        isLoading,
+        error,
+    } = useQuery({
         queryKey: ["fill-preview", month, year],
         queryFn: () => fetchFillPreview(month, year),
     });
@@ -81,7 +85,15 @@ export function ImportPage() {
                 <h1 className="text-xl font-mono font-bold text-gray-200">
                     CLARITY <span className="text-amber-500">IMPORT</span>
                 </h1>
-                <MonthPicker month={month} year={year} onChange={(m, y) => { setMonth(m); setYear(y); setSelectedWeeks(new Set()); }} />
+                <MonthPicker
+                    month={month}
+                    year={year}
+                    onChange={(m, y) => {
+                        setMonth(m);
+                        setYear(y);
+                        setSelectedWeeks(new Set());
+                    }}
+                />
             </div>
 
             {isLoading && (
@@ -136,25 +148,27 @@ export function ImportPage() {
                         </Card>
                     ) : (
                         <div className="space-y-4">
-                            {preview.weeks.map((week: {
-                                timesheetId: number;
-                                periodStart: string;
-                                periodFinish: string;
-                                entries: Array<{
-                                    clarityTaskName: string;
-                                    clarityTaskCode: string;
-                                    dayValues: Record<string, number>;
-                                    totalMinutes: number;
-                                }>;
-                                unmappedWorkItems: Array<{ workItemId: number; minutes: number }>;
-                            }) => (
-                                <FillWeekCard
-                                    key={week.timesheetId}
-                                    {...week}
-                                    selected={selectedWeeks.has(week.timesheetId)}
-                                    onToggle={() => toggleWeek(week.timesheetId)}
-                                />
-                            ))}
+                            {preview.weeks.map(
+                                (week: {
+                                    timesheetId: number;
+                                    periodStart: string;
+                                    periodFinish: string;
+                                    entries: Array<{
+                                        clarityTaskName: string;
+                                        clarityTaskCode: string;
+                                        dayValues: Record<string, number>;
+                                        totalMinutes: number;
+                                    }>;
+                                    unmappedWorkItems: Array<{ workItemId: number; minutes: number }>;
+                                }) => (
+                                    <FillWeekCard
+                                        key={week.timesheetId}
+                                        {...week}
+                                        selected={selectedWeeks.has(week.timesheetId)}
+                                        onToggle={() => toggleWeek(week.timesheetId)}
+                                    />
+                                )
+                            )}
                         </div>
                     )}
 
@@ -179,8 +193,8 @@ export function ImportPage() {
                                     </CardHeader>
                                     <CardContent>
                                         <p className="text-sm text-gray-400 font-mono mb-4">
-                                            This will update {selectedWeeks.size} Clarity timesheet(s).
-                                            This action cannot be easily undone.
+                                            This will update {selectedWeeks.size} Clarity timesheet(s). This action
+                                            cannot be easily undone.
                                         </p>
                                         <div className="flex gap-3">
                                             <Button

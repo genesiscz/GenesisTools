@@ -1,5 +1,5 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Badge } from "@ui/components/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/components/table";
 
 interface WeekEntry {
