@@ -1,10 +1,10 @@
-import { ClarityApi } from "@app/utils/clarity";
-import { requireConfig } from "../config.js";
 import type { TimeEntryRecord, TimesheetRecord } from "@app/utils/clarity";
+import { ClarityApi } from "@app/utils/clarity";
 import * as clack from "@clack/prompts";
 import Table from "cli-table3";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { requireConfig } from "../config.js";
 
 function formatSeconds(seconds: number): string {
     const hours = seconds / 3600;
@@ -44,7 +44,9 @@ function renderTimesheetTable(ts: TimesheetRecord, entries: TimeEntryRecord[]): 
     const finish = ts.timePeriodFinish.split("T")[0];
 
     console.log(`\n${pc.bold(`Timesheet ${ts._internalId}`)} (${start} to ${finish})`);
-    console.log(`Status: ${statusColor(ts.status.id)} | Entries: ${entries.length} | Total: ${formatSeconds(ts.actualsTotal)}`);
+    console.log(
+        `Status: ${statusColor(ts.status.id)} | Entries: ${entries.length} | Total: ${formatSeconds(ts.actualsTotal)}`
+    );
 
     if (entries.length === 0) {
         console.log(pc.dim("  No time entries"));
@@ -85,10 +87,7 @@ function renderTimesheetTable(ts: TimesheetRecord, entries: TimeEntryRecord[]): 
             dayValues.push(val > 0 ? formatSeconds(val) : pc.dim("-"));
         }
 
-        const name =
-            entry.taskName.length > 30
-                ? `${entry.taskName.slice(0, 27)}...`
-                : entry.taskName;
+        const name = entry.taskName.length > 30 ? `${entry.taskName.slice(0, 27)}...` : entry.taskName;
 
         table.push([name, ...dayValues, pc.bold(formatSeconds(entryTotal))]);
     }
@@ -97,9 +96,7 @@ function renderTimesheetTable(ts: TimesheetRecord, entries: TimeEntryRecord[]): 
 }
 
 export function registerTimesheetCommand(program: Command): void {
-    const ts = program
-        .command("timesheet")
-        .description("View and manage Clarity timesheets");
+    const ts = program.command("timesheet").description("View and manage Clarity timesheets");
 
     ts.command("show <timesheetId>")
         .description("Show timesheet with time entries")

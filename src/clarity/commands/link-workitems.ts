@@ -1,10 +1,10 @@
-import { ClarityApi } from "@app/utils/clarity";
 import type { TimeEntryRecord } from "@app/utils/clarity";
-import { getConfig, saveConfig } from "../config.js";
-import type { ClarityMapping } from "../config.js";
+import { ClarityApi } from "@app/utils/clarity";
 import * as clack from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
+import type { ClarityMapping } from "../config.js";
+import { getConfig, saveConfig } from "../config.js";
 
 interface ClarityProject {
     taskId: number;
@@ -173,9 +173,7 @@ async function runInteractiveLinking(): Promise<void> {
     config.mappings.push(mapping);
     await saveConfig(config);
 
-    clack.outro(
-        pc.green(`Linked: ADO #${adoWorkItemId} -> ${project.taskName} [${project.investmentName}]`)
-    );
+    clack.outro(pc.green(`Linked: ADO #${adoWorkItemId} -> ${project.taskName} [${project.investmentName}]`));
 }
 
 export function registerLinkCommand(program: Command): void {
@@ -227,7 +225,10 @@ export function registerLinkCommand(program: Command): void {
             }
 
             // Non-interactive linking
-            if (options.azureDevopsWorkitem !== undefined && (options.clarityTask || options.clarityTaskId !== undefined)) {
+            if (
+                options.azureDevopsWorkitem !== undefined &&
+                (options.clarityTask || options.clarityTaskId !== undefined)
+            ) {
                 if (!options.timesheet) {
                     console.error("--timesheet <id> is required for non-interactive linking (to look up task details)");
                     process.exit(1);
@@ -268,9 +269,7 @@ export function registerLinkCommand(program: Command): void {
                 }
 
                 // Remove existing if any
-                const existingIdx = config.mappings.findIndex(
-                    (m) => m.adoWorkItemId === options.azureDevopsWorkitem
-                );
+                const existingIdx = config.mappings.findIndex((m) => m.adoWorkItemId === options.azureDevopsWorkitem);
 
                 if (existingIdx !== -1) {
                     config.mappings.splice(existingIdx, 1);
