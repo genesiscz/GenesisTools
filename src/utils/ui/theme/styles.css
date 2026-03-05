@@ -1,8 +1,4 @@
-@import 'tailwindcss';
-@import 'tw-animate-css';
 @import './cyberpunk.css';
-
-@custom-variant dark (&:is(.dark *));
 
 /* ============================================================================
    TYPOGRAPHY & BASE STYLES

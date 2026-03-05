@@ -9,4 +9,4 @@ export {
 	DialogPortal,
 	DialogTitle,
 	DialogTrigger,
-} from "../../../../../utils/ui/components/dialog";
+} from "@ui/components/dialog";

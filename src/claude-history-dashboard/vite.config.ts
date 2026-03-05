@@ -1,19 +1,16 @@
-import tailwindcss from "@tailwindcss/vite";
 import { devtools } from "@tanstack/devtools-vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
-import { resolve } from "path";
-import { defineConfig } from "vite";
+import { resolve } from "node:path";
 import viteTsConfigPaths from "vite-tsconfig-paths";
+import { createDashboardViteConfig } from "../utils/ui/vite.base";
 
-const config = defineConfig({
+export default createDashboardViteConfig({
+	root: __dirname,
+	port: 3069,
 	plugins: [
 		devtools(),
-		// this is the plugin that enables path aliases
-		viteTsConfigPaths({
-			projects: ["./tsconfig.json"],
-		}),
-		tailwindcss(),
+		viteTsConfigPaths({ projects: ["./tsconfig.json"] }),
 		tanstackStart(),
 		viteReact({
 			babel: {
@@ -21,11 +18,7 @@ const config = defineConfig({
 			},
 		}),
 	],
-	resolve: {
-		alias: {
-			"@app": resolve(__dirname, ".."),
-		},
+	aliases: {
+		"@app": resolve(__dirname, ".."),
 	},
 });
-
-export default config;

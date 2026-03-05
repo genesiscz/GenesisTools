@@ -1,1 +1,1 @@
-export { Button, buttonVariants } from "../../../../../utils/ui/components/button";
+export { Button, buttonVariants } from "@ui/components/button";
