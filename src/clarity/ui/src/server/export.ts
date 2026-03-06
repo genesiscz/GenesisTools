@@ -3,7 +3,7 @@ import { exportMonth, type MonthExport } from "@app/azure-devops/lib/timelog/exp
 import { enrichWorkItems } from "@app/azure-devops/lib/work-item-enrichment";
 import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
-import { type TimelogWorkItemGroup, getTimelogWorkItems } from "@app/clarity/lib/timelog-workitems";
+import { getTimelogWorkItems, type TimelogWorkItemGroup } from "@app/clarity/lib/timelog-workitems";
 
 export type { TimelogWorkItemGroup };
 
@@ -23,7 +23,7 @@ function requireAdoConfig(): AzureConfigWithTimeLog {
 
 function createTimeLogApi(adoConfig: AzureConfigWithTimeLog): TimeLogApi {
     const user = adoConfig.timelog!.defaultUser!;
-    return new TimeLogApi(adoConfig.orgId, adoConfig.projectId, adoConfig.timelog!.functionsKey, user);
+    return new TimeLogApi(adoConfig.orgId!, adoConfig.projectId, adoConfig.timelog!.functionsKey, user);
 }
 
 async function enrichExportEntries(result: MonthExport, adoConfig: AzureConfigWithTimeLog): Promise<void> {

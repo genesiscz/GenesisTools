@@ -1,16 +1,17 @@
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
-import { Button } from "@ui/components/button";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@ui/components/badge";
+import { Button } from "@ui/components/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
-import { CheckCircle, XCircle, RefreshCw, Shield, Globe, Link2, User } from "lucide-react";
+import { CheckCircle, Globe, Link2, RefreshCw, Shield, User, XCircle } from "lucide-react";
+import { useState } from "react";
 
 async function fetchStatus() {
     const res = await fetch("/api/status");
 
     if (!res.ok) {
-        throw new Error("Failed to fetch status");
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Failed to fetch status (${res.status})`);
     }
 
     return res.json();
@@ -20,7 +21,8 @@ async function testConnectionApi() {
     const res = await fetch("/api/test-connection", { method: "POST" });
 
     if (!res.ok) {
-        throw new Error("Connection test failed");
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Connection test failed (${res.status})`);
     }
 
     return res.json();
@@ -34,7 +36,8 @@ async function updateAuthApi(curl: string) {
     });
 
     if (!res.ok) {
-        throw new Error("Auth update failed");
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Auth update failed (${res.status})`);
     }
 
     return res.json();
@@ -104,12 +107,19 @@ export function SettingsPage() {
                             <div className="flex items-center gap-3">
                                 <Shield className="w-4 h-4 text-gray-500" />
                                 <span className="font-mono text-sm text-gray-400">
-                                    Auth: {status.hasAuth ? (
-                                        <Badge variant="outline" className="text-xs border-green-500/30 text-green-400 ml-1">
+                                    Auth:{" "}
+                                    {status.hasAuth ? (
+                                        <Badge
+                                            variant="outline"
+                                            className="text-xs border-green-500/30 text-green-400 ml-1"
+                                        >
                                             ACTIVE
                                         </Badge>
                                     ) : (
-                                        <Badge variant="outline" className="text-xs border-red-500/30 text-red-400 ml-1">
+                                        <Badge
+                                            variant="outline"
+                                            className="text-xs border-red-500/30 text-red-400 ml-1"
+                                        >
                                             MISSING
                                         </Badge>
                                     )}
@@ -138,7 +148,9 @@ export function SettingsPage() {
                                     disabled={testMutation.isPending}
                                     className="font-mono text-xs"
                                 >
-                                    <RefreshCw className={`w-3.5 h-3.5 mr-2 ${testMutation.isPending ? "animate-spin" : ""}`} />
+                                    <RefreshCw
+                                        className={`w-3.5 h-3.5 mr-2 ${testMutation.isPending ? "animate-spin" : ""}`}
+                                    />
                                     {testMutation.isPending ? "TESTING..." : "TEST CONNECTION"}
                                 </Button>
 
@@ -149,7 +161,9 @@ export function SettingsPage() {
                                         ) : (
                                             <XCircle className="w-4 h-4 text-red-400" />
                                         )}
-                                        <span className={`font-mono text-xs ${testMutation.data.success ? "text-green-400" : "text-red-400"}`}>
+                                        <span
+                                            className={`font-mono text-xs ${testMutation.data.success ? "text-green-400" : "text-red-400"}`}
+                                        >
                                             {testMutation.data.message}
                                         </span>
                                     </div>
@@ -185,7 +199,9 @@ export function SettingsPage() {
                         </Button>
 
                         {authMutation.data && (
-                            <span className={`font-mono text-xs ${authMutation.data.success ? "text-green-400" : "text-red-400"}`}>
+                            <span
+                                className={`font-mono text-xs ${authMutation.data.success ? "text-green-400" : "text-red-400"}`}
+                            >
                                 {authMutation.data.message}
                             </span>
                         )}

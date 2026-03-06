@@ -9,12 +9,7 @@
  */
 
 import { Api } from "@app/azure-devops/api";
-import {
-    loadWorkItemCache,
-    saveWorkItemCache,
-    storage,
-    WORKITEM_FRESHNESS_MINUTES,
-} from "@app/azure-devops/cache";
+import { loadWorkItemCache, saveWorkItemCache, storage, WORKITEM_FRESHNESS_MINUTES } from "@app/azure-devops/cache";
 import type { AzureConfig, WorkItemCache, WorkItemTypeDefinition } from "@app/azure-devops/types";
 import { WORKITEM_CACHE_VERSION } from "@app/azure-devops/types";
 import logger from "@app/logger";

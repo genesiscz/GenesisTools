@@ -1,9 +1,10 @@
-import { exportMonth } from "../../../../azure-devops/lib/timelog/export";
-import { TimeLogApi } from "../../../../azure-devops/timelog-api";
-import { requireTimeLogConfig, requireTimeLogUser } from "../../../../azure-devops/utils";
-import type { TimeEntryRecord, TimeSegment, TimeSeriesValue } from "../../../../utils/clarity";
-import { ClarityApi } from "../../../../utils/clarity";
-import { type ClarityMapping, getMappingForWorkItem, requireConfig } from "../../../config";
+import { exportMonth } from "@app/azure-devops/lib/timelog/export";
+import { loadConfig as loadAdoConfig } from "@app/azure-devops/config";
+import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
+import { TimeLogApi } from "@app/azure-devops/timelog-api";
+import type { TimeEntryRecord, TimeSegment, TimeSeriesValue } from "@app/utils/clarity";
+import { ClarityApi } from "@app/utils/clarity";
+import { type ClarityMapping, getMappingForWorkItem, requireConfig } from "@app/clarity/config";
 
 interface FillEntry {
     mapping: ClarityMapping;
@@ -48,9 +49,19 @@ function getWeekRange(date: Date): { start: Date; end: Date } {
 
 export async function getFillPreview(month: number, year: number): Promise<FillPreviewResult> {
     const clarityConfig = await requireConfig();
-    const adoConfig = requireTimeLogConfig();
-    const adoUser = requireTimeLogUser(adoConfig);
-    const adoApi = new TimeLogApi(adoConfig.orgId!, adoConfig.projectId, adoConfig.timelog!.functionsKey, adoUser);
+    const adoConfig = loadAdoConfig() as AzureConfigWithTimeLog | null;
+
+    if (!adoConfig?.orgId || !adoConfig.timelog?.functionsKey) {
+        throw new Error("Azure DevOps / TimeLog not configured. Run: tools azure-devops configure");
+    }
+
+    const adoUser = adoConfig.timelog.defaultUser;
+
+    if (!adoUser) {
+        throw new Error("TimeLog user not configured in Azure DevOps config");
+    }
+
+    const adoApi = new TimeLogApi(adoConfig.orgId, adoConfig.projectId, adoConfig.timelog.functionsKey, adoUser);
     const clarityApi = new ClarityApi({
         baseUrl: clarityConfig.baseUrl,
         authToken: clarityConfig.authToken,
@@ -162,9 +173,19 @@ export async function executeFill(
     weekIds: number[]
 ): Promise<{ success: number; failed: number; errors: string[] }> {
     const clarityConfig = await requireConfig();
-    const adoConfig = requireTimeLogConfig();
-    const adoUser = requireTimeLogUser(adoConfig);
-    const adoApi = new TimeLogApi(adoConfig.orgId!, adoConfig.projectId, adoConfig.timelog!.functionsKey, adoUser);
+    const adoConfig = loadAdoConfig() as AzureConfigWithTimeLog | null;
+
+    if (!adoConfig?.orgId || !adoConfig.timelog?.functionsKey) {
+        throw new Error("Azure DevOps / TimeLog not configured. Run: tools azure-devops configure");
+    }
+
+    const adoUser = adoConfig.timelog.defaultUser;
+
+    if (!adoUser) {
+        throw new Error("TimeLog user not configured in Azure DevOps config");
+    }
+
+    const adoApi = new TimeLogApi(adoConfig.orgId, adoConfig.projectId, adoConfig.timelog.functionsKey, adoUser);
     const clarityApi = new ClarityApi({
         baseUrl: clarityConfig.baseUrl,
         authToken: clarityConfig.authToken,

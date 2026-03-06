@@ -61,9 +61,7 @@ export function apiPlugin(): Plugin {
                 },
                 "GET /api/workitem-type-colors": async () => {
                     const { loadConfig } = await import("@app/azure-devops/config");
-                    const { getWorkItemTypeColors } = await import(
-                        "@app/azure-devops/lib/work-item-enrichment"
-                    );
+                    const { getWorkItemTypeColors } = await import("@app/azure-devops/lib/work-item-enrichment");
                     const config = loadConfig();
 
                     if (!config) {

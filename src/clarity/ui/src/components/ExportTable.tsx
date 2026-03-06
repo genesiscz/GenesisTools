@@ -25,7 +25,14 @@ function buildWorkItemUrl(org: string, project: string, id: number): string {
     return `${org}/${encodeURIComponent(project)}/_workitems/edit/${id}`;
 }
 
-export function ExportTable({ entries, entriesByDay, mappedWorkItemIds, adoOrg, adoProject, typeColors }: ExportTableProps) {
+export function ExportTable({
+    entries,
+    entriesByDay,
+    mappedWorkItemIds,
+    adoOrg,
+    adoProject,
+    typeColors,
+}: ExportTableProps) {
     // Group entries by date
     const byDate = new Map<string, ExportEntry[]>();
 
@@ -110,7 +117,10 @@ export function ExportTable({ entries, entriesByDay, mappedWorkItemIds, adoOrg, 
                             <TableCell className="font-mono text-sm text-gray-300">
                                 {(entry.minutes / 60).toFixed(2)}h
                             </TableCell>
-                            <TableCell className="font-mono text-xs text-gray-500 max-w-48 truncate" title={entry.comment ?? undefined}>
+                            <TableCell
+                                className="font-mono text-xs text-gray-500 max-w-48 truncate"
+                                title={entry.comment ?? undefined}
+                            >
                                 {entry.comment || ""}
                             </TableCell>
                             <TableCell>

@@ -1,13 +1,13 @@
-import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { TimeLogApi } from "@app/azure-devops/timelog-api";
+import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { ClarityApi } from "@app/utils/clarity";
 import * as clack from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 import type { ClarityMapping } from "../config.js";
 import { getConfig, getMappingForWorkItem, requireConfig, saveConfig } from "../config.js";
-import { getTimesheetWeeks, type TimesheetWeek } from "../lib/timesheet-weeks.js";
 import { getTimelogWorkItems, type TimelogWorkItemGroup } from "../lib/timelog-workitems.js";
+import { getTimesheetWeeks, type TimesheetWeek } from "../lib/timesheet-weeks.js";
 
 interface ClarityProject {
     taskId: number;
@@ -18,7 +18,16 @@ interface ClarityProject {
     timeEntryId: number;
 }
 
-function extractProjects(entries: Array<{ taskId: number; taskName: string; taskCode: string; investmentName: string; investmentCode: string; _internalId: number }>): ClarityProject[] {
+function extractProjects(
+    entries: Array<{
+        taskId: number;
+        taskName: string;
+        taskCode: string;
+        investmentName: string;
+        investmentCode: string;
+        _internalId: number;
+    }>
+): ClarityProject[] {
     return entries.map((e) => ({
         taskId: e.taskId,
         taskName: e.taskName,
@@ -49,12 +58,7 @@ async function runInteractiveLinking(): Promise<void> {
 
     const adoConfig = requireTimeLogConfig();
     const adoUser = requireTimeLogUser(adoConfig);
-    const adoApi = new TimeLogApi(
-        adoConfig.orgId!,
-        adoConfig.projectId,
-        adoConfig.timelog!.functionsKey,
-        adoUser
-    );
+    const adoApi = new TimeLogApi(adoConfig.orgId!, adoConfig.projectId, adoConfig.timelog!.functionsKey, adoUser);
 
     // Load weeks
     const weeksSpinner = clack.spinner();
@@ -183,9 +187,7 @@ async function runInteractiveLinking(): Promise<void> {
                 options: workItems.map((wi) => {
                     const hours = (wi.totalMinutes / 60).toFixed(1);
                     const existing = getMappingForWorkItem(mappings, wi.id);
-                    const hint = existing
-                        ? `MAPPED → ${existing.clarityTaskName}`
-                        : `${wi.type}, ${hours}h`;
+                    const hint = existing ? `MAPPED → ${existing.clarityTaskName}` : `${wi.type}, ${hours}h`;
 
                     return {
                         value: wi,

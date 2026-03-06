@@ -1,6 +1,6 @@
 import type { ClarityMapping } from "@app/clarity/config";
 import { getConfig, saveConfig } from "@app/clarity/config";
-import { type TimesheetWeek, getTimesheetWeeks as getTimesheetWeeksShared } from "@app/clarity/lib/timesheet-weeks";
+import { getTimesheetWeeks as getTimesheetWeeksShared, type TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
 import type { TimeEntryRecord } from "@app/utils/clarity";
 import { ClarityApi } from "@app/utils/clarity";
 

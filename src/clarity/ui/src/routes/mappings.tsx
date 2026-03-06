@@ -4,6 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
 import { AddMappingForm } from "../components/AddMappingForm";
 import { MappingTable } from "../components/MappingTable";
+import { MonthPicker } from "../components/MonthPicker";
+import { useAppContext } from "../context/AppContext";
 
 async function fetchMappings() {
     const res = await fetch("/api/mappings");
@@ -32,6 +34,7 @@ async function deleteMappingApi(adoWorkItemId: number) {
 
 export function MappingsPage() {
     const queryClient = useQueryClient();
+    const { month, year, setMonthYear } = useAppContext();
 
     const { data, isLoading, error } = useQuery({
         queryKey: ["mappings"],
@@ -51,11 +54,14 @@ export function MappingsPage() {
                 <h1 className="text-xl font-mono font-bold text-gray-200">
                     WORK ITEM <span className="text-amber-500">&harr;</span> CLARITY MAPPINGS
                 </h1>
-                {data?.mappings && (
-                    <Badge variant="outline" className="font-mono">
-                        {data.mappings.length} mappings
-                    </Badge>
-                )}
+                <div className="flex items-center gap-3">
+                    {data?.mappings && (
+                        <Badge variant="outline" className="font-mono">
+                            {data.mappings.length} mappings
+                        </Badge>
+                    )}
+                    <MonthPicker month={month} year={year} onChange={setMonthYear} />
+                </div>
             </div>
 
             <Card className="border-amber-500/20">

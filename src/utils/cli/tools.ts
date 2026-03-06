@@ -1,7 +1,15 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExecResult } from "./executor";
 
-const TOOLS_PATH = resolve(import.meta.dir, "../../../tools");
+function getToolsPath(): string {
+    // import.meta.dir is Bun-specific; fall back to import.meta.url for Node/Vite SSR
+    const dir =
+        typeof import.meta.dir === "string"
+            ? import.meta.dir
+            : dirname(fileURLToPath(import.meta.url));
+    return resolve(dir, "../../../tools");
+}
 
 export interface RunToolOptions {
     timeout?: number;
@@ -14,7 +22,7 @@ export interface RunToolOptions {
  * Usage: `runTool(["claude", "usage"])` runs `tools claude usage`
  */
 export async function runTool(args: string[], options?: RunToolOptions): Promise<ExecResult> {
-    const proc = Bun.spawn(["bun", "run", TOOLS_PATH, ...args], {
+    const proc = Bun.spawn(["bun", "run", getToolsPath(), ...args], {
         cwd: options?.cwd ?? process.cwd(),
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, ...options?.env },
@@ -43,7 +51,7 @@ export async function runToolInteractive(
     args: string[],
     options?: Omit<RunToolOptions, "timeout">
 ): Promise<ExecResult> {
-    const proc = Bun.spawn(["bun", "run", TOOLS_PATH, ...args], {
+    const proc = Bun.spawn(["bun", "run", getToolsPath(), ...args], {
         cwd: options?.cwd ?? process.cwd(),
         stdio: ["inherit", "inherit", "inherit"],
         env: { ...process.env, ...options?.env },

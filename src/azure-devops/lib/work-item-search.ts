@@ -68,10 +68,7 @@ export async function searchWorkItems(
 /**
  * Get my assigned (active) work items.
  */
-export async function getMyWorkItems(
-    config: AzureConfig,
-    options?: { top?: number }
-): Promise<WorkItemSearchResult[]> {
+export async function getMyWorkItems(config: AzureConfig, options?: { top?: number }): Promise<WorkItemSearchResult[]> {
     const api = new Api(config);
     const top = options?.top ?? 30;
 

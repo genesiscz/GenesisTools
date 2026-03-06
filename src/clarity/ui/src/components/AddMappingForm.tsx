@@ -204,8 +204,8 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
         isLoading: weeksLoading,
         error: weeksError,
     } = useQuery({
-        queryKey: ["clarity-weeks"],
-        queryFn: fetchWeeks,
+        queryKey: ["clarity-weeks", month, year],
+        queryFn: () => fetchWeeks(month, year),
     });
 
     const timesheetId = useManualId ? parseInt(manualTimesheetId, 10) : selectedWeek?.timesheetId;
@@ -264,9 +264,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
 
         const q = timelogFilter.toLowerCase();
 
-        return timelogData.workItems.filter(
-            (wi) => `#${wi.id}`.includes(q) || wi.title.toLowerCase().includes(q)
-        );
+        return timelogData.workItems.filter((wi) => `#${wi.id}`.includes(q) || wi.title.toLowerCase().includes(q));
     }, [timelogData, timelogFilter]);
 
     const addMutation = useMutation({
@@ -533,9 +531,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                 {/* Step 3: Select ADO work items (multi-select) */}
                 {selectedTask && (
                     <div className="space-y-3">
-                        <span className="block text-xs font-mono text-gray-500">
-                            STEP 3: SELECT ADO WORK ITEMS
-                        </span>
+                        <span className="block text-xs font-mono text-gray-500">STEP 3: SELECT ADO WORK ITEMS</span>
 
                         {/* Timelog entries section */}
                         <div>
