@@ -16,3 +16,6 @@ export type {
     SessionStats,
     ToolCallResult,
 } from "./lib/types";
+export { ModelSelector } from "./providers/ModelSelector";
+export { ProviderManager } from "./providers/ProviderManager";
+export type { DetectedProvider, ModelInfo, ProviderChoice } from "./types";

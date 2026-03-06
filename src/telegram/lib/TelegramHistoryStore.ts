@@ -5,7 +5,25 @@ import { dirname, join } from "node:path";
 import logger from "@app/logger";
 import { cosineDistance } from "@app/utils/math";
 import type { SerializedMessage } from "./TelegramMessage";
-import type { ChatStats, MessageRow, SearchOptions, SearchResult, SyncStateRow } from "./types";
+import type {
+    AttachmentRow,
+    ChatRow,
+    ChatStats,
+    DateRange,
+    InsertSegmentInput,
+    MessageRevisionRow,
+    MessageRow,
+    MessageRowV2,
+    QueryOptions,
+    SearchOptions,
+    SearchResult,
+    SuggestionEditInput,
+    SuggestionEditRow,
+    SyncSegmentRow,
+    SyncStateRow,
+    UpsertAttachmentInput,
+    UpsertMessageInput,
+} from "./types";
 
 const DB_PATH = join(homedir(), ".genesis-tools", "telegram", "history.db");
 
@@ -27,7 +45,7 @@ export class TelegramHistoryStore {
         this.db.run("PRAGMA journal_mode = WAL");
         this.db.run("PRAGMA foreign_keys = ON");
 
-        this.initSchema();
+        this.migrate();
         logger.debug("TelegramHistoryStore opened");
     }
 
@@ -47,84 +65,147 @@ export class TelegramHistoryStore {
         return this.db;
     }
 
-    private initSchema(): void {
+    private migrate(): void {
         const db = this.getDb();
+        const { user_version: currentVersion } = db.query("PRAGMA user_version").get() as {
+            user_version: number;
+        };
 
-        db.run(`
-			CREATE TABLE IF NOT EXISTS messages (
-				id INTEGER NOT NULL,
-				chat_id TEXT NOT NULL,
-				sender_id TEXT,
-				text TEXT,
-				media_desc TEXT,
-				is_outgoing INTEGER NOT NULL,
-				date_unix INTEGER NOT NULL,
-				date_iso TEXT NOT NULL,
-				PRIMARY KEY (chat_id, id)
-			)
-		`);
+        if (currentVersion < 1) {
+            db.run(`CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER NOT NULL,
+                chat_id TEXT NOT NULL,
+                sender_id TEXT,
+                text TEXT,
+                media_desc TEXT,
+                is_outgoing INTEGER NOT NULL,
+                date_unix INTEGER NOT NULL,
+                date_iso TEXT NOT NULL,
+                PRIMARY KEY (chat_id, id)
+            )`);
+            db.run(`CREATE INDEX IF NOT EXISTS idx_messages_chat_date ON messages(chat_id, date_unix)`);
+            db.run(`CREATE TABLE IF NOT EXISTS sync_state (
+                chat_id TEXT PRIMARY KEY,
+                last_synced_id INTEGER NOT NULL,
+                last_synced_at TEXT NOT NULL
+            )`);
+            db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                text, content=messages, content_rowid=rowid, tokenize='unicode61'
+            )`);
 
-        db.run(`
-			CREATE INDEX IF NOT EXISTS idx_messages_chat_date
-				ON messages(chat_id, date_unix)
-		`);
+            try {
+                db.run(`CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
+                    INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
+                END`);
+            } catch {
+                // trigger already exists
+            }
 
-        db.run(`
-			CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-				text,
-				content=messages,
-				content_rowid=rowid,
-				tokenize='unicode61'
-			)
-		`);
+            try {
+                db.run(`CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
+                    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+                END`);
+            } catch {
+                // trigger already exists
+            }
 
-        db.run(`
-			CREATE TABLE IF NOT EXISTS sync_state (
-				chat_id TEXT PRIMARY KEY,
-				last_synced_id INTEGER NOT NULL,
-				last_synced_at TEXT NOT NULL
-			)
-		`);
+            try {
+                db.run(`CREATE TRIGGER messages_au AFTER UPDATE ON messages BEGIN
+                    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+                    INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
+                END`);
+            } catch {
+                // trigger already exists
+            }
 
-        // Embeddings stored as BLOBs (bun:sqlite doesn't support sqlite-vec extensions)
-        db.run(`
-			CREATE TABLE IF NOT EXISTS embeddings (
-				message_rowid INTEGER PRIMARY KEY,
-				embedding BLOB NOT NULL
-			)
-		`);
-
-        // FTS5 external content triggers
-        try {
-            db.run(`
-				CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
-					INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
-				END
-			`);
-        } catch {
-            // trigger already exists
+            db.run(`CREATE TABLE IF NOT EXISTS embeddings (
+                message_rowid INTEGER PRIMARY KEY,
+                embedding BLOB NOT NULL
+            )`);
         }
 
-        try {
-            db.run(`
-				CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
-					INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-				END
-			`);
-        } catch {
-            // trigger already exists
+        if (currentVersion < 2) {
+            const existingCols = new Set(
+                (db.query("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map((c) => c.name)
+            );
+
+            if (!existingCols.has("edited_date_unix")) {
+                db.run("ALTER TABLE messages ADD COLUMN edited_date_unix INTEGER");
+            }
+
+            if (!existingCols.has("is_deleted")) {
+                db.run("ALTER TABLE messages ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0");
+            }
+
+            if (!existingCols.has("deleted_at_iso")) {
+                db.run("ALTER TABLE messages ADD COLUMN deleted_at_iso TEXT");
+            }
+
+            if (!existingCols.has("reply_to_msg_id")) {
+                db.run("ALTER TABLE messages ADD COLUMN reply_to_msg_id INTEGER");
+            }
+
+            db.run(`CREATE TABLE IF NOT EXISTS chats (
+                chat_id TEXT PRIMARY KEY,
+                chat_type TEXT NOT NULL DEFAULT 'user',
+                title TEXT NOT NULL,
+                username TEXT,
+                last_synced_at TEXT
+            )`);
+
+            db.run(`CREATE TABLE IF NOT EXISTS message_revisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id TEXT NOT NULL,
+                message_id INTEGER NOT NULL,
+                revision_type TEXT NOT NULL,
+                old_text TEXT,
+                new_text TEXT,
+                revised_at_unix INTEGER NOT NULL,
+                revised_at_iso TEXT NOT NULL
+            )`);
+            db.run(`CREATE INDEX IF NOT EXISTS idx_revisions_chat_msg ON message_revisions(chat_id, message_id)`);
+
+            db.run(`CREATE TABLE IF NOT EXISTS attachments (
+                chat_id TEXT NOT NULL,
+                message_id INTEGER NOT NULL,
+                attachment_index INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                mime_type TEXT,
+                file_name TEXT,
+                file_size INTEGER,
+                telegram_file_id TEXT,
+                is_downloaded INTEGER NOT NULL DEFAULT 0,
+                local_path TEXT,
+                sha256 TEXT,
+                PRIMARY KEY (chat_id, message_id, attachment_index)
+            )`);
+
+            db.run(`CREATE TABLE IF NOT EXISTS sync_segments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id TEXT NOT NULL,
+                from_date_unix INTEGER NOT NULL,
+                to_date_unix INTEGER NOT NULL,
+                from_msg_id INTEGER NOT NULL,
+                to_msg_id INTEGER NOT NULL,
+                synced_at TEXT NOT NULL
+            )`);
+            db.run(`CREATE INDEX IF NOT EXISTS idx_sync_segments_chat ON sync_segments(chat_id, from_date_unix)`);
+
+            db.run(`CREATE TABLE IF NOT EXISTS suggestion_edits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id TEXT NOT NULL,
+                message_id INTEGER,
+                suggested_text TEXT NOT NULL,
+                edited_text TEXT NOT NULL,
+                sent_text TEXT NOT NULL,
+                provider TEXT,
+                model TEXT,
+                created_at TEXT NOT NULL
+            )`);
+            db.run(`CREATE INDEX IF NOT EXISTS idx_suggestion_edits_chat ON suggestion_edits(chat_id)`);
         }
 
-        try {
-            db.run(`
-				CREATE TRIGGER messages_au AFTER UPDATE ON messages BEGIN
-					INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-					INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
-				END
-			`);
-        } catch {
-            // trigger already exists
-        }
+        db.run("PRAGMA user_version = 2");
     }
 
     // ── Insert ────────────────────────────────────────────────────────
@@ -442,6 +523,347 @@ export class TelegramHistoryStore {
 		`,
             [chatId, messageId]
         );
+    }
+
+    // ── Query Primitives (V2) ────────────────────────────────────────
+
+    queryMessages(chatId: string, options: QueryOptions): MessageRowV2[] {
+        const db = this.getDb();
+        const conditions: string[] = ["chat_id = ?"];
+        const params: (string | number)[] = [chatId];
+
+        if (!options.includeDeleted) {
+            conditions.push("is_deleted = 0");
+        }
+
+        if (options.sender === "me") {
+            conditions.push("is_outgoing = 1");
+        } else if (options.sender === "them") {
+            conditions.push("is_outgoing = 0");
+        }
+
+        if (options.since) {
+            conditions.push("date_unix >= ?");
+            params.push(Math.floor(options.since.getTime() / 1000));
+        }
+
+        if (options.until) {
+            conditions.push("date_unix <= ?");
+            params.push(Math.floor(options.until.getTime() / 1000));
+        }
+
+        if (options.textPattern) {
+            conditions.push("text LIKE ?");
+            params.push(`%${options.textPattern}%`);
+        }
+
+        const order = options.limit ? "DESC" : "ASC";
+        let sql = `SELECT * FROM messages WHERE ${conditions.join(" AND ")} ORDER BY date_unix ${order}`;
+
+        if (options.limit) {
+            sql += " LIMIT ?";
+            params.push(options.limit);
+        }
+
+        const rows = db.query(sql).all(...params) as MessageRowV2[];
+
+        // DESC + LIMIT gives us the *last* N rows; reverse back to chronological for display
+        if (options.limit) {
+            rows.reverse();
+        }
+
+        return rows;
+    }
+
+    findMessageById(messageId: number): { chat_id: string } | null {
+        const db = this.getDb();
+        return (
+            (db.query("SELECT chat_id FROM messages WHERE id = ? LIMIT 1").get(messageId) as {
+                chat_id: string;
+            }) ?? null
+        );
+    }
+
+    markMessageDeleted(chatId: string, messageId: number): void {
+        const db = this.getDb();
+        const now = new Date();
+
+        const current = db.query("SELECT text FROM messages WHERE chat_id = ? AND id = ?").get(chatId, messageId) as {
+            text: string | null;
+        } | null;
+
+        db.run("UPDATE messages SET is_deleted = 1, deleted_at_iso = ? WHERE chat_id = ? AND id = ?", [
+            now.toISOString(),
+            chatId,
+            messageId,
+        ]);
+
+        db.run(
+            `INSERT INTO message_revisions (chat_id, message_id, revision_type, old_text, new_text, revised_at_unix, revised_at_iso)
+             VALUES (?, ?, 'delete', ?, NULL, ?, ?)`,
+            [chatId, messageId, current?.text ?? null, Math.floor(now.getTime() / 1000), now.toISOString()]
+        );
+    }
+
+    // ── Upsert With Revision Tracking ────────────────────────────────
+
+    upsertMessageWithRevision(chatId: string, msg: UpsertMessageInput): void {
+        const db = this.getDb();
+        const now = new Date();
+
+        const existing = db.query("SELECT text FROM messages WHERE chat_id = ? AND id = ?").get(chatId, msg.id) as {
+            text: string | null;
+        } | null;
+
+        if (existing) {
+            if (existing.text !== msg.text) {
+                db.run(
+                    `INSERT INTO message_revisions (chat_id, message_id, revision_type, old_text, new_text, revised_at_unix, revised_at_iso)
+                     VALUES (?, ?, 'edit', ?, ?, ?, ?)`,
+                    [
+                        chatId,
+                        msg.id,
+                        existing.text,
+                        msg.text,
+                        msg.editedDateUnix ?? Math.floor(now.getTime() / 1000),
+                        now.toISOString(),
+                    ]
+                );
+            }
+
+            db.run(
+                `UPDATE messages SET text = ?, media_desc = ?, edited_date_unix = ?, reply_to_msg_id = ? WHERE chat_id = ? AND id = ?`,
+                [
+                    msg.text,
+                    msg.mediaDescription ?? null,
+                    msg.editedDateUnix ?? null,
+                    msg.replyToMsgId ?? null,
+                    chatId,
+                    msg.id,
+                ]
+            );
+        } else {
+            db.run(
+                `INSERT INTO messages (id, chat_id, sender_id, text, media_desc, is_outgoing, date_unix, date_iso, reply_to_msg_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    msg.id,
+                    chatId,
+                    msg.senderId ?? null,
+                    msg.text,
+                    msg.mediaDescription ?? null,
+                    msg.isOutgoing ? 1 : 0,
+                    msg.dateUnix,
+                    msg.date,
+                    msg.replyToMsgId ?? null,
+                ]
+            );
+
+            db.run(
+                `INSERT INTO message_revisions (chat_id, message_id, revision_type, old_text, new_text, revised_at_unix, revised_at_iso)
+                 VALUES (?, ?, 'create', NULL, ?, ?, ?)`,
+                [chatId, msg.id, msg.text, msg.dateUnix, msg.date]
+            );
+        }
+    }
+
+    getRevisions(chatId: string, messageId: number): MessageRevisionRow[] {
+        const db = this.getDb();
+        return db
+            .query("SELECT * FROM message_revisions WHERE chat_id = ? AND message_id = ? ORDER BY revised_at_unix ASC")
+            .all(chatId, messageId) as MessageRevisionRow[];
+    }
+
+    // ── Attachments ──────────────────────────────────────────────────
+
+    upsertAttachment(input: UpsertAttachmentInput): void {
+        const db = this.getDb();
+        db.run(
+            `INSERT OR REPLACE INTO attachments (chat_id, message_id, attachment_index, kind, mime_type, file_name, file_size, telegram_file_id, is_downloaded, local_path, sha256)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?,
+                     COALESCE((SELECT is_downloaded FROM attachments WHERE chat_id = ? AND message_id = ? AND attachment_index = ?), 0),
+                     (SELECT local_path FROM attachments WHERE chat_id = ? AND message_id = ? AND attachment_index = ?),
+                     (SELECT sha256 FROM attachments WHERE chat_id = ? AND message_id = ? AND attachment_index = ?))`,
+            [
+                input.chat_id,
+                input.message_id,
+                input.attachment_index,
+                input.kind,
+                input.mime_type,
+                input.file_name,
+                input.file_size,
+                input.telegram_file_id,
+                input.chat_id,
+                input.message_id,
+                input.attachment_index,
+                input.chat_id,
+                input.message_id,
+                input.attachment_index,
+                input.chat_id,
+                input.message_id,
+                input.attachment_index,
+            ]
+        );
+    }
+
+    getAttachments(chatId: string, messageId: number): AttachmentRow[] {
+        const db = this.getDb();
+        return db
+            .query("SELECT * FROM attachments WHERE chat_id = ? AND message_id = ? ORDER BY attachment_index ASC")
+            .all(chatId, messageId) as AttachmentRow[];
+    }
+
+    listAttachments(chatId: string, options?: { since?: Date; until?: Date; kind?: string }): AttachmentRow[] {
+        const db = this.getDb();
+        const conditions = ["a.chat_id = ?"];
+        const params: (string | number)[] = [chatId];
+
+        if (options?.kind) {
+            conditions.push("a.kind = ?");
+            params.push(options.kind);
+        }
+
+        let sql = "SELECT a.* FROM attachments a";
+
+        if (options?.since || options?.until) {
+            sql += " JOIN messages m ON a.chat_id = m.chat_id AND a.message_id = m.id";
+
+            if (options.since) {
+                conditions.push("m.date_unix >= ?");
+                params.push(Math.floor(options.since.getTime() / 1000));
+            }
+
+            if (options.until) {
+                conditions.push("m.date_unix <= ?");
+                params.push(Math.floor(options.until.getTime() / 1000));
+            }
+        }
+
+        sql += ` WHERE ${conditions.join(" AND ")} ORDER BY a.message_id ASC, a.attachment_index ASC`;
+
+        return db.query(sql).all(...params) as AttachmentRow[];
+    }
+
+    markAttachmentDownloaded(
+        chatId: string,
+        messageId: number,
+        attachmentIndex: number,
+        localPath: string,
+        sha256: string
+    ): void {
+        const db = this.getDb();
+        db.run(
+            "UPDATE attachments SET is_downloaded = 1, local_path = ?, sha256 = ? WHERE chat_id = ? AND message_id = ? AND attachment_index = ?",
+            [localPath, sha256, chatId, messageId, attachmentIndex]
+        );
+    }
+
+    // ── Sync Segments ────────────────────────────────────────────────
+
+    insertSyncSegment(chatId: string, input: InsertSegmentInput): void {
+        const db = this.getDb();
+        db.run(
+            `INSERT INTO sync_segments (chat_id, from_date_unix, to_date_unix, from_msg_id, to_msg_id, synced_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [chatId, input.fromDateUnix, input.toDateUnix, input.fromMsgId, input.toMsgId, new Date().toISOString()]
+        );
+    }
+
+    getSyncSegments(chatId: string): SyncSegmentRow[] {
+        const db = this.getDb();
+        return db
+            .query("SELECT * FROM sync_segments WHERE chat_id = ? ORDER BY from_date_unix ASC")
+            .all(chatId) as SyncSegmentRow[];
+    }
+
+    getMissingSegments(chatId: string, fromDateUnix: number, toDateUnix: number): DateRange[] {
+        const segments = this.getSyncSegments(chatId);
+        const gaps: DateRange[] = [];
+
+        const sorted = segments
+            .filter((s) => s.to_date_unix > fromDateUnix && s.from_date_unix < toDateUnix)
+            .sort((a, b) => a.from_date_unix - b.from_date_unix);
+
+        if (sorted.length === 0) {
+            return [{ fromDateUnix, toDateUnix }];
+        }
+
+        if (sorted[0].from_date_unix > fromDateUnix) {
+            gaps.push({ fromDateUnix, toDateUnix: sorted[0].from_date_unix });
+        }
+
+        for (let i = 0; i < sorted.length - 1; i++) {
+            const currentEnd = sorted[i].to_date_unix;
+            const nextStart = sorted[i + 1].from_date_unix;
+
+            if (nextStart > currentEnd) {
+                gaps.push({ fromDateUnix: currentEnd, toDateUnix: nextStart });
+            }
+        }
+
+        const lastEnd = sorted[sorted.length - 1].to_date_unix;
+
+        if (lastEnd < toDateUnix) {
+            gaps.push({ fromDateUnix: lastEnd, toDateUnix });
+        }
+
+        return gaps;
+    }
+
+    // ── Chat Metadata ────────────────────────────────────────────────
+
+    upsertChat(input: { chat_id: string; chat_type: string; title: string; username: string | null }): void {
+        const db = this.getDb();
+        db.run(
+            `INSERT INTO chats (chat_id, chat_type, title, username) VALUES (?, ?, ?, ?)
+             ON CONFLICT(chat_id) DO UPDATE SET chat_type = excluded.chat_type, title = excluded.title, username = excluded.username`,
+            [input.chat_id, input.chat_type, input.title, input.username]
+        );
+    }
+
+    getChat(chatId: string): ChatRow | null {
+        const db = this.getDb();
+        return (db.query("SELECT * FROM chats WHERE chat_id = ?").get(chatId) as ChatRow) ?? null;
+    }
+
+    listChats(type?: string): ChatRow[] {
+        const db = this.getDb();
+
+        if (type) {
+            return db.query("SELECT * FROM chats WHERE chat_type = ? ORDER BY title").all(type) as ChatRow[];
+        }
+
+        return db.query("SELECT * FROM chats ORDER BY chat_type, title").all() as ChatRow[];
+    }
+
+    // ── Suggestion Edits ─────────────────────────────────────────────
+
+    insertSuggestionEdit(input: SuggestionEditInput): void {
+        const db = this.getDb();
+        db.run(
+            `INSERT INTO suggestion_edits (chat_id, message_id, suggested_text, edited_text, sent_text, provider, model, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                input.chatId,
+                input.messageId,
+                input.suggestedText,
+                input.editedText,
+                input.sentText,
+                input.provider,
+                input.model,
+                new Date().toISOString(),
+            ]
+        );
+    }
+
+    getRecentSuggestionEdits(chatId: string, limit = 10): SuggestionEditRow[] {
+        const db = this.getDb();
+        return db
+            .query(
+                `SELECT suggested_text, edited_text, sent_text, created_at
+                 FROM suggestion_edits WHERE chat_id = ? ORDER BY created_at DESC LIMIT ?`
+            )
+            .all(chatId, limit) as SuggestionEditRow[];
     }
 
     // ── Stats ─────────────────────────────────────────────────────────

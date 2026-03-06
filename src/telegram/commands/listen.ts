@@ -7,13 +7,13 @@ import { TelegramHistoryStore } from "../lib/TelegramHistoryStore";
 import { TelegramMessage } from "../lib/TelegramMessage";
 import { TelegramToolConfig } from "../lib/TelegramToolConfig";
 import { TGClient } from "../lib/TGClient";
-import type { ContactConfig } from "../lib/types";
+import type { TelegramContactV2 } from "../lib/types";
 import { DEFAULTS } from "../lib/types";
 
 async function syncAndLoadHistory(
     client: TGClient,
     store: TelegramHistoryStore,
-    contacts: ContactConfig[],
+    contacts: TelegramContactV2[],
     myName: string
 ): Promise<Map<string, string[]>> {
     const historyMap = new Map<string, string[]>();
