@@ -1,6 +1,6 @@
 ---
 name: genesis-tools:timelog
-description: Sync time from Timely to Azure DevOps. Use when user says "sync timely", "log my time from timely", "propose time entries", "what did I work on today", "sync my tracked time". Analyzes Timely auto-tracked activities and git commits to generate Azure DevOps time log proposals.
+description: Sync time from Timely to Azure DevOps, and fill Clarity PPM timesheets. Use when user says "sync timely", "log my time from timely", "propose time entries", "what did I work on today", "sync my tracked time", "fill clarity", "sync to clarity", "clarity timesheet", "export timelog", "ppm". Analyzes Timely auto-tracked activities and git commits to generate Azure DevOps time log proposals, and bridges ADO timelogs to CA PPM Clarity timesheets.
 ---
 
 # Timely -> Azure DevOps Time Sync
@@ -406,3 +406,100 @@ The Timely event notes often contain the user's own time breakdown (e.g., "SU (0
 - When in doubt about work item assignment, ask the user rather than guess.
 - Minimum time unit: 0.5h (30 minutes). Round up small items.
 - Weekend/off-hours commits should still be estimated and proposed (user decides whether to log them).
+
+---
+
+## Clarity (CA PPM) Integration
+
+Clarity PPM is the corporate timesheet system. ADO TimeLog tracks time per work item (fine-grained). Clarity tracks time per project/phase (coarse-grained). The `tools clarity` CLI bridges both systems.
+
+### Configuration
+
+```bash
+# Set up Clarity authentication (paste cURL from browser DevTools)
+tools clarity configure
+
+# Show current config (auth redacted)
+tools clarity configure show
+
+# Manage ADO-to-Clarity task mappings
+tools clarity configure mappings
+```
+
+### Mapping Workflow
+
+ADO work items map many-to-one to Clarity tasks. Multiple ADO tasks may roll up to a single Clarity project line.
+
+```bash
+# Interactive: browse Clarity tasks, link to ADO work items
+tools clarity link-workitems
+
+# Non-interactive: link directly (requires timesheet ID for task lookup)
+tools clarity link-workitems \
+  --azure-devops-workitem 268935 \
+  --clarity-task "SampleTask_Release_External_Capex" \
+  --timesheet 8524081
+
+# List current mappings
+tools clarity link-workitems --list
+
+# Remove a mapping
+tools clarity link-workitems --unlink 268935
+```
+
+### Export + Fill Workflow
+
+The standard workflow to sync ADO time into Clarity:
+
+```bash
+# 1. Export ADO timelog for a month (view what was logged)
+tools azure-devops timelog export-month --month 2 --year 2026 --format table
+
+# 2. Preview fill into Clarity (DRY RUN - default, no changes made)
+tools clarity fill --month 2 --year 2026
+
+# 3. Execute fill (actually writes to Clarity)
+tools clarity fill --month 2 --year 2026 --confirm
+```
+
+The fill command:
+1. Exports all ADO timelog entries for the month
+2. Groups them by mapped Clarity project (unmapped entries are warned/skipped)
+3. Converts ADO minutes to Clarity seconds (minutes * 60)
+4. Shows a preview table with hours per day per Clarity task
+5. On `--confirm`, updates each Clarity time entry via the API
+
+### Timesheet Management
+
+```bash
+# List timesheets in a carousel (requires a known time period ID)
+tools clarity timesheet list --period 5008007
+
+# Show a timesheet with all entries and hours per day
+tools clarity timesheet show 8524081
+
+# Submit a timesheet for approval
+tools clarity timesheet submit 8524081
+
+# Revert a submitted timesheet to allow edits
+tools clarity timesheet revert 8524081
+
+# JSON output for any command
+tools clarity timesheet show 8524081 --format json
+```
+
+### Key Differences: ADO TimeLog vs Clarity
+
+| Aspect | ADO TimeLog | Clarity |
+|--------|-------------|---------|
+| Granularity | Per work item (task/bug) | Per project/phase |
+| Time unit | Minutes | Seconds (3600 = 1h) |
+| Period | Single date entries | Weekly timesheets |
+| Auth | API key (Azure Functions) | SSO session cookie + authToken |
+
+### Clarity API Documentation
+
+See `src/clarity/docs/` for detailed API reference:
+- `api.md` — endpoint reference, headers, time units
+- `authentication.md` — how to extract credentials from browser
+- `timesheet-workflow.md` — lifecycle, carousel navigation, segment arrays

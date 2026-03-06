@@ -23,7 +23,9 @@
 		"noUncheckedSideEffectImports": true,
 		"paths": {
 			"@/*": ["./src/*"],
-			"@app/*": ["../*"]
+			"@app/*": ["../*"],
+			"@ui/*": ["../utils/ui/*"],
+			"@ui": ["../utils/ui/index.ts"]
 		}
 	}
 }
