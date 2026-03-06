@@ -59,6 +59,31 @@ export function apiPlugin(): Plugin {
                     const { updateAuth } = await import("./settings");
                     return updateAuth(body.curl as string);
                 },
+                "GET /api/workitem-type-colors": async () => {
+                    const { loadConfig } = await import("@app/azure-devops/config");
+                    const { getWorkItemTypeColors } = await import(
+                        "@app/azure-devops/lib/work-item-enrichment"
+                    );
+                    const config = loadConfig();
+
+                    if (!config) {
+                        throw new Error("Azure DevOps not configured");
+                    }
+
+                    const colorMap = await getWorkItemTypeColors(config);
+                    const types: Record<string, { color: string; name: string; icon: { id: string; url: string } }> =
+                        {};
+
+                    for (const [name, info] of colorMap) {
+                        types[name] = info;
+                    }
+
+                    return { types };
+                },
+                "POST /api/timelog-entries": async (body) => {
+                    const { getTimelogEntries } = await import("./export");
+                    return getTimelogEntries(body.month as number, body.year as number);
+                },
             };
 
             server.middlewares.use(async (req, res, next) => {
