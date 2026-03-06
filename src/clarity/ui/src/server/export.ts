@@ -1,8 +1,11 @@
-import { exportMonth, type MonthExport } from "@app/azure-devops/lib/timelog/export";
 import { loadConfig as loadAdoConfig } from "@app/azure-devops/config";
-import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
+import { exportMonth, type MonthExport } from "@app/azure-devops/lib/timelog/export";
+import { enrichWorkItems } from "@app/azure-devops/lib/work-item-enrichment";
 import { TimeLogApi } from "@app/azure-devops/timelog-api";
-import { enrichWorkItems, type EnrichedWorkItem } from "@app/azure-devops/lib/work-item-enrichment";
+import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
+import { type TimelogWorkItemGroup, getTimelogWorkItems } from "@app/clarity/lib/timelog-workitems";
+
+export type { TimelogWorkItemGroup };
 
 function requireAdoConfig(): AzureConfigWithTimeLog {
     const adoConfig = loadAdoConfig() as AzureConfigWithTimeLog | null;
@@ -64,49 +67,8 @@ export async function getExportData(month: number, year: number): Promise<MonthE
     return result;
 }
 
-export interface TimelogWorkItemGroup {
-    id: number;
-    title: string;
-    type: string;
-    state: string;
-    totalMinutes: number;
-    entryCount: number;
-}
-
-export async function getTimelogEntries(
-    month: number,
-    year: number
-): Promise<{ workItems: TimelogWorkItemGroup[] }> {
+export async function getTimelogEntries(month: number, year: number): Promise<{ workItems: TimelogWorkItemGroup[] }> {
     const adoConfig = requireAdoConfig();
     const adoApi = createTimeLogApi(adoConfig);
-    const result = await exportMonth(adoApi, month, year, adoConfig.timelog!.defaultUser!.userId);
-
-    const uniqueIds = [...new Set(result.entries.map((e) => e.workItemId))];
-    let workItemMap = new Map<number, EnrichedWorkItem>();
-
-    if (uniqueIds.length > 0) {
-        try {
-            workItemMap = await enrichWorkItems(adoConfig, uniqueIds);
-        } catch (err) {
-            console.error("[clarity-api] Failed to enrich timelog entries:", err);
-        }
-    }
-
-    const workItems: TimelogWorkItemGroup[] = Object.entries(result.summary.entriesByWorkItem).map(
-        ([idStr, summary]) => {
-            const id = Number(idStr);
-            const wi = workItemMap.get(id);
-
-            return {
-                id,
-                title: wi?.title ?? summary.title ?? `Work Item #${id}`,
-                type: wi?.type ?? "",
-                state: wi?.state ?? "",
-                totalMinutes: summary.minutes,
-                entryCount: summary.count,
-            };
-        }
-    );
-
-    return { workItems };
+    return getTimelogWorkItems(adoApi, adoConfig, month, year, adoConfig.timelog!.defaultUser!.userId);
 }
