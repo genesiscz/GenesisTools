@@ -1,6 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
+import { RefreshCw } from "lucide-react";
 import { ExportSummary } from "../components/ExportSummary";
 import { ExportTable } from "../components/ExportTable";
 import { MonthPicker } from "../components/MonthPicker";
@@ -33,6 +35,7 @@ async function fetchMappings() {
 
 export function ExportPage() {
     const { month, year, setMonthYear } = useAppContext();
+    const queryClient = useQueryClient();
 
     const {
         data: exportData,
@@ -56,6 +59,18 @@ export function ExportPage() {
         },
     });
 
+    const { data: typeColorsData } = useQuery({
+        queryKey: ["workitem-type-colors"],
+        queryFn: async () => {
+            const res = await fetch("/api/workitem-type-colors");
+            if (!res.ok) {
+                return { types: {} };
+            }
+
+            return res.json();
+        },
+    });
+
     const mappedIds = new Set<number>(
         (mappingsData?.mappings ?? []).map((m: { adoWorkItemId: number }) => m.adoWorkItemId)
     );
@@ -66,7 +81,20 @@ export function ExportPage() {
                 <h1 className="text-xl font-mono font-bold text-gray-200">
                     ADO TIMELOG <span className="text-amber-500">EXPORT</span>
                 </h1>
-                <MonthPicker month={month} year={year} onChange={setMonthYear} />
+                <div className="flex items-center gap-2">
+                    <MonthPicker month={month} year={year} onChange={setMonthYear} />
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                            queryClient.invalidateQueries({ queryKey: ["export", month, year] });
+                            queryClient.invalidateQueries({ queryKey: ["workitem-type-colors"] });
+                        }}
+                        className="font-mono text-xs"
+                    >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                    </Button>
+                </div>
             </div>
 
             {isLoading && (
@@ -114,6 +142,7 @@ export function ExportPage() {
                                 mappedWorkItemIds={mappedIds}
                                 adoOrg={adoConfig?.org}
                                 adoProject={adoConfig?.project}
+                                typeColors={typeColorsData?.types ?? {}}
                             />
                         </CardContent>
                     </Card>
