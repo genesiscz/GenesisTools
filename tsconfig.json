@@ -25,6 +25,10 @@
         "noUnusedParameters": false,
         "noPropertyAccessFromIndexSignature": false,
 
+        // Required for compatibility
+        "esModuleInterop": true,
+        "downlevelIteration": true,
+
         // Path aliases
         "paths": {
             "@app/*": ["./src/*"],
