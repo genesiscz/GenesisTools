@@ -1,6 +1,6 @@
 import type { Api } from "telegram";
-import type { ActionType, ContactConfig } from "./types";
-import { DEFAULTS } from "./types";
+import type { ActionType, AskModeConfig, ContactConfig, SuggestionModeConfig, TelegramRuntimeMode } from "./types";
+import { DEFAULT_MODE_CONFIG, DEFAULT_WATCH_CONFIG, DEFAULTS } from "./types";
 
 export class TelegramContact {
     constructor(
@@ -15,19 +15,53 @@ export class TelegramContact {
     }
 
     get hasAskAction(): boolean {
-        return this.config.actions.includes("ask");
+        return this.actions.includes("ask") || this.autoReplyMode.enabled;
+    }
+
+    get watchEnabled(): boolean {
+        return this.config.watch?.enabled ?? DEFAULT_WATCH_CONFIG.enabled;
+    }
+
+    get contextLength(): number {
+        return this.config.watch?.contextLength ?? DEFAULT_WATCH_CONFIG.contextLength;
+    }
+
+    get runtimeMode(): TelegramRuntimeMode {
+        return this.config.watch?.runtimeMode ?? DEFAULT_WATCH_CONFIG.runtimeMode ?? "daemon";
+    }
+
+    get autoReplyMode(): AskModeConfig {
+        return {
+            ...DEFAULT_MODE_CONFIG.autoReply,
+            ...this.config.modes?.autoReply,
+            enabled: this.config.modes?.autoReply?.enabled ?? this.actions.includes("ask"),
+        };
+    }
+
+    get assistantMode(): AskModeConfig {
+        return {
+            ...DEFAULT_MODE_CONFIG.assistant,
+            ...this.config.modes?.assistant,
+        };
+    }
+
+    get suggestionMode(): SuggestionModeConfig {
+        return {
+            ...DEFAULT_MODE_CONFIG.suggestions,
+            ...this.config.modes?.suggestions,
+        };
     }
 
     get askSystemPrompt(): string {
-        return this.config.askSystemPrompt ?? DEFAULTS.askSystemPrompt;
+        return this.autoReplyMode.systemPrompt ?? DEFAULTS.askSystemPrompt;
     }
 
     get askProvider(): string {
-        return this.config.askProvider ?? DEFAULTS.askProvider;
+        return this.autoReplyMode.provider ?? DEFAULTS.askProvider;
     }
 
     get askModel(): string {
-        return this.config.askModel ?? DEFAULTS.askModel;
+        return this.autoReplyMode.model ?? DEFAULTS.askModel;
     }
 
     get replyDelayMin(): number {

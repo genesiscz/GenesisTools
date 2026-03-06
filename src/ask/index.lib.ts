@@ -16,3 +16,4 @@ export type {
     SessionStats,
     ToolCallResult,
 } from "./lib/types";
+export { modelSelector } from "./providers/ModelSelector";

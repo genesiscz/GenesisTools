@@ -1,20 +1,70 @@
+import { modelSelector } from "@ask/providers/ModelSelector";
+import type { ProviderChoice } from "@ask/types";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 import type { Api } from "telegram";
 import { TelegramToolConfig } from "../lib/TelegramToolConfig";
 import { TGClient } from "../lib/TGClient";
-import type { ActionType, ContactConfig, TelegramConfigData } from "../lib/types";
-import { DEFAULTS } from "../lib/types";
+import type {
+    ActionType,
+    AskModeConfig,
+    ContactConfig,
+    StyleProfileConfig,
+    StyleSourceRule,
+    SuggestionModeConfig,
+    TelegramConfigData,
+    TelegramDialogType,
+} from "../lib/types";
+import {
+    DEFAULT_MODE_CONFIG,
+    DEFAULT_STYLE_PROFILE,
+    DEFAULT_WATCH_CONFIG,
+    DEFAULTS,
+    TELEGRAM_CONFIG_VERSION,
+} from "../lib/types";
+
+interface DialogOption {
+    id: string;
+    label: string;
+    hint?: string;
+    dialogType: TelegramDialogType;
+}
 
 function isUser(entity: unknown): entity is Api.User {
-    return (
-        entity !== null &&
-        entity !== undefined &&
-        typeof entity === "object" &&
-        "className" in entity &&
-        (entity as { className: string }).className === "User"
-    );
+    if (entity === null || entity === undefined || typeof entity !== "object") {
+        return false;
+    }
+
+    if (!("className" in entity)) {
+        return false;
+    }
+
+    return (entity as { className: string }).className === "User";
+}
+
+function isChat(entity: unknown): entity is Api.Chat {
+    if (entity === null || entity === undefined || typeof entity !== "object") {
+        return false;
+    }
+
+    if (!("className" in entity)) {
+        return false;
+    }
+
+    return (entity as { className: string }).className === "Chat";
+}
+
+function isChannel(entity: unknown): entity is Api.Channel {
+    if (entity === null || entity === undefined || typeof entity !== "object") {
+        return false;
+    }
+
+    if (!("className" in entity)) {
+        return false;
+    }
+
+    return (entity as { className: string }).className === "Channel";
 }
 
 async function promptCredentials(
@@ -25,8 +75,8 @@ async function promptCredentials(
     const apiId = await p.text({
         message: "API ID:",
         initialValue: String(existing?.apiId ?? DEFAULTS.apiId),
-        validate: (v) => {
-            if (!v || !/^\d+$/.test(v)) {
+        validate: (value) => {
+            if (!value || !/^\d+$/.test(value)) {
                 return "Must be a number";
             }
         },
@@ -39,8 +89,8 @@ async function promptCredentials(
     const apiHash = await p.text({
         message: "API Hash:",
         initialValue: existing?.apiHash ?? DEFAULTS.apiHash,
-        validate: (v) => {
-            if (!v || !/^[a-f0-9]{32}$/.test(v)) {
+        validate: (value) => {
+            if (!value || !/^[a-f0-9]{32}$/.test(value)) {
                 return "Must be 32 hex chars";
             }
         },
@@ -86,15 +136,15 @@ async function runAuthFlow(client: TGClient): Promise<boolean> {
                 return code as string;
             },
             password: async () => {
-                const pass = await p.password({
+                const password = await p.password({
                     message: "2FA password (if enabled):",
                 });
 
-                if (p.isCancel(pass)) {
+                if (p.isCancel(password)) {
                     throw new Error("Cancelled");
                 }
 
-                return pass as string;
+                return password as string;
             },
         });
 
@@ -106,40 +156,69 @@ async function runAuthFlow(client: TGClient): Promise<boolean> {
     }
 }
 
-interface ContactOption {
-    userId: string;
-    label: string;
-    hint: string;
-    user: Api.User;
-}
-
-async function fetchContacts(client: TGClient): Promise<ContactOption[]> {
+async function fetchDialogs(client: TGClient): Promise<DialogOption[]> {
     const spinner = p.spinner();
-    spinner.start("Fetching your recent chats...");
+    spinner.start("Fetching your recent dialogs...");
 
-    const dialogs = await client.getDialogs(100);
+    const dialogs = await client.getDialogs(200);
+    const options: DialogOption[] = [];
 
-    const userDialogs = dialogs.filter((d) => d.isUser && isUser(d.entity) && !d.entity.bot && !d.entity.self);
+    for (const dialog of dialogs) {
+        const entity = dialog.entity;
 
-    spinner.stop(`Found ${userDialogs.length} contacts`);
+        if (!entity) {
+            continue;
+        }
 
-    return userDialogs
-        .filter((d): d is typeof d & { entity: Api.User } => isUser(d.entity))
-        .map((d) => {
-            const user = d.entity;
-            const label = `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.id.toString();
-            const hint = user.username ? `@${user.username}` : user.phone ? `+${user.phone}` : "";
-            return { userId: user.id.toString(), label, hint, user };
-        });
+        if (isUser(entity)) {
+            if (entity.bot || entity.self) {
+                continue;
+            }
+
+            const label = `${entity.firstName || ""} ${entity.lastName || ""}`.trim() || entity.id.toString();
+            options.push({
+                id: entity.id.toString(),
+                label,
+                hint: entity.username ? `@${entity.username}` : entity.phone ? `+${entity.phone}` : undefined,
+                dialogType: "user",
+            });
+            continue;
+        }
+
+        if (isChat(entity)) {
+            options.push({
+                id: entity.id.toString(),
+                label: entity.title,
+                hint: "group",
+                dialogType: "group",
+            });
+            continue;
+        }
+
+        if (isChannel(entity)) {
+            options.push({
+                id: entity.id.toString(),
+                label: entity.title,
+                hint: entity.username ? `@${entity.username}` : "channel",
+                dialogType: "channel",
+            });
+        }
+    }
+
+    spinner.stop(`Found ${options.length} dialogs`);
+    return options;
 }
 
-async function selectContacts(options: ContactOption[], existingContacts: ContactConfig[]): Promise<string[] | null> {
-    const existingIds = new Set(existingContacts.map((c) => c.userId));
-
+async function selectDialogs(options: DialogOption[], existingContacts: ContactConfig[]): Promise<string[] | null> {
+    const existingIds = new Set(existingContacts.map((contact) => contact.userId));
     const selected = await p.multiselect({
-        message: "Select contacts to watch:",
-        options: options.map((o) => ({ value: o.userId, label: o.label, hint: o.hint })),
-        initialValues: [...existingIds].filter((id) => options.some((o) => o.userId === id)),
+        message: "Select dialogs to watch:",
+        options: options.map((option) => ({
+            value: option.id,
+            label: option.label,
+            hint: option.hint,
+        })),
+        initialValues: [...existingIds].filter((id) => options.some((option) => option.id === id)),
         required: false,
     });
 
@@ -150,15 +229,427 @@ async function selectContacts(options: ContactOption[], existingContacts: Contac
     return selected as string[];
 }
 
-async function configureContactActions(opt: ContactOption, existing?: ContactConfig): Promise<ContactConfig | null> {
-    p.log.step(pc.bold(opt.label));
+async function chooseProviderModel(existingProvider?: string, existingModel?: string): Promise<ProviderChoice | null> {
+    if (existingProvider && existingModel) {
+        const exact = await modelSelector.selectModelByName(existingProvider, existingModel);
+
+        if (exact) {
+            const reuse = await p.confirm({
+                message: `Reuse ${existingProvider}/${existingModel}?`,
+                initialValue: true,
+            });
+
+            if (!p.isCancel(reuse) && reuse) {
+                return exact;
+            }
+        }
+    }
+
+    return modelSelector.selectModel();
+}
+
+async function promptAskModeConfig(
+    label: string,
+    defaults: AskModeConfig,
+    existing: AskModeConfig | undefined,
+    initialEnabled: boolean
+): Promise<AskModeConfig | null> {
+    const enabled = await p.confirm({
+        message: `Enable ${label}?`,
+        initialValue: existing?.enabled ?? initialEnabled,
+    });
+
+    if (p.isCancel(enabled)) {
+        return null;
+    }
+
+    const result: AskModeConfig = {
+        ...defaults,
+        ...existing,
+        enabled,
+    };
+
+    if (!enabled) {
+        return result;
+    }
+
+    const choice = await chooseProviderModel(result.provider, result.model);
+
+    if (!choice) {
+        return null;
+    }
+
+    result.provider = choice.provider.name;
+    result.model = choice.model.id;
+
+    const systemPrompt = await p.text({
+        message: `${label} system prompt:`,
+        initialValue: result.systemPrompt ?? DEFAULTS.askSystemPrompt,
+    });
+
+    if (p.isCancel(systemPrompt)) {
+        return null;
+    }
+
+    result.systemPrompt = systemPrompt as string;
+
+    const temperatureInput = await p.text({
+        message: `${label} temperature:`,
+        initialValue: String(result.temperature ?? DEFAULTS.askTemperature),
+        validate: (value) => {
+            const parsed = Number(value);
+
+            if (Number.isNaN(parsed) || parsed < 0 || parsed > 2) {
+                return "Use number between 0 and 2";
+            }
+        },
+    });
+
+    if (p.isCancel(temperatureInput)) {
+        return null;
+    }
+
+    result.temperature = Number(temperatureInput);
+
+    const maxTokensInput = await p.text({
+        message: `${label} max tokens:`,
+        initialValue: String(result.maxTokens ?? DEFAULTS.askMaxTokens),
+        validate: (value) => {
+            const parsed = Number(value);
+
+            if (!Number.isInteger(parsed) || parsed <= 0) {
+                return "Use positive integer";
+            }
+        },
+    });
+
+    if (p.isCancel(maxTokensInput)) {
+        return null;
+    }
+
+    result.maxTokens = Number(maxTokensInput);
+
+    return result;
+}
+
+async function promptSuggestionModeConfig(
+    existing: SuggestionModeConfig | undefined
+): Promise<SuggestionModeConfig | null> {
+    const base = await promptAskModeConfig(
+        "Suggestion mode",
+        DEFAULT_MODE_CONFIG.suggestions,
+        existing,
+        DEFAULT_MODE_CONFIG.suggestions.enabled
+    );
+
+    if (!base) {
+        return null;
+    }
+
+    const result: SuggestionModeConfig = {
+        ...DEFAULT_MODE_CONFIG.suggestions,
+        ...existing,
+        ...base,
+    };
+
+    if (!result.enabled) {
+        return result;
+    }
+
+    const countInput = await p.text({
+        message: "How many suggestions (1-5)?",
+        initialValue: String(result.count),
+        validate: (value) => {
+            const parsed = Number(value);
+
+            if (!Number.isInteger(parsed) || parsed < 1 || parsed > 5) {
+                return "Enter integer from 1 to 5";
+            }
+        },
+    });
+
+    if (p.isCancel(countInput)) {
+        return null;
+    }
+
+    result.count = Number(countInput);
+
+    const trigger = await p.select({
+        message: "Suggestion trigger mode:",
+        options: [
+            { value: "manual" as const, label: "Manual only (/suggest)" },
+            { value: "auto" as const, label: "Auto on every incoming message" },
+            { value: "hybrid" as const, label: "Manual + auto with debounce" },
+        ],
+        initialValue: result.trigger,
+    });
+
+    if (p.isCancel(trigger)) {
+        return null;
+    }
+
+    result.trigger = trigger;
+
+    const delayInput = await p.text({
+        message: "Auto suggestion debounce delay (ms):",
+        initialValue: String(result.autoDelayMs),
+        validate: (value) => {
+            const parsed = Number(value);
+
+            if (!Number.isInteger(parsed) || parsed < 0) {
+                return "Enter non-negative integer";
+            }
+        },
+    });
+
+    if (p.isCancel(delayInput)) {
+        return null;
+    }
+
+    result.autoDelayMs = Number(delayInput);
+
+    const allowAutoSend = await p.confirm({
+        message: "Allow automatic sending of top suggestion?",
+        initialValue: result.allowAutoSend,
+    });
+
+    if (p.isCancel(allowAutoSend)) {
+        return null;
+    }
+
+    result.allowAutoSend = allowAutoSend;
+
+    return result;
+}
+
+function parseOptionalIsoDateInput(raw: string): string | undefined {
+    const value = raw.trim();
+
+    if (!value) {
+        return undefined;
+    }
+
+    const parsed = new Date(value);
+
+    if (Number.isNaN(parsed.getTime())) {
+        return undefined;
+    }
+
+    return parsed.toISOString();
+}
+
+function buildDefaultStyleRule(dialogId: string): StyleSourceRule {
+    return {
+        id: "self-outgoing-500",
+        sourceChatId: dialogId,
+        direction: "outgoing",
+        limit: 500,
+    };
+}
+
+async function promptStyleProfileConfig(
+    currentDialog: DialogOption,
+    allDialogs: DialogOption[],
+    existing: StyleProfileConfig | undefined
+): Promise<StyleProfileConfig | null> {
+    const enabled = await p.confirm({
+        message: "Enable style profile?",
+        initialValue: existing?.enabled ?? false,
+    });
+
+    if (p.isCancel(enabled)) {
+        return null;
+    }
+
+    const base: StyleProfileConfig = {
+        ...DEFAULT_STYLE_PROFILE,
+        ...existing,
+        enabled,
+    };
+
+    if (!enabled) {
+        return {
+            ...base,
+            rules: existing?.rules ?? [],
+        };
+    }
+
+    const previewInWatch = await p.confirm({
+        message: "Preview derived style prompt in watch mode?",
+        initialValue: base.previewInWatch,
+    });
+
+    if (p.isCancel(previewInWatch)) {
+        return null;
+    }
+
+    const seedRules = existing?.rules.length ? existing.rules : [buildDefaultStyleRule(currentDialog.id)];
+    const ruleCountInput = await p.text({
+        message: "How many style rules?",
+        initialValue: String(seedRules.length),
+        validate: (value) => {
+            const parsed = Number(value);
+
+            if (!Number.isInteger(parsed) || parsed < 1 || parsed > 10) {
+                return "Enter integer from 1 to 10";
+            }
+        },
+    });
+
+    if (p.isCancel(ruleCountInput)) {
+        return null;
+    }
+
+    const desiredRuleCount = Number(ruleCountInput);
+    const rules: StyleSourceRule[] = [];
+
+    for (let i = 0; i < desiredRuleCount; i++) {
+        const seed = seedRules[i] ?? buildDefaultStyleRule(currentDialog.id);
+        const sourceChatId = await p.select({
+            message: `Rule ${i + 1}: source chat`,
+            options: allDialogs.map((dialog) => ({
+                value: dialog.id,
+                label: dialog.label,
+                hint: dialog.hint ?? dialog.dialogType,
+            })),
+            initialValue: seed.sourceChatId,
+        });
+
+        if (p.isCancel(sourceChatId)) {
+            return null;
+        }
+
+        const direction = await p.select({
+            message: `Rule ${i + 1}: direction`,
+            options: [
+                { value: "outgoing" as const, label: "outgoing (my messages)" },
+                { value: "incoming" as const, label: "incoming (their messages)" },
+            ],
+            initialValue: seed.direction,
+        });
+
+        if (p.isCancel(direction)) {
+            return null;
+        }
+
+        const limitInput = await p.text({
+            message: `Rule ${i + 1}: max messages (empty = unlimited)`,
+            initialValue: seed.limit !== undefined ? String(seed.limit) : "",
+            validate: (value) => {
+                const trimmed = (value ?? "").trim();
+
+                if (!trimmed) {
+                    return;
+                }
+
+                const parsed = Number(trimmed);
+
+                if (!Number.isInteger(parsed) || parsed < 1) {
+                    return "Enter a positive integer or leave empty";
+                }
+            },
+        });
+
+        if (p.isCancel(limitInput)) {
+            return null;
+        }
+
+        const sinceInput = await p.text({
+            message: `Rule ${i + 1}: since (optional, e.g. 2025-01-01)`,
+            initialValue: seed.since ?? "",
+            validate: (value) => {
+                const trimmed = (value ?? "").trim();
+
+                if (!trimmed) {
+                    return;
+                }
+
+                if (!parseOptionalIsoDateInput(trimmed)) {
+                    return "Use a valid date/time or leave empty";
+                }
+            },
+        });
+
+        if (p.isCancel(sinceInput)) {
+            return null;
+        }
+
+        const untilInput = await p.text({
+            message: `Rule ${i + 1}: until (optional, e.g. 2025-12-31)`,
+            initialValue: seed.until ?? "",
+            validate: (value) => {
+                const trimmed = (value ?? "").trim();
+
+                if (!trimmed) {
+                    return;
+                }
+
+                if (!parseOptionalIsoDateInput(trimmed)) {
+                    return "Use a valid date/time or leave empty";
+                }
+            },
+        });
+
+        if (p.isCancel(untilInput)) {
+            return null;
+        }
+
+        const regexInput = await p.text({
+            message: `Rule ${i + 1}: regex filter (optional)`,
+            initialValue: seed.regex ?? "",
+            validate: (value) => {
+                const trimmed = (value ?? "").trim();
+
+                if (!trimmed) {
+                    return;
+                }
+
+                try {
+                    new RegExp(trimmed);
+                } catch {
+                    return "Invalid regex";
+                }
+            },
+        });
+
+        if (p.isCancel(regexInput)) {
+            return null;
+        }
+
+        const limitValue = (limitInput as string).trim();
+
+        rules.push({
+            id: seed.id || `rule-${i + 1}`,
+            sourceChatId: sourceChatId as string,
+            direction,
+            limit: limitValue ? Number(limitValue) : undefined,
+            since: parseOptionalIsoDateInput(sinceInput as string),
+            until: parseOptionalIsoDateInput(untilInput as string),
+            regex: (regexInput as string).trim() || undefined,
+        });
+    }
+
+    return {
+        ...base,
+        enabled: true,
+        previewInWatch,
+        rules,
+    };
+}
+
+async function configureContact(
+    option: DialogOption,
+    dialogOptions: DialogOption[],
+    existing?: ContactConfig
+): Promise<ContactConfig | null> {
+    p.log.step(pc.bold(option.label));
 
     const actions = await p.multiselect({
-        message: `Actions for ${opt.label}:`,
+        message: `Actions for ${option.label}:`,
         options: [
-            { value: "say" as const, label: "Say aloud", hint: "macOS TTS with language detection" },
-            { value: "ask" as const, label: "Auto-reply", hint: "LLM generates reply via tools ask" },
-            { value: "notify" as const, label: "Notification", hint: "macOS notification" },
+            { value: "say" as const, label: "Say aloud", hint: "macOS TTS" },
+            { value: "ask" as const, label: "Auto-reply", hint: "AI response" },
+            { value: "notify" as const, label: "Notification", hint: "Desktop notification" },
         ],
         initialValues: existing?.actions ?? ["notify"],
         required: true,
@@ -168,56 +659,92 @@ async function configureContactActions(opt: ContactOption, existing?: ContactCon
         return null;
     }
 
-    const typedActions = actions as ActionType[];
-    let askSystemPrompt: string | undefined;
-    let askProvider: string | undefined;
-    let askModel: string | undefined;
+    const contextLengthInput = await p.text({
+        message: "Watch context length (messages):",
+        initialValue: String(existing?.watch?.contextLength ?? DEFAULT_WATCH_CONFIG.contextLength),
+        validate: (value) => {
+            const parsed = Number(value);
 
-    if (typedActions.includes("ask")) {
-        const prompt = await p.text({
-            message: `System prompt for auto-replies to ${opt.label}:`,
-            initialValue: existing?.askSystemPrompt || DEFAULTS.askSystemPrompt,
-        });
+            if (!Number.isInteger(parsed) || parsed < 1) {
+                return "Enter a positive integer";
+            }
+        },
+    });
 
-        if (p.isCancel(prompt)) {
-            return null;
-        }
+    if (p.isCancel(contextLengthInput)) {
+        return null;
+    }
 
-        askSystemPrompt = prompt as string;
+    const runtimeMode = await p.select({
+        message: "Preferred runtime:",
+        options: [
+            { value: "daemon" as const, label: "daemon" },
+            { value: "light" as const, label: "light" },
+            { value: "ink" as const, label: "ink" },
+        ],
+        initialValue: existing?.watch?.runtimeMode ?? DEFAULT_WATCH_CONFIG.runtimeMode,
+    });
 
-        const provider = await p.text({
-            message: "LLM provider:",
-            initialValue: existing?.askProvider || DEFAULTS.askProvider,
-        });
+    if (p.isCancel(runtimeMode)) {
+        return null;
+    }
 
-        if (p.isCancel(provider)) {
-            return null;
-        }
+    const autoReply = await promptAskModeConfig(
+        "Auto reply",
+        DEFAULT_MODE_CONFIG.autoReply,
+        existing?.modes?.autoReply,
+        (actions as ActionType[]).includes("ask")
+    );
 
-        askProvider = provider as string;
+    if (!autoReply) {
+        return null;
+    }
 
-        const model = await p.text({
-            message: "LLM model:",
-            initialValue: existing?.askModel || DEFAULTS.askModel,
-        });
+    const assistantMode = await promptAskModeConfig(
+        "Assistant mode",
+        DEFAULT_MODE_CONFIG.assistant,
+        existing?.modes?.assistant,
+        true
+    );
 
-        if (p.isCancel(model)) {
-            return null;
-        }
+    if (!assistantMode) {
+        return null;
+    }
 
-        askModel = model as string;
+    const suggestionMode = await promptSuggestionModeConfig(existing?.modes?.suggestions);
+
+    if (!suggestionMode) {
+        return null;
+    }
+
+    const styleProfile = await promptStyleProfileConfig(option, dialogOptions, existing?.styleProfile);
+
+    if (!styleProfile) {
+        return null;
     }
 
     return {
-        userId: opt.userId,
-        displayName: opt.label,
-        username: opt.user.username ?? undefined,
-        actions: typedActions,
-        askSystemPrompt,
-        askProvider,
-        askModel,
+        userId: option.id,
+        displayName: option.label,
+        username: undefined,
+        dialogType: option.dialogType,
+        actions: actions as ActionType[],
+        modes: {
+            autoReply,
+            assistant: assistantMode,
+            suggestions: suggestionMode,
+        },
+        watch: {
+            enabled: true,
+            contextLength: Number(contextLengthInput),
+            runtimeMode,
+        },
+        styleProfile,
         replyDelayMin: existing?.replyDelayMin ?? DEFAULTS.replyDelayMin,
         replyDelayMax: existing?.replyDelayMax ?? DEFAULTS.replyDelayMax,
+        askProvider: autoReply.provider,
+        askModel: autoReply.model,
+        askSystemPrompt: autoReply.systemPrompt,
     };
 }
 
@@ -243,7 +770,7 @@ export function registerConfigureCommand(program: Command): void {
                     spinner.stop("Session valid");
                     const me = await client.getMe();
                     p.log.success(
-                        `Logged in as ${pc.bold(me.firstName || "")} ` + `${me.username ? `(@${me.username})` : ""}`
+                        `Logged in as ${pc.bold(me.firstName || "")} ${me.username ? `(@${me.username})` : ""}`
                     );
                 } else {
                     spinner.stop("Session expired — re-authentication needed");
@@ -256,15 +783,15 @@ export function registerConfigureCommand(program: Command): void {
             let effectiveApiHash = toolConfig.getApiHash();
 
             if (!client) {
-                const creds = await promptCredentials(existing);
+                const credentials = await promptCredentials(existing);
 
-                if (!creds) {
+                if (!credentials) {
                     return;
                 }
 
-                effectiveApiId = creds.apiId;
-                effectiveApiHash = creds.apiHash;
-                client = new TGClient(creds.apiId, creds.apiHash);
+                effectiveApiId = credentials.apiId;
+                effectiveApiHash = credentials.apiHash;
+                client = new TGClient(credentials.apiId, credentials.apiHash);
 
                 const ok = await runAuthFlow(client);
 
@@ -276,12 +803,12 @@ export function registerConfigureCommand(program: Command): void {
 
             const me = await client.getMe();
             const session = client.getSessionString();
+            const dialogOptions = await fetchDialogs(client);
 
-            const contactOptions = await fetchContacts(client);
-
-            if (contactOptions.length === 0) {
-                p.log.warn("No contacts found in recent chats.");
+            if (dialogOptions.length === 0) {
+                p.log.warn("No dialogs found in recent chats.");
                 await toolConfig.save({
+                    version: TELEGRAM_CONFIG_VERSION,
                     apiId: effectiveApiId,
                     apiHash: effectiveApiHash,
                     session,
@@ -290,15 +817,16 @@ export function registerConfigureCommand(program: Command): void {
                         username: me.username ?? undefined,
                         phone: me.phone ?? undefined,
                     },
+                    defaults: existing?.defaults,
                     contacts: [],
                     configuredAt: new Date().toISOString(),
                 });
                 await client.disconnect();
-                p.outro("Configuration saved (no contacts to watch).");
+                p.outro("Configuration saved (no dialogs to watch).");
                 return;
             }
 
-            const selectedIds = await selectContacts(contactOptions, existing?.contacts ?? []);
+            const selectedIds = await selectDialogs(dialogOptions, existing?.contacts ?? []);
 
             if (!selectedIds) {
                 await client.disconnect();
@@ -307,25 +835,26 @@ export function registerConfigureCommand(program: Command): void {
 
             const contacts: ContactConfig[] = [];
 
-            for (const userId of selectedIds) {
-                const opt = contactOptions.find((o) => o.userId === userId);
+            for (const id of selectedIds) {
+                const option = dialogOptions.find((candidate) => candidate.id === id);
 
-                if (!opt) {
+                if (!option) {
                     continue;
                 }
 
-                const existingContact = existing?.contacts.find((c) => c.userId === userId);
-                const contact = await configureContactActions(opt, existingContact);
+                const existingContact = existing?.contacts.find((contact) => contact.userId === id);
+                const configured = await configureContact(option, dialogOptions, existingContact);
 
-                if (!contact) {
+                if (!configured) {
                     await client.disconnect();
                     return;
                 }
 
-                contacts.push(contact);
+                contacts.push(configured);
             }
 
             await toolConfig.save({
+                version: TELEGRAM_CONFIG_VERSION,
                 apiId: effectiveApiId,
                 apiHash: effectiveApiHash,
                 session,
@@ -334,13 +863,17 @@ export function registerConfigureCommand(program: Command): void {
                     username: me.username ?? undefined,
                     phone: me.phone ?? undefined,
                 },
+                defaults: existing?.defaults ?? {
+                    autoReply: { ...DEFAULT_MODE_CONFIG.autoReply },
+                    assistant: { ...DEFAULT_MODE_CONFIG.assistant },
+                    suggestions: { ...DEFAULT_MODE_CONFIG.suggestions },
+                },
                 contacts,
                 configuredAt: new Date().toISOString(),
             });
 
             await client.disconnect();
-
             p.log.success(`Saved ${contacts.length} contact(s)`);
-            p.outro("Run: tools telegram listen");
+            p.outro("Run: tools telegram watch --all");
         });
 }

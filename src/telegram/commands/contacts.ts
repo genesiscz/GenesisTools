@@ -27,7 +27,11 @@ export function registerContactsCommand(program: Command): void {
                 p.log.info(
                     `${pc.bold(c.displayName)} ${c.username ? pc.dim(`@${c.username}`) : ""}\n` +
                         `  Actions: [${c.actions.join(", ")}]` +
-                        (c.askSystemPrompt ? `\n  Prompt: "${c.askSystemPrompt}"` : "")
+                        `\n  Type: ${c.dialogType ?? "user"}` +
+                        `\n  Runtime: ${c.watch?.runtimeMode ?? "daemon"} (ctx ${c.watch?.contextLength ?? 30})` +
+                        (c.modes?.autoReply?.model
+                            ? `\n  Auto-reply: ${c.modes.autoReply.provider}/${c.modes.autoReply.model}`
+                            : "")
                 );
             }
 
