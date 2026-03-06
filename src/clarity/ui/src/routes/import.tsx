@@ -7,6 +7,7 @@ import { AlertTriangle, CheckCircle, Play, XCircle } from "lucide-react";
 import { useState } from "react";
 import { FillWeekCard } from "../components/FillWeekCard";
 import { MonthPicker } from "../components/MonthPicker";
+import { useAppContext } from "../context/AppContext";
 
 async function fetchFillPreview(month: number, year: number) {
     const res = await fetch("/api/fill/preview", {
@@ -16,7 +17,8 @@ async function fetchFillPreview(month: number, year: number) {
     });
 
     if (!res.ok) {
-        throw new Error(`Preview failed: ${await res.text()}`);
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Preview failed (${res.status})`);
     }
 
     return res.json();
@@ -30,16 +32,15 @@ async function executeFillApi(month: number, year: number, weekIds: number[]) {
     });
 
     if (!res.ok) {
-        throw new Error(`Fill failed: ${await res.text()}`);
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Fill failed (${res.status})`);
     }
 
     return res.json();
 }
 
 export function ImportPage() {
-    const now = new Date();
-    const [month, setMonth] = useState(now.getMonth() + 1);
-    const [year, setYear] = useState(now.getFullYear());
+    const { month, year, setMonthYear } = useAppContext();
     const [selectedWeeks, setSelectedWeeks] = useState<Set<number>>(new Set());
     const [showConfirm, setShowConfirm] = useState(false);
 
@@ -89,8 +90,7 @@ export function ImportPage() {
                     month={month}
                     year={year}
                     onChange={(m, y) => {
-                        setMonth(m);
-                        setYear(y);
+                        setMonthYear(m, y);
                         setSelectedWeeks(new Set());
                     }}
                 />

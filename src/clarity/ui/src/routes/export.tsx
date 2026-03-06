@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
-import { useState } from "react";
 import { ExportSummary } from "../components/ExportSummary";
 import { ExportTable } from "../components/ExportTable";
 import { MonthPicker } from "../components/MonthPicker";
+import { useAppContext } from "../context/AppContext";
 
 async function fetchExport(month: number, year: number) {
     const res = await fetch("/api/export", {
@@ -14,7 +14,8 @@ async function fetchExport(month: number, year: number) {
     });
 
     if (!res.ok) {
-        throw new Error(`Export failed: ${await res.text()}`);
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Export failed (${res.status})`);
     }
 
     return res.json();
@@ -31,9 +32,7 @@ async function fetchMappings() {
 }
 
 export function ExportPage() {
-    const now = new Date();
-    const [month, setMonth] = useState(now.getMonth() + 1);
-    const [year, setYear] = useState(now.getFullYear());
+    const { month, year, setMonthYear } = useAppContext();
 
     const {
         data: exportData,
@@ -49,6 +48,14 @@ export function ExportPage() {
         queryFn: fetchMappings,
     });
 
+    const { data: adoConfig } = useQuery({
+        queryKey: ["ado-config"],
+        queryFn: async () => {
+            const res = await fetch("/api/ado-config");
+            return res.ok ? res.json() : { configured: false };
+        },
+    });
+
     const mappedIds = new Set<number>(
         (mappingsData?.mappings ?? []).map((m: { adoWorkItemId: number }) => m.adoWorkItemId)
     );
@@ -59,14 +66,7 @@ export function ExportPage() {
                 <h1 className="text-xl font-mono font-bold text-gray-200">
                     ADO TIMELOG <span className="text-amber-500">EXPORT</span>
                 </h1>
-                <MonthPicker
-                    month={month}
-                    year={year}
-                    onChange={(m, y) => {
-                        setMonth(m);
-                        setYear(y);
-                    }}
-                />
+                <MonthPicker month={month} year={year} onChange={setMonthYear} />
             </div>
 
             {isLoading && (
@@ -112,6 +112,8 @@ export function ExportPage() {
                                 entries={exportData.entries}
                                 entriesByDay={exportData.summary.entriesByDay}
                                 mappedWorkItemIds={mappedIds}
+                                adoOrg={adoConfig?.org}
+                                adoProject={adoConfig?.project}
                             />
                         </CardContent>
                     </Card>

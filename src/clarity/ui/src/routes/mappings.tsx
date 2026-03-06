@@ -2,13 +2,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
+import { AddMappingForm } from "../components/AddMappingForm";
 import { MappingTable } from "../components/MappingTable";
 
 async function fetchMappings() {
     const res = await fetch("/api/mappings");
 
     if (!res.ok) {
-        throw new Error("Failed to fetch mappings");
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Failed to fetch mappings (${res.status})`);
     }
 
     return res.json();
@@ -86,8 +88,8 @@ export function MappingsPage() {
                 </CardContent>
             </Card>
 
-            <div className="mt-4 text-xs text-gray-500 font-mono">
-                To add mappings, use: <code className="text-amber-400">tools clarity link-workitems</code>
+            <div className="mt-6">
+                <AddMappingForm onMappingAdded={() => queryClient.invalidateQueries({ queryKey: ["mappings"] })} />
             </div>
         </div>
     );
