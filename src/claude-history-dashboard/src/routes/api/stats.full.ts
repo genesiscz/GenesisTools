@@ -23,7 +23,7 @@ export const Route = createFileRoute("/api/stats/full")({
 					return Response.json({ error: `Invalid 'to' date: ${to}` }, { status: 400 });
 				}
 
-				if (from && to && from > to) {
+				if (from && to && new Date(from).getTime() > new Date(to).getTime()) {
 					return Response.json({ error: "'from' date must be before 'to' date" }, { status: 400 });
 				}
 

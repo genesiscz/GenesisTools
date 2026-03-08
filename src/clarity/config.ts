@@ -1,3 +1,4 @@
+import { chmod } from "node:fs/promises";
 import { Storage } from "@app/utils/storage/storage";
 import { z } from "zod";
 
@@ -41,8 +42,10 @@ export async function getConfig(): Promise<ClarityConfig | null> {
 }
 
 export async function saveConfig(config: ClarityConfig): Promise<void> {
+    ClarityConfigSchema.parse(config);
     await storage.ensureDirs();
     await storage.setConfig(config);
+    await chmod(storage.getConfigPath(), 0o600);
 }
 
 export async function requireConfig(): Promise<ClarityConfig> {
@@ -59,8 +62,8 @@ export function getMappingForWorkItem(mappings: ClarityMapping[], workItemId: nu
     return mappings.find((m) => m.adoWorkItemId === workItemId);
 }
 
-export function getMappingForClarityTask(mappings: ClarityMapping[], taskName: string): ClarityMapping | undefined {
-    return mappings.find((m) => m.clarityTaskName === taskName);
+export function getMappingForClarityTask(mappings: ClarityMapping[], taskId: number): ClarityMapping | undefined {
+    return mappings.find((m) => m.clarityTaskId === taskId);
 }
 
 export { storage };

@@ -89,6 +89,17 @@ function SettingsPage() {
                             </span>
                         </div>
                     )}
+
+                    {testMutation.isError && (
+                        <div className="mt-2 flex items-center gap-2">
+                            <XCircle className="w-4 h-4 text-red-400" />
+                            <span className="font-mono text-xs text-red-400">
+                                {testMutation.error instanceof Error
+                                    ? testMutation.error.message
+                                    : "Connection test failed"}
+                            </span>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -123,6 +134,14 @@ function SettingsPage() {
                                 {authMutation.data.message}
                             </span>
                         )}
+
+                        {authMutation.isError && (
+                            <span className="font-mono text-xs text-red-400">
+                                {authMutation.error instanceof Error
+                                    ? authMutation.error.message
+                                    : "Auth update failed"}
+                            </span>
+                        )}
                     </div>
                 </CardContent>
             </Card>
@@ -135,7 +154,7 @@ function SettingsPage() {
                 <CardContent>
                     <div className="space-y-2 font-mono text-xs">
                         <div className="flex items-center gap-2">
-                            <code className="text-amber-400">tools clarity configure</code>
+                            <code className="text-amber-400">tools clarity configure auth</code>
                             <span className="text-gray-500">Initial setup with base URL and auth</span>
                         </div>
                         <div className="flex items-center gap-2">

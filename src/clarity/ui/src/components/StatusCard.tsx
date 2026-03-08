@@ -38,7 +38,11 @@ function AuthBadge({ hasAuth }: { hasAuth: boolean }) {
 }
 
 export function StatusCard({ compact }: StatusCardProps) {
-    const { data: status, isLoading } = useQuery({
+    const {
+        data: status,
+        isLoading,
+        error,
+    } = useQuery({
         queryKey: ["status"],
         queryFn: fetchStatus,
         staleTime: 30_000,
@@ -57,6 +61,24 @@ export function StatusCard({ compact }: StatusCardProps) {
                     <div className="space-y-3">
                         <Skeleton variant="line" />
                         <Skeleton variant="line" />
+                    </div>
+                </CardContent>
+            </Card>
+        );
+    }
+
+    if (error) {
+        return (
+            <Card className="border-red-500/20">
+                <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
+                        <Shield className="w-4 h-4" />
+                        System status
+                    </CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <div className="text-red-400 font-mono text-sm">
+                        {error instanceof Error ? error.message : "Failed to fetch status"}
                     </div>
                 </CardContent>
             </Card>

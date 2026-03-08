@@ -75,11 +75,16 @@ export function DashboardLayout({
                                 {navLinks.map(({ label, href, icon: linkIcon }) => {
                                     const isActive = activePath === href;
                                     return (
-                                        <button
+                                        <a
                                             key={href}
-                                            type="button"
-                                            onClick={() => onNavigate?.(href)}
-                                            className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-mono tracking-wider transition-all ${
+                                            href={href}
+                                            onClick={(e) => {
+                                                if (onNavigate) {
+                                                    e.preventDefault();
+                                                    onNavigate(href);
+                                                }
+                                            }}
+                                            className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-mono tracking-wider transition-all no-underline ${
                                                 isActive
                                                     ? "bg-amber-500/10 text-amber-400 border border-amber-500/30 neon-glow"
                                                     : "text-gray-500 hover:text-gray-300 hover:bg-white/5"
@@ -87,7 +92,7 @@ export function DashboardLayout({
                                         >
                                             {linkIcon}
                                             {label}
-                                        </button>
+                                        </a>
                                     );
                                 })}
                             </nav>

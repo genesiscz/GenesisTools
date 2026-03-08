@@ -53,18 +53,19 @@ function renderTimesheetTable(ts: TimesheetRecord, entries: TimeEntryRecord[]): 
         return;
     }
 
-    // Build day columns from first entry's actuals period
-    const periodStart = new Date(ts.timePeriodStart);
+    // Build day columns from first entry's actuals period (use UTC to avoid timezone shifts)
+    const [pYear, pMonth, pDay] = ts.timePeriodStart.split("T")[0].split("-").map(Number);
+    const periodStart = new Date(Date.UTC(pYear, pMonth - 1, pDay));
     const dayLabels: string[] = [];
     const dayDates: string[] = [];
     const dayNames = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
     for (let d = 0; d < 7; d++) {
         const date = new Date(periodStart);
-        date.setDate(date.getDate() + d);
+        date.setUTCDate(date.getUTCDate() + d);
         const iso = date.toISOString().split("T")[0];
         dayDates.push(iso);
-        dayLabels.push(`${dayNames[date.getDay()]} ${date.getDate()}`);
+        dayLabels.push(`${dayNames[date.getUTCDay()]} ${date.getUTCDate()}`);
     }
 
     const table = new Table({
@@ -117,7 +118,15 @@ export function registerTimesheetCommand(program: Command): void {
                 process.exit(1);
             }
 
-            const data = await api.getTimesheet(timesheetId);
+            let data: Awaited<ReturnType<typeof api.getTimesheet>>;
+
+            try {
+                data = await api.getTimesheet(timesheetId);
+            } catch (err) {
+                console.error(`Failed to fetch timesheet: ${err instanceof Error ? err.message : String(err)}`);
+                process.exit(1);
+            }
+
             const ts = data.timesheets._results[0];
 
             if (!ts) {
@@ -134,8 +143,8 @@ export function registerTimesheetCommand(program: Command): void {
         });
 
     ts.command("list")
-        .description("List timesheets for a time period")
-        .option("--period <id>", "Time period ID", parseInt)
+        .description("List timesheets for a time period (requires --period ID from Clarity)")
+        .option("--period <id>", "Clarity time period ID (find via the Clarity web UI)", parseInt)
         .option("--format <format>", "Output format: table|json", "table")
         .action(async (options: { period?: number; format: string }) => {
             const config = await requireConfig();
@@ -151,7 +160,14 @@ export function registerTimesheetCommand(program: Command): void {
                 process.exit(1);
             }
 
-            const data = await api.getTimesheetApp(options.period);
+            let data: Awaited<ReturnType<typeof api.getTimesheetApp>>;
+
+            try {
+                data = await api.getTimesheetApp(options.period);
+            } catch (err) {
+                console.error(`Failed to fetch timesheets: ${err instanceof Error ? err.message : String(err)}`);
+                process.exit(1);
+            }
 
             if (options.format === "json") {
                 console.log(JSON.stringify(data, null, 2));
@@ -192,6 +208,11 @@ export function registerTimesheetCommand(program: Command): void {
 
             const timesheetId = parseInt(timesheetIdStr, 10);
 
+            if (Number.isNaN(timesheetId)) {
+                console.error("Invalid timesheet ID");
+                process.exit(1);
+            }
+
             clack.intro(pc.bgYellow(pc.black(" Submit Timesheet ")));
 
             const confirm = await clack.confirm({
@@ -230,6 +251,11 @@ export function registerTimesheetCommand(program: Command): void {
             });
 
             const timesheetId = parseInt(timesheetIdStr, 10);
+
+            if (Number.isNaN(timesheetId)) {
+                console.error("Invalid timesheet ID");
+                process.exit(1);
+            }
 
             clack.intro(pc.bgRed(pc.white(" Revert Timesheet ")));
 

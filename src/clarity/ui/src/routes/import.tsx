@@ -87,6 +87,7 @@ function ImportPage() {
         mutationFn: () => executeFillApi(month, year, [...selectedWeeks]),
         onSuccess: () => {
             setShowConfirm(false);
+            setSelectedWeeks(new Set());
         },
     });
 

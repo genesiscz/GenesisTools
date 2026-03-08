@@ -39,7 +39,7 @@ export async function getTimelogWorkItems(
 
             return {
                 id,
-                title: wi?.title ?? summary.title ?? `Work Item #${id}`,
+                title: wi?.title || summary.title || `Work Item #${id}`,
                 type: wi?.type ?? "",
                 state: wi?.state ?? "",
                 totalMinutes: summary.minutes,

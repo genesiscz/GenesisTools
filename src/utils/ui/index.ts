@@ -1,5 +1,3 @@
-// Components
-
 export { Badge, badgeVariants } from "@ui/components/badge";
 export { Button, buttonVariants } from "@ui/components/button";
 export {
@@ -50,15 +48,10 @@ export {
     TableRow,
 } from "@ui/components/table";
 export type { DashboardAppConfig } from "@ui/create-app";
-// App factory
 export { createDashboardApp } from "@ui/create-app";
 export type { DashboardLayoutProps, NavLink } from "@ui/layouts/DashboardLayout";
-// Layout
 export { DashboardLayout } from "@ui/layouts/DashboardLayout";
-// Utilities
 export { cn } from "@ui/lib/utils";
 export type { DashboardViteConfig } from "@ui/vite.base";
-// Vite config
 export { createDashboardViteConfig } from "@ui/vite.base";
-// Toast
 export { toast } from "sonner";

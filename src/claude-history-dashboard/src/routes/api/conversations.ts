@@ -11,7 +11,8 @@ export const Route = createFileRoute("/api/conversations")({
 		handlers: {
 			GET: async ({ request }: { request: Request }) => {
 				const url = new URL(request.url);
-				const limit = Number(url.searchParams.get("limit")) || 50;
+				const rawLimit = Number(url.searchParams.get("limit"));
+				const limit = Number.isInteger(rawLimit) && rawLimit > 0 ? rawLimit : 50;
 				const query = url.searchParams.get("q") || undefined;
 				const project = url.searchParams.get("project") || undefined;
 

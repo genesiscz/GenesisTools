@@ -69,6 +69,13 @@ interface AdoEntry {
     minutes: number;
 }
 
+/** Per-date unmapped entry for a single work item */
+export interface UnmappedEntry {
+    workItemId: number;
+    date: string;
+    minutes: number;
+}
+
 /**
  * Group ADO timelog entries by Clarity mapping → FillEntry map.
  * Returns both the fill map and a map of unmapped work items.
@@ -77,9 +84,10 @@ export function buildFillMap(
     entries: AdoEntry[],
     mappings: ClarityMapping[],
     options?: { trackEntries?: boolean }
-): { fillMap: Map<number, FillEntry>; unmappedByWi: Map<number, number> } {
+): { fillMap: Map<number, FillEntry>; unmappedByWi: Map<number, number>; unmappedEntries: UnmappedEntry[] } {
     const fillMap = new Map<number, FillEntry>();
     const unmappedByWi = new Map<number, number>();
+    const unmappedEntries: UnmappedEntry[] = [];
     const trackEntries = options?.trackEntries ?? false;
 
     for (const entry of entries) {
@@ -87,6 +95,7 @@ export function buildFillMap(
 
         if (!mapping) {
             unmappedByWi.set(entry.workItemId, (unmappedByWi.get(entry.workItemId) ?? 0) + entry.minutes);
+            unmappedEntries.push({ workItemId: entry.workItemId, date: entry.date, minutes: entry.minutes });
             continue;
         }
 
@@ -113,5 +122,5 @@ export function buildFillMap(
         }
     }
 
-    return { fillMap, unmappedByWi };
+    return { fillMap, unmappedByWi, unmappedEntries };
 }

@@ -17,8 +17,13 @@ export function parseAuthCurl(curl: string): ClarityAuthFromCurl {
     const urlObj = new URL(parsed.url);
     const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
 
-    const authToken =
-        parsed.headers.authToken || parsed.headers.AuthToken || parsed.headers.AUTHTOKEN || parsed.headers.authtoken;
+    const normalizedHeaders: Record<string, string> = {};
+
+    for (const [key, value] of Object.entries(parsed.headers)) {
+        normalizedHeaders[key.toLowerCase()] = value;
+    }
+
+    const authToken = normalizedHeaders.authtoken;
 
     if (!authToken) {
         throw new Error("No authToken header found in cURL");

@@ -57,10 +57,10 @@ export const getConversation = createServerFn({ method: "GET" })
 			messages: result.matchedMessages.map((msg) => ({
 				type: msg.type,
 				role: "message" in msg ? (msg.message as { role?: string })?.role : undefined,
-				content: extractMessageContent(msg as { type: string; message?: { content: unknown } }),
+				content: extractMessageContent(msg),
 				timestamp: "timestamp" in msg ? String(msg.timestamp) : undefined,
-				toolUses: extractToolUses(msg as { type: string; message?: { content: unknown } }),
-				toolResults: extractToolResults(msg as { type: string; message?: { content: unknown } }),
+				toolUses: extractToolUses(msg),
+				toolResults: extractToolResults(msg),
 			})),
 		};
 		return detail;

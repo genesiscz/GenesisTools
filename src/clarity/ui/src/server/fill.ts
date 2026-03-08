@@ -97,7 +97,7 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
         }
     }
 
-    const { fillMap, unmappedByWi } = buildFillMap(adoExport.entries, clarityConfig.mappings, {
+    const { fillMap, unmappedByWi, unmappedEntries } = buildFillMap(adoExport.entries, clarityConfig.mappings, {
         trackEntries: true,
     });
 
@@ -191,7 +191,16 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
             continue;
         }
 
-        const weekUnmapped: WeekPreview["unmappedWorkItems"] = [...unmappedByWi.entries()].map(
+        // Filter unmapped entries to this week's date range, then aggregate per work item
+        const weekUnmappedMap = new Map<number, number>();
+
+        for (const ue of unmappedEntries) {
+            if (ue.date >= cw.startDate && ue.date < cw.finishDate) {
+                weekUnmappedMap.set(ue.workItemId, (weekUnmappedMap.get(ue.workItemId) ?? 0) + ue.minutes);
+            }
+        }
+
+        const weekUnmapped: WeekPreview["unmappedWorkItems"] = [...weekUnmappedMap.entries()].map(
             ([workItemId, minutes]) => ({ workItemId, minutes })
         );
 
@@ -325,6 +334,22 @@ export async function executeFill(month: number, year: number, weekIds: number[]
             const exclusiveEnd = `${addDay(ts.timePeriodFinish.split("T")[0])}T00:00:00`;
             const segments = buildTimeSegments(ts.timePeriodStart, exclusiveEnd, fill.dayMinutes);
             const totalSeconds = segments.reduce((sum, s) => sum + s.value, 0);
+
+            // Skip zero-minute updates to avoid wiping existing Clarity entries
+            if (totalSeconds === 0) {
+                resultEntries.push({
+                    clarityTaskName: fill.mapping.clarityTaskName,
+                    clarityTaskCode: fill.mapping.clarityTaskCode,
+                    timesheetId,
+                    timeEntryId: timeEntry._internalId,
+                    totalHours: 0,
+                    segments: [],
+                    status: "skipped",
+                    error: "No minutes for this task in this week",
+                });
+                skipped++;
+                continue;
+            }
 
             const actuals: TimeSeriesValue = {
                 isFiscal: false,

@@ -29,7 +29,15 @@ program
 
         // Open browser after a short delay
         setTimeout(() => {
-            Bun.spawn(["open", "http://localhost:3071"]);
+            const url = "http://localhost:3071";
+
+            if (process.platform === "darwin") {
+                Bun.spawn(["open", url]);
+            } else if (process.platform === "win32") {
+                Bun.spawn(["cmd", "/c", "start", url]);
+            } else {
+                Bun.spawn(["xdg-open", url]);
+            }
         }, 2000);
 
         await proc.exited;

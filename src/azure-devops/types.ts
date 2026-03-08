@@ -157,6 +157,7 @@ export interface WorkItemCache {
     title: string;
     state: string;
     type?: string;
+    assignee?: string;
     category?: string;
     taskFolder?: boolean;
     history?: WorkItemHistorySection;

@@ -1,4 +1,5 @@
 import type { getAllConversations } from "@app/claude/lib/history/search";
+import type { ConversationMessage, ToolResultBlock, ToolUseBlock } from "@app/utils/claude/types";
 
 // Serializable types for client/server communication
 export interface SerializableConversation {
@@ -81,9 +82,9 @@ export function serializeResult(result: Awaited<ReturnType<typeof getAllConversa
 }
 
 // Helper to extract text from a message
-export function extractMessageContent(msg: { type: string; message?: { content: unknown } }): string {
+export function extractMessageContent(msg: ConversationMessage): string {
 	if (msg.type === "user" || msg.type === "assistant") {
-		const content = (msg as { message?: { content: unknown } }).message?.content;
+		const content = msg.message.content;
 
 		if (typeof content === "string") {
 			return content;
@@ -119,51 +120,39 @@ export function extractMessageContent(msg: { type: string; message?: { content: 
 }
 
 // Helper to extract tool uses from a message
-export function extractToolUses(msg: {
-	type: string;
-	message?: { content: unknown };
-}): Array<{ name: string; input?: object }> {
+export function extractToolUses(msg: ConversationMessage): Array<{ name: string; input?: object }> {
 	if (msg.type !== "assistant") {
 		return [];
 	}
 
-	const content = (msg as { message?: { content: unknown } }).message?.content;
+	const content = msg.message.content;
 
 	if (!Array.isArray(content)) {
 		return [];
 	}
 
 	return content
-		.filter(
-			(b): b is { type: "tool_use"; name: string; input?: object } =>
-				typeof b === "object" && b !== null && "type" in b && b.type === "tool_use"
-		)
+		.filter((b): b is ToolUseBlock => typeof b === "object" && b !== null && "type" in b && b.type === "tool_use")
 		.map((b) => ({ name: b.name, input: b.input }));
 }
 
 // Helper to extract tool results from a message
-export function extractToolResults(msg: {
-	type: string;
-	message?: { content: unknown };
-}): Array<{ toolUseId: string; content: string; isError?: boolean }> {
+export function extractToolResults(msg: ConversationMessage): Array<{ toolUseId: string; content: string; isError?: boolean }> {
 	if (msg.type !== "user") {
 		return [];
 	}
 
-	const content = (msg as { message?: { content: unknown } }).message?.content;
+	const content = msg.message.content;
 
 	if (!Array.isArray(content)) {
 		return [];
 	}
 
 	return content
-		.filter(
-			(b): b is { type: "tool_result"; tool_use_id: string; content: string | unknown[]; is_error?: boolean } =>
-				typeof b === "object" && b !== null && "type" in b && b.type === "tool_result"
-		)
+		.filter((b): b is ToolResultBlock => typeof b === "object" && b !== null && "type" in b && b.type === "tool_result")
 		.map((b) => ({
 			toolUseId: b.tool_use_id,
-			content: typeof b.content === "string" ? b.content : JSON.stringify(b.content, null, 2),
+			content: typeof b.content === "string" ? b.content : JSON.stringify(b.content, null, 2) ?? "",
 			isError: b.is_error,
 		}));
 }

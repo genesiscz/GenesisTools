@@ -134,11 +134,14 @@ function MappingsPage() {
         staleTime: 60 * 60 * 1000,
     });
 
-    const { data: adoConfig } = useQuery({
+    const { data: adoConfigRaw } = useQuery({
         queryKey: ["ado-config"],
         queryFn: fetchAdoConfig,
         staleTime: 60 * 60 * 1000,
     });
+
+    const adoConfig =
+        adoConfigRaw?.org && adoConfigRaw?.project ? { org: adoConfigRaw.org, project: adoConfigRaw.project } : null;
 
     const { data: weeksData } = useQuery({
         queryKey: ["clarity-weeks", month, year],
@@ -234,7 +237,7 @@ function MappingsPage() {
                             mappings={data.mappings}
                             allTasks={tasksData?.tasks ?? []}
                             typeColors={typeColors?.types ?? {}}
-                            adoConfig={adoConfig?.org ? (adoConfig as { org: string; project: string }) : null}
+                            adoConfig={adoConfig}
                             onRemove={(id) => removeMutation.mutate(id)}
                             onMove={(adoWorkItemId, target) => moveMutation.mutate({ adoWorkItemId, target })}
                             onAdd={setAddToTask}

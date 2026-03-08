@@ -34,6 +34,22 @@ export async function getMappings(): Promise<{ mappings: ClarityMapping[]; confi
     return { mappings: config.mappings, configured: true };
 }
 
+function requireString(value: unknown, field: string): string {
+    if (typeof value !== "string" || value.trim() === "") {
+        throw new Error(`Invalid mapping payload: '${field}' must be a non-empty string`);
+    }
+
+    return value;
+}
+
+function requireNumber(value: unknown, field: string): number {
+    if (typeof value !== "number" || Number.isNaN(value)) {
+        throw new Error(`Invalid mapping payload: '${field}' must be a number`);
+    }
+
+    return value;
+}
+
 export async function addMapping(data: Record<string, unknown>): Promise<{ success: boolean }> {
     const config = await getConfig();
 
@@ -42,14 +58,14 @@ export async function addMapping(data: Record<string, unknown>): Promise<{ succe
     }
 
     const mapping: ClarityMapping = {
-        clarityTaskId: data.clarityTaskId as number,
-        clarityTaskName: data.clarityTaskName as string,
-        clarityTaskCode: data.clarityTaskCode as string,
-        clarityInvestmentName: data.clarityInvestmentName as string,
-        clarityInvestmentCode: data.clarityInvestmentCode as string,
-        adoWorkItemId: data.adoWorkItemId as number,
-        adoWorkItemTitle: data.adoWorkItemTitle as string,
-        adoWorkItemType: data.adoWorkItemType as string | undefined,
+        clarityTaskId: requireNumber(data.clarityTaskId, "clarityTaskId"),
+        clarityTaskName: requireString(data.clarityTaskName, "clarityTaskName"),
+        clarityTaskCode: requireString(data.clarityTaskCode, "clarityTaskCode"),
+        clarityInvestmentName: requireString(data.clarityInvestmentName, "clarityInvestmentName"),
+        clarityInvestmentCode: requireString(data.clarityInvestmentCode, "clarityInvestmentCode"),
+        adoWorkItemId: requireNumber(data.adoWorkItemId, "adoWorkItemId"),
+        adoWorkItemTitle: requireString(data.adoWorkItemTitle, "adoWorkItemTitle"),
+        adoWorkItemType: typeof data.adoWorkItemType === "string" ? data.adoWorkItemType : undefined,
     };
 
     const existing = config.mappings.findIndex((m) => m.adoWorkItemId === mapping.adoWorkItemId);

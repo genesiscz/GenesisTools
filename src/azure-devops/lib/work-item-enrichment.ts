@@ -110,7 +110,7 @@ export async function enrichWorkItems(
         for (const [id, item] of fetched) {
             const itemType = (item.rawFields?.["System.WorkItemType"] as string | undefined) ?? undefined;
 
-            // Save to cache (including type)
+            // Save to cache (including type and assignee)
             const cacheEntry: WorkItemCache = {
                 version: WORKITEM_CACHE_VERSION,
                 cache: { fieldsFetchedAt: new Date().toISOString() },
@@ -120,6 +120,7 @@ export async function enrichWorkItems(
                 title: item.title,
                 state: item.state,
                 type: itemType,
+                assignee: item.assignee,
             };
 
             await saveWorkItemCache(id, cacheEntry);
@@ -242,6 +243,7 @@ function cacheToEnriched(cache: WorkItemCache, includeType: boolean): EnrichedWo
         title: cache.title,
         state: cache.state,
         type: includeType ? cache.type : undefined,
+        assignee: cache.assignee,
         changed: cache.changed,
     };
 }

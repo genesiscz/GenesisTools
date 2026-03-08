@@ -59,7 +59,10 @@ export function ExportTable({ entries, entriesByDay, mappedWorkItemIds, adoConfi
                     const dayTotal = entriesByDay[date] ?? 0;
 
                     return dayEntries.map((entry, i) => (
-                        <TableRow key={`${date}-${entry.workItemId}`} className="border-white/5 hover:bg-amber-500/5">
+                        <TableRow
+                            key={`${date}-${entry.workItemId}-${i}`}
+                            className="border-white/5 hover:bg-amber-500/5"
+                        >
                             <TableCell className="font-mono text-sm text-gray-400">
                                 {i === 0 ? (
                                     <div>

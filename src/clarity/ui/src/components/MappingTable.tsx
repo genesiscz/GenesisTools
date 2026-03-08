@@ -229,6 +229,8 @@ export function MappingTable({
                                             )}
 
                                             <Button
+                                                type="button"
+                                                aria-label={`Remove mapping for ADO work item ${item.adoWorkItemId}`}
                                                 variant="ghost"
                                                 size="sm"
                                                 onClick={() => onRemove(item.adoWorkItemId)}
