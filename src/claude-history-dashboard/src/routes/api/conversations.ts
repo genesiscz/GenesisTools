@@ -1,8 +1,4 @@
-import {
-	getAllConversations,
-	type SearchFilters,
-	searchConversations,
-} from "@app/claude/lib/history/search";
+import { getAllConversations, type SearchFilters, searchConversations } from "@app/claude/lib/history/search";
 import { createFileRoute } from "@tanstack/react-router";
 import { serializeResult } from "../../server/serializers";
 
@@ -18,9 +14,7 @@ export const Route = createFileRoute("/api/conversations")({
 
 				const filters: Omit<SearchFilters, "onProgress"> = { limit, query, project };
 
-				const results = query
-					? await searchConversations(filters)
-					: await getAllConversations({ ...filters, limit });
+				const results = query ? await searchConversations(filters) : await getAllConversations({ ...filters, limit });
 
 				return Response.json(results.map(serializeResult));
 			},

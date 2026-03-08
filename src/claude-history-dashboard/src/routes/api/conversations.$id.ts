@@ -1,10 +1,10 @@
 import { getConversationBySessionId } from "@app/claude/lib/history/search";
 import { createFileRoute } from "@tanstack/react-router";
 import {
-	type SerializableConversationDetail,
 	extractMessageContent,
 	extractToolResults,
 	extractToolUses,
+	type SerializableConversationDetail,
 	serializeResult,
 } from "../../server/serializers";
 
