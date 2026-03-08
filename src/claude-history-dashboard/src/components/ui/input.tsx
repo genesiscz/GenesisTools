@@ -1,1 +1,1 @@
-export { Input } from "../../../../../utils/ui/components/input";
+export { Input } from "@ui/components/input";

@@ -1,1 +1,1 @@
-export { cn } from "../../../../utils/ui/lib/utils.ts";
+export { cn } from "@ui/lib/utils";
