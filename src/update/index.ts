@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { discoverTools } from "@app/tools/lib/discovery";
+import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
 
@@ -35,29 +36,58 @@ const program = new Command()
             process.exit(1);
         }
 
-        // 3. Claude Code plugin management (if running in Claude Code)
-        if (process.env.CLAUDE_CODE_SESSION_ID) {
-            console.log(pc.dim("\n  Updating Claude Code plugin..."));
+        // 3. Claude Code plugin management
+        const inClaudeCode = Boolean(process.env.CLAUDE_CODE_SESSION_ID);
+        const runClaudeUpdates = await p.confirm({
+            message: inClaudeCode
+                ? "Run Claude plugin update and marketplace update?"
+                : "Run Claude marketplace update, add, and plugin install?",
+            initialValue: true,
+        });
+        if (p.isCancel(runClaudeUpdates)) {
+            p.cancel("Cancelled");
+            process.exit(0);
+        }
+        if (runClaudeUpdates) {
+            if (inClaudeCode) {
+                console.log(pc.dim("\n  Adding marketplace (if needed)..."));
+                Bun.spawnSync(["claude", "plugin", "marketplace", "add", "https://github.com/genesiscz/GenesisTools"], {
+                    stdio: ["inherit", "inherit", "inherit"],
+                });
 
-            // marketplace add (may fail — that's OK)
-            Bun.spawnSync(["claude", "plugin", "marketplace", "add", "https://github.com/genesiscz/GenesisTools"], {
-                stdio: ["inherit", "inherit", "inherit"],
-            });
+                console.log(pc.dim("\n  Installing plugin (if needed)..."));
+                const pluginInstall = Bun.spawnSync(["claude", "plugin", "install", "genesis-tools@genesis-tools"], {
+                    stdio: ["inherit", "inherit", "inherit"],
+                });
+                if (pluginInstall.exitCode !== 0) {
+                    console.log(pc.yellow("  Plugin install had issues (may already be installed)"));
+                }
 
-            // plugin install
-            const pluginInstall = Bun.spawnSync(["claude", "plugin", "install", "genesis-tools@genesis-tools"], {
-                stdio: ["inherit", "inherit", "inherit"],
-            });
-            if (pluginInstall.exitCode !== 0) {
-                console.log(pc.yellow("  Plugin install had issues (may already be installed)"));
-            }
+                console.log(pc.dim("\n  Updating Claude Code plugin..."));
+                const pluginUpdate = Bun.spawnSync(["claude", "plugin", "update", "genesis-tools@genesis-tools"], {
+                    stdio: ["inherit", "inherit", "inherit"],
+                });
+                if (pluginUpdate.exitCode !== 0) {
+                    console.log(pc.yellow("  Plugin update had issues"));
+                }
+            } else {
+                console.log(pc.dim("\n  Updating Claude Code marketplace..."));
+                Bun.spawnSync(["claude", "plugin", "marketplace", "update"], {
+                    stdio: ["inherit", "inherit", "inherit"],
+                });
 
-            // plugin update
-            const pluginUpdate = Bun.spawnSync(["claude", "plugin", "update", "genesis-tools@genesis-tools"], {
-                stdio: ["inherit", "inherit", "inherit"],
-            });
-            if (pluginUpdate.exitCode !== 0) {
-                console.log(pc.yellow("  Plugin update had issues"));
+                console.log(pc.dim("\n  Adding marketplace..."));
+                Bun.spawnSync(["claude", "plugin", "marketplace", "add", "https://github.com/genesiscz/GenesisTools"], {
+                    stdio: ["inherit", "inherit", "inherit"],
+                });
+
+                console.log(pc.dim("\n  Installing plugin..."));
+                const pluginInstall = Bun.spawnSync(["claude", "plugin", "install", "genesis-tools@genesis-tools"], {
+                    stdio: ["inherit", "inherit", "inherit"],
+                });
+                if (pluginInstall.exitCode !== 0) {
+                    console.log(pc.yellow("  Plugin install had issues"));
+                }
             }
         }
 
