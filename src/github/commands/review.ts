@@ -291,18 +291,30 @@ async function respondCommand(
         const result = await batchReplyAndResolve(threadIds, message, {
             onProgress: showProgress ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
         });
-        console.log(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
+
         if (result.failed.length) {
             console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
         }
+
+        if (result.replied === 0 && result.failed.length > 0) {
+            throw new Error(`All thread mutations failed: ${result.failed.join(", ")}`);
+        }
+
+        console.log(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
     } else {
         const result = await batchReply(threadIds, message, {
             onProgress: showProgress ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
         });
-        console.log(chalk.green(`Replied to ${result.replied} thread(s)`));
+
         if (result.failed.length) {
             console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
         }
+
+        if (result.replied === 0 && result.failed.length > 0) {
+            throw new Error(`All thread mutations failed: ${result.failed.join(", ")}`);
+        }
+
+        console.log(chalk.green(`Replied to ${result.replied} thread(s)`));
     }
 }
 

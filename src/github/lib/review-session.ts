@@ -96,9 +96,7 @@ export class ReviewSessionManager {
             if (match) {
                 const threadNumber = parseInt(match[1], 10);
                 const thread = sessionData.threads.find((t) => t.threadNumber === threadNumber);
-                if (thread) {
-                    results.push({ refId: ref, threadId: thread.threadId, thread });
-                }
+                results.push({ refId: ref, threadId: thread?.threadId ?? ref, thread });
             } else {
                 // Treat as raw GraphQL thread ID
                 const thread = sessionData.threads.find((t) => t.threadId === ref);
