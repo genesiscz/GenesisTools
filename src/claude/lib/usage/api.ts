@@ -30,13 +30,14 @@ export interface AccountUsage {
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 
-export async function fetchUsage(accessToken: string): Promise<UsageResponse> {
+export async function fetchUsage(accessToken: string, signal?: AbortSignal): Promise<UsageResponse> {
     const res = await fetch(USAGE_URL, {
         headers: {
             Authorization: `Bearer ${accessToken}`,
             "anthropic-beta": "oauth-2025-04-20",
             Accept: "application/json",
         },
+        signal,
     });
     if (!res.ok) {
         const body = await res.text().catch(() => "");
@@ -112,7 +113,10 @@ async function ensureValidToken(
     }, 60_000); // 60s timeout for acquiring the config lock; refresh holds the lock while running
 }
 
-export async function fetchAllAccountsUsage(accounts: Record<string, AccountConfig>): Promise<AccountUsage[]> {
+export async function fetchAllAccountsUsage(
+    accounts: Record<string, AccountConfig>,
+    signal?: AbortSignal
+): Promise<AccountUsage[]> {
     const entries = Object.entries(accounts);
     if (entries.length === 0) {
         return [];
@@ -121,7 +125,7 @@ export async function fetchAllAccountsUsage(accounts: Record<string, AccountConf
     const results = await Promise.allSettled(
         entries.map(async ([name, account]) => {
             const { accessToken } = await ensureValidToken(name, account);
-            const usage = await fetchUsage(accessToken);
+            const usage = await fetchUsage(accessToken, signal);
             return { accountName: name, label: account.label, usage } satisfies AccountUsage;
         })
     );

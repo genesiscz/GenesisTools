@@ -1,10 +1,14 @@
 import type { UsageHistoryDb, UsageSnapshot } from "@app/claude/lib/usage/history-db";
 import { Box, Text, useInput, useStdout } from "ink";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useScroll } from "../../hooks/use-scroll";
+
+// Module-level: survives component unmount/remount (tab switches)
+let _savedHistoryOffset = 0;
 
 interface HistoryViewProps {
     db: UsageHistoryDb | null;
+    dbVersion: number;
 }
 
 const BUCKET_SHORT_LABELS: Record<string, string> = {
@@ -74,14 +78,14 @@ function computeDeltas(snapshots: UsageSnapshot[]): SnapshotWithDelta[] {
     });
 }
 
-export function HistoryView({ db }: HistoryViewProps) {
+export function HistoryView({ db, dbVersion }: HistoryViewProps) {
     const { stdout } = useStdout();
     const termHeight = stdout?.rows ?? 24;
-    const pageSize = Math.max(5, termHeight - 10);
 
     const [layout, setLayout] = useState<"stacked" | "side-by-side">("stacked");
     const [timeRange, setTimeRange] = useState(60); // minutes
 
+    // biome-ignore lint/correctness/useExhaustiveDependencies: dbVersion is an intentional cache-busting dep — db ref is stable but DB contents change on each poll
     const allData = useMemo(() => {
         if (!db) {
             return new Map<string, SnapshotWithDelta[]>();
@@ -97,7 +101,7 @@ export function HistoryView({ db }: HistoryViewProps) {
         }
 
         return result;
-    }, [db, timeRange]);
+    }, [db, timeRange, dbVersion]);
 
     const allRows = useMemo(() => {
         const rows: Array<{ key: string; data: SnapshotWithDelta }> = [];
@@ -111,11 +115,32 @@ export function HistoryView({ db }: HistoryViewProps) {
         return rows;
     }, [allData]);
 
-    const { offset } = useScroll({
+    // Chrome: TabBar(1) + StatusBar(3) + paddingY(2) + hint(1) + colHeader(1) = 8
+    // Account separator headers: first = 1 line, subsequent = 2 lines (marginTop=1)
+    const uniqueAccounts = new Set(Array.from(allData.keys()).map((k) => k.split(":")[0])).size;
+    const separatorLines = uniqueAccounts > 0 ? 1 + (uniqueAccounts - 1) * 2 : 0;
+    const pageSize = Math.max(3, termHeight - 8 - separatorLines);
+
+    const { offset, setOffset } = useScroll({
         totalItems: allRows.length,
         pageSize,
         enabled: true,
+        initialOffset: _savedHistoryOffset,
     });
+
+    // Persist offset so it survives tab switches (component unmount/remount)
+    useEffect(() => {
+        _savedHistoryOffset = offset;
+    }, [offset]);
+
+    // When new data arrives and current offset is beyond new total, clamp it
+    useEffect(() => {
+        const max = Math.max(0, allRows.length - pageSize);
+
+        if (offset > max) {
+            setOffset(max);
+        }
+    }, [allRows.length, pageSize, offset, setOffset]);
 
     useInput((input) => {
         if (input === "l") {
@@ -149,51 +174,46 @@ export function HistoryView({ db }: HistoryViewProps) {
     const rangeLabel =
         timeRange <= 60 ? `${timeRange}m` : timeRange <= 1440 ? `${timeRange / 60}h` : `${timeRange / 1440}d`;
 
+    // Cap history view height so Ink never renders beyond the terminal
+    const maxHeight = Math.max(8, termHeight - 4);
+
     if (layout === "stacked") {
-        // Group by account
-        const groups = new Map<string, SnapshotWithDelta[]>();
-
-        for (const [key, snapshots] of allData) {
-            const accountName = key.split(":")[0];
-
-            if (!groups.has(accountName)) {
-                groups.set(accountName, []);
-            }
-
-            groups.get(accountName)!.push(...snapshots);
-        }
+        const visibleRows = allRows.slice(offset, offset + pageSize);
 
         return (
-            <Box flexDirection="column" paddingX={1} paddingY={1}>
-                <Text dimColor>{`Showing last ${rangeLabel}  [f] cycle range  [l] layout  [j/k] scroll`}</Text>
-                {Array.from(groups).map(([accountName, snapshots]) => {
-                    const visible = snapshots.slice(offset, offset + pageSize);
+            <Box flexDirection="column" paddingX={1} paddingY={1} height={maxHeight} overflow="hidden">
+                <Text
+                    dimColor
+                >{`Showing last ${rangeLabel}  [f] cycle range  [l] layout  [j/k] scroll  (${allRows.length > 0 ? offset + 1 : 0}-${Math.min(offset + pageSize, allRows.length)} of ${allRows.length})`}</Text>
+                <Box>
+                    <Text bold>
+                        {`${"Time".padEnd(10)}${"Bucket".padEnd(10)}${"Util %".padEnd(10)}${"Δ%".padEnd(8)}Speed / 1%`}
+                    </Text>
+                </Box>
+                {visibleRows.map((row, i) => {
+                    const showHeader = i === 0 || row.key !== visibleRows[i - 1].key;
+                    const accountName = row.data.accountName;
+                    const bucketLabel = BUCKET_SHORT_LABELS[row.data.bucket] ?? row.data.bucket;
+                    const s = row.data;
 
                     return (
-                        <Box key={accountName} flexDirection="column" marginBottom={1}>
-                            <Text bold>{`── ${accountName} ${"─".repeat(40)}`}</Text>
+                        <Box key={`${row.key}-${s.timestamp}-${i}`} flexDirection="column">
+                            {showHeader && (
+                                <Box marginTop={i > 0 ? 1 : 0}>
+                                    <Text bold>{`── ${accountName} ${"─".repeat(40)}`}</Text>
+                                </Box>
+                            )}
                             <Box>
-                                <Text bold>
-                                    {`${"Time".padEnd(10)}${"Bucket".padEnd(10)}${"Util %".padEnd(10)}${"Δ%".padEnd(8)}Speed / 1%`}
+                                <Text dimColor>{formatTimestamp(s.timestamp).padEnd(10)}</Text>
+                                <Text>{bucketLabel.padEnd(10)}</Text>
+                                <Text>{`${s.utilization.toFixed(1)}%`.padEnd(10)}</Text>
+                                <Text color={s.delta !== null && s.delta > 0 ? "yellow" : "green"}>
+                                    {s.delta !== null
+                                        ? `${s.delta >= 0 ? "+" : ""}${s.delta.toFixed(1)}`.padEnd(8)
+                                        : "—".padEnd(8)}
                                 </Text>
+                                <Text dimColor>{s.timePerPct ?? "—"}</Text>
                             </Box>
-                            {visible.map((s, i) => {
-                                const bucketLabel = BUCKET_SHORT_LABELS[s.bucket] ?? s.bucket;
-
-                                return (
-                                    <Box key={`${s.timestamp}-${s.bucket}-${i}`}>
-                                        <Text dimColor>{formatTimestamp(s.timestamp).padEnd(10)}</Text>
-                                        <Text>{bucketLabel.padEnd(10)}</Text>
-                                        <Text>{`${s.utilization.toFixed(1)}%`.padEnd(10)}</Text>
-                                        <Text color={s.delta !== null && s.delta > 0 ? "yellow" : "green"}>
-                                            {s.delta !== null
-                                                ? `${s.delta >= 0 ? "+" : ""}${s.delta.toFixed(1)}`.padEnd(8)
-                                                : "—".padEnd(8)}
-                                        </Text>
-                                        <Text dimColor>{s.timePerPct ?? "—"}</Text>
-                                    </Box>
-                                );
-                            })}
                         </Box>
                     );
                 })}
