@@ -179,7 +179,6 @@ export function HistoryView({ db, dbVersion }: HistoryViewProps) {
 
     if (layout === "stacked") {
         const visibleRows = allRows.slice(offset, offset + pageSize);
-        let lastKey = "";
 
         return (
             <Box flexDirection="column" paddingX={1} paddingY={1} height={maxHeight} overflow="hidden">
@@ -192,9 +191,8 @@ export function HistoryView({ db, dbVersion }: HistoryViewProps) {
                     </Text>
                 </Box>
                 {visibleRows.map((row, i) => {
-                    const showHeader = row.key !== lastKey;
-                    lastKey = row.key;
-                    const accountName = row.key.split(":")[0];
+                    const showHeader = i === 0 || row.key !== visibleRows[i - 1].key;
+                    const accountName = row.data.accountName;
                     const bucketLabel = BUCKET_SHORT_LABELS[row.data.bucket] ?? row.data.bucket;
                     const s = row.data;
 

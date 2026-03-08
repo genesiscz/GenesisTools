@@ -44,7 +44,7 @@ A second `stable` process (PID 2554) is the terminal server subprocess.
 
 The log shows repeated stalls where timestamp progression halts mid-session:
 
-```
+```text
 16:23:37 → 16:23:51  (14s gap)
 16:24:11 → 16:24:24  (13s gap)
 16:24:43 → 16:25:04  (21s gap)
@@ -68,7 +68,7 @@ The log shows repeated stalls where timestamp progression halts mid-session:
 
 The log entries immediately before each gap are `TypedCharacters` events:
 
-```
+```log
 2026-03-02T16:29:07Z [INFO] dispatching typed action: warp::terminal::view::action::TerminalAction::TypedCharacters
 2026-03-02T16:29:08Z [INFO] dispatching typed action: warp::terminal::view::action::TerminalAction::KeyDown
                                                                               ↑
@@ -84,7 +84,7 @@ User was actively **typing** when each freeze hit. The render path triggered by 
 
 At the time of collection the app was not frozen — the main thread was idle in the RunLoop waiting for events:
 
-```
+```text
 2436 Thread_32643  com.apple.main-thread
   → NSApplication run
   → CFRunLoopRun → mach_msg (waiting for events)  ← IDLE, not stuck
@@ -98,7 +98,7 @@ Background executor threads (0–7) are all parked in `pthread_cond_wait`. The a
 
 macOS filed a CPU resource violation for Warp on Feb 24:
 
-```
+```text
 /Library/Logs/DiagnosticReports/stable_2026-02-24-001430_MacBook-Pro-2.cpu_resource.diag
 ```
 
@@ -116,7 +116,7 @@ The escalating freeze durations (7s → 60s → silence) suggest the app's memor
 
 ### Contributing: WAL file recovery at startup
 
-```
+```log
 2026-02-23T17:30:08Z [WARN] SQLite error 283: recovered 331 frames from WAL file warp.sqlite-wal
 ```
 

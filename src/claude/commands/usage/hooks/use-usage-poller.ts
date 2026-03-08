@@ -135,19 +135,23 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
             let accountUsages: AccountUsage[];
 
             try {
-                accountUsages = await fetchAllAccountsUsage(accountsRef.current);
+                accountUsages = await fetchAllAccountsUsage(accountsRef.current, controller.signal);
             } finally {
                 clearTimeout(timeout);
             }
 
             const now = new Date();
 
-            // Persist for other instances to reuse within the same interval
-            await storage.putCacheFile<PollCache>(
-                cacheKey,
-                { timestamp: now.toISOString(), accounts: accountUsages },
-                `${pollIntervalSeconds} seconds`
-            );
+            // Persist for other instances to reuse within the same interval (best-effort)
+            try {
+                await storage.putCacheFile<PollCache>(
+                    cacheKey,
+                    { timestamp: now.toISOString(), accounts: accountUsages },
+                    `${pollIntervalSeconds} seconds`
+                );
+            } catch {
+                // Cache is an optimization; continue with fresh results
+            }
 
             processAccountUsages(accountUsages, now);
         } catch (error) {
