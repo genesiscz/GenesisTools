@@ -13,7 +13,8 @@ function cloneDefaults() {
         watch: { ...DEFAULT_WATCH_CONFIG },
         styleProfile: {
             enabled: DEFAULT_STYLE_PROFILE.enabled,
-            source: DEFAULT_STYLE_PROFILE.source,
+            refresh: DEFAULT_STYLE_PROFILE.refresh,
+            previewInWatch: DEFAULT_STYLE_PROFILE.previewInWatch,
             rules: DEFAULT_STYLE_PROFILE.rules.map((rule) => ({ ...rule })),
         },
     };
@@ -41,7 +42,8 @@ export function migrateContactV1toV2(v1: ContactConfig): TelegramContactV2 {
         },
         styleProfile: {
             enabled: DEFAULT_STYLE_PROFILE.enabled,
-            source: DEFAULT_STYLE_PROFILE.source,
+            refresh: DEFAULT_STYLE_PROFILE.refresh,
+            previewInWatch: DEFAULT_STYLE_PROFILE.previewInWatch,
             rules: DEFAULT_STYLE_PROFILE.rules.map((rule) => ({ ...rule })),
         },
         replyDelayMin: v1.replyDelayMin,
