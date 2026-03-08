@@ -1,1 +1,1 @@
-export { Card, CardHeader, CardFooter, CardTitle, CardAction, CardDescription, CardContent } from "@ui/components/card";
+export { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@ui/components/card";

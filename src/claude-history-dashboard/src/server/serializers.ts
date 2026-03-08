@@ -137,7 +137,9 @@ export function extractToolUses(msg: ConversationMessage): Array<{ name: string;
 }
 
 // Helper to extract tool results from a message
-export function extractToolResults(msg: ConversationMessage): Array<{ toolUseId: string; content: string; isError?: boolean }> {
+export function extractToolResults(
+	msg: ConversationMessage
+): Array<{ toolUseId: string; content: string; isError?: boolean }> {
 	if (msg.type !== "user") {
 		return [];
 	}
@@ -152,7 +154,7 @@ export function extractToolResults(msg: ConversationMessage): Array<{ toolUseId:
 		.filter((b): b is ToolResultBlock => typeof b === "object" && b !== null && "type" in b && b.type === "tool_result")
 		.map((b) => ({
 			toolUseId: b.tool_use_id,
-			content: typeof b.content === "string" ? b.content : JSON.stringify(b.content, null, 2) ?? "",
+			content: typeof b.content === "string" ? b.content : (JSON.stringify(b.content, null, 2) ?? ""),
 			isError: b.is_error,
 		}));
 }

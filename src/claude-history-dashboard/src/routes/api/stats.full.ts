@@ -1,7 +1,4 @@
-import {
-	type DateRange,
-	getConversationStatsWithCache,
-} from "@app/claude/lib/history/search";
+import { type DateRange, getConversationStatsWithCache } from "@app/claude/lib/history/search";
 import { createFileRoute } from "@tanstack/react-router";
 import type { SerializableStats } from "../../server/serializers";
 

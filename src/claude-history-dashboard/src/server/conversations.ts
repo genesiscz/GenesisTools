@@ -17,16 +17,22 @@ import {
 } from "@app/claude/lib/history/search";
 import { createServerFn } from "@tanstack/react-start";
 import {
-	type SerializableConversationDetail,
-	type SerializableStats,
 	extractMessageContent,
 	extractToolResults,
 	extractToolUses,
+	type SerializableConversationDetail,
+	type SerializableStats,
 	serializeResult,
 } from "./serializers";
 
 // Re-export types so existing consumers don't break
-export type { QuickStatsResponse, SerializableConversation, SerializableConversationDetail, SerializableStats, TokenUsage } from "./serializers";
+export type {
+	QuickStatsResponse,
+	SerializableConversation,
+	SerializableConversationDetail,
+	SerializableStats,
+	TokenUsage,
+} from "./serializers";
 
 /**
  * Get conversations with optional search/filtering
