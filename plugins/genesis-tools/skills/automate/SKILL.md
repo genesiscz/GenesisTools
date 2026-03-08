@@ -1,13 +1,9 @@
 ---
 name: genesis-tools:automate
 description: |
-  Create and run automation presets using the `tools automate` CLI.
-  Use when:
-  - User wants to automate a repetitive workflow
-  - User says "automate", "create automation", "run preset"
-  - User wants to chain multiple tools commands together
-  - User asks to create a reusable workflow
-  - User wants to run a previously saved preset
+  Use for saving and replaying multi-step GenesisTools CLI workflows as named presets. Triggers when the user wants to bundle a sequence of `tools` commands into a reusable automation they can run with one command — for example: chaining tools like `collect-files-for-ai`, `github`, `azure-devops`, or `json` into a repeatable workflow. Also triggers when running a previously saved preset by name (e.g. "run the db-backup preset").
+
+  Does NOT trigger for: browser automation, bash scripting, Makefile/CI setup, or general task scheduling.
 ---
 
 # Automate Tool Usage Guide
