@@ -71,11 +71,7 @@ export class ClarityApi {
     }
 
     /** Update time entry hours (segments in seconds: 3600 = 1h) */
-    async updateTimeEntry(
-        timesheetId: number,
-        timeEntryId: number,
-        body: UpdateTimeEntryRequest
-    ): Promise<unknown> {
+    async updateTimeEntry(timesheetId: number, timeEntryId: number, body: UpdateTimeEntryRequest): Promise<unknown> {
         return this.request(`/timesheets/${timesheetId}/timeEntries/${timeEntryId}`, {
             method: "PUT",
             body: JSON.stringify(body),

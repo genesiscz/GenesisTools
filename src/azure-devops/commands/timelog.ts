@@ -2,9 +2,9 @@ import type { Command } from "commander";
 import { registerAddSubcommand } from "./timelog/add";
 import { registerConfigureSubcommand } from "./timelog/configure";
 import { registerDeleteSubcommand } from "./timelog/delete";
+import { registerExportMonthSubcommand } from "./timelog/export-month";
 import { registerImportSubcommand } from "./timelog/import";
 import { registerListSubcommand } from "./timelog/list";
-import { registerExportMonthSubcommand } from "./timelog/export-month";
 import { registerPrepareImportSubcommand } from "./timelog/prepare-import";
 import { registerTypesSubcommand } from "./timelog/types";
 

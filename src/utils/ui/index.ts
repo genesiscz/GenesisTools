@@ -1,7 +1,7 @@
 // Components
 
-export { Badge, badgeVariants } from "./components/badge";
-export { Button, buttonVariants } from "./components/button";
+export { Badge, badgeVariants } from "@ui/components/badge";
+export { Button, buttonVariants } from "@ui/components/button";
 export {
     Card,
     CardAction,
@@ -10,7 +10,7 @@ export {
     CardFooter,
     CardHeader,
     CardTitle,
-} from "./components/card";
+} from "@ui/components/card";
 export {
     Command,
     CommandDialog,
@@ -21,8 +21,8 @@ export {
     CommandList,
     CommandSeparator,
     CommandShortcut,
-} from "./components/command";
-export { DateRangePicker } from "./components/date-range-picker";
+} from "@ui/components/command";
+export { DateRangePicker } from "@ui/components/date-range-picker";
 export {
     Dialog,
     DialogClose,
@@ -34,11 +34,11 @@ export {
     DialogPortal,
     DialogTitle,
     DialogTrigger,
-} from "./components/dialog";
-export { Input } from "./components/input";
-export { ScrollArea, ScrollBar } from "./components/scroll-area";
-export type { SkeletonProps, SkeletonVariant } from "./components/skeleton";
-export { Skeleton } from "./components/skeleton";
+} from "@ui/components/dialog";
+export { Input } from "@ui/components/input";
+export { ScrollArea, ScrollBar } from "@ui/components/scroll-area";
+export type { SkeletonProps, SkeletonVariant } from "@ui/components/skeleton";
+export { Skeleton } from "@ui/components/skeleton";
 export {
     Table,
     TableBody,
@@ -48,15 +48,15 @@ export {
     TableHead,
     TableHeader,
     TableRow,
-} from "./components/table";
-export type { DashboardAppConfig } from "./create-app";
+} from "@ui/components/table";
+export type { DashboardAppConfig } from "@ui/create-app";
 // App factory
-export { createDashboardApp } from "./create-app";
-export type { DashboardLayoutProps, NavLink } from "./layouts/DashboardLayout";
+export { createDashboardApp } from "@ui/create-app";
+export type { DashboardLayoutProps, NavLink } from "@ui/layouts/DashboardLayout";
 // Layout
-export { DashboardLayout } from "./layouts/DashboardLayout";
+export { DashboardLayout } from "@ui/layouts/DashboardLayout";
 // Utilities
-export { cn } from "./lib/utils";
-export type { DashboardViteConfig } from "./vite.base";
+export { cn } from "@ui/lib/utils";
+export type { DashboardViteConfig } from "@ui/vite.base";
 // Vite config
-export { createDashboardViteConfig } from "./vite.base";
+export { createDashboardViteConfig } from "@ui/vite.base";

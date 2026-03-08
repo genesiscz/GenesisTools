@@ -1,6 +1,5 @@
+import { cn } from "@ui/lib/utils";
 import type * as React from "react";
-
-import { cn } from "../lib/utils";
 
 type InputVariant = "default" | "cyber";
 
