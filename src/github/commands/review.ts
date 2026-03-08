@@ -183,7 +183,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
         const prComments = reviewData.prComments ?? [];
         if (prComments.length > 0) {
             if (isFirstFetch) {
-                output += "\n" + formatPrCommentsLLM(prComments, sessionId);
+                output += `\n${formatPrCommentsLLM(prComments, sessionId)}`;
             } else {
                 output += `\nSummary: tools github review summary -s ${sessionId}\n`;
             }
@@ -224,7 +224,10 @@ async function expandCommand(refs: string, options: { session?: string; repo?: s
         throw new Error(`Session not found or expired: ${sessionId}`);
     }
 
-    const refIds = refs.split(",").map((s) => s.trim()).filter(Boolean);
+    const refIds = refs
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
     const resolved = sessionMgr.resolveRefIds(sessionData, refIds);
 
     for (const { refId, thread } of resolved) {
@@ -240,7 +243,7 @@ async function expandCommand(refs: string, options: { session?: string; repo?: s
 async function respondCommand(
     refs: string,
     message: string,
-    options: { session?: string; resolve?: boolean },
+    options: { session?: string; resolve?: boolean }
 ): Promise<void> {
     const sessionMgr = new ReviewSessionManager();
     const sessionId = options.session;
@@ -253,7 +256,10 @@ async function respondCommand(
         throw new Error(`Session not found or expired: ${sessionId}`);
     }
 
-    const refIds = refs.split(",").map((s) => s.trim()).filter(Boolean);
+    const refIds = refs
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
     const resolved = sessionMgr.resolveRefIds(sessionData, refIds);
     const threadIds = resolved.map((r) => r.threadId).filter(Boolean);
 
@@ -265,9 +271,7 @@ async function respondCommand(
 
     if (options.resolve) {
         const result = await batchReplyAndResolve(threadIds, message, {
-            onProgress: showProgress
-                ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
-                : undefined,
+            onProgress: showProgress ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
         });
         console.log(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
         if (result.failed.length) {
@@ -275,9 +279,7 @@ async function respondCommand(
         }
     } else {
         const result = await batchReply(threadIds, message, {
-            onProgress: showProgress
-                ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
-                : undefined,
+            onProgress: showProgress ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
         });
         console.log(chalk.green(`Replied to ${result.replied} thread(s)`));
         if (result.failed.length) {
@@ -286,10 +288,7 @@ async function respondCommand(
     }
 }
 
-async function resolveCommand(
-    refs: string,
-    options: { session?: string },
-): Promise<void> {
+async function resolveCommand(refs: string, options: { session?: string }): Promise<void> {
     const sessionMgr = new ReviewSessionManager();
     const sessionId = options.session;
     if (!sessionId) {
@@ -301,7 +300,10 @@ async function resolveCommand(
         throw new Error(`Session not found or expired: ${sessionId}`);
     }
 
-    const refIds = refs.split(",").map((s) => s.trim()).filter(Boolean);
+    const refIds = refs
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
     const resolved = sessionMgr.resolveRefIds(sessionData, refIds);
     const threadIds = resolved.map((r) => r.threadId).filter(Boolean);
 
@@ -311,9 +313,7 @@ async function resolveCommand(
 
     const showProgress = threadIds.length > 1;
     const result = await batchResolveThreads(threadIds, {
-        onProgress: showProgress
-            ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
-            : undefined,
+        onProgress: showProgress ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`)) : undefined,
     });
 
     console.log(chalk.green(`Resolved ${result.resolved} thread(s)`));
@@ -463,16 +463,14 @@ Examples:
     );
 
     cmd.addCommand(
-        new Command("sessions")
-            .description("List review sessions")
-            .action(async () => {
-                try {
-                    await sessionsCommand();
-                } catch (error) {
-                    console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
-                    process.exit(1);
-                }
-            })
+        new Command("sessions").description("List review sessions").action(async () => {
+            try {
+                await sessionsCommand();
+            } catch (error) {
+                console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                process.exit(1);
+            }
+        })
     );
 
     cmd.addCommand(
