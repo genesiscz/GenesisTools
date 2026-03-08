@@ -1,5 +1,5 @@
 {
-    "exclude": ["src/mcp-tsc/test-dummy*.ts", "src/claude-history-dashboard", "src/fsevents-profile"],
+    "exclude": ["src/mcp-tsc/test-dummy*.ts", "src/claude-history-dashboard", "src/fsevents-profile", "src/utils/ui", "src/clarity/ui"],
     "compilerOptions": {
         // Enable latest features
         "lib": ["ESNext", "DOM"],
