@@ -610,6 +610,16 @@ function registerQueryCommand(history: Command): void {
                 const since = opts.since ? (parseDateNatural(opts.since) ?? undefined) : undefined;
                 const until = opts.until ? (parseDateNatural(opts.until) ?? undefined) : undefined;
 
+                if (opts.since && !since) {
+                    p.log.error(`Invalid --since date: "${opts.since}"`);
+                    return;
+                }
+
+                if (opts.until && !until) {
+                    p.log.error(`Invalid --until date: "${opts.until}"`);
+                    return;
+                }
+
                 const store = new TelegramHistoryStore();
                 store.open();
                 let client: TGClient | null = null;

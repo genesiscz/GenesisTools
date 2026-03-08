@@ -1,4 +1,5 @@
 import { Box, Text } from "ink";
+import { useInput } from "ink";
 import SelectInput from "ink-select-input";
 import type { TelegramContactV2 } from "../../../lib/types";
 
@@ -22,7 +23,13 @@ function chatTypeIcon(chatType: string): string {
     return "[user]";
 }
 
-export function ContactList({ contacts, currentContactId, unreadCounts, onSelect }: ContactListProps) {
+export function ContactList({ contacts, currentContactId, unreadCounts, onSelect, onBack }: ContactListProps) {
+    useInput((_input, key) => {
+        if (key.tab) {
+            onBack();
+        }
+    });
+
     const items = contacts.map((c) => {
         const icon = chatTypeIcon(c.chatType);
         const current = c.userId === currentContactId ? " <" : "";

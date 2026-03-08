@@ -121,7 +121,7 @@ export class WatchSession {
         this.notify();
     }
 
-    onAutoSuggest(callback: (suggestions: string[]) => void): void {
+    onAutoSuggest(callback: ((suggestions: string[]) => void) | null): void {
         this._autoSuggestCallback = callback;
     }
 

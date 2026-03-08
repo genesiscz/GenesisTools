@@ -86,7 +86,7 @@ describe("StyleProfileEngine", () => {
 
     it("builds a hybrid style prompt", () => {
         const engine = new StyleProfileEngine(store);
-        const prompt = engine.buildStylePrompt("chat1", {
+        const prompt = engine.buildStylePrompt({
             rules: [{ id: "r1", sourceChatId: "chat1", direction: "outgoing", limit: 100 }],
             exampleCount: 5,
         });
@@ -111,7 +111,7 @@ describe("StyleProfileEngine", () => {
             },
         ]);
 
-        const prompt = engine.buildStylePrompt("chat1", {
+        const prompt = engine.buildStylePrompt({
             rules: [{ id: "r1", sourceChatId: "chat1", direction: "outgoing", limit: 100 }],
             exampleCount: 5,
         });

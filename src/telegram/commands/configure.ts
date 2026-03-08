@@ -150,35 +150,38 @@ function classifyDialog(d: Dialog): { chatType: ChatType; entityId: string; dial
 async function fetchDialogOptions(client: TGClient): Promise<DialogOption[]> {
     const spinner = p.spinner();
     spinner.start("Fetching your recent chats...");
-
-    const dialogs = await client.getDialogs(200);
     const options: DialogOption[] = [];
 
-    for (const d of dialogs) {
-        const classified = classifyDialog(d);
+    try {
+        const dialogs = await client.getDialogs(200);
 
-        if (!classified) {
-            continue;
+        for (const d of dialogs) {
+            const classified = classifyDialog(d);
+
+            if (!classified) {
+                continue;
+            }
+
+            const entity = d.entity as { username?: string; phone?: string; id: { toString(): string } };
+            const username = "username" in entity ? entity.username : undefined;
+            const typePrefix = classified.chatType === "user" ? "U" : classified.chatType === "group" ? "G" : "C";
+            const label = `[${typePrefix}] ${d.title || classified.entityId}`;
+            const hint = username ? `@${username}` : "";
+
+            options.push({
+                dialog: d,
+                chatType: classified.chatType,
+                entityId: classified.entityId,
+                dialogKey: classified.dialogKey,
+                label,
+                hint,
+            });
         }
 
-        const entity = d.entity as { username?: string; phone?: string; id: { toString(): string } };
-        const username = "username" in entity ? entity.username : undefined;
-        const typePrefix = classified.chatType === "user" ? "U" : classified.chatType === "group" ? "G" : "C";
-        const label = `[${typePrefix}] ${d.title || classified.entityId}`;
-        const hint = username ? `@${username}` : "";
-
-        options.push({
-            dialog: d,
-            chatType: classified.chatType,
-            entityId: classified.entityId,
-            dialogKey: classified.dialogKey,
-            label,
-            hint,
-        });
+        return options;
+    } finally {
+        spinner.stop(`Found ${options.length} chats`);
     }
-
-    spinner.stop(`Found ${options.length} chats`);
-    return options;
 }
 
 async function selectDialogs(options: DialogOption[], existingContacts: TelegramContactV2[]): Promise<string[] | null> {

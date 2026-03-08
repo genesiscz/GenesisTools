@@ -25,6 +25,7 @@ export interface ActionResult {
     action: ActionType;
     success: boolean;
     reply?: string;
+    /** Telegram ID of the sent outgoing message produced by the action. */
     replyMessageId?: number;
     duration: number;
     error?: unknown;

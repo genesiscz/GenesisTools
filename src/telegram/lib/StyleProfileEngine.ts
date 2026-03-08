@@ -45,7 +45,7 @@ export class StyleProfileEngine {
         return this.analyzeStyleFromTexts(texts);
     }
 
-    buildStylePrompt(_chatId: string, options: StylePromptOptions): string {
+    buildStylePrompt(options: StylePromptOptions): string {
         const messages = this.ruleResolver.resolveMessages(options.rules);
         const texts = messages.map((m) => m.text ?? "").filter(Boolean);
 
@@ -171,11 +171,15 @@ export class StyleProfileEngine {
     }
 
     private selectRepresentativeExamples(texts: string[], count: number): string[] {
+        if (count <= 0) {
+            return [];
+        }
+
         if (texts.length <= count) {
             return texts;
         }
 
-        const step = Math.floor(texts.length / count);
+        const step = Math.max(1, Math.floor(texts.length / count));
         const examples: string[] = [];
 
         for (let i = 0; i < texts.length && examples.length < count; i += step) {

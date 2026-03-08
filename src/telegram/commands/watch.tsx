@@ -2,6 +2,7 @@ import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { render } from "ink";
 import { ReadStream } from "node:tty";
+import type { NewMessageEvent } from "telegram/events";
 import { ConversationSyncService } from "../lib/ConversationSyncService";
 import { TelegramHistoryStore } from "../lib/TelegramHistoryStore";
 import { TelegramMessage } from "../lib/TelegramMessage";
@@ -47,6 +48,10 @@ export function registerWatchCommand(program: Command): void {
 
             const store = new TelegramHistoryStore();
             store.open();
+            const syncService = new ConversationSyncService(client, store);
+            const bufferedEvents: NewMessageEvent[] = [];
+            let session: WatchSession | null = null;
+            let sessionReady = false;
 
             try {
                 let contact = contactArg
@@ -89,15 +94,6 @@ export function registerWatchCommand(program: Command): void {
                     };
                 }
 
-                const syncSpinner = p.spinner();
-                syncSpinner.start("Syncing latest messages...");
-                const syncService = new ConversationSyncService(client, store);
-                const syncResult = await syncService.syncLatest(contact.userId);
-                syncSpinner.stop(`Synced ${syncResult.synced} new messages`);
-
-                const session = new WatchSession(client, store, myName, contact, data.contacts);
-                await session.loadHistory();
-
                 client.onNewMessage(async (event) => {
                     const msg = new TelegramMessage(event.message);
                     const senderId = msg.senderId;
@@ -113,6 +109,11 @@ export function registerWatchCommand(program: Command): void {
                                       : ""
                           )
                         : "";
+                    if (!session || !sessionReady) {
+                        bufferedEvents.push(event);
+                        return;
+                    }
+
                     const currentContactId = session.currentContact.userId;
 
                     if (senderId === currentContactId || peerId === currentContactId) {
@@ -127,6 +128,51 @@ export function registerWatchCommand(program: Command): void {
                         }
                     }
                 });
+
+                const syncSpinner = p.spinner();
+                syncSpinner.start("Syncing latest messages...");
+                const syncResult = await syncService.syncLatest(contact.userId);
+                syncSpinner.stop(`Synced ${syncResult.synced} new messages`);
+
+                session = new WatchSession(client, store, myName, contact, data.contacts);
+                await session.loadHistory();
+                sessionReady = true;
+
+                if (bufferedEvents.length > 0) {
+                    for (const event of bufferedEvents) {
+                        const msg = new TelegramMessage(event.message);
+                        const senderId = msg.senderId;
+                        const peer = event.message?.peerId;
+                        const peerId = peer
+                            ? String(
+                                  "userId" in peer
+                                      ? peer.userId
+                                      : "chatId" in peer
+                                        ? peer.chatId
+                                        : "channelId" in peer
+                                          ? peer.channelId
+                                          : ""
+                              )
+                            : "";
+                        const currentContactId = session.currentContact.userId;
+
+                        if (senderId === currentContactId || peerId === currentContactId) {
+                            store.insertMessages(currentContactId, [msg.toJSON()]);
+                            session.addIncoming(msg);
+                        } else {
+                            const matchedContact = data.contacts.find(
+                                (c) => c.userId === senderId || c.userId === peerId
+                            );
+
+                            if (matchedContact) {
+                                store.insertMessages(matchedContact.userId, [msg.toJSON()]);
+                                session.incrementUnread(matchedContact.userId);
+                            }
+                        }
+                    }
+
+                    bufferedEvents.length = 0;
+                }
 
                 p.log.info(`Watching ${contact.displayName}. Tab to switch contacts, /help for commands.`);
 

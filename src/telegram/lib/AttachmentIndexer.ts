@@ -57,7 +57,7 @@ export class AttachmentIndexer {
                     kind,
                     mime_type: fullDoc.mimeType ?? null,
                     file_name: fileName,
-                    file_size: fullDoc.size ? Number(fullDoc.size) : null,
+                    file_size: fullDoc.size != null ? Number(fullDoc.size) : null,
                     telegram_file_id: fullDoc.id ? String(fullDoc.id) : null,
                 });
                 break;

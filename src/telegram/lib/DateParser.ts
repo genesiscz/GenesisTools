@@ -5,15 +5,17 @@ export function parseDate(input: string): Date | null {
         return null;
     }
 
-    if (/^\d{4}-\d{2}-\d{2}/.test(input)) {
-        const isoDate = new Date(input);
+    const trimmed = input.trim();
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        const isoDate = new Date(trimmed);
 
         if (!Number.isNaN(isoDate.getTime())) {
             return isoDate;
         }
     }
 
-    const results = chrono.parse(input);
+    const results = chrono.parse(trimmed);
 
     if (results.length > 0) {
         return results[0].start.date();

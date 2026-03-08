@@ -40,7 +40,7 @@ export class SuggestionEngine {
         let stylePrompt: string | undefined;
 
         if (this.contact.styleProfile?.enabled && this.contact.styleProfile.rules.length > 0) {
-            stylePrompt = this.styleEngine.buildStylePrompt(this.contact.userId, {
+            stylePrompt = this.styleEngine.buildStylePrompt({
                 rules: this.contact.styleProfile.rules,
                 exampleCount: 15,
             });

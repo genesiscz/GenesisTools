@@ -1,6 +1,13 @@
+import logger from "@app/logger";
 import { parseDate } from "./DateParser";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
 import type { MessageRowV2, StyleSourceRule } from "./types";
+
+const MAX_REGEX_LENGTH = 200;
+
+function hasObviousCatastrophicPattern(pattern: string): boolean {
+    return /(\([^)]*[+*][^)]*\))[+*]/.test(pattern) || /(\.\*){2,}/.test(pattern);
+}
 
 export class StyleRuleResolver {
     constructor(private store: TelegramHistoryStore) {}
@@ -20,8 +27,29 @@ export class StyleRuleResolver {
             let filtered = messages;
 
             if (rule.regex) {
-                const re = new RegExp(rule.regex, "i");
-                filtered = filtered.filter((m) => m.text && re.test(m.text));
+                const pattern = rule.regex.trim();
+
+                if (!pattern || pattern.length > MAX_REGEX_LENGTH || hasObviousCatastrophicPattern(pattern)) {
+                    logger.warn({ ruleId: rule.id, pattern }, "Skipping unsafe style regex");
+                } else {
+                    try {
+                        const re = new RegExp(pattern, "i");
+                        filtered = filtered.filter((m) => {
+                            if (!m.text) {
+                                return false;
+                            }
+
+                            try {
+                                return re.test(m.text);
+                            } catch (err) {
+                                logger.warn({ err, ruleId: rule.id, pattern }, "Regex test failed; skipping rule");
+                                return false;
+                            }
+                        });
+                    } catch (err) {
+                        logger.warn({ err, ruleId: rule.id, pattern }, "Invalid style regex; skipping rule");
+                    }
+                }
             }
 
             allMessages.push(...filtered);

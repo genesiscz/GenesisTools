@@ -1,5 +1,5 @@
 import { Box, useApp, useInput } from "ink";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { TelegramContactV2 } from "../../lib/types";
 import type { WatchMessage, WatchSession } from "../shared/WatchSession";
 import { ContactList } from "./components/ContactList";
@@ -19,6 +19,7 @@ export function WatchInkApp({ session }: WatchInkAppProps) {
     const [messages, setMessages] = useState<WatchMessage[]>(session.getMessages());
     const [view, setView] = useState<View>("chat");
     const [systemLines, setSystemLines] = useState<SystemLine[]>([]);
+    const autoSuggestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
         const unsub = session.subscribe(() => {
@@ -26,16 +27,28 @@ export function WatchInkApp({ session }: WatchInkAppProps) {
         });
 
         session.onAutoSuggest((suggestions) => {
+            if (autoSuggestTimeoutRef.current) {
+                clearTimeout(autoSuggestTimeoutRef.current);
+            }
+
             setSystemLines(
                 suggestions.map((s, i) => ({
                     text: `  ${i + 1}. ${s}`,
                     type: "suggestion" as const,
                 }))
             );
-            setTimeout(() => setSystemLines([]), 30000);
+            autoSuggestTimeoutRef.current = setTimeout(() => setSystemLines([]), 30000);
         });
 
-        return unsub;
+        return () => {
+            unsub();
+            session.onAutoSuggest(null);
+
+            if (autoSuggestTimeoutRef.current) {
+                clearTimeout(autoSuggestTimeoutRef.current);
+                autoSuggestTimeoutRef.current = null;
+            }
+        };
     }, [session]);
 
     useInput((_input, key) => {

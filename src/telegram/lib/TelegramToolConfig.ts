@@ -3,6 +3,22 @@ import { Storage } from "@app/utils/storage/storage";
 import type { ContactConfig, TelegramConfigData, TelegramConfigDataV2, TelegramContactV2 } from "./types";
 import { DEFAULT_MODE_CONFIG, DEFAULT_STYLE_PROFILE, DEFAULT_WATCH_CONFIG, DEFAULTS } from "./types";
 
+function cloneDefaults() {
+    return {
+        modes: {
+            autoReply: { ...DEFAULT_MODE_CONFIG.autoReply },
+            assistant: { ...DEFAULT_MODE_CONFIG.assistant },
+            suggestions: { ...DEFAULT_MODE_CONFIG.suggestions },
+        },
+        watch: { ...DEFAULT_WATCH_CONFIG },
+        styleProfile: {
+            enabled: DEFAULT_STYLE_PROFILE.enabled,
+            source: DEFAULT_STYLE_PROFILE.source,
+            rules: DEFAULT_STYLE_PROFILE.rules.map((rule) => ({ ...rule })),
+        },
+    };
+}
+
 export function migrateContactV1toV2(v1: ContactConfig): TelegramContactV2 {
     const hasAsk = v1.actions.includes("ask");
 
@@ -23,7 +39,11 @@ export function migrateContactV1toV2(v1: ContactConfig): TelegramContactV2 {
             assistant: { ...DEFAULT_MODE_CONFIG.assistant },
             suggestions: { ...DEFAULT_MODE_CONFIG.suggestions },
         },
-        styleProfile: { ...DEFAULT_STYLE_PROFILE },
+        styleProfile: {
+            enabled: DEFAULT_STYLE_PROFILE.enabled,
+            source: DEFAULT_STYLE_PROFILE.source,
+            rules: DEFAULT_STYLE_PROFILE.rules.map((rule) => ({ ...rule })),
+        },
         replyDelayMin: v1.replyDelayMin,
         replyDelayMax: v1.replyDelayMax,
     };
@@ -42,11 +62,7 @@ export function migrateConfigV1toV2(config: TelegramConfigData | TelegramConfigD
         session: v1.session,
         me: v1.me,
         contacts: v1.contacts.map(migrateContactV1toV2),
-        globalDefaults: {
-            modes: { ...DEFAULT_MODE_CONFIG },
-            watch: { ...DEFAULT_WATCH_CONFIG },
-            styleProfile: { ...DEFAULT_STYLE_PROFILE },
-        },
+        globalDefaults: cloneDefaults(),
         configuredAt: v1.configuredAt,
     };
 }

@@ -605,7 +605,9 @@ export class TelegramHistoryStore {
             params.push(`%${options.textPattern}%`);
         }
 
-        const row = db.query(`SELECT COUNT(*) AS count FROM messages WHERE ${conditions.join(" AND ")}`).get(...params) as {
+        const row = db
+            .query(`SELECT COUNT(*) AS count FROM messages WHERE ${conditions.join(" AND ")}`)
+            .get(...params) as {
             count: number;
         };
         return row.count;
@@ -616,13 +618,17 @@ export class TelegramHistoryStore {
 
         if (chatId) {
             return (
-                (db.query("SELECT chat_id FROM messages WHERE chat_id = ? AND id = ? LIMIT 1").get(chatId, messageId) as {
+                (db
+                    .query("SELECT chat_id FROM messages WHERE chat_id = ? AND id = ? LIMIT 1")
+                    .get(chatId, messageId) as {
                     chat_id: string;
                 }) ?? null
             );
         }
 
-        const rows = db.query("SELECT chat_id FROM messages WHERE id = ? GROUP BY chat_id LIMIT 2").all(messageId) as Array<{
+        const rows = db
+            .query("SELECT chat_id FROM messages WHERE id = ? GROUP BY chat_id LIMIT 2")
+            .all(messageId) as Array<{
             chat_id: string;
         }>;
         return rows.length === 1 ? rows[0] : null;
@@ -636,11 +642,10 @@ export class TelegramHistoryStore {
             text: string | null;
         } | null;
 
-        const updateResult = db.run("UPDATE messages SET is_deleted = 1, deleted_at_iso = ? WHERE chat_id = ? AND id = ?", [
-            now.toISOString(),
-            chatId,
-            messageId,
-        ]);
+        const updateResult = db.run(
+            "UPDATE messages SET is_deleted = 1, deleted_at_iso = ? WHERE chat_id = ? AND id = ?",
+            [now.toISOString(), chatId, messageId]
+        );
 
         if (updateResult.changes === 0) {
             return;
@@ -817,20 +822,30 @@ export class TelegramHistoryStore {
         );
     }
 
-    getSyncSegments(chatId: string): SyncSegmentRow[] {
+    getSyncSegments(chatId: string, fromDateUnix?: number, toDateUnix?: number): SyncSegmentRow[] {
         const db = this.getDb();
-        return db
-            .query("SELECT * FROM sync_segments WHERE chat_id = ? ORDER BY from_date_unix ASC")
-            .all(chatId) as SyncSegmentRow[];
+        let sql = "SELECT * FROM sync_segments WHERE chat_id = ?";
+        const params: Array<string | number> = [chatId];
+
+        if (fromDateUnix !== undefined) {
+            sql += " AND to_date_unix > ?";
+            params.push(fromDateUnix);
+        }
+
+        if (toDateUnix !== undefined) {
+            sql += " AND from_date_unix < ?";
+            params.push(toDateUnix);
+        }
+
+        sql += " ORDER BY from_date_unix ASC";
+
+        return db.query(sql).all(...params) as SyncSegmentRow[];
     }
 
     getMissingSegments(chatId: string, fromDateUnix: number, toDateUnix: number): DateRange[] {
-        const segments = this.getSyncSegments(chatId);
+        const segments = this.getSyncSegments(chatId, fromDateUnix, toDateUnix);
         const gaps: DateRange[] = [];
-
-        const sorted = segments
-            .filter((s) => s.to_date_unix > fromDateUnix && s.from_date_unix < toDateUnix)
-            .sort((a, b) => a.from_date_unix - b.from_date_unix);
+        const sorted = [...segments].sort((a, b) => a.from_date_unix - b.from_date_unix);
 
         const merged: Array<{ from: number; to: number }> = [];
 

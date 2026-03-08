@@ -10,6 +10,10 @@ interface SyncRange {
 
 export class SyncRangePlanner {
     static plan(segments: SegmentInput[], queryFrom: number, queryTo: number): SyncRange[] {
+        if (queryFrom > queryTo) {
+            throw new RangeError("queryFrom must be <= queryTo");
+        }
+
         if (segments.length === 0) {
             return [{ from: queryFrom, to: queryTo }];
         }

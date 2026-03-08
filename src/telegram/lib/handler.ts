@@ -13,6 +13,7 @@ import { DEFAULTS } from "./types";
 
 const processedIds = new Set<number>();
 const processedOrder: number[] = [];
+let localReplyFallbackId = -1;
 
 function trackMessage(id: number): boolean {
     if (processedIds.has(id)) {
@@ -166,7 +167,7 @@ export function registerHandler(client: TGClient, options: HandlerOptions): void
                         try {
                             options.store.insertMessages(senderId, [
                                 {
-                                    id: r.replyMessageId ?? Date.now(),
+                                    id: r.replyMessageId ?? localReplyFallbackId--,
                                     senderId: undefined,
                                     text: r.reply,
                                     mediaDescription: undefined,
@@ -221,7 +222,9 @@ export function registerHandler(client: TGClient, options: HandlerOptions): void
     client.onDeletedMessage(async (event: DeletedMessageEvent) => {
         try {
             const deletedIds: number[] = event.deletedIds ?? [];
-            const peerChatId = extractPeerId((event.peer as { userId?: unknown; chatId?: unknown; channelId?: unknown } | null) ?? null);
+            const peerChatId = extractPeerId(
+                (event.peer as { userId?: unknown; chatId?: unknown; channelId?: unknown } | null) ?? null
+            );
 
             for (const msgId of deletedIds) {
                 const row = options.store.findMessageById(msgId, peerChatId ?? undefined);

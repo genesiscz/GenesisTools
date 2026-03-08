@@ -80,6 +80,7 @@ describe("TelegramHistoryStore migrations", () => {
 			last_synced_id INTEGER NOT NULL,
 			last_synced_at TEXT NOT NULL
 		)`);
+        db.run("PRAGMA user_version = 1");
         db.close();
 
         store.open(dbPath);
