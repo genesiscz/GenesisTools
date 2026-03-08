@@ -4,6 +4,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ParsedReviewThread, PRLevelComment, ReviewData } from "@app/github/types";
+import { formatRelativeTime } from "@app/utils/format";
 import chalk from "chalk";
 
 // =============================================================================
@@ -431,4 +432,119 @@ export async function saveReviewMarkdown(content: string, prNumber: number): Pro
     await Bun.write(filePath, content);
 
     return filePath;
+}
+
+// =============================================================================
+// LLM-Optimized Formatting (plain text, token-efficient)
+// =============================================================================
+
+/**
+ * Format review data as compact L1 summary for LLM consumption.
+ * Shows thread list with ref IDs (t1, t2, ...) for progressive drill-down.
+ */
+export function formatReviewLLM(data: ReviewData, sessionId: string): string {
+    const { threads, stats } = data;
+
+    let output = `=== PR Review Session: ${sessionId} ===\n`;
+    output += `PR #${data.prNumber}: ${data.title} | ${data.state} | ${data.owner}/${data.repo}\n`;
+    output += `Stats: ${stats.total} threads (${stats.unresolved} unresolved) | HIGH: ${stats.high} | MED: ${stats.medium} | LOW: ${stats.low}\n`;
+    output += "\n";
+
+    if (threads.length === 0) {
+        output += "No review threads found.\n";
+        return output;
+    }
+
+    output += "Threads:\n";
+
+    for (const thread of threads) {
+        const ref = `t${thread.threadNumber}`;
+        const status = thread.status === "resolved" ? "RESOLVED" : "UNRESOLVED";
+        const sev = thread.severity.toUpperCase();
+        const fileLine =
+            thread.startLine && thread.startLine !== thread.line
+                ? `${thread.file}:${thread.startLine}-${thread.line}`
+                : thread.line
+                  ? `${thread.file}:${thread.line}`
+                  : thread.file;
+        const age = formatRelativeTime(new Date(thread.createdAt), { compact: true });
+        const replies = thread.replies.length > 0 ? `${thread.replies.length}r` : "";
+        const title = thread.title.length > 40 ? `${thread.title.slice(0, 37)}...` : thread.title;
+
+        const parts = [ref, status, sev, replies, fileLine, title, `@${thread.author}`, age].filter(Boolean);
+        output += `  ${parts.join("  ")}\n`;
+    }
+
+    output += "\n";
+    output += `Expand: tools github review expand t1 -s ${sessionId}\n`;
+    output += `Respond: tools github review respond t1 "message" -s ${sessionId}\n`;
+    output += `Resolve: tools github review resolve t1,t2 -s ${sessionId}\n`;
+
+    return output;
+}
+
+/**
+ * Format a single thread in full detail (L2 view).
+ */
+export function formatThreadExpanded(thread: ParsedReviewThread, sessionId: string): string {
+    const age = formatRelativeTime(new Date(thread.createdAt), { compact: true });
+
+    let output = `=== Session: ${sessionId} | Thread t${thread.threadNumber} ===\n\n`;
+    output += `Thread #${thread.threadNumber}: ${thread.title}\n`;
+    output += `Status: ${thread.status.toUpperCase()} | Severity: ${thread.severity.toUpperCase()}\n`;
+
+    const fileLine =
+        thread.startLine && thread.startLine !== thread.line
+            ? `${thread.file}:${thread.startLine}-${thread.line}`
+            : thread.line
+              ? `${thread.file}:${thread.line}`
+              : thread.file;
+    output += `File: ${fileLine} | Author: @${thread.author} | ${age}\n`;
+    output += `Thread ID: ${thread.threadId}\n`;
+    output += "\n";
+
+    output += `Issue:\n${thread.issue}\n\n`;
+
+    if (thread.diffHunk) {
+        output += `Diff Context:\n${thread.diffHunk}\n\n`;
+    }
+
+    if (thread.suggestedCode) {
+        output += `Suggested Change:\n\`\`\`suggestion\n${thread.suggestedCode}\n\`\`\`\n\n`;
+    }
+
+    if (thread.replies.length > 0) {
+        output += `Replies (${thread.replies.length}):\n`;
+        for (const reply of thread.replies) {
+            const replyAge = formatRelativeTime(new Date(reply.createdAt), { compact: true });
+            output += `  @${reply.author} (${replyAge}): ${reply.body}\n`;
+        }
+        output += "\n";
+    }
+
+    output += `Respond: tools github review respond t${thread.threadNumber} "message" -s ${sessionId}\n`;
+    output += `Resolve: tools github review resolve t${thread.threadNumber} -s ${sessionId}\n`;
+
+    return output;
+}
+
+/**
+ * Format PR-level comments (reviewer summaries) for LLM consumption.
+ * These are walkthrough/overview comments from CodeRabbit, Gemini, Copilot, etc.
+ */
+export function formatPrCommentsLLM(prComments: PRLevelComment[], sessionId: string): string {
+    if (prComments.length === 0) {
+        return "No PR-level comments.\n";
+    }
+
+    let output = `=== PR-Level Comments (${prComments.length}) | Session: ${sessionId} ===\n\n`;
+
+    for (const c of prComments) {
+        const stateLabel = c.type === "review" && c.reviewState ? ` [${c.reviewState}]` : "";
+        const date = c.createdAt.slice(0, 10);
+        output += `--- @${c.author}${stateLabel} (${date}) ---\n`;
+        output += `${c.body}\n\n`;
+    }
+
+    return output;
 }

@@ -351,7 +351,8 @@ export interface ParsedReviewThread {
     diffHunk: string | null;
     suggestedCode: string | null;
     firstCommentId: string;
-    replies: { author: string; body: string; id: string }[];
+    createdAt: string;
+    replies: { author: string; body: string; id: string; createdAt: string }[];
 }
 
 export interface ReviewThreadStats {
@@ -396,6 +397,26 @@ export interface ReviewCommandOptions {
     verbose?: boolean;
     prComments?: boolean;
     author?: string;
+    llm?: boolean;
+    session?: string;
+}
+
+export interface ReviewSessionMeta {
+    sessionId: string;
+    owner: string;
+    repo: string;
+    prNumber: number;
+    title: string;
+    state: string;
+    createdAt: number;
+    stats: ReviewThreadStats;
+    threadCount: number;
+}
+
+export interface ReviewSessionData {
+    meta: ReviewSessionMeta;
+    threads: ParsedReviewThread[];
+    prComments?: PRLevelComment[];
 }
 
 export interface RepoSearchResult {

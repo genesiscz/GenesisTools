@@ -861,6 +861,7 @@ export function parseThreads(threads: ReviewThread[]): ParsedReviewThread[] {
                 author: c.author,
                 body: c.body,
                 id: c.id,
+                createdAt: c.createdAt,
             }));
 
             return {
@@ -877,6 +878,7 @@ export function parseThreads(threads: ReviewThread[]): ParsedReviewThread[] {
                 diffHunk: trimDiffHunk(firstComment.diffHunk, thread.line, thread.startLine),
                 suggestedCode: extractSuggestion(firstComment.body),
                 firstCommentId: firstComment.id,
+                createdAt: firstComment.createdAt,
                 replies,
             };
         });

@@ -21,7 +21,11 @@ import { Command } from "commander";
 
 const program = new Command();
 
-program.name("github").description("GitHub CLI tool for fetching issues, PRs, and comments").version("1.0.0");
+program
+    .name("github")
+    .description("GitHub CLI tool for fetching issues, PRs, and comments")
+    .version("1.0.0")
+    .enablePositionalOptions();
 
 // Add subcommands
 program.addCommand(createIssueCommand());
