@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { defineConfig, type Plugin, type PluginOption, type UserConfig } from "vite";
 
@@ -14,6 +15,10 @@ export interface DashboardViteConfig {
     aliases?: Record<string, string>;
     /** Additional Vite config overrides (merged shallowly) */
     overrides?: Partial<UserConfig>;
+    /** TanStack Start plugin options. Pass `false` to disable for non-Start apps. Default: enabled */
+    tanstackStartOptions?: Parameters<typeof tanstackStart>[0] | false;
+    /** Options passed to @vitejs/plugin-react (e.g., babel config) */
+    reactOptions?: Parameters<typeof viteReact>[0];
 }
 
 /**
@@ -51,17 +56,30 @@ export function createDashboardViteConfig({
     plugins: extraPlugins = [],
     aliases = {},
     overrides = {},
+    tanstackStartOptions,
+    reactOptions,
 }: DashboardViteConfig): UserConfig {
     const { plugins: _ignored, resolve: _resolveIgnored, ...rest } = overrides;
 
+    const corePlugins: PluginOption[] = [resolveSharedDeps(root), tailwindcss()];
+
+    if (tanstackStartOptions !== false) {
+        corePlugins.push(tanstackStart(tanstackStartOptions ?? {}));
+    }
+
+    corePlugins.push(viteReact(reactOptions));
+
     return defineConfig({
         root,
-        plugins: [resolveSharedDeps(root), tailwindcss(), viteReact(), ...extraPlugins],
+        plugins: [...corePlugins, ...extraPlugins],
         server: {
             port,
             host: true,
             fs: {
                 allow: [root, resolve(__dirname, "..")],
+            },
+            watch: {
+                ignored: ["**/routeTree.gen.ts"],
             },
         },
         resolve: {

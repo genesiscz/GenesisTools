@@ -56,6 +56,76 @@ export function getWeekRange(date: Date): { start: Date; end: Date } {
     return { start, end };
 }
 
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * Add one day to a "YYYY-MM-DD" date string.
+ */
+export function addDay(date: string): string {
+    const d = new Date(date);
+    d.setDate(d.getDate() + 1);
+    return formatDate(d);
+}
+
+/**
+ * Subtract one day from a "YYYY-MM-DD" date string.
+ */
+export function subtractDay(date: string): string {
+    const d = new Date(date);
+    d.setDate(d.getDate() - 1);
+    return formatDate(d);
+}
+
+/**
+ * Get all days in a date range as labeled entries.
+ * Start is inclusive, finish is exclusive (standard half-open interval).
+ * Format: "YYYY-MM-DD".
+ */
+export function getDaysInPeriod(periodStart: string, periodFinish: string): Array<{ label: string; date: string }> {
+    const start = new Date(periodStart);
+    const finish = new Date(periodFinish);
+    const days: Array<{ label: string; date: string }> = [];
+    const current = new Date(start);
+
+    while (current < finish) {
+        const dow = current.getDay();
+        days.push({ label: `${DAY_NAMES[dow]} ${current.getDate()}`, date: formatDate(current) });
+        current.setDate(current.getDate() + 1);
+    }
+
+    return days;
+}
+
+/**
+ * Convert minutes to seconds.
+ */
+export function minutesToSeconds(minutes: number): number {
+    return minutes * 60;
+}
+
+/**
+ * Build a per-day value array for every day in a half-open [start, finish) period.
+ * Returns one entry per day with date string and computed value.
+ */
+export function buildDailyValues<T>(
+    periodStart: string,
+    periodFinish: string,
+    getValue: (date: string) => T
+): Array<{ date: string; iso: string; value: T }> {
+    const result: Array<{ date: string; iso: string; value: T }> = [];
+    const start = new Date(periodStart);
+    const end = new Date(periodFinish);
+    const current = new Date(start);
+
+    while (current < end) {
+        const dateStr = formatDate(current);
+        result.push({ date: dateStr, iso: `${dateStr}T00:00:00`, value: getValue(dateStr) });
+        current.setDate(current.getDate() + 1);
+    }
+
+    return result;
+}
+
 export function getDatesInMonth(month: string): string[] {
     const { since, upto } = getMonthDateRange(month);
     const dates: string[] = [];

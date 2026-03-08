@@ -1,37 +1,23 @@
-import tailwindcss from "@tailwindcss/vite";
 import { devtools } from "@tanstack/devtools-vite";
-import { tanstackStart } from "@tanstack/react-start/plugin/vite";
-import viteReact from "@vitejs/plugin-react";
 import { resolve } from "node:path";
-import { defineConfig } from "vite";
 import viteTsConfigPaths from "vite-tsconfig-paths";
-import { resolveSharedDeps } from "../utils/ui/vite.base";
+import { createDashboardViteConfig } from "../utils/ui/vite.base";
 
-const config = defineConfig({
+const config = createDashboardViteConfig({
+	root: __dirname,
+	port: 3069,
 	plugins: [
-		resolveSharedDeps(__dirname),
 		devtools(),
 		viteTsConfigPaths({
 			projects: ["./tsconfig.json"],
 		}),
-		tailwindcss(),
-		tanstackStart(),
-		viteReact({
-			babel: {
-				plugins: ["babel-plugin-react-compiler"],
-			},
-		}),
 	],
-	server: {
-		port: 3069,
-		fs: {
-			allow: [__dirname, resolve(__dirname, "..", "utils", "ui")],
-		},
+	aliases: {
+		"@app": resolve(__dirname, ".."),
 	},
-	resolve: {
-		alias: {
-			"@ui": resolve(__dirname, "..", "utils", "ui"),
-			"@app": resolve(__dirname, ".."),
+	reactOptions: {
+		babel: {
+			plugins: ["babel-plugin-react-compiler"],
 		},
 	},
 });

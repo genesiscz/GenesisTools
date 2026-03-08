@@ -1,9 +1,13 @@
-import { useRouter } from "@tanstack/react-router";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { Card, CardContent } from "@ui/components/card";
 import { ArrowDownToLine, ArrowUpFromLine, Link2, Settings } from "lucide-react";
 import { StatusCard } from "../components/StatusCard";
 
-export function IndexPage() {
+export const Route = createFileRoute("/")({
+    component: IndexPage,
+});
+
+function IndexPage() {
     const router = useRouter();
 
     const quickActions = [

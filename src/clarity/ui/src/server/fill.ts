@@ -1,17 +1,28 @@
 import { loadConfig as loadAdoConfig } from "@app/azure-devops/config";
 import { exportMonth } from "@app/azure-devops/lib/timelog/export";
+import { enrichWorkItems } from "@app/azure-devops/lib/work-item-enrichment";
 import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
-import { type ClarityMapping, getMappingForWorkItem, requireConfig } from "@app/clarity/config";
+import { requireConfig } from "@app/clarity/config";
+import {
+    buildFillMap,
+    buildTimeSegments,
+    type ExecuteFillResult,
+    type FillEntryResult,
+} from "@app/clarity/lib/fill-utils";
 import { getTimesheetWeeks } from "@app/clarity/lib/timesheet-weeks";
-import type { TimeEntryRecord, TimeSegment, TimeSeriesValue } from "@app/utils/clarity";
+import type { ApiDebugInfo, TimeEntryRecord, TimeSeriesValue } from "@app/utils/clarity";
 import { ClarityApi } from "@app/utils/clarity";
-import { formatDate } from "@app/utils/date";
+import { addDay } from "@app/utils/date";
 
-interface FillEntry {
-    mapping: ClarityMapping;
-    dayMinutes: Record<string, number>;
-    totalMinutes: number;
+interface WeekPreviewTimelogEntry {
+    workItemId: number;
+    workItemTitle: string;
+    workItemType: string;
+    timeTypeDescription: string;
+    comment: string | null;
+    date: string;
+    minutes: number;
 }
 
 interface WeekPreview {
@@ -23,14 +34,19 @@ interface WeekPreview {
         clarityTaskCode: string;
         dayValues: Record<string, number>;
         totalMinutes: number;
+        timelogEntries: WeekPreviewTimelogEntry[];
+        clarityCurrentMinutes?: number;
+        clarityDayValues?: Record<string, number>;
     }>;
     unmappedWorkItems: Array<{ workItemId: number; minutes: number }>;
+    clarityTotalMinutes?: number;
 }
 
 export interface FillPreviewResult {
     weeks: WeekPreview[];
     totalMapped: number;
     totalUnmapped: number;
+    adoConfig?: { org: string; project: string };
     diagnostics?: {
         reason: string;
         message: string;
@@ -60,30 +76,34 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
     });
 
     const adoExport = await exportMonth(adoApi, month, year, adoUser.userId);
-    const fillMap = new Map<number, FillEntry>();
-    const unmappedByWi = new Map<number, number>();
 
-    for (const entry of adoExport.entries) {
-        const mapping = getMappingForWorkItem(clarityConfig.mappings, entry.workItemId);
+    // Enrich work item titles/types from ADO
+    const uniqueIds = [...new Set(adoExport.entries.map((e) => e.workItemId))];
 
-        if (!mapping) {
-            unmappedByWi.set(entry.workItemId, (unmappedByWi.get(entry.workItemId) ?? 0) + entry.minutes);
-            continue;
+    if (uniqueIds.length > 0) {
+        try {
+            const workItems = await enrichWorkItems(adoConfig, uniqueIds);
+
+            for (const entry of adoExport.entries) {
+                const wi = workItems.get(entry.workItemId);
+
+                if (wi) {
+                    entry.workItemTitle = wi.title;
+                    entry.workItemType = wi.type ?? "";
+                }
+            }
+        } catch {
+            // Non-fatal — titles will show as "#ID"
         }
-
-        let fill = fillMap.get(mapping.clarityTaskId);
-
-        if (!fill) {
-            fill = { mapping, dayMinutes: {}, totalMinutes: 0 };
-            fillMap.set(mapping.clarityTaskId, fill);
-        }
-
-        fill.dayMinutes[entry.date] = (fill.dayMinutes[entry.date] ?? 0) + entry.minutes;
-        fill.totalMinutes += entry.minutes;
     }
+
+    const { fillMap, unmappedByWi } = buildFillMap(adoExport.entries, clarityConfig.mappings, {
+        trackEntries: true,
+    });
 
     const totalMapped = [...fillMap.values()].reduce((s, f) => s + f.totalMinutes, 0);
     const totalUnmapped = [...unmappedByWi.values()].reduce((s, v) => s + v, 0);
+    const adoInfo = adoConfig.orgId ? { org: adoConfig.orgId, project: adoConfig.projectId } : undefined;
 
     if (clarityConfig.mappings.length === 0) {
         return {
@@ -121,7 +141,6 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
         };
     }
 
-    // Resolve Clarity timesheet weeks for this month via the carousel API
     const { weeks: clarityWeeks } = await getTimesheetWeeks(clarityApi, clarityConfig.mappings, month, year);
 
     if (clarityWeeks.length === 0) {
@@ -140,7 +159,6 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
     const weekPreviews: WeekPreview[] = [];
 
     for (const cw of clarityWeeks) {
-        // Filter fill entries to only include days within this week's range
         const weekEntries: WeekPreview["entries"] = [];
 
         for (const fill of fillMap.values()) {
@@ -148,28 +166,31 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
             let weekTotal = 0;
 
             for (const [date, mins] of Object.entries(fill.dayMinutes)) {
-                if (date >= cw.startDate && date <= cw.finishDate) {
+                if (date >= cw.startDate && date < cw.finishDate) {
                     weekDayValues[date] = mins;
                     weekTotal += mins;
                 }
             }
 
             if (weekTotal > 0) {
+                const weekTimelogs = (fill.timelogEntries ?? []).filter(
+                    (e) => e.date >= cw.startDate && e.date < cw.finishDate
+                );
+
                 weekEntries.push({
                     clarityTaskName: fill.mapping.clarityTaskName,
                     clarityTaskCode: fill.mapping.clarityTaskCode,
                     dayValues: weekDayValues,
                     totalMinutes: weekTotal,
+                    timelogEntries: weekTimelogs,
                 });
             }
         }
 
-        // Only include weeks that have data
         if (weekEntries.length === 0) {
             continue;
         }
 
-        // Filter unmapped work items to this week's range too
         const weekUnmapped: WeekPreview["unmappedWorkItems"] = [...unmappedByWi.entries()].map(
             ([workItemId, minutes]) => ({ workItemId, minutes })
         );
@@ -183,22 +204,54 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
         });
     }
 
+    // Fetch current Clarity state for each week (parallel)
+    await Promise.all(
+        weekPreviews.map(async (wp) => {
+            try {
+                const tsData = await clarityApi.getTimesheet(wp.timesheetId);
+                const ts = tsData.timesheets._results[0];
+
+                if (!ts) {
+                    return;
+                }
+
+                let weekClarityTotal = 0;
+
+                for (const entry of wp.entries) {
+                    const te = ts.timeentries._results.find(
+                        (e: TimeEntryRecord) => e.taskCode === entry.clarityTaskCode
+                    );
+                    const totalSeconds = te?.actuals?.segmentList?.total ?? 0;
+                    entry.clarityCurrentMinutes = Math.round(totalSeconds / 60);
+
+                    // Extract per-day values from Clarity segments
+                    const dayValues: Record<string, number> = {};
+
+                    for (const seg of te?.actuals?.segmentList?.segments ?? []) {
+                        const date = seg.start.split("T")[0];
+                        dayValues[date] = Math.round(seg.value / 60);
+                    }
+
+                    entry.clarityDayValues = dayValues;
+                    weekClarityTotal += entry.clarityCurrentMinutes;
+                }
+
+                wp.clarityTotalMinutes = weekClarityTotal;
+            } catch {
+                // Non-fatal — clarity state indicators will be absent
+            }
+        })
+    );
+
     return {
         weeks: weekPreviews,
         totalMapped: [...fillMap.values()].reduce((s, f) => s + f.totalMinutes, 0),
         totalUnmapped: [...unmappedByWi.values()].reduce((s, v) => s + v, 0),
+        adoConfig: adoInfo,
     };
 }
 
-function minutesToSeconds(minutes: number): number {
-    return minutes * 60;
-}
-
-export async function executeFill(
-    month: number,
-    year: number,
-    weekIds: number[]
-): Promise<{ success: number; failed: number; errors: string[] }> {
+export async function executeFill(month: number, year: number, weekIds: number[]): Promise<ExecuteFillResult> {
     const clarityConfig = await requireConfig();
     const adoConfig = loadAdoConfig() as AzureConfigWithTimeLog | null;
 
@@ -221,36 +274,28 @@ export async function executeFill(
     });
 
     const adoExport = await exportMonth(adoApi, month, year, adoUser.userId);
-    const fillMap = new Map<number, FillEntry>();
-
-    for (const entry of adoExport.entries) {
-        const mapping = getMappingForWorkItem(clarityConfig.mappings, entry.workItemId);
-
-        if (!mapping) {
-            continue;
-        }
-
-        let fill = fillMap.get(mapping.clarityTaskId);
-
-        if (!fill) {
-            fill = { mapping, dayMinutes: {}, totalMinutes: 0 };
-            fillMap.set(mapping.clarityTaskId, fill);
-        }
-
-        fill.dayMinutes[entry.date] = (fill.dayMinutes[entry.date] ?? 0) + entry.minutes;
-        fill.totalMinutes += entry.minutes;
-    }
+    const { fillMap } = buildFillMap(adoExport.entries, clarityConfig.mappings);
 
     let success = 0;
     let failed = 0;
-    const errors: string[] = [];
+    let skipped = 0;
+    const resultEntries: FillEntryResult[] = [];
 
     for (const timesheetId of weekIds) {
         const tsData = await clarityApi.getTimesheet(timesheetId);
         const ts = tsData.timesheets._results[0];
 
         if (!ts) {
-            errors.push(`Timesheet ${timesheetId} not found`);
+            resultEntries.push({
+                clarityTaskName: `Timesheet #${timesheetId}`,
+                clarityTaskCode: "",
+                timesheetId,
+                timeEntryId: 0,
+                totalHours: 0,
+                segments: [],
+                status: "error",
+                error: `Timesheet ${timesheetId} not found`,
+            });
             failed++;
             continue;
         }
@@ -261,48 +306,69 @@ export async function executeFill(
             );
 
             if (!timeEntry) {
+                resultEntries.push({
+                    clarityTaskName: fill.mapping.clarityTaskName,
+                    clarityTaskCode: fill.mapping.clarityTaskCode,
+                    timesheetId,
+                    timeEntryId: 0,
+                    totalHours: 0,
+                    segments: [],
+                    status: "skipped",
+                    error: `No time entry for task in timesheet ${timesheetId}`,
+                });
+                skipped++;
                 continue;
             }
 
-            const segments: TimeSegment[] = [];
-            const periodStart = new Date(ts.timePeriodStart);
-
-            for (let d = 0; d < 7; d++) {
-                const date = new Date(periodStart);
-                date.setDate(date.getDate() + d);
-                const dateStr = formatDate(date);
-                const mins = fill.dayMinutes[dateStr];
-
-                if (mins && mins > 0) {
-                    const iso = `${dateStr}T00:00:00`;
-                    segments.push({ start: iso, finish: iso, value: minutesToSeconds(mins) });
-                }
-            }
-
+            // timePeriodFinish is inclusive (last day e.g. Sunday "2026-02-08T00:00:00")
+            // buildTimeSegments needs exclusive end for its loop
+            const exclusiveEnd = `${addDay(ts.timePeriodFinish.split("T")[0])}T00:00:00`;
+            const segments = buildTimeSegments(ts.timePeriodStart, exclusiveEnd, fill.dayMinutes);
             const totalSeconds = segments.reduce((sum, s) => sum + s.value, 0);
+
             const actuals: TimeSeriesValue = {
                 isFiscal: false,
                 curveType: "value",
-                total: totalSeconds,
                 dataType: "numeric",
                 _type: "tsv",
                 start: ts.timePeriodStart,
                 finish: ts.timePeriodFinish,
-                segmentList: { total: totalSeconds, defaultValue: 0, segments },
+                segmentList: {
+                    total: totalSeconds,
+                    defaultValue: 0,
+                    segments,
+                },
+            };
+
+            const entryResult: FillEntryResult = {
+                clarityTaskName: fill.mapping.clarityTaskName,
+                clarityTaskCode: fill.mapping.clarityTaskCode,
+                timesheetId,
+                timeEntryId: timeEntry._internalId,
+                totalHours: totalSeconds / 3600,
+                segments: segments
+                    .filter((s) => s.value > 0)
+                    .map((s) => ({ date: s.start.split("T")[0], hours: s.value / 3600 })),
+                status: "success",
             };
 
             try {
-                await clarityApi.updateTimeEntry(timesheetId, timeEntry._internalId, {
+                const { debug } = await clarityApi.updateTimeEntryVerbose(timesheetId, timeEntry._internalId, {
                     taskId: timeEntry.taskId,
                     actuals,
                 });
+                entryResult.debug = debug;
                 success++;
             } catch (err) {
+                entryResult.status = "error";
+                entryResult.error = err instanceof Error ? err.message : String(err);
+                entryResult.debug = (err as Error & { debug?: ApiDebugInfo }).debug;
                 failed++;
-                errors.push(`${fill.mapping.clarityTaskName}: ${err instanceof Error ? err.message : String(err)}`);
             }
+
+            resultEntries.push(entryResult);
         }
     }
 
-    return { success, failed, errors };
+    return { success, failed, skipped, entries: resultEntries };
 }

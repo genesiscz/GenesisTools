@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
@@ -34,7 +35,11 @@ async function fetchMappings() {
     return res.json();
 }
 
-export function ExportPage() {
+export const Route = createFileRoute("/export")({
+    component: ExportPage,
+});
+
+function ExportPage() {
     const { month, year, setMonthYear } = useAppContext();
     const queryClient = useQueryClient();
     const forceRef = useRef(false);

@@ -144,7 +144,7 @@ export async function getTimesheetWeeks(
             }
         }
 
-        weeks = weeks.filter((w) => w.startDate <= monthEnd && w.finishDate >= monthStart);
+        weeks = weeks.filter((w) => w.startDate <= monthEnd && w.finishDate > monthStart);
     }
 
     // Fetch entry counts for weeks that don't have them yet (not in current period's timesheets section)
