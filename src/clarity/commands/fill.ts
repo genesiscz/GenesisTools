@@ -1,19 +1,14 @@
 import { exportMonth } from "@app/azure-devops/lib/timelog/export";
 import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import type { TimeEntryRecord, TimeSegment, TimeSeriesValue } from "@app/utils/clarity";
+import type { TimeEntryRecord, TimeSeriesValue } from "@app/utils/clarity";
 import { ClarityApi } from "@app/utils/clarity";
+import { addDay, formatDate, getWeekRange, subtractDay } from "@app/utils/date";
 import Table from "cli-table3";
 import type { Command } from "commander";
 import pc from "picocolors";
-import type { ClarityMapping } from "../config.js";
-import { getMappingForWorkItem, requireConfig } from "../config.js";
-
-interface FillEntry {
-    mapping: ClarityMapping;
-    dayMinutes: Record<string, number>; // date -> ADO minutes
-    totalMinutes: number;
-}
+import { requireConfig } from "../config.js";
+import { buildFillMap, buildTimeSegments, type FillEntry } from "../lib/fill-utils.js";
 
 interface WeekPlan {
     timesheetId: number;
@@ -23,34 +18,13 @@ interface WeekPlan {
         fill: FillEntry;
         timeEntryId: number;
         taskId: number;
-        segments: TimeSegment[];
     }>;
     unmappedWorkItems: Array<{ workItemId: number; minutes: number }>;
 }
 
-function getWeekRange(date: Date): { start: Date; end: Date } {
-    const d = new Date(date);
-    const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Monday
-    const start = new Date(d);
-    start.setDate(diff);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(start.getDate() + 6);
-    return { start, end };
-}
-
-function formatDate(d: Date): string {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function minutesToSeconds(minutes: number): number {
-    return minutes * 60;
-}
-
 function renderWeekPreview(plan: WeekPlan): void {
     const start = plan.periodStart.split("T")[0];
-    const end = plan.periodFinish.split("T")[0];
+    const end = subtractDay(plan.periodFinish.split("T")[0]);
 
     console.log(`\n${pc.bold(`Week: ${start} to ${end}`)} (Timesheet: ${plan.timesheetId})`);
 
@@ -59,17 +33,19 @@ function renderWeekPreview(plan: WeekPlan): void {
         return;
     }
 
-    // Build day columns
+    // Build day columns (periodFinish is exclusive)
     const periodStart = new Date(plan.periodStart);
+    const periodEnd = new Date(plan.periodFinish);
     const dayLabels: string[] = [];
     const dayDates: string[] = [];
     const dayNames = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
-    for (let d = 0; d < 7; d++) {
-        const date = new Date(periodStart);
-        date.setDate(date.getDate() + d);
-        dayDates.push(formatDate(date));
-        dayLabels.push(`${dayNames[date.getDay()]} ${date.getDate()}`);
+    const current = new Date(periodStart);
+
+    while (current < periodEnd) {
+        dayDates.push(formatDate(current));
+        dayLabels.push(`${dayNames[current.getDay()]} ${current.getDate()}`);
+        current.setDate(current.getDate() + 1);
     }
 
     // Only show Mon-Fri
@@ -128,239 +104,247 @@ export function registerFillCommand(program: Command): void {
         .option("--month <n>", "Month number (1-12)", parseInt)
         .option("--year <n>", "Year (default: current)", parseInt)
         .option("--confirm", "Actually execute the fill (default: dry-run)")
-        .option("--dry-run", "Preview only, do not write (default)");
+        .option("--dry-run", "Preview only, do not write (default)")
+        .option("--verbose", "Show HTTP request/response debug info");
 
-    fillCmd.action(async (options: { month?: number; year?: number; confirm?: boolean; dryRun?: boolean }) => {
-        if (!options.month) {
-            fillCmd.help();
-            return;
-        }
-
-        const year = options.year ?? new Date().getFullYear();
-        const isDryRun = !options.confirm;
-
-        if (options.month < 1 || options.month > 12) {
-            console.error("Month must be between 1 and 12");
-            process.exit(1);
-        }
-
-        // Load configs
-        const clarityConfig = await requireConfig();
-        const adoConfig = requireTimeLogConfig();
-        const adoUser = requireTimeLogUser(adoConfig);
-        const adoApi = new TimeLogApi(adoConfig.orgId!, adoConfig.projectId, adoConfig.timelog!.functionsKey, adoUser);
-        const clarityApi = new ClarityApi({
-            baseUrl: clarityConfig.baseUrl,
-            authToken: clarityConfig.authToken,
-            sessionId: clarityConfig.sessionId,
-            cookies: clarityConfig.cookies,
-        });
-
-        console.log(pc.bold(`\nFilling Clarity for ${options.month}/${year}${isDryRun ? " (DRY RUN)" : ""}`));
-
-        // Step 1: Export ADO timelog
-        console.log("Exporting ADO timelog data...");
-        const adoExport = await exportMonth(adoApi, options.month, year, adoUser.userId);
-        console.log(`  Found ${adoExport.entries.length} ADO entries (${adoExport.summary.totalHours}h total)`);
-
-        if (adoExport.entries.length === 0) {
-            console.log("No ADO timelog entries found for this month.");
-            return;
-        }
-
-        // Step 2: Group by Clarity mapping and day
-        const fillMap = new Map<number, FillEntry>(); // clarityTaskId -> FillEntry
-        const unmappedByWi = new Map<number, number>(); // workItemId -> total minutes
-
-        for (const entry of adoExport.entries) {
-            const mapping = getMappingForWorkItem(clarityConfig.mappings, entry.workItemId);
-
-            if (!mapping) {
-                unmappedByWi.set(entry.workItemId, (unmappedByWi.get(entry.workItemId) ?? 0) + entry.minutes);
-                continue;
+    fillCmd.action(
+        async (options: { month?: number; year?: number; confirm?: boolean; dryRun?: boolean; verbose?: boolean }) => {
+            if (!options.month) {
+                fillCmd.help();
+                return;
             }
 
-            let fill = fillMap.get(mapping.clarityTaskId);
+            const year = options.year ?? new Date().getFullYear();
 
-            if (!fill) {
-                fill = { mapping, dayMinutes: {}, totalMinutes: 0 };
-                fillMap.set(mapping.clarityTaskId, fill);
+            if (options.confirm && options.dryRun) {
+                console.error("Cannot use --confirm and --dry-run together");
+                process.exit(1);
             }
 
-            fill.dayMinutes[entry.date] = (fill.dayMinutes[entry.date] ?? 0) + entry.minutes;
-            fill.totalMinutes += entry.minutes;
-        }
+            const isDryRun = Boolean(options.dryRun) || !options.confirm;
+            const verbose = options.verbose ?? false;
 
-        // Step 3: Build week plans
-        // Find all unique weeks in the month
-        const allDatesSet = new Set<string>();
-        for (const fill of fillMap.values()) {
-            for (const date of Object.keys(fill.dayMinutes)) {
-                allDatesSet.add(date);
+            if (options.month < 1 || options.month > 12) {
+                console.error("Month must be between 1 and 12");
+                process.exit(1);
             }
-        }
-        const allDates = [...allDatesSet].sort();
 
-        if (allDates.length === 0 && unmappedByWi.size > 0) {
-            console.log(pc.yellow("\nAll entries are unmapped. Run 'tools clarity link-workitems' first."));
-            return;
-        }
-
-        const weeksSeen = new Set<string>();
-        const weeks: Array<{ start: Date; end: Date }> = [];
-
-        for (const date of allDates) {
-            const d = new Date(date);
-            const { start } = getWeekRange(d);
-            const key = formatDate(start);
-
-            if (!weeksSeen.has(key)) {
-                weeksSeen.add(key);
-                weeks.push(getWeekRange(d));
-            }
-        }
-
-        // For each week, we need to find the timesheet
-        // We'll use a known timePeriodId from the first mapping or config
-        const firstMapping = clarityConfig.mappings[0];
-
-        if (!firstMapping?.clarityTimesheetId) {
-            console.error(
-                "No cached timesheet ID in mappings. Run 'tools clarity link-workitems' with a valid timesheet first."
+            const clarityConfig = await requireConfig();
+            const adoConfig = requireTimeLogConfig();
+            const adoUser = requireTimeLogUser(adoConfig);
+            const adoApi = new TimeLogApi(
+                adoConfig.orgId!,
+                adoConfig.projectId,
+                adoConfig.timelog!.functionsKey,
+                adoUser
             );
-            process.exit(1);
-        }
+            const clarityApi = new ClarityApi({
+                baseUrl: clarityConfig.baseUrl,
+                authToken: clarityConfig.authToken,
+                sessionId: clarityConfig.sessionId,
+                cookies: clarityConfig.cookies,
+            });
 
-        // Load the timesheet to get time entry details
-        console.log("Loading Clarity timesheet data...");
+            console.log(pc.bold(`\nFilling Clarity for ${options.month}/${year}${isDryRun ? " (DRY RUN)" : ""}`));
 
-        const weekPlans: WeekPlan[] = [];
+            console.log("Exporting ADO timelog data...");
+            const adoExport = await exportMonth(adoApi, options.month, year, adoUser.userId);
+            console.log(`  Found ${adoExport.entries.length} ADO entries (${adoExport.summary.totalHours}h total)`);
 
-        for (const week of weeks) {
-            // For now, try each known timesheet ID
-            // In a full implementation, we'd navigate the carousel
-            const tsData = await clarityApi.getTimesheet(firstMapping.clarityTimesheetId);
-            const ts = tsData.timesheets._results[0];
-
-            if (!ts) {
-                console.warn(pc.yellow(`  Could not find timesheet for week ${formatDate(week.start)}`));
-                continue;
+            if (adoExport.entries.length === 0) {
+                console.log("No ADO timelog entries found for this month.");
+                return;
             }
 
-            const plan: WeekPlan = {
-                timesheetId: ts._internalId,
-                periodStart: ts.timePeriodStart,
-                periodFinish: ts.timePeriodFinish,
-                entries: [],
-                unmappedWorkItems: [...unmappedByWi.entries()].map(([workItemId, minutes]) => ({
-                    workItemId,
-                    minutes,
-                })),
-            };
+            const { fillMap, unmappedByWi } = buildFillMap(adoExport.entries, clarityConfig.mappings);
+
+            const allDatesSet = new Set<string>();
 
             for (const fill of fillMap.values()) {
-                // Find matching time entry in the timesheet
-                const timeEntry = ts.timeentries._results.find(
-                    (e: TimeEntryRecord) => e.taskId === fill.mapping.clarityTaskId
+                for (const date of Object.keys(fill.dayMinutes)) {
+                    allDatesSet.add(date);
+                }
+            }
+
+            const allDates = [...allDatesSet].sort();
+
+            if (allDates.length === 0 && unmappedByWi.size > 0) {
+                console.log(pc.yellow("\nAll entries are unmapped. Run 'tools clarity link-workitems' first."));
+                return;
+            }
+
+            const weeksSeen = new Set<string>();
+            const weeks: Array<{ start: Date; end: Date }> = [];
+
+            for (const date of allDates) {
+                const d = new Date(date);
+                const { start } = getWeekRange(d);
+                const key = formatDate(start);
+
+                if (!weeksSeen.has(key)) {
+                    weeksSeen.add(key);
+                    weeks.push(getWeekRange(d));
+                }
+            }
+
+            const firstMapping = clarityConfig.mappings[0];
+
+            if (!firstMapping?.clarityTimesheetId) {
+                console.error(
+                    "No cached timesheet ID in mappings. Run 'tools clarity link-workitems' with a valid timesheet first."
+                );
+                process.exit(1);
+            }
+
+            console.log("Loading Clarity timesheet data...");
+
+            const weekPlans: WeekPlan[] = [];
+
+            for (const week of weeks) {
+                const carouselEntry = await clarityApi.findTimesheetForDate(
+                    firstMapping.clarityTimesheetId,
+                    week.start
                 );
 
-                if (!timeEntry) {
-                    console.warn(
-                        pc.yellow(
-                            `  No time entry found for task ${fill.mapping.clarityTaskName} in timesheet ${ts._internalId}`
-                        )
-                    );
+                if (!carouselEntry) {
+                    console.warn(pc.yellow(`  Could not find timesheet for week ${formatDate(week.start)}`));
                     continue;
                 }
 
-                // Build segments for this week
-                const segments: TimeSegment[] = [];
-                const periodStart = new Date(ts.timePeriodStart);
+                const tsData = await clarityApi.getTimesheet(carouselEntry.timesheet_id);
+                const ts = tsData.timesheets._results[0];
 
-                for (let d = 0; d < 7; d++) {
-                    const date = new Date(periodStart);
-                    date.setDate(date.getDate() + d);
-                    const dateStr = formatDate(date);
-                    const mins = fill.dayMinutes[dateStr];
-
-                    if (mins && mins > 0) {
-                        const iso = `${dateStr}T00:00:00`;
-                        segments.push({
-                            start: iso,
-                            finish: iso,
-                            value: minutesToSeconds(mins),
-                        });
-                    }
+                if (!ts) {
+                    console.warn(pc.yellow(`  Could not load timesheet ${carouselEntry.timesheet_id} for week ${formatDate(week.start)}`));
+                    continue;
                 }
 
-                plan.entries.push({
-                    fill,
-                    timeEntryId: timeEntry._internalId,
-                    taskId: timeEntry.taskId,
-                    segments,
-                });
-            }
-
-            weekPlans.push(plan);
-        }
-
-        // Step 4: Preview
-        for (const plan of weekPlans) {
-            renderWeekPreview(plan);
-        }
-
-        if (isDryRun) {
-            console.log(pc.cyan("\n  This is a DRY RUN. Use --confirm to execute."));
-            return;
-        }
-
-        // Step 5: Execute
-        console.log(pc.bold("\nExecuting fill..."));
-        let successCount = 0;
-        let errorCount = 0;
-
-        for (const plan of weekPlans) {
-            for (const entry of plan.entries) {
-                const totalSeconds = entry.segments.reduce((sum, s) => sum + s.value, 0);
-                const actuals: TimeSeriesValue = {
-                    isFiscal: false,
-                    curveType: "value",
-                    total: totalSeconds,
-                    dataType: "numeric",
-                    _type: "tsv",
-                    start: plan.periodStart,
-                    finish: plan.periodFinish,
-                    segmentList: {
-                        total: totalSeconds,
-                        defaultValue: 0,
-                        segments: entry.segments,
-                    },
+                const plan: WeekPlan = {
+                    timesheetId: ts._internalId,
+                    periodStart: ts.timePeriodStart,
+                    periodFinish: ts.timePeriodFinish,
+                    entries: [],
+                    unmappedWorkItems: [...unmappedByWi.entries()].map(([workItemId, minutes]) => ({
+                        workItemId,
+                        minutes,
+                    })),
                 };
 
-                try {
-                    await clarityApi.updateTimeEntry(plan.timesheetId, entry.timeEntryId, {
-                        taskId: entry.taskId,
-                        actuals,
+                for (const fill of fillMap.values()) {
+                    const timeEntry = ts.timeentries._results.find(
+                        (e: TimeEntryRecord) => e.taskId === fill.mapping.clarityTaskId
+                    );
+
+                    if (!timeEntry) {
+                        console.warn(
+                            pc.yellow(
+                                `  No time entry found for task ${fill.mapping.clarityTaskName} in timesheet ${ts._internalId}`
+                            )
+                        );
+                        continue;
+                    }
+
+                    plan.entries.push({
+                        fill,
+                        timeEntryId: timeEntry._internalId,
+                        taskId: timeEntry.taskId,
                     });
-                    successCount++;
-                    console.log(
-                        pc.green(
-                            `  Updated ${entry.fill.mapping.clarityTaskName}: ${(totalSeconds / 3600).toFixed(2)}h`
-                        )
-                    );
-                } catch (err) {
-                    errorCount++;
-                    console.error(
-                        pc.red(
-                            `  Failed ${entry.fill.mapping.clarityTaskName}: ${err instanceof Error ? err.message : String(err)}`
-                        )
-                    );
+                }
+
+                weekPlans.push(plan);
+            }
+
+            // Preview
+            for (const plan of weekPlans) {
+                renderWeekPreview(plan);
+            }
+
+            if (isDryRun) {
+                console.log(pc.cyan("\n  This is a DRY RUN. Use --confirm to execute."));
+                return;
+            }
+
+            // Execute
+            console.log(pc.bold("\nExecuting fill..."));
+            let successCount = 0;
+            let errorCount = 0;
+
+            for (const plan of weekPlans) {
+                const weekLabel = `${plan.periodStart.split("T")[0]} to ${subtractDay(plan.periodFinish.split("T")[0])}`;
+                console.log(`\n${pc.dim(`TS#${plan.timesheetId} (${weekLabel})`)}`);
+
+                for (const entry of plan.entries) {
+                    // periodFinish is inclusive (last day) — add 1 day for exclusive loop bound
+                    const exclusiveEnd = `${addDay(plan.periodFinish.split("T")[0])}T00:00:00`;
+                    const segments = buildTimeSegments(plan.periodStart, exclusiveEnd, entry.fill.dayMinutes);
+                    const totalSeconds = segments.reduce((sum, s) => sum + s.value, 0);
+
+                    if (totalSeconds === 0) {
+                        continue;
+                    }
+
+                    const totalHours = totalSeconds / 3600;
+
+                    const actuals: TimeSeriesValue = {
+                        isFiscal: false,
+                        curveType: "value",
+                        dataType: "numeric",
+                        _type: "tsv",
+                        start: plan.periodStart,
+                        finish: plan.periodFinish,
+                        segmentList: {
+                            total: totalSeconds,
+                            defaultValue: 0,
+                            segments,
+                        },
+                    };
+
+                    const taskName =
+                        entry.fill.mapping.clarityTaskName.length > 40
+                            ? `${entry.fill.mapping.clarityTaskName.slice(0, 37)}...`
+                            : entry.fill.mapping.clarityTaskName;
+
+                    const dayBreakdown = segments
+                        .filter((s) => s.value > 0)
+                        .map((s) => `${s.start.slice(5, 10)}=${(s.value / 3600).toFixed(1)}h`)
+                        .join(" ");
+
+                    try {
+                        const { debug } = await clarityApi.updateTimeEntryVerbose(plan.timesheetId, entry.timeEntryId, {
+                            taskId: entry.taskId,
+                            actuals,
+                        });
+                        successCount++;
+                        console.log(
+                            pc.green(`  ${pc.bold("OK")} ${taskName}: ${totalHours.toFixed(2)}h [${dayBreakdown}]`)
+                        );
+
+                        if (verbose) {
+                            console.log(pc.dim(`     PUT ${debug.url}`));
+                            console.log(pc.dim(`     Status: ${debug.responseStatus}`));
+                            console.log(pc.dim(`     Request:  ${JSON.stringify(debug.requestBody)}`));
+                            console.log(pc.dim(`     Response: ${JSON.stringify(debug.responseBody)}`));
+                        }
+                    } catch (err) {
+                        errorCount++;
+                        const msg = err instanceof Error ? err.message : String(err);
+                        console.error(pc.red(`  ${pc.bold("FAIL")} ${taskName}: ${msg}`));
+
+                        if (verbose) {
+                            const debug = (err as Error & { debug?: unknown }).debug;
+
+                            if (debug) {
+                                console.log(pc.dim(`     Debug: ${JSON.stringify(debug)}`));
+                            }
+                        }
+                    }
                 }
             }
-        }
 
-        console.log(
-            `\n${pc.bold("Results:")} ${pc.green(`${successCount} updated`)}${errorCount > 0 ? `, ${pc.red(`${errorCount} failed`)}` : ""}`
-        );
-    });
+            console.log(
+                `\n${pc.bold("Results:")} ${pc.green(`${successCount} updated`)}` +
+                    `${errorCount > 0 ? `, ${pc.red(`${errorCount} failed`)}` : ""}`
+            );
+        }
+    );
 }

@@ -1,11 +1,18 @@
+import type { TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
+import type { ClarityTask } from "@app/clarity/lib/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@ui/components/dialog";
 import { Skeleton } from "@ui/components/skeleton";
+import { useState } from "react";
 import { toast } from "sonner";
 import { AddMappingForm } from "../components/AddMappingForm";
+import type { ClarityGroup } from "../components/MappingTable";
 import { MappingTable } from "../components/MappingTable";
 import { MonthPicker } from "../components/MonthPicker";
+import { WorkItemSelector } from "../components/WorkItemSelector";
 import { useAppContext } from "../context/AppContext";
 
 async function fetchMappings() {
@@ -36,6 +43,34 @@ async function fetchAdoConfig(): Promise<{ org: string | null; project: string |
 
     if (!res.ok) {
         return { org: null, project: null };
+    }
+
+    return res.json();
+}
+
+async function fetchWeeks(month: number, year: number): Promise<{ weeks: TimesheetWeek[] }> {
+    const res = await fetch("/api/clarity-weeks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ month, year }),
+    });
+
+    if (!res.ok) {
+        return { weeks: [] };
+    }
+
+    return res.json();
+}
+
+async function fetchClarityTasks(timesheetId: number): Promise<{ tasks: ClarityTask[] }> {
+    const res = await fetch("/api/clarity-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ timesheetId }),
+    });
+
+    if (!res.ok) {
+        return { tasks: [] };
     }
 
     return res.json();
@@ -79,9 +114,14 @@ async function moveMappingApi(
     return res.json();
 }
 
-export function MappingsPage() {
+export const Route = createFileRoute("/mappings")({
+    component: MappingsPage,
+});
+
+function MappingsPage() {
     const queryClient = useQueryClient();
     const { month, year, setMonthYear } = useAppContext();
+    const [addToTask, setAddToTask] = useState<ClarityGroup | null>(null);
 
     const { data, isLoading, error } = useQuery({
         queryKey: ["mappings"],
@@ -98,6 +138,19 @@ export function MappingsPage() {
         queryKey: ["ado-config"],
         queryFn: fetchAdoConfig,
         staleTime: 60 * 60 * 1000,
+    });
+
+    const { data: weeksData } = useQuery({
+        queryKey: ["clarity-weeks", month, year],
+        queryFn: () => fetchWeeks(month, year),
+    });
+
+    const firstTimesheetId = weeksData?.weeks[0]?.timesheetId;
+
+    const { data: tasksData } = useQuery({
+        queryKey: ["clarity-tasks", firstTimesheetId],
+        queryFn: () => fetchClarityTasks(firstTimesheetId!),
+        enabled: !!firstTimesheetId,
     });
 
     const removeMutation = useMutation({
@@ -179,14 +232,49 @@ export function MappingsPage() {
                     {data && (
                         <MappingTable
                             mappings={data.mappings}
+                            allTasks={tasksData?.tasks ?? []}
                             typeColors={typeColors?.types ?? {}}
                             adoConfig={adoConfig?.org ? (adoConfig as { org: string; project: string }) : null}
                             onRemove={(id) => removeMutation.mutate(id)}
                             onMove={(adoWorkItemId, target) => moveMutation.mutate({ adoWorkItemId, target })}
+                            onAdd={setAddToTask}
                         />
                     )}
                 </CardContent>
             </Card>
+
+            {/* Add Work Items Dialog */}
+            <Dialog open={!!addToTask} onOpenChange={(open: boolean) => !open && setAddToTask(null)}>
+                <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto bg-gray-950 border-amber-500/20">
+                    <DialogHeader>
+                        <DialogTitle className="font-mono text-sm text-gray-200">
+                            Add work items to <span className="text-amber-400">{addToTask?.clarityTaskName}</span>
+                        </DialogTitle>
+                        <DialogDescription className="font-mono text-xs text-gray-500">
+                            {addToTask?.clarityTaskCode}
+                            {addToTask?.clarityInvestmentName && ` · ${addToTask.clarityInvestmentName}`}
+                        </DialogDescription>
+                    </DialogHeader>
+                    {addToTask && (
+                        <WorkItemSelector
+                            clarityTask={{
+                                taskId: addToTask.clarityTaskId,
+                                taskName: addToTask.clarityTaskName,
+                                taskCode: addToTask.clarityTaskCode,
+                                investmentName: addToTask.clarityInvestmentName,
+                                investmentCode: addToTask.clarityInvestmentCode,
+                            }}
+                            timesheetId={firstTimesheetId}
+                            month={month}
+                            year={year}
+                            onItemsAdded={() => {
+                                setAddToTask(null);
+                                queryClient.invalidateQueries({ queryKey: ["mappings"] });
+                            }}
+                        />
+                    )}
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

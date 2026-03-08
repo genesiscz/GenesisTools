@@ -347,9 +347,10 @@ export function registerConfigureCommand(program: Command): void {
                 let baseUrl: string;
                 let authToken: string;
                 let sessionId: string;
+                let cookies: string;
 
                 try {
-                    ({ baseUrl, authToken, sessionId } = parseAuthCurl(curlInput));
+                    ({ baseUrl, authToken, sessionId, cookies } = parseAuthCurl(curlInput));
                 } catch (err) {
                     clack.log.error(err instanceof Error ? err.message : String(err));
                     continue;
@@ -367,6 +368,7 @@ export function registerConfigureCommand(program: Command): void {
                     config.baseUrl = baseUrl;
                     config.authToken = authToken;
                     config.sessionId = sessionId;
+                    config.cookies = cookies;
 
                     if (resource) {
                         config.resourceId = resource.id;

@@ -12,6 +12,11 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as StatsRouteImport } from './routes/stats'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ConversationIdRouteImport } from './routes/conversation.$id'
+import { Route as ApiStatsRouteImport } from './routes/api/stats'
+import { Route as ApiProjectsRouteImport } from './routes/api/projects'
+import { Route as ApiConversationsRouteImport } from './routes/api/conversations'
+import { Route as ApiStatsFullRouteImport } from './routes/api/stats.full'
+import { Route as ApiConversationsIdRouteImport } from './routes/api/conversations.$id'
 
 const StatsRoute = StatsRouteImport.update({
   id: '/stats',
@@ -28,34 +33,102 @@ const ConversationIdRoute = ConversationIdRouteImport.update({
   path: '/conversation/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiStatsRoute = ApiStatsRouteImport.update({
+  id: '/api/stats',
+  path: '/api/stats',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProjectsRoute = ApiProjectsRouteImport.update({
+  id: '/api/projects',
+  path: '/api/projects',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiConversationsRoute = ApiConversationsRouteImport.update({
+  id: '/api/conversations',
+  path: '/api/conversations',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiStatsFullRoute = ApiStatsFullRouteImport.update({
+  id: '/full',
+  path: '/full',
+  getParentRoute: () => ApiStatsRoute,
+} as any)
+const ApiConversationsIdRoute = ApiConversationsIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => ApiConversationsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/stats': typeof StatsRoute
+  '/api/conversations': typeof ApiConversationsRouteWithChildren
+  '/api/projects': typeof ApiProjectsRoute
+  '/api/stats': typeof ApiStatsRouteWithChildren
   '/conversation/$id': typeof ConversationIdRoute
+  '/api/conversations/$id': typeof ApiConversationsIdRoute
+  '/api/stats/full': typeof ApiStatsFullRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/stats': typeof StatsRoute
+  '/api/conversations': typeof ApiConversationsRouteWithChildren
+  '/api/projects': typeof ApiProjectsRoute
+  '/api/stats': typeof ApiStatsRouteWithChildren
   '/conversation/$id': typeof ConversationIdRoute
+  '/api/conversations/$id': typeof ApiConversationsIdRoute
+  '/api/stats/full': typeof ApiStatsFullRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/stats': typeof StatsRoute
+  '/api/conversations': typeof ApiConversationsRouteWithChildren
+  '/api/projects': typeof ApiProjectsRoute
+  '/api/stats': typeof ApiStatsRouteWithChildren
   '/conversation/$id': typeof ConversationIdRoute
+  '/api/conversations/$id': typeof ApiConversationsIdRoute
+  '/api/stats/full': typeof ApiStatsFullRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/stats' | '/conversation/$id'
+  fullPaths:
+    | '/'
+    | '/stats'
+    | '/api/conversations'
+    | '/api/projects'
+    | '/api/stats'
+    | '/conversation/$id'
+    | '/api/conversations/$id'
+    | '/api/stats/full'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/stats' | '/conversation/$id'
-  id: '__root__' | '/' | '/stats' | '/conversation/$id'
+  to:
+    | '/'
+    | '/stats'
+    | '/api/conversations'
+    | '/api/projects'
+    | '/api/stats'
+    | '/conversation/$id'
+    | '/api/conversations/$id'
+    | '/api/stats/full'
+  id:
+    | '__root__'
+    | '/'
+    | '/stats'
+    | '/api/conversations'
+    | '/api/projects'
+    | '/api/stats'
+    | '/conversation/$id'
+    | '/api/conversations/$id'
+    | '/api/stats/full'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   StatsRoute: typeof StatsRoute
+  ApiConversationsRoute: typeof ApiConversationsRouteWithChildren
+  ApiProjectsRoute: typeof ApiProjectsRoute
+  ApiStatsRoute: typeof ApiStatsRouteWithChildren
   ConversationIdRoute: typeof ConversationIdRoute
 }
 
@@ -82,12 +155,73 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConversationIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/stats': {
+      id: '/api/stats'
+      path: '/api/stats'
+      fullPath: '/api/stats'
+      preLoaderRoute: typeof ApiStatsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/projects': {
+      id: '/api/projects'
+      path: '/api/projects'
+      fullPath: '/api/projects'
+      preLoaderRoute: typeof ApiProjectsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/conversations': {
+      id: '/api/conversations'
+      path: '/api/conversations'
+      fullPath: '/api/conversations'
+      preLoaderRoute: typeof ApiConversationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/stats/full': {
+      id: '/api/stats/full'
+      path: '/full'
+      fullPath: '/api/stats/full'
+      preLoaderRoute: typeof ApiStatsFullRouteImport
+      parentRoute: typeof ApiStatsRoute
+    }
+    '/api/conversations/$id': {
+      id: '/api/conversations/$id'
+      path: '/$id'
+      fullPath: '/api/conversations/$id'
+      preLoaderRoute: typeof ApiConversationsIdRouteImport
+      parentRoute: typeof ApiConversationsRoute
+    }
   }
 }
+
+interface ApiConversationsRouteChildren {
+  ApiConversationsIdRoute: typeof ApiConversationsIdRoute
+}
+
+const ApiConversationsRouteChildren: ApiConversationsRouteChildren = {
+  ApiConversationsIdRoute: ApiConversationsIdRoute,
+}
+
+const ApiConversationsRouteWithChildren =
+  ApiConversationsRoute._addFileChildren(ApiConversationsRouteChildren)
+
+interface ApiStatsRouteChildren {
+  ApiStatsFullRoute: typeof ApiStatsFullRoute
+}
+
+const ApiStatsRouteChildren: ApiStatsRouteChildren = {
+  ApiStatsFullRoute: ApiStatsFullRoute,
+}
+
+const ApiStatsRouteWithChildren = ApiStatsRoute._addFileChildren(
+  ApiStatsRouteChildren,
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   StatsRoute: StatsRoute,
+  ApiConversationsRoute: ApiConversationsRouteWithChildren,
+  ApiProjectsRoute: ApiProjectsRoute,
+  ApiStatsRoute: ApiStatsRouteWithChildren,
   ConversationIdRoute: ConversationIdRoute,
 }
 export const routeTree = rootRouteImport

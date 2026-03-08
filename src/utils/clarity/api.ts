@@ -1,4 +1,5 @@
 import type {
+    ApiDebugInfo,
     CarouselEntry,
     TimesheetAppResponse,
     TimesheetResponse,
@@ -85,6 +86,56 @@ export class ClarityApi {
             method: "PUT",
             body: JSON.stringify(body),
         });
+    }
+
+    /** Update time entry with full debug info (request URL, body, response) */
+    async updateTimeEntryVerbose(
+        timesheetId: number,
+        timeEntryId: number,
+        body: UpdateTimeEntryRequest
+    ): Promise<{ data: unknown; debug: ApiDebugInfo }> {
+        const path = `/timesheets/${timesheetId}/timeEntries/${timeEntryId}`;
+        const url = `${this.config.baseUrl}/ppm/rest/v1${path}`;
+        const bodyStr = JSON.stringify(body);
+
+        const response = await fetch(url, {
+            method: "PUT",
+            headers: {
+                Accept: "application/json, text/plain, */*",
+                "Content-Type": "application/json",
+                authToken: this.config.authToken,
+                "Cache-Control": "no-cache",
+                "x-api-force-patch": "true",
+                "x-api-full-response": "true",
+                Cookie: this.config.cookies || `sessionId=${this.config.sessionId}`,
+            },
+            body: bodyStr,
+        });
+
+        const text = await response.text();
+        let responseBody: unknown;
+
+        try {
+            responseBody = JSON.parse(text);
+        } catch {
+            responseBody = text.slice(0, 2000);
+        }
+
+        const debug: ApiDebugInfo = {
+            url,
+            method: "PUT",
+            requestBody: body,
+            responseStatus: response.status,
+            responseBody,
+        };
+
+        if (!response.ok) {
+            const err = new Error(`Clarity API error ${response.status}: ${text.slice(0, 500)}`);
+            (err as Error & { debug: ApiDebugInfo }).debug = debug;
+            throw err;
+        }
+
+        return { data: responseBody, debug };
     }
 
     /** Submit timesheet (status=1) */

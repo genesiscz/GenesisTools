@@ -1,4 +1,9 @@
-import { createContext, use, useState } from "react";
+import { createContext, use, useCallback, useEffect, useState } from "react";
+
+interface AppState {
+    month: number;
+    year: number;
+}
 
 interface AppContextValue {
     month: number;
@@ -9,18 +14,112 @@ interface AppContextValue {
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
+const APP_CONTEXT_STORAGE_KEY = "clarityAppContext.state";
+
+function createDefaultState(): AppState {
+    const now = new Date();
+
+    return {
+        month: now.getMonth() + 1,
+        year: now.getFullYear(),
+    };
+}
+
+function isValidMonthYear(month: unknown, year: unknown): boolean {
+    return (
+        typeof month === "number" &&
+        typeof year === "number" &&
+        month >= 1 &&
+        month <= 12 &&
+        year >= 1900 &&
+        year <= 9999
+    );
+}
+
+function readStoredState(defaultState: AppState): AppState {
+    if (typeof window === "undefined") {
+        return defaultState;
+    }
+
+    const raw = window.localStorage.getItem(APP_CONTEXT_STORAGE_KEY);
+
+    if (!raw) {
+        return defaultState;
+    }
+
+    try {
+        const parsed = JSON.parse(raw) as Partial<AppState> | null;
+
+        if (typeof parsed !== "object" || parsed === null) {
+            return defaultState;
+        }
+
+        if (!isValidMonthYear(parsed.month, parsed.year)) {
+            return defaultState;
+        }
+
+        return {
+            ...defaultState,
+            ...parsed,
+        };
+    } catch {
+        return defaultState;
+    }
+}
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-    const now = new Date();
-    const [month, setMonth] = useState(now.getMonth() + 1);
-    const [year, setYear] = useState(now.getFullYear());
+    const [state, setState] = useState<AppState>(() => {
+        const defaultState = createDefaultState();
+        return readStoredState(defaultState);
+    });
 
-    const setMonthYear = (m: number, y: number) => {
-        setMonth(m);
-        setYear(y);
+    const persistState = useCallback((nextState: AppState): void => {
+        if (typeof window === "undefined") {
+            return;
+        }
+
+        window.localStorage.setItem(APP_CONTEXT_STORAGE_KEY, JSON.stringify(nextState));
+    }, []);
+
+    const setMonthYear = (m: number, y: number): void => {
+        setState((prev) => ({
+            ...prev,
+            month: m,
+            year: y,
+        }));
     };
 
-    return <AppContext value={{ month, year, setMonth, setYear, setMonthYear }}>{children}</AppContext>;
+    const setMonthOnly = (m: number): void => {
+        setState((prev) => ({
+            ...prev,
+            month: m,
+        }));
+    };
+
+    const setYearOnly = (y: number): void => {
+        setState((prev) => ({
+            ...prev,
+            year: y,
+        }));
+    };
+
+    useEffect(() => {
+        persistState(state);
+    }, [state, persistState]);
+
+    return (
+        <AppContext
+            value={{
+                month: state.month,
+                year: state.year,
+                setMonth: setMonthOnly,
+                setYear: setYearOnly,
+                setMonthYear,
+            }}
+        >
+            {children}
+        </AppContext>
+    );
 }
 
 export function useAppContext(): AppContextValue {

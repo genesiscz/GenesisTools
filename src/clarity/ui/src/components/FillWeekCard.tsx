@@ -1,12 +1,30 @@
+import { getDaysInPeriod, subtractDay } from "@app/utils/date";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/components/table";
+import { CheckCircle, ChevronRight, XCircle } from "lucide-react";
+import { Fragment, useState } from "react";
+import type { AdoConfig } from "./WorkItemLink";
+import { WorkItemLink } from "./WorkItemLink";
+
+interface TimelogEntry {
+    workItemId: number;
+    workItemTitle: string;
+    workItemType: string;
+    timeTypeDescription: string;
+    comment: string | null;
+    date: string;
+    minutes: number;
+}
 
 interface WeekEntry {
     clarityTaskName: string;
     clarityTaskCode: string;
     dayValues: Record<string, number>;
     totalMinutes: number;
+    timelogEntries?: TimelogEntry[];
+    clarityCurrentMinutes?: number;
+    clarityDayValues?: Record<string, number>;
 }
 
 interface UnmappedItem {
@@ -20,28 +38,10 @@ interface FillWeekCardProps {
     periodFinish: string;
     entries: WeekEntry[];
     unmappedWorkItems: UnmappedItem[];
+    clarityTotalMinutes?: number;
     selected: boolean;
     onToggle: () => void;
-}
-
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-function getWorkDays(periodStart: string): Array<{ label: string; date: string }> {
-    const start = new Date(periodStart);
-    const days: Array<{ label: string; date: string }> = [];
-
-    for (let d = 0; d < 7; d++) {
-        const date = new Date(start);
-        date.setDate(date.getDate() + d);
-        const dow = date.getDay();
-
-        if (dow >= 1 && dow <= 5) {
-            const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-            days.push({ label: `${DAY_NAMES[dow]} ${date.getDate()}`, date: dateStr });
-        }
-    }
-
-    return days;
+    adoConfig?: AdoConfig | null;
 }
 
 export function FillWeekCard({
@@ -50,12 +50,29 @@ export function FillWeekCard({
     periodFinish,
     entries,
     unmappedWorkItems,
+    clarityTotalMinutes,
     selected,
     onToggle,
+    adoConfig,
 }: FillWeekCardProps) {
     const startDate = periodStart.split("T")[0];
-    const endDate = periodFinish.split("T")[0];
-    const workDays = getWorkDays(periodStart);
+    const endDate = subtractDay(periodFinish.split("T")[0]);
+    const workDays = getDaysInPeriod(periodStart, periodFinish);
+    const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+    function toggleExpand(code: string) {
+        setExpanded((prev) => {
+            const next = new Set(prev);
+
+            if (next.has(code)) {
+                next.delete(code);
+            } else {
+                next.add(code);
+            }
+
+            return next;
+        });
+    }
 
     return (
         <Card className={`border-amber-500/20 ${selected ? "ring-1 ring-amber-500/40" : ""}`}>
@@ -72,9 +89,16 @@ export function FillWeekCard({
                             Week: {startDate} to {endDate}
                         </label>
                     </CardTitle>
-                    <Badge variant="outline" className="font-mono text-xs">
-                        TS#{timesheetId}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                        {clarityTotalMinutes !== undefined && (
+                            <span className="font-mono text-[10px] text-gray-500">
+                                Clarity: {(clarityTotalMinutes / 60).toFixed(1)}h
+                            </span>
+                        )}
+                        <Badge variant="outline" className="font-mono text-xs">
+                            TS#{timesheetId}
+                        </Badge>
+                    </div>
                 </div>
             </CardHeader>
             <CardContent>
@@ -87,38 +111,120 @@ export function FillWeekCard({
                         <TableHeader>
                             <TableRow className="border-amber-500/20">
                                 <TableHead className="font-mono text-xs text-gray-400">Clarity Task</TableHead>
-                                {workDays.map((d) => (
-                                    <TableHead key={d.date} className="font-mono text-xs text-gray-400 text-center">
-                                        {d.label}
-                                    </TableHead>
-                                ))}
+                                {workDays.map((d) => {
+                                    const dayTotal = entries.reduce((sum, e) => sum + (e.dayValues[d.date] ?? 0), 0);
+                                    return (
+                                        <TableHead key={d.date} className="font-mono text-xs text-gray-400 text-center">
+                                            <div>{d.label}</div>
+                                            {dayTotal > 0 && (
+                                                <div className="text-amber-500/60">{(dayTotal / 60).toFixed(1)}h</div>
+                                            )}
+                                        </TableHead>
+                                    );
+                                })}
                                 <TableHead className="font-mono text-xs text-gray-400 text-right">Total</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {entries.map((entry) => (
-                                <TableRow key={entry.clarityTaskCode} className="border-white/5">
-                                    <TableCell className="font-mono text-sm text-gray-300">
-                                        <div className="max-w-[200px] truncate" title={entry.clarityTaskName}>
-                                            {entry.clarityTaskName}
-                                        </div>
-                                    </TableCell>
-                                    {workDays.map((d) => {
-                                        const mins = entry.dayValues[d.date] ?? 0;
-                                        return (
-                                            <TableCell
-                                                key={d.date}
-                                                className={`font-mono text-xs text-center ${mins > 0 ? "text-amber-400" : "text-gray-600"}`}
-                                            >
-                                                {mins > 0 ? `${(mins / 60).toFixed(1)}h` : "-"}
+                            {entries.map((entry) => {
+                                const isExpanded = expanded.has(entry.clarityTaskCode);
+                                const hasEntries = entry.timelogEntries && entry.timelogEntries.length > 0;
+
+                                return (
+                                    <Fragment key={entry.clarityTaskCode}>
+                                        <TableRow
+                                            className={`border-white/5 ${hasEntries ? "cursor-pointer hover:bg-amber-500/5" : ""}`}
+                                            onClick={hasEntries ? () => toggleExpand(entry.clarityTaskCode) : undefined}
+                                        >
+                                            <TableCell className="font-mono text-sm text-gray-300">
+                                                <div className="flex items-center gap-1.5">
+                                                    {hasEntries && (
+                                                        <ChevronRight
+                                                            className={`w-3.5 h-3.5 text-gray-500 flex-shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                                                        />
+                                                    )}
+                                                    <div className="truncate" title={entry.clarityTaskName}>
+                                                        {entry.clarityTaskName}
+                                                    </div>
+                                                </div>
                                             </TableCell>
-                                        );
-                                    })}
-                                    <TableCell className="font-mono text-sm text-right font-bold text-gray-200">
-                                        {(entry.totalMinutes / 60).toFixed(1)}h
-                                    </TableCell>
-                                </TableRow>
-                            ))}
+                                            {workDays.map((d) => {
+                                                const mins = entry.dayValues[d.date] ?? 0;
+                                                const clarityMins = entry.clarityDayValues?.[d.date];
+
+                                                return (
+                                                    <TableCell
+                                                        key={d.date}
+                                                        className={`font-mono text-xs text-center ${mins > 0 ? "text-amber-400" : "text-gray-600"}`}
+                                                    >
+                                                        <div className="flex flex-col items-center">
+                                                            {mins > 0 ? `${(mins / 60).toFixed(1)}h` : "-"}
+                                                            <DayClarityIndicator
+                                                                adoMinutes={mins}
+                                                                clarityMinutes={clarityMins}
+                                                            />
+                                                        </div>
+                                                    </TableCell>
+                                                );
+                                            })}
+                                            <TableCell className="font-mono text-sm text-right font-bold text-gray-200">
+                                                <div className="flex items-center justify-end gap-1.5">
+                                                    {(entry.totalMinutes / 60).toFixed(1)}h
+                                                    <ClarityStatusIcon
+                                                        clarityMinutes={entry.clarityCurrentMinutes}
+                                                        adoMinutes={entry.totalMinutes}
+                                                    />
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
+                                        {isExpanded && (
+                                            <TableRow className="border-white/5">
+                                                <TableCell colSpan={workDays.length + 2} className="p-0">
+                                                    <TimelogEntriesTable
+                                                        entries={entry.timelogEntries ?? []}
+                                                        adoConfig={adoConfig}
+                                                    />
+                                                </TableCell>
+                                            </TableRow>
+                                        )}
+                                    </Fragment>
+                                );
+                            })}
+                            {entries.length > 1 &&
+                                (() => {
+                                    const weekAdoTotal = entries.reduce((sum, e) => sum + e.totalMinutes, 0);
+
+                                    return (
+                                        <TableRow className="border-amber-500/20">
+                                            <TableCell className="font-mono text-xs text-gray-400 font-bold">
+                                                Total
+                                            </TableCell>
+                                            {workDays.map((d) => {
+                                                const dayTotal = entries.reduce(
+                                                    (sum, e) => sum + (e.dayValues[d.date] ?? 0),
+                                                    0
+                                                );
+                                                return (
+                                                    <TableCell
+                                                        key={d.date}
+                                                        className={`font-mono text-xs text-center font-bold ${dayTotal > 0 ? "text-amber-500" : "text-gray-600"}`}
+                                                    >
+                                                        {dayTotal > 0 ? `${(dayTotal / 60).toFixed(1)}h` : "-"}
+                                                    </TableCell>
+                                                );
+                                            })}
+                                            <TableCell className="font-mono text-sm text-right font-bold text-amber-500">
+                                                <div className="flex items-center justify-end gap-1.5">
+                                                    {(weekAdoTotal / 60).toFixed(1)}h
+                                                    <ClarityStatusIcon
+                                                        clarityMinutes={clarityTotalMinutes}
+                                                        adoMinutes={weekAdoTotal}
+                                                    />
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
+                                    );
+                                })()}
                         </TableBody>
                     </Table>
                 )}
@@ -131,5 +237,117 @@ export function FillWeekCard({
                 )}
             </CardContent>
         </Card>
+    );
+}
+
+function DayClarityIndicator({ adoMinutes, clarityMinutes }: { adoMinutes: number; clarityMinutes?: number }) {
+    if (clarityMinutes === undefined) {
+        return null;
+    }
+
+    // Both zero — no indicator needed
+    if (adoMinutes === 0 && clarityMinutes === 0) {
+        return null;
+    }
+
+    // Match (within 1 minute tolerance)
+    if (Math.abs(clarityMinutes - adoMinutes) < 2) {
+        return <CheckCircle className="w-2.5 h-2.5 text-green-500/70 mt-0.5" />;
+    }
+
+    // ADO has time but Clarity is 0 — not imported
+    if (clarityMinutes === 0 && adoMinutes > 0) {
+        return <XCircle className="w-2.5 h-2.5 text-amber-500/60 mt-0.5" />;
+    }
+
+    // Clarity has different non-zero value — red warning
+    return (
+        <span className="text-[9px] text-red-400/80 mt-0.5" title={`Clarity: ${(clarityMinutes / 60).toFixed(1)}h`}>
+            c:{(clarityMinutes / 60).toFixed(1)}
+        </span>
+    );
+}
+
+function ClarityStatusIcon({ clarityMinutes, adoMinutes }: { clarityMinutes?: number; adoMinutes: number }) {
+    if (clarityMinutes === undefined) {
+        return null;
+    }
+
+    if (clarityMinutes === 0) {
+        return (
+            <span className="flex-shrink-0" title="Not imported to Clarity">
+                <XCircle className="w-3.5 h-3.5 text-amber-500/70" />
+            </span>
+        );
+    }
+
+    if (Math.abs(clarityMinutes - adoMinutes) < 2) {
+        return (
+            <span className="flex-shrink-0" title={`Clarity: ${(clarityMinutes / 60).toFixed(1)}h (matches)`}>
+                <CheckCircle className="w-3.5 h-3.5 text-green-500" />
+            </span>
+        );
+    }
+
+    return (
+        <span
+            className="text-[10px] text-red-400 flex-shrink-0 whitespace-nowrap"
+            title={`Clarity has ${(clarityMinutes / 60).toFixed(1)}h, ADO has ${(adoMinutes / 60).toFixed(1)}h`}
+        >
+            c:{(clarityMinutes / 60).toFixed(1)}h
+        </span>
+    );
+}
+
+function TimelogEntriesTable({ entries, adoConfig }: { entries: TimelogEntry[]; adoConfig?: AdoConfig | null }) {
+    const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date) || a.workItemId - b.workItemId);
+
+    return (
+        <div className="ml-6 mr-2 my-2 border border-white/5 rounded bg-white/[0.01]">
+            <Table>
+                <TableHeader>
+                    <TableRow className="border-white/5">
+                        <TableHead className="font-mono text-[10px] text-gray-500">Date</TableHead>
+                        <TableHead className="font-mono text-[10px] text-gray-500">Hours</TableHead>
+                        <TableHead className="font-mono text-[10px] text-gray-500">Work Item</TableHead>
+                        <TableHead className="font-mono text-[10px] text-gray-500">Comment</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    {sorted.map((e, i) => (
+                        <TableRow key={`${e.date}-${e.workItemId}-${i}`} className="border-white/5">
+                            <TableCell className="font-mono text-xs text-gray-500 py-1">{e.date}</TableCell>
+                            <TableCell className="font-mono text-xs text-amber-400/80 py-1">
+                                {(e.minutes / 60).toFixed(2)}h
+                            </TableCell>
+                            <TableCell className="py-1">
+                                <div className="flex items-center gap-1.5 text-xs">
+                                    <WorkItemLink id={e.workItemId} adoConfig={adoConfig} />
+                                    {e.workItemType && (
+                                        <Badge variant="outline" className="text-[10px] px-1 py-0">
+                                            {e.workItemType}
+                                        </Badge>
+                                    )}
+                                    {e.timeTypeDescription && (
+                                        <span className="font-mono text-gray-500">· {e.timeTypeDescription}</span>
+                                    )}
+                                </div>
+                                {e.workItemTitle && (
+                                    <div className="text-xs text-gray-400 truncate mt-0.5 max-w-xs">
+                                        {e.workItemTitle}
+                                    </div>
+                                )}
+                            </TableCell>
+                            <TableCell
+                                className="font-mono text-[11px] text-gray-500 max-w-32 truncate py-1"
+                                title={e.comment ?? undefined}
+                            >
+                                {e.comment || ""}
+                            </TableCell>
+                        </TableRow>
+                    ))}
+                </TableBody>
+            </Table>
+        </div>
     );
 }

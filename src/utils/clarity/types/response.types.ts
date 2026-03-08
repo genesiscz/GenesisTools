@@ -138,12 +138,21 @@ export interface TimeEntryRecord {
 export interface TimeSeriesValue {
     isFiscal: boolean;
     curveType: string; // "value"
-    total: number;
+    total?: number; // present in responses, omit in requests (API calculates from segments)
     dataType: string; // "numeric"
     _type: string; // "tsv"
-    start: string; // ISO
-    finish: string; // ISO
+    start: string; // ISO — first day of period (inclusive)
+    finish: string; // ISO — last day of period (inclusive, NOT exclusive)
     segmentList: SegmentList;
+}
+
+// Debug info captured from Clarity API requests (for verbose logging)
+export interface ApiDebugInfo {
+    url: string;
+    method: string;
+    requestBody: unknown;
+    responseStatus: number;
+    responseBody: unknown;
 }
 
 export interface SegmentList {

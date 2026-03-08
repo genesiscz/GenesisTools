@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { CheckCircle, RefreshCw, XCircle } from "lucide-react";
@@ -31,7 +32,11 @@ async function updateAuthApi(curl: string) {
     return res.json();
 }
 
-export function SettingsPage() {
+export const Route = createFileRoute("/settings")({
+    component: SettingsPage,
+});
+
+function SettingsPage() {
     const queryClient = useQueryClient();
     const [curlInput, setCurlInput] = useState("");
 

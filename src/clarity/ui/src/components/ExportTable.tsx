@@ -47,9 +47,8 @@ export function ExportTable({ entries, entriesByDay, mappedWorkItemIds, adoConfi
             <TableHeader>
                 <TableRow className="border-amber-500/20">
                     <TableHead className="font-mono text-xs text-gray-400">Date</TableHead>
-                    <TableHead className="font-mono text-xs text-gray-400">Work Item</TableHead>
-                    <TableHead className="font-mono text-xs text-gray-400">Type</TableHead>
                     <TableHead className="font-mono text-xs text-gray-400">Hours</TableHead>
+                    <TableHead className="font-mono text-xs text-gray-400">Work Item</TableHead>
                     <TableHead className="font-mono text-xs text-gray-400">Comment</TableHead>
                     <TableHead className="font-mono text-xs text-gray-400">Status</TableHead>
                 </TableRow>
@@ -69,26 +68,31 @@ export function ExportTable({ entries, entriesByDay, mappedWorkItemIds, adoConfi
                                     </div>
                                 ) : null}
                             </TableCell>
-                            <TableCell>
-                                <div className="flex items-center gap-2">
-                                    <WorkItemLink
-                                        id={entry.workItemId}
-                                        title={entry.workItemTitle}
-                                        adoConfig={adoConfig}
-                                    />
-                                    {entry.workItemType && (
-                                        <TypeBadge
-                                            typeName={entry.workItemType}
-                                            color={typeColors[entry.workItemType]}
-                                        />
-                                    )}
-                                </div>
-                            </TableCell>
-                            <TableCell className="font-mono text-xs text-gray-400">
-                                {entry.timeTypeDescription || "—"}
-                            </TableCell>
                             <TableCell className="font-mono text-sm text-gray-300">
                                 {(entry.minutes / 60).toFixed(2)}h
+                            </TableCell>
+                            <TableCell>
+                                <div>
+                                    <div className="flex items-center gap-1.5 text-xs">
+                                        <WorkItemLink id={entry.workItemId} adoConfig={adoConfig} />
+                                        {entry.workItemType && (
+                                            <TypeBadge
+                                                typeName={entry.workItemType}
+                                                color={typeColors[entry.workItemType]}
+                                            />
+                                        )}
+                                        {entry.timeTypeDescription && (
+                                            <span className="font-mono text-gray-500">
+                                                · {entry.timeTypeDescription}
+                                            </span>
+                                        )}
+                                    </div>
+                                    {entry.workItemTitle && (
+                                        <div className="text-sm text-gray-400 truncate mt-0.5">
+                                            {entry.workItemTitle}
+                                        </div>
+                                    )}
+                                </div>
                             </TableCell>
                             <TableCell
                                 className="font-mono text-xs text-gray-500 max-w-48 truncate"
