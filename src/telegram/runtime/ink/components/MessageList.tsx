@@ -3,7 +3,6 @@ import type { WatchMessage } from "../../shared/WatchSession";
 
 interface MessageListProps {
     messages: WatchMessage[];
-    contactName: string;
 }
 
 export function MessageList({ messages }: MessageListProps) {

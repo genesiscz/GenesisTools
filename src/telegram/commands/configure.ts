@@ -119,25 +119,29 @@ interface DialogOption {
     dialog: Dialog;
     chatType: ChatType;
     entityId: string;
+    dialogKey: string;
     label: string;
     hint: string;
 }
 
-function classifyDialog(d: Dialog): { chatType: ChatType; entityId: string } | null {
+function classifyDialog(d: Dialog): { chatType: ChatType; entityId: string; dialogKey: string } | null {
     if (!d.entity) {
         return null;
     }
 
     if (d.isUser && isUser(d.entity) && !d.entity.bot && !d.entity.self) {
-        return { chatType: "user", entityId: d.entity.id.toString() };
+        const entityId = d.entity.id.toString();
+        return { chatType: "user", entityId, dialogKey: `user:${entityId}` };
     }
 
     if (d.isGroup && d.entity.id) {
-        return { chatType: "group", entityId: d.entity.id.toString() };
+        const entityId = d.entity.id.toString();
+        return { chatType: "group", entityId, dialogKey: `group:${entityId}` };
     }
 
     if (d.isChannel && d.entity.id) {
-        return { chatType: "channel", entityId: d.entity.id.toString() };
+        const entityId = d.entity.id.toString();
+        return { chatType: "channel", entityId, dialogKey: `channel:${entityId}` };
     }
 
     return null;
@@ -167,6 +171,7 @@ async function fetchDialogOptions(client: TGClient): Promise<DialogOption[]> {
             dialog: d,
             chatType: classified.chatType,
             entityId: classified.entityId,
+            dialogKey: classified.dialogKey,
             label,
             hint,
         });
@@ -177,12 +182,12 @@ async function fetchDialogOptions(client: TGClient): Promise<DialogOption[]> {
 }
 
 async function selectDialogs(options: DialogOption[], existingContacts: TelegramContactV2[]): Promise<string[] | null> {
-    const existingIds = new Set(existingContacts.map((c) => c.userId));
+    const existingDialogKeys = new Set(existingContacts.map((c) => `${c.chatType}:${c.userId}`));
 
     const selected = await p.multiselect({
         message: "Select chats to watch:",
-        options: options.map((o) => ({ value: o.entityId, label: o.label, hint: o.hint })),
-        initialValues: [...existingIds].filter((id) => options.some((o) => o.entityId === id)),
+        options: options.map((o) => ({ value: o.dialogKey, label: o.label, hint: o.hint })),
+        initialValues: options.filter((o) => existingDialogKeys.has(o.dialogKey)).map((o) => o.dialogKey),
         required: false,
     });
 
@@ -231,40 +236,41 @@ async function configureContactModes(
             initialValue: false,
         });
 
-        if (configureModel && !p.isCancel(configureModel)) {
+        if (p.isCancel(configureModel)) {
+            return null;
+        }
+
+        if (mode === "autoReply") {
+            modes.autoReply = { ...modes.autoReply, enabled: true };
+        } else if (mode === "assistant") {
+            modes.assistant = { ...modes.assistant, enabled: true };
+        } else if (mode === "suggestions") {
+            modes.suggestions = { ...modes.suggestions, enabled: true };
+        }
+
+        if (configureModel) {
             const choice = await modelSelector.selectModel();
 
-            if (choice) {
+            if (choice && !p.isCancel(choice)) {
                 if (mode === "autoReply") {
                     modes.autoReply = {
                         ...modes.autoReply,
-                        enabled: true,
                         provider: choice.provider.name,
                         model: choice.model.id,
                     };
                 } else if (mode === "assistant") {
                     modes.assistant = {
                         ...modes.assistant,
-                        enabled: true,
                         provider: choice.provider.name,
                         model: choice.model.id,
                     };
                 } else if (mode === "suggestions") {
                     modes.suggestions = {
                         ...modes.suggestions,
-                        enabled: true,
                         provider: choice.provider.name,
                         model: choice.model.id,
                     };
                 }
-            }
-        } else if (!p.isCancel(configureModel)) {
-            if (mode === "autoReply") {
-                modes.autoReply = { ...modes.autoReply, enabled: true };
-            } else if (mode === "assistant") {
-                modes.assistant = { ...modes.assistant, enabled: true };
-            } else if (mode === "suggestions") {
-                modes.suggestions = { ...modes.suggestions, enabled: true };
             }
         }
     }
@@ -489,14 +495,14 @@ export function registerConfigureCommand(program: Command): void {
 
             const contacts: TelegramContactV2[] = [];
 
-            for (const entityId of selectedIds) {
-                const opt = dialogOptions.find((o) => o.entityId === entityId);
+            for (const dialogKey of selectedIds) {
+                const opt = dialogOptions.find((o) => o.dialogKey === dialogKey);
 
                 if (!opt) {
                     continue;
                 }
 
-                const existingContact = existing?.contacts.find((c) => c.userId === entityId);
+                const existingContact = existing?.contacts.find((c) => `${c.chatType}:${c.userId}` === dialogKey);
                 const contact = await configureContactActions(opt, existingContact);
 
                 if (!contact) {

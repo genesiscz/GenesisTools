@@ -70,6 +70,32 @@ export interface HandlerOptions {
     store: TelegramHistoryStore;
 }
 
+function extractPeerId(
+    peer?: {
+        userId?: unknown;
+        chatId?: unknown;
+        channelId?: unknown;
+    } | null
+): string | null {
+    if (!peer) {
+        return null;
+    }
+
+    if ("userId" in peer && peer.userId !== undefined && peer.userId !== null) {
+        return String(peer.userId);
+    }
+
+    if ("chatId" in peer && peer.chatId !== undefined && peer.chatId !== null) {
+        return String(peer.chatId);
+    }
+
+    if ("channelId" in peer && peer.channelId !== undefined && peer.channelId !== null) {
+        return String(peer.channelId);
+    }
+
+    return null;
+}
+
 export function registerHandler(client: TGClient, options: HandlerOptions): void {
     const contactMap = new Map<string, TelegramContact>();
     const contexts = new Map<string, ConversationContext>();
@@ -171,18 +197,7 @@ export function registerHandler(client: TGClient, options: HandlerOptions): void
             }
 
             const msg = new TelegramMessage(message);
-            const chatId =
-                msg.senderId ??
-                String(
-                    message.peerId &&
-                        ("userId" in message.peerId
-                            ? message.peerId.userId
-                            : "chatId" in message.peerId
-                              ? message.peerId.chatId
-                              : "channelId" in message.peerId
-                                ? message.peerId.channelId
-                                : null)
-                );
+            const chatId = extractPeerId(message.peerId);
 
             if (!chatId) {
                 return;
@@ -206,9 +221,10 @@ export function registerHandler(client: TGClient, options: HandlerOptions): void
     client.onDeletedMessage(async (event: DeletedMessageEvent) => {
         try {
             const deletedIds: number[] = event.deletedIds ?? [];
+            const peerChatId = extractPeerId((event.peer as { userId?: unknown; chatId?: unknown; channelId?: unknown } | null) ?? null);
 
             for (const msgId of deletedIds) {
-                const row = options.store.findMessageById(msgId);
+                const row = options.store.findMessageById(msgId, peerChatId ?? undefined);
 
                 if (row) {
                     options.store.markMessageDeleted(row.chat_id, msgId);

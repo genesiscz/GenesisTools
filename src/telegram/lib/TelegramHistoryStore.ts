@@ -575,13 +575,57 @@ export class TelegramHistoryStore {
         return rows;
     }
 
-    findMessageById(messageId: number): { chat_id: string } | null {
+    countMessages(chatId: string, options: QueryOptions): number {
         const db = this.getDb();
-        return (
-            (db.query("SELECT chat_id FROM messages WHERE id = ? LIMIT 1").get(messageId) as {
-                chat_id: string;
-            }) ?? null
-        );
+        const conditions: string[] = ["chat_id = ?"];
+        const params: (string | number)[] = [chatId];
+
+        if (!options.includeDeleted) {
+            conditions.push("is_deleted = 0");
+        }
+
+        if (options.sender === "me") {
+            conditions.push("is_outgoing = 1");
+        } else if (options.sender === "them") {
+            conditions.push("is_outgoing = 0");
+        }
+
+        if (options.since) {
+            conditions.push("date_unix >= ?");
+            params.push(Math.floor(options.since.getTime() / 1000));
+        }
+
+        if (options.until) {
+            conditions.push("date_unix <= ?");
+            params.push(Math.floor(options.until.getTime() / 1000));
+        }
+
+        if (options.textPattern) {
+            conditions.push("text LIKE ?");
+            params.push(`%${options.textPattern}%`);
+        }
+
+        const row = db.query(`SELECT COUNT(*) AS count FROM messages WHERE ${conditions.join(" AND ")}`).get(...params) as {
+            count: number;
+        };
+        return row.count;
+    }
+
+    findMessageById(messageId: number, chatId?: string): { chat_id: string } | null {
+        const db = this.getDb();
+
+        if (chatId) {
+            return (
+                (db.query("SELECT chat_id FROM messages WHERE chat_id = ? AND id = ? LIMIT 1").get(chatId, messageId) as {
+                    chat_id: string;
+                }) ?? null
+            );
+        }
+
+        const rows = db.query("SELECT chat_id FROM messages WHERE id = ? GROUP BY chat_id LIMIT 2").all(messageId) as Array<{
+            chat_id: string;
+        }>;
+        return rows.length === 1 ? rows[0] : null;
     }
 
     markMessageDeleted(chatId: string, messageId: number): void {
@@ -592,11 +636,15 @@ export class TelegramHistoryStore {
             text: string | null;
         } | null;
 
-        db.run("UPDATE messages SET is_deleted = 1, deleted_at_iso = ? WHERE chat_id = ? AND id = ?", [
+        const updateResult = db.run("UPDATE messages SET is_deleted = 1, deleted_at_iso = ? WHERE chat_id = ? AND id = ?", [
             now.toISOString(),
             chatId,
             messageId,
         ]);
+
+        if (updateResult.changes === 0) {
+            return;
+        }
 
         db.run(
             `INSERT INTO message_revisions (chat_id, message_id, revision_type, old_text, new_text, revised_at_unix, revised_at_iso)
@@ -784,24 +832,34 @@ export class TelegramHistoryStore {
             .filter((s) => s.to_date_unix > fromDateUnix && s.from_date_unix < toDateUnix)
             .sort((a, b) => a.from_date_unix - b.from_date_unix);
 
-        if (sorted.length === 0) {
+        const merged: Array<{ from: number; to: number }> = [];
+
+        for (const s of sorted) {
+            if (merged.length === 0 || s.from_date_unix > merged[merged.length - 1].to) {
+                merged.push({ from: s.from_date_unix, to: s.to_date_unix });
+            } else {
+                merged[merged.length - 1].to = Math.max(merged[merged.length - 1].to, s.to_date_unix);
+            }
+        }
+
+        if (merged.length === 0) {
             return [{ fromDateUnix, toDateUnix }];
         }
 
-        if (sorted[0].from_date_unix > fromDateUnix) {
-            gaps.push({ fromDateUnix, toDateUnix: sorted[0].from_date_unix });
+        if (merged[0].from > fromDateUnix) {
+            gaps.push({ fromDateUnix, toDateUnix: merged[0].from });
         }
 
-        for (let i = 0; i < sorted.length - 1; i++) {
-            const currentEnd = sorted[i].to_date_unix;
-            const nextStart = sorted[i + 1].from_date_unix;
+        for (let i = 0; i < merged.length - 1; i++) {
+            const currentEnd = merged[i].to;
+            const nextStart = merged[i + 1].from;
 
             if (nextStart > currentEnd) {
                 gaps.push({ fromDateUnix: currentEnd, toDateUnix: nextStart });
             }
         }
 
-        const lastEnd = sorted[sorted.length - 1].to_date_unix;
+        const lastEnd = merged[merged.length - 1].to;
 
         if (lastEnd < toDateUnix) {
             gaps.push({ fromDateUnix: lastEnd, toDateUnix });

@@ -48,96 +48,98 @@ export function registerWatchCommand(program: Command): void {
             const store = new TelegramHistoryStore();
             store.open();
 
-            let contact = contactArg
-                ? data.contacts.find(
-                      (c) =>
-                          c.displayName.toLowerCase() === contactArg.toLowerCase() ||
-                          c.userId === contactArg ||
-                          c.username?.toLowerCase() === contactArg.toLowerCase()
-                  )
-                : undefined;
-
-            if (!contact) {
-                const choices = data.contacts.map((c) => {
-                    const icon = c.chatType === "group" ? "[group]" : c.chatType === "channel" ? "[channel]" : "[user]";
-                    return { value: c.userId, label: `${icon} ${c.displayName}` };
-                });
-
-                const selected = await p.select({
-                    message: "Which conversation to watch?",
-                    options: choices,
-                });
-
-                if (p.isCancel(selected)) {
-                    process.exit(0);
-                }
-
-                contact = data.contacts.find((c) => c.userId === selected);
-            }
-
-            if (!contact) {
-                p.log.error("Contact not found");
-                process.exit(1);
-            }
-
-            if (opts.contextLength) {
-                contact = {
-                    ...contact,
-                    watch: { ...contact.watch, contextLength: opts.contextLength },
-                };
-            }
-
-            const syncSpinner = p.spinner();
-            syncSpinner.start("Syncing latest messages...");
-            const syncService = new ConversationSyncService(client, store);
-            const syncResult = await syncService.syncLatest(contact.userId);
-            syncSpinner.stop(`Synced ${syncResult.synced} new messages`);
-
-            const session = new WatchSession(client, store, myName, contact, data.contacts);
-            await session.loadHistory();
-
-            const activeContact = contact;
-
-            client.onNewMessage(async (event) => {
-                const msg = new TelegramMessage(event.message);
-                const senderId = msg.senderId;
-                const peer = event.message?.peerId;
-                const peerId = peer
-                    ? String(
-                          "userId" in peer
-                              ? peer.userId
-                              : "chatId" in peer
-                                ? peer.chatId
-                                : "channelId" in peer
-                                  ? peer.channelId
-                                  : ""
+            try {
+                let contact = contactArg
+                    ? data.contacts.find(
+                          (c) =>
+                              c.displayName.toLowerCase() === contactArg.toLowerCase() ||
+                              c.userId === contactArg ||
+                              c.username?.toLowerCase() === contactArg.toLowerCase()
                       )
-                    : "";
+                    : undefined;
 
-                if (senderId === activeContact.userId || peerId === activeContact.userId) {
-                    store.insertMessages(activeContact.userId, [msg.toJSON()]);
-                    session.addIncoming(msg);
-                } else {
-                    const matchedContact = data.contacts.find((c) => c.userId === senderId || c.userId === peerId);
+                if (!contact) {
+                    const choices = data.contacts.map((c) => {
+                        const icon =
+                            c.chatType === "group" ? "[group]" : c.chatType === "channel" ? "[channel]" : "[user]";
+                        return { value: c.userId, label: `${icon} ${c.displayName}` };
+                    });
 
-                    if (matchedContact) {
-                        store.insertMessages(matchedContact.userId, [msg.toJSON()]);
-                        session.incrementUnread(matchedContact.userId);
+                    const selected = await p.select({
+                        message: "Which conversation to watch?",
+                        options: choices,
+                    });
+
+                    if (p.isCancel(selected)) {
+                        return;
                     }
+
+                    contact = data.contacts.find((c) => c.userId === selected);
                 }
-            });
 
-            p.log.info(`Watching ${activeContact.displayName}. Tab to switch contacts, /help for commands.`);
+                if (!contact) {
+                    p.log.error("Contact not found");
+                    return;
+                }
 
-            // Clack prompts permanently damage process.stdin (readline internals).
-            // Create a fresh TTY stream on fd 0 so Ink gets clean input.
-            const freshStdin = new ReadStream(0);
+                if (opts.contextLength) {
+                    contact = {
+                        ...contact,
+                        watch: { ...contact.watch, contextLength: opts.contextLength },
+                    };
+                }
 
-            const { waitUntilExit } = render(<WatchInkApp session={session} />, { stdin: freshStdin });
+                const syncSpinner = p.spinner();
+                syncSpinner.start("Syncing latest messages...");
+                const syncService = new ConversationSyncService(client, store);
+                const syncResult = await syncService.syncLatest(contact.userId);
+                syncSpinner.stop(`Synced ${syncResult.synced} new messages`);
 
-            await waitUntilExit();
+                const session = new WatchSession(client, store, myName, contact, data.contacts);
+                await session.loadHistory();
 
-            store.close();
-            await client.disconnect();
+                client.onNewMessage(async (event) => {
+                    const msg = new TelegramMessage(event.message);
+                    const senderId = msg.senderId;
+                    const peer = event.message?.peerId;
+                    const peerId = peer
+                        ? String(
+                              "userId" in peer
+                                  ? peer.userId
+                                  : "chatId" in peer
+                                    ? peer.chatId
+                                    : "channelId" in peer
+                                      ? peer.channelId
+                                      : ""
+                          )
+                        : "";
+                    const currentContactId = session.currentContact.userId;
+
+                    if (senderId === currentContactId || peerId === currentContactId) {
+                        store.insertMessages(currentContactId, [msg.toJSON()]);
+                        session.addIncoming(msg);
+                    } else {
+                        const matchedContact = data.contacts.find((c) => c.userId === senderId || c.userId === peerId);
+
+                        if (matchedContact) {
+                            store.insertMessages(matchedContact.userId, [msg.toJSON()]);
+                            session.incrementUnread(matchedContact.userId);
+                        }
+                    }
+                });
+
+                p.log.info(`Watching ${contact.displayName}. Tab to switch contacts, /help for commands.`);
+
+                // Clack prompts permanently damage process.stdin (readline internals).
+                // Create a fresh TTY stream on fd 0 so Ink gets clean input.
+                const freshStdin = new ReadStream(0);
+
+                const { waitUntilExit } = render(<WatchInkApp session={session} />, { stdin: freshStdin });
+
+                await waitUntilExit();
+            } finally {
+                store.close();
+                await client.disconnect();
+            }
         });
 }

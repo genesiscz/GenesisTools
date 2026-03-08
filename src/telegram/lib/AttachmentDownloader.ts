@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
 import type { TGClient } from "./TGClient";
 
@@ -34,23 +34,24 @@ export class AttachmentDownloader {
             };
         }
 
-        const messages: import("telegram").Api.Message[] = [];
+        let targetMessage: import("telegram").Api.Message | null = null;
 
         for await (const msg of this.client.getMessages(chatId, {
             minId: messageId - 1,
             maxId: messageId + 1,
-            limit: 1,
+            limit: 3,
         })) {
             if (msg.id === messageId) {
-                messages.push(msg);
+                targetMessage = msg;
+                break;
             }
         }
 
-        if (messages.length === 0 || !messages[0].media) {
+        if (!targetMessage?.media) {
             throw new Error(`Message ${messageId} not found or has no media`);
         }
 
-        const dir = outputPath ? resolve(outputPath, "..") : resolve(ATTACHMENTS_BASE, chatId, "attachments");
+        const dir = outputPath ? resolve(dirname(outputPath)) : resolve(ATTACHMENTS_BASE, chatId, "attachments");
 
         if (!existsSync(dir)) {
             mkdirSync(dir, { recursive: true });
@@ -59,7 +60,7 @@ export class AttachmentDownloader {
         const ext = this.guessExtension(attachment.mime_type, attachment.file_name);
         const fileName = outputPath ? resolve(outputPath) : resolve(dir, `${messageId}-${attachmentIndex}${ext}`);
 
-        const buffer = (await this.client.raw.downloadMedia(messages[0].media, {})) as Buffer;
+        const buffer = (await this.client.raw.downloadMedia(targetMessage.media, {})) as Buffer;
 
         if (!buffer) {
             throw new Error("Download returned empty buffer");

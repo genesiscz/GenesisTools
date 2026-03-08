@@ -150,6 +150,7 @@ export class WatchSession {
     }
 
     async switchContact(contact: TelegramContactV2): Promise<void> {
+        this.suggestionEngine.cancelAutoSuggest();
         this._currentContact = contact;
         this.messages = [];
         this._pendingSuggestions = null;
@@ -264,6 +265,9 @@ export class WatchSession {
                         "  /quit               Exit watch mode",
                     ].join("\n"),
                 };
+
+            case "contacts":
+                return { handled: true, output: "__CONTACTS__" };
 
             default:
                 return { handled: true, output: `Unknown command: /${cmd}. Type /help for available commands.` };
@@ -403,6 +407,9 @@ export class WatchSession {
                     [mode]: { ...this._currentContact.modes[mode], provider, model },
                 },
             };
+
+            this.assistantEngine = new AssistantEngine(this.store, this._currentContact, this.myName);
+            this.suggestionEngine = new SuggestionEngine(this.store, this._currentContact, this.myName);
 
             if (mode === "assistant") {
                 this.assistantEngine.resetSession();

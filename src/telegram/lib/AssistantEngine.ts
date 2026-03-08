@@ -122,12 +122,12 @@ export class AssistantEngine {
                 description: "Count messages matching filters",
                 parameters: messageCountSchema,
                 execute: async (input: MessageCountInput) => {
-                    const results = store.queryMessages(contactId, {
+                    const count = store.countMessages(contactId, {
                         since: input.since ? (parseDate(input.since) ?? undefined) : undefined,
                         until: input.until ? (parseDate(input.until) ?? undefined) : undefined,
                         sender: input.sender ?? "any",
                     });
-                    return { count: results.length };
+                    return { count };
                 },
             },
 

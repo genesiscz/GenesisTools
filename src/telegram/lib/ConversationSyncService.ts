@@ -164,13 +164,13 @@ export class ConversationSyncService {
         chatId: string,
         fromUnix: number,
         toUnix: number,
-        options?: SyncOptions
+        options?: SyncOptions,
+        retryAttempt = 0
     ): Promise<SyncResult> {
         let synced = 0;
         let attachmentsIndexed = 0;
         let highestId = 0;
         let lowestMsgId = Infinity;
-        let retries = 0;
 
         const batch: SerializedMessage[] = [];
 
@@ -214,10 +214,9 @@ export class ConversationSyncService {
                 const match = err.message.match(/FLOOD_WAIT_(\d+)/);
                 const waitSeconds = match ? Number.parseInt(match[1], 10) : 30;
 
-                if (retries < MAX_RETRIES) {
-                    retries++;
-                    await Bun.sleep(waitSeconds * 1000 * 2 ** (retries - 1));
-                    return this.syncDateRange(chatId, fromUnix, toUnix, options);
+                if (retryAttempt < MAX_RETRIES) {
+                    await Bun.sleep(waitSeconds * 1000 * 2 ** retryAttempt);
+                    return this.syncDateRange(chatId, fromUnix, toUnix, options, retryAttempt + 1);
                 }
             }
 
@@ -228,7 +227,9 @@ export class ConversationSyncService {
             synced += this.store.insertMessages(chatId, batch);
         }
 
-        if (synced > 0) {
+        const isLimitedRangeFetch = typeof iterOptions.limit === "number";
+
+        if (synced > 0 && !isLimitedRangeFetch) {
             this.store.insertSyncSegment(chatId, {
                 fromDateUnix: fromUnix,
                 toDateUnix: toUnix,
@@ -237,7 +238,7 @@ export class ConversationSyncService {
             });
         }
 
-        return { synced, attachmentsIndexed, segments: synced > 0 ? 1 : 0 };
+        return { synced, attachmentsIndexed, segments: synced > 0 && !isLimitedRangeFetch ? 1 : 0 };
     }
 
     private indexAttachments(chatId: string, rawMsg: Api.Message): number {

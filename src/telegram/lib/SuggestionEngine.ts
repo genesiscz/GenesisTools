@@ -30,6 +30,11 @@ export class SuggestionEngine {
 
     async suggest(recentMessages: Array<{ sender: string; text: string }>, customPrompt?: string): Promise<string[]> {
         const config = this.getConfig();
+
+        if (!config.enabled) {
+            return [];
+        }
+
         const count = config.count ?? 3;
 
         let stylePrompt: string | undefined;
@@ -90,7 +95,7 @@ export class SuggestionEngine {
     ): void {
         const config = this.getConfig();
 
-        if (config.trigger === "manual") {
+        if (!config.enabled || config.trigger === "manual") {
             return;
         }
 

@@ -56,6 +56,11 @@ export function WatchInkApp({ session }: WatchInkAppProps) {
                     return;
                 }
 
+                if (result.output === "__CONTACTS__") {
+                    setView("contacts");
+                    return;
+                }
+
                 if (result.handled && result.output) {
                     setSystemLines([{ text: result.output, type: "info" }]);
                 }
@@ -106,7 +111,7 @@ export function WatchInkApp({ session }: WatchInkAppProps) {
         <Box flexDirection="column" height="100%">
             <StatusBar contact={session.currentContact} messageCount={messages.length} inputMode={session.inputMode} />
             <Box flexDirection="column" flexGrow={1}>
-                <MessageList messages={messages} contactName={session.currentContact.displayName} />
+                <MessageList messages={messages} />
             </Box>
             <SystemOutput lines={systemLines} />
             <InputBar

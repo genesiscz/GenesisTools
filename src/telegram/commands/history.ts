@@ -612,10 +612,11 @@ function registerQueryCommand(history: Command): void {
 
                 const store = new TelegramHistoryStore();
                 store.open();
+                let client: TGClient | null = null;
 
                 try {
                     if (!opts.localOnly) {
-                        const client = await ensureClient(config);
+                        client = await ensureClient(config);
 
                         if (!client) {
                             return;
@@ -639,7 +640,6 @@ function registerQueryCommand(history: Command): void {
                         }
 
                         console.log(`\n${results.length} message(s) found`);
-                        await client.disconnect();
                     } else {
                         const results = store.queryMessages(contact.userId, {
                             sender: opts.sender as "me" | "them" | "any",
@@ -660,6 +660,10 @@ function registerQueryCommand(history: Command): void {
                     }
                 } finally {
                     store.close();
+
+                    if (client) {
+                        await client.disconnect();
+                    }
                 }
             }
         );
