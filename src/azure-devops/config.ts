@@ -16,7 +16,7 @@ export function getRelativeTime(date: Date): string {
  */
 export function findConfigPath(): string | null {
     const configName = ".claude/azure/config.json";
-    let currentDir = process.cwd();
+    let currentDir = process.env.CLARITY_PROJECT_CWD || process.cwd();
 
     for (let i = 0; i < 4; i++) {
         // current + 3 levels up

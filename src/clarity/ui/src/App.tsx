@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router";
 import { DashboardLayout } from "@ui/layouts/DashboardLayout";
 import { ArrowDownToLine, ArrowUpFromLine, Link2, Settings } from "lucide-react";
+import { AppProvider } from "./context/AppContext";
 import { ExportPage } from "./routes/export";
 import { ImportPage } from "./routes/import";
 import { IndexPage } from "./routes/index";
@@ -87,5 +88,9 @@ declare module "@tanstack/react-router" {
 }
 
 export function App() {
-    return <RouterProvider router={routerInstance} />;
+    return (
+        <AppProvider>
+            <RouterProvider router={routerInstance} />
+        </AppProvider>
+    );
 }

@@ -20,7 +20,7 @@ export interface DashboardViteConfig {
  * Vite plugin that ensures bare module imports from shared UI files
  * resolve against the dashboard's node_modules, not the file's location.
  */
-function resolveSharedDeps(appRoot: string): Plugin {
+export function resolveSharedDeps(appRoot: string): Plugin {
     const uiDir = resolve(__dirname, ".");
 
     return {
@@ -59,6 +59,7 @@ export function createDashboardViteConfig({
         plugins: [resolveSharedDeps(root), tailwindcss(), viteReact(), ...extraPlugins],
         server: {
             port,
+            host: true,
             fs: {
                 allow: [root, resolve(__dirname, "..")],
             },

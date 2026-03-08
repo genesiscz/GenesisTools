@@ -24,7 +24,7 @@ program
         const proc = Bun.spawn(["bun", "run", "dev"], {
             cwd: uiDir,
             stdio: ["inherit", "inherit", "inherit"],
-            env: { ...process.env },
+            env: { ...process.env, CLARITY_PROJECT_CWD: process.cwd() },
         });
 
         // Open browser after a short delay

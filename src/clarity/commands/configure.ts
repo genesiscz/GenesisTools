@@ -2,9 +2,69 @@ import { ClarityApi } from "@app/utils/clarity";
 import { parseCurl } from "@app/utils/curl";
 import * as clack from "@clack/prompts";
 import type { Command } from "commander";
+import { createInterface } from "node:readline";
 import pc from "picocolors";
 import type { ClarityConfig } from "../config.js";
 import { getConfig, saveConfig } from "../config.js";
+
+/**
+ * Read multiline cURL input from stdin.
+ * Collects lines until: empty line entered, or a line without trailing backslash
+ * (with a short debounce to handle fast paste).
+ */
+async function readMultilineCurl(): Promise<string> {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const lines: string[] = [];
+    let finishTimer: ReturnType<typeof setTimeout> | null = null;
+
+    return new Promise((resolve) => {
+        console.log(pc.gray("  (paste cURL, press Enter on blank line to finish)"));
+        process.stdout.write(pc.cyan("  > "));
+
+        function finish() {
+            if (finishTimer) {
+                clearTimeout(finishTimer);
+            }
+
+            rl.close();
+            const result = lines
+                .map((l) => l.replace(/\\\s*$/, ""))
+                .join(" ")
+                .trim();
+            resolve(result);
+        }
+
+        rl.on("line", (line) => {
+            if (finishTimer) {
+                clearTimeout(finishTimer);
+                finishTimer = null;
+            }
+
+            // Empty line after content = done
+            if (lines.length > 0 && line.trim() === "") {
+                finish();
+                return;
+            }
+
+            lines.push(line);
+
+            // Line ends with backslash = more input expected
+            if (line.trim().endsWith("\\")) {
+                process.stdout.write(pc.cyan("  > "));
+                return;
+            }
+
+            // No backslash: debounce 200ms in case paste buffer has more lines
+            finishTimer = setTimeout(finish, 200);
+        });
+
+        rl.on("close", () => {
+            if (lines.length > 0) {
+                finish();
+            }
+        });
+    });
+}
 
 async function runInteractiveSetup(): Promise<void> {
     clack.intro(pc.bgCyan(pc.black(" Clarity PPM Configuration ")));
@@ -37,22 +97,17 @@ async function runInteractiveSetup(): Promise<void> {
         "How to get the cURL command"
     );
 
-    const curlInput = await clack.text({
-        message: "Paste the cURL command:",
-        placeholder: "curl 'https://...' -H 'authToken: ...' ...",
-        validate(value) {
-            if (!value?.trim()) {
-                return "cURL command is required";
-            }
-            if (!value.includes("curl") && !value.includes("http")) {
-                return "Doesn't look like a valid cURL command";
-            }
-        },
-    });
+    clack.log.step("Paste the cURL command:");
+    const curlInput = await readMultilineCurl();
 
-    if (clack.isCancel(curlInput)) {
-        clack.cancel("Configuration cancelled.");
+    if (!curlInput.trim()) {
+        clack.cancel("No cURL command provided.");
         process.exit(0);
+    }
+
+    if (!curlInput.includes("curl") && !curlInput.includes("http")) {
+        clack.log.error("Doesn't look like a valid cURL command.");
+        process.exit(1);
     }
 
     const spinner = clack.spinner();
