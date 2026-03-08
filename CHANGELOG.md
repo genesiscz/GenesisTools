@@ -6,6 +6,12 @@ Version format: `YYYY.MM.DD.revision` (e.g., `2026.02.18.1`)
 
 ## 2026.03.03.1
 
+### clarity
+- Added Clarity PPM integration with `tools clarity` CLI (configure, timesheet, fill, link-workitems, ui)
+- Added web dashboard with cyberpunk theme (export, import/fill, mappings, settings pages)
+- Added cURL-based auth extraction, timesheet CRUD, and ADO-to-Clarity work item linking
+- Added fill command for importing ADO timelog hours into Clarity timesheets with dry-run preview
+
 ### claude
 - Added interactive Ink TUI dashboard for usage monitoring with 4 tabs (Overview, Timeline, Rates, History), SQLite persistence, rate calculation, and macOS notifications
 - Fixed OAuth token loss on crash — tokens now persisted atomically with file lock immediately after refresh
@@ -16,6 +22,8 @@ Version format: `YYYY.MM.DD.revision` (e.g., `2026.02.18.1`)
 
 ### azure-devops
 - Added `--images` flag to download inline images from work item descriptions and comments, with local path rewriting in generated markdown
+- Added `timelog export-month` library function and CLI command
+- Added cached work item enrichment service with type definitions
 
 ### watchman
 - Added `--temporary` flag to auto-unwatch paths on process exit
@@ -23,6 +31,11 @@ Version format: `YYYY.MM.DD.revision` (e.g., `2026.02.18.1`)
 ### migrate-to-codex
 - Overhauled scope detection, plugin directory symlinks, and namespace handling
 - Improved edge case handling for plugin migration
+
+### UI Framework
+- Extracted shared UI component library (`src/utils/ui/`) from claude-history-dashboard
+- Added `createDashboardApp` factory, `DashboardLayout`, base Vite config factory, and `@ui/` alias
+- Migrated claude-history-dashboard to shared UI framework and TanStack Start server routes
 
 ### Skills & Commands
 - Added `/question` command for answer-only mode with refinement loop
@@ -34,6 +47,8 @@ Version format: `YYYY.MM.DD.revision` (e.g., `2026.02.18.1`)
 - Improved format detection matching
 
 ### Core
+- Added Clarity PPM API client, type definitions, and comprehensive API/auth documentation
+- Added cURL command parser utility for cookie/header extraction
 - Resolved all TypeScript errors across codebase
 - Resolved all Biome lint/format errors and added pre-commit hook
 - Added shared Ink component library (`src/utils/ink/`) with reusable UI components and hooks
