@@ -1,6 +1,7 @@
-import { ClarityApi } from "../../../../utils/clarity";
-import { parseCurl } from "../../../../utils/curl";
-import { getConfig, saveConfig } from "../../../config";
+import { loadConfig as loadAdoConfig } from "@app/azure-devops/config";
+import { ClarityApi } from "@app/utils/clarity";
+import { parseCurl } from "@app/utils/curl";
+import { getConfig, saveConfig } from "@app/clarity/config";
 
 export interface StatusResult {
     configured: boolean;
@@ -64,6 +65,31 @@ export async function testConnection(): Promise<{ success: boolean; message: str
             message: err instanceof Error ? err.message : String(err),
         };
     }
+}
+
+export async function getAdoConfig(): Promise<{ configured: boolean; org: string | null; project: string | null }> {
+    const config = loadAdoConfig();
+
+    if (!config) {
+        return { configured: false, org: null, project: null };
+    }
+
+    return { configured: true, org: config.org, project: config.project };
+}
+
+export async function searchAdoWorkItems(
+    query: string
+): Promise<{ items: Array<{ id: number; title: string; type: string; state: string }> }> {
+    const config = loadAdoConfig();
+
+    if (!config) {
+        throw new Error("Azure DevOps not configured");
+    }
+
+    const { searchWorkItems } = await import("@app/azure-devops/lib/work-item-search");
+    const items = await searchWorkItems(config, query);
+
+    return { items };
 }
 
 export async function updateAuth(curl: string): Promise<{ success: boolean; message: string }> {

@@ -709,6 +709,18 @@ export class Api {
     }
 
     /**
+     * Get full type definitions (with colors, icons, states) for all non-disabled work item types.
+     */
+    async getWorkItemTypeDefinitions(): Promise<WorkItemTypeDefinition[]> {
+        logger.debug("[api] Fetching work item type definitions");
+        const url = Api.witUrl(this.config, "workitemtypes");
+        const result = await this.get<{ value: WorkItemTypeDefinition[] }>(url, "work item type definitions");
+        const definitions = result.value.filter((t) => !t.isDisabled);
+        logger.debug(`[api] Found ${definitions.length} work item type definitions`);
+        return definitions;
+    }
+
+    /**
      * Get all queries from the project (flat list)
      * Recursively fetches queries from all folders
      */

@@ -2,13 +2,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
+import { AddMappingForm } from "../components/AddMappingForm";
 import { MappingTable } from "../components/MappingTable";
+import { MonthPicker } from "../components/MonthPicker";
+import { useAppContext } from "../context/AppContext";
 
 async function fetchMappings() {
     const res = await fetch("/api/mappings");
 
     if (!res.ok) {
-        throw new Error("Failed to fetch mappings");
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Failed to fetch mappings (${res.status})`);
     }
 
     return res.json();
@@ -30,6 +34,7 @@ async function deleteMappingApi(adoWorkItemId: number) {
 
 export function MappingsPage() {
     const queryClient = useQueryClient();
+    const { month, year, setMonthYear } = useAppContext();
 
     const { data, isLoading, error } = useQuery({
         queryKey: ["mappings"],
@@ -49,11 +54,14 @@ export function MappingsPage() {
                 <h1 className="text-xl font-mono font-bold text-gray-200">
                     WORK ITEM <span className="text-amber-500">&harr;</span> CLARITY MAPPINGS
                 </h1>
-                {data?.mappings && (
-                    <Badge variant="outline" className="font-mono">
-                        {data.mappings.length} mappings
-                    </Badge>
-                )}
+                <div className="flex items-center gap-3">
+                    {data?.mappings && (
+                        <Badge variant="outline" className="font-mono">
+                            {data.mappings.length} mappings
+                        </Badge>
+                    )}
+                    <MonthPicker month={month} year={year} onChange={setMonthYear} />
+                </div>
             </div>
 
             <Card className="border-amber-500/20">
@@ -86,8 +94,8 @@ export function MappingsPage() {
                 </CardContent>
             </Card>
 
-            <div className="mt-4 text-xs text-gray-500 font-mono">
-                To add mappings, use: <code className="text-amber-400">tools clarity link-workitems</code>
+            <div className="mt-6">
+                <AddMappingForm onMappingAdded={() => queryClient.invalidateQueries({ queryKey: ["mappings"] })} />
             </div>
         </div>
     );
