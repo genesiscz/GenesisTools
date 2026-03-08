@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:f
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import logger from "@app/logger";
-import { LockTimeoutError, withFileLock as acquireFileLock } from "./file-lock";
+import { withFileLock as acquireFileLock, LockTimeoutError } from "./file-lock";
 
 /**
  * TTL string format: "<number> <unit>" or "<number><unit>"
