@@ -4,6 +4,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ParsedReviewThread, PRLevelComment, ReviewData } from "@app/github/types";
+import { formatRelativeTime } from "@app/utils/format";
 import chalk from "chalk";
 
 // =============================================================================
@@ -431,4 +432,89 @@ export async function saveReviewMarkdown(content: string, prNumber: number): Pro
     await Bun.write(filePath, content);
 
     return filePath;
+}
+
+// =============================================================================
+// LLM-Optimized Formatting (plain text, token-efficient)
+// =============================================================================
+
+/**
+ * Format review data as compact L1 summary for LLM consumption.
+ * Shows thread list with ref IDs (t1, t2, ...) for progressive drill-down.
+ */
+export function formatReviewLLM(data: ReviewData, sessionId: string): string {
+    const { threads, stats } = data;
+
+    let output = `=== PR Review Session: ${sessionId} ===\n`;
+    output += `PR #${data.prNumber}: ${data.title} | ${data.state} | ${data.owner}/${data.repo}\n`;
+    output += `Stats: ${stats.total} threads (${stats.unresolved} unresolved) | HIGH: ${stats.high} | MED: ${stats.medium} | LOW: ${stats.low}\n`;
+    output += "\n";
+
+    if (threads.length === 0) {
+        output += "No review threads found.\n";
+        return output;
+    }
+
+    output += "Threads:\n";
+
+    for (const thread of threads) {
+        const ref = `t${thread.threadNumber}`;
+        const status = thread.status === "resolved" ? "RESOLVED" : "UNRESOLVED";
+        const sev = thread.severity.toUpperCase().padEnd(4);
+        const fileLine = thread.line ? `${thread.file}:${thread.line}` : thread.file;
+        const age = formatRelativeTime(new Date(thread.createdAt), { compact: true });
+        const replyCount = thread.replies.length;
+        const replyText = replyCount === 0 ? "" : `(${replyCount} ${replyCount === 1 ? "reply" : "replies"})`;
+
+        output += `  ${ref.padEnd(5)} ${status.padEnd(10)} ${sev}  ${fileLine.padEnd(35).slice(0, 35)}  ${thread.title.slice(0, 40).padEnd(40)}  @${thread.author.padEnd(12).slice(0, 12)}  ${age.padEnd(8)}  ${replyText}\n`;
+    }
+
+    output += "\n";
+    output += `Expand: tools github review expand t1 -s ${sessionId}\n`;
+    output += `Respond: tools github review respond t1 "message" -s ${sessionId}\n`;
+    output += `Resolve: tools github review resolve t1,t2 -s ${sessionId}\n`;
+
+    return output;
+}
+
+/**
+ * Format a single thread in full detail (L2 view).
+ */
+export function formatThreadExpanded(thread: ParsedReviewThread, sessionId: string): string {
+    const age = formatRelativeTime(new Date(thread.createdAt), { compact: true });
+
+    let output = `=== Session: ${sessionId} | Thread t${thread.threadNumber} ===\n\n`;
+    output += `Thread #${thread.threadNumber}: ${thread.title}\n`;
+    output += `Status: ${thread.status.toUpperCase()} | Severity: ${thread.severity.toUpperCase()}\n`;
+
+    const fileLine = thread.startLine && thread.startLine !== thread.line
+        ? `${thread.file}:${thread.startLine}-${thread.line}`
+        : thread.line ? `${thread.file}:${thread.line}` : thread.file;
+    output += `File: ${fileLine} | Author: @${thread.author} | ${age}\n`;
+    output += `Thread ID: ${thread.threadId}\n`;
+    output += "\n";
+
+    output += `Issue:\n${thread.issue}\n\n`;
+
+    if (thread.diffHunk) {
+        output += `Diff Context:\n${thread.diffHunk}\n\n`;
+    }
+
+    if (thread.suggestedCode) {
+        output += `Suggested Change:\n\`\`\`suggestion\n${thread.suggestedCode}\n\`\`\`\n\n`;
+    }
+
+    if (thread.replies.length > 0) {
+        output += `Replies (${thread.replies.length}):\n`;
+        for (const reply of thread.replies) {
+            const replyAge = formatRelativeTime(new Date(reply.createdAt), { compact: true });
+            output += `  @${reply.author} (${replyAge}): ${reply.body}\n`;
+        }
+        output += "\n";
+    }
+
+    output += `Respond: tools github review respond t${thread.threadNumber} "message" -s ${sessionId}\n`;
+    output += `Resolve: tools github review resolve t${thread.threadNumber} -s ${sessionId}\n`;
+
+    return output;
 }

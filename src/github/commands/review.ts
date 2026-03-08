@@ -2,10 +2,13 @@
 
 import {
     formatReviewJSON,
+    formatReviewLLM,
     formatReviewMarkdown,
     formatReviewTerminal,
+    formatThreadExpanded,
     saveReviewMarkdown,
 } from "@app/github/lib/review-output";
+import { ReviewSessionManager } from "@app/github/lib/review-session";
 import {
     batchReply,
     batchReplyAndResolve,
@@ -14,8 +17,9 @@ import {
     fetchPRReviewThreads,
     parseThreads,
 } from "@app/github/lib/review-threads";
-import type { ReviewCommandOptions, ReviewData } from "@app/github/types";
+import type { ReviewCommandOptions, ReviewData, ReviewSessionData } from "@app/github/types";
 import logger from "@app/logger";
+import { formatRelativeTime } from "@app/utils/format";
 import { detectRepoFromGit, parseGitHubUrl } from "@app/utils/github/url-parser";
 import { setGlobalVerbose } from "@app/utils/github/utils";
 import chalk from "chalk";
@@ -148,6 +152,32 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                 : undefined,
     };
 
+    // LLM-optimized output (session-based with refs)
+    if (options.llm) {
+        const sessionMgr = new ReviewSessionManager();
+        const sessionId = options.session || sessionMgr.generateSessionId(prNumber);
+
+        const sessionData: ReviewSessionData = {
+            meta: {
+                sessionId,
+                owner,
+                repo,
+                prNumber,
+                title: prInfo.title,
+                state: prInfo.state,
+                createdAt: Date.now(),
+                stats,
+                threadCount: displayThreads.length,
+            },
+            threads: displayThreads,
+            prComments: reviewData.prComments,
+        };
+
+        await sessionMgr.createSession(sessionData);
+        console.log(formatReviewLLM(reviewData, sessionId));
+        return;
+    }
+
     // JSON output
     if (options.json) {
         process.stdout.write(`${formatReviewJSON(reviewData)}\n`);
@@ -165,6 +195,134 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
 
     // Terminal output (default)
     console.log(formatReviewTerminal(reviewData, options.groupByFile ?? false));
+}
+
+async function expandCommand(refs: string, options: { session?: string; repo?: string }): Promise<void> {
+    const sessionMgr = new ReviewSessionManager();
+    const sessionId = options.session;
+    if (!sessionId) {
+        throw new Error("Session ID required. Use -s <session-id>");
+    }
+
+    const sessionData = await sessionMgr.loadSession(sessionId);
+    if (!sessionData) {
+        throw new Error(`Session not found or expired: ${sessionId}`);
+    }
+
+    const refIds = refs.split(",").map((s) => s.trim()).filter(Boolean);
+    const resolved = sessionMgr.resolveRefIds(sessionData, refIds);
+
+    for (const { refId, thread } of resolved) {
+        if (!thread) {
+            console.error(`Warning: ref ${refId} not found in session`);
+            continue;
+        }
+
+        console.log(formatThreadExpanded(thread, sessionId));
+    }
+}
+
+async function respondCommand(
+    refs: string,
+    message: string,
+    options: { session?: string; resolve?: boolean },
+): Promise<void> {
+    const sessionMgr = new ReviewSessionManager();
+    const sessionId = options.session;
+    if (!sessionId) {
+        throw new Error("Session ID required. Use -s <session-id>");
+    }
+
+    const sessionData = await sessionMgr.loadSession(sessionId);
+    if (!sessionData) {
+        throw new Error(`Session not found or expired: ${sessionId}`);
+    }
+
+    const refIds = refs.split(",").map((s) => s.trim()).filter(Boolean);
+    const resolved = sessionMgr.resolveRefIds(sessionData, refIds);
+    const threadIds = resolved.map((r) => r.threadId).filter(Boolean);
+
+    if (threadIds.length === 0) {
+        throw new Error("No valid thread refs resolved");
+    }
+
+    const showProgress = threadIds.length > 1;
+
+    if (options.resolve) {
+        const result = await batchReplyAndResolve(threadIds, message, {
+            onProgress: showProgress
+                ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
+                : undefined,
+        });
+        console.log(chalk.green(`Replied to ${result.replied}, resolved ${result.resolved} thread(s)`));
+        if (result.failed.length) {
+            console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+        }
+    } else {
+        const result = await batchReply(threadIds, message, {
+            onProgress: showProgress
+                ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
+                : undefined,
+        });
+        console.log(chalk.green(`Replied to ${result.replied} thread(s)`));
+        if (result.failed.length) {
+            console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+        }
+    }
+}
+
+async function resolveCommand(
+    refs: string,
+    options: { session?: string },
+): Promise<void> {
+    const sessionMgr = new ReviewSessionManager();
+    const sessionId = options.session;
+    if (!sessionId) {
+        throw new Error("Session ID required. Use -s <session-id>");
+    }
+
+    const sessionData = await sessionMgr.loadSession(sessionId);
+    if (!sessionData) {
+        throw new Error(`Session not found or expired: ${sessionId}`);
+    }
+
+    const refIds = refs.split(",").map((s) => s.trim()).filter(Boolean);
+    const resolved = sessionMgr.resolveRefIds(sessionData, refIds);
+    const threadIds = resolved.map((r) => r.threadId).filter(Boolean);
+
+    if (threadIds.length === 0) {
+        throw new Error("No valid thread refs resolved");
+    }
+
+    const showProgress = threadIds.length > 1;
+    const result = await batchResolveThreads(threadIds, {
+        onProgress: showProgress
+            ? (done, total) => console.error(chalk.dim(`  [${done}/${total}]`))
+            : undefined,
+    });
+
+    console.log(chalk.green(`Resolved ${result.resolved} thread(s)`));
+    if (result.failed.length) {
+        console.error(chalk.red(`Failed: ${result.failed.join(", ")}`));
+    }
+}
+
+async function sessionsCommand(): Promise<void> {
+    const sessionMgr = new ReviewSessionManager();
+    const sessions = await sessionMgr.listSessions();
+
+    if (sessions.length === 0) {
+        console.log("No review sessions found.");
+        return;
+    }
+
+    console.log(`Review Sessions (${sessions.length}):\n`);
+    for (const s of sessions) {
+        const age = formatRelativeTime(new Date(s.createdAt), { compact: true });
+        console.log(
+            `  ${s.sessionId.padEnd(30)}  PR #${String(s.prNumber).padEnd(6)}  ${s.owner}/${s.repo}  ${String(s.threadCount).padEnd(3)} threads  ${age}`
+        );
+    }
 }
 
 /**
@@ -188,7 +346,15 @@ Examples:
   Batch operations (comma-separated thread IDs):
   $ tools github review 137 --resolve-thread -t id1,id2,id3              # Resolve multiple threads
   $ tools github review 137 --respond "Fixed" -t id1,id2                 # Reply to multiple threads
-  $ tools github review 137 --respond "Fixed" --resolve-thread -t id1,id2,id3  # Reply+resolve batch`
+  $ tools github review 137 --respond "Fixed" --resolve-thread -t id1,id2,id3  # Reply+resolve batch
+
+  LLM mode (session-based with refs):
+  $ tools github review 137 --llm                                            # Compact L1 summary with refs
+  $ tools github review 137 --llm -u -s pr137-session                        # Unresolved only, named session
+  $ tools github review expand t1,t3 -s pr137-20260308-143025                # Expand threads to full detail
+  $ tools github review respond t1 "Fixed in abc123" --resolve -s pr137-...  # Reply + resolve
+  $ tools github review resolve t1,t2,t3 -s pr137-...                        # Resolve threads
+  $ tools github review sessions                                              # List review sessions`
         )
         .argument("<pr>", "PR number or full GitHub URL")
         .option("--repo <owner/repo>", "Repository (auto-detected from URL or git)")
@@ -200,6 +366,8 @@ Examples:
         .option("-t, --thread-id <ids>", "Thread ID(s) for reply/resolve (comma-separated for batch)")
         .option("-R, --resolve-thread", "Mark a thread as resolved", false)
         .option("--resolve", "Alias for --resolve-thread", false)
+        .option("--llm", "LLM-optimized output with session (compact refs)", false)
+        .option("-s, --session <id>", "Review session ID")
         .option("-v, --verbose", "Enable verbose logging")
         .option("--no-pr-comments", "Hide PR-level review summaries and conversation comments")
         .option("-a, --author <login>", "Filter threads by reviewer login (case-insensitive)")
@@ -212,6 +380,67 @@ Examples:
                 process.exit(1);
             }
         });
+
+    cmd.addCommand(
+        new Command("expand")
+            .description("Expand thread refs to show full detail")
+            .argument("<refs>", "Thread refs (comma-separated, e.g. t1,t3,t5)")
+            .option("-s, --session <id>", "Review session ID")
+            .option("--repo <owner/repo>", "Repository")
+            .action(async (refs: string, opts: { session?: string; repo?: string }) => {
+                try {
+                    await expandCommand(refs, opts);
+                } catch (error) {
+                    console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                    process.exit(1);
+                }
+            })
+    );
+
+    cmd.addCommand(
+        new Command("respond")
+            .description("Reply to review threads by ref ID")
+            .argument("<refs>", "Thread refs (comma-separated, e.g. t1,t3)")
+            .argument("<message>", "Reply message")
+            .option("-s, --session <id>", "Review session ID")
+            .option("--resolve", "Also resolve the threads after replying", false)
+            .action(async (refs: string, message: string, opts: { session?: string; resolve?: boolean }) => {
+                try {
+                    await respondCommand(refs, message, opts);
+                } catch (error) {
+                    console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                    process.exit(1);
+                }
+            })
+    );
+
+    cmd.addCommand(
+        new Command("resolve")
+            .description("Resolve review threads by ref ID")
+            .argument("<refs>", "Thread refs (comma-separated, e.g. t1,t3,t5)")
+            .option("-s, --session <id>", "Review session ID")
+            .action(async (refs: string, opts: { session?: string }) => {
+                try {
+                    await resolveCommand(refs, opts);
+                } catch (error) {
+                    console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                    process.exit(1);
+                }
+            })
+    );
+
+    cmd.addCommand(
+        new Command("sessions")
+            .description("List review sessions")
+            .action(async () => {
+                try {
+                    await sessionsCommand();
+                } catch (error) {
+                    console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                    process.exit(1);
+                }
+            })
+    );
 
     return cmd;
 }
