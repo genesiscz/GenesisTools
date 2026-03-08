@@ -330,6 +330,30 @@ tools github review 137 --respond "Fixed in abc1234" -t PRRT_id1,PRRT_id2
 tools github review 137 --respond "Fixed" --resolve-thread -t PRRT_id1,PRRT_id2,PRRT_id3
 ```
 
+### LLM Mode (Session-Based Review)
+
+For large PRs, use `--llm` mode which creates a session and uses compact refs:
+
+```bash
+# Fetch + create session with compact output
+tools github review 137 --llm -u -s pr137-session
+
+# Expand specific threads to see full detail
+tools github review expand t1,t3 -s pr137-session
+
+# Reply to threads using refs
+tools github review respond t1 "Fixed in abc123" --resolve -s pr137-session
+
+# Resolve multiple threads
+tools github review resolve t1,t2,t3 -s pr137-session
+
+# List active review sessions
+tools github review sessions
+```
+
+The `-s` flag specifies the session ID. Always use it to avoid cross-session confusion.
+When using the `genesis-tools:github-pr` skill, it automatically generates and uses session IDs.
+
 > **PR review fix workflow:** If the user asks to fix, address, or analyze PR review comments — or provides multiple PR URLs — use the `/genesis-tools:github-pr` command (via the `Skill` tool). It handles the full end-to-end flow: fetch threads, critically evaluate each comment (pushing back on false positives), implement fixes, commit, reply to reviewers, and for multiple PRs: spawn parallel agents and produce a consolidated report.
 
 ### Resolving Review Threads
