@@ -1,18 +1,7 @@
 ---
 name: genesis-tools:github
 description: |
-  Efficiently interact with GitHub issues, PRs, comments, and code using the `tools github` CLI.
-  Use when:
-  - User provides a GitHub issue/PR URL and wants details or comments
-  - User asks about recent activity on an issue
-  - User wants to find issues/PRs matching criteria
-  - User asks for comments starting from a specific point
-  - User wants to filter comments by reactions, author, or date
-  - User wants to search code in a repository (e.g. "find how X is implemented")
-  - User wants to find issues or discussions about a library or framework
-  - User asks "how does library X handle Y" or "are there issues about Z"
-  - User asks to fix/address/review PR review comments → use the `/genesis-tools:github-pr` command instead
-  - User provides multiple PR URLs to analyze → use the `/genesis-tools:github-pr` command instead
+  Use whenever the user wants to READ or SEARCH GitHub content: fetching an issue or PR from a URL, getting comments (including after a specific comment anchor like #issuecomment-XXX), viewing PR review threads without making code changes, searching a repository's issues/PRs/code (e.g. "find how library X handles Y", "are there issues about Z"), browsing notifications or activity. Triggers on any "look up", "show me", "find", "check", "summarize", or "search" intent on GitHub URLs or repositories. Do NOT use when the task is to implement code fixes, address PR feedback, or make commits — use genesis-tools:github-pr for that.
 ---
 
 # GitHub Tool Usage Guide

@@ -1,7 +1,7 @@
 ---
 name: debugging-master
 description: |
-  Hypothesis-driven runtime debugging toolkit. Use when debugging runtime bugs, investigating unexpected behavior, profiling performance, tracing execution flow, or inspecting runtime data. Triggers on "debug this", "why is this happening", "instrument the code", "add logging", "trace execution", "profile performance", "runtime bug", "debug session". NEVER guess at runtime behavior - instrument, reproduce, and analyze real data.
+  Use when debugging runtime behavior that code-reading alone can't explain. Prime indicators: environment-specific failures ("works locally, breaks in CI"), operations that are slow or hang, data discrepancies between layers (API returns X but UI shows Y), or any "why is this happening at runtime" question. Core actions: adding targeted logging to observe real values, profiling slow operations, tracing execution flow, instrumenting HTTP calls. The key signal: you need to run the code and observe what actually happens. Not for static problems like type errors, code review, or adding permanent features.
 ---
 
 # Debugging Master
