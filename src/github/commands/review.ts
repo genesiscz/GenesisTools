@@ -330,6 +330,7 @@ async function sessionsCommand(): Promise<void> {
  */
 export function createReviewCommand(): Command {
     const cmd = new Command("review")
+        .enablePositionalOptions()
         .description(
             `Fetch and display GitHub PR review threads
 
