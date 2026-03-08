@@ -20,33 +20,29 @@ export class ReviewSessionManager {
         return `pr${prNumber}-${date}-${time}`;
     }
 
+    private validateSessionId(sessionId: string): string {
+        if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) {
+            throw new Error(`Invalid session ID: "${sessionId}" — only alphanumeric, dash, and underscore allowed`);
+        }
+
+        return sessionId;
+    }
+
     async createSession(data: ReviewSessionData): Promise<string> {
-        const { sessionId } = data.meta;
-        await this.storage.putCacheFile(
-            `${SESSIONS_DIR}/${sessionId}.json`,
-            data,
-            SESSION_TTL,
-        );
-        await this.storage.putCacheFile(
-            `${SESSIONS_DIR}/${sessionId}.meta.json`,
-            data.meta,
-            SESSION_TTL,
-        );
+        const sessionId = this.validateSessionId(data.meta.sessionId);
+        await this.storage.putCacheFile(`${SESSIONS_DIR}/${sessionId}.json`, data, SESSION_TTL);
+        await this.storage.putCacheFile(`${SESSIONS_DIR}/${sessionId}.meta.json`, data.meta, SESSION_TTL);
         return sessionId;
     }
 
     async loadSession(sessionId: string): Promise<ReviewSessionData | null> {
-        return this.storage.getCacheFile<ReviewSessionData>(
-            `${SESSIONS_DIR}/${sessionId}.json`,
-            SESSION_TTL,
-        );
+        const safeId = this.validateSessionId(sessionId);
+        return this.storage.getCacheFile<ReviewSessionData>(`${SESSIONS_DIR}/${safeId}.json`, SESSION_TTL);
     }
 
     async loadSessionMeta(sessionId: string): Promise<ReviewSessionMeta | null> {
-        return this.storage.getCacheFile<ReviewSessionMeta>(
-            `${SESSIONS_DIR}/${sessionId}.meta.json`,
-            SESSION_TTL,
-        );
+        const safeId = this.validateSessionId(sessionId);
+        return this.storage.getCacheFile<ReviewSessionMeta>(`${SESSIONS_DIR}/${safeId}.meta.json`, SESSION_TTL);
     }
 
     async listSessions(): Promise<ReviewSessionMeta[]> {
@@ -55,7 +51,7 @@ export class ReviewSessionManager {
             return [];
         }
 
-        const files = readdirSync(dir).filter((f: string) => f.endsWith(".meta.json"));
+        const files = readdirSync(dir).filter((f) => f.endsWith(".meta.json"));
         const sessions: ReviewSessionMeta[] = [];
 
         for (const file of files) {
@@ -73,17 +69,16 @@ export class ReviewSessionManager {
         owner: string,
         repo: string,
         prNumber: number,
-        maxAgeMs = 60 * 60 * 1000,
+        maxAgeMs = 60 * 60 * 1000
     ): Promise<ReviewSessionMeta | null> {
         const sessions = await this.listSessions();
         const cutoff = Date.now() - maxAgeMs;
 
-        return sessions.find(
-            (s) => s.prNumber === prNumber
-                && s.owner === owner
-                && s.repo === repo
-                && s.createdAt > cutoff,
-        ) ?? null;
+        return (
+            sessions.find(
+                (s) => s.prNumber === prNumber && s.owner === owner && s.repo === repo && s.createdAt > cutoff
+            ) ?? null
+        );
     }
 
     /**
@@ -92,15 +87,15 @@ export class ReviewSessionManager {
      */
     resolveRefIds(
         sessionData: ReviewSessionData,
-        refIds: string[],
-    ): { refId: string; threadId: string; thread: ParsedReviewThread }[] {
-        const results: { refId: string; threadId: string; thread: ParsedReviewThread }[] = [];
+        refIds: string[]
+    ): { refId: string; threadId: string; thread: ParsedReviewThread | undefined }[] {
+        const results: { refId: string; threadId: string; thread: ParsedReviewThread | undefined }[] = [];
 
         for (const ref of refIds) {
             const match = ref.match(/^t(\d+)$/i);
             if (match) {
-                const index = parseInt(match[1], 10) - 1;
-                const thread = sessionData.threads[index];
+                const threadNumber = parseInt(match[1], 10);
+                const thread = sessionData.threads.find((t) => t.threadNumber === threadNumber);
                 if (thread) {
                     results.push({ refId: ref, threadId: thread.threadId, thread });
                 }
@@ -110,7 +105,7 @@ export class ReviewSessionManager {
                 if (thread) {
                     results.push({ refId: `t${thread.threadNumber}`, threadId: ref, thread });
                 } else {
-                    results.push({ refId: ref, threadId: ref, thread: undefined as unknown as ParsedReviewThread });
+                    results.push({ refId: ref, threadId: ref, thread: undefined });
                 }
             }
         }

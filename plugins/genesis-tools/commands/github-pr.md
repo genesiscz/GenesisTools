@@ -215,7 +215,7 @@ Which review threads should I fix?
 Options:
 1. Fix all VALID threads (X threads)
 2. Fix only HIGH priority VALID threads (Y threads)
-3. Let me specify thread numbers
+3. Let me specify thread refs
 4. Adjust verdicts first (I disagree with some analysis)
 ```
 

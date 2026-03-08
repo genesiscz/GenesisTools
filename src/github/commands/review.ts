@@ -160,6 +160,13 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
         const isFirstFetch = !recentSession;
         const sessionId = options.session || sessionMgr.generateSessionId(prNumber);
 
+        // Reindex threads with contiguous ref numbers (t1, t2, ...) for session-local refs
+        const sessionThreads = displayThreads.map((thread, index) => ({
+            ...thread,
+            threadNumber: index + 1,
+        }));
+        const sessionStats = calculateReviewStats(sessionThreads);
+
         const sessionData: ReviewSessionData = {
             meta: {
                 sessionId,
@@ -169,16 +176,22 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                 title: prInfo.title,
                 state: prInfo.state,
                 createdAt: Date.now(),
-                stats,
-                threadCount: displayThreads.length,
+                stats: sessionStats,
+                threadCount: sessionThreads.length,
             },
-            threads: displayThreads,
+            threads: sessionThreads,
             prComments: reviewData.prComments,
+        };
+
+        const llmReviewData: ReviewData = {
+            ...reviewData,
+            threads: sessionThreads,
+            stats: sessionStats,
         };
 
         await sessionMgr.createSession(sessionData);
 
-        let output = formatReviewLLM(reviewData, sessionId);
+        let output = formatReviewLLM(llmReviewData, sessionId);
 
         const prComments = reviewData.prComments ?? [];
         if (prComments.length > 0) {
@@ -261,7 +274,12 @@ async function respondCommand(
         .map((s) => s.trim())
         .filter(Boolean);
     const resolved = sessionMgr.resolveRefIds(sessionData, refIds);
-    const threadIds = resolved.map((r) => r.threadId).filter(Boolean);
+    const missing = resolved.filter((r) => !r.thread);
+    if (missing.length > 0) {
+        console.error(chalk.yellow(`Warning: could not resolve ref(s): ${missing.map((r) => r.refId).join(", ")}`));
+    }
+
+    const threadIds = [...new Set(resolved.filter((r) => r.thread).map((r) => r.threadId))];
 
     if (threadIds.length === 0) {
         throw new Error("No valid thread refs resolved");
@@ -305,7 +323,12 @@ async function resolveCommand(refs: string, options: { session?: string }): Prom
         .map((s) => s.trim())
         .filter(Boolean);
     const resolved = sessionMgr.resolveRefIds(sessionData, refIds);
-    const threadIds = resolved.map((r) => r.threadId).filter(Boolean);
+    const missing = resolved.filter((r) => !r.thread);
+    if (missing.length > 0) {
+        console.error(chalk.yellow(`Warning: could not resolve ref(s): ${missing.map((r) => r.refId).join(", ")}`));
+    }
+
+    const threadIds = [...new Set(resolved.filter((r) => r.thread).map((r) => r.threadId))];
 
     if (threadIds.length === 0) {
         throw new Error("No valid thread refs resolved");
