@@ -59,12 +59,13 @@ export const handleAsk: ActionHandler = async (message, contact, client, convers
 
         await Bun.sleep(contact.randomDelay);
 
-        await client.sendMessage(contact.userId, response.content);
+        const sentMessage = await client.sendMessage(contact.userId, response.content);
 
         return {
             action: "ask",
             success: true,
             reply: response.content,
+            replyMessageId: sentMessage.id,
             duration: performance.now() - start,
         };
     } catch (err) {

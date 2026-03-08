@@ -1,16 +1,19 @@
 import logger from "@app/logger";
 import pc from "picocolors";
 import type { NewMessageEvent } from "telegram/events";
+import type { DeletedMessageEvent } from "telegram/events/DeletedMessage";
+import type { EditedMessageEvent } from "telegram/events/EditedMessage";
 import { executeActions } from "./actions";
 import { TelegramContact } from "./TelegramContact";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
 import { TelegramMessage } from "./TelegramMessage";
 import type { TGClient } from "./TGClient";
-import type { ContactConfig } from "./types";
+import type { TelegramContactV2 } from "./types";
 import { DEFAULTS } from "./types";
 
 const processedIds = new Set<number>();
 const processedOrder: number[] = [];
+let localReplyFallbackId = -1;
 
 function trackMessage(id: number): boolean {
     if (processedIds.has(id)) {
@@ -62,10 +65,36 @@ class ConversationContext {
 }
 
 export interface HandlerOptions {
-    contacts: ContactConfig[];
+    contacts: TelegramContactV2[];
     myName: string;
     initialHistory?: Map<string, string[]>;
     store: TelegramHistoryStore;
+}
+
+function extractPeerId(
+    peer?: {
+        userId?: unknown;
+        chatId?: unknown;
+        channelId?: unknown;
+    } | null
+): string | null {
+    if (!peer) {
+        return null;
+    }
+
+    if ("userId" in peer && peer.userId !== undefined && peer.userId !== null) {
+        return String(peer.userId);
+    }
+
+    if ("chatId" in peer && peer.chatId !== undefined && peer.chatId !== null) {
+        return String(peer.chatId);
+    }
+
+    if ("channelId" in peer && peer.channelId !== undefined && peer.channelId !== null) {
+        return String(peer.channelId);
+    }
+
+    return null;
 }
 
 export function registerHandler(client: TGClient, options: HandlerOptions): void {
@@ -132,15 +161,13 @@ export function registerHandler(client: TGClient, options: HandlerOptions): void
                     const extra = r.reply ? ` "${r.reply.slice(0, 60)}${r.reply.length > 60 ? "..." : ""}"` : "";
                     logger.info(`  ${pc.green(`[${r.action}]`)} OK${pc.dim(extra)}`);
 
-                    // Append our reply to the conversation context
                     if (r.action === "ask" && r.reply && ctx) {
                         ctx.append(options.myName, r.reply);
 
-                        // Persist outgoing reply to history store
                         try {
                             options.store.insertMessages(senderId, [
                                 {
-                                    id: Date.now(),
+                                    id: r.replyMessageId ?? localReplyFallbackId--,
                                     senderId: undefined,
                                     text: r.reply,
                                     mediaDescription: undefined,
@@ -159,6 +186,55 @@ export function registerHandler(client: TGClient, options: HandlerOptions): void
             }
         } catch (err) {
             logger.error(`Handler error: ${err}`);
+        }
+    });
+
+    client.onEditedMessage(async (event: EditedMessageEvent) => {
+        try {
+            const message = event.message;
+
+            if (!message) {
+                return;
+            }
+
+            const msg = new TelegramMessage(message);
+            const chatId = extractPeerId(message.peerId);
+
+            if (!chatId) {
+                return;
+            }
+
+            options.store.upsertMessageWithRevision(chatId, {
+                id: msg.id,
+                senderId: msg.senderId,
+                text: msg.text,
+                mediaDescription: msg.mediaDescription,
+                isOutgoing: msg.isOutgoing,
+                date: msg.date.toISOString(),
+                dateUnix: Math.floor(msg.date.getTime() / 1000),
+                editedDateUnix: message.editDate ?? Math.floor(Date.now() / 1000),
+            });
+        } catch (err) {
+            logger.error({ err }, "Error handling edited message");
+        }
+    });
+
+    client.onDeletedMessage(async (event: DeletedMessageEvent) => {
+        try {
+            const deletedIds: number[] = event.deletedIds ?? [];
+            const peerChatId = extractPeerId(
+                (event.peer as { userId?: unknown; chatId?: unknown; channelId?: unknown } | null) ?? null
+            );
+
+            for (const msgId of deletedIds) {
+                const row = options.store.findMessageById(msgId, peerChatId ?? undefined);
+
+                if (row) {
+                    options.store.markMessageDeleted(row.chat_id, msgId);
+                }
+            }
+        } catch (err) {
+            logger.error({ err }, "Error handling deleted message");
         }
     });
 

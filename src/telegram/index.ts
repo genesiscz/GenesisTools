@@ -4,6 +4,7 @@ import { registerConfigureCommand } from "./commands/configure";
 import { registerContactsCommand } from "./commands/contacts";
 import { registerHistoryCommand } from "./commands/history";
 import { registerListenCommand } from "./commands/listen";
+import { registerWatchCommand } from "./commands/watch";
 
 handleReadmeFlag(import.meta.url);
 
@@ -18,6 +19,7 @@ registerConfigureCommand(program);
 registerListenCommand(program);
 registerContactsCommand(program);
 registerHistoryCommand(program);
+registerWatchCommand(program);
 
 program.parseAsync().catch((err) => {
     console.error(err);

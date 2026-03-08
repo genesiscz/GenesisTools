@@ -1,11 +1,20 @@
+import { ModelSelector } from "@app/ask/index.lib";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 import type { Api } from "telegram";
+import type { Dialog } from "telegram/tl/custom/dialog";
 import { TelegramToolConfig } from "../lib/TelegramToolConfig";
 import { TGClient } from "../lib/TGClient";
-import type { ActionType, ContactConfig, TelegramConfigData } from "../lib/types";
-import { DEFAULTS } from "../lib/types";
+import type {
+    ActionType,
+    ChatType,
+    ContactModesConfig,
+    TelegramConfigDataV2,
+    TelegramContactV2,
+    WatchConfig,
+} from "../lib/types";
+import { DEFAULT_MODE_CONFIG, DEFAULT_STYLE_PROFILE, DEFAULT_WATCH_CONFIG, DEFAULTS } from "../lib/types";
 
 function isUser(entity: unknown): entity is Api.User {
     return (
@@ -18,7 +27,7 @@ function isUser(entity: unknown): entity is Api.User {
 }
 
 async function promptCredentials(
-    existing: TelegramConfigData | null
+    existing: TelegramConfigDataV2 | null
 ): Promise<{ apiId: number; apiHash: string } | null> {
     p.note("Telegram API credentials are pre-filled.\nGet your own at https://my.telegram.org/apps", "API Credentials");
 
@@ -106,40 +115,82 @@ async function runAuthFlow(client: TGClient): Promise<boolean> {
     }
 }
 
-interface ContactOption {
-    userId: string;
+interface DialogOption {
+    dialog: Dialog;
+    chatType: ChatType;
+    entityId: string;
+    dialogKey: string;
     label: string;
     hint: string;
-    user: Api.User;
 }
 
-async function fetchContacts(client: TGClient): Promise<ContactOption[]> {
+function classifyDialog(d: Dialog): { chatType: ChatType; entityId: string; dialogKey: string } | null {
+    if (!d.entity) {
+        return null;
+    }
+
+    if (d.isUser && isUser(d.entity) && !d.entity.bot && !d.entity.self) {
+        const entityId = d.entity.id.toString();
+        return { chatType: "user", entityId, dialogKey: `user:${entityId}` };
+    }
+
+    if (d.isGroup && d.entity.id) {
+        const entityId = d.entity.id.toString();
+        return { chatType: "group", entityId, dialogKey: `group:${entityId}` };
+    }
+
+    if (d.isChannel && d.entity.id) {
+        const entityId = d.entity.id.toString();
+        return { chatType: "channel", entityId, dialogKey: `channel:${entityId}` };
+    }
+
+    return null;
+}
+
+async function fetchDialogOptions(client: TGClient): Promise<DialogOption[]> {
     const spinner = p.spinner();
     spinner.start("Fetching your recent chats...");
+    const options: DialogOption[] = [];
 
-    const dialogs = await client.getDialogs(100);
+    try {
+        const dialogs = await client.getDialogs(200);
 
-    const userDialogs = dialogs.filter((d) => d.isUser && isUser(d.entity) && !d.entity.bot && !d.entity.self);
+        for (const d of dialogs) {
+            const classified = classifyDialog(d);
 
-    spinner.stop(`Found ${userDialogs.length} contacts`);
+            if (!classified) {
+                continue;
+            }
 
-    return userDialogs
-        .filter((d): d is typeof d & { entity: Api.User } => isUser(d.entity))
-        .map((d) => {
-            const user = d.entity;
-            const label = `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.id.toString();
-            const hint = user.username ? `@${user.username}` : user.phone ? `+${user.phone}` : "";
-            return { userId: user.id.toString(), label, hint, user };
-        });
+            const entity = d.entity as { username?: string; phone?: string; id: { toString(): string } };
+            const username = "username" in entity ? entity.username : undefined;
+            const typePrefix = classified.chatType === "user" ? "U" : classified.chatType === "group" ? "G" : "C";
+            const label = `[${typePrefix}] ${d.title || classified.entityId}`;
+            const hint = username ? `@${username}` : "";
+
+            options.push({
+                dialog: d,
+                chatType: classified.chatType,
+                entityId: classified.entityId,
+                dialogKey: classified.dialogKey,
+                label,
+                hint,
+            });
+        }
+
+        return options;
+    } finally {
+        spinner.stop(`Found ${options.length} chats`);
+    }
 }
 
-async function selectContacts(options: ContactOption[], existingContacts: ContactConfig[]): Promise<string[] | null> {
-    const existingIds = new Set(existingContacts.map((c) => c.userId));
+async function selectDialogs(options: DialogOption[], existingContacts: TelegramContactV2[]): Promise<string[] | null> {
+    const existingDialogKeys = new Set(existingContacts.map((c) => `${c.chatType}:${c.userId}`));
 
     const selected = await p.multiselect({
-        message: "Select contacts to watch:",
-        options: options.map((o) => ({ value: o.userId, label: o.label, hint: o.hint })),
-        initialValues: [...existingIds].filter((id) => options.some((o) => o.userId === id)),
+        message: "Select chats to watch:",
+        options: options.map((o) => ({ value: o.dialogKey, label: o.label, hint: o.hint })),
+        initialValues: options.filter((o) => existingDialogKeys.has(o.dialogKey)).map((o) => o.dialogKey),
         required: false,
     });
 
@@ -150,7 +201,112 @@ async function selectContacts(options: ContactOption[], existingContacts: Contac
     return selected as string[];
 }
 
-async function configureContactActions(opt: ContactOption, existing?: ContactConfig): Promise<ContactConfig | null> {
+async function configureContactModes(
+    displayName: string,
+    existing?: TelegramContactV2
+): Promise<ContactModesConfig | null> {
+    const modeChoices = await p.multiselect({
+        message: `Which AI modes for ${displayName}?`,
+        options: [
+            { value: "autoReply" as const, label: "Auto-Reply", hint: "Automatically respond to messages" },
+            { value: "assistant" as const, label: "Chat Assistant", hint: "Ask questions about the conversation" },
+            {
+                value: "suggestions" as const,
+                label: "Message Suggestions",
+                hint: "Get suggested replies to pick/edit/send",
+            },
+        ],
+        initialValues: getExistingEnabledModes(existing),
+        required: false,
+    });
+
+    if (p.isCancel(modeChoices)) {
+        return null;
+    }
+
+    const selectedModes = modeChoices as string[];
+    const modes: ContactModesConfig = {
+        autoReply: { ...DEFAULT_MODE_CONFIG.autoReply },
+        assistant: { ...DEFAULT_MODE_CONFIG.assistant },
+        suggestions: { ...DEFAULT_MODE_CONFIG.suggestions },
+    };
+
+    const modelSelector = new ModelSelector();
+
+    for (const mode of selectedModes) {
+        const configureModel = await p.confirm({
+            message: `Configure custom model for ${mode}?`,
+            initialValue: false,
+        });
+
+        if (p.isCancel(configureModel)) {
+            return null;
+        }
+
+        if (mode === "autoReply") {
+            modes.autoReply = { ...modes.autoReply, enabled: true };
+        } else if (mode === "assistant") {
+            modes.assistant = { ...modes.assistant, enabled: true };
+        } else if (mode === "suggestions") {
+            modes.suggestions = { ...modes.suggestions, enabled: true };
+        }
+
+        if (configureModel) {
+            const choice = await modelSelector.selectModel();
+
+            if (choice && !p.isCancel(choice)) {
+                if (mode === "autoReply") {
+                    modes.autoReply = {
+                        ...modes.autoReply,
+                        provider: choice.provider.name,
+                        model: choice.model.id,
+                    };
+                } else if (mode === "assistant") {
+                    modes.assistant = {
+                        ...modes.assistant,
+                        provider: choice.provider.name,
+                        model: choice.model.id,
+                    };
+                } else if (mode === "suggestions") {
+                    modes.suggestions = {
+                        ...modes.suggestions,
+                        provider: choice.provider.name,
+                        model: choice.model.id,
+                    };
+                }
+            }
+        }
+    }
+
+    return modes;
+}
+
+function getExistingEnabledModes(existing?: TelegramContactV2): string[] {
+    if (!existing?.modes) {
+        return ["assistant", "suggestions"];
+    }
+
+    const enabled: string[] = [];
+
+    if (existing.modes.autoReply.enabled) {
+        enabled.push("autoReply");
+    }
+
+    if (existing.modes.assistant.enabled) {
+        enabled.push("assistant");
+    }
+
+    if (existing.modes.suggestions.enabled) {
+        enabled.push("suggestions");
+    }
+
+    return enabled;
+}
+
+async function configureContactActions(
+    opt: DialogOption,
+    existing?: TelegramContactV2
+): Promise<TelegramContactV2 | null> {
     p.log.step(pc.bold(opt.label));
 
     const actions = await p.multiselect({
@@ -169,56 +325,84 @@ async function configureContactActions(opt: ContactOption, existing?: ContactCon
     }
 
     const typedActions = actions as ActionType[];
-    let askSystemPrompt: string | undefined;
-    let askProvider: string | undefined;
-    let askModel: string | undefined;
+
+    let systemPrompt: string | undefined;
 
     if (typedActions.includes("ask")) {
         const prompt = await p.text({
             message: `System prompt for auto-replies to ${opt.label}:`,
-            initialValue: existing?.askSystemPrompt || DEFAULTS.askSystemPrompt,
+            initialValue: existing?.modes?.autoReply?.systemPrompt || DEFAULTS.askSystemPrompt,
         });
 
         if (p.isCancel(prompt)) {
             return null;
         }
 
-        askSystemPrompt = prompt as string;
-
-        const provider = await p.text({
-            message: "LLM provider:",
-            initialValue: existing?.askProvider || DEFAULTS.askProvider,
-        });
-
-        if (p.isCancel(provider)) {
-            return null;
-        }
-
-        askProvider = provider as string;
-
-        const model = await p.text({
-            message: "LLM model:",
-            initialValue: existing?.askModel || DEFAULTS.askModel,
-        });
-
-        if (p.isCancel(model)) {
-            return null;
-        }
-
-        askModel = model as string;
+        systemPrompt = prompt as string;
     }
 
+    const modes = await configureContactModes(opt.label, existing);
+
+    if (!modes) {
+        return null;
+    }
+
+    if (systemPrompt && modes.autoReply.enabled) {
+        modes.autoReply.systemPrompt = systemPrompt;
+    }
+
+    const contextLength = await p.text({
+        message: "Context window size (number of recent messages)?",
+        initialValue: String(existing?.watch?.contextLength ?? 30),
+        validate: (v) => {
+            if (!v) {
+                return "Required";
+            }
+
+            const n = Number.parseInt(v, 10);
+
+            if (Number.isNaN(n) || n < 1 || n > 500) {
+                return "Must be 1-500";
+            }
+        },
+    });
+
+    if (p.isCancel(contextLength)) {
+        return null;
+    }
+
+    const watchConfig: WatchConfig = {
+        enabled: true,
+        contextLength: Number.parseInt(contextLength as string, 10),
+        runtimeMode: existing?.watch?.runtimeMode ?? "ink",
+    };
+
     return {
-        userId: opt.userId,
-        displayName: opt.label,
-        username: opt.user.username ?? undefined,
+        userId: opt.entityId,
+        displayName: opt.dialog.title || opt.entityId,
+        username: getEntityUsername(opt.dialog),
+        chatType: opt.chatType,
         actions: typedActions,
-        askSystemPrompt,
-        askProvider,
-        askModel,
+        watch: watchConfig,
+        modes,
+        styleProfile: existing?.styleProfile ?? { ...DEFAULT_STYLE_PROFILE },
         replyDelayMin: existing?.replyDelayMin ?? DEFAULTS.replyDelayMin,
         replyDelayMax: existing?.replyDelayMax ?? DEFAULTS.replyDelayMax,
     };
+}
+
+function getEntityUsername(dialog: Dialog): string | undefined {
+    const entity = dialog.entity;
+
+    if (!entity) {
+        return undefined;
+    }
+
+    if ("username" in entity && typeof entity.username === "string") {
+        return entity.username;
+    }
+
+    return undefined;
 }
 
 export function registerConfigureCommand(program: Command): void {
@@ -246,7 +430,7 @@ export function registerConfigureCommand(program: Command): void {
                         `Logged in as ${pc.bold(me.firstName || "")} ` + `${me.username ? `(@${me.username})` : ""}`
                     );
                 } else {
-                    spinner.stop("Session expired — re-authentication needed");
+                    spinner.stop("Session expired -- re-authentication needed");
                     await client.disconnect();
                     client = null;
                 }
@@ -277,11 +461,12 @@ export function registerConfigureCommand(program: Command): void {
             const me = await client.getMe();
             const session = client.getSessionString();
 
-            const contactOptions = await fetchContacts(client);
+            const dialogOptions = await fetchDialogOptions(client);
 
-            if (contactOptions.length === 0) {
-                p.log.warn("No contacts found in recent chats.");
-                await toolConfig.save({
+            if (dialogOptions.length === 0) {
+                p.log.warn("No chats found.");
+                const emptyConfig: TelegramConfigDataV2 = {
+                    version: 2,
                     apiId: effectiveApiId,
                     apiHash: effectiveApiHash,
                     session,
@@ -291,30 +476,36 @@ export function registerConfigureCommand(program: Command): void {
                         phone: me.phone ?? undefined,
                     },
                     contacts: [],
+                    globalDefaults: {
+                        modes: { ...DEFAULT_MODE_CONFIG },
+                        watch: { ...DEFAULT_WATCH_CONFIG },
+                        styleProfile: { ...DEFAULT_STYLE_PROFILE },
+                    },
                     configuredAt: new Date().toISOString(),
-                });
+                };
+                await toolConfig.save(emptyConfig);
                 await client.disconnect();
                 p.outro("Configuration saved (no contacts to watch).");
                 return;
             }
 
-            const selectedIds = await selectContacts(contactOptions, existing?.contacts ?? []);
+            const selectedIds = await selectDialogs(dialogOptions, existing?.contacts ?? []);
 
             if (!selectedIds) {
                 await client.disconnect();
                 return;
             }
 
-            const contacts: ContactConfig[] = [];
+            const contacts: TelegramContactV2[] = [];
 
-            for (const userId of selectedIds) {
-                const opt = contactOptions.find((o) => o.userId === userId);
+            for (const dialogKey of selectedIds) {
+                const opt = dialogOptions.find((o) => o.dialogKey === dialogKey);
 
                 if (!opt) {
                     continue;
                 }
 
-                const existingContact = existing?.contacts.find((c) => c.userId === userId);
+                const existingContact = existing?.contacts.find((c) => `${c.chatType}:${c.userId}` === dialogKey);
                 const contact = await configureContactActions(opt, existingContact);
 
                 if (!contact) {
@@ -325,7 +516,8 @@ export function registerConfigureCommand(program: Command): void {
                 contacts.push(contact);
             }
 
-            await toolConfig.save({
+            const configToSave: TelegramConfigDataV2 = {
+                version: 2,
                 apiId: effectiveApiId,
                 apiHash: effectiveApiHash,
                 session,
@@ -335,9 +527,15 @@ export function registerConfigureCommand(program: Command): void {
                     phone: me.phone ?? undefined,
                 },
                 contacts,
+                globalDefaults: existing?.globalDefaults ?? {
+                    modes: { ...DEFAULT_MODE_CONFIG },
+                    watch: { ...DEFAULT_WATCH_CONFIG },
+                    styleProfile: { ...DEFAULT_STYLE_PROFILE },
+                },
                 configuredAt: new Date().toISOString(),
-            });
+            };
 
+            await toolConfig.save(configToSave);
             await client.disconnect();
 
             p.log.success(`Saved ${contacts.length} contact(s)`);
