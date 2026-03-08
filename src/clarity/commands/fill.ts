@@ -153,6 +153,7 @@ export function registerFillCommand(program: Command): void {
             baseUrl: clarityConfig.baseUrl,
             authToken: clarityConfig.authToken,
             sessionId: clarityConfig.sessionId,
+            cookies: clarityConfig.cookies,
         });
 
         console.log(pc.bold(`\nFilling Clarity for ${options.month}/${year}${isDryRun ? " (DRY RUN)" : ""}`));

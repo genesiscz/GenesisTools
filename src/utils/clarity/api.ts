@@ -7,9 +7,10 @@ import type {
 } from "./types/index.js";
 
 export interface ClarityApiConfig {
-    baseUrl: string; // e.g. "https://clarity.example.com"
-    authToken: string; // e.g. "34546093__A7F323E6-..."
-    sessionId: string; // from cookie
+    baseUrl: string;
+    authToken: string;
+    sessionId: string;
+    cookies?: string;
 }
 
 export class ClarityApi {
@@ -30,17 +31,24 @@ export class ClarityApi {
                 "Cache-Control": "no-cache",
                 "x-api-force-patch": "true",
                 "x-api-full-response": "true",
-                Cookie: `sessionId=${this.config.sessionId}`,
+                Cookie: this.config.cookies || `sessionId=${this.config.sessionId}`,
                 ...(options.headers as Record<string, string>),
             },
         });
 
+        const text = await response.text();
+
         if (!response.ok) {
-            const text = await response.text();
-            throw new Error(`Clarity API error ${response.status}: ${text}`);
+            throw new Error(`Clarity API error ${response.status}: ${text.slice(0, 500)}`);
         }
 
-        return response.json() as Promise<T>;
+        try {
+            return JSON.parse(text) as T;
+        } catch {
+            const isHtml = text.trimStart().startsWith("<");
+            const hint = isHtml ? "Session expired — re-authenticate in Settings" : text.slice(0, 300);
+            throw new Error(`Clarity API returned non-JSON (${response.status}): ${hint}`);
+        }
     }
 
     /** Fetch a full timesheet with all time entries */

@@ -107,6 +107,7 @@ export function registerTimesheetCommand(program: Command): void {
                 baseUrl: config.baseUrl,
                 authToken: config.authToken,
                 sessionId: config.sessionId,
+                cookies: config.cookies,
             });
 
             const timesheetId = parseInt(timesheetIdStr, 10);
@@ -142,6 +143,7 @@ export function registerTimesheetCommand(program: Command): void {
                 baseUrl: config.baseUrl,
                 authToken: config.authToken,
                 sessionId: config.sessionId,
+                cookies: config.cookies,
             });
 
             if (!options.period) {
@@ -185,6 +187,7 @@ export function registerTimesheetCommand(program: Command): void {
                 baseUrl: config.baseUrl,
                 authToken: config.authToken,
                 sessionId: config.sessionId,
+                cookies: config.cookies,
             });
 
             const timesheetId = parseInt(timesheetIdStr, 10);
@@ -223,6 +226,7 @@ export function registerTimesheetCommand(program: Command): void {
                 baseUrl: config.baseUrl,
                 authToken: config.authToken,
                 sessionId: config.sessionId,
+                cookies: config.cookies,
             });
 
             const timesheetId = parseInt(timesheetIdStr, 10);

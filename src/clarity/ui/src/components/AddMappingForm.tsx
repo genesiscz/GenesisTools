@@ -68,7 +68,8 @@ async function fetchWeeks(month?: number, year?: number): Promise<{ weeks: Times
     });
 
     if (!res.ok) {
-        throw new Error("Failed to load timesheet weeks");
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Failed to load timesheet weeks (${res.status})`);
     }
 
     return res.json();
@@ -410,8 +411,19 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                         </div>
                     ) : weeksError ? (
                         <div className="flex items-center gap-2 text-red-400 font-mono text-xs py-2">
-                            <XCircle className="w-3.5 h-3.5" />
-                            {weeksError instanceof Error ? weeksError.message : "Failed to load weeks"}
+                            <XCircle className="w-3.5 h-3.5 shrink-0" />
+                            {weeksError instanceof Error && weeksError.message.includes("non-JSON") ? (
+                                <span>
+                                    Clarity session expired.{" "}
+                                    <a href="#/settings" className="underline text-amber-400 hover:text-amber-300">
+                                        Re-authenticate in Settings
+                                    </a>
+                                </span>
+                            ) : weeksError instanceof Error ? (
+                                weeksError.message
+                            ) : (
+                                "Failed to load weeks"
+                            )}
                         </div>
                     ) : (
                         <div className="space-y-1.5 max-h-52 overflow-y-auto">

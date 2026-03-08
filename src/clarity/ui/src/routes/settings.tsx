@@ -1,21 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Badge } from "@ui/components/badge";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
-import { Skeleton } from "@ui/components/skeleton";
-import { CheckCircle, Globe, Link2, RefreshCw, Shield, User, XCircle } from "lucide-react";
+import { CheckCircle, RefreshCw, XCircle } from "lucide-react";
 import { useState } from "react";
-
-async function fetchStatus() {
-    const res = await fetch("/api/status");
-
-    if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error || `Failed to fetch status (${res.status})`);
-    }
-
-    return res.json();
-}
+import { StatusCard } from "../components/StatusCard";
 
 async function testConnectionApi() {
     const res = await fetch("/api/test-connection", { method: "POST" });
@@ -47,11 +35,6 @@ export function SettingsPage() {
     const queryClient = useQueryClient();
     const [curlInput, setCurlInput] = useState("");
 
-    const { data: status, isLoading } = useQuery({
-        queryKey: ["status"],
-        queryFn: fetchStatus,
-    });
-
     const testMutation = useMutation({
         mutationFn: testConnectionApi,
     });
@@ -61,7 +44,7 @@ export function SettingsPage() {
         onSuccess: (result) => {
             if (result.success) {
                 setCurlInput("");
-                queryClient.invalidateQueries({ queryKey: ["status"] });
+                queryClient.invalidateQueries();
             }
         },
     });
@@ -73,106 +56,36 @@ export function SettingsPage() {
             </h1>
 
             {/* Status section */}
-            <Card className="border-amber-500/20 mb-6">
-                <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
-                        <Shield className="w-4 h-4" />
-                        Connection Status
-                    </CardTitle>
-                </CardHeader>
-                <CardContent>
-                    {isLoading ? (
-                        <div className="space-y-3">
-                            <Skeleton variant="line" />
-                            <Skeleton variant="line" />
-                        </div>
-                    ) : status ? (
-                        <div className="space-y-3">
-                            <div className="flex items-center gap-3">
-                                <div
-                                    className={`w-2 h-2 rounded-full ${status.configured ? "bg-green-500" : "bg-red-500"}`}
-                                />
-                                <span className="font-mono text-sm text-gray-300">
-                                    {status.configured ? "Configured" : "Not configured"}
-                                </span>
-                            </div>
+            <div className="mb-6">
+                <StatusCard />
+                <div className="mt-3 px-1">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => testMutation.mutate()}
+                        disabled={testMutation.isPending}
+                        className="font-mono text-xs"
+                    >
+                        <RefreshCw className={`w-3.5 h-3.5 mr-2 ${testMutation.isPending ? "animate-spin" : ""}`} />
+                        {testMutation.isPending ? "Testing..." : "Test connection"}
+                    </Button>
 
-                            {status.baseUrl && (
-                                <div className="flex items-center gap-3">
-                                    <Globe className="w-4 h-4 text-gray-500" />
-                                    <span className="font-mono text-sm text-gray-400">{status.baseUrl}</span>
-                                </div>
+                    {testMutation.data && (
+                        <div className="mt-2 flex items-center gap-2">
+                            {testMutation.data.success ? (
+                                <CheckCircle className="w-4 h-4 text-green-400" />
+                            ) : (
+                                <XCircle className="w-4 h-4 text-red-400" />
                             )}
-
-                            <div className="flex items-center gap-3">
-                                <Shield className="w-4 h-4 text-gray-500" />
-                                <span className="font-mono text-sm text-gray-400">
-                                    Auth:{" "}
-                                    {status.hasAuth ? (
-                                        <Badge
-                                            variant="outline"
-                                            className="text-xs border-green-500/30 text-green-400 ml-1"
-                                        >
-                                            ACTIVE
-                                        </Badge>
-                                    ) : (
-                                        <Badge
-                                            variant="outline"
-                                            className="text-xs border-red-500/30 text-red-400 ml-1"
-                                        >
-                                            MISSING
-                                        </Badge>
-                                    )}
-                                </span>
-                            </div>
-
-                            <div className="flex items-center gap-3">
-                                <Link2 className="w-4 h-4 text-gray-500" />
-                                <span className="font-mono text-sm text-gray-400">
-                                    Mappings: {status.mappingsCount}
-                                </span>
-                            </div>
-
-                            {status.uniqueName && (
-                                <div className="flex items-center gap-3">
-                                    <User className="w-4 h-4 text-gray-500" />
-                                    <span className="font-mono text-sm text-gray-400">{status.uniqueName}</span>
-                                </div>
-                            )}
-
-                            <div className="pt-3">
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => testMutation.mutate()}
-                                    disabled={testMutation.isPending}
-                                    className="font-mono text-xs"
-                                >
-                                    <RefreshCw
-                                        className={`w-3.5 h-3.5 mr-2 ${testMutation.isPending ? "animate-spin" : ""}`}
-                                    />
-                                    {testMutation.isPending ? "Testing..." : "Test Connection"}
-                                </Button>
-
-                                {testMutation.data && (
-                                    <div className="mt-2 flex items-center gap-2">
-                                        {testMutation.data.success ? (
-                                            <CheckCircle className="w-4 h-4 text-green-400" />
-                                        ) : (
-                                            <XCircle className="w-4 h-4 text-red-400" />
-                                        )}
-                                        <span
-                                            className={`font-mono text-xs ${testMutation.data.success ? "text-green-400" : "text-red-400"}`}
-                                        >
-                                            {testMutation.data.message}
-                                        </span>
-                                    </div>
-                                )}
-                            </div>
+                            <span
+                                className={`font-mono text-xs ${testMutation.data.success ? "text-green-400" : "text-red-400"}`}
+                            >
+                                {testMutation.data.message}
+                            </span>
                         </div>
-                    ) : null}
-                </CardContent>
-            </Card>
+                    )}
+                </div>
+            </div>
 
             {/* Update Auth section */}
             <Card className="border-amber-500/20 mb-6">

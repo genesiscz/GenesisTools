@@ -26,6 +26,7 @@ export async function getTimesheetWeeks(month?: number, year?: number): Promise<
         baseUrl: config.baseUrl,
         authToken: config.authToken,
         sessionId: config.sessionId,
+        cookies: config.cookies,
     });
 
     return getTimesheetWeeksShared(api, config.mappings, month, year);
@@ -82,6 +83,7 @@ export async function getClarityTasks(timesheetId: number): Promise<{ tasks: Cla
         baseUrl: config.baseUrl,
         authToken: config.authToken,
         sessionId: config.sessionId,
+        cookies: config.cookies,
     });
 
     const data = await api.getTimesheet(timesheetId);

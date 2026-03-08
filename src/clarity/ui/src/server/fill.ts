@@ -3,8 +3,10 @@ import { exportMonth } from "@app/azure-devops/lib/timelog/export";
 import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
 import { type ClarityMapping, getMappingForWorkItem, requireConfig } from "@app/clarity/config";
+import { getTimesheetWeeks } from "@app/clarity/lib/timesheet-weeks";
 import type { TimeEntryRecord, TimeSegment, TimeSeriesValue } from "@app/utils/clarity";
 import { ClarityApi } from "@app/utils/clarity";
+import { formatDate } from "@app/utils/date";
 
 interface FillEntry {
     mapping: ClarityMapping;
@@ -35,22 +37,6 @@ export interface FillPreviewResult {
     };
 }
 
-function formatDate(d: Date): string {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function getWeekRange(date: Date): { start: Date; end: Date } {
-    const d = new Date(date);
-    const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-    const start = new Date(d);
-    start.setDate(diff);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(start.getDate() + 6);
-    return { start, end };
-}
-
 export async function getFillPreview(month: number, year: number): Promise<FillPreviewResult> {
     const clarityConfig = await requireConfig();
     const adoConfig = loadAdoConfig() as AzureConfigWithTimeLog | null;
@@ -70,6 +56,7 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
         baseUrl: clarityConfig.baseUrl,
         authToken: clarityConfig.authToken,
         sessionId: clarityConfig.sessionId,
+        cookies: clarityConfig.cookies,
     });
 
     const adoExport = await exportMonth(adoApi, month, year, adoUser.userId);
@@ -93,28 +80,6 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
 
         fill.dayMinutes[entry.date] = (fill.dayMinutes[entry.date] ?? 0) + entry.minutes;
         fill.totalMinutes += entry.minutes;
-    }
-
-    const allDatesSet = new Set<string>();
-    for (const fill of fillMap.values()) {
-        for (const date of Object.keys(fill.dayMinutes)) {
-            allDatesSet.add(date);
-        }
-    }
-    const allDates = [...allDatesSet].sort();
-
-    const weeksSeen = new Set<string>();
-    const weeks: Array<{ start: Date; end: Date }> = [];
-
-    for (const date of allDates) {
-        const d = new Date(date);
-        const { start } = getWeekRange(d);
-        const key = formatDate(start);
-
-        if (!weeksSeen.has(key)) {
-            weeksSeen.add(key);
-            weeks.push(getWeekRange(d));
-        }
     }
 
     const totalMapped = [...fillMap.values()].reduce((s, f) => s + f.totalMinutes, 0);
@@ -156,52 +121,66 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
         };
     }
 
-    const firstMapping = clarityConfig.mappings[0];
+    // Resolve Clarity timesheet weeks for this month via the carousel API
+    const { weeks: clarityWeeks } = await getTimesheetWeeks(clarityApi, clarityConfig.mappings, month, year);
 
-    if (!firstMapping?.clarityTimesheetId) {
+    if (clarityWeeks.length === 0) {
         return {
             weeks: [],
             totalMapped,
             totalUnmapped,
             diagnostics: {
-                reason: "no_timesheet_id",
+                reason: "no_timesheet_weeks",
                 message:
-                    "Mappings exist but none have a clarityTimesheetId. Re-create mappings via the Add Mapping form (select a timesheet week first).",
+                    "Could not resolve Clarity timesheet weeks for this month. Check that mappings have a valid clarityTimesheetId.",
             },
         };
     }
 
     const weekPreviews: WeekPreview[] = [];
 
-    for (const _week of weeks) {
-        const tsData = await clarityApi.getTimesheet(firstMapping.clarityTimesheetId);
-        const ts = tsData.timesheets._results[0];
+    for (const cw of clarityWeeks) {
+        // Filter fill entries to only include days within this week's range
+        const weekEntries: WeekPreview["entries"] = [];
 
-        if (!ts) {
+        for (const fill of fillMap.values()) {
+            const weekDayValues: Record<string, number> = {};
+            let weekTotal = 0;
+
+            for (const [date, mins] of Object.entries(fill.dayMinutes)) {
+                if (date >= cw.startDate && date <= cw.finishDate) {
+                    weekDayValues[date] = mins;
+                    weekTotal += mins;
+                }
+            }
+
+            if (weekTotal > 0) {
+                weekEntries.push({
+                    clarityTaskName: fill.mapping.clarityTaskName,
+                    clarityTaskCode: fill.mapping.clarityTaskCode,
+                    dayValues: weekDayValues,
+                    totalMinutes: weekTotal,
+                });
+            }
+        }
+
+        // Only include weeks that have data
+        if (weekEntries.length === 0) {
             continue;
         }
 
-        const preview: WeekPreview = {
-            timesheetId: ts._internalId,
-            periodStart: ts.timePeriodStart,
-            periodFinish: ts.timePeriodFinish,
-            entries: [],
-            unmappedWorkItems: [...unmappedByWi.entries()].map(([workItemId, minutes]) => ({
-                workItemId,
-                minutes,
-            })),
-        };
+        // Filter unmapped work items to this week's range too
+        const weekUnmapped: WeekPreview["unmappedWorkItems"] = [...unmappedByWi.entries()].map(
+            ([workItemId, minutes]) => ({ workItemId, minutes })
+        );
 
-        for (const fill of fillMap.values()) {
-            preview.entries.push({
-                clarityTaskName: fill.mapping.clarityTaskName,
-                clarityTaskCode: fill.mapping.clarityTaskCode,
-                dayValues: fill.dayMinutes,
-                totalMinutes: fill.totalMinutes,
-            });
-        }
-
-        weekPreviews.push(preview);
+        weekPreviews.push({
+            timesheetId: cw.timesheetId,
+            periodStart: cw.startDate,
+            periodFinish: cw.finishDate,
+            entries: weekEntries,
+            unmappedWorkItems: weekUnmapped,
+        });
     }
 
     return {
@@ -238,6 +217,7 @@ export async function executeFill(
         baseUrl: clarityConfig.baseUrl,
         authToken: clarityConfig.authToken,
         sessionId: clarityConfig.sessionId,
+        cookies: clarityConfig.cookies,
     });
 
     const adoExport = await exportMonth(adoApi, month, year, adoUser.userId);

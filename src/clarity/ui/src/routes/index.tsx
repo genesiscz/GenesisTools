@@ -1,7 +1,7 @@
 import { useRouter } from "@tanstack/react-router";
-import { Badge } from "@ui/components/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
+import { Card, CardContent } from "@ui/components/card";
 import { ArrowDownToLine, ArrowUpFromLine, Link2, Settings } from "lucide-react";
+import { StatusCard } from "../components/StatusCard";
 
 export function IndexPage() {
     const router = useRouter();
@@ -44,32 +44,9 @@ export function IndexPage() {
                 </p>
             </div>
 
-            {/* Status card */}
-            <Card className="mb-8 border-amber-500/20">
-                <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
-                        System Status
-                    </CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                            <span className="text-xs font-mono text-gray-400">Clarity</span>
-                            <Badge variant="outline" className="text-xs">
-                                Check Settings
-                            </Badge>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                            <span className="text-xs font-mono text-gray-400">ADO Timelog</span>
-                            <Badge variant="outline" className="text-xs">
-                                Check Settings
-                            </Badge>
-                        </div>
-                    </div>
-                </CardContent>
-            </Card>
+            <div className="mb-8">
+                <StatusCard compact />
+            </div>
 
             {/* Quick actions grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

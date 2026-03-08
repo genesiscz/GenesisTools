@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline";
+import { parseAuthCurl } from "@app/clarity/lib/parse-auth-curl";
 import { ClarityApi } from "@app/utils/clarity";
-import { parseCurl } from "@app/utils/curl";
 import * as clack from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -114,35 +114,16 @@ async function runInteractiveSetup(): Promise<void> {
     const spinner = clack.spinner();
     spinner.start("Parsing cURL command...");
 
-    let parsed: ReturnType<typeof parseCurl>;
+    let baseUrl: string;
+    let authToken: string;
+    let sessionId: string;
+    let cookies: string;
 
     try {
-        parsed = parseCurl(curlInput);
+        ({ baseUrl, authToken, sessionId, cookies } = parseAuthCurl(curlInput));
     } catch (err) {
         spinner.stop("Failed to parse cURL command");
         clack.log.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
-    }
-
-    // Extract base URL
-    const urlObj = new URL(parsed.url);
-    const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
-
-    // Extract authToken from headers
-    const authToken = parsed.headers.authToken || parsed.headers.AuthToken || parsed.headers.AUTHTOKEN;
-
-    if (!authToken) {
-        spinner.stop("No authToken header found in cURL");
-        clack.log.error("The pasted cURL must contain an 'authToken' header.");
-        process.exit(1);
-    }
-
-    // Extract sessionId from cookies
-    const sessionId = parsed.cookies.sessionId || parsed.cookies.JSESSIONID;
-
-    if (!sessionId) {
-        spinner.stop("No sessionId cookie found in cURL");
-        clack.log.error("The pasted cURL must contain a 'sessionId' cookie.");
         process.exit(1);
     }
 
@@ -155,7 +136,7 @@ async function runInteractiveSetup(): Promise<void> {
     // Test connection
     spinner.start("Testing connection...");
 
-    const api = new ClarityApi({ baseUrl, authToken, sessionId });
+    const api = new ClarityApi({ baseUrl, authToken, sessionId, cookies });
 
     try {
         // Try to fetch any timesheet data to validate the credentials
@@ -172,6 +153,7 @@ async function runInteractiveSetup(): Promise<void> {
             baseUrl,
             authToken,
             sessionId,
+            cookies,
             resourceId: resource?.id,
             uniqueName: resource?.email,
             mappings: existingConfig?.mappings ?? [],
@@ -269,29 +251,22 @@ export function registerConfigureCommand(program: Command): void {
                 process.exit(0);
             }
 
-            let parsed: ReturnType<typeof parseCurl>;
+            let baseUrl: string;
+            let authToken: string;
+            let sessionId: string;
+            let cookies: string;
 
             try {
-                parsed = parseCurl(curlInput);
+                ({ baseUrl, authToken, sessionId, cookies } = parseAuthCurl(curlInput));
             } catch (err) {
                 clack.log.error(err instanceof Error ? err.message : String(err));
-                process.exit(1);
-            }
-
-            const urlObj = new URL(parsed.url);
-            const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
-            const authToken = parsed.headers.authToken || parsed.headers.AuthToken || parsed.headers.AUTHTOKEN;
-            const sessionId = parsed.cookies.sessionId || parsed.cookies.JSESSIONID;
-
-            if (!authToken || !sessionId) {
-                clack.log.error("Missing authToken header or sessionId cookie in cURL.");
                 process.exit(1);
             }
 
             const spinner = clack.spinner();
             spinner.start("Testing connection...");
 
-            const api = new ClarityApi({ baseUrl, authToken, sessionId });
+            const api = new ClarityApi({ baseUrl, authToken, sessionId, cookies });
 
             try {
                 const appData = await api.getTimesheetApp(0);
@@ -306,6 +281,7 @@ export function registerConfigureCommand(program: Command): void {
                 config.baseUrl = baseUrl;
                 config.authToken = authToken;
                 config.sessionId = sessionId;
+                config.cookies = cookies;
 
                 if (resource) {
                     config.resourceId = resource.id;
@@ -368,28 +344,20 @@ export function registerConfigureCommand(program: Command): void {
                     continue;
                 }
 
-                let parsed: ReturnType<typeof parseCurl>;
+                let baseUrl: string;
+                let authToken: string;
+                let sessionId: string;
 
                 try {
-                    parsed = parseCurl(curlInput);
+                    ({ baseUrl, authToken, sessionId } = parseAuthCurl(curlInput));
                 } catch (err) {
                     clack.log.error(err instanceof Error ? err.message : String(err));
                     continue;
                 }
 
-                const urlObj = new URL(parsed.url);
-                const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
-                const authToken = parsed.headers.authToken || parsed.headers.AuthToken || parsed.headers.AUTHTOKEN;
-                const sessionId = parsed.cookies.sessionId || parsed.cookies.JSESSIONID;
-
-                if (!authToken || !sessionId) {
-                    clack.log.error("Missing authToken header or sessionId cookie in cURL.");
-                    continue;
-                }
-
                 const spinner = clack.spinner();
                 spinner.start("Testing connection...");
-                const api = new ClarityApi({ baseUrl, authToken, sessionId });
+                const api = new ClarityApi({ baseUrl, authToken, sessionId, cookies });
 
                 try {
                     const appData = await api.getTimesheetApp(0);

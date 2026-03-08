@@ -54,6 +54,7 @@ export async function runInteractiveLinking(): Promise<void> {
         baseUrl: config.baseUrl,
         authToken: config.authToken,
         sessionId: config.sessionId,
+        cookies: config.cookies,
     });
 
     const adoConfig = requireTimeLogConfig();
@@ -257,14 +258,16 @@ export async function runInteractiveLinking(): Promise<void> {
             const showMapped = unmapped.length === 0;
             const itemsToShow = showMapped ? workItems : unmapped;
 
+            const mappedItems = showMapped ? itemsToShow.filter((wi) => getMappingForWorkItem(mappings, wi.id)) : [];
+
             const result = await clack.multiselect({
                 message: showMapped
-                    ? "Select ADO work items to re-assign:"
+                    ? "Select ADO work items to keep mapped (deselect to unmap):"
                     : `Select ADO work items to link (${mapped.length} already mapped, hidden):`,
                 options: itemsToShow.map((wi) => {
                     const hours = (wi.totalMinutes / 60).toFixed(1);
                     const existing = getMappingForWorkItem(mappings, wi.id);
-                    const hint = existing ? `MAPPED → ${existing.clarityTaskName}` : `${wi.type}, ${hours}h`;
+                    const hint = existing ? `mapped → ${existing.clarityTaskName}` : `${wi.type}, ${hours}h`;
 
                     return {
                         value: wi,
@@ -272,7 +275,8 @@ export async function runInteractiveLinking(): Promise<void> {
                         hint,
                     };
                 }),
-                required: true,
+                initialValues: mappedItems,
+                required: false,
             });
 
             if (clack.isCancel(result)) {
@@ -283,11 +287,31 @@ export async function runInteractiveLinking(): Promise<void> {
             step = 4;
 
             // Step 4: Confirm & save
-            const selected = result;
-            const confirmMsg = `Link ${selected.length} work item${selected.length > 1 ? "s" : ""} to ${selectedTask!.taskName}?`;
+            const selected = result ?? [];
+            const deselected = showMapped ? mappedItems.filter((mi) => !selected.some((s) => s.id === mi.id)) : [];
+
+            const parts: string[] = [];
+
+            if (selected.length > 0) {
+                parts.push(
+                    `link ${selected.length} work item${selected.length > 1 ? "s" : ""} to ${selectedTask!.taskName}`
+                );
+            }
+
+            if (deselected.length > 0) {
+                parts.push(`unmap ${deselected.length} work item${deselected.length > 1 ? "s" : ""}`);
+            }
+
+            if (parts.length === 0) {
+                clack.log.warn("No changes to make.");
+                step = 3;
+                continue;
+            }
+
+            const confirmMsg = `${parts.join(" and ")}?`;
 
             const confirmed = await clack.confirm({
-                message: confirmMsg,
+                message: confirmMsg.charAt(0).toUpperCase() + confirmMsg.slice(1),
             });
 
             if (clack.isCancel(confirmed) || !confirmed) {
@@ -298,8 +322,18 @@ export async function runInteractiveLinking(): Promise<void> {
             // Save mappings
             const freshConfig = await requireConfig();
 
+            // Remove deselected (unmapped) items
+            for (const wi of deselected) {
+                const idx = freshConfig.mappings.findIndex((m) => m.adoWorkItemId === wi.id);
+
+                if (idx !== -1) {
+                    freshConfig.mappings.splice(idx, 1);
+                    clack.log.info(`Unmapped: ADO #${wi.id}`);
+                }
+            }
+
+            // Add/re-assign selected items
             for (const wi of selected) {
-                // Remove existing mapping if any
                 const existingIdx = freshConfig.mappings.findIndex((m) => m.adoWorkItemId === wi.id);
 
                 if (existingIdx !== -1) {
@@ -320,13 +354,10 @@ export async function runInteractiveLinking(): Promise<void> {
                 };
 
                 freshConfig.mappings.push(mapping);
+                clack.log.success(`Linked: ADO #${wi.id} → ${selectedTask!.taskName}`);
             }
 
             await saveConfig(freshConfig);
-
-            for (const wi of selected) {
-                clack.log.success(`Linked: ADO #${wi.id} → ${selectedTask!.taskName}`);
-            }
 
             // Ask to add more
             const again = await clack.confirm({
