@@ -1,7 +1,7 @@
 import { loadConfig as loadAdoConfig } from "@app/azure-devops/config";
 import { getConfig, saveConfig } from "@app/clarity/config";
+import { parseAuthCurl } from "@app/clarity/lib/parse-auth-curl";
 import { ClarityApi } from "@app/utils/clarity";
-import { parseCurl } from "@app/utils/curl";
 
 export interface StatusResult {
     configured: boolean;
@@ -48,17 +48,11 @@ export async function testConnection(): Promise<{ success: boolean; message: str
             baseUrl: config.baseUrl,
             authToken: config.authToken,
             sessionId: config.sessionId,
+            cookies: config.cookies,
         });
 
-        // Try to fetch a known timesheet or discover via carousel
-        const firstMapping = config.mappings[0];
-
-        if (firstMapping?.clarityTimesheetId) {
-            await api.getTimesheet(firstMapping.clarityTimesheetId);
-            return { success: true, message: "Connected successfully" };
-        }
-
-        return { success: true, message: "Config present but no timesheet to test against" };
+        await api.getTimesheetApp();
+        return { success: true, message: "Connected successfully" };
     } catch (err) {
         return {
             success: false,
@@ -100,28 +94,11 @@ export async function updateAuth(curl: string): Promise<{ success: boolean; mess
     }
 
     try {
-        const parsed = parseCurl(curl);
-
-        const authToken =
-            (parsed.headers.authtoken as string) ??
-            (parsed.headers.authToken as string) ??
-            (parsed.headers.AuthToken as string);
-
-        if (!authToken) {
-            return { success: false, message: "No authToken header found in cURL" };
-        }
-
-        // Extract sessionId from cookies
-        const cookieHeader = (parsed.headers.cookie as string) ?? (parsed.headers.Cookie as string) ?? "";
-        const sessionMatch = cookieHeader.match(/sessionId=([^;]+)/);
-        const sessionId = sessionMatch?.[1] ?? "";
-
-        if (!sessionId) {
-            return { success: false, message: "No sessionId cookie found in cURL" };
-        }
+        const { authToken, sessionId, cookies } = parseAuthCurl(curl);
 
         config.authToken = authToken;
         config.sessionId = sessionId;
+        config.cookies = cookies;
         await saveConfig(config);
 
         return { success: true, message: "Auth tokens updated" };

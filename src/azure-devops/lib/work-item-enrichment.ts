@@ -8,8 +8,13 @@
  * without fetching full details every time.
  */
 
-import { Api } from "@app/azure-devops/api";
 import { loadWorkItemCache, saveWorkItemCache, storage, WORKITEM_FRESHNESS_MINUTES } from "@app/azure-devops/cache";
+
+async function createApi(config: import("@app/azure-devops/types").AzureConfig) {
+    const { Api } = await import("@app/azure-devops/api");
+    return new Api(config);
+}
+
 import type { AzureConfig, WorkItemCache, WorkItemTypeDefinition } from "@app/azure-devops/types";
 import { WORKITEM_CACHE_VERSION } from "@app/azure-devops/types";
 import logger from "@app/logger";
@@ -96,7 +101,7 @@ export async function enrichWorkItems(
 
     // Phase 2: Batch fetch missing items from API
     if (idsToFetch.length > 0) {
-        const api = new Api(config);
+        const api = await createApi(config);
         const fetched = await api.getWorkItems(idsToFetch, {
             comments: false,
             updates: false,
@@ -165,7 +170,7 @@ export async function getWorkItemTypeColors(
     }
 
     // Fetch from API
-    const api = new Api(config);
+    const api = await createApi(config);
     const definitions = await api.getWorkItemTypeDefinitions();
 
     // Save to cache
@@ -206,7 +211,7 @@ export async function getWorkItemTypeDefinitions(
         }
     }
 
-    const api = new Api(config);
+    const api = await createApi(config);
     const definitions = await api.getWorkItemTypeDefinitions();
 
     await storage.putCacheFile(

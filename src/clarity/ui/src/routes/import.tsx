@@ -142,7 +142,8 @@ export function ImportPage() {
                         <Card className="border-amber-500/20">
                             <CardContent className="p-8 text-center">
                                 <div className="text-gray-500 font-mono text-sm">
-                                    No week data available. Check that mappings have cached timesheet IDs.
+                                    {preview.diagnostics?.message ??
+                                        "No week data available. Check that mappings have cached timesheet IDs."}
                                 </div>
                             </CardContent>
                         </Card>
