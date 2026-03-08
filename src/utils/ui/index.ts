@@ -52,6 +52,7 @@ export { createDashboardApp } from "@ui/create-app";
 export type { DashboardLayoutProps, NavLink } from "@ui/layouts/DashboardLayout";
 export { DashboardLayout } from "@ui/layouts/DashboardLayout";
 export { cn } from "@ui/lib/utils";
-export type { DashboardViteConfig } from "@ui/vite.base";
-export { createDashboardViteConfig } from "@ui/vite.base";
+// vite.base exports are NOT re-exported here — import directly from
+// "@ui/vite.base" in vite.config.ts files to avoid pulling vite types
+// into the component type-check scope.
 export { toast } from "sonner";

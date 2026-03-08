@@ -92,10 +92,7 @@ export function extractMessageContent(msg: ConversationMessage): string {
 
 		if (Array.isArray(content)) {
 			return content
-				.filter(
-					(b): b is { type: string; text?: string; thinking?: string } =>
-						typeof b === "object" && b !== null && "type" in b
-				)
+				.filter((b) => typeof b === "object" && b !== null && "type" in b)
 				.map((b) => {
 					if (b.type === "text") {
 						return b.text || "";
