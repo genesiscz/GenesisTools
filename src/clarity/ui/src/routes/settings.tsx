@@ -69,7 +69,7 @@ export function SettingsPage() {
     return (
         <div className="max-w-6xl mx-auto px-6 py-8">
             <h1 className="text-xl font-mono font-bold text-gray-200 mb-6">
-                <span className="text-amber-500">SETTINGS</span>
+                <span className="text-amber-500">Settings</span>
             </h1>
 
             {/* Status section */}
@@ -77,7 +77,7 @@ export function SettingsPage() {
                 <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
                         <Shield className="w-4 h-4" />
-                        CONNECTION STATUS
+                        Connection Status
                     </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -151,7 +151,7 @@ export function SettingsPage() {
                                     <RefreshCw
                                         className={`w-3.5 h-3.5 mr-2 ${testMutation.isPending ? "animate-spin" : ""}`}
                                     />
-                                    {testMutation.isPending ? "TESTING..." : "TEST CONNECTION"}
+                                    {testMutation.isPending ? "Testing..." : "Test Connection"}
                                 </Button>
 
                                 {testMutation.data && (
@@ -177,7 +177,7 @@ export function SettingsPage() {
             {/* Update Auth section */}
             <Card className="border-amber-500/20 mb-6">
                 <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-mono text-gray-400">UPDATE AUTH TOKENS</CardTitle>
+                    <CardTitle className="text-sm font-mono text-gray-400">Update Auth Tokens</CardTitle>
                 </CardHeader>
                 <CardContent>
                     <p className="text-xs text-gray-500 font-mono mb-3">
@@ -195,7 +195,7 @@ export function SettingsPage() {
                             disabled={authMutation.isPending || !curlInput.trim()}
                             className="bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30 font-mono text-xs"
                         >
-                            {authMutation.isPending ? "UPDATING..." : "UPDATE AUTH"}
+                            {authMutation.isPending ? "Updating..." : "Update Auth"}
                         </Button>
 
                         {authMutation.data && (
@@ -212,7 +212,7 @@ export function SettingsPage() {
             {/* Help section */}
             <Card className="border-white/5">
                 <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-mono text-gray-400">CLI COMMANDS</CardTitle>
+                    <CardTitle className="text-sm font-mono text-gray-400">CLI Commands</CardTitle>
                 </CardHeader>
                 <CardContent>
                     <div className="space-y-2 font-mono text-xs">

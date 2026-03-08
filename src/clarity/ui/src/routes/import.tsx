@@ -84,7 +84,7 @@ export function ImportPage() {
         <div className="max-w-6xl mx-auto px-6 py-8">
             <div className="flex items-center justify-between mb-6">
                 <h1 className="text-xl font-mono font-bold text-gray-200">
-                    CLARITY <span className="text-amber-500">IMPORT</span>
+                    Clarity <span className="text-amber-500">Import</span>
                 </h1>
                 <MonthPicker
                     month={month}
@@ -119,12 +119,12 @@ export function ImportPage() {
                     {/* Summary */}
                     <div className="flex items-center gap-4 mb-6">
                         <Badge variant="outline" className="font-mono text-xs border-green-500/30 text-green-400">
-                            MAPPED: {(preview.totalMapped / 60).toFixed(1)}h
+                            Mapped: {(preview.totalMapped / 60).toFixed(1)}h
                         </Badge>
 
                         {preview.totalUnmapped > 0 && (
                             <Badge variant="outline" className="font-mono text-xs border-red-500/30 text-red-400">
-                                UNMAPPED: {(preview.totalUnmapped / 60).toFixed(1)}h
+                                Unmapped: {(preview.totalUnmapped / 60).toFixed(1)}h
                             </Badge>
                         )}
 
@@ -181,14 +181,14 @@ export function ImportPage() {
                                     className="bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30 hover:neon-glow font-mono tracking-wider px-8 py-3 text-sm"
                                 >
                                     <Play className="w-4 h-4 mr-2" />
-                                    EXECUTE FILL ({selectedWeeks.size} week{selectedWeeks.size > 1 ? "s" : ""})
+                                    Execute Fill ({selectedWeeks.size} week{selectedWeeks.size > 1 ? "s" : ""})
                                 </Button>
                             ) : (
                                 <Card className="border-amber-500/40 w-full max-w-md">
                                     <CardHeader>
                                         <CardTitle className="text-sm font-mono text-amber-400 flex items-center gap-2">
                                             <AlertTriangle className="w-4 h-4" />
-                                            CONFIRM FILL
+                                            Confirm Fill
                                         </CardTitle>
                                     </CardHeader>
                                     <CardContent>
@@ -202,14 +202,14 @@ export function ImportPage() {
                                                 disabled={fillMutation.isPending}
                                                 className="bg-amber-500/20 border border-amber-500/40 text-amber-400 hover:bg-amber-500/30 font-mono text-xs flex-1"
                                             >
-                                                {fillMutation.isPending ? "EXECUTING..." : "CONFIRM"}
+                                                {fillMutation.isPending ? "Executing..." : "Confirm"}
                                             </Button>
                                             <Button
                                                 variant="ghost"
                                                 onClick={() => setShowConfirm(false)}
                                                 className="font-mono text-xs"
                                             >
-                                                CANCEL
+                                                Cancel
                                             </Button>
                                         </div>
                                     </CardContent>

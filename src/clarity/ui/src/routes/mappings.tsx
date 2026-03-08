@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
+import { toast } from "sonner";
 import { AddMappingForm } from "../components/AddMappingForm";
 import { MappingTable } from "../components/MappingTable";
 import { MonthPicker } from "../components/MonthPicker";
@@ -13,6 +14,28 @@ async function fetchMappings() {
     if (!res.ok) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error || `Failed to fetch mappings (${res.status})`);
+    }
+
+    return res.json();
+}
+
+async function fetchTypeColors(): Promise<{
+    types: Record<string, { color: string; name: string; icon: { id: string; url: string } }>;
+}> {
+    const res = await fetch("/api/workitem-type-colors");
+
+    if (!res.ok) {
+        return { types: {} };
+    }
+
+    return res.json();
+}
+
+async function fetchAdoConfig(): Promise<{ org: string | null; project: string | null }> {
+    const res = await fetch("/api/ado-config");
+
+    if (!res.ok) {
+        return { org: null, project: null };
     }
 
     return res.json();
@@ -32,6 +55,30 @@ async function deleteMappingApi(adoWorkItemId: number) {
     return res.json();
 }
 
+async function moveMappingApi(
+    adoWorkItemId: number,
+    target: {
+        clarityTaskId: number;
+        clarityTaskName: string;
+        clarityTaskCode: string;
+        clarityInvestmentName: string;
+        clarityInvestmentCode: string;
+    }
+) {
+    const res = await fetch("/api/move-mapping", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adoWorkItemId, target }),
+    });
+
+    if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || "Failed to move mapping");
+    }
+
+    return res.json();
+}
+
 export function MappingsPage() {
     const queryClient = useQueryClient();
     const { month, year, setMonthYear } = useAppContext();
@@ -41,10 +88,43 @@ export function MappingsPage() {
         queryFn: fetchMappings,
     });
 
+    const { data: typeColors } = useQuery({
+        queryKey: ["workitem-type-colors"],
+        queryFn: fetchTypeColors,
+        staleTime: 60 * 60 * 1000,
+    });
+
+    const { data: adoConfig } = useQuery({
+        queryKey: ["ado-config"],
+        queryFn: fetchAdoConfig,
+        staleTime: 60 * 60 * 1000,
+    });
+
     const removeMutation = useMutation({
         mutationFn: deleteMappingApi,
-        onSuccess: () => {
+        onSuccess: (_data, adoWorkItemId) => {
+            toast.success(`Mapping removed for #${adoWorkItemId}`);
             queryClient.invalidateQueries({ queryKey: ["mappings"] });
+        },
+        onError: (err) => {
+            toast.error(err instanceof Error ? err.message : "Failed to remove mapping");
+        },
+    });
+
+    const moveMutation = useMutation({
+        mutationFn: ({
+            adoWorkItemId,
+            target,
+        }: {
+            adoWorkItemId: number;
+            target: Parameters<typeof moveMappingApi>[1];
+        }) => moveMappingApi(adoWorkItemId, target),
+        onSuccess: () => {
+            toast.success("Mapping moved successfully");
+            queryClient.invalidateQueries({ queryKey: ["mappings"] });
+        },
+        onError: (err) => {
+            toast.error(err instanceof Error ? err.message : "Failed to move mapping");
         },
     });
 
@@ -52,7 +132,7 @@ export function MappingsPage() {
         <div className="max-w-6xl mx-auto px-6 py-8">
             <div className="flex items-center justify-between mb-6">
                 <h1 className="text-xl font-mono font-bold text-gray-200">
-                    WORK ITEM <span className="text-amber-500">&harr;</span> CLARITY MAPPINGS
+                    Work Item <span className="text-amber-500">&harr;</span> Clarity Mappings
                 </h1>
                 <div className="flex items-center gap-3">
                     {data?.mappings && (
@@ -64,13 +144,19 @@ export function MappingsPage() {
                 </div>
             </div>
 
+            {/* Add Mapping — quick action on top */}
+            <div className="mb-6">
+                <AddMappingForm onMappingAdded={() => queryClient.invalidateQueries({ queryKey: ["mappings"] })} />
+            </div>
+
+            {/* Configured Mappings — main view below */}
             <Card className="border-amber-500/20">
                 <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
-                        CONFIGURED MAPPINGS
+                        Configured Mappings
                         {!data?.configured && !isLoading && (
                             <Badge variant="destructive" className="text-xs">
-                                NOT CONFIGURED
+                                Not Configured
                             </Badge>
                         )}
                     </CardTitle>
@@ -90,13 +176,17 @@ export function MappingsPage() {
                         </div>
                     )}
 
-                    {data && <MappingTable mappings={data.mappings} onRemove={(id) => removeMutation.mutate(id)} />}
+                    {data && (
+                        <MappingTable
+                            mappings={data.mappings}
+                            typeColors={typeColors?.types ?? {}}
+                            adoConfig={adoConfig?.org ? (adoConfig as { org: string; project: string }) : null}
+                            onRemove={(id) => removeMutation.mutate(id)}
+                            onMove={(adoWorkItemId, target) => moveMutation.mutate({ adoWorkItemId, target })}
+                        />
+                    )}
                 </CardContent>
             </Card>
-
-            <div className="mt-6">
-                <AddMappingForm onMappingAdded={() => queryClient.invalidateQueries({ queryKey: ["mappings"] })} />
-            </div>
         </div>
     );
 }

@@ -48,21 +48,21 @@ export function IndexPage() {
             <Card className="mb-8 border-amber-500/20">
                 <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
-                        SYSTEM STATUS
+                        System Status
                     </CardTitle>
                 </CardHeader>
                 <CardContent>
                     <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2">
                             <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                            <span className="text-xs font-mono text-gray-400">CLARITY</span>
+                            <span className="text-xs font-mono text-gray-400">Clarity</span>
                             <Badge variant="outline" className="text-xs">
                                 Check Settings
                             </Badge>
                         </div>
                         <div className="flex items-center gap-2">
                             <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                            <span className="text-xs font-mono text-gray-400">ADO TIMELOG</span>
+                            <span className="text-xs font-mono text-gray-400">ADO Timelog</span>
                             <Badge variant="outline" className="text-xs">
                                 Check Settings
                             </Badge>

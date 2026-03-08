@@ -60,3 +60,5 @@ export { cn } from "@ui/lib/utils";
 export type { DashboardViteConfig } from "@ui/vite.base";
 // Vite config
 export { createDashboardViteConfig } from "@ui/vite.base";
+// Toast
+export { toast } from "sonner";

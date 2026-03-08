@@ -45,7 +45,7 @@ function formatWeekLabel(w: TimesheetWeek): string {
     return `${fmt(start)} – ${fmt(end)}`;
 }
 
-async function runInteractiveLinking(): Promise<void> {
+export async function runInteractiveLinking(): Promise<void> {
     const config = await requireConfig();
 
     clack.intro(pc.bgCyan(pc.black(" Link ADO Work Items to Clarity Tasks ")));
@@ -60,14 +60,67 @@ async function runInteractiveLinking(): Promise<void> {
     const adoUser = requireTimeLogUser(adoConfig);
     const adoApi = new TimeLogApi(adoConfig.orgId!, adoConfig.projectId, adoConfig.timelog!.functionsKey, adoUser);
 
+    // Ask for month/year
+    const now = new Date();
+    const monthNames = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
+
+    const monthResult = await clack.select({
+        message: "Select month:",
+        options: Array.from({ length: 12 }, (_, i) => ({
+            value: i + 1,
+            label: monthNames[i],
+            hint: i + 1 === currentMonth ? "current" : undefined,
+        })),
+        initialValue: currentMonth,
+    });
+
+    if (clack.isCancel(monthResult)) {
+        clack.outro("Cancelled");
+        return;
+    }
+
+    const selectedMonth = monthResult;
+
+    const yearResult = await clack.select({
+        message: "Select year:",
+        options: [currentYear - 1, currentYear, currentYear + 1].map((y) => ({
+            value: y,
+            label: String(y),
+            hint: y === currentYear ? "current" : undefined,
+        })),
+        initialValue: currentYear,
+    });
+
+    if (clack.isCancel(yearResult)) {
+        clack.outro("Cancelled");
+        return;
+    }
+
+    const selectedYear = yearResult;
+
     // Load weeks
     const weeksSpinner = clack.spinner();
-    weeksSpinner.start("Loading timesheet weeks...");
+    weeksSpinner.start(`Loading timesheet weeks for ${monthNames[selectedMonth - 1]} ${selectedYear}...`);
 
     let weeks: TimesheetWeek[];
 
     try {
-        const result = await getTimesheetWeeks(api, config.mappings);
+        const result = await getTimesheetWeeks(api, config.mappings, selectedMonth, selectedYear);
         weeks = result.weeks;
         weeksSpinner.stop(`Found ${weeks.length} weeks`);
     } catch (err) {
@@ -134,16 +187,18 @@ async function runInteractiveLinking(): Promise<void> {
                 continue;
             }
 
-            // Also load timelog work items for the week's month
-            const weekDate = new Date(selectedWeek.startDate);
-            const month = weekDate.getMonth() + 1;
-            const year = weekDate.getFullYear();
-
+            // Load timelog work items for the selected month
             const wiSpinner = clack.spinner();
             wiSpinner.start("Loading ADO timelog entries...");
 
             try {
-                const result = await getTimelogWorkItems(adoApi, adoConfig, month, year, adoUser.userId);
+                const result = await getTimelogWorkItems(
+                    adoApi,
+                    adoConfig,
+                    selectedMonth,
+                    selectedYear,
+                    adoUser.userId
+                );
                 workItems = result.workItems;
                 wiSpinner.stop(`Found ${workItems.length} work items`);
             } catch (err) {
@@ -182,9 +237,31 @@ async function runInteractiveLinking(): Promise<void> {
             const currentConfig = await getConfig();
             const mappings = currentConfig?.mappings ?? [];
 
+            const unmapped = workItems.filter((wi) => !getMappingForWorkItem(mappings, wi.id));
+            const mapped = workItems.filter((wi) => getMappingForWorkItem(mappings, wi.id));
+
+            if (unmapped.length === 0) {
+                clack.log.info("All work items are already mapped.");
+
+                const showAll = await clack.confirm({
+                    message: `Show ${mapped.length} already-mapped items to re-assign?`,
+                    initialValue: false,
+                });
+
+                if (clack.isCancel(showAll) || !showAll) {
+                    step = 2;
+                    continue;
+                }
+            }
+
+            const showMapped = unmapped.length === 0;
+            const itemsToShow = showMapped ? workItems : unmapped;
+
             const result = await clack.multiselect({
-                message: "Select ADO work items to link:",
-                options: workItems.map((wi) => {
+                message: showMapped
+                    ? "Select ADO work items to re-assign:"
+                    : `Select ADO work items to link (${mapped.length} already mapped, hidden):`,
+                options: itemsToShow.map((wi) => {
                     const hours = (wi.totalMinutes / 60).toFixed(1);
                     const existing = getMappingForWorkItem(mappings, wi.id);
                     const hint = existing ? `MAPPED → ${existing.clarityTaskName}` : `${wi.type}, ${hours}h`;

@@ -3,16 +3,17 @@ import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
 import { RefreshCw } from "lucide-react";
+import { useRef } from "react";
 import { ExportSummary } from "../components/ExportSummary";
 import { ExportTable } from "../components/ExportTable";
 import { MonthPicker } from "../components/MonthPicker";
 import { useAppContext } from "../context/AppContext";
 
-async function fetchExport(month: number, year: number) {
+async function fetchExport(month: number, year: number, force = false) {
     const res = await fetch("/api/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month, year }),
+        body: JSON.stringify({ month, year, force }),
     });
 
     if (!res.ok) {
@@ -36,6 +37,7 @@ async function fetchMappings() {
 export function ExportPage() {
     const { month, year, setMonthYear } = useAppContext();
     const queryClient = useQueryClient();
+    const forceRef = useRef(false);
 
     const {
         data: exportData,
@@ -43,7 +45,11 @@ export function ExportPage() {
         error,
     } = useQuery({
         queryKey: ["export", month, year],
-        queryFn: () => fetchExport(month, year),
+        queryFn: () => {
+            const force = forceRef.current;
+            forceRef.current = false;
+            return fetchExport(month, year, force);
+        },
     });
 
     const { data: mappingsData } = useQuery({
@@ -79,7 +85,7 @@ export function ExportPage() {
         <div className="max-w-6xl mx-auto px-6 py-8">
             <div className="flex items-center justify-between mb-6">
                 <h1 className="text-xl font-mono font-bold text-gray-200">
-                    ADO TIMELOG <span className="text-amber-500">EXPORT</span>
+                    ADO Timelog <span className="text-amber-500">Export</span>
                 </h1>
                 <div className="flex items-center gap-2">
                     <MonthPicker month={month} year={year} onChange={setMonthYear} />
@@ -87,6 +93,7 @@ export function ExportPage() {
                         variant="ghost"
                         size="sm"
                         onClick={() => {
+                            forceRef.current = true;
                             queryClient.invalidateQueries({ queryKey: ["export", month, year] });
                             queryClient.invalidateQueries({ queryKey: ["workitem-type-colors"] });
                         }}
@@ -132,7 +139,7 @@ export function ExportPage() {
                     <Card className="border-amber-500/20">
                         <CardHeader className="pb-3">
                             <CardTitle className="text-sm font-mono text-gray-400">
-                                ENTRIES ({exportData.entries.length})
+                                Entries ({exportData.entries.length})
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
@@ -140,8 +147,7 @@ export function ExportPage() {
                                 entries={exportData.entries}
                                 entriesByDay={exportData.summary.entriesByDay}
                                 mappedWorkItemIds={mappedIds}
-                                adoOrg={adoConfig?.org}
-                                adoProject={adoConfig?.project}
+                                adoConfig={adoConfig?.org ? (adoConfig as { org: string; project: string }) : null}
                                 typeColors={typeColorsData?.types ?? {}}
                             />
                         </CardContent>

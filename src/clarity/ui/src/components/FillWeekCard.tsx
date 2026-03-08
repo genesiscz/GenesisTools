@@ -69,7 +69,7 @@ export function FillWeekCard({
                                 onChange={onToggle}
                                 className="accent-amber-500"
                             />
-                            WEEK: {startDate} to {endDate}
+                            Week: {startDate} to {endDate}
                         </label>
                     </CardTitle>
                     <Badge variant="outline" className="font-mono text-xs">
@@ -86,13 +86,13 @@ export function FillWeekCard({
                     <Table>
                         <TableHeader>
                             <TableRow className="border-amber-500/20">
-                                <TableHead className="font-mono text-xs text-gray-400">CLARITY TASK</TableHead>
+                                <TableHead className="font-mono text-xs text-gray-400">Clarity Task</TableHead>
                                 {workDays.map((d) => (
                                     <TableHead key={d.date} className="font-mono text-xs text-gray-400 text-center">
                                         {d.label}
                                     </TableHead>
                                 ))}
-                                <TableHead className="font-mono text-xs text-gray-400 text-right">TOTAL</TableHead>
+                                <TableHead className="font-mono text-xs text-gray-400 text-right">Total</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>

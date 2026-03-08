@@ -4,10 +4,7 @@ import type { ExecResult } from "./executor";
 
 function getToolsPath(): string {
     // import.meta.dir is Bun-specific; fall back to import.meta.url for Node/Vite SSR
-    const dir =
-        typeof import.meta.dir === "string"
-            ? import.meta.dir
-            : dirname(fileURLToPath(import.meta.url));
+    const dir = typeof import.meta.dir === "string" ? import.meta.dir : dirname(fileURLToPath(import.meta.url));
     return resolve(dir, "../../../tools");
 }
 

@@ -1,7 +1,7 @@
 import { loadConfig as loadAdoConfig } from "@app/azure-devops/config";
+import { getConfig, saveConfig } from "@app/clarity/config";
 import { ClarityApi } from "@app/utils/clarity";
 import { parseCurl } from "@app/utils/curl";
-import { getConfig, saveConfig } from "@app/clarity/config";
 
 export interface StatusResult {
     configured: boolean;
