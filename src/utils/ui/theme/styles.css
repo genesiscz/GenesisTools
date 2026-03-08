@@ -1,4 +1,7 @@
+@reference "tailwindcss";
 @import '@ui/theme/cyberpunk.css';
+
+@custom-variant dark (&:is(.dark *));
 
 /* ============================================================================
    TYPOGRAPHY & BASE STYLES
