@@ -287,19 +287,19 @@ Use markdown link format in the reply: `[short-sha](full-url)`.
 | Other bots / GitHub Actions | _(none)_ | `Fixed in ...` |
 | Human reviewer | `@<username> ` only if they asked a question | `@alice Fixed in ...` |
 
-**For fixed threads** — use `respond` with `--resolve`:
+**For fixed threads** — explain what was fixed and link the commit:
 ```bash
-tools github review respond t1 "@coderabbitai Fixed in [abc1234](https://github.com/owner/repo/commit/abc1234def5678) — scoped stale cleanup to current project directory." --resolve -s <session-id>
+tools github review respond t1 "@coderabbitai Fixed in [abc1234](https://github.com/owner/repo/commit/abc1234def5678) — scoped stale cleanup to current project directory." -s <session-id>
 ```
 
-**For skipped threads** — respond without resolving:
+**For skipped threads** — provide a detailed technical explanation of why:
 ```bash
 tools github review respond t5 "/gemini Won't fix — the projectNameCache already prevents repeated filesystem resolution." -s <session-id>
 ```
 
-**Batch operations:** When multiple threads have the same fix/response:
+**Batch operations (reply only):** When multiple threads have the same fix/response:
 ```bash
-tools github review respond t1,t3,t5 "@coderabbitai Fixed in [abc1234](https://github.com/owner/repo/commit/abc1234def5678) — addressed review feedback." --resolve -s <session-id>
+tools github review respond t1,t3,t5 "@coderabbitai Fixed in [abc1234](https://github.com/owner/repo/commit/abc1234def5678) — addressed review feedback." -s <session-id>
 ```
 
 #### Dispatching to a background agent
@@ -315,9 +315,9 @@ Task tool call:
     Run each of these commands. Report only errors — if a command succeeds, just note the thread ref.
     If a command fails, include the full error output.
 
-    1. tools github review respond t1 "@coderabbitai ..." --resolve -s <session-id>
+    1. tools github review respond t1 "@coderabbitai ..." -s <session-id>
     2. tools github review respond t5 "/gemini ..." -s <session-id>
-    3. tools github review respond t3,t4 "..." --resolve -s <session-id>
+    3. tools github review respond t3,t4 "..." -s <session-id>
     ...
 ```
 
@@ -365,7 +365,7 @@ User: /github-pr 137 -u
 7. User selects: "Fix all VALID threads"
 8. Fix each thread, run linting
 9. Commit: "fix(scope): address code review issues..."
-10. Reply agent: tools github review respond t1 "Fixed in ..." --resolve -s pr137-...
+10. Reply agent: tools github review respond t1 "Fixed in ..." -s pr137-...
 11. Report: "Fixed 12 threads, skipped 2 (FALSE_POSITIVE), modified 5 files, commit abc1234"
 ```
 

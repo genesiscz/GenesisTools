@@ -461,9 +461,12 @@ export function formatReviewLLM(data: ReviewData, sessionId: string): string {
         const ref = `t${thread.threadNumber}`;
         const status = thread.status === "resolved" ? "RESOLVED" : "UNRESOLVED";
         const sev = thread.severity.toUpperCase();
-        const fileLine = thread.startLine && thread.startLine !== thread.line
-            ? `${thread.file}:${thread.startLine}-${thread.line}`
-            : thread.line ? `${thread.file}:${thread.line}` : thread.file;
+        const fileLine =
+            thread.startLine && thread.startLine !== thread.line
+                ? `${thread.file}:${thread.startLine}-${thread.line}`
+                : thread.line
+                  ? `${thread.file}:${thread.line}`
+                  : thread.file;
         const age = formatRelativeTime(new Date(thread.createdAt), { compact: true });
         const replies = thread.replies.length > 0 ? `${thread.replies.length}r` : "";
         const title = thread.title.length > 40 ? `${thread.title.slice(0, 37)}...` : thread.title;
@@ -490,9 +493,12 @@ export function formatThreadExpanded(thread: ParsedReviewThread, sessionId: stri
     output += `Thread #${thread.threadNumber}: ${thread.title}\n`;
     output += `Status: ${thread.status.toUpperCase()} | Severity: ${thread.severity.toUpperCase()}\n`;
 
-    const fileLine = thread.startLine && thread.startLine !== thread.line
-        ? `${thread.file}:${thread.startLine}-${thread.line}`
-        : thread.line ? `${thread.file}:${thread.line}` : thread.file;
+    const fileLine =
+        thread.startLine && thread.startLine !== thread.line
+            ? `${thread.file}:${thread.startLine}-${thread.line}`
+            : thread.line
+              ? `${thread.file}:${thread.line}`
+              : thread.file;
     output += `File: ${fileLine} | Author: @${thread.author} | ${age}\n`;
     output += `Thread ID: ${thread.threadId}\n`;
     output += "\n";
