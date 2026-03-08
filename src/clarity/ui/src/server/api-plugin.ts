@@ -19,9 +19,22 @@ export function apiPlugin(): Plugin {
                     const { removeMapping } = await import("./mappings");
                     return removeMapping(body.adoWorkItemId as number);
                 },
+                "POST /api/move-mapping": async (body) => {
+                    const { moveMapping } = await import("./mappings");
+                    return moveMapping(
+                        body.adoWorkItemId as number,
+                        body.target as {
+                            clarityTaskId: number;
+                            clarityTaskName: string;
+                            clarityTaskCode: string;
+                            clarityInvestmentName: string;
+                            clarityInvestmentCode: string;
+                        }
+                    );
+                },
                 "POST /api/export": async (body) => {
                     const { getExportData } = await import("./export");
-                    return getExportData(body.month as number, body.year as number);
+                    return getExportData(body.month as number, body.year as number, { force: !!body.force });
                 },
                 "POST /api/fill/preview": async (body) => {
                     const { getFillPreview } = await import("./fill");

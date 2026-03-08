@@ -1,6 +1,8 @@
+import type { WorkItemTypeColor } from "@app/azure-devops/lib/work-item-enrichment";
 import { Badge } from "@ui/components/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/components/table";
-import { ExternalLink } from "lucide-react";
+import type { AdoConfig } from "./WorkItemLink";
+import { TypeBadge, WorkItemLink } from "./WorkItemLink";
 
 interface ExportEntry {
     date: string;
@@ -16,23 +18,11 @@ interface ExportTableProps {
     entries: ExportEntry[];
     entriesByDay: Record<string, number>;
     mappedWorkItemIds: Set<number>;
-    adoOrg?: string | null;
-    adoProject?: string | null;
-    typeColors: Record<string, { color: string; name: string }>;
+    adoConfig?: AdoConfig | null;
+    typeColors: Record<string, WorkItemTypeColor>;
 }
 
-function buildWorkItemUrl(org: string, project: string, id: number): string {
-    return `${org}/${encodeURIComponent(project)}/_workitems/edit/${id}`;
-}
-
-export function ExportTable({
-    entries,
-    entriesByDay,
-    mappedWorkItemIds,
-    adoOrg,
-    adoProject,
-    typeColors,
-}: ExportTableProps) {
+export function ExportTable({ entries, entriesByDay, mappedWorkItemIds, adoConfig, typeColors }: ExportTableProps) {
     // Group entries by date
     const byDate = new Map<string, ExportEntry[]>();
 
@@ -56,12 +46,12 @@ export function ExportTable({
         <Table>
             <TableHeader>
                 <TableRow className="border-amber-500/20">
-                    <TableHead className="font-mono text-xs text-gray-400">DATE</TableHead>
-                    <TableHead className="font-mono text-xs text-gray-400">WORK ITEM</TableHead>
-                    <TableHead className="font-mono text-xs text-gray-400">TYPE</TableHead>
-                    <TableHead className="font-mono text-xs text-gray-400">HOURS</TableHead>
-                    <TableHead className="font-mono text-xs text-gray-400">COMMENT</TableHead>
-                    <TableHead className="font-mono text-xs text-gray-400">STATUS</TableHead>
+                    <TableHead className="font-mono text-xs text-gray-400">Date</TableHead>
+                    <TableHead className="font-mono text-xs text-gray-400">Work Item</TableHead>
+                    <TableHead className="font-mono text-xs text-gray-400">Type</TableHead>
+                    <TableHead className="font-mono text-xs text-gray-400">Hours</TableHead>
+                    <TableHead className="font-mono text-xs text-gray-400">Comment</TableHead>
+                    <TableHead className="font-mono text-xs text-gray-400">Status</TableHead>
                 </TableRow>
             </TableHeader>
             <TableBody>
@@ -81,33 +71,16 @@ export function ExportTable({
                             </TableCell>
                             <TableCell>
                                 <div className="flex items-center gap-2">
-                                    {adoOrg && adoProject ? (
-                                        <a
-                                            href={buildWorkItemUrl(adoOrg, adoProject, entry.workItemId)}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="inline-flex items-center gap-1 font-mono text-sm text-amber-400 hover:text-amber-300 hover:underline"
-                                        >
-                                            #{entry.workItemId}
-                                            <ExternalLink className="w-3 h-3" />
-                                        </a>
-                                    ) : (
-                                        <span className="font-mono text-sm text-amber-400">#{entry.workItemId}</span>
-                                    )}
-                                    {entry.workItemTitle && (
-                                        <span className="text-sm text-gray-400">{entry.workItemTitle}</span>
-                                    )}
-                                    {entry.workItemType && typeColors[entry.workItemType] && (
-                                        <span
-                                            className="text-xs font-mono px-1.5 py-0.5 rounded"
-                                            style={{
-                                                borderLeft: `3px solid #${typeColors[entry.workItemType].color}`,
-                                                backgroundColor: `#${typeColors[entry.workItemType].color}18`,
-                                                color: `#${typeColors[entry.workItemType].color}`,
-                                            }}
-                                        >
-                                            {entry.workItemType}
-                                        </span>
+                                    <WorkItemLink
+                                        id={entry.workItemId}
+                                        title={entry.workItemTitle}
+                                        adoConfig={adoConfig}
+                                    />
+                                    {entry.workItemType && (
+                                        <TypeBadge
+                                            typeName={entry.workItemType}
+                                            color={typeColors[entry.workItemType]}
+                                        />
                                     )}
                                 </div>
                             </TableCell>
@@ -126,11 +99,11 @@ export function ExportTable({
                             <TableCell>
                                 {mappedWorkItemIds.has(entry.workItemId) ? (
                                     <Badge variant="outline" className="text-xs border-green-500/30 text-green-400">
-                                        MAPPED
+                                        Mapped
                                     </Badge>
                                 ) : (
                                     <Badge variant="outline" className="text-xs border-red-500/30 text-red-400">
-                                        UNMAPPED
+                                        Unmapped
                                     </Badge>
                                 )}
                             </TableCell>

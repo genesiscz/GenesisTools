@@ -26,7 +26,11 @@ function createTimeLogApi(adoConfig: AzureConfigWithTimeLog): TimeLogApi {
     return new TimeLogApi(adoConfig.orgId!, adoConfig.projectId, adoConfig.timelog!.functionsKey, user);
 }
 
-async function enrichExportEntries(result: MonthExport, adoConfig: AzureConfigWithTimeLog): Promise<void> {
+async function enrichExportEntries(
+    result: MonthExport,
+    adoConfig: AzureConfigWithTimeLog,
+    options?: { force?: boolean }
+): Promise<void> {
     const uniqueIds = [...new Set(result.entries.map((e) => e.workItemId))];
 
     if (uniqueIds.length === 0) {
@@ -34,7 +38,7 @@ async function enrichExportEntries(result: MonthExport, adoConfig: AzureConfigWi
     }
 
     try {
-        const workItems = await enrichWorkItems(adoConfig, uniqueIds);
+        const workItems = await enrichWorkItems(adoConfig, uniqueIds, { force: options?.force });
 
         for (const entry of result.entries) {
             const wi = workItems.get(entry.workItemId);
@@ -57,12 +61,12 @@ async function enrichExportEntries(result: MonthExport, adoConfig: AzureConfigWi
     }
 }
 
-export async function getExportData(month: number, year: number): Promise<MonthExport> {
+export async function getExportData(month: number, year: number, options?: { force?: boolean }): Promise<MonthExport> {
     const adoConfig = requireAdoConfig();
     const adoApi = createTimeLogApi(adoConfig);
     const result = await exportMonth(adoApi, month, year, adoConfig.timelog!.defaultUser!.userId);
 
-    await enrichExportEntries(result, adoConfig);
+    await enrichExportEntries(result, adoConfig, options);
 
     return result;
 }

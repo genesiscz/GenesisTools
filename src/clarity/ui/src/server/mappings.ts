@@ -91,7 +91,7 @@ export async function getClarityTasks(timesheetId: number): Promise<{ tasks: Cla
         throw new Error(`Timesheet ${timesheetId} not found`);
     }
 
-    const tasks: ClarityTask[] = ts.timeentries._results.map((e: TimeEntryRecord) => ({
+    const tasks: ClarityTask[] = (ts.timeentries?._results ?? []).map((e: TimeEntryRecord) => ({
         taskId: e.taskId,
         taskName: e.taskName,
         taskCode: e.taskCode,
@@ -101,6 +101,38 @@ export async function getClarityTasks(timesheetId: number): Promise<{ tasks: Cla
     }));
 
     return { tasks };
+}
+
+export async function moveMapping(
+    adoWorkItemId: number,
+    target: {
+        clarityTaskId: number;
+        clarityTaskName: string;
+        clarityTaskCode: string;
+        clarityInvestmentName: string;
+        clarityInvestmentCode: string;
+    }
+): Promise<{ success: boolean }> {
+    const config = await getConfig();
+
+    if (!config) {
+        throw new Error("Clarity not configured");
+    }
+
+    const mapping = config.mappings.find((m) => m.adoWorkItemId === adoWorkItemId);
+
+    if (!mapping) {
+        throw new Error(`Mapping for work item ${adoWorkItemId} not found`);
+    }
+
+    mapping.clarityTaskId = target.clarityTaskId;
+    mapping.clarityTaskName = target.clarityTaskName;
+    mapping.clarityTaskCode = target.clarityTaskCode;
+    mapping.clarityInvestmentName = target.clarityInvestmentName;
+    mapping.clarityInvestmentCode = target.clarityInvestmentCode;
+
+    await saveConfig(config);
+    return { success: true };
 }
 
 export async function removeMapping(adoWorkItemId: number): Promise<{ success: boolean }> {

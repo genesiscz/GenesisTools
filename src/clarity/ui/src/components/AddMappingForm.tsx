@@ -1,3 +1,4 @@
+import type { WorkItemTypeColor } from "@app/azure-devops/lib/work-item-enrichment";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
@@ -23,6 +24,7 @@ interface TimesheetWeek {
     finishDate: string;
     totalHours: number;
     status: string;
+    entryCount?: number;
 }
 
 interface AdoWorkItem {
@@ -39,12 +41,6 @@ interface TimelogWorkItem {
     state: string;
     totalMinutes: number;
     entryCount: number;
-}
-
-interface TypeColorInfo {
-    color: string;
-    name: string;
-    icon: { id: string; url: string };
 }
 
 interface AddMappingFormProps {
@@ -108,7 +104,7 @@ async function fetchTimelogEntries(month: number, year: number): Promise<{ workI
     return res.json();
 }
 
-async function fetchTypeColors(): Promise<{ types: Record<string, TypeColorInfo> }> {
+async function fetchTypeColors(): Promise<{ types: Record<string, WorkItemTypeColor> }> {
     const res = await fetch("/api/workitem-type-colors");
 
     if (!res.ok) {
@@ -158,7 +154,7 @@ async function addMappingApi(data: Record<string, unknown>) {
     return res.json();
 }
 
-function TypeBadge({ typeName, colors }: { typeName: string; colors: Record<string, TypeColorInfo> }) {
+function TypeBadge({ typeName, colors }: { typeName: string; colors: Record<string, WorkItemTypeColor> }) {
     const info = colors[typeName];
 
     if (!info) {
@@ -196,6 +192,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
     // Step 3 state
     const [selectedWorkItems, setSelectedWorkItems] = useState<Map<number, AdoWorkItem>>(new Map());
     const [timelogFilter, setTimelogFilter] = useState("");
+    const [showMapped, setShowMapped] = useState(false);
     const [adoQuery, setAdoQuery] = useState("");
     const [submitProgress, setSubmitProgress] = useState<{ done: number; total: number } | null>(null);
 
@@ -258,14 +255,19 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
             return [];
         }
 
-        if (!timelogFilter.trim()) {
-            return timelogData.workItems;
+        let items = timelogData.workItems;
+
+        if (!showMapped) {
+            items = items.filter((wi) => !mappedIds.has(wi.id));
         }
 
-        const q = timelogFilter.toLowerCase();
+        if (timelogFilter.trim()) {
+            const q = timelogFilter.toLowerCase();
+            items = items.filter((wi) => `#${wi.id}`.includes(q) || wi.title.toLowerCase().includes(q));
+        }
 
-        return timelogData.workItems.filter((wi) => `#${wi.id}`.includes(q) || wi.title.toLowerCase().includes(q));
-    }, [timelogData, timelogFilter]);
+        return items;
+    }, [timelogData, timelogFilter, showMapped, mappedIds]);
 
     const addMutation = useMutation({
         mutationFn: async () => {
@@ -352,14 +354,14 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
             <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
                     <Plus className="w-4 h-4" />
-                    ADD MAPPING
+                    Add Mapping
                 </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
                 {/* Step 1: Select timesheet week */}
                 <div>
                     <div className="flex items-center justify-between mb-1.5">
-                        <span className="block text-xs font-mono text-gray-500">STEP 1: SELECT TIMESHEET WEEK</span>
+                        <span className="block text-xs font-mono text-gray-500">Step 1: Select timesheet week</span>
                         <button
                             type="button"
                             onClick={() => {
@@ -370,7 +372,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                             }}
                             className="text-[10px] font-mono text-gray-600 hover:text-amber-400 transition-colors"
                         >
-                            {useManualId ? "← SHOW WEEKS" : "ENTER ID MANUALLY →"}
+                            {useManualId ? "← Show weeks" : "Enter ID manually →"}
                         </button>
                     </div>
 
@@ -398,7 +400,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                                 ) : (
                                     <Search className="w-3.5 h-3.5" />
                                 )}
-                                LOAD
+                                Load
                             </Button>
                         </div>
                     ) : weeksLoading ? (
@@ -443,12 +445,19 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                                                         variant="outline"
                                                         className="text-[9px] border-green-500/30 text-green-400"
                                                     >
-                                                        THIS WEEK
+                                                        This week
                                                     </Badge>
                                                 )}
                                             </span>
                                             <div className="flex items-center gap-2">
-                                                <span className="text-gray-500">{week.totalHours.toFixed(1)}h</span>
+                                                <span className="text-gray-500">
+                                                    {(week.totalHours ?? 0).toFixed(1)}h
+                                                </span>
+                                                {week.entryCount !== undefined && (
+                                                    <span className="text-gray-600 text-[10px]">
+                                                        {week.entryCount} task{week.entryCount !== 1 ? "s" : ""}
+                                                    </span>
+                                                )}
                                                 <Badge variant="outline" className="text-[9px]">
                                                     {week.status}
                                                 </Badge>
@@ -475,7 +484,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                             ) : (
                                 <Search className="w-3.5 h-3.5 mr-1.5" />
                             )}
-                            LOAD TASKS FROM {formatWeekLabel(selectedWeek.startDate, selectedWeek.finishDate)}
+                            Load tasks from {formatWeekLabel(selectedWeek.startDate, selectedWeek.finishDate)}
                         </Button>
                     )}
 
@@ -491,7 +500,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                 {tasksMutation.data && (
                     <div>
                         <span className="block text-xs font-mono text-gray-500 mb-1.5">
-                            STEP 2: SELECT CLARITY TASK
+                            Step 2: Select Clarity task
                         </span>
                         <div className="space-y-1.5 max-h-48 overflow-y-auto">
                             {tasksMutation.data.tasks.map((task) => (
@@ -531,19 +540,32 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                 {/* Step 3: Select ADO work items (multi-select) */}
                 {selectedTask && (
                     <div className="space-y-3">
-                        <span className="block text-xs font-mono text-gray-500">STEP 3: SELECT ADO WORK ITEMS</span>
+                        <span className="block text-xs font-mono text-gray-500">Step 3: Select ADO work items</span>
 
                         {/* Timelog entries section */}
                         <div>
                             <div className="flex items-center justify-between mb-1.5">
-                                <span className="text-[10px] font-mono text-gray-500 uppercase">
+                                <span className="text-[10px] font-mono text-gray-500">
                                     Timelog entries ({month}/{year})
                                 </span>
-                                {timelogData?.workItems && (
-                                    <span className="text-[10px] font-mono text-gray-600">
-                                        {timelogData.workItems.length} items
-                                    </span>
-                                )}
+                                <div className="flex items-center gap-3">
+                                    {mappedIds.size > 0 && (
+                                        <label className="flex items-center gap-1.5 cursor-pointer text-[10px] font-mono text-gray-500 hover:text-gray-400 transition-colors">
+                                            <input
+                                                type="checkbox"
+                                                checked={showMapped}
+                                                onChange={(e) => setShowMapped(e.target.checked)}
+                                                className="accent-amber-500 w-3 h-3"
+                                            />
+                                            Show mapped
+                                        </label>
+                                    )}
+                                    {timelogData?.workItems && (
+                                        <span className="text-[10px] font-mono text-gray-600">
+                                            {filteredTimelog.length}/{timelogData.workItems.length} items
+                                        </span>
+                                    )}
+                                </div>
                             </div>
 
                             <Input
@@ -601,7 +623,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                                                         variant="outline"
                                                         className="text-[9px] border-green-500/30 text-green-500"
                                                     >
-                                                        MAPPED
+                                                        Mapped
                                                     </Badge>
                                                 )}
                                             </label>
@@ -621,7 +643,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
 
                         {/* ADO search section */}
                         <div>
-                            <span className="text-[10px] font-mono text-gray-500 uppercase block mb-1.5">
+                            <span className="text-[10px] font-mono text-gray-500 block mb-1.5">
                                 Search other ADO item
                             </span>
                             <div className="flex gap-2">
@@ -647,7 +669,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                                     ) : (
                                         <Search className="w-3.5 h-3.5" />
                                     )}
-                                    SEARCH
+                                    Search
                                 </Button>
                             </div>
 
@@ -683,7 +705,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                                                         variant="outline"
                                                         className="text-[9px] border-green-500/30 text-green-500"
                                                     >
-                                                        MAPPED
+                                                        Mapped
                                                     </Badge>
                                                 ) : isSelected ? (
                                                     <button
@@ -734,13 +756,13 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                                     <>
                                         <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
                                         {submitProgress
-                                            ? `ADDING ${submitProgress.done}/${submitProgress.total}...`
-                                            : "ADDING..."}
+                                            ? `Adding ${submitProgress.done}/${submitProgress.total}...`
+                                            : "Adding..."}
                                     </>
                                 ) : (
                                     <>
                                         <Plus className="w-3.5 h-3.5 mr-2" />
-                                        ADD {selectedWorkItems.size > 1 ? `${selectedWorkItems.size} ` : ""}MAPPINGS
+                                        Add {selectedWorkItems.size > 1 ? `${selectedWorkItems.size} ` : ""}mappings
                                     </>
                                 )}
                             </Button>
@@ -749,7 +771,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                         {addMutation.isSuccess && (
                             <div className="flex items-center gap-2 text-green-400 font-mono text-xs">
                                 <CheckCircle className="w-3.5 h-3.5" />
-                                {selectedWorkItems.size === 0 ? "Mappings added successfully" : "Done"}
+                                Mappings added successfully
                             </div>
                         )}
 

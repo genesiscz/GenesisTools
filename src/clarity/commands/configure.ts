@@ -1,11 +1,12 @@
+import { createInterface } from "node:readline";
 import { ClarityApi } from "@app/utils/clarity";
 import { parseCurl } from "@app/utils/curl";
 import * as clack from "@clack/prompts";
 import type { Command } from "commander";
-import { createInterface } from "node:readline";
 import pc from "picocolors";
 import type { ClarityConfig } from "../config.js";
 import { getConfig, saveConfig } from "../config.js";
+import { runInteractiveLinking } from "./link-workitems.js";
 
 /**
  * Read multiline cURL input from stdin.
@@ -206,80 +207,6 @@ function showConfig(config: ClarityConfig): void {
     }
 }
 
-async function manageMappings(): Promise<void> {
-    const config = await getConfig();
-
-    if (!config) {
-        console.error("Clarity not configured. Run: tools clarity configure");
-        process.exit(1);
-    }
-
-    clack.intro(pc.bgCyan(pc.black(" Clarity Mappings ")));
-
-    if (config.mappings.length === 0) {
-        clack.log.info("No mappings configured. Use 'tools clarity link-workitems' to create mappings.");
-        clack.outro("Done");
-        return;
-    }
-
-    console.log("\nCurrent Mappings:");
-
-    for (const [i, m] of config.mappings.entries()) {
-        console.log(`  ${i + 1}. ADO #${m.adoWorkItemId} (${m.adoWorkItemTitle})`);
-        console.log(`     -> ${m.clarityTaskName} [${m.clarityInvestmentName}]`);
-    }
-
-    const action = await clack.select({
-        message: "What would you like to do?",
-        options: [
-            { value: "remove", label: "Remove a mapping" },
-            { value: "clear", label: "Remove all mappings" },
-            { value: "done", label: "Done" },
-        ],
-    });
-
-    if (clack.isCancel(action) || action === "done") {
-        clack.outro("Done");
-        return;
-    }
-
-    if (action === "clear") {
-        const confirm = await clack.confirm({
-            message: `Remove all ${config.mappings.length} mappings?`,
-            initialValue: false,
-        });
-
-        if (clack.isCancel(confirm) || !confirm) {
-            clack.outro("Cancelled");
-            return;
-        }
-
-        config.mappings = [];
-        await saveConfig(config);
-        clack.outro("All mappings removed.");
-        return;
-    }
-
-    if (action === "remove") {
-        const toRemove = await clack.select({
-            message: "Select mapping to remove:",
-            options: config.mappings.map((m, i) => ({
-                value: i,
-                label: `ADO #${m.adoWorkItemId} -> ${m.clarityTaskName}`,
-            })),
-        });
-
-        if (clack.isCancel(toRemove)) {
-            clack.outro("Cancelled");
-            return;
-        }
-
-        const removed = config.mappings.splice(toRemove as number, 1)[0];
-        await saveConfig(config);
-        clack.outro(`Removed mapping: ADO #${removed.adoWorkItemId} -> ${removed.clarityTaskName}`);
-    }
-}
-
 export function registerConfigureCommand(program: Command): void {
     const cmd = program.command("configure").description("Configure Clarity PPM connection and mappings");
 
@@ -303,13 +230,225 @@ export function registerConfigureCommand(program: Command): void {
         });
 
     cmd.command("mappings")
-        .description("Manage ADO-to-Clarity task mappings")
+        .description("Add/manage ADO-to-Clarity task mappings (interactive)")
         .action(async () => {
-            await manageMappings();
+            await runInteractiveLinking();
         });
 
-    // Default action: run interactive setup
+    cmd.command("update-auth")
+        .description("Update auth credentials (paste new cURL)")
+        .action(async () => {
+            const config = await getConfig();
+
+            if (!config) {
+                console.error("Clarity not configured. Run: tools clarity configure auth");
+                process.exit(1);
+            }
+
+            clack.intro(pc.bgCyan(pc.black(" Update Clarity Auth ")));
+
+            clack.note(
+                [
+                    "Paste a fresh cURL command from Clarity to update auth credentials.",
+                    "Your mappings will be preserved.",
+                    "",
+                    "Steps:",
+                    "  1. Open Clarity PPM in your browser",
+                    "  2. Open Developer Tools (F12) -> Network tab",
+                    "  3. Right-click any request to /ppm/rest/v1/",
+                    "  4. Copy as cURL and paste below",
+                ].join("\n"),
+                "Update credentials"
+            );
+
+            clack.log.step("Paste the cURL command:");
+            const curlInput = await readMultilineCurl();
+
+            if (!curlInput.trim()) {
+                clack.cancel("No cURL command provided.");
+                process.exit(0);
+            }
+
+            let parsed: ReturnType<typeof parseCurl>;
+
+            try {
+                parsed = parseCurl(curlInput);
+            } catch (err) {
+                clack.log.error(err instanceof Error ? err.message : String(err));
+                process.exit(1);
+            }
+
+            const urlObj = new URL(parsed.url);
+            const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
+            const authToken = parsed.headers.authToken || parsed.headers.AuthToken || parsed.headers.AUTHTOKEN;
+            const sessionId = parsed.cookies.sessionId || parsed.cookies.JSESSIONID;
+
+            if (!authToken || !sessionId) {
+                clack.log.error("Missing authToken header or sessionId cookie in cURL.");
+                process.exit(1);
+            }
+
+            const spinner = clack.spinner();
+            spinner.start("Testing connection...");
+
+            const api = new ClarityApi({ baseUrl, authToken, sessionId });
+
+            try {
+                const appData = await api.getTimesheetApp(0);
+                const resource = appData.resource._results[0];
+
+                spinner.stop("Connection successful!");
+
+                if (resource) {
+                    clack.log.info(`Logged in as: ${pc.green(resource.full_name)} (${resource.email})`);
+                }
+
+                config.baseUrl = baseUrl;
+                config.authToken = authToken;
+                config.sessionId = sessionId;
+
+                if (resource) {
+                    config.resourceId = resource.id;
+                    config.uniqueName = resource.email;
+                }
+
+                await saveConfig(config);
+                clack.outro(pc.green(`Auth updated! ${config.mappings.length} mappings preserved.`));
+            } catch (err) {
+                spinner.stop("Connection failed");
+                clack.log.error(err instanceof Error ? err.message : String(err));
+                process.exit(1);
+            }
+        });
+
+    // Default action: show config + menu
     cmd.action(async () => {
-        await runInteractiveSetup();
+        let config = await getConfig();
+
+        if (!config) {
+            clack.intro(pc.bgCyan(pc.black(" Clarity PPM Configuration ")));
+            clack.log.warn("Not configured yet.");
+            clack.log.info("Run: tools clarity configure auth");
+            clack.outro("");
+            return;
+        }
+
+        // Multi-loop: show menu repeatedly, Esc on menu exits
+        while (true) {
+            // Refresh config each iteration (may have changed)
+            config = (await getConfig())!;
+            showConfig(config);
+
+            const action = await clack.select({
+                message: "What would you like to do?",
+                options: [
+                    { value: "done", label: "Done" },
+                    { value: "link", label: "Add/update mappings (link work items)" },
+                    { value: "remove-mapping", label: "Remove a mapping" },
+                    { value: "update-auth", label: "Update auth credentials (paste new cURL)" },
+                    { value: "reconfigure", label: "Full reconfigure (reset everything)" },
+                ],
+            });
+
+            if (clack.isCancel(action) || action === "done") {
+                break;
+            }
+
+            if (action === "update-auth") {
+                clack.note(
+                    "Paste a fresh cURL command from Clarity to update credentials.\nYour mappings will be preserved.",
+                    "Update credentials"
+                );
+
+                clack.log.step("Paste the cURL command:");
+                const curlInput = await readMultilineCurl();
+
+                if (!curlInput.trim()) {
+                    clack.log.warn("No cURL command provided.");
+                    continue;
+                }
+
+                let parsed: ReturnType<typeof parseCurl>;
+
+                try {
+                    parsed = parseCurl(curlInput);
+                } catch (err) {
+                    clack.log.error(err instanceof Error ? err.message : String(err));
+                    continue;
+                }
+
+                const urlObj = new URL(parsed.url);
+                const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
+                const authToken = parsed.headers.authToken || parsed.headers.AuthToken || parsed.headers.AUTHTOKEN;
+                const sessionId = parsed.cookies.sessionId || parsed.cookies.JSESSIONID;
+
+                if (!authToken || !sessionId) {
+                    clack.log.error("Missing authToken header or sessionId cookie in cURL.");
+                    continue;
+                }
+
+                const spinner = clack.spinner();
+                spinner.start("Testing connection...");
+                const api = new ClarityApi({ baseUrl, authToken, sessionId });
+
+                try {
+                    const appData = await api.getTimesheetApp(0);
+                    const resource = appData.resource._results[0];
+                    spinner.stop("Connection successful!");
+
+                    config.baseUrl = baseUrl;
+                    config.authToken = authToken;
+                    config.sessionId = sessionId;
+
+                    if (resource) {
+                        config.resourceId = resource.id;
+                        config.uniqueName = resource.email;
+                        clack.log.info(`Logged in as: ${pc.green(resource.full_name)} (${resource.email})`);
+                    }
+
+                    await saveConfig(config);
+                    clack.log.success(`Auth updated! ${config.mappings.length} mappings preserved.`);
+                } catch (err) {
+                    spinner.stop("Connection failed");
+                    clack.log.error(err instanceof Error ? err.message : String(err));
+                }
+
+                continue;
+            }
+
+            if (action === "link") {
+                await runInteractiveLinking();
+                continue;
+            }
+
+            if (action === "remove-mapping") {
+                if (config.mappings.length === 0) {
+                    clack.log.info("No mappings to remove.");
+                    continue;
+                }
+
+                const toRemove = await clack.select({
+                    message: "Select mapping to remove:",
+                    options: config.mappings.map((m, i) => ({
+                        value: i,
+                        label: `ADO #${m.adoWorkItemId} (${m.adoWorkItemTitle}) → ${m.clarityTaskName}`,
+                    })),
+                });
+
+                // Esc goes back to menu
+                if (clack.isCancel(toRemove)) {
+                    continue;
+                }
+
+                const removed = config.mappings.splice(toRemove as number, 1)[0];
+                await saveConfig(config);
+                clack.log.success(`Removed: ADO #${removed.adoWorkItemId} → ${removed.clarityTaskName}`);
+                continue;
+            }
+
+            if (action === "reconfigure") {
+                await runInteractiveSetup();
+            }
+        }
     });
 }

@@ -1,10 +1,10 @@
-import { exportMonth } from "@app/azure-devops/lib/timelog/export";
 import { loadConfig as loadAdoConfig } from "@app/azure-devops/config";
-import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
+import { exportMonth } from "@app/azure-devops/lib/timelog/export";
 import { TimeLogApi } from "@app/azure-devops/timelog-api";
+import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
+import { type ClarityMapping, getMappingForWorkItem, requireConfig } from "@app/clarity/config";
 import type { TimeEntryRecord, TimeSegment, TimeSeriesValue } from "@app/utils/clarity";
 import { ClarityApi } from "@app/utils/clarity";
-import { type ClarityMapping, getMappingForWorkItem, requireConfig } from "@app/clarity/config";
 
 interface FillEntry {
     mapping: ClarityMapping;
@@ -29,6 +29,10 @@ export interface FillPreviewResult {
     weeks: WeekPreview[];
     totalMapped: number;
     totalUnmapped: number;
+    diagnostics?: {
+        reason: string;
+        message: string;
+    };
 }
 
 function formatDate(d: Date): string {
@@ -113,13 +117,57 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
         }
     }
 
+    const totalMapped = [...fillMap.values()].reduce((s, f) => s + f.totalMinutes, 0);
+    const totalUnmapped = [...unmappedByWi.values()].reduce((s, v) => s + v, 0);
+
+    if (clarityConfig.mappings.length === 0) {
+        return {
+            weeks: [],
+            totalMapped,
+            totalUnmapped,
+            diagnostics: {
+                reason: "no_mappings",
+                message: "No ADO-to-Clarity mappings configured. Create mappings on the Mappings page first.",
+            },
+        };
+    }
+
+    if (fillMap.size === 0 && adoExport.entries.length === 0) {
+        return {
+            weeks: [],
+            totalMapped,
+            totalUnmapped,
+            diagnostics: {
+                reason: "no_ado_entries",
+                message: `No ADO timelog entries found for ${year}-${String(month).padStart(2, "0")}.`,
+            },
+        };
+    }
+
+    if (fillMap.size === 0 && adoExport.entries.length > 0) {
+        return {
+            weeks: [],
+            totalMapped,
+            totalUnmapped,
+            diagnostics: {
+                reason: "all_unmapped",
+                message: `Found ${adoExport.entries.length} ADO entries but none match configured mappings. ${unmappedByWi.size} work items are unmapped.`,
+            },
+        };
+    }
+
     const firstMapping = clarityConfig.mappings[0];
 
     if (!firstMapping?.clarityTimesheetId) {
         return {
             weeks: [],
-            totalMapped: [...fillMap.values()].reduce((s, f) => s + f.totalMinutes, 0),
-            totalUnmapped: [...unmappedByWi.values()].reduce((s, v) => s + v, 0),
+            totalMapped,
+            totalUnmapped,
+            diagnostics: {
+                reason: "no_timesheet_id",
+                message:
+                    "Mappings exist but none have a clarityTimesheetId. Re-create mappings via the Add Mapping form (select a timesheet week first).",
+            },
         };
     }
 

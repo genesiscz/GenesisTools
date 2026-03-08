@@ -9,10 +9,10 @@ interface ExportSummaryProps {
 
 export function ExportSummary({ totalHours, totalEntries, workItemCount, dayCount }: ExportSummaryProps) {
     const stats = [
-        { label: "TOTAL HOURS", value: totalHours.toFixed(1), accent: true },
-        { label: "ENTRIES", value: String(totalEntries), accent: false },
-        { label: "WORK ITEMS", value: String(workItemCount), accent: false },
-        { label: "DAYS", value: String(dayCount), accent: false },
+        { label: "Total Hours", value: totalHours.toFixed(1), accent: true },
+        { label: "Entries", value: String(totalEntries), accent: false },
+        { label: "Work Items", value: String(workItemCount), accent: false },
+        { label: "Days", value: String(dayCount), accent: false },
     ];
 
     return (

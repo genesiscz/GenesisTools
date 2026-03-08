@@ -1,6 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ComponentProps } from "react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { Toaster } from "sonner";
 
 export interface DashboardAppConfig {
     /** The root React component (typically a Router) */
@@ -9,6 +11,8 @@ export interface DashboardAppConfig {
     rootId?: string;
     /** Custom QueryClient instance (default: creates new one) */
     queryClient?: QueryClient;
+    /** Toaster props override (default: dark theme) */
+    toaster?: ComponentProps<typeof Toaster>;
 }
 
 export function createDashboardApp(config: DashboardAppConfig) {
@@ -23,6 +27,7 @@ export function createDashboardApp(config: DashboardAppConfig) {
         <StrictMode>
             <QueryClientProvider client={queryClient}>
                 <config.App />
+                <Toaster theme="dark" {...config.toaster} />
             </QueryClientProvider>
         </StrictMode>
     );

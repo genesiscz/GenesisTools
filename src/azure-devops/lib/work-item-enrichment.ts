@@ -103,7 +103,9 @@ export async function enrichWorkItems(
         });
 
         for (const [id, item] of fetched) {
-            // Save to cache
+            const itemType = (item.rawFields?.["System.WorkItemType"] as string | undefined) ?? undefined;
+
+            // Save to cache (including type)
             const cacheEntry: WorkItemCache = {
                 version: WORKITEM_CACHE_VERSION,
                 cache: { fieldsFetchedAt: new Date().toISOString() },
@@ -112,6 +114,7 @@ export async function enrichWorkItems(
                 changed: item.changed,
                 title: item.title,
                 state: item.state,
+                type: itemType,
             };
 
             await saveWorkItemCache(id, cacheEntry);
@@ -121,13 +124,10 @@ export async function enrichWorkItems(
                 id: item.id,
                 title: item.title,
                 state: item.state,
+                type: includeType ? itemType : undefined,
                 assignee: item.assignee,
                 changed: item.changed,
             };
-
-            if (includeType && item.rawFields) {
-                enriched.type = item.rawFields["System.WorkItemType"] as string | undefined;
-            }
 
             result.set(id, enriched);
         }
@@ -231,11 +231,12 @@ function isCacheFresh(cache: WorkItemCache): boolean {
     return ageMs < WORKITEM_FRESHNESS_MINUTES * 60 * 1000;
 }
 
-function cacheToEnriched(cache: WorkItemCache, _includeType: boolean): EnrichedWorkItem {
+function cacheToEnriched(cache: WorkItemCache, includeType: boolean): EnrichedWorkItem {
     return {
         id: cache.id,
         title: cache.title,
         state: cache.state,
+        type: includeType ? cache.type : undefined,
         changed: cache.changed,
     };
 }

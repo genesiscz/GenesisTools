@@ -17,10 +17,10 @@ import { MappingsPage } from "./routes/mappings";
 import { SettingsPage } from "./routes/settings";
 
 const navLinks = [
-    { label: "MAPPINGS", href: "/mappings", icon: <Link2 className="w-3.5 h-3.5" /> },
-    { label: "EXPORT", href: "/export", icon: <ArrowDownToLine className="w-3.5 h-3.5" /> },
-    { label: "IMPORT", href: "/import", icon: <ArrowUpFromLine className="w-3.5 h-3.5" /> },
-    { label: "SETTINGS", href: "/settings", icon: <Settings className="w-3.5 h-3.5" /> },
+    { label: "Mappings", href: "/mappings", icon: <Link2 className="w-3.5 h-3.5" /> },
+    { label: "Export", href: "/export", icon: <ArrowDownToLine className="w-3.5 h-3.5" /> },
+    { label: "Import", href: "/import", icon: <ArrowUpFromLine className="w-3.5 h-3.5" /> },
+    { label: "Settings", href: "/settings", icon: <Settings className="w-3.5 h-3.5" /> },
 ];
 
 const rootRoute = createRootRoute({
@@ -30,8 +30,8 @@ const rootRoute = createRootRoute({
 
         return (
             <DashboardLayout
-                title="CLARITY"
-                titleAccent="TIMELOG"
+                title="Clarity"
+                titleAccent="Timelog"
                 navLinks={navLinks}
                 activePath={currentPath}
                 onNavigate={(href) => routerInstance.navigate({ to: href })}

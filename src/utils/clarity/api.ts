@@ -49,8 +49,9 @@ export class ClarityApi {
     }
 
     /** Discover timesheets via timesheetApp (returns carousel with timesheet_id mapping) */
-    async getTimesheetApp(timePeriodId: number): Promise<TimesheetAppResponse> {
-        return this.request<TimesheetAppResponse>(`/private/timesheetApp?filter=(timeperiodId = ${timePeriodId})`);
+    async getTimesheetApp(timePeriodId?: number): Promise<TimesheetAppResponse> {
+        const filter = timePeriodId ? `?filter=(timeperiodId = ${timePeriodId})` : "";
+        return this.request<TimesheetAppResponse>(`/private/timesheetApp${filter}`);
     }
 
     /** Find timesheetId for a specific date by navigating the carousel */
