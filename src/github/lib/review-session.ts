@@ -69,6 +69,23 @@ export class ReviewSessionManager {
         return sessions.sort((a, b) => b.createdAt - a.createdAt);
     }
 
+    async findRecentSessionForPR(
+        owner: string,
+        repo: string,
+        prNumber: number,
+        maxAgeMs = 60 * 60 * 1000,
+    ): Promise<ReviewSessionMeta | null> {
+        const sessions = await this.listSessions();
+        const cutoff = Date.now() - maxAgeMs;
+
+        return sessions.find(
+            (s) => s.prNumber === prNumber
+                && s.owner === owner
+                && s.repo === repo
+                && s.createdAt > cutoff,
+        ) ?? null;
+    }
+
     /**
      * Resolve ref IDs (t1, t3) or raw GraphQL IDs (PRRT_xxx) to thread entries.
      * Returns array of { refId, threadId, thread } for each resolved ref.

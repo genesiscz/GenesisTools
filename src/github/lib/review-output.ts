@@ -460,13 +460,16 @@ export function formatReviewLLM(data: ReviewData, sessionId: string): string {
     for (const thread of threads) {
         const ref = `t${thread.threadNumber}`;
         const status = thread.status === "resolved" ? "RESOLVED" : "UNRESOLVED";
-        const sev = thread.severity.toUpperCase().padEnd(4);
-        const fileLine = thread.line ? `${thread.file}:${thread.line}` : thread.file;
+        const sev = thread.severity.toUpperCase();
+        const fileLine = thread.startLine && thread.startLine !== thread.line
+            ? `${thread.file}:${thread.startLine}-${thread.line}`
+            : thread.line ? `${thread.file}:${thread.line}` : thread.file;
         const age = formatRelativeTime(new Date(thread.createdAt), { compact: true });
-        const replyCount = thread.replies.length;
-        const replyText = replyCount === 0 ? "" : `(${replyCount} ${replyCount === 1 ? "reply" : "replies"})`;
+        const replies = thread.replies.length > 0 ? `${thread.replies.length}r` : "";
+        const title = thread.title.length > 40 ? `${thread.title.slice(0, 37)}...` : thread.title;
 
-        output += `  ${ref.padEnd(5)} ${status.padEnd(10)} ${sev}  ${fileLine.padEnd(35).slice(0, 35)}  ${thread.title.slice(0, 40).padEnd(40)}  @${thread.author.padEnd(12).slice(0, 12)}  ${age.padEnd(8)}  ${replyText}\n`;
+        const parts = [ref, status, sev, replies, fileLine, title, `@${thread.author}`, age].filter(Boolean);
+        output += `  ${parts.join("  ")}\n`;
     }
 
     output += "\n";
@@ -515,6 +518,27 @@ export function formatThreadExpanded(thread: ParsedReviewThread, sessionId: stri
 
     output += `Respond: tools github review respond t${thread.threadNumber} "message" -s ${sessionId}\n`;
     output += `Resolve: tools github review resolve t${thread.threadNumber} -s ${sessionId}\n`;
+
+    return output;
+}
+
+/**
+ * Format PR-level comments (reviewer summaries) for LLM consumption.
+ * These are walkthrough/overview comments from CodeRabbit, Gemini, Copilot, etc.
+ */
+export function formatPrCommentsLLM(prComments: PRLevelComment[], sessionId: string): string {
+    if (prComments.length === 0) {
+        return "No PR-level comments.\n";
+    }
+
+    let output = `=== PR-Level Comments (${prComments.length}) | Session: ${sessionId} ===\n\n`;
+
+    for (const c of prComments) {
+        const stateLabel = c.type === "review" && c.reviewState ? ` [${c.reviewState}]` : "";
+        const date = c.createdAt.slice(0, 10);
+        output += `--- @${c.author}${stateLabel} (${date}) ---\n`;
+        output += `${c.body}\n\n`;
+    }
 
     return output;
 }

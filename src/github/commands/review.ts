@@ -1,6 +1,7 @@
 // Review command - fetch, display, reply to, and resolve PR review threads
 
 import {
+    formatPrCommentsLLM,
     formatReviewJSON,
     formatReviewLLM,
     formatReviewMarkdown,
@@ -155,6 +156,8 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
     // LLM-optimized output (session-based with refs)
     if (options.llm) {
         const sessionMgr = new ReviewSessionManager();
+        const recentSession = await sessionMgr.findRecentSessionForPR(owner, repo, prNumber);
+        const isFirstFetch = !recentSession;
         const sessionId = options.session || sessionMgr.generateSessionId(prNumber);
 
         const sessionData: ReviewSessionData = {
@@ -174,7 +177,19 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
         };
 
         await sessionMgr.createSession(sessionData);
-        console.log(formatReviewLLM(reviewData, sessionId));
+
+        let output = formatReviewLLM(reviewData, sessionId);
+
+        const prComments = reviewData.prComments ?? [];
+        if (prComments.length > 0) {
+            if (isFirstFetch) {
+                output += "\n" + formatPrCommentsLLM(prComments, sessionId);
+            } else {
+                output += `\nSummary: tools github review summary -s ${sessionId}\n`;
+            }
+        }
+
+        console.log(output);
         return;
     }
 
@@ -325,6 +340,22 @@ async function sessionsCommand(): Promise<void> {
     }
 }
 
+async function summaryCommand(options: { session?: string }): Promise<void> {
+    const sessionMgr = new ReviewSessionManager();
+    const sessionId = options.session;
+    if (!sessionId) {
+        throw new Error("Session ID required. Use -s <session-id>");
+    }
+
+    const sessionData = await sessionMgr.loadSession(sessionId);
+    if (!sessionData) {
+        throw new Error(`Session not found or expired: ${sessionId}`);
+    }
+
+    const prComments = sessionData.prComments ?? [];
+    console.log(formatPrCommentsLLM(prComments, sessionId));
+}
+
 /**
  * Create review command for commander
  */
@@ -355,7 +386,8 @@ Examples:
   $ tools github review expand t1,t3 -s pr137-20260308-143025                # Expand threads to full detail
   $ tools github review respond t1 "Fixed in abc123" --resolve -s pr137-...  # Reply + resolve
   $ tools github review resolve t1,t2,t3 -s pr137-...                        # Resolve threads
-  $ tools github review sessions                                              # List review sessions`
+  $ tools github review sessions                                              # List review sessions
+  $ tools github review summary -s pr137-...                                  # Show PR-level review summaries`
         )
         .argument("<pr>", "PR number or full GitHub URL")
         .option("--repo <owner/repo>", "Repository (auto-detected from URL or git)")
@@ -436,6 +468,20 @@ Examples:
             .action(async () => {
                 try {
                     await sessionsCommand();
+                } catch (error) {
+                    console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                    process.exit(1);
+                }
+            })
+    );
+
+    cmd.addCommand(
+        new Command("summary")
+            .description("Show PR-level review summaries (CodeRabbit walkthroughs, etc.)")
+            .option("-s, --session <id>", "Review session ID")
+            .action(async (opts: { session?: string }) => {
+                try {
+                    await summaryCommand(opts);
                 } catch (error) {
                     console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
                     process.exit(1);
