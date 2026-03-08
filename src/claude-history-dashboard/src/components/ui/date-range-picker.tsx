@@ -1,1 +1,1 @@
-export { DateRangePicker } from "../../../../../utils/ui/components/date-range-picker";
+export { DateRangePicker } from "@ui/components/date-range-picker";

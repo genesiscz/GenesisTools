@@ -8,4 +8,4 @@ export {
 	CommandItem,
 	CommandShortcut,
 	CommandSeparator,
-} from "../../../../../utils/ui/components/command";
+} from "@ui/components/command";

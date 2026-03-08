@@ -1,1 +1,1 @@
-export { Badge, badgeVariants } from "../../../../../utils/ui/components/badge";
+export { Badge, badgeVariants } from "@ui/components/badge";
