@@ -1,7 +1,7 @@
+import { ReadStream } from "node:tty";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { render } from "ink";
-import { ReadStream } from "node:tty";
 import type { NewMessageEvent } from "telegram/events";
 import { ConversationSyncService } from "../lib/ConversationSyncService";
 import { TelegramHistoryStore } from "../lib/TelegramHistoryStore";

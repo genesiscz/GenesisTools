@@ -1,5 +1,4 @@
-import { Box, Text } from "ink";
-import { useInput } from "ink";
+import { Box, Text, useInput } from "ink";
 import SelectInput from "ink-select-input";
 import type { TelegramContactV2 } from "../../../lib/types";
 
