@@ -17,8 +17,25 @@ export async function getTimesheetWeeks(
     month?: number,
     year?: number
 ): Promise<{ weeks: TimesheetWeek[] }> {
-    // Try to find a valid timePeriodId to seed the carousel
-    const timePeriodId = await findValidTimePeriodId(api, mappings);
+    // Try to find a valid timePeriodId to seed the carousel.
+    // When a specific month/year is requested, try to navigate to a period covering that month
+    // so the carousel window is anchored correctly.
+    const seedTimePeriodId = await findValidTimePeriodId(api, mappings);
+    let timePeriodId = seedTimePeriodId;
+
+    if (month !== undefined && year !== undefined && seedTimePeriodId !== undefined) {
+        const targetDate = new Date(year, month - 1, 15); // mid-month
+
+        try {
+            const entry = await api.findTimesheetForDate(seedTimePeriodId, targetDate);
+
+            if (entry) {
+                timePeriodId = entry.id;
+            }
+        } catch {
+            // Navigation failed, fall back to the seed period
+        }
+    }
 
     const app = await api.getTimesheetApp(timePeriodId);
     let carousel = app.tscarousel?._results;
@@ -173,6 +190,16 @@ export async function getTimesheetWeeks(
     return { weeks };
 }
 
+/** Check if an error indicates a "not found" condition (vs auth/transport failure) */
+function isNotFoundError(err: unknown): boolean {
+    if (err instanceof Error) {
+        const msg = err.message.toLowerCase();
+        return msg.includes("not found") || msg.includes("404") || msg.includes("no results");
+    }
+
+    return false;
+}
+
 async function findValidTimePeriodId(api: ClarityApi, mappings: ClarityMapping[]): Promise<number | undefined> {
     // Strategy 1: Use an existing mapping's clarityTimesheetId to get a timePeriodId
     for (const mapping of mappings) {
@@ -187,8 +214,12 @@ async function findValidTimePeriodId(api: ClarityApi, mappings: ClarityMapping[]
             if (record?.timePeriodId) {
                 return record.timePeriodId;
             }
-        } catch {
-            // Timesheet might no longer exist, try next
+        } catch (err) {
+            // Only continue to next mapping if timesheet was not found;
+            // rethrow auth/permission/transport errors so they surface to the caller
+            if (!isNotFoundError(err)) {
+                throw err;
+            }
         }
     }
 

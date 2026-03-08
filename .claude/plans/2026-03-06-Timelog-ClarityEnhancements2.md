@@ -135,7 +135,7 @@ Add:
 
 ## Verification
 
-1. Open `http://localhost:3071/#/mappings` in Feb 2026
+1. Open `http://localhost:3071/#/mappings`
 2. See mappings grouped by Clarity project (cards)
 3. Each card header shows project name + code on second line
 4. Each ADO row shows: type color border, title as link, type badge, #ID, delete button

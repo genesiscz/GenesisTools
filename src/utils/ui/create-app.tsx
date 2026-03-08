@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ComponentType } from "react";
 import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { Toaster } from "sonner";
 
 export interface DashboardAppConfig {
     /** The root React component (typically a Router) */
-    App: React.ComponentType;
+    App: ComponentType;
     /** Root element ID (default: "root") */
     rootId?: string;
     /** Custom QueryClient instance (default: creates new one) */
@@ -14,6 +14,8 @@ export interface DashboardAppConfig {
     /** Toaster props override (default: dark theme) */
     toaster?: ComponentProps<typeof Toaster>;
 }
+
+const rootCache = new WeakMap<Element, Root>();
 
 export function createDashboardApp(config: DashboardAppConfig) {
     const queryClient = config.queryClient ?? new QueryClient();
@@ -23,7 +25,14 @@ export function createDashboardApp(config: DashboardAppConfig) {
         throw new Error(`Root element #${config.rootId ?? "root"} not found`);
     }
 
-    createRoot(rootElement).render(
+    let root = rootCache.get(rootElement);
+
+    if (!root) {
+        root = createRoot(rootElement);
+        rootCache.set(rootElement, root);
+    }
+
+    root.render(
         <StrictMode>
             <QueryClientProvider client={queryClient}>
                 <config.App />

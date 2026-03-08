@@ -53,7 +53,8 @@ async function fetchMappings(): Promise<{ mappings: Array<{ adoWorkItemId: numbe
     const res = await fetch("/api/mappings");
 
     if (!res.ok) {
-        return { mappings: [] };
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Failed to load mappings (${res.status})`);
     }
 
     return res.json();
@@ -157,35 +158,41 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
         mutationFn: async () => {
             const items = [...selectedWorkItems.values()];
             setSubmitProgress({ done: 0, total: items.length });
+            const errors: string[] = [];
 
             for (let i = 0; i < items.length; i++) {
                 const wi = items[i];
 
-                await addMappingApi({
-                    clarityTaskId: clarityTask.taskId,
-                    clarityTaskName: clarityTask.taskName,
-                    clarityTaskCode: clarityTask.taskCode,
-                    clarityInvestmentName: clarityTask.investmentName,
-                    clarityInvestmentCode: clarityTask.investmentCode,
-                    clarityTimesheetId: timesheetId,
-                    adoWorkItemId: wi.id,
-                    adoWorkItemTitle: wi.title,
-                    adoWorkItemType: wi.type,
-                });
+                try {
+                    await addMappingApi({
+                        clarityTaskId: clarityTask.taskId,
+                        clarityTaskName: clarityTask.taskName,
+                        clarityTaskCode: clarityTask.taskCode,
+                        clarityInvestmentName: clarityTask.investmentName,
+                        clarityInvestmentCode: clarityTask.investmentCode,
+                        clarityTimesheetId: timesheetId,
+                        adoWorkItemId: wi.id,
+                        adoWorkItemTitle: wi.title,
+                        adoWorkItemType: wi.type,
+                    });
+                } catch (err) {
+                    errors.push(`#${wi.id}: ${err instanceof Error ? err.message : "Unknown error"}`);
+                }
 
                 setSubmitProgress({ done: i + 1, total: items.length });
             }
+
+            if (errors.length > 0) {
+                throw new Error(`Failed to add ${errors.length} mapping(s): ${errors.join("; ")}`);
+            }
         },
-        onSuccess: () => {
+        onSettled: () => {
             setSelectedWorkItems(new Map());
             setAdoQuery("");
             setTimelogFilter("");
             setSubmitProgress(null);
             adoSearchMutation.reset();
             onItemsAdded();
-        },
-        onError: () => {
-            setSubmitProgress(null);
         },
     });
 

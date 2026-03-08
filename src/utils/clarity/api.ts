@@ -23,8 +23,10 @@ export class ClarityApi {
 
     private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
         const url = `${this.config.baseUrl}/ppm/rest/v1${path}`;
+        const signal = options.signal ?? AbortSignal.timeout(30_000);
         const response = await fetch(url, {
             ...options,
+            signal,
             headers: {
                 Accept: "application/json, text/plain, */*",
                 "Content-Type": "application/json",

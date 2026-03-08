@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
-import { RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useRef } from "react";
 import { ExportSummary } from "../components/ExportSummary";
 import { ExportTable } from "../components/ExportTable";
@@ -29,7 +29,8 @@ async function fetchMappings() {
     const res = await fetch("/api/mappings");
 
     if (!res.ok) {
-        return { mappings: [] };
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Failed to load mappings (${res.status})`);
     }
 
     return res.json();
@@ -57,7 +58,7 @@ function ExportPage() {
         },
     });
 
-    const { data: mappingsData } = useQuery({
+    const { data: mappingsData, error: mappingsError } = useQuery({
         queryKey: ["mappings"],
         queryFn: fetchMappings,
     });
@@ -97,6 +98,7 @@ function ExportPage() {
                     <Button
                         variant="ghost"
                         size="sm"
+                        aria-label="Refresh export"
                         onClick={() => {
                             forceRef.current = true;
                             queryClient.invalidateQueries({ queryKey: ["export", month, year] });
@@ -104,7 +106,7 @@ function ExportPage() {
                         }}
                         className="font-mono text-xs"
                     >
-                        <RefreshCw className="w-3.5 h-3.5" />
+                        <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
                     </Button>
                 </div>
             </div>
@@ -125,6 +127,18 @@ function ExportPage() {
                     <CardContent className="p-6">
                         <div className="text-red-400 font-mono text-sm">
                             {error instanceof Error ? error.message : "Failed to load export data"}
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
+
+            {mappingsError && (
+                <Card className="border-amber-500/20 mb-4">
+                    <CardContent className="p-4">
+                        <div className="text-amber-400 font-mono text-sm flex items-center gap-2">
+                            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                            Mappings unavailable:{" "}
+                            {mappingsError instanceof Error ? mappingsError.message : "Failed to load mappings"}
                         </div>
                     </CardContent>
                 </Card>
@@ -152,7 +166,11 @@ function ExportPage() {
                                 entries={exportData.entries}
                                 entriesByDay={exportData.summary.entriesByDay}
                                 mappedWorkItemIds={mappedIds}
-                                adoConfig={adoConfig?.org ? (adoConfig as { org: string; project: string }) : null}
+                                adoConfig={
+                                    adoConfig?.org && adoConfig?.project
+                                        ? { org: adoConfig.org, project: adoConfig.project }
+                                        : null
+                                }
                                 typeColors={typeColorsData?.types ?? {}}
                             />
                         </CardContent>

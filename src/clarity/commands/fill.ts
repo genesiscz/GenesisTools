@@ -44,8 +44,8 @@ function renderWeekPreview(plan: WeekPlan): void {
 
     while (current < periodEnd) {
         dayDates.push(formatDate(current));
-        dayLabels.push(`${dayNames[current.getDay()]} ${current.getDate()}`);
-        current.setDate(current.getDate() + 1);
+        dayLabels.push(`${dayNames[current.getUTCDay()]} ${current.getUTCDate()}`);
+        current.setUTCDate(current.getUTCDate() + 1);
     }
 
     // Only show Mon-Fri
@@ -53,8 +53,8 @@ function renderWeekPreview(plan: WeekPlan): void {
         .map((_, i) => i)
         .filter((i) => {
             const d = new Date(periodStart);
-            d.setDate(d.getDate() + i);
-            const dow = d.getDay();
+            d.setUTCDate(d.getUTCDate() + i);
+            const dow = d.getUTCDay();
             return dow >= 1 && dow <= 5;
         });
 
@@ -215,7 +215,11 @@ export function registerFillCommand(program: Command): void {
                 const ts = tsData.timesheets._results[0];
 
                 if (!ts) {
-                    console.warn(pc.yellow(`  Could not load timesheet ${carouselEntry.timesheet_id} for week ${formatDate(week.start)}`));
+                    console.warn(
+                        pc.yellow(
+                            `  Could not load timesheet ${carouselEntry.timesheet_id} for week ${formatDate(week.start)}`
+                        )
+                    );
                     continue;
                 }
 

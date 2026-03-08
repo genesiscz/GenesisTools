@@ -3,7 +3,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"dev": "bun --bun vite dev --port 3071",
+		"dev": "bun --bun vite dev --port 3071 --strictPort",
 		"build": "bun --bun vite build",
 		"preview": "bun --bun vite preview"
 	},

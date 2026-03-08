@@ -2,7 +2,7 @@ import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { ClarityApi } from "@app/utils/clarity";
 import * as clack from "@clack/prompts";
-import type { Command } from "commander";
+import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import type { ClarityMapping } from "../config.js";
 import { getConfig, getMappingForWorkItem, requireConfig, saveConfig } from "../config.js";
@@ -189,6 +189,7 @@ export async function runInteractiveLinking(): Promise<void> {
             }
 
             // Load timelog work items for the selected month
+            // If the week spans a month boundary, also load the adjacent month and merge
             const wiSpinner = clack.spinner();
             wiSpinner.start("Loading ADO timelog entries...");
 
@@ -201,6 +202,28 @@ export async function runInteractiveLinking(): Promise<void> {
                     adoUser.userId
                 );
                 workItems = result.workItems;
+
+                // Check if the selected week spans into a different month
+                const startMonth = new Date(selectedWeek.startDate).getUTCMonth() + 1;
+                const startYear = new Date(selectedWeek.startDate).getUTCFullYear();
+                const endMonth = new Date(selectedWeek.finishDate).getUTCMonth() + 1;
+                const endYear = new Date(selectedWeek.finishDate).getUTCFullYear();
+
+                if (startMonth !== endMonth || startYear !== endYear) {
+                    const adjMonth = startMonth !== selectedMonth ? startMonth : endMonth;
+                    const adjYear = startYear !== selectedYear ? startYear : endYear;
+                    const adjResult = await getTimelogWorkItems(adoApi, adoConfig, adjMonth, adjYear, adoUser.userId);
+
+                    // Merge: add items not already present
+                    const existingIds = new Set(workItems.map((wi) => wi.id));
+
+                    for (const wi of adjResult.workItems) {
+                        if (!existingIds.has(wi.id)) {
+                            workItems.push(wi);
+                        }
+                    }
+                }
+
                 wiSpinner.stop(`Found ${workItems.length} work items`);
             } catch (err) {
                 wiSpinner.stop("Failed to load timelog entries");
@@ -214,7 +237,7 @@ export async function runInteractiveLinking(): Promise<void> {
             const result = await clack.select({
                 message: "Select Clarity task to link to:",
                 options: projects.map((p) => ({
-                    value: p,
+                    value: p.taskId,
                     label: `${p.taskName} [${p.investmentName}]`,
                     hint: `code: ${p.taskCode}`,
                 })),
@@ -225,7 +248,7 @@ export async function runInteractiveLinking(): Promise<void> {
                 continue;
             }
 
-            selectedTask = result;
+            selectedTask = projects.find((p) => p.taskId === result) ?? null;
             step = 3;
         } else if (step === 3) {
             // Step 3: Multi-select ADO work items
@@ -377,16 +400,30 @@ export async function runInteractiveLinking(): Promise<void> {
     clack.outro("Done");
 }
 
+function parseIntegerOption(value: string, optionName: string): number {
+    const trimmed = value.trim();
+
+    if (!/^\d+$/.test(trimmed)) {
+        throw new InvalidArgumentError(`${optionName} must be a valid integer`);
+    }
+
+    return Number(trimmed);
+}
+
 export function registerLinkCommand(program: Command): void {
     const cmd = program
         .command("link-workitems")
         .description("Link ADO work items to Clarity tasks")
-        .option("--list", "List current mappings and available tasks")
-        .option("--azure-devops-workitem <id>", "ADO work item ID (non-interactive)", parseInt)
+        .option("--list", "List current mappings")
+        .option("--azure-devops-workitem <id>", "ADO work item ID (non-interactive)", (v) =>
+            parseIntegerOption(v, "--azure-devops-workitem")
+        )
         .option("--clarity-task <name>", "Clarity task name (non-interactive)")
-        .option("--clarity-task-id <id>", "Clarity internal task ID (non-interactive)", parseInt)
-        .option("--timesheet <id>", "Timesheet ID to look up task info", parseInt)
-        .option("--unlink <id>", "Remove mapping for ADO work item ID", parseInt);
+        .option("--clarity-task-id <id>", "Clarity internal task ID (non-interactive)", (v) =>
+            parseIntegerOption(v, "--clarity-task-id")
+        )
+        .option("--timesheet <id>", "Timesheet ID to look up task info", (v) => parseIntegerOption(v, "--timesheet"))
+        .option("--unlink <id>", "Remove mapping for ADO work item ID", (v) => parseIntegerOption(v, "--unlink"));
 
     cmd.action(
         async (options: {
@@ -426,26 +463,58 @@ export function registerLinkCommand(program: Command): void {
             }
 
             // Non-interactive linking
+            const hasAnyNonInteractiveFlag =
+                options.azureDevopsWorkitem !== undefined ||
+                options.clarityTask !== undefined ||
+                options.clarityTaskId !== undefined ||
+                options.timesheet !== undefined;
+
+            if (hasAnyNonInteractiveFlag) {
+                const missing: string[] = [];
+
+                if (options.azureDevopsWorkitem === undefined) {
+                    missing.push("--azure-devops-workitem");
+                }
+
+                if (!options.clarityTask && options.clarityTaskId === undefined) {
+                    missing.push("--clarity-task or --clarity-task-id");
+                }
+
+                if (!options.timesheet) {
+                    missing.push("--timesheet");
+                }
+
+                if (missing.length > 0) {
+                    console.error(`Non-interactive linking requires all flags. Missing: ${missing.join(", ")}`);
+                    process.exit(1);
+                }
+            }
+
             if (
                 options.azureDevopsWorkitem !== undefined &&
                 (options.clarityTask || options.clarityTaskId !== undefined)
             ) {
-                if (!options.timesheet) {
-                    console.error("--timesheet <id> is required for non-interactive linking (to look up task details)");
-                    process.exit(1);
-                }
-
                 const api = new ClarityApi({
                     baseUrl: config.baseUrl,
                     authToken: config.authToken,
                     sessionId: config.sessionId,
+                    cookies: config.cookies,
                 });
 
-                const data = await api.getTimesheet(options.timesheet);
+                const timesheetId = options.timesheet!;
+                let data: Awaited<ReturnType<typeof api.getTimesheet>>;
+
+                try {
+                    data = await api.getTimesheet(timesheetId);
+                } catch (err) {
+                    console.error(`Failed to fetch timesheet: ${err instanceof Error ? err.message : String(err)}`);
+                    process.exit(1);
+                }
+
                 const ts = data.timesheets._results[0];
 
                 if (!ts) {
-                    console.error(`Timesheet ${options.timesheet} not found`);
+                    console.error(`Timesheet ${timesheetId} not found`);
                     process.exit(1);
                 }
 
@@ -455,11 +524,26 @@ export function registerLinkCommand(program: Command): void {
                 if (options.clarityTaskId !== undefined) {
                     project = projects.find((p) => p.taskId === options.clarityTaskId);
                 } else if (options.clarityTask) {
-                    project = projects.find(
-                        (p) =>
-                            p.taskName === options.clarityTask ||
+                    // Try exact match first
+                    project = projects.find((p) => p.taskName === options.clarityTask);
+
+                    if (!project) {
+                        // Fall back to substring match, but require exactly one result
+                        const matches = projects.filter((p) =>
                             p.taskName.toLowerCase().includes(options.clarityTask!.toLowerCase())
-                    );
+                        );
+
+                        if (matches.length === 1) {
+                            project = matches[0];
+                        } else if (matches.length > 1) {
+                            console.error(
+                                `Ambiguous --clarity-task "${options.clarityTask}" matched ${matches.length} tasks:\n` +
+                                    matches.map((p) => `  - ${p.taskName} (id: ${p.taskId})`).join("\n") +
+                                    `\nUse --clarity-task-id <id> for an exact match.`
+                            );
+                            process.exit(1);
+                        }
+                    }
                 }
 
                 if (!project) {

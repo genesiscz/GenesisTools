@@ -130,8 +130,8 @@ async function runInteractiveSetup(): Promise<void> {
     spinner.stop("cURL parsed successfully");
 
     clack.log.info(`Base URL: ${pc.cyan(baseUrl)}`);
-    clack.log.info(`Auth Token: ${pc.dim(`${authToken.slice(0, 12)}...`)}`);
-    clack.log.info(`Session ID: ${pc.dim(`${sessionId.slice(0, 12)}...`)}`);
+    clack.log.info("Auth Token: [configured]");
+    clack.log.info("Session ID: [configured]");
 
     // Test connection
     spinner.start("Testing connection...");
@@ -140,6 +140,7 @@ async function runInteractiveSetup(): Promise<void> {
 
     try {
         // Try to fetch any timesheet data to validate the credentials
+        // 0 fetches the default/current timesheet app list, not tied to a specific period
         const appData = await api.getTimesheetApp(0);
         const resource = appData.resource._results[0];
 
@@ -172,8 +173,8 @@ async function runInteractiveSetup(): Promise<void> {
 function showConfig(config: ClarityConfig): void {
     console.log("\nClarity Configuration:");
     console.log(`  Base URL:     ${config.baseUrl}`);
-    console.log(`  Auth Token:   ${config.authToken.slice(0, 12)}...`);
-    console.log(`  Session ID:   ${config.sessionId.slice(0, 12)}...`);
+    console.log(`  Auth Token:   [configured]`);
+    console.log(`  Session ID:   [configured]`);
     console.log(`  Resource ID:  ${config.resourceId ?? "not set"}`);
     console.log(`  User:         ${config.uniqueName ?? "not set"}`);
     console.log(`  Mappings:     ${config.mappings.length}`);
@@ -269,6 +270,7 @@ export function registerConfigureCommand(program: Command): void {
             const api = new ClarityApi({ baseUrl, authToken, sessionId, cookies });
 
             try {
+                // 0 fetches the default/current timesheet app list, not tied to a specific period
                 const appData = await api.getTimesheetApp(0);
                 const resource = appData.resource._results[0];
 
@@ -361,6 +363,7 @@ export function registerConfigureCommand(program: Command): void {
                 const api = new ClarityApi({ baseUrl, authToken, sessionId, cookies });
 
                 try {
+                    // 0 fetches the default/current timesheet app list, not tied to a specific period
                     const appData = await api.getTimesheetApp(0);
                     const resource = appData.resource._results[0];
                     spinner.stop("Connection successful!");

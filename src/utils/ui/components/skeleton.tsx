@@ -1,4 +1,5 @@
 import { cn } from "@ui/lib/utils";
+import type * as React from "react";
 
 type SkeletonVariant = "default" | "cyber" | "data-stream" | "card" | "line";
 

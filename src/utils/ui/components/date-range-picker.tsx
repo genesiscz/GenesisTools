@@ -17,12 +17,21 @@ const presets = [
 ] as const;
 
 function formatDate(date: Date): string {
-    return date.toISOString().split("T")[0];
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
 }
 
 function getDateRange(days: number | null): { from: string; to: string } {
     const to = new Date();
-    const from = days ? new Date(Date.now() - days * 24 * 60 * 60 * 1000) : new Date(0);
+
+    if (days === null) {
+        return { from: "1970-01-01", to: formatDate(to) };
+    }
+
+    const from = new Date(to);
+    from.setDate(from.getDate() - (days - 1));
     return { from: formatDate(from), to: formatDate(to) };
 }
 

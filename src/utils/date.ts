@@ -38,7 +38,7 @@ export function getMonthDateRange(month: string): { since: string; upto: string 
  * Format a Date to "YYYY-MM-DD".
  */
 export function formatDate(d: Date): string {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
 /**
@@ -46,13 +46,13 @@ export function formatDate(d: Date): string {
  */
 export function getWeekRange(date: Date): { start: Date; end: Date } {
     const d = new Date(date);
-    const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    const day = d.getUTCDay();
+    const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1);
     const start = new Date(d);
-    start.setDate(diff);
-    start.setHours(0, 0, 0, 0);
+    start.setUTCDate(diff);
+    start.setUTCHours(0, 0, 0, 0);
     const end = new Date(start);
-    end.setDate(start.getDate() + 6);
+    end.setUTCDate(start.getUTCDate() + 6);
     return { start, end };
 }
 
@@ -63,7 +63,7 @@ const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  */
 export function addDay(date: string): string {
     const d = new Date(date);
-    d.setDate(d.getDate() + 1);
+    d.setUTCDate(d.getUTCDate() + 1);
     return formatDate(d);
 }
 
@@ -72,7 +72,7 @@ export function addDay(date: string): string {
  */
 export function subtractDay(date: string): string {
     const d = new Date(date);
-    d.setDate(d.getDate() - 1);
+    d.setUTCDate(d.getUTCDate() - 1);
     return formatDate(d);
 }
 
@@ -88,9 +88,9 @@ export function getDaysInPeriod(periodStart: string, periodFinish: string): Arra
     const current = new Date(start);
 
     while (current < finish) {
-        const dow = current.getDay();
-        days.push({ label: `${DAY_NAMES[dow]} ${current.getDate()}`, date: formatDate(current) });
-        current.setDate(current.getDate() + 1);
+        const dow = current.getUTCDay();
+        days.push({ label: `${DAY_NAMES[dow]} ${current.getUTCDate()}`, date: formatDate(current) });
+        current.setUTCDate(current.getUTCDate() + 1);
     }
 
     return days;
@@ -120,7 +120,7 @@ export function buildDailyValues<T>(
     while (current < end) {
         const dateStr = formatDate(current);
         result.push({ date: dateStr, iso: `${dateStr}T00:00:00`, value: getValue(dateStr) });
-        current.setDate(current.getDate() + 1);
+        current.setUTCDate(current.getUTCDate() + 1);
     }
 
     return result;

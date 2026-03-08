@@ -68,16 +68,9 @@ function normalizeDate(date: string): string {
  * @param month - Month number (1-12)
  * @param year - Year (e.g. 2026)
  * @param userId - Azure AD user GUID
- * @param options - Optional settings
  * @returns Structured month export with entries and summary
  */
-export async function exportMonth(
-    api: TimeLogApi,
-    month: number,
-    year: number,
-    userId: string,
-    _options?: { enrichWorkItems?: boolean }
-): Promise<MonthExport> {
+export async function exportMonth(api: TimeLogApi, month: number, year: number, userId: string): Promise<MonthExport> {
     const { fromDate, toDate } = getMonthRange(month, year);
 
     // Query all timelog entries for the month

@@ -31,7 +31,11 @@ export function resolveSharedDeps(appRoot: string): Plugin {
     return {
         name: "resolve-shared-ui-deps",
         enforce: "pre",
-        async resolveId(source: string, importer: string | undefined, options: { skipSelf: boolean }) {
+        async resolveId(
+            source: string,
+            importer: string | undefined,
+            options: { isEntry: boolean; [key: string]: unknown }
+        ) {
             if (!importer || !importer.startsWith(uiDir)) {
                 return null;
             }

@@ -16,7 +16,12 @@ export function apiHandler(
     };
 }
 
-/** Helper to read JSON body from request */
-export async function jsonBody(request: Request): Promise<Record<string, unknown>> {
-    return request.json();
+/** Helper to read JSON body from request — returns parsed object or a 400 Response on parse failure */
+export async function jsonBody(request: Request): Promise<Record<string, unknown> | Response> {
+    try {
+        return (await request.json()) as Record<string, unknown>;
+    } catch (err) {
+        const message = err instanceof Error ? err.message : "Invalid JSON body";
+        return Response.json({ error: `Failed to parse request body: ${message}` }, { status: 400 });
+    }
 }
