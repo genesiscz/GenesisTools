@@ -1,6 +1,6 @@
+import { Input } from "@ui/components/input";
+import { cn } from "@ui/lib/utils";
 import { useState } from "react";
-import { cn } from "../lib/utils";
-import { Input } from "./input";
 
 interface DateRangePickerProps {
     value: { from: string; to: string };

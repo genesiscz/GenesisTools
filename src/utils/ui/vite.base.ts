@@ -26,7 +26,7 @@ function resolveSharedDeps(appRoot: string): Plugin {
     return {
         name: "resolve-shared-ui-deps",
         enforce: "pre",
-        async resolveId(source, importer, options) {
+        async resolveId(source: string, importer: string | undefined, options: { skipSelf: boolean }) {
             if (!importer || !importer.startsWith(uiDir)) {
                 return null;
             }

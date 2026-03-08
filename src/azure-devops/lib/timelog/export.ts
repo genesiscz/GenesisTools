@@ -1,5 +1,5 @@
+import type { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { TimeLogQueryEntry } from "@app/azure-devops/types";
-import { TimeLogApi } from "@app/azure-devops/timelog-api";
 
 export interface ExportedEntry extends TimeLogQueryEntry {
     workItemTitle: string;

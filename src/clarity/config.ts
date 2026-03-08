@@ -54,17 +54,11 @@ export async function requireConfig(): Promise<ClarityConfig> {
     return config;
 }
 
-export function getMappingForWorkItem(
-    mappings: ClarityMapping[],
-    workItemId: number
-): ClarityMapping | undefined {
+export function getMappingForWorkItem(mappings: ClarityMapping[], workItemId: number): ClarityMapping | undefined {
     return mappings.find((m) => m.adoWorkItemId === workItemId);
 }
 
-export function getMappingForClarityTask(
-    mappings: ClarityMapping[],
-    taskName: string
-): ClarityMapping | undefined {
+export function getMappingForClarityTask(mappings: ClarityMapping[], taskName: string): ClarityMapping | undefined {
     return mappings.find((m) => m.clarityTaskName === taskName);
 }
 
