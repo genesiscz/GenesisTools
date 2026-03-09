@@ -1,6 +1,23 @@
 #!/bin/sh
 
-# Autofix staged files with biome before committing.
+# Pre-commit hook — mirrors CI checks (biome + tsgo typecheck).
 # Biome's --staged flag processes only staged files and re-stages the fixes.
+# Activate: git config core.hooksPath .githooks
 
+set -e
+
+echo "▶ biome check --write --staged..."
 bunx biome check --write --staged --no-errors-on-unmatched
+
+# Check if any dashboard files are staged
+if git diff --cached --name-only --diff-filter=d | grep -q '^src/claude-history-dashboard/'; then
+    echo "▶ biome check dashboard --staged..."
+    cd src/claude-history-dashboard
+    bunx biome check --write --staged --no-errors-on-unmatched
+    cd ../..
+fi
+
+echo "▶ tsgo --noEmit..."
+tsgo --noEmit
+
+echo "✔ pre-commit passed"
