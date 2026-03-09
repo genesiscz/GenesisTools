@@ -1,3 +1,4 @@
+import type { OAuthProfileResponse } from "@app/utils/claude/auth";
 import { Storage } from "@app/utils/storage/storage";
 
 export interface AccountConfig {
@@ -66,4 +67,60 @@ export async function loadConfig(): Promise<ClaudeConfig> {
 
 export async function saveConfig(config: ClaudeConfig): Promise<void> {
     await storage.setConfig(config);
+}
+
+export function determineAccountLabel(profile: OAuthProfileResponse | undefined): string | undefined {
+    if (!profile) {
+        return undefined;
+    }
+
+    const tier = profile.organization.rate_limit_tier;
+
+    if (tier.includes("max")) {
+        // Extract multiplier: "max_5x" → "max 5x", "max_20x" → "max 20x"
+        const match = tier.match(/max[_\s]*(\d+x?)/i);
+        // Fall back to raw tier value (e.g. "max_5") rather than just "max"
+        return match ? `max ${match[1]}` : tier.replace(/_/g, " ");
+    }
+
+    if (tier.includes("pro")) {
+        return "pro";
+    }
+
+    return profile.organization.billing_type;
+}
+
+/**
+ * Fetch profiles for all accounts and update their labels in the config.
+ * Best-effort — failures are silently ignored.
+ */
+export async function refreshAccountLabels(): Promise<void> {
+    const { fetchOAuthProfile } = await import("@app/utils/claude/auth");
+    const config = await loadConfig();
+    const entries = Object.entries(config.accounts);
+
+    if (entries.length === 0) {
+        return;
+    }
+
+    const profiles = await Promise.allSettled(
+        entries.map(([, acc]) => fetchOAuthProfile(acc.accessToken))
+    );
+
+    let changed = false;
+
+    for (let i = 0; i < entries.length; i++) {
+        const result = profiles[i];
+        const profile = result.status === "fulfilled" ? result.value : undefined;
+        const newLabel = determineAccountLabel(profile);
+
+        if (newLabel && newLabel !== entries[i][1].label) {
+            config.accounts[entries[i][0]].label = newLabel;
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        await saveConfig(config);
+    }
 }
