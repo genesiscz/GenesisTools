@@ -4,6 +4,7 @@ import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-confi
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
 import { Storage } from "@app/utils/storage/storage";
+import { join } from "node:path";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PollResult } from "../types";
 
@@ -106,54 +107,71 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
         setPollingLabel(names.length > 0 ? names.join(", ") : "...");
 
         try {
-            // Cache key per account filter so filtered views don't share results with full views
             const cacheKey = `poll-results-${accountFilter ?? "all"}.json`;
-            // TTL: use pollInterval minus a small buffer so cache expires just before the next poll
             const ttlSeconds = Math.max(3, pollIntervalSeconds - 2);
+
+            // Check cache first WITHOUT lock (fast path — avoids lock contention when cache is fresh)
             const cached = await storage.getCacheFile<PollCache>(cacheKey, `${ttlSeconds} seconds`);
 
             if (cached) {
-                // Fresh data already fetched by another instance — reuse it
                 processAccountUsages(cached.accounts, new Date(cached.timestamp));
                 return;
             }
 
-            // Always reload config — tokens may have been refreshed by daemon or another process
-            const cfg = await loadConfig();
-            let accounts = cfg.accounts;
+            // Cache is stale — acquire lock and poll (or wait for another process that's already polling)
+            const cacheFilePath = join(storage.getCacheDir(), cacheKey);
+            const result = await storage.withFileLock({
+                file: cacheFilePath,
+                fn: async (): Promise<PollCache | null> => {
+                    // Re-check cache inside lock — another process may have just written it
+                    const freshCached = await storage.getCacheFile<PollCache>(cacheKey, `${ttlSeconds} seconds`);
 
-            if (accountFilter) {
-                accounts = accounts[accountFilter] ? { [accountFilter]: accounts[accountFilter] } : {};
+                    if (freshCached) {
+                        return freshCached;
+                    }
+
+                    // We're the winner — fetch fresh data
+                    const cfg = await loadConfig();
+                    let accounts = cfg.accounts;
+
+                    if (accountFilter) {
+                        accounts = accounts[accountFilter] ? { [accountFilter]: accounts[accountFilter] } : {};
+                    }
+
+                    accountsRef.current = accounts;
+                    setPollingLabel(Object.keys(accountsRef.current).join(", ") || "...");
+
+                    const controller = new AbortController();
+                    const timeout = setTimeout(() => controller.abort(), 3000);
+                    let accountUsages: AccountUsage[];
+
+                    try {
+                        accountUsages = await fetchAllAccountsUsage(accountsRef.current, controller.signal);
+                    } finally {
+                        clearTimeout(timeout);
+                    }
+
+                    const now = new Date();
+                    const pollCache: PollCache = { timestamp: now.toISOString(), accounts: accountUsages };
+
+                    try {
+                        await storage.putCacheFile<PollCache>(cacheKey, pollCache, `${pollIntervalSeconds} seconds`);
+                    } catch {
+                        // Cache write is best-effort
+                    }
+
+                    return pollCache;
+                },
+                timeout: 10_000,
+                onTimeout: () => {
+                    // Lock timed out — return null, we'll try again next interval
+                    return null;
+                },
+            });
+
+            if (result) {
+                processAccountUsages(result.accounts, new Date(result.timestamp));
             }
-
-            accountsRef.current = accounts;
-
-            setPollingLabel(Object.keys(accountsRef.current).join(", ") || "...");
-
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 3000);
-            let accountUsages: AccountUsage[];
-
-            try {
-                accountUsages = await fetchAllAccountsUsage(accountsRef.current, controller.signal);
-            } finally {
-                clearTimeout(timeout);
-            }
-
-            const now = new Date();
-
-            // Persist for other instances to reuse within the same interval (best-effort)
-            try {
-                await storage.putCacheFile<PollCache>(
-                    cacheKey,
-                    { timestamp: now.toISOString(), accounts: accountUsages },
-                    `${pollIntervalSeconds} seconds`
-                );
-            } catch {
-                // Cache is an optimization; continue with fresh results
-            }
-
-            processAccountUsages(accountUsages, now);
         } catch (error) {
             setResults({
                 accounts: [],
