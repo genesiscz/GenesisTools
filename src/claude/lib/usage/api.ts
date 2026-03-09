@@ -145,8 +145,28 @@ export async function fetchAllAccountsUsage(
     const results = await Promise.allSettled(
         entries.map(async ([name, account]) => {
             const { accessToken } = await ensureValidToken(name, account);
-            const usage = await fetchUsage(accessToken, signal);
-            return { accountName: name, label: account.label, usage } satisfies AccountUsage;
+
+            try {
+                const usage = await fetchUsage(accessToken, signal);
+                return { accountName: name, label: account.label, usage } satisfies AccountUsage;
+            } catch (err) {
+                if (!(err instanceof RateLimitError)) {
+                    throw err;
+                }
+
+                // 429 — force-refresh token to get fresh rate limit window
+                const { accessToken: freshToken, refreshed } = await ensureValidToken(name, account, {
+                    forceRefresh: true,
+                });
+
+                if (!refreshed) {
+                    throw err; // No refresh token available, can't bypass
+                }
+
+                // Retry once with new token
+                const usage = await fetchUsage(freshToken, signal);
+                return { accountName: name, label: account.label, usage } satisfies AccountUsage;
+            }
         })
     );
 
