@@ -146,10 +146,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                                 return freshCached;
                             }
 
-                            const [usage] = await fetchAllAccountsUsage(
-                                { [name]: account },
-                                new AbortController().signal
-                            );
+                            const [usage] = await fetchAllAccountsUsage({ [name]: account });
 
                             try {
                                 await storage.putCacheFile(cacheKey, usage, `${pollIntervalSeconds} seconds`);
