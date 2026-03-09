@@ -1,10 +1,11 @@
 // Get file content command implementation
 
+import type { GitHubCommitUrl } from "@app/github/types";
 import logger from "@app/logger";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
-import { buildRawGitHubUrl, parseGitHubFileUrl } from "@app/utils/github/url-parser";
+import { buildRawGitHubUrl, parseGitHubCommitUrl, parseGitHubFileUrl } from "@app/utils/github/url-parser";
 import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
 import chalk from "chalk";
 import { Command } from "commander";
@@ -16,6 +17,7 @@ interface GetOptions {
     lines?: string;
     raw?: boolean;
     verbose?: boolean;
+    format?: "md" | "json";
 }
 
 interface FileContent {
@@ -122,12 +124,21 @@ export async function getCommand(input: string, options: GetOptions): Promise<vo
 
     // Parse URL
     const parsed = parseGitHubFileUrl(input);
+
     if (!parsed) {
-        console.error(chalk.red("Invalid GitHub file URL."));
+        const commitParsed = parseGitHubCommitUrl(input);
+
+        if (commitParsed) {
+            await handleCommitUrl(commitParsed, options);
+            return;
+        }
+
+        console.error(chalk.red("Invalid GitHub URL."));
         console.error(chalk.dim("\nSupported formats:"));
         console.error(chalk.dim("  https://github.com/owner/repo/blob/branch/path/to/file"));
         console.error(chalk.dim("  https://github.com/owner/repo/blame/tag/path/to/file"));
         console.error(chalk.dim("  https://raw.githubusercontent.com/owner/repo/ref/path"));
+        console.error(chalk.dim("  https://github.com/owner/repo/commit/SHA"));
         console.error(chalk.dim("  Any of the above with #L10 or #L10-L20 line references"));
         process.exit(1);
     }
@@ -183,6 +194,86 @@ export async function getCommand(input: string, options: GetOptions): Promise<vo
     }
 }
 
+interface GetCommitData {
+    sha: string;
+    message: string;
+    author: { name: string; date: string };
+    files: Array<{ filename: string; status: string; additions: number; deletions: number; patch?: string }>;
+    stats: { additions: number; deletions: number; total: number };
+    url: string;
+}
+
+async function fetchCommit(owner: string, repo: string, sha: string): Promise<GetCommitData> {
+    const octokit = getOctokit();
+
+    const { data } = await withRetry(() => octokit.rest.repos.getCommit({ owner, repo, ref: sha }), {
+        label: `GET /repos/${owner}/${repo}/commits/${sha}`,
+    });
+
+    return {
+        sha: data.sha,
+        message: data.commit.message,
+        author: {
+            name: data.commit.author?.name ?? "unknown",
+            date: data.commit.author?.date ?? "",
+        },
+        files: (data.files ?? []).map((f) => ({
+            filename: f.filename,
+            status: f.status ?? "modified",
+            additions: f.additions,
+            deletions: f.deletions,
+            patch: f.patch,
+        })),
+        stats: {
+            additions: data.stats?.additions ?? 0,
+            deletions: data.stats?.deletions ?? 0,
+            total: data.stats?.total ?? 0,
+        },
+        url: data.html_url,
+    };
+}
+
+function formatCommitMd(commit: GetCommitData): string {
+    const lines: string[] = [];
+    lines.push(`commit ${commit.sha}`);
+    lines.push(`Author: ${commit.author.name}`);
+    lines.push(`Date:   ${commit.author.date}`);
+    lines.push("");
+    lines.push(`    ${commit.message.replace(/\n/g, "\n    ")}`);
+    lines.push("");
+    lines.push(`${commit.files.length} files changed: +${commit.stats.additions} -${commit.stats.deletions}`);
+    lines.push("");
+
+    for (const file of commit.files) {
+        lines.push(`--- a/${file.filename}`);
+        lines.push(`+++ b/${file.filename}`);
+
+        if (file.patch) {
+            lines.push(file.patch);
+        }
+
+        lines.push("");
+    }
+
+    return lines.join("\n");
+}
+
+async function handleCommitUrl(parsed: GitHubCommitUrl, options: GetOptions): Promise<void> {
+    const commit = await fetchCommit(parsed.owner, parsed.repo, parsed.sha);
+
+    const content = options.format === "json" ? JSON.stringify(commit, null, 2) : formatCommitMd(commit);
+
+    if (options.clipboard) {
+        await copyToClipboard(content, { silent: true });
+        console.log(chalk.green(`✔ Copied commit ${commit.sha.slice(0, 7)} to clipboard`));
+    } else if (options.output) {
+        await Bun.write(options.output, content);
+        console.log(chalk.green(`✔ Written to ${options.output}`));
+    } else {
+        console.log(content);
+    }
+}
+
 export function createGetCommand(): Command {
     const cmd = new Command("get")
         .description("Get file content from a GitHub URL")
@@ -192,6 +283,7 @@ export function createGetCommand(): Command {
         .option("-o, --output <file>", "Write to file")
         .option("-c, --clipboard", "Copy to clipboard")
         .option("--raw", "Fetch via raw.githubusercontent.com (faster, less metadata)")
+        .option("-f, --format <format>", "Output format: md (default) or json")
         .option("-v, --verbose", "Enable verbose logging")
         .addHelpText(
             "after",
@@ -217,6 +309,12 @@ Examples:
 
   # Use URL with line references
   tools github get "https://github.com/owner/repo/blob/main/file.ts#L10-L20"
+
+  # Get commit diff
+  tools github get https://github.com/owner/repo/commit/abc1234
+
+  # Get commit as JSON
+  tools github get https://github.com/owner/repo/commit/abc1234 --format json
 `
         )
         .action(async (url, opts) => {
