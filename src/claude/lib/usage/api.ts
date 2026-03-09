@@ -65,15 +65,23 @@ export async function fetchUsage(accessToken: string, signal?: AbortSignal): Pro
  */
 async function ensureValidToken(
     accountName: string,
-    account: AccountConfig
+    account: AccountConfig,
+    options?: { forceRefresh?: boolean }
 ): Promise<{ accessToken: string; refreshed: boolean }> {
-    // No refresh token? Can't auto-refresh
-    if (!account.refreshToken) {
-        return { accessToken: account.accessToken, refreshed: false };
+    if (!options?.forceRefresh) {
+        // No refresh token? Can't auto-refresh
+        if (!account.refreshToken) {
+            return { accessToken: account.accessToken, refreshed: false };
+        }
+
+        // Token still valid? No refresh needed
+        if (account.expiresAt && account.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
+            return { accessToken: account.accessToken, refreshed: false };
+        }
     }
 
-    // Token still valid? No refresh needed
-    if (account.expiresAt && account.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
+    // Need refresh but no refresh token available
+    if (!account.refreshToken) {
         return { accessToken: account.accessToken, refreshed: false };
     }
 
