@@ -1,10 +1,10 @@
 // Get file content command implementation
 
+import type { GitHubCommitUrl } from "@app/github/types";
 import logger from "@app/logger";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
-import type { GitHubCommitUrl } from "@app/github/types";
 import { buildRawGitHubUrl, parseGitHubCommitUrl, parseGitHubFileUrl } from "@app/utils/github/url-parser";
 import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
 import chalk from "chalk";
@@ -206,10 +206,9 @@ interface GetCommitData {
 async function fetchCommit(owner: string, repo: string, sha: string): Promise<GetCommitData> {
     const octokit = getOctokit();
 
-    const { data } = await withRetry(
-        () => octokit.rest.repos.getCommit({ owner, repo, ref: sha }),
-        { label: `GET /repos/${owner}/${repo}/commits/${sha}` }
-    );
+    const { data } = await withRetry(() => octokit.rest.repos.getCommit({ owner, repo, ref: sha }), {
+        label: `GET /repos/${owner}/${repo}/commits/${sha}`,
+    });
 
     return {
         sha: data.sha,
@@ -259,10 +258,7 @@ function formatCommitMd(commit: GetCommitData): string {
     return lines.join("\n");
 }
 
-async function handleCommitUrl(
-    parsed: GitHubCommitUrl,
-    options: GetOptions
-): Promise<void> {
+async function handleCommitUrl(parsed: GitHubCommitUrl, options: GetOptions): Promise<void> {
     const commit = await fetchCommit(parsed.owner, parsed.repo, parsed.sha);
 
     const content = options.format === "json" ? JSON.stringify(commit, null, 2) : formatCommitMd(commit);
