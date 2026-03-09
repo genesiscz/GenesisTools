@@ -6,13 +6,15 @@ export function registerUsageCommand(program: Command): void {
     program
         .command("usage")
         .description("Show Claude API usage dashboard (interactive TUI)")
-        .argument("[account]", "Specific account name")
+        .option("-f, --filter <account>", "Filter to a specific account name")
         .option("--token <token>", "Use a specific OAuth access token")
         .option("--no-tui", "Use legacy plain text output")
         .option("--json", "Output as JSON")
         .option("--watch", "Watch mode (legacy)")
         .option("--interval <seconds>", "Poll interval override")
-        .action(async (accountArg: string | undefined, opts: Record<string, string | boolean | undefined>) => {
+        .action(async (opts: Record<string, string | boolean | undefined>) => {
+            const accountFilter = typeof opts.filter === "string" ? opts.filter : undefined;
+
             if (opts.tui === false || opts.json || opts.token || opts.watch) {
                 const { loadConfig } = await import("@app/claude/lib/config");
                 const { fetchAllAccountsUsage, fetchUsage } = await import("@app/claude/lib/usage/api");
@@ -34,13 +36,13 @@ export function registerUsageCommand(program: Command): void {
                 const config = await loadConfig();
                 let accounts = config.accounts;
 
-                if (accountArg) {
-                    if (!accounts[accountArg]) {
-                        console.error(`Unknown account: ${accountArg}`);
+                if (accountFilter) {
+                    if (!accounts[accountFilter]) {
+                        console.error(`Unknown account: ${accountFilter}`);
                         process.exit(1);
                     }
 
-                    accounts = { [accountArg]: accounts[accountArg] };
+                    accounts = { [accountFilter]: accounts[accountFilter] };
                 }
 
                 if (opts.watch) {
@@ -60,7 +62,7 @@ export function registerUsageCommand(program: Command): void {
                 return;
             }
 
-            const { waitUntilExit } = render(<App accountFilter={accountArg} />);
+            const { waitUntilExit } = render(<App accountFilter={accountFilter} />);
             await waitUntilExit();
         });
 }
