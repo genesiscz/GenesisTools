@@ -13,7 +13,6 @@ function maskToken(token: string): string {
     return `${token.slice(0, 20)}...`;
 }
 
-
 async function generateAuthUrl(): Promise<string> {
     const spinner = p.spinner();
     spinner.start("Generating authorization URL...");
