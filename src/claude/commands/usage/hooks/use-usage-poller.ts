@@ -142,7 +142,7 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                     setPollingLabel(Object.keys(accountsRef.current).join(", ") || "...");
 
                     const controller = new AbortController();
-                    const timeout = setTimeout(() => controller.abort(), 3000);
+                    const timeout = setTimeout(() => controller.abort(), 10_000);
                     let accountUsages: AccountUsage[];
 
                     try {

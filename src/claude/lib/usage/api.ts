@@ -68,20 +68,9 @@ async function ensureValidToken(
     account: AccountConfig,
     options?: { forceRefresh?: boolean }
 ): Promise<{ accessToken: string; refreshed: boolean }> {
-    if (!options?.forceRefresh) {
-        // No refresh token? Can't auto-refresh
-        if (!account.refreshToken) {
-            return { accessToken: account.accessToken, refreshed: false };
-        }
+    const tokenIsValid = account.expiresAt && account.expiresAt > Date.now() + EXPIRY_BUFFER_MS;
 
-        // Token still valid? No refresh needed
-        if (account.expiresAt && account.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
-            return { accessToken: account.accessToken, refreshed: false };
-        }
-    }
-
-    // Need refresh but no refresh token available
-    if (!account.refreshToken) {
+    if (!account.refreshToken || (!options?.forceRefresh && tokenIsValid)) {
         return { accessToken: account.accessToken, refreshed: false };
     }
 
@@ -91,12 +80,16 @@ async function ensureValidToken(
         const freshConfig = await loadConfig();
         const diskAccount = freshConfig.accounts[accountName];
 
-        // Another process already refreshed — use their tokens (check before missing refreshToken)
+        // Another process already refreshed — use their tokens if:
+        // - Token is time-valid AND we're not force-refreshing, OR
+        // - Token is different from ours (another process refreshed for 429 too)
         if (diskAccount?.expiresAt && diskAccount.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
-            account.accessToken = diskAccount.accessToken;
-            account.refreshToken = diskAccount.refreshToken;
-            account.expiresAt = diskAccount.expiresAt;
-            return { accessToken: diskAccount.accessToken, refreshed: true };
+            if (!options?.forceRefresh || diskAccount.accessToken !== account.accessToken) {
+                account.accessToken = diskAccount.accessToken;
+                account.refreshToken = diskAccount.refreshToken;
+                account.expiresAt = diskAccount.expiresAt;
+                return { accessToken: diskAccount.accessToken, refreshed: true };
+            }
         }
 
         if (!diskAccount?.refreshToken) {
