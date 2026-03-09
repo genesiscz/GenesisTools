@@ -4,6 +4,13 @@ import { refreshOAuthToken } from "@app/utils/claude/auth";
 
 export type { AccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
 
+export class RateLimitError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "RateLimitError";
+    }
+}
+
 // Refresh tokens 5 minutes before expiry to avoid edge cases
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
@@ -39,6 +46,11 @@ export async function fetchUsage(accessToken: string, signal?: AbortSignal): Pro
         },
         signal,
     });
+    if (res.status === 429) {
+        const body = await res.text().catch(() => "");
+        throw new RateLimitError(`Usage API 429: ${body.slice(0, 200)}`);
+    }
+
     if (!res.ok) {
         const body = await res.text().catch(() => "");
         throw new Error(`Usage API ${res.status}: ${body.slice(0, 200)}`);
