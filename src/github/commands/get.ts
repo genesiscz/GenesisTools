@@ -4,6 +4,7 @@ import logger from "@app/logger";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
+import type { GitHubCommitUrl } from "@app/github/types";
 import { buildRawGitHubUrl, parseGitHubCommitUrl, parseGitHubFileUrl } from "@app/utils/github/url-parser";
 import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
 import chalk from "chalk";
@@ -16,7 +17,7 @@ interface GetOptions {
     lines?: string;
     raw?: boolean;
     verbose?: boolean;
-    format?: string;
+    format?: "md" | "json";
 }
 
 interface FileContent {
@@ -125,7 +126,6 @@ export async function getCommand(input: string, options: GetOptions): Promise<vo
     const parsed = parseGitHubFileUrl(input);
 
     if (!parsed) {
-        // Try commit URL
         const commitParsed = parseGitHubCommitUrl(input);
 
         if (commitParsed) {
@@ -242,7 +242,7 @@ function formatCommitMd(commit: GetCommitData): string {
     lines.push("");
     lines.push(`    ${commit.message.replace(/\n/g, "\n    ")}`);
     lines.push("");
-    lines.push(`${commit.stats.total} changed: +${commit.stats.additions} -${commit.stats.deletions}`);
+    lines.push(`${commit.files.length} files changed: +${commit.stats.additions} -${commit.stats.deletions}`);
     lines.push("");
 
     for (const file of commit.files) {
@@ -260,7 +260,7 @@ function formatCommitMd(commit: GetCommitData): string {
 }
 
 async function handleCommitUrl(
-    parsed: { owner: string; repo: string; sha: string },
+    parsed: GitHubCommitUrl,
     options: GetOptions
 ): Promise<void> {
     const commit = await fetchCommit(parsed.owner, parsed.repo, parsed.sha);

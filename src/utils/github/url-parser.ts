@@ -253,7 +253,7 @@ export function parseGitHubFileUrl(input: string): GitHubFileUrl | null {
  * Supports: https://github.com/owner/repo/commit/SHA
  */
 export function parseGitHubCommitUrl(input: string): GitHubCommitUrl | null {
-    const match = input.match(/github\.com\/([^/]+)\/([^/]+)\/commit\/([a-f0-9]+)/i);
+    const match = input.match(/github\.com\/([^/]+)\/([^/]+)\/commit\/([a-f0-9]{7,40})(?=$|[?#/])/i);
 
     if (!match) {
         return null;
