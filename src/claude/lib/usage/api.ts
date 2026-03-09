@@ -4,6 +4,13 @@ import { refreshOAuthToken } from "@app/utils/claude/auth";
 
 export type { AccountInfo, KeychainCredentials } from "@app/utils/claude/auth";
 
+export class RateLimitError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "RateLimitError";
+    }
+}
+
 // Refresh tokens 5 minutes before expiry to avoid edge cases
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
@@ -39,6 +46,11 @@ export async function fetchUsage(accessToken: string, signal?: AbortSignal): Pro
         },
         signal,
     });
+    if (res.status === 429) {
+        const body = await res.text().catch(() => "");
+        throw new RateLimitError(`Usage API 429: ${body.slice(0, 200)}`);
+    }
+
     if (!res.ok) {
         const body = await res.text().catch(() => "");
         throw new Error(`Usage API ${res.status}: ${body.slice(0, 200)}`);
@@ -53,15 +65,12 @@ export async function fetchUsage(accessToken: string, signal?: AbortSignal): Pro
  */
 async function ensureValidToken(
     accountName: string,
-    account: AccountConfig
+    account: AccountConfig,
+    options?: { forceRefresh?: boolean }
 ): Promise<{ accessToken: string; refreshed: boolean }> {
-    // No refresh token? Can't auto-refresh
-    if (!account.refreshToken) {
-        return { accessToken: account.accessToken, refreshed: false };
-    }
+    const tokenIsValid = account.expiresAt && account.expiresAt > Date.now() + EXPIRY_BUFFER_MS;
 
-    // Token still valid? No refresh needed
-    if (account.expiresAt && account.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
+    if (!account.refreshToken || (!options?.forceRefresh && tokenIsValid)) {
         return { accessToken: account.accessToken, refreshed: false };
     }
 
@@ -71,12 +80,16 @@ async function ensureValidToken(
         const freshConfig = await loadConfig();
         const diskAccount = freshConfig.accounts[accountName];
 
-        // Another process already refreshed — use their tokens (check before missing refreshToken)
+        // Another process already refreshed — use their tokens if:
+        // - Token is time-valid AND we're not force-refreshing, OR
+        // - Token is different from ours (another process refreshed for 429 too)
         if (diskAccount?.expiresAt && diskAccount.expiresAt > Date.now() + EXPIRY_BUFFER_MS) {
-            account.accessToken = diskAccount.accessToken;
-            account.refreshToken = diskAccount.refreshToken;
-            account.expiresAt = diskAccount.expiresAt;
-            return { accessToken: diskAccount.accessToken, refreshed: true };
+            if (!options?.forceRefresh || diskAccount.accessToken !== account.accessToken) {
+                account.accessToken = diskAccount.accessToken;
+                account.refreshToken = diskAccount.refreshToken;
+                account.expiresAt = diskAccount.expiresAt;
+                return { accessToken: diskAccount.accessToken, refreshed: true };
+            }
         }
 
         if (!diskAccount?.refreshToken) {
@@ -125,8 +138,28 @@ export async function fetchAllAccountsUsage(
     const results = await Promise.allSettled(
         entries.map(async ([name, account]) => {
             const { accessToken } = await ensureValidToken(name, account);
-            const usage = await fetchUsage(accessToken, signal);
-            return { accountName: name, label: account.label, usage } satisfies AccountUsage;
+
+            try {
+                const usage = await fetchUsage(accessToken, signal);
+                return { accountName: name, label: account.label, usage } satisfies AccountUsage;
+            } catch (err) {
+                if (!(err instanceof RateLimitError)) {
+                    throw err;
+                }
+
+                // 429 — force-refresh token to get fresh rate limit window
+                const { accessToken: freshToken, refreshed } = await ensureValidToken(name, account, {
+                    forceRefresh: true,
+                });
+
+                if (!refreshed) {
+                    throw err; // No refresh token available, can't bypass
+                }
+
+                // Retry once with new token
+                const usage = await fetchUsage(freshToken, signal);
+                return { accountName: name, label: account.label, usage } satisfies AccountUsage;
+            }
         })
     );
 

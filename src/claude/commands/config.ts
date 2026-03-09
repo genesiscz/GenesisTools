@@ -17,13 +17,19 @@ function determineAccountLabel(profile: Awaited<ReturnType<typeof fetchOAuthProf
     if (!profile) {
         return undefined;
     }
+
     const tier = profile.organization.rate_limit_tier;
+
     if (tier.includes("max")) {
-        return "max";
+        // Extract multiplier: "max_5x" → "max 5x", "max_20x" → "max 20x"
+        const match = tier.match(/max[_\s]*(\d+x?)/i);
+        return match ? `max ${match[1]}` : "max";
     }
+
     if (tier.includes("pro")) {
         return "pro";
     }
+
     return profile.organization.billing_type;
 }
 
