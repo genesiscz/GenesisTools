@@ -43,7 +43,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
     const { activeTab, tabs, activeIndex } = useTabNavigation(config.defaultTab);
 
     const [pollInterval, setPollInterval] = useState<PollInterval>(
-        (POLL_INTERVALS.includes(config.refreshInterval as PollInterval) ? config.refreshInterval : 10) as PollInterval
+        (POLL_INTERVALS.includes(config.refreshInterval as PollInterval) ? config.refreshInterval : 60) as PollInterval
     );
 
     const [paused, setPaused] = useState(false);
