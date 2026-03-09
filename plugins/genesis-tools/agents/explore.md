@@ -65,7 +65,7 @@ Use today's date and a descriptive kebab-case name derived from the exploration 
 
 #### Report Template
 
-```markdown
+````markdown
 # [Topic Title]
 
 > Explored on YYYY-MM-DD | Scope: [which directories/modules were examined]
@@ -88,7 +88,7 @@ Use today's date and a descriptive kebab-case name derived from the exploration 
 
 [If applicable — describe how components connect. Use a text diagram if it helps:]
 
-```
+```text
 ComponentA ──calls──▶ ComponentB ──emits──▶ EventBus
                           │
                           ▼
@@ -110,7 +110,7 @@ Use line references so the reader can jump to the source.]
 ## Open Questions
 
 [Anything unresolved or worth further investigation. Skip this section if everything is clear.]
-```
+````
 
 **Report writing guidelines:**
 - **Be specific.** Always include file paths with line numbers (`file.ts:42`), not vague references.
@@ -122,7 +122,7 @@ Use line references so the reader can jump to the source.]
 
 After writing the report, return a brief summary to the caller:
 
-```
+```text
 Exploration complete. Report saved to `.claude/explore/YYYY-MM-DD-<name>.md`
 
 **Key findings:**
