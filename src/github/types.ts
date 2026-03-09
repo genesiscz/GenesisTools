@@ -52,6 +52,15 @@ export interface TimelineEventRecord {
 }
 
 /**
+ * Parsed GitHub commit URL
+ */
+export interface GitHubCommitUrl {
+    owner: string;
+    repo: string;
+    sha: string;
+}
+
+/**
  * Parsed GitHub file URL
  */
 export interface GitHubFileUrl {
