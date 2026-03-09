@@ -96,31 +96,33 @@ export function determineAccountLabel(profile: OAuthProfileResponse | undefined)
  */
 export async function refreshAccountLabels(): Promise<void> {
     const { fetchOAuthProfile } = await import("@app/utils/claude/auth");
-    const config = await loadConfig();
-    const entries = Object.entries(config.accounts);
 
-    if (entries.length === 0) {
-        return;
-    }
+    await withConfigLock(async () => {
+        const config = await loadConfig();
+        const entries = Object.entries(config.accounts);
 
-    const profiles = await Promise.allSettled(
-        entries.map(([, acc]) => fetchOAuthProfile(acc.accessToken))
-    );
-
-    let changed = false;
-
-    for (let i = 0; i < entries.length; i++) {
-        const result = profiles[i];
-        const profile = result.status === "fulfilled" ? result.value : undefined;
-        const newLabel = determineAccountLabel(profile);
-
-        if (newLabel && newLabel !== entries[i][1].label) {
-            config.accounts[entries[i][0]].label = newLabel;
-            changed = true;
+        if (entries.length === 0) {
+            return;
         }
-    }
 
-    if (changed) {
-        await saveConfig(config);
-    }
+        const profiles = await Promise.all(
+            entries.map(([, acc]) => fetchOAuthProfile(acc.accessToken).catch(() => undefined))
+        );
+
+        let changed = false;
+
+        for (let i = 0; i < entries.length; i++) {
+            const profile = profiles[i];
+            const newLabel = determineAccountLabel(profile);
+
+            if (newLabel && newLabel !== entries[i][1].label) {
+                config.accounts[entries[i][0]].label = newLabel;
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            await saveConfig(config);
+        }
+    });
 }
