@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { type AccountConfig, loadConfig } from "@app/claude/lib/config";
+import { type AccountConfig, loadConfig, refreshAccountLabels } from "@app/claude/lib/config";
 import { type AccountUsage, fetchAllAccountsUsage } from "@app/claude/lib/usage/api";
 import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
@@ -33,6 +33,9 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
     const pollingRef = useRef(false);
 
     useEffect(() => {
+        // Refresh account labels from API profiles on startup (best-effort, non-blocking)
+        refreshAccountLabels().catch(() => {});
+
         dbRef.current = new UsageHistoryDb();
         notifRef.current = new NotificationManager(config.notifications);
 
@@ -118,17 +121,18 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
             // Per-account locking: each account gets its own cache + lock
             // This ensures "tools claude usage" and "tools claude usage --filter foo"
             // share the same lock for account "foo" instead of racing.
-            const accountUsages: AccountUsage[] = [];
+            const accountEntries = Object.entries(accounts);
+            const accountUsages: (AccountUsage | null)[] = new Array(accountEntries.length).fill(null);
 
             await Promise.all(
-                Object.entries(accounts).map(async ([name, account]) => {
+                accountEntries.map(async ([name, account], index) => {
                     const cacheKey = `poll-account-${name}.json`;
 
                     // Fast path: check cache without lock
                     const cached = await storage.getCacheFile<AccountUsage>(cacheKey, `${ttlSeconds} seconds`);
 
                     if (cached) {
-                        accountUsages.push(cached);
+                        accountUsages[index] = cached;
                         return;
                     }
 
@@ -160,14 +164,14 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                         onTimeout: () => null,
                     });
 
-                    if (result) {
-                        accountUsages.push(result);
-                    }
+                    accountUsages[index] = result;
                 })
             );
 
-            if (accountUsages.length > 0) {
-                processAccountUsages(accountUsages, new Date());
+            const resolvedUsages = accountUsages.filter((u): u is AccountUsage => u !== null);
+
+            if (resolvedUsages.length > 0) {
+                processAccountUsages(resolvedUsages, new Date());
             }
         } catch (error) {
             setResults({

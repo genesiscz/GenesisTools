@@ -1,4 +1,4 @@
-import { type ClaudeConfig, loadConfig, saveConfig } from "@app/claude/lib/config";
+import { type ClaudeConfig, determineAccountLabel, loadConfig, saveConfig } from "@app/claude/lib/config";
 import { fetchUsage } from "@app/claude/lib/usage/api";
 import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@app/utils/claude/auth";
 import { copyToClipboard } from "@app/utils/clipboard";
@@ -11,26 +11,6 @@ function maskToken(token: string): string {
         return "****";
     }
     return `${token.slice(0, 20)}...`;
-}
-
-function determineAccountLabel(profile: Awaited<ReturnType<typeof fetchOAuthProfile>>): string | undefined {
-    if (!profile) {
-        return undefined;
-    }
-
-    const tier = profile.organization.rate_limit_tier;
-
-    if (tier.includes("max")) {
-        // Extract multiplier: "max_5x" → "max 5x", "max_20x" → "max 20x"
-        const match = tier.match(/max[_\s]*(\d+x?)/i);
-        return match ? `max ${match[1]}` : "max";
-    }
-
-    if (tier.includes("pro")) {
-        return "pro";
-    }
-
-    return profile.organization.billing_type;
 }
 
 async function generateAuthUrl(): Promise<string> {
