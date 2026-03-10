@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>PowerSync Init Test</title>
+</head>
+<body>
+  <h1>PowerSync Initialization Test</h1>
+  <div id="status">Testing...</div>
+  <button onclick="testInit()">Test Init</button>
+  <button onclick="deleteDB()">Delete DB</button>
+
+  <script type="module">
+    window.testInit = async function() {
+      const statusEl = document.getElementById('status');
+      statusEl.innerHTML = 'Starting test...<br>';
+
+      try {
+        // Step 1: Import PowerSync
+        statusEl.innerHTML += '1. Importing PowerSync...<br>';
+        const { PowerSyncDatabase, Schema, Table, column } = await import('/@powersync/web');
+        statusEl.innerHTML += '✓ PowerSync imported<br>';
+
+        // Step 2: Import WASM SQLite
+        statusEl.innerHTML += '2. Importing WASM SQLite...<br>';
+        await import('/@journeyapps/wa-sqlite');
+        statusEl.innerHTML += '✓ WASM SQLite imported<br>';
+
+        // Step 3: Create minimal schema
+        statusEl.innerHTML += '3. Creating schema...<br>';
+        const schema = new Schema({
+          test: new Table({
+            name: column.text,
+          }),
+        });
+        statusEl.innerHTML += '✓ Schema created<br>';
+
+        // Step 4: Create database
+        statusEl.innerHTML += '4. Creating database instance...<br>';
+        const db = new PowerSyncDatabase({
+          database: {
+            dbFilename: 'test-powersync.db',
+            dbLocation: 'default',
+          },
+          schema,
+          flags: {
+            useWebWorker: false,
+          },
+        });
+        statusEl.innerHTML += '✓ Database instance created<br>';
+
+        // Step 5: Initialize
+        statusEl.innerHTML += '5. Calling db.init() (may take 10-30 seconds)...<br>';
+        const start = Date.now();
+        await db.init();
+        const duration = Date.now() - start;
+        statusEl.innerHTML += `✓ db.init() completed in ${duration}ms<br>`;
+
+        // Step 6: Test query
+        statusEl.innerHTML += '6. Testing query...<br>';
+        const result = await db.getAll('SELECT * FROM test');
+        statusEl.innerHTML += `✓ Query successful, returned ${result.length} rows<br>`;
+
+        statusEl.innerHTML += '<br><strong>✅ ALL TESTS PASSED!</strong>';
+      } catch (err) {
+        statusEl.innerHTML += `<br><strong>❌ ERROR: ${err.message}</strong><br>`;
+        console.error('Full error:', err);
+      }
+    };
+
+    window.deleteDB = async function() {
+      const statusEl = document.getElementById('status');
+      statusEl.innerHTML = 'Deleting databases...<br>';
+
+      try {
+        await indexedDB.deleteDatabase('test-powersync.db');
+        statusEl.innerHTML += '✓ Deleted test-powersync.db<br>';
+
+        await indexedDB.deleteDatabase('dashboard.sqlite');
+        statusEl.innerHTML += '✓ Deleted dashboard.sqlite<br>';
+
+        statusEl.innerHTML += '<br><strong>✅ Databases deleted. Refresh page.</strong>';
+      } catch (err) {
+        statusEl.innerHTML += `<br><strong>❌ ERROR: ${err.message}</strong>`;
+      }
+    };
+  </script>
+</body>
+</html>

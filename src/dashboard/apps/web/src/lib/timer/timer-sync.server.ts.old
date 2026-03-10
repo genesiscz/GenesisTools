@@ -1,0 +1,561 @@
+import { createServerFn } from '@tanstack/react-start'
+import { neon } from '@neondatabase/serverless'
+
+// Get Neon SQL client (uses DATABASE_URL from env)
+const getDatabase = () => {
+  const url = process.env.DATABASE_URL
+  if (!url) {
+    console.warn('[Timer Sync] DATABASE_URL not set, database operations will be skipped')
+    return null
+  }
+  return neon(url)
+}
+
+// Types matching the client-side Timer type
+interface TimerData {
+  id: string
+  name: string
+  timerType: 'stopwatch' | 'countdown' | 'pomodoro'
+  isRunning: boolean
+  elapsedTime: number
+  duration?: number
+  laps: Array<{ id: string; time: number; delta: number }>
+  userId: string
+  createdAt: string
+  updatedAt: string
+  showTotal: boolean
+  firstStartTime?: string
+  startTime?: string
+  pomodoroSettings?: {
+    workDuration: number
+    shortBreakDuration: number
+    longBreakDuration: number
+    sessionsBeforeLongBreak: number
+  }
+  pomodoroPhase?: 'work' | 'short_break' | 'long_break'
+  pomodoroSessionCount: number
+}
+
+interface ActivityLogData {
+  id: string
+  timerId: string
+  timerName: string
+  userId: string
+  eventType: string
+  timestamp: string
+  elapsedAtEvent: number
+  sessionDuration?: number
+  previousValue?: number
+  newValue?: number
+  metadata?: Record<string, unknown>
+}
+
+interface SyncInput {
+  userId: string
+  timers: TimerData[]
+  activityLogs: ActivityLogData[]
+  lastSyncAt?: string
+}
+
+interface SyncOutput {
+  timers: TimerData[]
+  activityLogs: ActivityLogData[]
+  syncedAt: string
+}
+
+// Database row types
+interface TimerRow {
+  id: string
+  name: string
+  timer_type: string
+  is_running: number
+  elapsed_time: number
+  duration: number | null
+  laps: string
+  user_id: string
+  created_at: string
+  updated_at: string
+  show_total: number
+  first_start_time: string | null
+  start_time: string | null
+  pomodoro_settings: string | null
+  pomodoro_phase: string | null
+  pomodoro_session_count: number
+}
+
+interface ActivityLogRow {
+  id: string
+  timer_id: string
+  timer_name: string
+  user_id: string
+  event_type: string
+  timestamp: string
+  elapsed_at_event: number
+  session_duration: number | null
+  previous_value: number | null
+  new_value: number | null
+  metadata: string
+}
+
+// Convert client timer to database row values
+function timerToRow(timer: TimerData): TimerRow {
+  return {
+    id: timer.id,
+    name: timer.name,
+    timer_type: timer.timerType,
+    is_running: timer.isRunning ? 1 : 0,
+    elapsed_time: timer.elapsedTime,
+    duration: timer.duration ?? null,
+    laps: JSON.stringify(timer.laps),
+    user_id: timer.userId,
+    created_at: timer.createdAt,
+    updated_at: timer.updatedAt,
+    show_total: timer.showTotal ? 1 : 0,
+    first_start_time: timer.firstStartTime ?? null,
+    start_time: timer.startTime ?? null,
+    pomodoro_settings: timer.pomodoroSettings ? JSON.stringify(timer.pomodoroSettings) : null,
+    pomodoro_phase: timer.pomodoroPhase ?? null,
+    pomodoro_session_count: timer.pomodoroSessionCount ?? 0,
+  }
+}
+
+// Convert database row to client timer
+function rowToTimer(row: TimerRow): TimerData {
+  return {
+    id: row.id,
+    name: row.name,
+    timerType: row.timer_type as TimerData['timerType'],
+    isRunning: row.is_running === 1,
+    elapsedTime: row.elapsed_time,
+    duration: row.duration ?? undefined,
+    laps: JSON.parse(row.laps || '[]'),
+    userId: row.user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    showTotal: row.show_total === 1,
+    firstStartTime: row.first_start_time ?? undefined,
+    startTime: row.start_time ?? undefined,
+    pomodoroSettings: row.pomodoro_settings ? JSON.parse(row.pomodoro_settings) : undefined,
+    pomodoroPhase: row.pomodoro_phase as TimerData['pomodoroPhase'],
+    pomodoroSessionCount: row.pomodoro_session_count,
+  }
+}
+
+// Convert client activity log to database row
+function activityToRow(log: ActivityLogData): ActivityLogRow {
+  return {
+    id: log.id,
+    timer_id: log.timerId,
+    timer_name: log.timerName,
+    user_id: log.userId,
+    event_type: log.eventType,
+    timestamp: log.timestamp,
+    elapsed_at_event: log.elapsedAtEvent,
+    session_duration: log.sessionDuration ?? null,
+    previous_value: log.previousValue ?? null,
+    new_value: log.newValue ?? null,
+    metadata: JSON.stringify(log.metadata || {}),
+  }
+}
+
+// Convert database row to client activity log
+function rowToActivity(row: ActivityLogRow): ActivityLogData {
+  return {
+    id: row.id,
+    timerId: row.timer_id,
+    timerName: row.timer_name,
+    userId: row.user_id,
+    eventType: row.event_type,
+    timestamp: row.timestamp,
+    elapsedAtEvent: row.elapsed_at_event,
+    sessionDuration: row.session_duration ?? undefined,
+    previousValue: row.previous_value ?? undefined,
+    newValue: row.new_value ?? undefined,
+    metadata: JSON.parse(row.metadata || '{}'),
+  }
+}
+
+/**
+ * Initialize database tables
+ */
+async function ensureTables() {
+  const sql = getDatabase()
+  if (!sql) return // Skip if no database configured
+
+  // Create timers table
+  await sql`
+    CREATE TABLE IF NOT EXISTS timers (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      timer_type TEXT NOT NULL,
+      is_running INTEGER NOT NULL DEFAULT 0,
+      elapsed_time INTEGER NOT NULL DEFAULT 0,
+      duration INTEGER,
+      laps TEXT DEFAULT '[]',
+      user_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      show_total INTEGER NOT NULL DEFAULT 0,
+      first_start_time TEXT,
+      start_time TEXT,
+      pomodoro_settings TEXT,
+      pomodoro_phase TEXT,
+      pomodoro_session_count INTEGER DEFAULT 0
+    )
+  `
+
+  // Create activity logs table
+  await sql`
+    CREATE TABLE IF NOT EXISTS activity_logs (
+      id TEXT PRIMARY KEY,
+      timer_id TEXT NOT NULL,
+      timer_name TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      elapsed_at_event INTEGER NOT NULL DEFAULT 0,
+      session_duration INTEGER,
+      previous_value INTEGER,
+      new_value INTEGER,
+      metadata TEXT DEFAULT '{}'
+    )
+  `
+
+  // Create todos table (for example demo)
+  await sql`
+    CREATE TABLE IF NOT EXISTS todos (
+      id TEXT PRIMARY KEY,
+      text TEXT NOT NULL,
+      completed INTEGER NOT NULL DEFAULT 0,
+      user_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `
+
+  // Create indexes
+  await sql`CREATE INDEX IF NOT EXISTS idx_timers_user_id ON timers(user_id)`
+  await sql`CREATE INDEX IF NOT EXISTS idx_activity_logs_user_id ON activity_logs(user_id)`
+  await sql`CREATE INDEX IF NOT EXISTS idx_activity_logs_timer_id ON activity_logs(timer_id)`
+  await sql`CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id)`
+}
+
+// ============================================
+// CRUD Batch Upload (PowerSync Sync)
+// ============================================
+
+interface CrudOperation {
+  id: string
+  op: 'PUT' | 'PATCH' | 'DELETE'
+  table: string
+  data: Record<string, unknown>
+}
+
+interface UploadBatchInput {
+  operations: CrudOperation[]
+}
+
+/**
+ * Upload CRUD batch from PowerSync to server database
+ * This is the main sync endpoint called by the connector
+ */
+export const uploadSyncBatch = createServerFn({
+  method: 'POST',
+})
+  .inputValidator((d: UploadBatchInput) => d)
+  .handler(async ({ data }): Promise<{ success: boolean }> => {
+    const { operations } = data
+
+    if (!operations || operations.length === 0) {
+      return { success: true }
+    }
+
+    await ensureTables()
+    const sql = getDatabase()
+    if (!sql) {
+      console.log('[Sync] No database configured, skipping operations')
+      return { success: true }
+    }
+
+    console.log(`[Sync] Processing ${operations.length} operations...`)
+    if (operations.length > 0) {
+      console.log('[Sync] First operation:', JSON.stringify(operations[0], null, 2))
+    }
+
+    for (const op of operations) {
+      await processOperation(sql, op)
+    }
+
+    console.log(`[Sync] Completed ${operations.length} operations`)
+    return { success: true }
+  })
+
+// biome-ignore lint/suspicious/noExplicitAny: Neon SQL function type
+async function processOperation(
+  sql: any,
+  op: CrudOperation
+) {
+  const { table, data } = op
+
+  // Skip if no data or no id
+  if (!data || !data.id) {
+    console.warn('[Sync] Skipping operation with missing data or id:', op)
+    return
+  }
+
+  switch (op.op) {
+    case 'PUT':
+      if (table === 'timers') {
+        await sql`
+          INSERT INTO timers (
+            id, name, timer_type, is_running, elapsed_time, duration, laps,
+            user_id, created_at, updated_at, show_total, first_start_time,
+            start_time, pomodoro_settings, pomodoro_phase, pomodoro_session_count
+          ) VALUES (
+            ${data.id}, ${data.name}, ${data.timer_type}, ${data.is_running ?? 0},
+            ${data.elapsed_time ?? 0}, ${data.duration}, ${data.laps ?? '[]'},
+            ${data.user_id}, ${data.created_at}, ${data.updated_at},
+            ${data.show_total ?? 0}, ${data.first_start_time}, ${data.start_time},
+            ${data.pomodoro_settings}, ${data.pomodoro_phase}, ${data.pomodoro_session_count ?? 0}
+          )
+          ON CONFLICT (id) DO UPDATE SET
+            name = EXCLUDED.name,
+            timer_type = EXCLUDED.timer_type,
+            is_running = EXCLUDED.is_running,
+            elapsed_time = EXCLUDED.elapsed_time,
+            duration = EXCLUDED.duration,
+            laps = EXCLUDED.laps,
+            updated_at = EXCLUDED.updated_at,
+            show_total = EXCLUDED.show_total,
+            first_start_time = EXCLUDED.first_start_time,
+            start_time = EXCLUDED.start_time,
+            pomodoro_settings = EXCLUDED.pomodoro_settings,
+            pomodoro_phase = EXCLUDED.pomodoro_phase,
+            pomodoro_session_count = EXCLUDED.pomodoro_session_count
+        `
+      } else if (table === 'activity_logs') {
+        await sql`
+          INSERT INTO activity_logs (
+            id, timer_id, timer_name, user_id, event_type, timestamp,
+            elapsed_at_event, session_duration, previous_value, new_value, metadata
+          ) VALUES (
+            ${data.id}, ${data.timer_id}, ${data.timer_name}, ${data.user_id},
+            ${data.event_type}, ${data.timestamp}, ${data.elapsed_at_event ?? 0},
+            ${data.session_duration}, ${data.previous_value}, ${data.new_value},
+            ${data.metadata ?? '{}'}
+          )
+          ON CONFLICT (id) DO UPDATE SET
+            timer_id = EXCLUDED.timer_id,
+            timer_name = EXCLUDED.timer_name,
+            event_type = EXCLUDED.event_type,
+            timestamp = EXCLUDED.timestamp,
+            elapsed_at_event = EXCLUDED.elapsed_at_event,
+            session_duration = EXCLUDED.session_duration,
+            previous_value = EXCLUDED.previous_value,
+            new_value = EXCLUDED.new_value,
+            metadata = EXCLUDED.metadata
+        `
+      } else if (table === 'todos') {
+        await sql`
+          INSERT INTO todos (
+            id, text, completed, user_id, created_at, updated_at
+          ) VALUES (
+            ${data.id}, ${data.text}, ${data.completed ?? 0},
+            ${data.user_id}, ${data.created_at}, ${data.updated_at}
+          )
+          ON CONFLICT (id) DO UPDATE SET
+            text = EXCLUDED.text,
+            completed = EXCLUDED.completed,
+            updated_at = EXCLUDED.updated_at
+        `
+      }
+      break
+
+    case 'PATCH':
+      if (table === 'timers') {
+        await sql`
+          UPDATE timers SET updated_at = ${data.updated_at ?? new Date().toISOString()}
+          WHERE id = ${data.id}
+        `
+      }
+      break
+
+    case 'DELETE':
+      if (table === 'timers') {
+        await sql`DELETE FROM timers WHERE id = ${data.id}`
+      } else if (table === 'activity_logs') {
+        await sql`DELETE FROM activity_logs WHERE id = ${data.id}`
+      } else if (table === 'todos') {
+        await sql`DELETE FROM todos WHERE id = ${data.id}`
+      }
+      break
+  }
+}
+
+/**
+ * Get all timers for a user from the server database
+ */
+export const getTimersFromServer = createServerFn({
+  method: 'GET',
+})
+  .inputValidator((d: string) => d) // userId
+  .handler(async ({ data: userId }) => {
+    try {
+      console.log('[Server] getTimersFromServer called for user:', userId)
+      await ensureTables()
+      const sql = getDatabase()
+      if (!sql) return []
+
+      const rows = await sql`
+        SELECT * FROM timers WHERE user_id = ${userId} ORDER BY created_at DESC
+      ` as unknown as TimerRow[]
+
+      console.log('[Server] getTimersFromServer returning', rows?.length ?? 0, 'timers')
+      return (rows ?? []).map(rowToTimer)
+    } catch (error) {
+      console.error('[Server] getTimersFromServer error:', error)
+      return []
+    }
+  })
+
+/**
+ * Get all activity logs for a user from the server database
+ */
+export const getActivityLogsFromServer = createServerFn({
+  method: 'GET',
+})
+  .inputValidator((d: string) => d) // userId
+  .handler(async ({ data: userId }) => {
+    try {
+      console.log('[Server] getActivityLogsFromServer called for user:', userId)
+      await ensureTables()
+      const sql = getDatabase()
+      if (!sql) return []
+
+      const rows = await sql`
+        SELECT * FROM activity_logs WHERE user_id = ${userId} ORDER BY timestamp DESC LIMIT 1000
+      ` as unknown as ActivityLogRow[]
+
+      console.log('[Server] getActivityLogsFromServer returning', rows?.length ?? 0, 'logs')
+      return (rows ?? []).map(rowToActivity)
+    } catch (error) {
+      console.error('[Server] getActivityLogsFromServer error:', error)
+      return []
+    }
+  })
+
+/**
+ * Full sync - upload local changes and download server changes
+ * Uses last-write-wins conflict resolution based on updatedAt timestamp
+ */
+export const syncTimers = createServerFn({
+  method: 'POST',
+})
+  .inputValidator((d: SyncInput) => d)
+  .handler(async ({ data }): Promise<SyncOutput> => {
+    await ensureTables()
+    const sql = getDatabase()
+
+    const { userId, timers: clientTimers, activityLogs: clientLogs } = data
+    const syncedAt = new Date().toISOString()
+
+    if (!sql) {
+      // Return empty results if no database configured
+      return { timers: [], activityLogs: [], syncedAt }
+    }
+
+    // Get current server state
+    const serverTimerRows = await sql`
+      SELECT * FROM timers WHERE user_id = ${userId}
+    ` as unknown as TimerRow[]
+    const serverTimerMap = new Map((serverTimerRows ?? []).map((t: TimerRow) => [t.id, t]))
+
+    // Process client timers - upsert with last-write-wins
+    for (const timer of clientTimers) {
+      const serverTimer = serverTimerMap.get(timer.id)
+
+      // If server has newer version, skip client update
+      if (serverTimer && new Date(serverTimer.updated_at) > new Date(timer.updatedAt)) {
+        continue
+      }
+
+      const row = timerToRow(timer)
+
+      // Upsert using PostgreSQL ON CONFLICT
+      await sql`
+        INSERT INTO timers (
+          id, name, timer_type, is_running, elapsed_time, duration, laps,
+          user_id, created_at, updated_at, show_total, first_start_time,
+          start_time, pomodoro_settings, pomodoro_phase, pomodoro_session_count
+        ) VALUES (
+          ${row.id}, ${row.name}, ${row.timer_type}, ${row.is_running}, ${row.elapsed_time},
+          ${row.duration}, ${row.laps}, ${row.user_id}, ${row.created_at}, ${row.updated_at},
+          ${row.show_total}, ${row.first_start_time}, ${row.start_time},
+          ${row.pomodoro_settings}, ${row.pomodoro_phase}, ${row.pomodoro_session_count}
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          timer_type = EXCLUDED.timer_type,
+          is_running = EXCLUDED.is_running,
+          elapsed_time = EXCLUDED.elapsed_time,
+          duration = EXCLUDED.duration,
+          laps = EXCLUDED.laps,
+          updated_at = EXCLUDED.updated_at,
+          show_total = EXCLUDED.show_total,
+          first_start_time = EXCLUDED.first_start_time,
+          start_time = EXCLUDED.start_time,
+          pomodoro_settings = EXCLUDED.pomodoro_settings,
+          pomodoro_phase = EXCLUDED.pomodoro_phase,
+          pomodoro_session_count = EXCLUDED.pomodoro_session_count
+      `
+    }
+
+    // Process activity logs - just insert new ones (they're immutable)
+    for (const log of clientLogs) {
+      const row = activityToRow(log)
+
+      // Insert if not exists (PostgreSQL ON CONFLICT DO NOTHING)
+      await sql`
+        INSERT INTO activity_logs (
+          id, timer_id, timer_name, user_id, event_type, timestamp,
+          elapsed_at_event, session_duration, previous_value, new_value, metadata
+        ) VALUES (
+          ${row.id}, ${row.timer_id}, ${row.timer_name}, ${row.user_id}, ${row.event_type},
+          ${row.timestamp}, ${row.elapsed_at_event}, ${row.session_duration},
+          ${row.previous_value}, ${row.new_value}, ${row.metadata}
+        )
+        ON CONFLICT (id) DO NOTHING
+      `
+    }
+
+    // Return merged state from server
+    const mergedTimerRows = await sql`
+      SELECT * FROM timers WHERE user_id = ${userId} ORDER BY created_at DESC
+    ` as unknown as TimerRow[]
+    const mergedLogRows = await sql`
+      SELECT * FROM activity_logs WHERE user_id = ${userId} ORDER BY timestamp DESC LIMIT 1000
+    ` as unknown as ActivityLogRow[]
+
+    return {
+      timers: (mergedTimerRows ?? []).map(rowToTimer),
+      activityLogs: (mergedLogRows ?? []).map(rowToActivity),
+      syncedAt,
+    }
+  })
+
+/**
+ * Delete a timer from the server database
+ */
+export const deleteTimerFromServer = createServerFn({
+  method: 'POST',
+})
+  .inputValidator((d: { timerId: string; userId: string }) => d)
+  .handler(async ({ data }) => {
+    await ensureTables()
+    const sql = getDatabase()
+    if (!sql) return { success: true }
+
+    await sql`DELETE FROM timers WHERE id = ${data.timerId}`
+
+    return { success: true }
+  })
