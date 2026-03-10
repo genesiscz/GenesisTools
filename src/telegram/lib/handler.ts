@@ -1,19 +1,18 @@
 import logger from "@app/logger";
 import pc from "picocolors";
-import type { NewMessageEvent } from "telegram/events";
 import type { DeletedMessageEvent } from "telegram/events/DeletedMessage";
 import type { EditedMessageEvent } from "telegram/events/EditedMessage";
+import type { NewMessageEvent } from "telegram/events/NewMessage";
 import { executeActions } from "./actions";
 import { TelegramContact } from "./TelegramContact";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
 import { TelegramMessage } from "./TelegramMessage";
 import type { TGClient } from "./TGClient";
-import type { TelegramContactV2 } from "./types";
+import type { ContactConfig } from "./types";
 import { DEFAULTS } from "./types";
 
 const processedIds = new Set<number>();
 const processedOrder: number[] = [];
-let localReplyFallbackId = -1;
 
 function trackMessage(id: number): boolean {
     if (processedIds.has(id)) {
@@ -34,23 +33,22 @@ function trackMessage(id: number): boolean {
     return true;
 }
 
-/**
- * Per-contact conversation context buffer.
- * Stores formatted "Name: message" lines for LLM context.
- */
 class ConversationContext {
     private lines: string[] = [];
+    private maxLines: number;
 
-    constructor(initialLines?: string[]) {
+    constructor(maxLines: number, initialLines?: string[]) {
+        this.maxLines = maxLines;
+
         if (initialLines) {
-            this.lines = initialLines.slice(-DEFAULTS.maxContextMessages);
+            this.lines = initialLines.slice(-maxLines);
         }
     }
 
     append(name: string, content: string): void {
         this.lines.push(`${name}: ${content}`);
 
-        while (this.lines.length > DEFAULTS.maxContextMessages) {
+        while (this.lines.length > this.maxLines) {
             this.lines.shift();
         }
     }
@@ -64,37 +62,53 @@ class ConversationContext {
     }
 }
 
-export interface HandlerOptions {
-    contacts: TelegramContactV2[];
-    myName: string;
-    initialHistory?: Map<string, string[]>;
-    store: TelegramHistoryStore;
+function resolveTargetChatId(message: TelegramMessage): string | undefined {
+    if (message.chatId) {
+        return message.chatId;
+    }
+
+    if (message.senderId) {
+        return message.senderId;
+    }
+
+    return undefined;
 }
 
-function extractPeerId(
-    peer?: {
-        userId?: unknown;
-        chatId?: unknown;
-        channelId?: unknown;
-    } | null
-): string | null {
+function resolveDeletedEventChatId(event: DeletedMessageEvent): string | undefined {
+    const peer = event.peer;
+
     if (!peer) {
-        return null;
+        return undefined;
     }
 
-    if ("userId" in peer && peer.userId !== undefined && peer.userId !== null) {
-        return String(peer.userId);
+    if (typeof peer === "string") {
+        return peer;
     }
 
-    if ("chatId" in peer && peer.chatId !== undefined && peer.chatId !== null) {
-        return String(peer.chatId);
+    if (typeof peer !== "object" || peer === null) {
+        return undefined;
     }
 
-    if ("channelId" in peer && peer.channelId !== undefined && peer.channelId !== null) {
+    if ("channelId" in peer && peer.channelId) {
         return String(peer.channelId);
     }
 
-    return null;
+    if ("chatId" in peer && peer.chatId) {
+        return String(peer.chatId);
+    }
+
+    if ("userId" in peer && peer.userId) {
+        return String(peer.userId);
+    }
+
+    return undefined;
+}
+
+export interface HandlerOptions {
+    contacts: ContactConfig[];
+    myName: string;
+    initialHistory?: Map<string, string[]>;
+    store: TelegramHistoryStore;
 }
 
 export function registerHandler(client: TGClient, options: HandlerOptions): void {
@@ -106,82 +120,83 @@ export function registerHandler(client: TGClient, options: HandlerOptions): void
         contactMap.set(config.userId, contact);
 
         const initial = options.initialHistory?.get(config.userId);
-        contexts.set(config.userId, new ConversationContext(initial));
+        contexts.set(config.userId, new ConversationContext(contact.contextLength, initial));
     }
 
     client.onNewMessage(async (event: NewMessageEvent) => {
         try {
-            const msg = new TelegramMessage(event.message);
+            const message = new TelegramMessage(event.message);
 
-            if (!msg.isPrivate || msg.isOutgoing) {
+            if (message.isOutgoing) {
                 return;
             }
 
-            const senderId = msg.senderId;
+            const targetChatId = resolveTargetChatId(message);
 
-            if (!senderId) {
+            if (!targetChatId) {
                 return;
             }
 
-            const contact = contactMap.get(senderId);
+            const contact = contactMap.get(targetChatId);
 
             if (!contact) {
                 return;
             }
 
-            if (!trackMessage(msg.id)) {
+            if (!trackMessage(message.id)) {
                 return;
             }
 
-            if (!msg.hasText && !msg.hasMedia) {
+            if (!message.hasText && !message.hasMedia) {
                 return;
             }
 
-            // Persist incoming message to history store
-            try {
-                options.store.insertMessages(senderId, [msg.toJSON()]);
-            } catch (err) {
-                logger.debug(`Failed to persist message: ${err}`);
+            options.store.upsertMessageWithRevision(targetChatId, message.toJSON(), "create");
+
+            const context = contexts.get(targetChatId);
+
+            if (context) {
+                context.append(contact.displayName, message.contentForLLM);
             }
 
-            // Append incoming message to conversation context
-            const ctx = contexts.get(senderId);
+            logger.info(`${pc.bold(pc.cyan(contact.displayName))}: ${message.preview}`);
 
-            if (ctx) {
-                ctx.append(contact.displayName, msg.contentForLLM);
-            }
+            const history = context && !context.isEmpty ? context.toString() : undefined;
+            const results = await executeActions(contact, message, client, history);
 
-            logger.info(`${pc.bold(pc.cyan(contact.displayName))}: ${msg.preview}`);
+            for (const result of results) {
+                if (result.success) {
+                    const extra = result.reply
+                        ? ` "${result.reply.slice(0, 60)}${result.reply.length > 60 ? "..." : ""}"`
+                        : "";
+                    logger.info(`  ${pc.green(`[${result.action}]`)} OK${pc.dim(extra)}`);
 
-            const history = ctx && !ctx.isEmpty ? ctx.toString() : undefined;
-            const results = await executeActions(contact, msg, client, history);
+                    if (result.action === "ask" && result.reply && context) {
+                        context.append(options.myName, result.reply);
 
-            for (const r of results) {
-                if (r.success) {
-                    const extra = r.reply ? ` "${r.reply.slice(0, 60)}${r.reply.length > 60 ? "..." : ""}"` : "";
-                    logger.info(`  ${pc.green(`[${r.action}]`)} OK${pc.dim(extra)}`);
-
-                    if (r.action === "ask" && r.reply && ctx) {
-                        ctx.append(options.myName, r.reply);
-
-                        try {
-                            options.store.insertMessages(senderId, [
+                        if (result.sentMessageId) {
+                            options.store.upsertMessageWithRevision(
+                                targetChatId,
                                 {
-                                    id: r.replyMessageId ?? localReplyFallbackId--,
+                                    id: result.sentMessageId,
                                     senderId: undefined,
-                                    text: r.reply,
+                                    text: result.reply,
                                     mediaDescription: undefined,
                                     isOutgoing: true,
                                     date: new Date().toISOString(),
                                     dateUnix: Math.floor(Date.now() / 1000),
+                                    attachments: [],
                                 },
-                            ]);
-                        } catch (err) {
-                            logger.debug(`Failed to persist reply: ${err}`);
+                                "create"
+                            );
+                        } else {
+                            logger.warn(
+                                `Auto-reply message id missing for ${targetChatId}; skipping outgoing persistence.`
+                            );
                         }
                     }
                 } else {
-                    logger.warn(`  ${pc.red(`[${r.action}]`)} FAILED: ${r.error}`);
+                    logger.warn(`  ${pc.red(`[${result.action}]`)} FAILED: ${result.error}`);
                 }
             }
         } catch (err) {
@@ -191,53 +206,41 @@ export function registerHandler(client: TGClient, options: HandlerOptions): void
 
     client.onEditedMessage(async (event: EditedMessageEvent) => {
         try {
-            const message = event.message;
+            const message = new TelegramMessage(event.message);
+            const targetChatId = resolveTargetChatId(message);
 
-            if (!message) {
+            if (!targetChatId || !contactMap.has(targetChatId)) {
                 return;
             }
 
-            const msg = new TelegramMessage(message);
-            const chatId = extractPeerId(message.peerId);
-
-            if (!chatId) {
-                return;
-            }
-
-            options.store.upsertMessageWithRevision(chatId, {
-                id: msg.id,
-                senderId: msg.senderId,
-                text: msg.text,
-                mediaDescription: msg.mediaDescription,
-                isOutgoing: msg.isOutgoing,
-                date: msg.date.toISOString(),
-                dateUnix: Math.floor(msg.date.getTime() / 1000),
-                editedDateUnix: message.editDate ?? Math.floor(Date.now() / 1000),
-            });
+            options.store.upsertMessageWithRevision(targetChatId, message.toJSON(), "edit");
+            logger.info(`${pc.yellow("Edited")} ${pc.cyan(targetChatId)} #${message.id}`);
         } catch (err) {
-            logger.error({ err }, "Error handling edited message");
+            logger.warn(`Edit event handling failed: ${err}`);
         }
     });
 
     client.onDeletedMessage(async (event: DeletedMessageEvent) => {
         try {
-            const deletedIds: number[] = event.deletedIds ?? [];
-            const peerChatId = extractPeerId(
-                (event.peer as { userId?: unknown; chatId?: unknown; channelId?: unknown } | null) ?? null
-            );
+            const eventChatId = resolveDeletedEventChatId(event);
 
-            for (const msgId of deletedIds) {
-                const row = options.store.findMessageById(msgId, peerChatId ?? undefined);
+            for (const messageId of event.deletedIds) {
+                const candidateChats = eventChatId ? [eventChatId] : options.store.findChatsByMessageId(messageId);
 
-                if (row) {
-                    options.store.markMessageDeleted(row.chat_id, msgId);
+                for (const chatId of candidateChats) {
+                    if (!contactMap.has(chatId)) {
+                        continue;
+                    }
+
+                    options.store.markMessageDeleted(chatId, messageId);
+                    logger.info(`${pc.red("Deleted")} ${pc.cyan(chatId)} #${messageId}`);
                 }
             }
         } catch (err) {
-            logger.error({ err }, "Error handling deleted message");
+            logger.warn(`Delete event handling failed: ${err}`);
         }
     });
 
-    const names = options.contacts.map((c) => pc.cyan(c.displayName)).join(", ");
+    const names = options.contacts.map((contact) => pc.cyan(contact.displayName)).join(", ");
     logger.info(`Listening for messages from ${options.contacts.length} contact(s): ${names}`);
 }

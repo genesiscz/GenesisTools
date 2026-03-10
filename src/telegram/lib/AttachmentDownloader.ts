@@ -1,100 +1,84 @@
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
 import type { TGClient } from "./TGClient";
+import type { AttachmentLocator } from "./types";
 
-const ATTACHMENTS_BASE = resolve(homedir(), ".genesis-tools/telegram/chats");
+const DEFAULT_CHATS_DIR = join(homedir(), ".genesis-tools", "telegram", "chats");
+
+export interface DownloadAttachmentOptions {
+    outputPath?: string;
+}
+
+export interface DownloadAttachmentResult {
+    outputPath: string;
+    bytes: number;
+}
 
 export class AttachmentDownloader {
-    constructor(
-        private client: TGClient,
-        private store: TelegramHistoryStore
-    ) {}
-
-    async download(
-        chatId: string,
-        messageId: number,
-        attachmentIndex: number,
-        outputPath?: string
-    ): Promise<{ path: string; size: number; sha256: string }> {
-        const attachments = this.store.getAttachments(chatId, messageId);
-        const attachment = attachments.find((a) => a.attachment_index === attachmentIndex);
+    async downloadByLocator(
+        client: TGClient,
+        store: TelegramHistoryStore,
+        locator: AttachmentLocator,
+        options: DownloadAttachmentOptions = {}
+    ): Promise<DownloadAttachmentResult> {
+        const attachment = store.getAttachment(locator);
 
         if (!attachment) {
-            throw new Error(`Attachment not found: chat=${chatId} msg=${messageId} idx=${attachmentIndex}`);
+            throw new Error(
+                `Attachment not found for ${locator.chatId}:${locator.messageId}:${locator.attachmentIndex}`
+            );
         }
 
-        if (attachment.is_downloaded && attachment.local_path && existsSync(attachment.local_path)) {
+        const message = await client.getMessageById(locator.chatId, locator.messageId);
+
+        if (!message || !message.media) {
+            throw new Error(`Telegram message ${locator.messageId} has no downloadable media`);
+        }
+
+        const safeFileName = (attachment.file_name ?? `${locator.messageId}-${locator.attachmentIndex}`).replace(
+            /[\\/:*?"<>|]/g,
+            "_"
+        );
+        const fallbackPath = join(
+            DEFAULT_CHATS_DIR,
+            locator.chatId,
+            "attachments",
+            `${locator.messageId}-${locator.attachmentIndex}-${safeFileName}`
+        );
+        const outputPath = options.outputPath ?? fallbackPath;
+        const outputDir = dirname(outputPath);
+
+        if (!existsSync(outputDir)) {
+            mkdirSync(outputDir, { recursive: true });
+        }
+
+        const downloaded = await client.downloadMedia(message, {
+            outputFile: outputPath,
+        });
+
+        if (downloaded === undefined) {
+            throw new Error("Telegram client returned no data while downloading media");
+        }
+
+        if (Buffer.isBuffer(downloaded)) {
+            store.markAttachmentDownloaded(locator, outputPath, downloaded);
+
             return {
-                path: attachment.local_path,
-                size: attachment.file_size ?? 0,
-                sha256: attachment.sha256 ?? "",
+                outputPath,
+                bytes: downloaded.byteLength,
             };
         }
 
-        let targetMessage: import("telegram").Api.Message | null = null;
+        const fileBytes = readFileSync(downloaded);
+        store.markAttachmentDownloaded(locator, downloaded, fileBytes);
 
-        for await (const msg of this.client.getMessages(chatId, {
-            minId: messageId - 1,
-            maxId: messageId + 1,
-            limit: 3,
-        })) {
-            if (msg.id === messageId) {
-                targetMessage = msg;
-                break;
-            }
-        }
-
-        if (!targetMessage?.media) {
-            throw new Error(`Message ${messageId} not found or has no media`);
-        }
-
-        const dir = outputPath ? resolve(dirname(outputPath)) : resolve(ATTACHMENTS_BASE, chatId, "attachments");
-
-        if (!existsSync(dir)) {
-            mkdirSync(dir, { recursive: true });
-        }
-
-        const ext = this.guessExtension(attachment.mime_type, attachment.file_name);
-        const fileName = outputPath ? resolve(outputPath) : resolve(dir, `${messageId}-${attachmentIndex}${ext}`);
-
-        const buffer = (await this.client.raw.downloadMedia(targetMessage.media, {})) as Buffer;
-
-        if (!buffer) {
-            throw new Error("Download returned empty buffer");
-        }
-
-        await Bun.write(fileName, buffer);
-
-        const hash = createHash("sha256").update(buffer).digest("hex");
-
-        this.store.markAttachmentDownloaded(chatId, messageId, attachmentIndex, fileName, hash);
-
-        return { path: fileName, size: buffer.length, sha256: hash };
-    }
-
-    private guessExtension(mimeType: string | null, fileName: string | null): string {
-        if (fileName) {
-            const dot = fileName.lastIndexOf(".");
-
-            if (dot !== -1) {
-                return fileName.slice(dot);
-            }
-        }
-
-        const mimeMap: Record<string, string> = {
-            "image/jpeg": ".jpg",
-            "image/png": ".png",
-            "image/webp": ".webp",
-            "image/gif": ".gif",
-            "video/mp4": ".mp4",
-            "audio/ogg": ".ogg",
-            "audio/mpeg": ".mp3",
-            "application/pdf": ".pdf",
+        return {
+            outputPath: downloaded,
+            bytes: fileBytes.byteLength,
         };
-
-        return mimeMap[mimeType ?? ""] ?? "";
     }
 }
+
+export const attachmentDownloader = new AttachmentDownloader();

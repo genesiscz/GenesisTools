@@ -1,70 +1,45 @@
-import logger from "@app/logger";
-import { parseDate } from "./DateParser";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
-import type { MessageRowV2, StyleSourceRule } from "./types";
-
-const MAX_REGEX_LENGTH = 200;
-
-function hasObviousCatastrophicPattern(pattern: string): boolean {
-    return /(\([^)]*[+*][^)]*\))[+*]/.test(pattern) || /(\.\*){2,}/.test(pattern);
-}
+import type { StyleSourceRule } from "./types";
 
 export class StyleRuleResolver {
-    constructor(private store: TelegramHistoryStore) {}
+    resolveRule(store: TelegramHistoryStore, rule: StyleSourceRule): string[] {
+        const since = rule.since ? new Date(rule.since) : undefined;
+        const until = rule.until ? new Date(rule.until) : undefined;
+        const sender = rule.direction === "outgoing" ? "me" : "them";
 
-    resolveMessages(rules: StyleSourceRule[]): MessageRowV2[] {
-        const allMessages: MessageRowV2[] = [];
-
-        for (const rule of rules) {
-            const sender = rule.direction === "outgoing" ? "me" : "them";
-            const messages = this.store.queryMessages(rule.sourceChatId, {
+        let lines = store
+            .queryMessages(rule.sourceChatId, {
+                since,
+                until,
                 sender,
-                since: rule.since ? (parseDate(rule.since) ?? undefined) : undefined,
-                until: rule.until ? (parseDate(rule.until) ?? undefined) : undefined,
-                limit: rule.limit ?? 500,
-            });
+                limit: rule.limit,
+            })
+            .map((row) => row.text ?? row.media_desc ?? "")
+            .map((line) => line.trim())
+            .filter(Boolean);
 
-            let filtered = messages;
-
-            if (rule.regex) {
-                const pattern = rule.regex.trim();
-
-                if (!pattern || pattern.length > MAX_REGEX_LENGTH || hasObviousCatastrophicPattern(pattern)) {
-                    logger.warn({ ruleId: rule.id, pattern }, "Skipping unsafe style regex");
-                } else {
-                    try {
-                        const re = new RegExp(pattern, "i");
-                        filtered = filtered.filter((m) => {
-                            if (!m.text) {
-                                return false;
-                            }
-
-                            try {
-                                return re.test(m.text);
-                            } catch (err) {
-                                logger.warn({ err, ruleId: rule.id, pattern }, "Regex test failed; skipping rule");
-                                return false;
-                            }
-                        });
-                    } catch (err) {
-                        logger.warn({ err, ruleId: rule.id, pattern }, "Invalid style regex; skipping rule");
-                    }
-                }
+        if (rule.regex) {
+            try {
+                const regex = new RegExp(rule.regex, "i");
+                lines = lines.filter((line) => regex.test(line));
+            } catch {
+                // ignore invalid regex in rule
             }
-
-            allMessages.push(...filtered);
         }
 
-        const seen = new Set<string>();
-        return allMessages.filter((m) => {
-            const key = `${m.chat_id}:${m.id}`;
+        return lines;
+    }
 
-            if (seen.has(key)) {
-                return false;
-            }
+    resolveRules(store: TelegramHistoryStore, rules: StyleSourceRule[]): string[] {
+        const output: string[] = [];
 
-            seen.add(key);
-            return true;
-        });
+        for (const rule of rules) {
+            const ruleLines = this.resolveRule(store, rule);
+            output.push(...ruleLines);
+        }
+
+        return output;
     }
 }
+
+export const styleRuleResolver = new StyleRuleResolver();

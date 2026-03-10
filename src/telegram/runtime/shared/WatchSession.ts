@@ -1,423 +1,791 @@
-import { AssistantEngine } from "../../lib/AssistantEngine";
-import { StyleProfileEngine } from "../../lib/StyleProfileEngine";
-import { SuggestionEngine } from "../../lib/SuggestionEngine";
+import { stdin as input, stdout as output } from "node:process";
+import { createInterface } from "node:readline/promises";
+import logger from "@app/logger";
+import { modelSelector } from "@ask/providers/ModelSelector";
+import * as p from "@clack/prompts";
+import pc from "picocolors";
+import { assistantEngine } from "../../lib/AssistantEngine";
+import { attachmentDownloader } from "../../lib/AttachmentDownloader";
+import { styleProfileEngine } from "../../lib/StyleProfileEngine";
+import { suggestionEngine } from "../../lib/SuggestionEngine";
+import { TelegramContact } from "../../lib/TelegramContact";
 import type { TelegramHistoryStore } from "../../lib/TelegramHistoryStore";
-import type { TelegramMessage } from "../../lib/TelegramMessage";
+import { TelegramMessage } from "../../lib/TelegramMessage";
 import type { TGClient } from "../../lib/TGClient";
-import type { TelegramContactV2 } from "../../lib/types";
+import type { ContactConfig } from "../../lib/types";
 
-export interface WatchMessage {
+interface FeedEntry {
     id: number;
+    direction: "in" | "out";
     text: string;
-    isOutgoing: boolean;
-    senderName: string;
-    date: Date;
-    mediaDesc?: string;
+    timestampIso: string;
 }
 
-export type InputMode = "chat" | "careful";
+interface ContactState {
+    contact: TelegramContact;
+    historyLines: string[];
+    messageFeed: FeedEntry[];
+    lastIncoming?: string;
+    lastIncomingMessageId?: number;
+    pendingIncomingMessageId?: number;
+    pendingSuggestions: string[];
+    rawStyleSamples: string[];
+    unreadCount: number;
+}
+
+export interface WatchSessionOptions {
+    contacts: ContactConfig[];
+    myName: string;
+    client: TGClient;
+    store: TelegramHistoryStore;
+    contextLengthOverride?: number;
+}
+
+export interface WatchViewModel {
+    carefulMode: boolean;
+    activeChatId: string;
+    contacts: Array<{
+        id: string;
+        name: string;
+        unreadCount: number;
+        isActive: boolean;
+    }>;
+    messages: FeedEntry[];
+    pendingSuggestions: string[];
+}
+
+interface HandleResult {
+    output?: string;
+    exit?: boolean;
+}
+
+const MAX_FEED_MESSAGES = 500;
 
 export class WatchSession {
-    private messages: WatchMessage[] = [];
-    private listeners: Array<() => void> = [];
-    private _inputMode: InputMode = "chat";
-    private _currentContact: TelegramContactV2;
-    private unreadCounts = new Map<string, number>();
-    private _pendingSuggestions: string[] | null = null;
-    private _autoSuggestCallback: ((suggestions: string[]) => void) | null = null;
+    private states = new Map<string, ContactState>();
+    private activeChatId: string;
+    private carefulMode = false;
+    private shouldExit = false;
+    private listeners = new Set<() => void>();
+    private suggestionTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    private assistantEngine: AssistantEngine;
-    private suggestionEngine: SuggestionEngine;
-    private styleEngine: StyleProfileEngine;
+    constructor(private options: WatchSessionOptions) {
+        if (options.contacts.length === 0) {
+            throw new Error("WatchSession requires at least one contact.");
+        }
 
-    constructor(
-        private client: TGClient,
-        private store: TelegramHistoryStore,
-        private myName: string,
-        contact: TelegramContactV2,
-        private allContacts: TelegramContactV2[]
-    ) {
-        this._currentContact = contact;
-        this.assistantEngine = new AssistantEngine(store, contact, myName);
-        this.suggestionEngine = new SuggestionEngine(store, contact, myName);
-        this.styleEngine = new StyleProfileEngine(store);
-    }
+        this.activeChatId = options.contacts[0].userId;
 
-    get currentContact(): TelegramContactV2 {
-        return this._currentContact;
-    }
+        for (const config of options.contacts) {
+            const contact = TelegramContact.fromConfig(config);
+            const contextLength = options.contextLengthOverride ?? contact.contextLength;
+            const rows = this.options.store.getByDateRange(
+                contact.userId,
+                undefined,
+                undefined,
+                Math.max(contextLength, 200)
+            );
+            const historyLines = rows
+                .map((row) => {
+                    const content = row.text ?? row.media_desc ?? "";
 
-    get inputMode(): InputMode {
-        return this._inputMode;
-    }
+                    if (!content) {
+                        return undefined;
+                    }
 
-    get contextLength(): number {
-        return this._currentContact.watch?.contextLength ?? 30;
-    }
+                    const name = row.is_outgoing ? this.options.myName : contact.displayName;
+                    return `${name}: ${content}`;
+                })
+                .filter((line): line is string => line !== undefined);
+            const messageFeed: FeedEntry[] = rows
+                .map((row) => {
+                    const text = row.text ?? row.media_desc ?? "";
 
-    async loadHistory(): Promise<void> {
-        const rows = this.store.queryMessages(this._currentContact.userId, {
-            limit: this.contextLength,
-        });
+                    if (!text) {
+                        return undefined;
+                    }
 
-        this.messages = rows.map((r) => ({
-            id: r.id,
-            text: r.text ?? "",
-            isOutgoing: r.is_outgoing === 1,
-            senderName: r.is_outgoing === 1 ? this.myName : this._currentContact.displayName,
-            date: new Date(r.date_unix * 1000),
-            mediaDesc: r.media_desc ?? undefined,
-        }));
+                    return {
+                        id: row.id,
+                        direction: row.is_outgoing ? "out" : "in",
+                        text,
+                        timestampIso: row.date_iso,
+                    } satisfies FeedEntry;
+                })
+                .filter((entry): entry is FeedEntry => entry !== undefined);
+            const rawStyleSamples = styleProfileEngine.getRawStyleSamples(contact, this.options.store, 120);
 
-        this.notify();
+            this.states.set(contact.userId, {
+                contact,
+                historyLines,
+                messageFeed,
+                pendingSuggestions: [],
+                unreadCount: 0,
+                rawStyleSamples,
+            });
+        }
     }
 
     subscribe(listener: () => void): () => void {
-        this.listeners.push(listener);
+        this.listeners.add(listener);
+
         return () => {
-            this.listeners = this.listeners.filter((l) => l !== listener);
+            this.listeners.delete(listener);
         };
     }
 
-    private notify() {
-        for (const l of this.listeners) {
-            l();
+    getViewModel(): WatchViewModel {
+        const active = this.getRequiredState(this.activeChatId);
+
+        return {
+            carefulMode: this.carefulMode,
+            activeChatId: this.activeChatId,
+            contacts: [...this.states.values()].map((state) => ({
+                id: state.contact.userId,
+                name: state.contact.displayName,
+                unreadCount: state.unreadCount,
+                isActive: state.contact.userId === this.activeChatId,
+            })),
+            messages: active.messageFeed.slice(-200),
+            pendingSuggestions: active.pendingSuggestions,
+        };
+    }
+
+    private notifyViewUpdate(): void {
+        for (const listener of this.listeners) {
+            listener();
         }
     }
 
-    getMessages(): WatchMessage[] {
-        return this.messages.slice(-this.contextLength);
-    }
+    private getRequiredState(chatId: string): ContactState {
+        const state = this.states.get(chatId);
 
-    getContacts(): TelegramContactV2[] {
-        return this.allContacts;
-    }
-
-    addIncoming(msg: TelegramMessage): void {
-        this.messages.push({
-            id: msg.id,
-            text: msg.text,
-            isOutgoing: false,
-            senderName: this._currentContact.displayName,
-            date: msg.date,
-            mediaDesc: msg.mediaDescription,
-        });
-
-        const triggerMode = this._currentContact.modes.suggestions.trigger;
-
-        if (triggerMode === "auto" || triggerMode === "hybrid") {
-            const recentMsgs = this.messages.slice(-10).map((m) => ({
-                sender: m.senderName,
-                text: m.text,
-            }));
-
-            this.suggestionEngine.scheduleAutoSuggest(recentMsgs, (suggestions) => {
-                this._pendingSuggestions = suggestions;
-                this._autoSuggestCallback?.(suggestions);
-                this.notify();
-            });
+        if (!state) {
+            throw new Error(`Unknown chat id: ${chatId}`);
         }
 
-        this.notify();
+        return state;
     }
 
-    onAutoSuggest(callback: ((suggestions: string[]) => void) | null): void {
-        this._autoSuggestCallback = callback;
+    getActiveState(): ContactState {
+        return this.getRequiredState(this.activeChatId);
     }
 
-    async sendMessage(text: string): Promise<void> {
-        const sent = await this.client.sendMessage(this._currentContact.userId, text);
-        this.store.insertMessages(this._currentContact.userId, [
+    setActiveChat(chatId: string): void {
+        const state = this.states.get(chatId);
+
+        if (!state) {
+            return;
+        }
+
+        this.activeChatId = chatId;
+        state.unreadCount = 0;
+        this.notifyViewUpdate();
+    }
+
+    cycleActiveChat(direction: 1 | -1 = 1): void {
+        const ids = [...this.states.keys()];
+
+        if (ids.length <= 1) {
+            return;
+        }
+
+        const index = ids.findIndex((id) => id === this.activeChatId);
+
+        if (index === -1) {
+            this.activeChatId = ids[0];
+            this.notifyViewUpdate();
+            return;
+        }
+
+        const next = (index + direction + ids.length) % ids.length;
+        this.setActiveChat(ids[next]);
+    }
+
+    private pushHistory(state: ContactState, line: string): void {
+        const maxLength = this.options.contextLengthOverride ?? state.contact.contextLength;
+        state.historyLines.push(line);
+
+        while (state.historyLines.length > maxLength) {
+            state.historyLines.shift();
+        }
+    }
+
+    private pushFeed(state: ContactState, entry: FeedEntry): void {
+        state.messageFeed.push(entry);
+
+        while (state.messageFeed.length > MAX_FEED_MESSAGES) {
+            state.messageFeed.shift();
+        }
+    }
+
+    private getHistoryText(state: ContactState): string {
+        return state.historyLines.join("\n");
+    }
+
+    private refreshStyleSamples(state: ContactState): void {
+        const styleProfile = state.contact.config.styleProfile;
+
+        if (!styleProfile || !styleProfile.enabled) {
+            return;
+        }
+
+        state.rawStyleSamples = styleProfileEngine.getRawStyleSamples(state.contact, this.options.store, 120);
+    }
+
+    private findState(target: string): ContactState | null {
+        const lower = target.toLowerCase();
+
+        for (const state of this.states.values()) {
+            if (state.contact.userId === target) {
+                return state;
+            }
+
+            if (state.contact.displayName.toLowerCase() === lower) {
+                return state;
+            }
+
+            if (state.contact.username?.toLowerCase() === lower) {
+                return state;
+            }
+        }
+
+        return null;
+    }
+
+    private parseStateFromArgs(args: string[]): { state: ContactState; consumed: number } | null {
+        if (args.length === 0) {
+            return {
+                state: this.getActiveState(),
+                consumed: 0,
+            };
+        }
+
+        const contactCandidate = this.findState(args[0]);
+
+        if (contactCandidate) {
+            return {
+                state: contactCandidate,
+                consumed: 1,
+            };
+        }
+
+        return {
+            state: this.getActiveState(),
+            consumed: 0,
+        };
+    }
+
+    private async sendText(
+        state: ContactState,
+        text: string,
+        feedback?: { suggestionText: string; incomingMessageId?: number }
+    ): Promise<void> {
+        const sent = await this.options.client.sendMessage(state.contact.userId, text);
+        const timestampUnix = sent.date ? sent.date : Math.floor(Date.now() / 1000);
+        const timestampIso = new Date(timestampUnix * 1000).toISOString();
+
+        this.options.store.upsertMessageWithRevision(
+            state.contact.userId,
             {
                 id: sent.id,
                 senderId: undefined,
                 text,
                 mediaDescription: undefined,
                 isOutgoing: true,
-                date: new Date().toISOString(),
-                dateUnix: Math.floor(Date.now() / 1000),
+                date: timestampIso,
+                dateUnix: timestampUnix,
+                attachments: [],
             },
-        ]);
+            "create"
+        );
 
-        this.messages.push({
+        if (feedback) {
+            this.options.store.recordSuggestionFeedback({
+                chatId: state.contact.userId,
+                incomingMessageId: feedback.incomingMessageId,
+                suggestionText: feedback.suggestionText,
+                sentText: text,
+                editedText: feedback.suggestionText === text ? undefined : text,
+            });
+        }
+
+        this.pushHistory(state, `${this.options.myName}: ${text}`);
+        this.pushFeed(state, {
             id: sent.id,
+            direction: "out",
             text,
-            isOutgoing: true,
-            senderName: this.myName,
-            date: new Date(),
+            timestampIso,
         });
-        this.notify();
+        this.refreshStyleSamples(state);
+
+        logger.info(`${pc.green("You")} → ${pc.cyan(state.contact.displayName)}: ${text}`);
+        this.notifyViewUpdate();
     }
 
-    async switchContact(contact: TelegramContactV2): Promise<void> {
-        this.suggestionEngine.cancelAutoSuggest();
-        this._currentContact = contact;
-        this.messages = [];
-        this._pendingSuggestions = null;
-        this.clearUnread(contact.userId);
-        this.assistantEngine = new AssistantEngine(this.store, contact, this.myName);
-        this.suggestionEngine = new SuggestionEngine(this.store, contact, this.myName);
-        await this.loadHistory();
-    }
-
-    toggleCarefulMode(): void {
-        this._inputMode = this._inputMode === "chat" ? "careful" : "chat";
-        this.notify();
-    }
-
-    incrementUnread(contactId: string): void {
-        const current = this.unreadCounts.get(contactId) ?? 0;
-        this.unreadCounts.set(contactId, current + 1);
-        this.notify();
-    }
-
-    getUnreadCount(contactId: string): number {
-        return this.unreadCounts.get(contactId) ?? 0;
-    }
-
-    clearUnread(contactId: string): void {
-        this.unreadCounts.delete(contactId);
-    }
-
-    getUnreadCounts(): Map<string, number> {
-        return this.unreadCounts;
-    }
-
-    async handleSlashCommand(input: string): Promise<{ handled: boolean; output?: string }> {
-        const trimmed = input.trim();
-
-        if (!trimmed.startsWith("/")) {
-            return { handled: false };
+    private async generateSuggestionsForState(state: ContactState): Promise<string[]> {
+        if (!state.lastIncoming) {
+            return [];
         }
 
-        const parts = trimmed.slice(1).split(/\s+/);
-        const cmd = parts[0].toLowerCase();
-        const args = parts.slice(1).join(" ");
-
-        switch (cmd) {
-            case "careful":
-                this.toggleCarefulMode();
-                return { handled: true, output: `Input mode: ${this._inputMode}` };
-
-            case "send":
-                if (this._inputMode === "careful" && args) {
-                    await this.sendMessage(args);
-                    return { handled: true };
-                }
-
-                return { handled: true, output: "Usage: /send <message>" };
-
-            case "quit":
-            case "exit":
-                return { handled: true, output: "__EXIT__" };
-
-            case "ask":
-                return this.handleAsk(args);
-
-            case "suggest":
-                return this.handleSuggest(args);
-
-            case "pick":
-                return this.handlePick(args);
-
-            case "style":
-                return this.handleStyle();
-
-            case "model":
-                return this.handleModel(args);
-
-            case "attachment": {
-                const msgId = Number.parseInt(args, 10);
-
-                if (Number.isNaN(msgId)) {
-                    return { handled: true, output: "Usage: /attachment <message_id>" };
-                }
-
-                const atts = this.store.getAttachments(this._currentContact.userId, msgId);
-
-                if (atts.length === 0) {
-                    return { handled: true, output: "No attachments for this message" };
-                }
-
-                const list = atts
-                    .map(
-                        (a) =>
-                            `  [${a.attachment_index}] ${a.kind} ${a.file_name ?? ""} ${a.is_downloaded ? "downloaded" : "not downloaded"}`
-                    )
-                    .join("\n");
-                return { handled: true, output: `Attachments:\n${list}` };
-            }
-
-            case "help":
-                return {
-                    handled: true,
-                    output: [
-                        "Commands:",
-                        "  /ask <question>     Ask assistant about the conversation",
-                        "  /suggest [prompt]   Generate reply suggestions",
-                        "  /pick <n> [edit]    Pick/edit a suggestion and send",
-                        "  /send <text>        Send message (required in /careful mode)",
-                        "  /careful            Toggle careful mode (require /send)",
-                        "  /model              Switch AI model",
-                        "  /style              Derive/preview style profile",
-                        "  /attachment <id>    List/download attachments",
-                        "  /contacts           Switch to contact list",
-                        "  /quit               Exit watch mode",
-                    ].join("\n"),
-                };
-
-            case "contacts":
-                return { handled: true, output: "__CONTACTS__" };
-
-            default:
-                return { handled: true, output: `Unknown command: /${cmd}. Type /help for available commands.` };
-        }
-    }
-
-    private async handleAsk(args: string): Promise<{ handled: boolean; output?: string }> {
-        if (!args) {
-            return { handled: true, output: "Usage: /ask <question>" };
+        if (state.rawStyleSamples.length === 0) {
+            state.rawStyleSamples = styleProfileEngine.getRawStyleSamples(state.contact, this.options.store, 120);
         }
 
-        try {
-            const answer = await this.assistantEngine.ask(args);
-            return { handled: true, output: answer };
-        } catch (err) {
-            return { handled: true, output: `Assistant error: ${err instanceof Error ? err.message : String(err)}` };
-        }
-    }
-
-    private async handleSuggest(args: string): Promise<{ handled: boolean; output?: string }> {
-        try {
-            const recentMsgs = this.messages.slice(-10).map((m) => ({
-                sender: m.senderName,
-                text: m.text,
-            }));
-            const customPrompt = args || undefined;
-            const suggestions = await this.suggestionEngine.suggest(recentMsgs, customPrompt);
-
-            this._pendingSuggestions = suggestions;
-
-            const formatted = suggestions.map((s, i) => `  ${i + 1}. ${s}`).join("\n");
-            return {
-                handled: true,
-                output: `Suggestions:\n${formatted}\n\nUse /pick <number> to select, or /pick <number> <edited text> to edit and send.`,
-            };
-        } catch (err) {
-            return { handled: true, output: `Suggestion error: ${err instanceof Error ? err.message : String(err)}` };
-        }
-    }
-
-    private async handlePick(args: string): Promise<{ handled: boolean; output?: string }> {
-        if (!this._pendingSuggestions || this._pendingSuggestions.length === 0) {
-            return { handled: true, output: "No pending suggestions. Use /suggest first." };
-        }
-
-        const pickParts = args.split(/\s+/);
-        const index = Number.parseInt(pickParts[0], 10) - 1;
-
-        if (Number.isNaN(index) || index < 0 || index >= this._pendingSuggestions.length) {
-            return { handled: true, output: `Invalid choice. Pick 1-${this._pendingSuggestions.length}` };
-        }
-
-        const original = this._pendingSuggestions[index];
-        const edited = pickParts.length > 1 ? pickParts.slice(1).join(" ") : original;
-
-        const sent = await this.client.sendMessage(this._currentContact.userId, edited);
-
-        this.store.insertMessages(this._currentContact.userId, [
-            {
-                id: sent.id,
-                senderId: undefined,
-                text: edited,
-                mediaDescription: undefined,
-                isOutgoing: true,
-                date: new Date().toISOString(),
-                dateUnix: Math.floor(Date.now() / 1000),
-            },
-        ]);
-
-        this.messages.push({
-            id: sent.id,
-            text: edited,
-            isOutgoing: true,
-            senderName: this.myName,
-            date: new Date(),
+        const suggestions = await suggestionEngine.generateSuggestions({
+            sessionId: `watch-${state.contact.userId}`,
+            mode: state.contact.suggestionMode,
+            incomingText: state.lastIncoming,
+            incomingMessageId: state.lastIncomingMessageId,
+            conversationHistory: this.getHistoryText(state),
+            stylePrompt: state.contact.config.styleProfile?.derivedPrompt,
+            rawStyleSamples: state.rawStyleSamples,
+            store: this.options.store,
+            chatId: state.contact.userId,
         });
 
-        this.suggestionEngine.trackEdit(original, edited, edited, sent.id);
+        state.pendingSuggestions = suggestions;
+        state.pendingIncomingMessageId = state.lastIncomingMessageId;
+        this.notifyViewUpdate();
 
-        this._pendingSuggestions = null;
-        this.notify();
+        if (state.contact.suggestionMode.allowAutoSend && suggestions.length > 0) {
+            await this.sendText(state, suggestions[0], {
+                suggestionText: suggestions[0],
+                incomingMessageId: state.pendingIncomingMessageId,
+            });
+            state.pendingSuggestions = [];
+            state.pendingIncomingMessageId = undefined;
+            this.notifyViewUpdate();
+        }
 
-        return { handled: true, output: `Sent: "${edited}"` };
+        return suggestions;
     }
 
-    private handleStyle(): { handled: boolean; output?: string } {
-        try {
-            const analysis = this.styleEngine.analyzeStyle(this._currentContact.userId, "me", 200);
-            const lines = [
-                `Style analysis (${analysis.totalMessages} messages):`,
-                ...analysis.traits.map((t) => `  - ${t}`),
-            ];
+    private printSuggestions(state: ContactState): void {
+        if (state.pendingSuggestions.length === 0) {
+            logger.info(`[suggest:${state.contact.displayName}] no options generated`);
+            return;
+        }
 
-            if (analysis.commonPatterns.length > 0) {
-                lines.push("Common starters:");
-                lines.push(...analysis.commonPatterns.map((p) => `  - ${p}`));
-            }
+        logger.info(pc.yellow(`Suggestions for ${state.contact.displayName}:`));
 
-            return { handled: true, output: lines.join("\n") };
-        } catch (err) {
-            return { handled: true, output: `Style error: ${err instanceof Error ? err.message : String(err)}` };
+        for (let i = 0; i < state.pendingSuggestions.length; i++) {
+            logger.info(`  ${i + 1}. ${state.pendingSuggestions[i]}`);
         }
     }
 
-    private handleModel(args: string): { handled: boolean; output?: string } {
-        if (!args) {
-            const current = this._currentContact.modes.assistant;
+    private scheduleAutoSuggestion(state: ContactState): void {
+        const existing = this.suggestionTimers.get(state.contact.userId);
+
+        if (existing) {
+            clearTimeout(existing);
+        }
+
+        const delayMs = state.contact.suggestionMode.autoDelayMs;
+        const timer = setTimeout(async () => {
+            try {
+                await this.generateSuggestionsForState(state);
+                this.printSuggestions(state);
+            } catch (err) {
+                logger.warn(`Auto suggestion failed: ${err}`);
+            } finally {
+                this.suggestionTimers.delete(state.contact.userId);
+            }
+        }, delayMs);
+
+        this.suggestionTimers.set(state.contact.userId, timer);
+    }
+
+    async startListeners(): Promise<void> {
+        this.options.client.onNewMessage(async (event) => {
+            const message = new TelegramMessage(event.message);
+
+            if (message.isOutgoing) {
+                return;
+            }
+
+            const targetId = message.chatId ?? message.senderId;
+
+            if (!targetId) {
+                return;
+            }
+
+            const state = this.states.get(targetId);
+
+            if (!state) {
+                return;
+            }
+
+            const serialized = message.toJSON();
+            this.options.store.upsertMessageWithRevision(targetId, serialized, "create");
+            const content = message.contentForLLM;
+
+            if (content) {
+                this.pushHistory(state, `${state.contact.displayName}: ${content}`);
+                state.lastIncoming = content;
+                state.lastIncomingMessageId = message.id;
+                this.pushFeed(state, {
+                    id: message.id,
+                    direction: "in",
+                    text: content,
+                    timestampIso: new Date(message.date.getTime()).toISOString(),
+                });
+                this.refreshStyleSamples(state);
+            }
+
+            if (state.contact.userId !== this.activeChatId) {
+                state.unreadCount += 1;
+            }
+
+            logger.info(`${pc.bold(pc.cyan(state.contact.displayName))}: ${message.preview}`);
+            this.notifyViewUpdate();
+
+            const suggestionMode = state.contact.suggestionMode;
+
+            if (!suggestionMode.enabled) {
+                return;
+            }
+
+            if (suggestionMode.trigger === "auto" || suggestionMode.trigger === "hybrid") {
+                this.scheduleAutoSuggestion(state);
+            }
+        });
+    }
+
+    private async handleCommand(line: string): Promise<HandleResult> {
+        const parts = line.split(" ").filter(Boolean);
+        const command = parts[0];
+        const args = parts.slice(1);
+
+        if (command === "/quit" || command === "/exit") {
+            this.shouldExit = true;
+            return { exit: true };
+        }
+
+        if (command === "/help") {
+            const active = this.getActiveState();
             return {
-                handled: true,
-                output: [
-                    "Current models:",
-                    `  Assistant: ${current.provider ?? "default"}/${current.model ?? "default"}`,
-                    `  Suggestions: ${this._currentContact.modes.suggestions.provider ?? "default"}/${this._currentContact.modes.suggestions.model ?? "default"}`,
-                    "",
-                    "Usage: /model assistant <provider>/<model>",
-                    "       /model suggestions <provider>/<model>",
-                ].join("\n"),
+                output:
+                    "Commands:\n" +
+                    "/chat <contact> | /next | /prev\n" +
+                    "/suggest [contact]\n" +
+                    "/pick [contact] <index> [edited text]\n" +
+                    "/send [contact] <text>\n" +
+                    "/ask [contact] <question>\n" +
+                    "/attachment [contact] <messageId> [attachmentIndex] [outputPath]\n" +
+                    "/model [contact] <autoReply|assistant|suggestions>\n" +
+                    "/style derive [contact]\n" +
+                    "/careful (toggle plain-text sending)\n" +
+                    `/active: ${active.contact.displayName}`,
             };
         }
 
-        const modelParts = args.split(/\s+/);
-        const mode = modelParts[0];
-        const modelSpec = modelParts[1];
-
-        if (!modelSpec || !modelSpec.includes("/")) {
-            return { handled: true, output: "Usage: /model <mode> <provider>/<model>" };
+        if (command === "/careful") {
+            this.carefulMode = !this.carefulMode;
+            this.notifyViewUpdate();
+            return {
+                output: `Careful mode ${this.carefulMode ? "enabled" : "disabled"}`,
+            };
         }
 
-        const [provider, ...modelNameParts] = modelSpec.split("/");
-        const model = modelNameParts.join("/");
+        if (command === "/chat") {
+            if (args.length === 0) {
+                return { output: "Usage: /chat <contact>" };
+            }
 
-        if (mode === "assistant" || mode === "suggestions" || mode === "autoReply") {
-            this._currentContact = {
-                ...this._currentContact,
-                modes: {
-                    ...this._currentContact.modes,
-                    [mode]: { ...this._currentContact.modes[mode], provider, model },
+            const state = this.findState(args[0]);
+
+            if (!state) {
+                return { output: `Unknown contact: ${args[0]}` };
+            }
+
+            this.setActiveChat(state.contact.userId);
+            return { output: `Active chat: ${state.contact.displayName}` };
+        }
+
+        if (command === "/next") {
+            this.cycleActiveChat(1);
+            return { output: `Active chat: ${this.getActiveState().contact.displayName}` };
+        }
+
+        if (command === "/prev") {
+            this.cycleActiveChat(-1);
+            return { output: `Active chat: ${this.getActiveState().contact.displayName}` };
+        }
+
+        if (command === "/suggest") {
+            const target = this.parseStateFromArgs(args);
+
+            if (!target) {
+                return { output: "Unable to resolve contact." };
+            }
+
+            await this.generateSuggestionsForState(target.state);
+            this.printSuggestions(target.state);
+            return { output: `Generated suggestions for ${target.state.contact.displayName}` };
+        }
+
+        if (command === "/pick") {
+            const target = this.parseStateFromArgs(args);
+
+            if (!target) {
+                return { output: "Unable to resolve contact." };
+            }
+
+            const indexRaw = args[target.consumed];
+            const index = indexRaw ? Number(indexRaw) : Number.NaN;
+
+            if (!Number.isInteger(index) || index < 1) {
+                return { output: "Usage: /pick [contact] <index> [edited text]" };
+            }
+
+            const suggestion = target.state.pendingSuggestions[index - 1];
+
+            if (!suggestion) {
+                return { output: `No suggestion at index ${index}` };
+            }
+
+            const inlineEditedText = args
+                .slice(target.consumed + 1)
+                .join(" ")
+                .trim();
+            let sendText = inlineEditedText;
+
+            if (!sendText) {
+                const promptValue = await p.text({
+                    message: `Edit suggestion ${index} before send (empty = keep as-is):`,
+                    initialValue: suggestion,
+                });
+
+                if (p.isCancel(promptValue)) {
+                    return { output: "Suggestion send cancelled." };
+                }
+
+                const textValue = (promptValue as string).trim();
+                sendText = textValue.length > 0 ? textValue : suggestion;
+            }
+
+            await this.sendText(target.state, sendText, {
+                suggestionText: suggestion,
+                incomingMessageId: target.state.pendingIncomingMessageId,
+            });
+
+            target.state.pendingSuggestions = [];
+            target.state.pendingIncomingMessageId = undefined;
+            this.notifyViewUpdate();
+            return { output: `Sent suggestion ${index} to ${target.state.contact.displayName}` };
+        }
+
+        if (command === "/send") {
+            const target = this.parseStateFromArgs(args);
+
+            if (!target) {
+                return { output: "Unable to resolve contact." };
+            }
+
+            const text = args.slice(target.consumed).join(" ").trim();
+
+            if (!text) {
+                return { output: "Usage: /send [contact] <text>" };
+            }
+
+            await this.sendText(target.state, text);
+            return { output: `Sent to ${target.state.contact.displayName}` };
+        }
+
+        if (command === "/ask") {
+            const target = this.parseStateFromArgs(args);
+
+            if (!target) {
+                return { output: "Unable to resolve contact." };
+            }
+
+            const question = args.slice(target.consumed).join(" ").trim();
+
+            if (!question) {
+                return { output: "Usage: /ask [contact] <question>" };
+            }
+
+            if (target.state.rawStyleSamples.length === 0) {
+                target.state.rawStyleSamples = styleProfileEngine.getRawStyleSamples(
+                    target.state.contact,
+                    this.options.store,
+                    120
+                );
+            }
+
+            const answer = await assistantEngine.ask({
+                sessionId: `watch-assistant-${target.state.contact.userId}`,
+                mode: target.state.contact.assistantMode,
+                incomingText: question,
+                conversationHistory: this.getHistoryText(target.state),
+                stylePrompt: target.state.contact.config.styleProfile?.derivedPrompt,
+                rawStyleSamples: target.state.rawStyleSamples,
+                store: this.options.store,
+                chatId: target.state.contact.userId,
+                includeFullDbHistory: true,
+            });
+
+            logger.info(pc.green(answer));
+            return { output: answer };
+        }
+
+        if (command === "/attachment") {
+            const target = this.parseStateFromArgs(args);
+
+            if (!target) {
+                return { output: "Unable to resolve contact." };
+            }
+
+            const messageIdRaw = args[target.consumed];
+            const attachmentIndexRaw = args[target.consumed + 1];
+            const messageId = messageIdRaw ? Number(messageIdRaw) : Number.NaN;
+            const attachmentIndex =
+                attachmentIndexRaw && /^\d+$/.test(attachmentIndexRaw) ? Number(attachmentIndexRaw) : 0;
+
+            if (!Number.isInteger(messageId) || messageId <= 0) {
+                return { output: "Usage: /attachment [contact] <messageId> [attachmentIndex] [outputPath]" };
+            }
+
+            let outputPath = args
+                .slice(target.consumed + (attachmentIndexRaw && /^\d+$/.test(attachmentIndexRaw) ? 2 : 1))
+                .join(" ")
+                .trim();
+
+            if (!outputPath) {
+                const inputPath = await p.text({
+                    message: "Output path (leave empty for default chats/<id>/attachments path):",
+                    initialValue: "",
+                });
+
+                if (!p.isCancel(inputPath)) {
+                    outputPath = (inputPath as string).trim();
+                }
+            }
+
+            const result = await attachmentDownloader.downloadByLocator(
+                this.options.client,
+                this.options.store,
+                {
+                    chatId: target.state.contact.userId,
+                    messageId,
+                    attachmentIndex,
                 },
-            };
+                {
+                    outputPath: outputPath || undefined,
+                }
+            );
 
-            this.assistantEngine = new AssistantEngine(this.store, this._currentContact, this.myName);
-            this.suggestionEngine = new SuggestionEngine(this.store, this._currentContact, this.myName);
-
-            if (mode === "assistant") {
-                this.assistantEngine.resetSession();
-            }
-
-            return { handled: true, output: `${mode} model set to ${provider}/${model}` };
+            return { output: `Attachment saved: ${result.outputPath} (${result.bytes} bytes)` };
         }
 
-        return { handled: true, output: `Unknown mode: ${mode}. Use assistant, suggestions, or autoReply` };
+        if (command === "/model") {
+            const target = this.parseStateFromArgs(args);
+
+            if (!target) {
+                return { output: "Unable to resolve contact." };
+            }
+
+            const modeArg = args[target.consumed] as "autoReply" | "assistant" | "suggestions" | undefined;
+
+            if (!modeArg || !["autoReply", "assistant", "suggestions"].includes(modeArg)) {
+                return { output: "Usage: /model [contact] <autoReply|assistant|suggestions>" };
+            }
+
+            const mode = target.state.contact.config.modes?.[modeArg];
+
+            if (!mode) {
+                return { output: `Mode ${modeArg} missing in contact config.` };
+            }
+
+            const choice = await modelSelector.selectModel();
+
+            if (!choice) {
+                return { output: "Model selection cancelled." };
+            }
+
+            mode.provider = choice.provider.name;
+            mode.model = choice.model.id;
+            return {
+                output: `Updated ${target.state.contact.displayName} ${modeArg} -> ${mode.provider}/${mode.model}`,
+            };
+        }
+
+        if (command === "/style" && args[0] === "derive") {
+            const target = this.parseStateFromArgs(args.slice(1));
+
+            if (!target) {
+                return { output: "Usage: /style derive [contact]" };
+            }
+
+            const result = await styleProfileEngine.deriveStylePrompt(target.state.contact, this.options.store);
+
+            if (!result) {
+                return { output: "No style profile generated (rules missing or no matching messages)." };
+            }
+
+            if (!target.state.contact.config.styleProfile) {
+                target.state.contact.config.styleProfile = {
+                    enabled: true,
+                    refresh: "incremental",
+                    rules: [],
+                    previewInWatch: false,
+                };
+            }
+
+            target.state.contact.config.styleProfile.derivedPrompt = result.prompt;
+            target.state.contact.config.styleProfile.derivedAt = result.generatedAt;
+            target.state.rawStyleSamples = result.rawSamples;
+            return { output: `Derived style profile from ${result.sampleCount} samples.` };
+        }
+
+        return { output: "Unknown command. Use /help." };
+    }
+
+    async handleInput(line: string): Promise<HandleResult> {
+        const trimmed = line.trim();
+
+        if (!trimmed) {
+            return {};
+        }
+
+        if (trimmed.startsWith("/")) {
+            return this.handleCommand(trimmed);
+        }
+
+        if (this.carefulMode) {
+            return { output: "Careful mode is on. Use /send to send messages." };
+        }
+
+        const active = this.getActiveState();
+        await this.sendText(active, trimmed);
+        return { output: `Sent to ${active.contact.displayName}` };
+    }
+
+    async runLightPromptLoop(): Promise<void> {
+        const rl = createInterface({ input, output });
+
+        logger.info(
+            "Live watch mode. Plain text sends to active chat. Use /help for commands. /careful toggles explicit /send-only mode."
+        );
+
+        try {
+            while (!this.shouldExit) {
+                const active = this.getActiveState();
+                const prompt = `${pc.dim("watch")}(${pc.cyan(active.contact.displayName)}${this.carefulMode ? pc.yellow(":careful") : ""})> `;
+                const line = await rl.question(prompt);
+                const result = await this.handleInput(line);
+
+                if (result.output) {
+                    logger.info(result.output);
+                }
+
+                if (result.exit) {
+                    break;
+                }
+            }
+        } finally {
+            rl.close();
+        }
     }
 }

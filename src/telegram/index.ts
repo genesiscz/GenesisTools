@@ -16,6 +16,7 @@ program
     .showHelpAfterError(true);
 
 registerConfigureCommand(program);
+registerWatchCommand(program);
 registerListenCommand(program);
 registerContactsCommand(program);
 registerHistoryCommand(program);
