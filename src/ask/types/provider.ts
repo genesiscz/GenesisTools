@@ -2,9 +2,8 @@ import type { ProviderV2 } from "@ai-sdk/provider";
 import type { LanguageModel } from "ai";
 import type { ModelInfo } from "./chat";
 
-// Helper function to get language model from ProviderV2
-// For OpenAI providers (v5+), prefer .chat() over .languageModel() which defaults to
-// the Responses API — that silently returns empty on errors instead of throwing.
+// For OpenAI providers (v5+), prefer .chat() over .languageModel() for better
+// compatibility — .languageModel() defaults to the Responses API endpoint.
 export function getLanguageModel(provider: ProviderV2, modelId: string): LanguageModel {
     if ("chat" in provider && typeof provider.chat === "function") {
         return (provider.chat as (id: string) => LanguageModel)(modelId);

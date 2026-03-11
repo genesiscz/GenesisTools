@@ -248,6 +248,7 @@ export const configureLogger = (config: LoggerConfig): void => {
     globalConfig = { ...globalConfig, ...config };
     const logToFile = globalConfig.logToFile ?? false;
     logger = createLogger({ logToFile, minimalLevels: true });
+    // consoleLog participates in file logging to capture full session output
     consoleLog = createLogger({ logToFile, minimalLevels: true });
 };
 
