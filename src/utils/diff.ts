@@ -157,7 +157,7 @@ export class DiffUtil {
             const oldValue = oldObj[field];
             const newValue = newObj[field];
 
-            // Deep comparison using JSON.stringify for simplicity
+            // Deep comparison using SafeJSON.stringify for simplicity
             if (SafeJSON.stringify(oldValue) !== SafeJSON.stringify(newValue)) {
                 differences.push(field);
             }

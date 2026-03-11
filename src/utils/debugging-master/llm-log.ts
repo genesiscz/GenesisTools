@@ -24,8 +24,6 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { SafeJSON } from "@app/utils/json";
-
 interface LogOpts {
     h?: string;
 }
@@ -70,7 +68,8 @@ function write(entry: Record<string, unknown>): void {
     ensureDir();
     const { file, line } = getCallerLocation();
     const full = { ...entry, ts: Date.now(), file, line };
-    appendFileSync(sessionPath, `${SafeJSON.stringify(full)}\n`);
+    // biome-ignore lint/style/noRestrictedGlobals: self-contained file — no external deps
+    appendFileSync(sessionPath, `${JSON.stringify(full)}\n`);
 }
 
 export const dbg = {

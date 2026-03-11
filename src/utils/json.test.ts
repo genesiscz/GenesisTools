@@ -15,17 +15,22 @@ describe("SafeJSON", () => {
         expect(SafeJSON.stringify({ a: 1 })).toBe('{"a":1}');
     });
 
-    it("preserves comments through stringify", () => {
+    it("stringify produces standard JSON (no comment preservation)", () => {
         const input = '{\n  // greeting\n  "name": "world"\n}';
         const obj = SafeJSON.parse(input);
         (obj as Record<string, string>).name = "updated";
         const output = SafeJSON.stringify(obj, null, 2);
-        expect(output).toContain("// greeting");
+        expect(output).not.toContain("// greeting");
         expect(output).toContain('"updated"');
     });
 
     it("supports replacer in stringify", () => {
         expect(SafeJSON.stringify({ a: 1 }, ["a"])).toBe('{"a":1}');
+    });
+
+    it("strict mode uses native JSON.parse (rejects comments)", () => {
+        expect(SafeJSON.parse('{"a":1}', null, { strict: true })).toEqual({ a: 1 });
+        expect(() => SafeJSON.parse("{ /* comment */ }", null, { strict: true })).toThrow();
     });
 });
 
