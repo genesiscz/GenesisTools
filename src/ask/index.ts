@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
 
-import logger from "@app/logger";
+import logger, { configureLogger } from "@app/logger";
 import { input } from "@app/utils/prompts/clack";
 import { handleReadmeFlag } from "@app/utils/readme";
+
+configureLogger({ logToFile: true });
 import { AIChat } from "@ask/AIChat";
 import { transcriptionManager } from "@ask/audio/TranscriptionManager";
 import { ChatEngine } from "@ask/chat/ChatEngine";
