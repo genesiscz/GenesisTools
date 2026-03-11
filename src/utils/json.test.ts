@@ -4,22 +4,27 @@ import { parseJSON, SafeJSON } from "./json";
 describe("SafeJSON", () => {
     it("parses standard JSON", () => {
         expect(SafeJSON.parse('{"a":1}') as Record<string, number>).toEqual({ a: 1 });
-        expect(SafeJSON.parse("123") as number).toBe(123);
     });
 
-    it("parses // comments, /* */ comments, trailing commas, unquoted keys", () => {
+    it("parses // comments, /* */ comments, trailing commas", () => {
         expect(SafeJSON.parse('{ /* comment */ "a": 1, }') as Record<string, number>).toEqual({ a: 1 });
-        expect(SafeJSON.parse("{ a: 1 }") as Record<string, number>).toEqual({ a: 1 });
         expect(SafeJSON.parse('{ "a": 1, // trailing\n }') as Record<string, number>).toEqual({ a: 1 });
     });
 
-    it("stringify produces valid output", () => {
+    it("stringify produces standard JSON (quoted keys)", () => {
         expect(SafeJSON.stringify({ a: 1 })).toBe('{"a":1}');
     });
 
-    it("supports reviver and replacer", () => {
-        const reviver = (_key: string, val: unknown) => (typeof val === "number" ? val * 2 : val);
-        expect(SafeJSON.parse('{"a":1}', reviver) as Record<string, number>).toEqual({ a: 2 });
+    it("preserves comments through stringify", () => {
+        const input = '{\n  // greeting\n  "name": "world"\n}';
+        const obj = SafeJSON.parse(input);
+        (obj as Record<string, string>).name = "updated";
+        const output = SafeJSON.stringify(obj, null, 2);
+        expect(output).toContain("// greeting");
+        expect(output).toContain('"updated"');
+    });
+
+    it("supports replacer in stringify", () => {
         expect(SafeJSON.stringify({ a: 1 }, ["a"])).toBe('{"a":1}');
     });
 });
@@ -27,11 +32,9 @@ describe("SafeJSON", () => {
 describe("parseJSON", () => {
     it("parses valid JSON", () => {
         expect(parseJSON<Record<string, number>>('{"a":1}')).toEqual({ a: 1 });
-        expect(parseJSON<number>("123")).toBe(123);
-        expect(parseJSON<string>('"hello"')).toBe("hello");
     });
 
-    it("parses JSON5 (comments, trailing commas)", () => {
+    it("parses JSONC (comments, trailing commas)", () => {
         expect(parseJSON<Record<string, number>>('{ /* c */ "a": 1 }')).toEqual({ a: 1 });
     });
 

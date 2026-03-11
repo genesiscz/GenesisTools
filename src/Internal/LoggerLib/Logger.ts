@@ -115,7 +115,7 @@ function stringify(data: unknown): string {
             (_key, value) => {
                 if (value && typeof value === "object") {
                     return Object.getOwnPropertyNames(value).reduce((acc: Record<string, unknown>, prop) => {
-                        acc[prop] = value[prop];
+                        acc[prop] = (value as Record<string, unknown>)[prop];
                         return acc;
                     }, {});
                 }

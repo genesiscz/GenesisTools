@@ -1,22 +1,26 @@
-import JSON5 from "json5";
+import { parse, stringify } from "comment-json";
+
+type Reviver = (key: string | number, value: unknown) => unknown;
 
 /**
- * Drop-in replacement for the global JSON object.
- * parse: powered by json5 — handles // comments, multi-line comments,
- *        trailing commas, unquoted keys, and other JSON5 features.
- * stringify: uses native JSON.stringify — always produces standard JSON output.
+ * Drop-in replacement for the global JSON object, powered by comment-json.
+ * parse: handles // comments, multi-line comments, trailing commas.
+ *        Comments are preserved as Symbol-keyed properties on the result.
+ * stringify: produces standard JSON output with comments preserved.
  */
 export const SafeJSON = {
-    parse: JSON5.parse,
-    stringify: globalThis.JSON.stringify,
+    // biome-ignore lint/suspicious/noExplicitAny: match native JSON.parse return type for drop-in compatibility
+    parse: (text: string, reviver?: Reviver | null): any => parse(text, reviver),
+    stringify,
 } as const;
 
 /**
- * Safely parse a JSON/JSON5 string. Returns `fallback` (or null) on parse failure.
+ * Safely parse a JSON string with comment support.
+ * Returns `fallback` (or null) on parse failure.
  */
 export function parseJSON<T>(text: string, fallback?: T): T | null {
     try {
-        return JSON5.parse(text) as T;
+        return parse(text) as T;
     } catch {
         if (fallback !== undefined) {
             return fallback;
