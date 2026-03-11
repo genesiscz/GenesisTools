@@ -19,7 +19,7 @@ describe("SafeJSON", () => {
 
     it("supports reviver and replacer", () => {
         const reviver = (_key: string, val: unknown) => (typeof val === "number" ? val * 2 : val);
-        expect((SafeJSON.parse('{"a":1}', reviver) as Record<string, number>)).toEqual({ a: 2 });
+        expect(SafeJSON.parse('{"a":1}', reviver) as Record<string, number>).toEqual({ a: 2 });
         expect(SafeJSON.stringify({ a: 1 }, ["a"])).toBe('{"a":1}');
     });
 });

@@ -1,4 +1,5 @@
-#!/usr/bin/env nodeimport { handleReadmeFlag } from "@app/utils/readme";
+#!/usr/bin/env node
+import { handleReadmeFlag } from "@app/utils/readme";
 import chalk from "chalk";
 import { Command } from "commander";
 

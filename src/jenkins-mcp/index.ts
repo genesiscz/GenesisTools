@@ -1,6 +1,7 @@
-#!/usr/bin/env nodeimport { Server } from "@modelcontextprotocol/sdk/server/index.js";
+#!/usr/bin/env node
 
 import { SafeJSON } from "@app/utils/json";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
 import axios from "axios";
@@ -138,7 +139,7 @@ class JenkinsServer {
         this.setupToolHandlers();
 
         // Error handling and graceful shutdown
-        this.server.onerror = (error) => console.error("[MCP Error]", error);
+        this.server.onerror = (error: Error) => console.error("[MCP Error]", error);
         process.on("SIGINT", async () => {
             await this.server.close();
             process.exit(0);
