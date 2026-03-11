@@ -17,9 +17,9 @@ async function main() {
     console.log("=== DarwinKit Smoke Test ===\n");
 
     // 1. Capabilities
-    const caps = await getDarwinKit().capabilities();
+    const caps = await getDarwinKit().system.capabilities();
     console.log("✓ Capabilities:", caps.version, "on", caps.os);
-    console.log("  Methods:", caps.methods.join(", "), "\n");
+    console.log("  Methods:", Object.keys(caps.methods).join(", "), "\n");
 
     // 2. Language detection
     const lang = await detectLanguage("Bonjour le monde, comment ça va?");

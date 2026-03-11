@@ -1,5 +1,3 @@
-// src/utils/macos/ocr.ts
-
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +18,7 @@ export interface OcrOptions {
  * @param imagePath - Absolute path to the image file (JPEG, PNG, TIFF, HEIC, PDF)
  */
 export async function recognizeText(imagePath: string, options: OcrOptions = {}): Promise<OcrResult> {
-    return getDarwinKit().call<OcrResult>("vision.ocr", {
+    return getDarwinKit().vision.ocr({
         path: imagePath,
         languages: options.languages ?? ["en-US"],
         level: options.level ?? "accurate",
