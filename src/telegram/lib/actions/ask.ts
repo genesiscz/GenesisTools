@@ -9,7 +9,7 @@ const contactChats = new Map<string, AIChat>();
 
 export const handleAsk: ActionHandler = async (message, contact, client, conversationHistory) => {
     const start = performance.now();
-    const typing = client.startTypingLoop(contact.userId);
+    const typing = client.startTypingLoop(contact.userId, contact.username);
 
     try {
         // Get or create AIChat instance — cache key includes config so changes are detected

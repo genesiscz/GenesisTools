@@ -97,7 +97,11 @@ export function registerListenCommand(program: Command): void {
 
             // Fetch dialogs to populate gramjs entity cache — required for
             // resolving userIds when sending messages / fetching history.
-            await client.getDialogs(100);
+            try {
+                await client.getDialogs(100);
+            } catch (err) {
+                logger.warn(`Failed to prefetch dialogs (entity cache may be incomplete): ${err}`);
+            }
 
             spinner.stop(`Connected as ${myName}`);
 

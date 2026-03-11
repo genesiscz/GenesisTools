@@ -57,11 +57,13 @@ export class TGClient {
         return this.client.getDialogs({ limit });
     }
 
+    private static readonly ENTITY_NOT_FOUND = "Could not find the input entity";
+
     async sendMessage(userId: string, text: string, username?: string): Promise<Api.Message> {
         try {
             return await this.client.sendMessage(userId, { message: text });
         } catch (err) {
-            if (username && String(err).includes("Could not find the input entity")) {
+            if (username && String(err).includes(TGClient.ENTITY_NOT_FOUND)) {
                 return this.client.sendMessage(username, { message: text });
             }
 
@@ -75,7 +77,7 @@ export class TGClient {
         try {
             peer = await this.client.getInputEntity(userId);
         } catch (err) {
-            if (username && String(err).includes("Could not find the input entity")) {
+            if (username && String(err).includes(TGClient.ENTITY_NOT_FOUND)) {
                 peer = await this.client.getInputEntity(username);
             } else {
                 throw err;
@@ -90,7 +92,7 @@ export class TGClient {
         );
     }
 
-    startTypingLoop(userId: string): { stop: () => void } {
+    startTypingLoop(userId: string, username?: string): { stop: () => void } {
         let stopped = false;
 
         const tick = async () => {
@@ -99,7 +101,7 @@ export class TGClient {
             }
 
             try {
-                await this.sendTyping(userId);
+                await this.sendTyping(userId, username);
             } catch {
                 // ignore typing errors
             }

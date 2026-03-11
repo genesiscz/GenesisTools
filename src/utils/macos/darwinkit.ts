@@ -1,6 +1,8 @@
 // src/utils/macos/darwinkit.ts
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import logger from "@app/logger";
 import type { CapabilitiesResult, DarwinKitConfig, JsonRpcRequest, JsonRpcResponse } from "./types";
 
@@ -31,15 +33,18 @@ export class DarwinKitClient {
         if (this.startPromise) {
             return this.startPromise;
         }
-        this.startPromise = this._doStart();
+        this.startPromise = this._doStart().catch((err) => {
+            this.startPromise = null;
+            throw err;
+        });
         return this.startPromise;
     }
 
-    private static readonly UNAVAILABLE_MARKER = `${process.env.HOME}/.genesis-tools/.darwinkit-unavailable`;
+    private static readonly UNAVAILABLE_MARKER = resolve(homedir(), ".genesis-tools", ".darwinkit-unavailable");
 
     private async _ensureInstalled(): Promise<void> {
         // Check known install path first
-        const knownPath = `${process.env.HOME}/.local/bin/darwinkit`;
+        const knownPath = resolve(homedir(), ".local", "bin", "darwinkit");
         if (Bun.spawnSync(["test", "-x", knownPath]).exitCode === 0) {
             this.config.binaryPath = knownPath;
             return;
@@ -61,7 +66,7 @@ export class DarwinKitClient {
 
         const downloadUrl =
             "https://github.com/0xMassi/darwinkit/releases/latest/download/darwinkit-macos-universal.tar.gz";
-        const installDir = `${process.env.HOME}/.local/bin`;
+        const installDir = resolve(homedir(), ".local", "bin");
 
         // Try direct binary download first (no sudo needed)
         const download = Bun.spawnSync(
@@ -97,7 +102,7 @@ export class DarwinKitClient {
 
         // Mark as unavailable so we don't retry on every process start
         try {
-            mkdirSync(`${process.env.HOME}/.genesis-tools`, { recursive: true });
+            mkdirSync(resolve(homedir(), ".genesis-tools"), { recursive: true });
             writeFileSync(DarwinKitClient.UNAVAILABLE_MARKER, new Date().toISOString());
         } catch {
             // ignore — worst case we retry next time
