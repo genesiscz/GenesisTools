@@ -1,6 +1,18 @@
 # TypeScript / Node.js SDKs for Apple Frameworks
 
+> Last updated: 2026-03-10
+
 A curated list of GitHub repos and npm packages that bridge TypeScript/Node.js to Apple's native macOS/iOS SDKs — Vision, NaturalLanguage, EventKit, Contacts, LocalAuthentication, and more.
+
+**See also:**
+- **[github-repos-index.md](./github-repos-index.md)** — Full index of 49 repos sorted by stars, categorized
+- **[macos-node-api.md](./macos-node-api.md)** — Comprehensive docs for `@nativescript/macos-node-api` (full Apple SDK access)
+- **[darwinkit.md](./darwinkit.md)** — Complete reference for DarwinKit (NLP + Vision via JSON-RPC)
+- **[typescript-sdks-automation.md](./typescript-sdks-automation.md)** — AppleScript/JXA automation SDKs
+- **[typescript-sdks-native-bridge.md](./typescript-sdks-native-bridge.md)** — Native bridge details
+- **[jxa-userland.md](./jxa-userland.md)** — Deep dive into @jxa/* packages
+- **[apple-mcp.md](./apple-mcp.md)** — apple-mcp codebase exploration
+- **[macos-automator-mcp.md](./macos-automator-mcp.md)** — macos-automator-mcp exploration
 
 ---
 
@@ -12,6 +24,7 @@ A curated list of GitHub repos and npm packages that bridge TypeScript/Node.js t
 - [Contacts Framework](#contacts-framework)
 - [LocalAuthentication (Touch ID / Face ID)](#localauthentication-touch-id--face-id)
 - [Full Apple SDK Access (Runtimes & Bridges)](#full-apple-sdk-access-runtimes--bridges)
+- [Desktop / System Utilities](#desktop--system-utilities)
 - [React Native Bridges (iOS / visionOS)](#react-native-bridges)
 - [Generic FFI](#generic-ffi)
 - [Quick Comparison](#quick-comparison)
@@ -526,6 +539,67 @@ $.framework('Vision');
 
 ---
 
+## Desktop / System Utilities
+
+Focused modules wrapping specific macOS APIs — mostly by [sindresorhus](https://github.com/sindresorhus) and [codebytere](https://github.com/codebytere) (Electron core team).
+
+### Window & Display
+
+| Package | Stars | Description | macOS API |
+|---------|------:|-------------|-----------|
+| [`active-win`](https://github.com/sindresorhus/active-win) | 895 | Get active window metadata (title, bounds, owner) | Accessibility API (AXUIElement) |
+| [`node-mac-displays`](https://github.com/codebytere/node-mac-displays) | 14 | Enumerate display information | CoreGraphics display APIs |
+
+### Desktop & Appearance
+
+| Package | Stars | Description | macOS API |
+|---------|------:|-------------|-----------|
+| [`wallpaper`](https://github.com/sindresorhus/wallpaper) | 1,087 | Manage desktop wallpaper (cross-platform) | NSWorkspace / AppKit |
+| [`macos-wallpaper`](https://github.com/sindresorhus/macos-wallpaper) | 696 | macOS-specific wallpaper (Swift CLI) | AppKit |
+| [`dark-mode`](https://github.com/sindresorhus/dark-mode) | 679 | Control dark mode from CLI | NSUserDefaults / AppKit |
+| [`do-not-disturb`](https://github.com/sindresorhus/do-not-disturb) | 224 | Control DND | Notification Center |
+
+### Notifications
+
+| Package | Stars | Description | macOS API |
+|---------|------:|-------------|-----------|
+| [`node-notifier`](https://github.com/mikaelbr/node-notifier) | 5,837 | Send native notifications (cross-platform) | NSUserNotification |
+| [`node-mac-notifier`](https://github.com/CharlieHess/node-mac-notifier) | 283 | macOS-native notifications | NSUserNotificationCenter |
+
+### Security & Permissions
+
+| Package | Stars | Description | macOS API |
+|---------|------:|-------------|-----------|
+| [`node-keytar`](https://github.com/atom/node-keytar) | 1,420 | Native password module | Security / Keychain |
+| [`node-mac-permissions`](https://github.com/codebytere/node-mac-permissions) | 237 | Manage system permissions (camera, mic, screen) | TCC / Privacy framework |
+
+### Filesystem & System
+
+| Package | Stars | Description | macOS API |
+|---------|------:|-------------|-----------|
+| [`plist.js`](https://github.com/TooTallNate/plist.js) | 598 | Plist parser/builder | CoreFoundation plist |
+| [`node-mac`](https://github.com/coreybutler/node-mac) | 541 | Processes, daemons, event logs | launchd, syslog |
+| [`clipboard-cli`](https://github.com/sindresorhus/clipboard-cli) | 506 | System clipboard access | NSPasteboard |
+| [`macos-trash`](https://github.com/sindresorhus/macos-trash) | 422 | Move files to Trash | NSFileManager |
+| [`fix-path`](https://github.com/sindresorhus/fix-path) | 295 | Fix $PATH in GUI apps | Shell / launchd |
+| [`macos-release`](https://github.com/sindresorhus/macos-release) | 67 | Get macOS name/version | System version |
+| [`node-mac-userdefaults`](https://github.com/codebytere/node-mac-userdefaults) | 17 | NSUserDefaults interface | Foundation |
+
+### Media & Screen
+
+| Package | Stars | Description | macOS API |
+|---------|------:|-------------|-----------|
+| [`node-osx-audio`](https://github.com/fardog/node-osx-audio) | 52 | Audio I/O as Node streams | CoreAudio |
+| [`node-mac-recorder`](https://github.com/aslanon/node-mac-recorder) | 24 | Screen recording | ScreenCaptureKit |
+
+### AI / ML
+
+| Package | Stars | Description | macOS API |
+|---------|------:|-------------|-----------|
+| [`apple-on-device-ai`](https://github.com/Meridius-Labs/apple-on-device-ai) | 148 | Apple Foundation Model bindings (Vercel AI SDK) | Apple Intelligence |
+
+---
+
 ## React Native Bridges
 
 ### `react-native-vision` (iOS — VisionKit + CoreML)
@@ -596,9 +670,16 @@ const CoreFoundation = ffi.Library('/System/Library/Frameworks/CoreFoundation.fr
 | `@nativescript/macos-node-api` | **All macOS APIs** | Runtime + TS types | ✅ | ❌ |
 | `node-swift` | Any Swift API | Swift → Node module | ✅ | ❌ |
 | `ffi-napi` | Any C-level API | FFI | ✅ | ❌ |
+| `active-win` | Accessibility (AXUIElement) | Native addon | ✅ | ❌ |
+| `node-mac-permissions` | TCC / Privacy | Native addon | ✅ | ❌ |
+| `node-keytar` | Security / Keychain | Native addon | ❌ Archived | ❌ |
+| `node-mac-recorder` | ScreenCaptureKit | Native addon | ✅ | ❌ |
+| `apple-on-device-ai` | Apple Intelligence | Node module | ✅ | ✅ |
 | `react-native-vision` | VisionKit + CoreML | React Native | ⚠️ Alpha | ❌ |
 | `react-native-visionos` | visionOS SDK | React Native | ✅ | ❌ |
 | `NodObjC` | All ObjC APIs | Dynamic bridge | ❌ Unmaintained | ❌ |
+
+For the full list of 49 repos with stars and categories, see **[github-repos-index.md](./github-repos-index.md)**.
 
 ### Decision Guide
 
@@ -611,7 +692,13 @@ const CoreFoundation = ffi.Library('/System/Library/Frameworks/CoreFoundation.fr
 | Read+write Contacts | `node-mac-contacts` |
 | Read-only Contacts, no native build | `@appkit/apple-contacts` |
 | Touch ID / biometric auth | `node-mac-auth` |
-| Access **any** Apple framework in TypeScript | `@nativescript/macos-node-api` |
+| Access **any** Apple framework in TypeScript | [`@nativescript/macos-node-api`](./macos-node-api.md) |
 | Use Swift-only APIs (WidgetKit, SwiftData, etc.) | `node-swift` |
+| Active window info | `active-win` |
+| System permissions (camera, mic, screen) | `node-mac-permissions` |
+| Keychain / password storage | `node-keytar` |
+| Desktop wallpaper, dark mode, DND | `wallpaper` / `dark-mode` / `do-not-disturb` |
+| Screen recording | `node-mac-recorder` |
+| Apple on-device AI / Foundation Models | `apple-on-device-ai` |
 | React Native iOS ML / Vision | `react-native-vision` |
 | Build native visionOS app in React | `react-native-visionos` |

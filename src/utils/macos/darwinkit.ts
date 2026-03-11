@@ -1,5 +1,6 @@
 // src/utils/macos/darwinkit.ts
 
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import logger from "@app/logger";
 import type { CapabilitiesResult, DarwinKitConfig, JsonRpcRequest, JsonRpcResponse } from "./types";
 
@@ -34,10 +35,25 @@ export class DarwinKitClient {
         return this.startPromise;
     }
 
+    private static readonly UNAVAILABLE_MARKER = `${process.env.HOME}/.genesis-tools/.darwinkit-unavailable`;
+
     private async _ensureInstalled(): Promise<void> {
+        // Check known install path first
+        const knownPath = `${process.env.HOME}/.local/bin/darwinkit`;
+        if (Bun.spawnSync(["test", "-x", knownPath]).exitCode === 0) {
+            this.config.binaryPath = knownPath;
+            return;
+        }
+
+        // Check PATH
         const which = Bun.spawnSync(["which", this.config.binaryPath]);
         if (which.exitCode === 0) {
             return;
+        }
+
+        // If we already tried and failed, don't retry
+        if (existsSync(DarwinKitClient.UNAVAILABLE_MARKER)) {
+            throw new Error("darwinkit is not available (install failed previously, remove ~/.genesis-tools/.darwinkit-unavailable to retry)");
         }
 
         logger.info("DarwinKitClient: darwinkit not found, installing...");
@@ -49,13 +65,17 @@ export class DarwinKitClient {
 
         // Try direct binary download first (no sudo needed)
         const download = Bun.spawnSync(
-            ["bash", "-c", `mkdir -p "${installDir}" && curl -fsSL "${downloadUrl}" | tar xz -C "${installDir}"`],
+            [
+                "bash",
+                "-c",
+                `set -o pipefail && mkdir -p "${installDir}" && curl -fsSL "${downloadUrl}" | tar xz -C "${installDir}"`,
+            ],
             { stdio: ["ignore", "pipe", "pipe"] }
         );
 
-        if (download.exitCode === 0) {
-            logger.info(`DarwinKitClient: installed to ${installDir}/darwinkit`);
-            this.config.binaryPath = `${installDir}/darwinkit`;
+        if (download.exitCode === 0 && Bun.spawnSync(["test", "-x", knownPath]).exitCode === 0) {
+            logger.info(`DarwinKitClient: installed to ${knownPath}`);
+            this.config.binaryPath = knownPath;
             return;
         }
 
@@ -75,10 +95,16 @@ export class DarwinKitClient {
             }
         }
 
+        // Mark as unavailable so we don't retry on every process start
+        try {
+            mkdirSync(`${process.env.HOME}/.genesis-tools`, { recursive: true });
+            writeFileSync(DarwinKitClient.UNAVAILABLE_MARKER, new Date().toISOString());
+        } catch {
+            // ignore — worst case we retry next time
+        }
+
         throw new Error(
-            "Failed to install darwinkit. Install manually:\n" +
-                `  curl -fsSL ${downloadUrl} | tar xz\n` +
-                '  mv darwinkit ~/.local/bin/ && export PATH="$HOME/.local/bin:$PATH"'
+            "Failed to install darwinkit (won't retry — remove ~/.genesis-tools/.darwinkit-unavailable to try again)"
         );
     }
 

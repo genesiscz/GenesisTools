@@ -1,6 +1,6 @@
 # TypeScript SDKs for macOS Native App Automation
 
-> Last updated: 2026-02-16
+> Last updated: 2026-03-10
 
 ## Overview
 
