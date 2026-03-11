@@ -63,6 +63,7 @@ export interface LoggerConfig {
     includeTimestamp?: boolean;
     timestampFormat?: string;
     sync?: boolean;
+    logToFile?: boolean;
 }
 
 // Global config
@@ -245,8 +246,10 @@ let consoleLog = createLogger({ logToFile: false, minimalLevels: true });
  */
 export const configureLogger = (config: LoggerConfig): void => {
     globalConfig = { ...globalConfig, ...config };
-    logger = createLogger({ logToFile: false, minimalLevels: true });
-    consoleLog = createLogger({ logToFile: false, minimalLevels: true });
+    const logToFile = globalConfig.logToFile ?? false;
+    logger = createLogger({ logToFile, minimalLevels: true });
+    // consoleLog participates in file logging to capture full session output
+    consoleLog = createLogger({ logToFile, minimalLevels: true });
 };
 
 export { consoleLog };
