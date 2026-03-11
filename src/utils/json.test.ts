@@ -3,14 +3,14 @@ import { parseJSON, SafeJSON } from "./json";
 
 describe("SafeJSON", () => {
     it("parses standard JSON", () => {
-        expect(SafeJSON.parse('{"a":1}')).toEqual({ a: 1 });
-        expect(SafeJSON.parse("123")).toBe(123);
+        expect(SafeJSON.parse('{"a":1}') as Record<string, number>).toEqual({ a: 1 });
+        expect(SafeJSON.parse("123") as number).toBe(123);
     });
 
     it("parses // comments, /* */ comments, trailing commas, unquoted keys", () => {
-        expect(SafeJSON.parse('{ /* comment */ "a": 1, }')).toEqual({ a: 1 });
-        expect(SafeJSON.parse("{ a: 1 }")).toEqual({ a: 1 });
-        expect(SafeJSON.parse('{ "a": 1, // trailing\n }')).toEqual({ a: 1 });
+        expect(SafeJSON.parse('{ /* comment */ "a": 1, }') as Record<string, number>).toEqual({ a: 1 });
+        expect(SafeJSON.parse("{ a: 1 }") as Record<string, number>).toEqual({ a: 1 });
+        expect(SafeJSON.parse('{ "a": 1, // trailing\n }') as Record<string, number>).toEqual({ a: 1 });
     });
 
     it("stringify produces valid output", () => {
@@ -19,7 +19,7 @@ describe("SafeJSON", () => {
 
     it("supports reviver and replacer", () => {
         const reviver = (_key: string, val: unknown) => (typeof val === "number" ? val * 2 : val);
-        expect(SafeJSON.parse('{"a":1}', reviver)).toEqual({ a: 2 });
+        expect((SafeJSON.parse('{"a":1}', reviver) as Record<string, number>)).toEqual({ a: 2 });
         expect(SafeJSON.stringify({ a: 1 }, ["a"])).toBe('{"a":1}');
     });
 });
