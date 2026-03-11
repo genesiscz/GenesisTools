@@ -473,6 +473,272 @@ export function extractCommitHashes(messages: ConversationMessage[]): string[] {
     return [...hashes];
 }
 
+interface CommitInfo {
+    fullHash: string;
+    date: Date;
+}
+
+/**
+ * Use git log to resolve a commit hash prefix to full hash + date.
+ * Returns null if the hash can't be resolved (e.g., not in a git repo).
+ */
+async function getCommitInfo(hashPrefix: string): Promise<CommitInfo | null> {
+    try {
+        const exec = new Executor({ prefix: "git" });
+        const result = await exec.exec(["log", "--format=%H|%aI", "-1", hashPrefix]);
+
+        if (!result.success || !result.stdout.trim()) {
+            return null;
+        }
+
+        const [fullHash, dateStr] = result.stdout.trim().split("|");
+
+        if (!fullHash || !dateStr) {
+            return null;
+        }
+
+        return { fullHash, date: new Date(dateStr) };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Fast commit hash search: uses git log + SQLite cache + raw text scanning
+ * to avoid parsing all JSONL files.
+ */
+async function searchCommitHashFast(
+    hashPrefix: string,
+    filters: SearchFilters
+): Promise<SearchResult[]> {
+    const hashLower = hashPrefix.toLowerCase();
+
+    // Step 1: Resolve full hash + date via git log
+    const commitInfo = await getCommitInfo(hashPrefix);
+    const fullHash = commitInfo?.fullHash?.toLowerCase();
+    // Use full hash for text matching when available, otherwise the prefix
+    const searchHash = fullHash || hashLower;
+
+    // Step 2: Get candidate files — use cache when we have a commit date
+    let candidateFiles: string[];
+
+    if (commitInfo?.date) {
+        // Narrow to ±2 days around commit date using SQLite cache
+        const dateMs = commitInfo.date.getTime();
+        const dayMs = 24 * 60 * 60 * 1000;
+        const from = new Date(dateMs - 2 * dayMs);
+        const to = new Date(dateMs + 2 * dayMs);
+
+        const projectFilter = filters.project?.toLowerCase();
+        const allMetadata = projectFilter
+            ? getAllSessionMetadata().filter((s) => s.project?.toLowerCase().includes(projectFilter))
+            : getAllSessionMetadata();
+
+        // Filter by date range and exclusions
+        const candidates = allMetadata.filter((s) => {
+            if (filters.excludeCurrentSession && s.sessionId === filters.excludeCurrentSession) {
+                return false;
+            }
+
+            if (filters.excludeAgents && s.isSubagent) {
+                return false;
+            }
+
+            if (!s.firstTimestamp) {
+                return true; // Include files without timestamps (can't filter)
+            }
+
+            const ts = new Date(s.firstTimestamp).getTime();
+            return ts >= from.getTime() && ts <= to.getTime();
+        });
+
+        candidateFiles = candidates.map((s) => s.filePath);
+        logger.debug(`Commit search: narrowed to ${candidateFiles.length} files from cache (±2 days of ${commitInfo.date.toISOString()})`);
+    } else {
+        // No git info — fall back to all files (but still use raw text filter)
+        candidateFiles = await findConversationFiles(filters);
+        logger.debug(`Commit search: no git date info, scanning ${candidateFiles.length} files`);
+    }
+
+    const total = candidateFiles.length;
+    let processed = 0;
+
+    for (const filePath of candidateFiles) {
+        processed++;
+        filters.onProgress?.(processed, total, basename(filePath, ".jsonl"));
+
+        // Step 3: Raw text pre-filter — skip files that don't contain the hash string
+        let raw: string;
+        try {
+            raw = await Bun.file(filePath).text();
+        } catch {
+            continue;
+        }
+
+        if (!raw.includes(searchHash) && (fullHash ? !raw.includes(hashLower) : true)) {
+            continue;
+        }
+
+        // Step 4: Parse only files that passed the raw text filter
+        const messages = await parseJsonlFile(filePath);
+
+        if (messages.length === 0) {
+            continue;
+        }
+
+        // Extract metadata
+        let summary: string | undefined;
+        let customTitle: string | undefined;
+        let gitBranch: string | undefined;
+        let sessionId: string | undefined;
+        let firstTimestamp: Date | undefined;
+
+        for (const msg of messages) {
+            if (msg.type === "summary") {
+                summary = (msg as SummaryMessage).summary;
+            }
+
+            if (msg.type === "custom-title") {
+                customTitle = (msg as CustomTitleMessage).customTitle;
+            }
+
+            if ("gitBranch" in msg && msg.gitBranch) {
+                gitBranch = msg.gitBranch as string;
+            }
+
+            if ("sessionId" in msg && msg.sessionId) {
+                sessionId = msg.sessionId as string;
+            }
+
+            if ("timestamp" in msg && msg.timestamp && !firstTimestamp) {
+                firstTimestamp = new Date(msg.timestamp as string);
+            }
+        }
+
+        if (filters.excludeCurrentSession && sessionId === filters.excludeCurrentSession) {
+            continue;
+        }
+
+        const commitHashes = extractCommitHashes(messages);
+
+        if (!commitHashes.some((h) => h.toLowerCase().startsWith(hashLower))) {
+            continue;
+        }
+
+        const project = extractProjectName(filePath);
+        const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
+
+        // Step 5: Early exit — commit hashes are unique
+        return [{
+            filePath,
+            project,
+            sessionId: sessionId || basename(filePath, ".jsonl"),
+            timestamp: firstTimestamp || new Date(),
+            summary,
+            customTitle,
+            gitBranch,
+            matchedMessages: messages.filter((m) => m.type === "user" || m.type === "assistant"),
+            isSubagent,
+            commitHashes,
+        }];
+    }
+
+    // If cache-narrowed search found nothing, retry with all files as fallback
+    if (commitInfo?.date) {
+        logger.debug("Commit search: cache-narrowed search found nothing, retrying with all files");
+        const allFiles = await findConversationFiles(filters);
+        // Exclude files already checked
+        const checked = new Set(candidateFiles);
+        const remaining = allFiles.filter((f) => !checked.has(f));
+
+        const remainingTotal = remaining.length;
+        let remainingProcessed = 0;
+
+        for (const filePath of remaining) {
+            remainingProcessed++;
+            filters.onProgress?.(remainingProcessed, remainingTotal, basename(filePath, ".jsonl"));
+
+            let raw: string;
+            try {
+                raw = await Bun.file(filePath).text();
+            } catch {
+                continue;
+            }
+
+            if (!raw.includes(searchHash) && (fullHash ? !raw.includes(hashLower) : true)) {
+                continue;
+            }
+
+            const messages = await parseJsonlFile(filePath);
+
+            if (messages.length === 0) {
+                continue;
+            }
+
+            let sessionId: string | undefined;
+
+            for (const msg of messages) {
+                if ("sessionId" in msg && msg.sessionId) {
+                    sessionId = msg.sessionId as string;
+                    break;
+                }
+            }
+
+            if (filters.excludeCurrentSession && sessionId === filters.excludeCurrentSession) {
+                continue;
+            }
+
+            const commitHashes = extractCommitHashes(messages);
+
+            if (!commitHashes.some((h) => h.toLowerCase().startsWith(hashLower))) {
+                continue;
+            }
+
+            // Extract remaining metadata
+            let summary: string | undefined;
+            let customTitle: string | undefined;
+            let gitBranch: string | undefined;
+            let firstTimestamp: Date | undefined;
+
+            for (const msg of messages) {
+                if (msg.type === "summary") {
+                    summary = (msg as SummaryMessage).summary;
+                }
+
+                if (msg.type === "custom-title") {
+                    customTitle = (msg as CustomTitleMessage).customTitle;
+                }
+
+                if ("gitBranch" in msg && msg.gitBranch) {
+                    gitBranch = msg.gitBranch as string;
+                }
+
+                if ("timestamp" in msg && msg.timestamp && !firstTimestamp) {
+                    firstTimestamp = new Date(msg.timestamp as string);
+                }
+            }
+
+            const project = extractProjectName(filePath);
+            const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
+
+            return [{
+                filePath,
+                project,
+                sessionId: sessionId || basename(filePath, ".jsonl"),
+                timestamp: firstTimestamp || new Date(),
+                summary,
+                customTitle,
+                gitBranch,
+                matchedMessages: messages.filter((m) => m.type === "user" || m.type === "assistant"),
+                isSubagent,
+                commitHashes,
+            }];
+        }
+    }
+
+    return [];
+}
+
 function matchesFilters(message: ConversationMessage, filters: SearchFilters, allText: string): boolean {
     // Query match
     if (filters.query) {
@@ -611,6 +877,11 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
         return searchSessionMetadataCache(filters);
     }
 
+    // Fast path: commit hash search uses git log + cache + raw text scanning
+    if (filters.commitHash) {
+        return searchCommitHashFast(filters.commitHash, filters);
+    }
+
     let results: SearchResult[] = [];
     const files = await findConversationFiles(filters);
     const total = files.length;
@@ -702,28 +973,6 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
                           firstTimestamp || new Date()
                       )
                     : 0,
-            });
-            continue;
-        }
-
-        // Commit hash search
-        if (filters.commitHash) {
-            const hashFilter = filters.commitHash.toLowerCase();
-            const commitHashes = extractCommitHashes(messages);
-            if (!commitHashes.some((h) => h.toLowerCase().startsWith(hashFilter))) {
-                continue;
-            }
-            results.push({
-                filePath,
-                project,
-                sessionId: sessionId || basename(filePath, ".jsonl"),
-                timestamp: firstTimestamp || new Date(),
-                summary,
-                customTitle,
-                gitBranch,
-                matchedMessages: messages.filter((m) => m.type === "user" || m.type === "assistant"),
-                isSubagent,
-                commitHashes,
             });
             continue;
         }
