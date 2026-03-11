@@ -4,29 +4,30 @@ type Reviver = (key: string | number, value: unknown) => unknown;
 
 type ParseOptions = {
     jsonl?: boolean;
+    strict?: boolean;
     reviver?: Reviver | null;
 };
 
 type StringifyOptions = {
     jsonl?: boolean;
+    strict?: boolean;
 };
 
 /**
  * Drop-in replacement for the global JSON object, powered by comment-json.
  * parse: handles // comments, multi-line comments, trailing commas.
  *        Comments are preserved as Symbol-keyed properties on the result.
- *        Pass { jsonl: true } to use native JSON.parse for performance-critical JSONL processing.
+ *        Pass { jsonl: true } or { strict: true } to use native JSON.parse (rejects comments).
  * stringify: produces standard JSON output with comments preserved.
- *            Pass { jsonl: true } to use native JSON.stringify.
+ *            Pass { jsonl: true } or { strict: true } to use native JSON.stringify.
  */
 export const SafeJSON = {
     // biome-ignore lint/suspicious/noExplicitAny: match native JSON.parse return type for drop-in compatibility
     parse: (text: string, reviverOrOptions?: Reviver | ParseOptions | null): any => {
-        // Check if second param is options object with jsonl flag
-        if (reviverOrOptions && typeof reviverOrOptions === "object" && "jsonl" in reviverOrOptions) {
+        if (reviverOrOptions && typeof reviverOrOptions === "object" && ("jsonl" in reviverOrOptions || "strict" in reviverOrOptions)) {
             const options = reviverOrOptions as ParseOptions;
-            if (options.jsonl) {
-                return JSON.parse(text, options.reviver);
+            if (options.jsonl || options.strict) {
+                return JSON.parse(text, options.reviver ?? undefined);
             }
             return parse(text, options.reviver);
         }
@@ -35,10 +36,9 @@ export const SafeJSON = {
     },
     // biome-ignore lint/suspicious/noExplicitAny: match native JSON.stringify parameter types
     stringify: (value: any, replacerOrOptions?: any, space?: string | number): string => {
-        // Check if second param is options object with jsonl flag
-        if (replacerOrOptions && typeof replacerOrOptions === "object" && "jsonl" in replacerOrOptions) {
+        if (replacerOrOptions && typeof replacerOrOptions === "object" && ("jsonl" in replacerOrOptions || "strict" in replacerOrOptions)) {
             const options = replacerOrOptions as StringifyOptions;
-            if (options.jsonl) {
+            if (options.jsonl || options.strict) {
                 return JSON.stringify(value);
             }
         }

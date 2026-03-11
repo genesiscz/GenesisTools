@@ -37,8 +37,18 @@ describe("SafeJSON", () => {
         expect(() => SafeJSON.parse('{ /* comment */ "a": 1 }', { jsonl: true })).toThrow();
     });
 
+    it("strict mode uses native JSON.parse (same as jsonl)", () => {
+        expect(SafeJSON.parse('{"a":1}', { strict: true })).toEqual({ a: 1 });
+        expect(() => SafeJSON.parse("{ /* comment */ }", { strict: true })).toThrow();
+    });
+
     it("uses native JSON.stringify with { jsonl: true }", () => {
         const result = SafeJSON.stringify({ a: 1 }, { jsonl: true });
+        expect(result).toBe('{"a":1}');
+    });
+
+    it("uses native JSON.stringify with { strict: true }", () => {
+        const result = SafeJSON.stringify({ a: 1 }, { strict: true });
         expect(result).toBe('{"a":1}');
     });
 
