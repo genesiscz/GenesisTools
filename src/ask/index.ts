@@ -3,8 +3,6 @@
 import logger, { configureLogger } from "@app/logger";
 import { input } from "@app/utils/prompts/clack";
 import { handleReadmeFlag } from "@app/utils/readme";
-
-configureLogger({ logToFile: true });
 import { AIChat } from "@ask/AIChat";
 import { transcriptionManager } from "@ask/audio/TranscriptionManager";
 import { ChatEngine } from "@ask/chat/ChatEngine";
@@ -42,6 +40,8 @@ import {
     validateOptions,
 } from "@ask/utils/cli";
 import { colorizeProvider, generateSessionId } from "@ask/utils/helpers";
+
+configureLogger({ logToFile: true });
 
 // Initialize conversation manager
 const convManager = conversationManager;
