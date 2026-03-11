@@ -25,8 +25,10 @@ const program = new Command()
             process.exit(1);
         }
 
-        // 2. Bun install
-        console.log(pc.dim("\n  Installing dependencies..."));
+        // 2. Clean install dependencies (rm node_modules to avoid stale nested deps)
+        console.log(pc.dim("\n  Installing dependencies (clean)..."));
+        const nodeModulesPath = join(genesisPath, "node_modules");
+        Bun.spawnSync(["rm", "-rf", nodeModulesPath], { stdio: ["inherit", "inherit", "inherit"] });
         const install = Bun.spawnSync(["bun", "install"], {
             cwd: genesisPath,
             stdio: ["inherit", "inherit", "inherit"],

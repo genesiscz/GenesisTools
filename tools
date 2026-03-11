@@ -1,7 +1,5 @@
 #!/usr/bin/env bun
 
-import { search } from "@inquirer/prompts";
-import { ExitPromptError } from "@inquirer/core";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
@@ -85,6 +83,7 @@ async function executeTool(scriptId, scriptArgs) {
         }
 
         if (!targetScript) {
+            const { searchSelect, searchSelectCancelSymbol } = await import("@app/utils/prompts/clack/search-select");
             const chalk = (await import("chalk")).default;
             // Fuzzy match: find tools that contain the input or share segments
             const availableTools = await getAvailableTools(srcDir);
@@ -105,28 +104,18 @@ async function executeTool(scriptId, scriptArgs) {
                 process.exit(1);
             }
 
-            // Launch interactive selector pre-filtered with matches
             console.log(`\n  ${chalk.yellow("No exact match for")} ${chalk.bold(scriptId)}${chalk.yellow(". Did you mean?")}\n`);
 
-            try {
-                const tool = await search({
-                    message: "Select a tool:",
-                    source: async (term) => {
-                        const filtered = matches.filter(t =>
-                            t.toLowerCase().includes((term || "").toLowerCase())
-                        );
-                        return filtered.map(t => ({ value: t, name: t }));
-                    },
-                });
+            const tool = await searchSelect({
+                message: "Select a tool:",
+                items: matches.map(t => ({ value: t, label: t })),
+            });
 
-                // Re-execute with the selected tool
-                await executeTool(tool, scriptArgs);
-            } catch (error) {
-                if (error instanceof ExitPromptError) {
-                    process.exit(0);
-                }
-                throw error;
+            if (tool === searchSelectCancelSymbol) {
+                process.exit(0);
             }
+
+            await executeTool(tool as string, scriptArgs);
             return;
         }
     }
