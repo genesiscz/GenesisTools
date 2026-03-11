@@ -71,7 +71,7 @@ export class ChatEngine {
 
     private async sendStreamingMessage(
         message: string,
-        _tools?: Record<string, unknown>,
+        tools?: Record<string, unknown>,
         callbacks?: {
             onChunk?: (chunk: string) => void;
             onThinking?: (text: string) => void;
@@ -87,6 +87,7 @@ export class ChatEngine {
             system: this.config.systemPrompt,
             temperature: this.config.temperature,
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
+            ...(tools ? { tools: tools as never } : {}),
             onFinish: async ({ usage }) => {
                 // This is called when the stream completes - usage is available HERE
                 logger.debug(
@@ -225,13 +226,14 @@ export class ChatEngine {
         };
     }
 
-    private async sendNonStreamingMessage(message: string, _tools?: Record<string, unknown>): Promise<ChatResponse> {
+    private async sendNonStreamingMessage(message: string, tools?: Record<string, unknown>): Promise<ChatResponse> {
         const result = await generateText({
             model: this.config.model,
             prompt: message, // Use prompt instead of messages array
             system: this.config.systemPrompt,
             temperature: this.config.temperature,
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
+            ...(tools ? { tools: tools as never } : {}),
         });
 
         // DEBUG: Log the full result object structure

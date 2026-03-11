@@ -1,137 +1,122 @@
-import { Box, useApp, useInput } from "ink";
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { TelegramContactV2 } from "../../lib/types";
-import type { WatchMessage, WatchSession } from "../shared/WatchSession";
-import { ContactList } from "./components/ContactList";
-import { InputBar } from "./components/InputBar";
-import { MessageList } from "./components/MessageList";
-import { StatusBar } from "./components/StatusBar";
-import { type SystemLine, SystemOutput } from "./components/SystemOutput";
+import { useTerminalSize } from "@app/utils/ink/hooks/use-terminal-size";
+import { Box, render, Text, useApp, useInput } from "ink";
+import TextInput from "ink-text-input";
+import { useEffect, useState } from "react";
+import type { WatchRuntimeOptions } from "../light/WatchRuntime";
+import { WatchSession } from "../shared/WatchSession";
 
-type View = "chat" | "contacts";
-
-interface WatchInkAppProps {
+interface WatchInkRootProps {
     session: WatchSession;
 }
 
-export function WatchInkApp({ session }: WatchInkAppProps) {
+function WatchInkRoot({ session }: WatchInkRootProps) {
+    useTerminalSize({ clearOnResize: true });
     const { exit } = useApp();
-    const [messages, setMessages] = useState<WatchMessage[]>(session.getMessages());
-    const [view, setView] = useState<View>("chat");
-    const [systemLines, setSystemLines] = useState<SystemLine[]>([]);
-    const autoSuggestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [input, setInput] = useState("");
+    const [feedback, setFeedback] = useState("");
+    const [refreshKey, setRefreshKey] = useState(0);
 
     useEffect(() => {
-        const unsub = session.subscribe(() => {
-            setMessages([...session.getMessages()]);
-        });
-
-        session.onAutoSuggest((suggestions) => {
-            if (autoSuggestTimeoutRef.current) {
-                clearTimeout(autoSuggestTimeoutRef.current);
-            }
-
-            setSystemLines(
-                suggestions.map((s, i) => ({
-                    text: `  ${i + 1}. ${s}`,
-                    type: "suggestion" as const,
-                }))
-            );
-            autoSuggestTimeoutRef.current = setTimeout(() => setSystemLines([]), 30000);
+        const unsubscribe = session.subscribe(() => {
+            setRefreshKey((value) => value + 1);
         });
 
         return () => {
-            unsub();
-            session.onAutoSuggest(null);
-
-            if (autoSuggestTimeoutRef.current) {
-                clearTimeout(autoSuggestTimeoutRef.current);
-                autoSuggestTimeoutRef.current = null;
-            }
+            unsubscribe();
         };
     }, [session]);
 
-    useInput((_input, key) => {
+    const view = session.getViewModel();
+
+    useInput((value, key) => {
+        if (key.ctrl && value === "c") {
+            exit();
+            return;
+        }
+
         if (key.tab) {
-            setView((v) => (v === "chat" ? "contacts" : "chat"));
+            session.cycleActiveChat(key.shift ? -1 : 1);
         }
     });
 
-    const handleSubmit = useCallback(
-        async (text: string) => {
-            setSystemLines([]);
+    const submitInput = (value: string) => {
+        void (async () => {
+            const result = await session.handleInput(value);
+            setInput("");
 
-            if (text.startsWith("/")) {
-                const result = await session.handleSlashCommand(text);
-
-                if (result.output === "__EXIT__") {
-                    exit();
-                    return;
-                }
-
-                if (result.output === "__CONTACTS__") {
-                    setView("contacts");
-                    return;
-                }
-
-                if (result.handled && result.output) {
-                    setSystemLines([{ text: result.output, type: "info" }]);
-                }
-
-                return;
+            if (result.output) {
+                setFeedback(result.output);
             }
 
-            if (session.inputMode === "careful") {
-                setSystemLines([{ text: "Careful mode: use /send <message> to send", type: "info" }]);
-                return;
+            if (result.exit) {
+                exit();
             }
-
-            try {
-                await session.sendMessage(text);
-            } catch (err) {
-                setSystemLines([
-                    {
-                        text: `Failed to send: ${err instanceof Error ? err.message : String(err)}`,
-                        type: "error",
-                    },
-                ]);
-            }
-        },
-        [session, exit]
-    );
-
-    const handleContactSelect = useCallback(
-        async (contact: TelegramContactV2) => {
-            await session.switchContact(contact);
-            setView("chat");
-        },
-        [session]
-    );
-
-    if (view === "contacts") {
-        return (
-            <ContactList
-                contacts={session.getContacts()}
-                currentContactId={session.currentContact.userId}
-                unreadCounts={session.getUnreadCounts()}
-                onSelect={handleContactSelect}
-                onBack={() => setView("chat")}
-            />
-        );
-    }
+        })();
+    };
 
     return (
-        <Box flexDirection="column" height="100%">
-            <StatusBar contact={session.currentContact} messageCount={messages.length} inputMode={session.inputMode} />
-            <Box flexDirection="column" flexGrow={1}>
-                <MessageList messages={messages} />
+        <Box flexDirection="column" key={refreshKey}>
+            <Text>
+                Telegram Watch (Ink) | Tab/Shift+Tab switch chat | Enter sends | /help commands | Mode:{" "}
+                {view.carefulMode ? "careful" : "normal"}
+            </Text>
+
+            <Box marginTop={1} flexDirection="row" flexWrap="wrap">
+                {view.contacts.map((contact) => (
+                    <Box key={contact.id} marginRight={2}>
+                        <Text color={contact.isActive ? "cyan" : "white"}>
+                            {contact.isActive ? ">" : " "} {contact.name}
+                            {contact.unreadCount > 0 ? ` (${contact.unreadCount})` : ""}
+                        </Text>
+                    </Box>
+                ))}
             </Box>
-            <SystemOutput lines={systemLines} />
-            <InputBar
-                mode={session.inputMode}
-                contactName={session.currentContact.displayName}
-                onSubmit={handleSubmit}
-            />
+
+            <Box marginTop={1} flexDirection="column">
+                {view.messages.slice(-25).map((message) => (
+                    <Text key={`${message.id}-${message.timestampIso}`}>
+                        {message.direction === "out" ? "You" : "Them"}: {message.text}
+                    </Text>
+                ))}
+            </Box>
+
+            {view.pendingSuggestions.length > 0 ? (
+                <Box marginTop={1} flexDirection="column">
+                    <Text color="yellow">Pending suggestions:</Text>
+                    {view.pendingSuggestions.map((suggestion, index) => (
+                        <Text key={`${index + 1}-${suggestion}`}>
+                            {" "}
+                            {index + 1}. {suggestion}
+                        </Text>
+                    ))}
+                </Box>
+            ) : null}
+
+            {feedback ? (
+                <Box marginTop={1}>
+                    <Text color="green">{feedback}</Text>
+                </Box>
+            ) : null}
+
+            <Box marginTop={1}>
+                <Text color="cyan">Input: </Text>
+                <TextInput value={input} onChange={setInput} onSubmit={submitInput} />
+            </Box>
         </Box>
     );
+}
+
+export async function runWatchInkApp(options: WatchRuntimeOptions): Promise<void> {
+    const session = new WatchSession({
+        contacts: options.contacts,
+        myName: options.myName,
+        client: options.client,
+        store: options.store,
+        contextLengthOverride: options.contextLength,
+    });
+
+    await session.startListeners();
+
+    const app = render(<WatchInkRoot session={session} />);
+    await app.waitUntilExit();
 }

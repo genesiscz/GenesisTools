@@ -1,10 +1,9 @@
 import logger from "@app/logger";
-import { formatNumber } from "@app/utils/format";
 import { detectLanguage, embedText } from "@app/utils/macos/nlp";
 import type { EmbedResult } from "@app/utils/macos/types";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { ConversationSyncService, type SyncResult } from "./ConversationSyncService";
+import { conversationSyncService } from "./ConversationSyncService";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
 import type { TGClient } from "./TGClient";
 import type { ContactConfig } from "./types";
@@ -21,60 +20,32 @@ export async function downloadContact(
     const spinner = p.spinner();
     spinner.start("Counting messages...");
 
-    let totalEstimate: number;
+    let totalEstimate = 0;
 
     try {
         totalEstimate = await client.getMessageCount(contact.userId);
     } catch {
-        spinner.stop("Could not count messages");
-        totalEstimate = 0;
+        // ignore counting failures
     }
 
-    const lastSyncedId = store.getLastSyncedId(contact.userId);
-    const isIncremental = lastSyncedId !== null && !options.since;
+    spinner.stop(`Found ${totalEstimate.toLocaleString()} total messages`);
 
-    if (isIncremental) {
-        spinner.stop(`Found ${formatNumber(totalEstimate)} total messages (incremental sync from #${lastSyncedId})`);
-    } else {
-        spinner.stop(`Found ${formatNumber(totalEstimate)} total messages`);
+    if (options.since || options.until) {
+        const since = options.since ?? new Date(0);
+        const until = options.until ?? new Date();
+
+        await conversationSyncService.syncRange(client, store, contact.userId, {
+            since,
+            until,
+            limit: options.limit,
+            source: "query",
+        });
+        return;
     }
 
-    const progressSpinner = p.spinner();
-    progressSpinner.start("Syncing messages...");
-
-    const syncService = new ConversationSyncService(client, store);
-
-    try {
-        let result: SyncResult;
-
-        if (options.since || options.until) {
-            const since = options.since ?? new Date(0);
-            const until = options.until ?? new Date();
-            result = await syncService.syncRange(contact.userId, since, until, {
-                limit: options.limit,
-                onProgress: (synced) => {
-                    progressSpinner.message(`Synced ${formatNumber(synced)} messages`);
-                },
-            });
-        } else {
-            result = await syncService.syncLatest(contact.userId, {
-                limit: options.limit,
-                onProgress: (synced) => {
-                    progressSpinner.message(`Synced ${formatNumber(synced)} messages`);
-                },
-            });
-        }
-
-        progressSpinner.stop(
-            `${pc.green(formatNumber(result.synced))} new messages stored` +
-                (result.attachmentsIndexed > 0
-                    ? `, ${formatNumber(result.attachmentsIndexed)} attachments indexed`
-                    : "")
-        );
-    } catch (err) {
-        progressSpinner.stop("Error during sync");
-        p.log.error(`Sync error: ${String(err)}`);
-    }
+    await conversationSyncService.syncIncremental(client, store, contact.userId, {
+        limit: options.limit,
+    });
 }
 
 export async function embedMessages(

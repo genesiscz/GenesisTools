@@ -1,22 +1,91 @@
 export type ActionType = "say" | "ask" | "notify";
 
+export type TelegramRuntimeMode = "daemon" | "light" | "ink";
+export type TelegramDialogType = "user" | "group" | "channel";
+export type SuggestionTrigger = "manual" | "auto" | "hybrid";
+export type StyleRefreshMode = "incremental";
+
+export interface AskModeConfig {
+    enabled: boolean;
+    provider?: string;
+    model?: string;
+    systemPrompt?: string;
+    temperature?: number;
+    maxTokens?: number;
+}
+
+export interface SuggestionModeConfig extends AskModeConfig {
+    count: number;
+    trigger: SuggestionTrigger;
+    autoDelayMs: number;
+    allowAutoSend: boolean;
+}
+
+export interface StyleSourceRule {
+    id: string;
+    sourceChatId: string;
+    direction: "outgoing" | "incoming";
+    limit?: number;
+    since?: string;
+    until?: string;
+    regex?: string;
+}
+
+export interface StyleProfileConfig {
+    enabled: boolean;
+    refresh: StyleRefreshMode;
+    rules: StyleSourceRule[];
+    previewInWatch: boolean;
+    derivedPrompt?: string;
+    derivedAt?: string;
+}
+
+export interface WatchConfig {
+    enabled: boolean;
+    contextLength: number;
+    runtimeMode?: TelegramRuntimeMode;
+}
+
+export interface ContactModesConfig {
+    autoReply: AskModeConfig;
+    assistant: AskModeConfig;
+    suggestions: SuggestionModeConfig;
+}
+
 export interface ContactConfig {
     userId: string;
     displayName: string;
     username?: string;
+    dialogType?: TelegramDialogType;
     actions: ActionType[];
+
+    // V2 config
+    watch?: WatchConfig;
+    modes?: ContactModesConfig;
+    styleProfile?: StyleProfileConfig;
+
+    // V1 compatibility (auto-migrated to modes.autoReply)
     askSystemPrompt?: string;
     askProvider?: string;
     askModel?: string;
+
     replyDelayMin: number;
     replyDelayMax: number;
 }
 
+export interface TelegramDefaultsConfig {
+    autoReply: AskModeConfig;
+    assistant: AskModeConfig;
+    suggestions: SuggestionModeConfig;
+}
+
 export interface TelegramConfigData {
+    version?: number;
     apiId: number;
     apiHash: string;
     session: string;
     me?: { firstName: string; username?: string; phone?: string };
+    defaults?: TelegramDefaultsConfig;
     contacts: ContactConfig[];
     configuredAt: string;
 }
@@ -25,8 +94,7 @@ export interface ActionResult {
     action: ActionType;
     success: boolean;
     reply?: string;
-    /** Telegram ID of the sent outgoing message produced by the action. */
-    replyMessageId?: number;
+    sentMessageId?: number;
     duration: number;
     error?: unknown;
 }
@@ -51,11 +119,63 @@ export const DEFAULTS = {
     askTimeoutMs: 60_000,
     askProvider: "openai",
     askModel: "gpt-4o-mini",
+    askTemperature: 0.7,
+    askMaxTokens: 512,
     maxContextMessages: 30,
     historyFetchLimit: 100,
+    watchContextLength: 30,
+    watchRuntimeMode: "daemon" as TelegramRuntimeMode,
+    suggestionCount: 3,
+    suggestionAutoDelayMs: 5000,
 } as const;
 
-// ── History Types (Phase 2) ─────────────────────────────────────────
+export const TELEGRAM_CONFIG_VERSION = 2;
+
+export const DEFAULT_MODE_CONFIG: ContactModesConfig = {
+    autoReply: {
+        enabled: false,
+        provider: DEFAULTS.askProvider,
+        model: DEFAULTS.askModel,
+        systemPrompt: DEFAULTS.askSystemPrompt,
+        temperature: DEFAULTS.askTemperature,
+        maxTokens: DEFAULTS.askMaxTokens,
+    },
+    assistant: {
+        enabled: true,
+        provider: DEFAULTS.askProvider,
+        model: DEFAULTS.askModel,
+        systemPrompt: DEFAULTS.askSystemPrompt,
+        temperature: DEFAULTS.askTemperature,
+        maxTokens: DEFAULTS.askMaxTokens,
+    },
+    suggestions: {
+        enabled: true,
+        provider: DEFAULTS.askProvider,
+        model: DEFAULTS.askModel,
+        systemPrompt: DEFAULTS.askSystemPrompt,
+        temperature: DEFAULTS.askTemperature,
+        maxTokens: DEFAULTS.askMaxTokens,
+        count: DEFAULTS.suggestionCount,
+        trigger: "manual",
+        autoDelayMs: DEFAULTS.suggestionAutoDelayMs,
+        allowAutoSend: false,
+    },
+};
+
+export const DEFAULT_STYLE_PROFILE: StyleProfileConfig = {
+    enabled: false,
+    refresh: "incremental",
+    rules: [],
+    previewInWatch: false,
+};
+
+export const DEFAULT_WATCH_CONFIG: WatchConfig = {
+    enabled: true,
+    contextLength: DEFAULTS.watchContextLength,
+    runtimeMode: DEFAULTS.watchRuntimeMode,
+};
+
+// ── History Types (V2) ──────────────────────────────────────────────
 
 export interface MessageRow {
     id: number;
@@ -66,6 +186,49 @@ export interface MessageRow {
     is_outgoing: number;
     date_unix: number;
     date_iso: string;
+    edited_date_unix: number | null;
+    is_deleted: number;
+    deleted_at_iso: string | null;
+    reply_to_msg_id: number | null;
+}
+
+export interface MessageRevisionRow {
+    id: number;
+    chat_id: string;
+    message_id: number;
+    revision_type: "create" | "edit" | "delete";
+    text: string | null;
+    media_desc: string | null;
+    date_iso: string;
+    date_unix: number;
+}
+
+export interface AttachmentRow {
+    chat_id: string;
+    message_id: number;
+    attachment_index: number;
+    kind: string;
+    mime_type: string | null;
+    file_name: string | null;
+    file_size: number | null;
+    telegram_file_id: string | null;
+    thumb_count: number;
+    is_downloaded: number;
+    local_path: string | null;
+    sha256: string | null;
+    created_at_iso: string;
+    updated_at_iso: string;
+}
+
+export interface SuggestionFeedbackRow {
+    id: number;
+    chat_id: string;
+    incoming_message_id: number | null;
+    suggestion_text: string;
+    edited_text: string | null;
+    sent_text: string;
+    was_edited: number;
+    created_at_iso: string;
 }
 
 export interface SyncStateRow {
@@ -74,9 +237,34 @@ export interface SyncStateRow {
     last_synced_at: string;
 }
 
+export interface SyncSegmentRow {
+    id: number;
+    chat_id: string;
+    start_unix: number;
+    end_unix: number;
+    source: "full" | "incremental" | "query";
+    created_at_iso: string;
+}
+
+export interface ChatRow {
+    chat_id: string;
+    chat_type: TelegramDialogType;
+    title: string;
+    username: string | null;
+    last_seen_at_iso: string;
+}
+
 export interface SearchOptions {
     since?: Date;
     until?: Date;
+    limit?: number;
+}
+
+export interface QueryMessagesOptions {
+    since?: Date;
+    until?: Date;
+    sender?: "me" | "them" | "any";
+    textRegex?: string;
     limit?: number;
 }
 
@@ -98,239 +286,27 @@ export interface ChatStats {
     embeddedMessages: number;
 }
 
-/** Languages supported by macOS NLEmbedding */
-export const EMBEDDING_LANGUAGES = new Set(["en", "es", "fr", "de", "it", "pt", "zh"]);
-
-// ── V2 Schema Types ─────────────────────────────────────────────────
-
-export interface MessageRowV2 extends MessageRow {
-    edited_date_unix: number | null;
-    is_deleted: number; // 0 or 1
-    deleted_at_iso: string | null;
-    reply_to_msg_id: number | null;
-}
-
-export type ChatType = "user" | "group" | "channel";
-
-export interface ChatRow {
-    chat_id: string;
-    chat_type: ChatType;
-    title: string;
-    username: string | null;
-    last_synced_at: string | null;
-}
-
-export interface AttachmentRow {
-    chat_id: string;
-    message_id: number;
-    attachment_index: number;
-    kind: string;
-    mime_type: string | null;
-    file_name: string | null;
-    file_size: number | null;
-    telegram_file_id: string | null;
-    is_downloaded: number; // 0 or 1
-    local_path: string | null;
-    sha256: string | null;
-}
-
-export interface MessageRevisionRow {
-    id: number;
-    chat_id: string;
-    message_id: number;
-    revision_type: "create" | "edit" | "delete";
-    old_text: string | null;
-    new_text: string | null;
-    revised_at_unix: number;
-    revised_at_iso: string;
-}
-
-export interface SyncSegmentRow {
-    id: number;
-    chat_id: string;
-    from_date_unix: number;
-    to_date_unix: number;
-    from_msg_id: number;
-    to_msg_id: number;
-    synced_at: string;
-}
-
-export interface QueryOptions {
-    sender?: "me" | "them" | "any";
-    since?: Date;
-    until?: Date;
-    textPattern?: string;
-    limit?: number;
-    includeDeleted?: boolean;
-}
-
-export interface UpsertMessageInput {
-    id: number;
-    senderId: string | undefined;
-    text: string;
-    mediaDescription: string | undefined;
-    isOutgoing: boolean;
-    date: string;
-    dateUnix: number;
-    editedDateUnix?: number;
-    replyToMsgId?: number;
-}
-
-export interface UpsertAttachmentInput {
-    chat_id: string;
-    message_id: number;
-    attachment_index: number;
-    kind: string;
-    mime_type: string | null;
-    file_name: string | null;
-    file_size: number | null;
-    telegram_file_id: string | null;
-}
-
-export interface InsertSegmentInput {
-    fromDateUnix: number;
-    toDateUnix: number;
-    fromMsgId: number;
-    toMsgId: number;
-}
-
-export interface DateRange {
-    fromDateUnix: number;
-    toDateUnix: number;
-}
-
-export interface SuggestionEditInput {
+export interface AttachmentLocator {
     chatId: string;
-    messageId: number | null;
-    suggestedText: string;
-    editedText: string;
-    sentText: string;
-    provider: string | null;
-    model: string | null;
+    messageId: number;
+    attachmentIndex: number;
 }
 
-export interface SuggestionEditRow {
-    suggested_text: string;
-    edited_text: string;
-    sent_text: string;
-    created_at: string;
+export interface MissingRange {
+    sinceUnix: number;
+    untilUnix: number;
 }
 
-// ── V2 Config Types ──────────────────────────────────────────────────
-
-export type TelegramRuntimeMode = "daemon" | "light" | "ink";
-
-export interface AskModeConfig {
-    enabled: boolean;
-    provider?: string;
-    model?: string;
-    systemPrompt?: string;
-    temperature?: number;
-    maxTokens?: number;
-}
-
-export interface SuggestionModeConfig extends AskModeConfig {
-    count: number;
-    trigger: "manual" | "auto" | "hybrid";
-    autoDelayMs: number;
-    allowAutoSend: boolean;
-}
-
-export interface StyleSourceRule {
-    id: string;
-    sourceChatId: string;
-    direction: "outgoing" | "incoming";
-    limit?: number;
+export interface QueryRequest {
+    from: string;
     since?: string;
     until?: string;
-    regex?: string;
+    sender?: "me" | "them" | "any";
+    text?: string;
+    localOnly?: boolean;
+    nl?: string;
+    limit?: number;
 }
 
-export interface StyleProfileConfig {
-    enabled: boolean;
-    refresh: "incremental";
-    rules: StyleSourceRule[];
-    previewInWatch: boolean;
-}
-
-export interface WatchConfig {
-    enabled: boolean;
-    contextLength: number;
-    runtimeMode: TelegramRuntimeMode;
-}
-
-export interface ContactModesConfig {
-    autoReply: AskModeConfig;
-    assistant: AskModeConfig;
-    suggestions: SuggestionModeConfig;
-}
-
-export interface TelegramContactV2 {
-    userId: string;
-    displayName: string;
-    username?: string;
-    chatType: ChatType;
-    actions: ActionType[];
-    watch: WatchConfig;
-    modes: ContactModesConfig;
-    styleProfile: StyleProfileConfig;
-    replyDelayMin: number;
-    replyDelayMax: number;
-}
-
-export interface TelegramConfigDataV2 {
-    version: 2;
-    apiId: number;
-    apiHash: string;
-    session: string;
-    me?: {
-        firstName: string;
-        username?: string;
-        phone?: string;
-    };
-    contacts: TelegramContactV2[];
-    globalDefaults: {
-        modes: ContactModesConfig;
-        watch: WatchConfig;
-        styleProfile: StyleProfileConfig;
-    };
-    configuredAt: string;
-}
-
-export const DEFAULT_MODE_CONFIG: ContactModesConfig = {
-    autoReply: {
-        enabled: false,
-        provider: undefined,
-        model: undefined,
-        systemPrompt: undefined,
-    },
-    assistant: {
-        enabled: true,
-        provider: undefined,
-        model: undefined,
-        systemPrompt: undefined,
-    },
-    suggestions: {
-        enabled: true,
-        provider: undefined,
-        model: undefined,
-        systemPrompt: undefined,
-        count: 3,
-        trigger: "manual",
-        autoDelayMs: 5000,
-        allowAutoSend: false,
-    },
-};
-
-export const DEFAULT_WATCH_CONFIG: WatchConfig = {
-    enabled: true,
-    contextLength: 30,
-    runtimeMode: "ink",
-};
-
-export const DEFAULT_STYLE_PROFILE: StyleProfileConfig = {
-    enabled: false,
-    refresh: "incremental",
-    rules: [],
-    previewInWatch: false,
-};
+/** Languages supported by macOS NLEmbedding */
+export const EMBEDDING_LANGUAGES = new Set(["en", "es", "fr", "de", "it", "pt", "zh"]);

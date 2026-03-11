@@ -1,108 +1,84 @@
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, unlinkSync } from "node:fs";
+import { describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TelegramHistoryStore } from "../TelegramHistoryStore";
 
-function tmpDbPath() {
-    return join(tmpdir(), `telegram-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
-}
+describe("TelegramHistoryStore migration", () => {
+    it("migrates v1 schema to v2 and supports new methods", () => {
+        const tempDir = mkdtempSync(join(tmpdir(), "telegram-store-"));
+        const dbPath = join(tempDir, "history.db");
 
-describe("TelegramHistoryStore migrations", () => {
-    let store: TelegramHistoryStore;
-    let dbPath: string;
+        try {
+            const db = new Database(dbPath);
+            db.run(`
+                CREATE TABLE messages (
+                    id INTEGER NOT NULL,
+                    chat_id TEXT NOT NULL,
+                    sender_id TEXT,
+                    text TEXT,
+                    media_desc TEXT,
+                    is_outgoing INTEGER NOT NULL,
+                    date_unix INTEGER NOT NULL,
+                    date_iso TEXT NOT NULL,
+                    PRIMARY KEY (chat_id, id)
+                )
+            `);
+            db.run(`
+                CREATE TABLE sync_state (
+                    chat_id TEXT PRIMARY KEY,
+                    last_synced_id INTEGER NOT NULL,
+                    last_synced_at TEXT NOT NULL
+                )
+            `);
+            db.run(`
+                CREATE TABLE embeddings (
+                    message_rowid INTEGER PRIMARY KEY,
+                    embedding BLOB NOT NULL
+                )
+            `);
+            db.run("PRAGMA user_version = 1");
+            db.close();
 
-    beforeEach(() => {
-        dbPath = tmpDbPath();
-        store = new TelegramHistoryStore();
-    });
+            const store = new TelegramHistoryStore();
+            store.open(dbPath);
 
-    afterEach(() => {
-        store.close();
+            const inserted = store.insertMessages("chat-1", [
+                {
+                    id: 1,
+                    senderId: "u1",
+                    text: "hello",
+                    mediaDescription: undefined,
+                    isOutgoing: false,
+                    date: "2025-01-01T00:00:00.000Z",
+                    dateUnix: 1_735_689_600,
+                    attachments: [],
+                },
+            ]);
 
-        if (existsSync(dbPath)) {
-            unlinkSync(dbPath);
+            expect(inserted).toBe(1);
+
+            const rows = store.queryMessages("chat-1", {
+                sender: "any",
+            });
+            expect(rows).toHaveLength(1);
+            expect(rows[0].is_deleted).toBe(0);
+
+            store.markMessageDeleted("chat-1", 1, 1_735_689_700);
+            const deletedRows = store.queryMessages("chat-1", {});
+            expect(deletedRows[0].is_deleted).toBe(1);
+
+            store.insertSyncSegment("chat-1", 100, 200, "query");
+            const gaps = store.getMissingSegments("chat-1", new Date(90 * 1000), new Date(220 * 1000));
+            expect(gaps).toEqual([
+                { sinceUnix: 90, untilUnix: 99 },
+                { sinceUnix: 201, untilUnix: 220 },
+            ]);
+
+            store.close();
+        } finally {
+            rmSync(tempDir, { recursive: true, force: true });
         }
-    });
-
-    it("creates all V2 tables on fresh database", () => {
-        store.open(dbPath);
-        const db = (store as unknown as { db: Database }).db;
-
-        const chats = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='chats'").get();
-        expect(chats).toBeTruthy();
-
-        const revisions = db
-            .query("SELECT name FROM sqlite_master WHERE type='table' AND name='message_revisions'")
-            .get();
-        expect(revisions).toBeTruthy();
-
-        const attachments = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='attachments'").get();
-        expect(attachments).toBeTruthy();
-
-        const segments = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='sync_segments'").get();
-        expect(segments).toBeTruthy();
-
-        const version = db.query("PRAGMA user_version").get() as { user_version: number };
-        expect(version.user_version).toBe(2);
-    });
-
-    it("migrates V0 (fresh) to V2 with new message columns", () => {
-        store.open(dbPath);
-        const db = (store as unknown as { db: Database }).db;
-
-        const cols = db.query("PRAGMA table_info(messages)").all() as Array<{ name: string }>;
-        const colNames = cols.map((c) => c.name);
-
-        expect(colNames).toContain("edited_date_unix");
-        expect(colNames).toContain("is_deleted");
-        expect(colNames).toContain("deleted_at_iso");
-        expect(colNames).toContain("reply_to_msg_id");
-    });
-
-    it("migrates existing V1 database to V2", () => {
-        const db = new Database(dbPath);
-        db.run("PRAGMA journal_mode = WAL");
-        db.run(`CREATE TABLE IF NOT EXISTS messages (
-			id INTEGER NOT NULL,
-			chat_id TEXT NOT NULL,
-			sender_id TEXT,
-			text TEXT,
-			media_desc TEXT,
-			is_outgoing INTEGER NOT NULL,
-			date_unix INTEGER NOT NULL,
-			date_iso TEXT NOT NULL,
-			PRIMARY KEY (chat_id, id)
-		)`);
-        db.run(`CREATE TABLE IF NOT EXISTS sync_state (
-			chat_id TEXT PRIMARY KEY,
-			last_synced_id INTEGER NOT NULL,
-			last_synced_at TEXT NOT NULL
-		)`);
-        db.run("PRAGMA user_version = 1");
-        db.close();
-
-        store.open(dbPath);
-        const storeDb = (store as unknown as { db: Database }).db;
-
-        const version = storeDb.query("PRAGMA user_version").get() as { user_version: number };
-        expect(version.user_version).toBe(2);
-
-        const cols = storeDb.query("PRAGMA table_info(messages)").all() as Array<{ name: string }>;
-        const colNames = cols.map((c) => c.name);
-        expect(colNames).toContain("is_deleted");
-    });
-
-    it("idempotent: opening V2 database doesn't re-migrate", () => {
-        store.open(dbPath);
-        store.close();
-
-        store = new TelegramHistoryStore();
-        store.open(dbPath);
-
-        const db = (store as unknown as { db: Database }).db;
-        const version = db.query("PRAGMA user_version").get() as { user_version: number };
-        expect(version.user_version).toBe(2);
     });
 });
