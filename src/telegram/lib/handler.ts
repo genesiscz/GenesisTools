@@ -158,7 +158,7 @@ export function registerHandler(client: TGClient, options: HandlerOptions): void
 
             for (const r of results) {
                 if (r.success) {
-                    const extra = r.reply ? ` "${r.reply.slice(0, 60)}${r.reply.length > 60 ? "..." : ""}"` : "";
+                    const extra = r.reply ? ` "${r.reply}"` : "";
                     logger.info(`  ${pc.green(`[${r.action}]`)} OK${pc.dim(extra)}`);
 
                     if (r.action === "ask" && r.reply && ctx) {

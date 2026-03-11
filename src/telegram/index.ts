@@ -1,3 +1,4 @@
+import { configureLogger } from "@app/logger";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure";
@@ -7,6 +8,7 @@ import { registerListenCommand } from "./commands/listen";
 import { registerWatchCommand } from "./commands/watch";
 
 handleReadmeFlag(import.meta.url);
+configureLogger({ logToFile: true });
 
 const program = new Command();
 program
