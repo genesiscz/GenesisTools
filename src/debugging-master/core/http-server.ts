@@ -3,6 +3,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { LogEntry } from "@app/debugging-master/types";
 
+import { SafeJSON } from "@app/utils/json";
+
 const SESSIONS_DIR = join(homedir(), ".genesis-tools", "debugging-master", "sessions");
 
 function ensureDir(): void {
@@ -29,7 +31,7 @@ const VALID_LEVELS = new Set([
 
 function normalizeEntry(body: string): LogEntry {
     try {
-        const parsed = JSON.parse(body);
+        const parsed = SafeJSON.parse(body);
         const level = VALID_LEVELS.has(parsed.level) ? parsed.level : "raw";
         return {
             ...parsed,
@@ -72,7 +74,7 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
 
             // Health check
             if (req.method === "GET" && url.pathname === "/health") {
-                return new Response(JSON.stringify({ status: "ok", uptime: process.uptime() }), {
+                return new Response(SafeJSON.stringify({ status: "ok", uptime: process.uptime() }), {
                     headers: { "Content-Type": "application/json", ...corsHeaders },
                 });
             }
@@ -87,7 +89,7 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
                 return req.text().then((body) => {
                     const entry = normalizeEntry(body);
                     const path = join(SESSIONS_DIR, `${sessionName}.jsonl`);
-                    appendFileSync(path, `${JSON.stringify(entry)}\n`);
+                    appendFileSync(path, `${SafeJSON.stringify(entry)}\n`);
                     return new Response("ok", { status: 200, headers: corsHeaders });
                 });
             }

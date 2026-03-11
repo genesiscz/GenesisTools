@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 import axios from "axios";
 import { type EngineName, getEngine } from "./engines/index.js";
 import { limitToTokens } from "./utils/tokens.js";
@@ -19,7 +20,7 @@ export async function fetchText(url: string, headers?: Record<string, string>): 
         validateStatus: (s) => s >= 200 && s < 400,
         maxRedirects: 5,
     });
-    return typeof res.data === "string" ? res.data : JSON.stringify(res.data);
+    return typeof res.data === "string" ? res.data : SafeJSON.stringify(res.data);
 }
 
 export function compactCodeBlocks(markdown: string): string {

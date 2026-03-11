@@ -1,6 +1,8 @@
 import os from "node:os";
 import pathUtils from "node:path";
 
+import { SafeJSON } from "@app/utils/json";
+
 /**
  * Replaces the home directory with a tilde.
  * @param path - The path to tildeify.
@@ -50,7 +52,7 @@ export function normalizeFilePaths(input: string | string[] | unknown): string[]
     if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
         // Try parsing as JSON first (handles double-quoted strings)
         try {
-            const parsed = JSON.parse(trimmed);
+            const parsed = SafeJSON.parse(trimmed);
             if (Array.isArray(parsed)) {
                 return parsed.filter((item): item is string => typeof item === "string");
             }
@@ -59,7 +61,7 @@ export function normalizeFilePaths(input: string | string[] | unknown): string[]
             try {
                 // Convert single quotes to double quotes for JSON compatibility
                 const pythonToJson = trimmed.replace(/'/g, '"');
-                const parsed = JSON.parse(pythonToJson);
+                const parsed = SafeJSON.parse(pythonToJson);
                 if (Array.isArray(parsed)) {
                     return parsed.filter((item): item is string => typeof item === "string");
                 }

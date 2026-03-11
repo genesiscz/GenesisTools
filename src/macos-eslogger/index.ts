@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import logger, { consoleLog } from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
 import { checkbox, select } from "@inquirer/prompts";
@@ -837,12 +838,12 @@ function monitorWithESF(
             }
 
             try {
-                const event: ESLoggerEvent = JSON.parse(line);
+                const event: ESLoggerEvent = SafeJSON.parse(line);
                 eventCount++;
 
                 if (debug) {
                     console.log(chalk.gray("--- RAW EVENT ---"));
-                    console.log(JSON.stringify(event, null, 2));
+                    console.log(SafeJSON.stringify(event, null, 2));
                     console.log(chalk.gray("--- END RAW ---"));
                 }
 
@@ -867,7 +868,7 @@ function monitorWithESF(
                             `[FORMAT_ERROR] Failed to format ${eventTypeName}: ${formatErr instanceof Error ? formatErr.message : String(formatErr)}`
                         );
                         if (debug) {
-                            consoleLog.warn(`Event data: ${JSON.stringify(event, null, 2)}`);
+                            consoleLog.warn(`Event data: ${SafeJSON.stringify(event, null, 2)}`);
                         }
                     }
                 }

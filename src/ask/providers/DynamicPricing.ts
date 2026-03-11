@@ -1,4 +1,5 @@
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
 import type { OpenRouterModelResponse, OpenRouterModelsResponse, OpenRouterPricing, PricingInfo } from "@ask/types";
 import type { LanguageModelUsage } from "ai";
@@ -220,7 +221,7 @@ export class DynamicPricingManager {
     async calculateCost(provider: string, model: string, usage: LanguageModelUsage): Promise<number> {
         // DEBUG: Log the usage object structure
         logger.debug(`[DynamicPricing] calculateCost called for ${provider}/${model}`);
-        logger.debug({ usage: JSON.stringify(usage, null, 2) }, `[DynamicPricing] usage object`);
+        logger.debug({ usage: SafeJSON.stringify(usage, null, 2) }, `[DynamicPricing] usage object`);
         logger.debug({ type: typeof usage }, `[DynamicPricing] usage type`);
         logger.debug({ keys: Object.keys(usage || {}) }, `[DynamicPricing] usage keys`);
         logger.debug({ inputTokens: usage.inputTokens }, `[DynamicPricing] usage.inputTokens`);

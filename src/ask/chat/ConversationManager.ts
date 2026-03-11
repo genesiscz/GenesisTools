@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { ChatMessage, ChatSession, ConversationMetadata } from "@ask/types";
 import { write } from "bun";
@@ -35,7 +36,7 @@ export class ConversationManager {
                 totalCost: await this.calculateTotalCost(session),
             };
 
-            await write(filePath, JSON.stringify(sessionData, null, 2));
+            await write(filePath, SafeJSON.stringify(sessionData, null, 2));
             logger.debug(`Conversation saved: ${session.id}`);
         } catch (error) {
             logger.error(`Failed to save conversation ${session.id}: ${error}`);
@@ -52,7 +53,7 @@ export class ConversationManager {
             }
 
             const data = readFileSync(filePath, "utf-8");
-            const session = JSON.parse(data) as ChatSession;
+            const session = SafeJSON.parse(data) as ChatSession;
 
             // Convert timestamp strings back to Date objects
             session.messages = session.messages.map(
@@ -88,7 +89,7 @@ export class ConversationManager {
                     const filePath = join(this.conversationsDir, file);
                     const _stats = statSync(filePath);
                     const data = readFileSync(filePath, "utf-8");
-                    const session = JSON.parse(data) as ChatSession;
+                    const session = SafeJSON.parse(data) as ChatSession;
 
                     const metadata: ConversationMetadata = {
                         sessionId: session.id,
@@ -204,7 +205,7 @@ export class ConversationManager {
 
             switch (format) {
                 case "json":
-                    return JSON.stringify(session, null, 2);
+                    return SafeJSON.stringify(session, null, 2);
 
                 case "markdown":
                     return this.convertToMarkdown(session);

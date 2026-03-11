@@ -1,5 +1,6 @@
 import type { IndexedEntry, OutputFormat, SessionStats } from "@app/har-analyzer/types.ts";
 import { formatBytes, formatDuration } from "@app/utils/format.ts";
+import { SafeJSON } from "@app/utils/json";
 import { formatTable } from "@app/utils/table.ts";
 
 export function truncatePath(path: string, maxLen: number): string {
@@ -94,7 +95,7 @@ export function formatDashboard(stats: SessionStats, sourceFile: string): string
 export async function printFormatted(text: string, format: OutputFormat): Promise<void> {
     switch (format) {
         case "json":
-            console.log(JSON.stringify({ output: text }));
+            console.log(SafeJSON.stringify({ output: text }));
             break;
         case "toon": {
             const { encode } = await import("@toon-format/toon");

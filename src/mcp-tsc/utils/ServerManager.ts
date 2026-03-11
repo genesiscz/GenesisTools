@@ -5,6 +5,8 @@ import type { ServerInfo } from "@app/mcp-tsc/core/interfaces.js";
 import { LspServer } from "@app/mcp-tsc/providers/LspServer.js";
 import { ensureServersDir, getServerInfoPath, SERVERS_DIR } from "@app/mcp-tsc/utils/helpers.js";
 
+import { SafeJSON } from "@app/utils/json";
+
 // Global map to store persistent LSP servers
 const persistentServers = new Map<string, LspServer>();
 
@@ -41,7 +43,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
         const infoPath = getServerInfoPath(cwd);
         if (existsSync(infoPath)) {
             try {
-                const info: ServerInfo = JSON.parse(readFileSync(infoPath, "utf-8"));
+                const info: ServerInfo = SafeJSON.parse(readFileSync(infoPath, "utf-8"));
                 logger.debug(
                     {
                         component: "mcp-tsc",
@@ -107,7 +109,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
     const infoPath = getServerInfoPath(cwd);
     if (existsSync(infoPath)) {
         try {
-            const info: ServerInfo = JSON.parse(readFileSync(infoPath, "utf-8"));
+            const info: ServerInfo = SafeJSON.parse(readFileSync(infoPath, "utf-8"));
             logger.warn(
                 {
                     component: "mcp-tsc",
@@ -184,7 +186,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
         cwd,
         started: Date.now(),
     };
-    writeFileSync(infoPath, JSON.stringify(serverInfo, null, 2));
+    writeFileSync(infoPath, SafeJSON.stringify(serverInfo, null, 2));
     logger.debug(
         {
             component: "mcp-tsc",
@@ -234,7 +236,7 @@ export async function killAllServers(): Promise<number> {
     for (const file of files) {
         try {
             const infoPath = path.join(SERVERS_DIR, file);
-            const info: ServerInfo = JSON.parse(readFileSync(infoPath, "utf-8"));
+            const info: ServerInfo = SafeJSON.parse(readFileSync(infoPath, "utf-8"));
 
             // Try to kill in-memory server
             const server = persistentServers.get(info.cwd);
@@ -263,7 +265,7 @@ export function listServers(): ServerInfo[] {
     const servers: ServerInfo[] = [];
     for (const file of files) {
         try {
-            const info: ServerInfo = JSON.parse(readFileSync(path.join(SERVERS_DIR, file), "utf-8"));
+            const info: ServerInfo = SafeJSON.parse(readFileSync(path.join(SERVERS_DIR, file), "utf-8"));
             servers.push(info);
         } catch (_error) {
             // Ignore errors for corrupt files

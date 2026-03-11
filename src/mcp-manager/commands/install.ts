@@ -3,6 +3,7 @@ import { parseCommandString, parseEnvString, parseHeaderString } from "@app/mcp-
 import { readUnifiedConfig, stripMeta, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import { SafeJSON } from "@app/utils/json";
 import { ExitPromptError } from "@inquirer/core";
 import { input, search, select } from "@inquirer/prompts";
 import chalk from "chalk";
@@ -185,7 +186,7 @@ export async function installServer(
                 try {
                     const inputHeaders = await input({
                         message: 'Enter optional headers ("Key: value" format or JSON) or leave empty:',
-                        default: serverConfig?.headers ? JSON.stringify(serverConfig.headers) : "",
+                        default: serverConfig?.headers ? SafeJSON.stringify(serverConfig.headers) : "",
                     });
 
                     if (inputHeaders.trim()) {
@@ -227,7 +228,7 @@ export async function installServer(
                 try {
                     const inputEnv = await input({
                         message: "Enter ENV variables (JSON format recommended) or leave empty:",
-                        default: serverConfig?.env ? JSON.stringify(serverConfig.env) : "",
+                        default: serverConfig?.env ? SafeJSON.stringify(serverConfig.env) : "",
                     });
 
                     if (inputEnv.trim()) {

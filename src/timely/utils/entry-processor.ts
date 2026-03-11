@@ -6,6 +6,7 @@
 import { join } from "node:path";
 import type { TimelyEntry } from "@app/timely/types/api";
 import { formatDuration as _formatDuration } from "@app/utils/format";
+import { SafeJSON } from "@app/utils/json";
 import type { Storage } from "@app/utils/storage";
 import { getDatesInMonth } from "./date";
 
@@ -424,7 +425,7 @@ async function processDay(
             return { rawEntries: [], summary: "" };
         }
 
-        const entries = JSON.parse(rawData) as ProcessedEntry[];
+        const entries = SafeJSON.parse(rawData) as ProcessedEntry[];
         const workEntriesRaw = entries.filter((e) => isWorkRelated(e));
 
         const workEntries = workEntriesRaw.map(extractDetailedContext);

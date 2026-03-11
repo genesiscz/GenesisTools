@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { SafeJSON } from "@app/utils/json";
 import { formatSchema, inferSchema } from "./json-schema";
 
 describe("inferSchema", () => {
@@ -90,7 +91,7 @@ describe("formatSchema", () => {
     describe("schema mode", () => {
         it("returns JSON schema string", () => {
             const result = formatSchema("hello", "schema");
-            const parsed = JSON.parse(result);
+            const parsed = SafeJSON.parse(result);
             expect(parsed.type).toBe("string");
         });
     });

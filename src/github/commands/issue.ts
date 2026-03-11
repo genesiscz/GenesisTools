@@ -41,6 +41,7 @@ import {
     toCommentRecord,
     verbose,
 } from "@app/utils/github/utils";
+import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -564,7 +565,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
                 event_type: e.event,
                 actor: e.actor,
                 created_at: e.createdAt,
-                data_json: JSON.stringify({ details: e.details }),
+                data_json: SafeJSON.stringify({ details: e.details }),
             }))
         );
     }

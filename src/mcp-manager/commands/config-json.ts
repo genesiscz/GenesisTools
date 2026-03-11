@@ -3,6 +3,8 @@ import { readUnifiedConfig, stripMetaFromServers } from "@app/mcp-manager/utils/
 import type { UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { copyToClipboard } from "@app/utils/clipboard";
 
+import { SafeJSON } from "@app/utils/json";
+
 export interface ConfigJsonOptions {
     client?: "standard" | "cursor" | "claude";
     enabledOnly?: boolean;
@@ -122,7 +124,7 @@ export async function configJson(options: ConfigJsonOptions = {}): Promise<void>
         }
     }
 
-    const jsonOutput = JSON.stringify(output, null, 2);
+    const jsonOutput = SafeJSON.stringify(output, null, 2);
 
     if (shouldCopyToClipboard) {
         await copyToClipboard(jsonOutput, { silent: true });

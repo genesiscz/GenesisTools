@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { spawn } from "bun";
 
 export type FFProbeResult = {
@@ -221,7 +222,7 @@ export class AudioProcessor {
                 duration?: string;
             }
 
-            const probeData = JSON.parse(stdout) as {
+            const probeData = SafeJSON.parse(stdout) as {
                 streams?: FFprobeStream[];
                 format?: { duration?: string; size?: string; bit_rate?: string };
             };

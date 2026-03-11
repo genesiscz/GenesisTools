@@ -12,6 +12,7 @@ import { exitWithAuthGuide } from "@app/azure-devops/cli.utils";
 import type { AzureConfig } from "@app/azure-devops/types";
 import { getLocalConfigDir, parseAzureDevOpsUrl } from "@app/azure-devops/utils";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { $ } from "bun";
 import type { Command } from "commander";
 
@@ -65,12 +66,12 @@ async function handleConfigure(url: string): Promise<void> {
 
     const configPath = join(configDir, "config.json");
     logger.debug(`[configure] Writing config to: ${configPath}`);
-    writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
+    writeFileSync(configPath, SafeJSON.stringify(newConfig, null, 2));
 
     console.log(`\n✅ Configuration saved to: ${configPath}`);
     console.log("\nConfig values:");
     console.log("```json");
-    console.log(JSON.stringify(newConfig, null, 2));
+    console.log(SafeJSON.stringify(newConfig, null, 2));
     console.log("```");
 
     // Configure az devops defaults

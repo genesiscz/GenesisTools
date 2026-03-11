@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import logger from "@app/logger";
 import { copyToClipboard } from "@app/utils/clipboard";
+import { SafeJSON } from "@app/utils/json";
 import type { OutputConfig, OutputFormat } from "@ask/types";
 import { write } from "bun";
 import pc from "picocolors";
@@ -99,7 +100,7 @@ export class OutputManager {
             ...(metadata && { metadata }),
         };
 
-        const jsonOutput = JSON.stringify(response, null, 2);
+        const jsonOutput = SafeJSON.stringify(response, null, 2);
         console.log(jsonOutput);
     }
 

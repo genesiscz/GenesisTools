@@ -3,6 +3,7 @@ import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/co
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { DiffUtil } from "@app/utils/diff";
+import { SafeJSON } from "@app/utils/json";
 import { ExitPromptError } from "@inquirer/core";
 import { checkbox, confirm, input, search } from "@inquirer/prompts";
 import chalk from "chalk";
@@ -91,8 +92,8 @@ export async function renameServer(
     if (hasConflictInUnified) {
         logger.warn(`\n⚠ Conflict detected: Server '${finalNewName}' already exists in unified config.`);
 
-        const oldServerConfig = JSON.stringify(config.mcpServers[finalOldName], null, 2);
-        const existingServerConfig = JSON.stringify(config.mcpServers[finalNewName], null, 2);
+        const oldServerConfig = SafeJSON.stringify(config.mcpServers[finalOldName], null, 2);
+        const existingServerConfig = SafeJSON.stringify(config.mcpServers[finalNewName], null, 2);
 
         logger.info(chalk.bold(`\nExisting server '${finalNewName}' configuration:`));
         logger.info(existingServerConfig);
@@ -225,8 +226,8 @@ async function renameServerInProvider(
     // Check for conflict - if new name already exists in provider
     if (hasNewServer && unifiedServers[newName]) {
         // Show diff for this provider
-        const existingConfig = JSON.stringify(unifiedServers[newName], null, 2);
-        const replacingConfig = JSON.stringify(serverConfig, null, 2);
+        const existingConfig = SafeJSON.stringify(unifiedServers[newName], null, 2);
+        const replacingConfig = SafeJSON.stringify(serverConfig, null, 2);
 
         logger.warn(`\n⚠ Conflict in ${provider.getName()}: Server '${newName}' already exists.`);
 

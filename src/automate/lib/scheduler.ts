@@ -1,4 +1,5 @@
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import type { AutomateDatabase, ScheduleRow } from "./db";
 import { runPreset } from "./engine";
 import { computeNextRunAt, parseInterval } from "./interval-parser";
@@ -63,7 +64,7 @@ async function executeDueSchedule(db: AutomateDatabase, schedule: ScheduleRow): 
     logger.info({ name: schedule.name, preset: schedule.preset_name }, "Executing scheduled preset");
     const preset = await loadPreset(schedule.preset_name);
     const runLogger = createRunLogger(preset.name, schedule.id, "schedule", db);
-    const vars = schedule.vars_json ? (JSON.parse(schedule.vars_json) as Record<string, string>) : undefined;
+    const vars = schedule.vars_json ? (SafeJSON.parse(schedule.vars_json) as Record<string, string>) : undefined;
     const options = {
         vars: vars ? Object.entries(vars).map(([k, v]) => `${k}=${v}`) : undefined,
         verbose: false,

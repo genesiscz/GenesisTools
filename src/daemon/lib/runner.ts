@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { SafeJSON } from "@app/utils/json";
 import type { DaemonTask, RunResult } from "./types";
 
 function safeTimestamp(): string {
@@ -7,7 +8,7 @@ function safeTimestamp(): string {
 }
 
 function appendJsonl(path: string, data: Record<string, unknown>): void {
-    appendFileSync(path, `${JSON.stringify(data)}\n`);
+    appendFileSync(path, `${SafeJSON.stringify(data)}\n`);
 }
 
 async function streamLines(

@@ -1,4 +1,5 @@
 import { formatDuration as _formatDuration } from "@app/utils/format";
+import { SafeJSON } from "@app/utils/json";
 import type { Args, CLIOptions, OutputFormat } from "@ask/types";
 import { Command } from "commander";
 
@@ -212,7 +213,7 @@ export function formatError(error: unknown, context?: string): string {
     } else if (typeof error === "string") {
         message += error;
     } else {
-        message += JSON.stringify(error);
+        message += SafeJSON.stringify(error);
     }
 
     return message;

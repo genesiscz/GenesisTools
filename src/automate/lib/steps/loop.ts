@@ -3,6 +3,7 @@
 import type { StepContext } from "@app/automate/lib/registry";
 import { registerStepCatalog, registerStepHandler, resolveStepHandler } from "@app/automate/lib/registry";
 import type { ForEachStepParams, PresetStep, StepResult, WhileStepParams } from "@app/automate/lib/types";
+import { SafeJSON } from "@app/utils/json";
 import { makeResult } from "./helpers";
 
 // --- forEach ---
@@ -54,7 +55,7 @@ async function forEachHandler(step: PresetStep, ctx: StepContext): Promise<StepR
                     (match) => {
                         const expr = match.replace(/\{\{\s*|\s*\}\}/g, "");
                         const val = childCtx.evaluate(expr);
-                        return typeof val === "string" ? val : JSON.stringify(val);
+                        return typeof val === "string" ? val : SafeJSON.stringify(val);
                     }
                 );
                 result = result.replace(new RegExp(`\\{\\{\\s*${indexVar}\\s*\\}\\}`, "g"), String(index));

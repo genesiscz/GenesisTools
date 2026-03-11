@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 // Core types
 export type LogLevel = {
     name: string;
@@ -109,7 +110,7 @@ function stringify(data: unknown): string {
     }
 
     try {
-        return JSON.stringify(
+        return SafeJSON.stringify(
             data,
             (_key, value) => {
                 if (value && typeof value === "object") {

@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 /**
  * Utility for formatting MCP response content consistently
  */
@@ -18,12 +19,12 @@ export function formatTextContent(
     }
 
     if (format === "json") {
-        const jsonString = typeof content === "string" ? content : JSON.stringify(content, null, 2);
+        const jsonString = typeof content === "string" ? content : SafeJSON.stringify(content, null, 2);
         return `\`\`\`json\n${jsonString}\n\`\`\``;
     }
 
     // Plain text (with backticks for better readability if it contains special characters)
-    const textString = typeof content === "object" ? JSON.stringify(content, null, 2) : content;
+    const textString = typeof content === "object" ? SafeJSON.stringify(content, null, 2) : content;
 
     // If it's a multi-line string or contains formatting, wrap in code fence
     if (textString.includes("\n") || textString.includes("```")) {

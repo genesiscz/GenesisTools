@@ -1,4 +1,5 @@
 import { copyToClipboard } from "@app/utils/clipboard";
+import { SafeJSON } from "@app/utils/json";
 import { formatSchema, type OutputMode } from "@app/utils/json-schema";
 import { Command, Option } from "commander";
 
@@ -43,7 +44,7 @@ program
 
         let value: unknown;
         try {
-            value = JSON.parse(raw);
+            value = SafeJSON.parse(raw);
         } catch {
             console.error("Failed to parse JSON input.");
             process.exit(1);

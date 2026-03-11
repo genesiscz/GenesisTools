@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import pino from "pino";
 import PinoPretty from "pino-pretty";
@@ -194,7 +195,7 @@ export const createConsoleLoggerRaw = (logLevel: LogLevel = currentLevel): RawCo
                     return arg.message;
                 }
                 try {
-                    return JSON.stringify(arg);
+                    return SafeJSON.stringify(arg);
                 } catch {
                     return String(arg);
                 }

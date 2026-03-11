@@ -3,6 +3,7 @@
 import type { StepContext } from "@app/automate/lib/registry";
 import { registerStepCatalog, registerStepHandler } from "@app/automate/lib/registry";
 import type { ArrayStepParams, JsonStepParams, PresetStep, StepResult, TextStepParams } from "@app/automate/lib/types";
+import { SafeJSON } from "@app/utils/json";
 import { makeResult } from "./helpers";
 
 // jsonpath has no TypeScript declarations
@@ -23,7 +24,7 @@ async function jsonHandler(step: PresetStep, ctx: StepContext): Promise<StepResu
                 }
 
                 const input = ctx.interpolate(params.input);
-                const parsed = JSON.parse(input);
+                const parsed = SafeJSON.parse(input);
                 return makeResult("success", parsed, start);
             }
 
@@ -34,7 +35,7 @@ async function jsonHandler(step: PresetStep, ctx: StepContext): Promise<StepResu
 
                 const input = ctx.evaluate(params.input);
                 const indent = params.indent ?? 2;
-                const result = JSON.stringify(input, null, indent);
+                const result = SafeJSON.stringify(input, null, indent);
                 return makeResult("success", result, start);
             }
 

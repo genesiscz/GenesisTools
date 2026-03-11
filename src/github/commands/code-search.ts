@@ -4,6 +4,7 @@ import logger from "@app/logger";
 import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
 import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
+import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -71,7 +72,7 @@ async function searchCode(query: string, options: CodeSearchOptions): Promise<Co
 
 function formatCodeResults(results: CodeSearchResult[], format: string): string {
     if (format === "json") {
-        return JSON.stringify(results, null, 2);
+        return SafeJSON.stringify(results, null, 2);
     }
 
     // Default markdown/AI format

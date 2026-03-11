@@ -1,5 +1,6 @@
 import logger from "@app/logger";
 import type { OAuth2Tokens, OAuthApplication } from "@app/timely/types";
+import { SafeJSON } from "@app/utils/json";
 import type { Storage } from "@app/utils/storage";
 import { ExitPromptError } from "@inquirer/core";
 import { input, password } from "@inquirer/prompts";
@@ -104,7 +105,7 @@ export class TimelyApiClient {
             headers: {
                 "Content-Type": "application/json",
             },
-            body: JSON.stringify({
+            body: SafeJSON.stringify({
                 grant_type: "refresh_token",
                 refresh_token: refreshToken,
                 client_id: oauth.client_id,
@@ -140,7 +141,7 @@ export class TimelyApiClient {
             headers: {
                 "Content-Type": "application/json",
             },
-            body: JSON.stringify({
+            body: SafeJSON.stringify({
                 grant_type: "authorization_code",
                 code,
                 client_id: oauth.client_id,
@@ -205,7 +206,7 @@ export class TimelyApiClient {
         const response = await fetch(url.toString(), {
             method,
             headers,
-            body: body ? JSON.stringify(body) : undefined,
+            body: body ? SafeJSON.stringify(body) : undefined,
         });
 
         if (!response.ok) {
@@ -219,7 +220,7 @@ export class TimelyApiClient {
             return {} as T;
         }
 
-        return JSON.parse(text) as T;
+        return SafeJSON.parse(text) as T;
     }
 
     /**

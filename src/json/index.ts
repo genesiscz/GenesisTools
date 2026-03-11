@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { decode, encode } from "@toon-format/toon";
 import { Command } from "commander";
@@ -17,7 +18,7 @@ function parseJSONL(input: string): unknown[] | null {
 
     // First, try parsing as a single JSON object/array
     try {
-        JSON.parse(trimmed);
+        SafeJSON.parse(trimmed);
         return null; // It's regular JSON, not JSONL
     } catch {
         // Not a single JSON, try JSONL
@@ -61,7 +62,7 @@ function parseJSONL(input: string): unknown[] | null {
             if (depth === 0) {
                 // Found a complete JSON object
                 try {
-                    const parsed = JSON.parse(currentObject.trim());
+                    const parsed = SafeJSON.parse(currentObject.trim());
                     objects.push(parsed);
                     currentObject = "";
                     // Skip whitespace and newlines before next object
@@ -103,7 +104,7 @@ function extractEmbeddedJson(input: string): string | null {
         const candidate = input.slice(startIdx, endIdx + 1);
 
         try {
-            JSON.parse(candidate);
+            SafeJSON.parse(candidate);
             return candidate;
         } catch {
             // Not valid JSON, try next
@@ -116,7 +117,7 @@ function extractEmbeddedJson(input: string): string | null {
 function detectFormat(input: string): Format {
     // Try JSON first
     try {
-        JSON.parse(input);
+        SafeJSON.parse(input);
         return "json";
     } catch {
         // Try JSONL (newline-delimited JSON)
@@ -170,7 +171,7 @@ function calculateSavings(original: number, compressed: number): { percentage: n
  * Compare TOON vs compact JSON sizes, log to stderr if verbose, return the winner.
  */
 function logSizeComparison(toonOutput: string, jsonData: unknown, verbose: boolean): "toon" | "json" {
-    const compactJson = JSON.stringify(jsonData);
+    const compactJson = SafeJSON.stringify(jsonData);
     const toonSize = calculateSize(toonOutput);
     const jsonSize = calculateSize(compactJson);
     const toonWins = toonSize < jsonSize;
@@ -209,7 +210,7 @@ function outputSmallestFormat(jsonData: unknown, verbose: boolean): void {
             console.error(`Returning compact JSON format`);
         }
 
-        console.log(JSON.stringify(jsonData));
+        console.log(SafeJSON.stringify(jsonData));
     }
 }
 
@@ -218,7 +219,7 @@ function outputSmallestFormat(jsonData: unknown, verbose: boolean): void {
  */
 function toonToJson(input: string): string {
     const decoded = decode(input);
-    return JSON.stringify(decoded, null, 2);
+    return SafeJSON.stringify(decoded, null, 2);
 }
 
 async function main(): Promise<void> {
@@ -287,9 +288,9 @@ async function main(): Promise<void> {
             jsonData = jsonlData;
         } else if (detectedFormat === "embedded-json") {
             const extracted = extractEmbeddedJson(input);
-            jsonData = JSON.parse(extracted!);
+            jsonData = SafeJSON.parse(extracted!);
         } else if (detectedFormat === "json") {
-            jsonData = JSON.parse(input);
+            jsonData = SafeJSON.parse(input);
         }
 
         const formatLabel =
@@ -337,7 +338,7 @@ async function main(): Promise<void> {
             if (detectedFormat === "toon") {
                 console.log(toonToJson(input));
             } else {
-                console.log(JSON.stringify(jsonData, null, 2));
+                console.log(SafeJSON.stringify(jsonData, null, 2));
             }
 
             return;

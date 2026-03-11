@@ -3,6 +3,7 @@ import path from "node:path";
 import type { DiagnosticsResult, TSServer } from "@app/mcp-tsc/core/interfaces.js";
 import type { GetTsDiagnosticsArgs, GetTsHoverArgs, GetTsHoverResponse } from "@app/mcp-tsc/types/mcp.js";
 import { filterByTsconfig, resolveFiles } from "@app/mcp-tsc/utils/FileResolver.js";
+import { SafeJSON } from "@app/utils/json";
 import { normalizeFilePaths } from "@app/utils.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -174,7 +175,7 @@ export class McpAdapter {
                             type: "text",
                             text: `No files found matching the specified patterns.\nSearched in: ${
                                 this.cwd
-                            }\nPatterns: ${JSON.stringify(filePatterns)}`,
+                            }\nPatterns: ${SafeJSON.stringify(filePatterns)}`,
                         },
                     ],
                 };
@@ -355,7 +356,7 @@ Please retry with a lower timeout (e.g., timeout=${retryTimeoutSeconds}) to get 
                 content: [
                     {
                         type: "text",
-                        text: `\`\`\`json\n${JSON.stringify(response, null, 2)}\n\`\`\``,
+                        text: `\`\`\`json\n${SafeJSON.stringify(response, null, 2)}\n\`\`\``,
                     },
                 ],
             };

@@ -1,4 +1,5 @@
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { ModelInfo, PricingInfo } from "@ask/types";
@@ -407,7 +408,7 @@ async function showPricingJSON(providerFilter?: string, filterCapabilities?: str
         };
     }
 
-    console.log(JSON.stringify(output, null, 2));
+    console.log(SafeJSON.stringify(output, null, 2));
 }
 
 export async function showPricing(options: ModelsOptions = {}): Promise<void> {

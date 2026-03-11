@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:f
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { withFileLock as acquireFileLock, LockTimeoutError } from "./file-lock";
 
 /**
@@ -86,7 +87,7 @@ export class Storage {
                 return null;
             }
             const content = await Bun.file(this.configPath).text();
-            return JSON.parse(content) as T;
+            return SafeJSON.parse(content) as T;
         } catch (error) {
             logger.error(`Failed to read config: ${error}`);
             return null;
@@ -138,7 +139,7 @@ export class Storage {
         }
         current[keys[keys.length - 1]] = value;
 
-        await Bun.write(this.configPath, JSON.stringify(config, null, 2));
+        await Bun.write(this.configPath, SafeJSON.stringify(config, null, 2));
         logger.debug(`Config updated: ${key}`);
     }
 
@@ -148,7 +149,7 @@ export class Storage {
      */
     async setConfig<T extends object>(config: T): Promise<void> {
         await this.ensureDirs();
-        await Bun.write(this.configPath, JSON.stringify(config, null, 2));
+        await Bun.write(this.configPath, SafeJSON.stringify(config, null, 2));
         logger.debug(`Config saved`);
     }
 
@@ -242,7 +243,7 @@ export class Storage {
         }
 
         // Save raw JSON without metadata wrapper
-        const content = JSON.stringify(data, null, 2);
+        const content = SafeJSON.stringify(data, null, 2);
         await Bun.write(filePath, content);
         logger.debug(`Cache written: ${filePath}`);
     }
@@ -264,7 +265,7 @@ export class Storage {
 
         try {
             const content = await Bun.file(filePath).text();
-            return JSON.parse(content) as T;
+            return SafeJSON.parse(content) as T;
         } catch {
             return null;
         }
@@ -443,7 +444,7 @@ export class Storage {
                 try {
                     if (existsSync(filePath)) {
                         const content = await Bun.file(filePath).text();
-                        current = JSON.parse(content) as T;
+                        current = SafeJSON.parse(content) as T;
                     }
                 } catch (error) {
                     logger.debug(`atomicUpdate: Could not read existing file at ${filePath}: ${error}`);
@@ -458,7 +459,7 @@ export class Storage {
                     mkdirSync(dir, { recursive: true });
                 }
 
-                await Bun.write(filePath, JSON.stringify(updated, null, 2));
+                await Bun.write(filePath, SafeJSON.stringify(updated, null, 2));
                 logger.debug(`Atomic update complete: ${filePath}`);
 
                 return updated;

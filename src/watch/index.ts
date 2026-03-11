@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { consoleLog as logger } from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
 import chalk from "chalk";
 import chokidar from "chokidar";
@@ -67,7 +68,7 @@ const cwd = process.cwd();
 // For debug purposes
 if (options.verbose) {
     logger.info(`CWD: ${cwd}`);
-    logger.info(`Patterns: ${JSON.stringify(globPatterns)}`);
+    logger.info(`Patterns: ${SafeJSON.stringify(globPatterns)}`);
 }
 
 const log = {

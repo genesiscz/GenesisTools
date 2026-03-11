@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 import { type AutomateDatabase, getDb } from "./db";
 import type { StepResult } from "./types";
 
@@ -24,7 +25,7 @@ export function createRunLogger(
                 result.output != null
                     ? typeof result.output === "string"
                         ? result.output
-                        : JSON.stringify(result.output)
+                        : SafeJSON.stringify(result.output)
                     : null;
             database.logStep(
                 runId,

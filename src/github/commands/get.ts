@@ -7,6 +7,7 @@ import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
 import { buildRawGitHubUrl, parseGitHubCommitUrl, parseGitHubFileUrl } from "@app/utils/github/url-parser";
 import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
+import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -261,7 +262,7 @@ function formatCommitMd(commit: GetCommitData): string {
 async function handleCommitUrl(parsed: GitHubCommitUrl, options: GetOptions): Promise<void> {
     const commit = await fetchCommit(parsed.owner, parsed.repo, parsed.sha);
 
-    const content = options.format === "json" ? JSON.stringify(commit, null, 2) : formatCommitMd(commit);
+    const content = options.format === "json" ? SafeJSON.stringify(commit, null, 2) : formatCommitMd(commit);
 
     if (options.clipboard) {
         await copyToClipboard(content, { silent: true });

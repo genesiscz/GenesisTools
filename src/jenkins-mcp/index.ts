@@ -1,5 +1,6 @@
-#!/usr/bin/env node
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+#!/usr/bin/env nodeimport { Server } from "@modelcontextprotocol/sdk/server/index.js";
+
+import { SafeJSON } from "@app/utils/json";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
 import axios from "axios";
@@ -336,7 +337,7 @@ class JenkinsServer {
             content: [
                 {
                     type: "text",
-                    text: JSON.stringify(
+                    text: SafeJSON.stringify(
                         {
                             building: response.data.building,
                             result: response.data.result,
@@ -422,7 +423,7 @@ class JenkinsServer {
             content: [
                 {
                     type: "text",
-                    text: JSON.stringify(
+                    text: SafeJSON.stringify(
                         {
                             folderPath: folderPath || "root",
                             totalJobs: jobList.length,
@@ -464,7 +465,7 @@ class JenkinsServer {
             content: [
                 {
                     type: "text",
-                    text: JSON.stringify(
+                    text: SafeJSON.stringify(
                         {
                             jobPath: args.jobPath,
                             totalBuilds: buildHistory.length,
@@ -520,7 +521,7 @@ class JenkinsServer {
             content: [
                 {
                     type: "text",
-                    text: JSON.stringify(
+                    text: SafeJSON.stringify(
                         {
                             totalQueueItems: queue.length,
                             queue: queue,
@@ -570,7 +571,7 @@ class JenkinsServer {
             content: [
                 {
                     type: "text",
-                    text: JSON.stringify(config, null, 2),
+                    text: SafeJSON.stringify(config, null, 2),
                 },
             ],
         };

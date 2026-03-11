@@ -1,5 +1,6 @@
 import logger from "@app/logger";
 import type { TimelyService } from "@app/timely/api/service";
+import { SafeJSON } from "@app/utils/json";
 import type { Storage } from "@app/utils/storage";
 import { ExitPromptError } from "@inquirer/core";
 import { select } from "@inquirer/prompts";
@@ -49,7 +50,7 @@ async function accountsAction(storage: Storage, service: TimelyService, options:
 
     // Display accounts
     if (options.format === "json") {
-        console.log(JSON.stringify(accounts, null, 2));
+        console.log(SafeJSON.stringify(accounts, null, 2));
         return;
     }
 

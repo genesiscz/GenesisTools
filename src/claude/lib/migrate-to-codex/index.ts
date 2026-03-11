@@ -14,6 +14,8 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 
+import { SafeJSON } from "@app/utils/json";
+
 export type MigrationScope = "project" | "global" | "both";
 export type SingleScope = "project" | "global";
 export type MigrationComponent = "skills" | "commands" | "instructions";
@@ -920,7 +922,7 @@ function isSameSymlink(targetPath: string, sourcePath: string): boolean {
 function parseJsonFile(filePath: string, warnings: string[]): Record<string, unknown> | null {
     try {
         const content = readFileSync(filePath, "utf-8");
-        return JSON.parse(content) as Record<string, unknown>;
+        return SafeJSON.parse(content) as Record<string, unknown>;
     } catch (error) {
         warnings.push(
             `Failed to parse JSON file ${filePath}: ${error instanceof Error ? error.message : String(error)}`

@@ -10,6 +10,8 @@ import { homedir } from "node:os";
 import { join, sep } from "node:path";
 import logger from "@app/logger";
 
+import { SafeJSON } from "@app/utils/json";
+
 const DEFAULT_CACHE_DIR = join(homedir(), ".genesis-tools", "claude-history");
 const DB_NAME = "index.db";
 
@@ -348,7 +350,7 @@ function safeJsonParse<T>(input: string | null | undefined, fallback: T): T {
         return fallback;
     }
     try {
-        return JSON.parse(input) as T;
+        return SafeJSON.parse(input) as T;
     } catch {
         logger.warn(`Failed to parse JSON from cache, using fallback. Input: ${input.slice(0, 100)}...`);
         return fallback;
@@ -402,11 +404,11 @@ export function upsertDailyStats(stats: DailyStats): void {
         stats.conversations,
         stats.messages,
         stats.subagentSessions,
-        JSON.stringify(stats.toolCounts),
-        JSON.stringify(stats.hourlyActivity),
-        JSON.stringify(stats.tokenUsage),
-        JSON.stringify(stats.modelCounts),
-        JSON.stringify(stats.branchCounts),
+        SafeJSON.stringify(stats.toolCounts),
+        SafeJSON.stringify(stats.hourlyActivity),
+        SafeJSON.stringify(stats.tokenUsage),
+        SafeJSON.stringify(stats.modelCounts),
+        SafeJSON.stringify(stats.branchCounts),
         now
     );
 }

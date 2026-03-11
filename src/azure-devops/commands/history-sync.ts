@@ -18,6 +18,7 @@ import {
 import { buildHistoryFromRevisions, buildWorkItemHistory } from "@app/azure-devops/history";
 import { requireConfig } from "@app/azure-devops/utils";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 
@@ -53,7 +54,7 @@ function getCachedWorkItems(): CachedWorkItem[] {
             const id = parseInt(match[1], 10);
             let title = `#${id}`;
             try {
-                const data = JSON.parse(readFileSync(join(cacheDir, file), "utf-8"));
+                const data = SafeJSON.parse(readFileSync(join(cacheDir, file), "utf-8"));
                 if (data.title) {
                     title = data.title;
                 }

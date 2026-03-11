@@ -1,6 +1,7 @@
 import logger from "@app/logger";
 import type { TimelyService } from "@app/timely/api/service";
 import type { TimelyClient, TimelyProject } from "@app/timely/types";
+import { SafeJSON } from "@app/utils/json";
 import type { Storage } from "@app/utils/storage";
 import { ExitPromptError } from "@inquirer/core";
 import { select } from "@inquirer/prompts";
@@ -58,7 +59,7 @@ async function projectsAction(storage: Storage, service: TimelyService, options:
 
     // Output based on format
     if (options.format === "json") {
-        console.log(JSON.stringify(projects, null, 2));
+        console.log(SafeJSON.stringify(projects, null, 2));
         return;
     }
 

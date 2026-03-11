@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import logger from "@app/logger";
 import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
+import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import type { CursorGenericConfig, CursorMCPServerConfig } from "./cursor.types.js";
 import type { MCPServerInfo, UnifiedMCPServerConfig } from "./types.js";
@@ -36,11 +37,11 @@ export class CursorProvider extends MCPProvider {
         }
 
         const content = await readFile(this.configPath, "utf-8");
-        return JSON.parse(content) as CursorGenericConfig;
+        return SafeJSON.parse(content) as CursorGenericConfig;
     }
 
     async writeConfig(config: unknown): Promise<WriteResult> {
-        const newContent = JSON.stringify(config, null, 2);
+        const newContent = SafeJSON.stringify(config, null, 2);
 
         // Read old content (empty string if file doesn't exist)
         const oldContent = (await this.configExists()) ? await readFile(this.configPath, "utf-8") : "";

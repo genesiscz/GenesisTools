@@ -1,5 +1,7 @@
 import logger from "@app/logger";
 
+import { SafeJSON } from "@app/utils/json";
+
 interface JxaResult {
     stdout: string;
     stderr: string;
@@ -59,7 +61,7 @@ export async function searchBodies(
 
     for (let i = 0; i < messageIdentifiers.length; i += batchSize) {
         const batch = messageIdentifiers.slice(i, i + batchSize);
-        const subjectList = JSON.stringify(batch.map((m) => ({ rowid: m.rowid, subject: m.subject })));
+        const subjectList = SafeJSON.stringify(batch.map((m) => ({ rowid: m.rowid, subject: m.subject })));
         const escapedQuery = escapeJxa(query);
 
         const script = `
@@ -100,7 +102,7 @@ export async function searchBodies(
         try {
             const result = await runJxa(script, 60_000);
             if (result.exitCode === 0 && result.stdout) {
-                const rowids = JSON.parse(result.stdout) as number[];
+                const rowids = SafeJSON.parse(result.stdout) as number[];
                 for (const r of rowids) {
                     matchedRowids.add(r);
                 }
@@ -154,7 +156,7 @@ export async function getMessageBody(subject: string, _dateSent: Date, senderAdd
     try {
         const result = await runJxa(script, 30_000);
         if (result.exitCode === 0 && result.stdout) {
-            const parsed = JSON.parse(result.stdout) as { body: string | null };
+            const parsed = SafeJSON.parse(result.stdout) as { body: string | null };
             return parsed.body;
         }
     } catch (err) {
@@ -218,7 +220,7 @@ export async function saveAttachment(
     try {
         const result = await runJxa(script, 30_000);
         if (result.exitCode === 0 && result.stdout) {
-            const parsed = JSON.parse(result.stdout) as { saved: boolean };
+            const parsed = SafeJSON.parse(result.stdout) as { saved: boolean };
             return parsed.saved;
         }
     } catch (err) {

@@ -1,8 +1,7 @@
-#!/usr/bin/env bun
-
-import { UsageDatabase } from "@app/ask/output/UsageDatabase";
+#!/usr/bin/env bunimport { UsageDatabase } from "@app/ask/output/UsageDatabase";
 import { dynamicPricingManager } from "@app/ask/providers/DynamicPricing";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import Table from "cli-table3";
 import { Command } from "commander";
@@ -206,7 +205,7 @@ async function showJSON(db: UsageDatabase, days: number, _provider?: string, _mo
         byModel: modelUsage,
     };
 
-    console.log(JSON.stringify(output, null, 2));
+    console.log(SafeJSON.stringify(output, null, 2));
 }
 
 async function main() {

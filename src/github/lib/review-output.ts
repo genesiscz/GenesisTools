@@ -5,6 +5,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ParsedReviewThread, PRLevelComment, ReviewData } from "@app/github/types";
 import { formatRelativeTime } from "@app/utils/format";
+import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 
 // =============================================================================
@@ -399,7 +400,7 @@ export function formatReviewMarkdown(data: ReviewData, groupByFile: boolean): st
  * Format review data as JSON
  */
 export function formatReviewJSON(data: ReviewData): string {
-    return JSON.stringify(
+    return SafeJSON.stringify(
         {
             repository: `${data.owner}/${data.repo}`,
             prNumber: data.prNumber,

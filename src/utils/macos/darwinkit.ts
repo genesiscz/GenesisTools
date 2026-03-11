@@ -1,6 +1,7 @@
 // src/utils/macos/darwinkit.ts
 
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import type { CapabilitiesResult, DarwinKitConfig, JsonRpcRequest, JsonRpcResponse } from "./types";
 
 type PendingEntry = {
@@ -110,7 +111,7 @@ export class DarwinKitClient {
             const originalHandler = this._handleLine.bind(this);
             this._handleLine = (line: string) => {
                 try {
-                    const msg = JSON.parse(line) as JsonRpcResponse;
+                    const msg = SafeJSON.parse(line) as JsonRpcResponse;
                     if (!msg.id) {
                         clearTimeout(timer);
                         this._handleLine = originalHandler;
@@ -165,7 +166,7 @@ export class DarwinKitClient {
 
         let msg: JsonRpcResponse;
         try {
-            msg = JSON.parse(line) as JsonRpcResponse;
+            msg = SafeJSON.parse(line) as JsonRpcResponse;
         } catch {
             logger.warn(`DarwinKitClient: failed to parse line: ${line}`);
             return;
@@ -210,7 +211,7 @@ export class DarwinKitClient {
                 timer,
             });
 
-            const line = `${JSON.stringify(request)}\n`;
+            const line = `${SafeJSON.stringify(request)}\n`;
             this.proc?.stdin.write(line);
         });
     }

@@ -8,6 +8,7 @@
 
 import type { AllowedTypeConfig, AzWorkItemRaw, Relation } from "@app/azure-devops/types";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { $ } from "bun";
 
 // ============= Types =============
@@ -67,7 +68,7 @@ async function fetchWorkItem(id: number, org: string): Promise<AzWorkItemRaw> {
             throw new Error(`Empty response for work item #${id}`);
         }
 
-        return JSON.parse(text) as AzWorkItemRaw;
+        return SafeJSON.parse(text) as AzWorkItemRaw;
     } catch (error) {
         const stderr = (error as { stderr?: { toString(): string } })?.stderr?.toString?.()?.trim();
         const message = stderr || (error instanceof Error ? error.message : String(error));

@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Button } from "@ui/components/button";
@@ -14,7 +15,7 @@ async function fetchExport(month: number, year: number, force = false) {
     const res = await fetch("/api/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month, year, force }),
+        body: SafeJSON.stringify({ month, year, force }),
     });
 
     if (!res.ok) {

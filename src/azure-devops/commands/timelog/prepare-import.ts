@@ -2,6 +2,7 @@ import { convertToMinutes, formatMinutes } from "@app/azure-devops/timelog-api";
 import type { AllowedTypeConfig } from "@app/azure-devops/types";
 import { requireTimeLogConfig } from "@app/azure-devops/utils";
 import { precheckWorkItem } from "@app/azure-devops/workitem-precheck";
+import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage";
 import type { Command } from "commander";
 import { z } from "zod";
@@ -89,7 +90,7 @@ async function handleAdd(options: { from?: string; to?: string; name?: string; e
     let rawEntry: unknown;
 
     try {
-        rawEntry = JSON.parse(options.entry);
+        rawEntry = SafeJSON.parse(options.entry);
     } catch {
         console.error("Invalid JSON in --entry");
         process.exit(1);
@@ -216,7 +217,7 @@ async function handleList(options: { name: string; format?: string }): Promise<v
     }
 
     if (options.format === "json") {
-        console.log(JSON.stringify(data, null, 2));
+        console.log(SafeJSON.stringify(data, null, 2));
         return;
     }
 

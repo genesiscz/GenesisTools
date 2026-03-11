@@ -1,11 +1,11 @@
-#!/usr/bin/env node
-import { handleReadmeFlag } from "@app/utils/readme";
+#!/usr/bin/env nodeimport { handleReadmeFlag } from "@app/utils/readme";
 import chalk from "chalk";
 import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
+import { SafeJSON } from "@app/utils/json";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -53,7 +53,7 @@ async function runCli(opts: CliOptions): Promise<void> {
     try {
         if (mode === "raw") {
             log.info(`Fetching raw HTML: ${chalk.cyan(url)}`);
-            const headers = opts.headers ? JSON.parse(String(opts.headers)) : undefined;
+            const headers = opts.headers ? SafeJSON.parse(String(opts.headers)) : undefined;
             let html = await fetchText(url, headers);
             if (saveTokens) {
                 html = html.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n");

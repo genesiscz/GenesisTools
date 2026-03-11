@@ -1,4 +1,5 @@
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage";
 import chalk from "chalk";
 import { BackupManager } from "./backup.js";
@@ -129,11 +130,11 @@ export async function writeUnifiedConfig(config: UnifiedMCPConfig): Promise<bool
     // Ensure enabledMcpServers is in sync with _meta.enabled before writing
     config = syncEnabledMcpServers(config);
 
-    const newContent = JSON.stringify(config, null, 2);
+    const newContent = SafeJSON.stringify(config, null, 2);
 
     // Read old content
     const existingConfig = await storage.getConfig<UnifiedMCPConfig>();
-    const oldContent = existingConfig ? JSON.stringify(existingConfig, null, 2) : "";
+    const oldContent = existingConfig ? SafeJSON.stringify(existingConfig, null, 2) : "";
 
     // Early exit if no changes
     if (oldContent === newContent) {

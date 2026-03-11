@@ -1,5 +1,6 @@
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { SafeJSON } from "@app/utils/json";
 import type { LogEntry, RunSummary } from "./types";
 
 const VALID_LOG_TYPES = new Set<string>(["meta", "stdout", "stderr", "exit"]);
@@ -81,7 +82,7 @@ export function listRunsForTask(logsBaseDir: string, taskName: string): RunSumma
                 continue;
             }
 
-            const meta = JSON.parse(firstLine) as Record<string, unknown>;
+            const meta = SafeJSON.parse(firstLine) as Record<string, unknown>;
 
             if (meta.type !== "meta" || typeof meta.runId !== "string" || typeof meta.startedAt !== "string") {
                 continue;
@@ -94,7 +95,7 @@ export function listRunsForTask(logsBaseDir: string, taskName: string): RunSumma
 
             if (lastLine && lastLine !== firstLine) {
                 try {
-                    const last = JSON.parse(lastLine) as Record<string, unknown>;
+                    const last = SafeJSON.parse(lastLine) as Record<string, unknown>;
 
                     if (last.type === "exit") {
                         exitCode = typeof last.code === "number" ? last.code : null;
@@ -141,7 +142,7 @@ export function parseLogFile(logFile: string): LogEntry[] {
         }
 
         try {
-            const parsed = JSON.parse(line) as Record<string, unknown>;
+            const parsed = SafeJSON.parse(line) as Record<string, unknown>;
 
             if (typeof parsed.type === "string" && VALID_LOG_TYPES.has(parsed.type)) {
                 entries.push(parsed as unknown as LogEntry);

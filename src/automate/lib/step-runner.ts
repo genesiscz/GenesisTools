@@ -1,5 +1,6 @@
 import logger from "@app/logger.ts";
 import { runTool } from "@app/utils/cli/tools";
+import { SafeJSON } from "@app/utils/json";
 import { executeBuiltin, isBuiltinAction } from "./builtins.ts";
 import { resolveExpression, resolveParams } from "./expressions.ts";
 import type { StepContext } from "./registry.ts";
@@ -67,7 +68,7 @@ export async function executeStep(
     // Try to parse stdout as JSON for structured access via expressions
     let output: unknown = stdout.trim();
     try {
-        output = JSON.parse(stdout);
+        output = SafeJSON.parse(stdout);
     } catch {
         // Keep as raw string
     }
@@ -176,7 +177,7 @@ function buildStepContext(ctx: ExecutionContext): StepContext {
         },
         interpolate: (template: string) => {
             const result = resolveExpression(template, ctx);
-            return typeof result === "string" ? result : JSON.stringify(result);
+            return typeof result === "string" ? result : SafeJSON.stringify(result);
         },
         log: (level, message) => {
             logger[level]?.(message) ?? logger.info(message);

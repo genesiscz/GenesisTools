@@ -15,6 +15,7 @@ import type {
     TimeType,
 } from "@app/azure-devops/types";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import type { QueryParams } from "@app/utils/url";
 import { buildUrl } from "@app/utils/url";
 
@@ -58,7 +59,7 @@ export class TimeLogApi {
         const response = await fetch(url, {
             method,
             headers,
-            body: body !== undefined ? JSON.stringify(body) : undefined,
+            body: body !== undefined ? SafeJSON.stringify(body) : undefined,
         });
 
         const elapsed = Date.now() - startTime;
@@ -76,7 +77,7 @@ export class TimeLogApi {
             return {} as T;
         }
 
-        return JSON.parse(text) as T;
+        return SafeJSON.parse(text) as T;
     }
 
     /**
@@ -168,7 +169,7 @@ export class TimeLogApi {
             workitemId: params.workitemId ? String(params.workitemId) : undefined,
             userId: params.userId,
         };
-        logger.debug(`[timelog-api] Querying time logs: /timelog/query ${JSON.stringify(queryParams)}`);
+        logger.debug(`[timelog-api] Querying time logs: /timelog/query ${SafeJSON.stringify(queryParams)}`);
         return this.request<TimeLogQueryEntry[]>("GET", "/timelog/query", undefined, queryParams);
     }
 

@@ -8,6 +8,7 @@ import { getOctokit } from "@app/utils/github/octokit";
 import { withRetry } from "@app/utils/github/rate-limit";
 import { apiUrlToWebUrl, extractNumberFromApiUrl, parseDate } from "@app/utils/github/url-parser";
 import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
+import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import { Command } from "commander";
 
@@ -65,7 +66,7 @@ export async function notificationsCommand(options: NotificationsCommandOptions)
         }
     }
 
-    verbose(options, `Fetching notifications with params: ${JSON.stringify(params)}`);
+    verbose(options, `Fetching notifications with params: ${SafeJSON.stringify(params)}`);
 
     // Fetch all pages
     const allNotifications: GitHubNotification[] = [];

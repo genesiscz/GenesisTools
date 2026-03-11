@@ -1,6 +1,7 @@
 import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { ClarityApi } from "@app/utils/clarity";
+import { SafeJSON } from "@app/utils/json";
 import * as clack from "@clack/prompts";
 import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
@@ -458,7 +459,7 @@ export function registerLinkCommand(program: Command): void {
 
             // List
             if (options.list) {
-                console.log(JSON.stringify({ mappings: config.mappings }, null, 2));
+                console.log(SafeJSON.stringify({ mappings: config.mappings }, null, 2));
                 return;
             }
 

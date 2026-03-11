@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 /**
  * JSON Schema inference utility.
  *
@@ -206,13 +207,13 @@ export function formatSchema(value: unknown, mode: OutputMode, options?: FormatO
 
     switch (mode) {
         case "schema":
-            return pretty ? JSON.stringify(schema, null, 2) : JSON.stringify(schema);
+            return pretty ? SafeJSON.stringify(schema, null, 2) : SafeJSON.stringify(schema);
         case "skeleton":
             return pretty ? formatSkeletonPretty(schema, 0) : formatSkeletonCompact(schema);
         case "typescript":
             return pretty ? formatTypeScriptPretty(schema) : formatTypeScriptCompact(schema);
         default:
-            return pretty ? JSON.stringify(schema, null, 2) : JSON.stringify(schema);
+            return pretty ? SafeJSON.stringify(schema, null, 2) : SafeJSON.stringify(schema);
     }
 }
 

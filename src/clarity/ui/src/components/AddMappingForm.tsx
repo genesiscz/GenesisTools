@@ -1,5 +1,6 @@
 import type { TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityTask } from "@app/clarity/lib/types";
+import { SafeJSON } from "@app/utils/json";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
@@ -31,7 +32,7 @@ async function fetchWeeks(month?: number, year?: number): Promise<{ weeks: Times
     const res = await fetch("/api/clarity-weeks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month, year }),
+        body: SafeJSON.stringify({ month, year }),
     });
 
     if (!res.ok) {
@@ -46,7 +47,7 @@ async function fetchClarityTasks(timesheetId: number): Promise<{ tasks: ClarityT
     const res = await fetch("/api/clarity-tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ timesheetId }),
+        body: SafeJSON.stringify({ timesheetId }),
     });
 
     if (!res.ok) {
