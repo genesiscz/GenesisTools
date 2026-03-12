@@ -189,25 +189,55 @@ export class ProviderManager {
             const knownModels = KNOWN_MODELS.openai || [];
             const knownModelsMap = new Map(knownModels.map((m) => [m.id, m]));
 
-            // Filter to only chat models (exclude embeddings, fine-tuning, image, audio, etc.)
-            const chatModelPrefixes = ["gpt-", "o1-", "o3-"];
-            const excludedPatterns = [
-                "image",
-                "audio",
-                "embedding",
-                "whisper",
-                "tts",
-                "dall-e",
-                "moderation",
-                "instruct",
+            // Known chat model prefixes (from @ai-sdk/openai OpenAIChatModelId type)
+            // Sorted by length descending so longer prefixes match first
+            const chatModelPrefixes = [
+                "gpt-3.5-turbo",
+                "gpt-4-turbo",
+                "gpt-5-mini",
+                "gpt-5-nano",
+                "gpt-5-chat",
+                "gpt-5-2025",
+                "chatgpt-",
+                "gpt-4.1",
+                "gpt-4.5",
+                "gpt-4o",
+                "gpt-4",
+                "gpt-5",
+                "o1",
+                "o3",
             ];
-            const chatModels = data.data.filter(
-                (model) =>
-                    chatModelPrefixes.some((prefix) => model.id.startsWith(prefix)) &&
-                    !excludedPatterns.some((pattern) => model.id.toLowerCase().includes(pattern)) &&
-                    // Only include models owned by OpenAI (exclude user-created fine-tuned models)
-                    (model.owned_by === "openai" || model.owned_by === "system")
-            );
+
+            // Models that match gpt- prefix but are NOT chat models
+            const nonChatPatterns = [
+                "codex", // gpt-5-codex, gpt-5.2-codex — code execution, Responses API only
+                "-pro", // gpt-5-pro — specialized, Responses API only
+                "instruct", // gpt-3.5-turbo-instruct — legacy completion API
+                "image", // gpt-image-1 — image generation model
+                "transcribe", // gpt-4o-transcribe — audio transcription
+                "tts", // gpt-4o-mini-tts — text-to-speech
+                "embedding", // text-embedding models
+                "whisper", // whisper models
+                "dall-e", // image generation
+                "moderation", // content moderation
+            ];
+
+            const chatModels = data.data.filter((model) => {
+                const id = model.id.toLowerCase();
+
+                // Must NOT match any non-chat pattern
+                if (nonChatPatterns.some((p) => id.includes(p))) {
+                    return false;
+                }
+
+                // Must match a known chat prefix
+                if (!chatModelPrefixes.some((prefix) => id.startsWith(prefix))) {
+                    return false;
+                }
+
+                // Must be owned by OpenAI
+                return model.owned_by === "openai" || model.owned_by === "system";
+            });
 
             const models: ModelInfo[] = await Promise.all(
                 chatModels.map(async (model) => {
