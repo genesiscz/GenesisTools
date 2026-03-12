@@ -19,6 +19,19 @@
             "category": "development",
             "commands": ["./commands/"],
             "skills": ["./skills/"]
+        },
+        {
+            "name": "genesis-tools-server",
+            "description": "Linux server security auditing and hardening tools. Provides comprehensive security analysis including log analysis, intrusion detection, malware scanning, and rootkit detection.",
+            "version": "1.0.0",
+            "author": {
+                "name": "GenesisTools"
+            },
+            "source": "./plugins/genesis-tools-server",
+            "category": "security",
+            "commands": [
+                "./commands/security-audit-linux-server.md"
+            ]
         }
     ]
 }
