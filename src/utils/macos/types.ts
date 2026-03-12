@@ -1,47 +1,22 @@
-// src/utils/macos/types.ts
+// Re-export types from @genesiscz/darwinkit package
+export type {
+    CapabilitiesResult,
+    DistanceResult,
+    EmbedResult,
+    EmbedType,
+    LanguageResult,
+    NeighborsResult,
+    OCRBlock as OcrBlock,
+    OCRBounds as OcrBounds,
+    OCRResult as OcrResult,
+    RecognitionLevel as OcrLevel,
+    SentimentResult,
+    TagScheme as NlpScheme,
+} from "@genesiscz/darwinkit";
 
-// ─── JSON-RPC Protocol ────────────────────────────────────────────────────────
+// ─── Local Types (different shape from package) ──────────────────────────────
 
-export interface JsonRpcRequest {
-    jsonrpc: "2.0";
-    id: string;
-    method: string;
-    params: Record<string, unknown>;
-}
-
-export interface JsonRpcResponse<T = unknown> {
-    jsonrpc: "2.0";
-    id?: string;
-    result?: T;
-    error?: { code: number; message: string };
-}
-
-/** Client configuration */
-export interface DarwinKitConfig {
-    /** Per-request timeout in ms. Default: 15_000 */
-    timeout?: number;
-    /** How long to wait for the "ready" notification on startup. Default: 8_000 */
-    startupTimeout?: number;
-    /** Override the darwinkit binary path. Default: "darwinkit" (resolved from PATH) */
-    binaryPath?: string;
-}
-
-// ─── NLP Types ────────────────────────────────────────────────────────────────
-
-export interface LanguageResult {
-    /** BCP-47 language code, e.g. "en", "fr", "zh" */
-    language: string;
-    /** 0.0–1.0 */
-    confidence: number;
-}
-
-export interface SentimentResult {
-    /** -1.0 to 1.0, positive = happy/good, negative = bad/angry */
-    score: number;
-    label: "positive" | "negative" | "neutral";
-}
-
-/** A single token annotation from nlp.tag */
+/** A single token annotation from nlp.tag (flattened format) */
 export interface TaggedToken {
     text: string;
     /** e.g. "Noun", "Verb", "PersonalName", "OrganizationName", "PlaceName" */
@@ -54,62 +29,9 @@ export interface TagResult {
     tokens: TaggedToken[];
 }
 
-export interface EmbedResult {
-    vector: number[];
-    dimension: number;
-}
-
-export interface DistanceResult {
-    /** 0 = identical, 2 = maximally different */
-    distance: number;
-    type: "cosine";
-}
-
 export interface Neighbor {
     text: string;
     distance: number;
-}
-
-export interface NeighborsResult {
-    neighbors: Neighbor[];
-}
-
-/** Valid NLP tag schemes */
-export type NlpScheme = "lexicalClass" | "nameType" | "lemma" | "sentimentScore" | "language";
-
-/** Word or sentence embedding */
-export type EmbedType = "word" | "sentence";
-
-// ─── OCR Types ────────────────────────────────────────────────────────────────
-
-export interface OcrBounds {
-    /** Normalized 0–1, bottom-left origin (native macOS coordinates) */
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-}
-
-export interface OcrBlock {
-    text: string;
-    /** 0.0–1.0 */
-    confidence: number;
-    bounds: OcrBounds;
-}
-
-export interface OcrResult {
-    text: string;
-    blocks: OcrBlock[];
-}
-
-export type OcrLevel = "fast" | "accurate";
-
-// ─── System Types ─────────────────────────────────────────────────────────────
-
-export interface CapabilitiesResult {
-    version: string;
-    os: string;
-    methods: string[];
 }
 
 // ─── Higher-level Utility Types ───────────────────────────────────────────────
@@ -128,13 +50,17 @@ export interface TextItem<IdType = string> {
 }
 
 /** Sentiment result for a single item in a batch */
-export interface SentimentItem<IdType = string> extends SentimentResult {
+export interface SentimentItem<IdType = string> {
     id: IdType;
+    score: number;
+    label: "positive" | "negative" | "neutral";
 }
 
 /** Language detection result for a single item in a batch */
-export interface LanguageItem<IdType = string> extends LanguageResult {
+export interface LanguageItem<IdType = string> {
     id: IdType;
+    language: string;
+    confidence: number;
 }
 
 /** Named entity extracted by NER */

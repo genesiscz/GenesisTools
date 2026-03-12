@@ -2,7 +2,8 @@
 
 // Classification
 export { classifyBatch, classifyText, groupByCategory } from "./classification";
-export { closeDarwinKit, DarwinKitClient, getDarwinKit } from "./darwinkit";
+export type { DarwinKitOptions } from "./darwinkit";
+export { closeDarwinKit, DarwinKit, DarwinKitError, getDarwinKit } from "./darwinkit";
 // NLP
 export {
     analyzeSentiment,
@@ -54,7 +55,6 @@ export type {
     ClassificationItem,
     ClassificationResult,
     Cluster,
-    DarwinKitConfig,
     DistanceResult,
     EmbedResult,
     EmbedType,

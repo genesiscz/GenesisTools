@@ -1,5 +1,3 @@
-// src/utils/macos/nlp.ts
-
 import { getDarwinKit } from "./darwinkit";
 import type {
     DistanceResult,
@@ -22,7 +20,7 @@ import type {
  * // → { language: "fr", confidence: 0.999 }
  */
 export async function detectLanguage(text: string): Promise<LanguageResult> {
-    return getDarwinKit().call<LanguageResult>("nlp.language", { text });
+    return getDarwinKit().nlp.language({ text });
 }
 
 /**
@@ -33,7 +31,7 @@ export async function detectLanguage(text: string): Promise<LanguageResult> {
  * // → { score: 1.0, label: "positive" }
  */
 export async function analyzeSentiment(text: string): Promise<SentimentResult> {
-    return getDarwinKit().call<SentimentResult>("nlp.sentiment", { text });
+    return getDarwinKit().nlp.sentiment({ text });
 }
 
 /**
@@ -50,11 +48,25 @@ export async function tagText(
     schemes: NlpScheme[] = ["lexicalClass"],
     language?: string
 ): Promise<TagResult> {
-    return getDarwinKit().call<TagResult>("nlp.tag", {
+    const result = await getDarwinKit().nlp.tag({
         text,
         schemes,
         ...(language ? { language } : {}),
     });
+
+    // Convert package's merged format { text, tags: { Scheme: tag } }
+    // to our flat format { text, tag, scheme } with camelCase scheme names
+    const tokens: TaggedToken[] = result.tokens.flatMap((t) =>
+        Object.entries(t.tags)
+            .filter((entry): entry is [string, string] => entry[1] != null)
+            .map(([scheme, tag]) => ({
+                text: t.text,
+                tag,
+                scheme: scheme[0].toLowerCase() + scheme.slice(1),
+            }))
+    );
+
+    return { tokens };
 }
 
 /**
@@ -82,7 +94,7 @@ export async function extractEntities(text: string): Promise<NamedEntity[]> {
  * @param type     - "word" or "sentence". Default: "sentence"
  */
 export async function embedText(text: string, language = "en", type: EmbedType = "sentence"): Promise<EmbedResult> {
-    return getDarwinKit().call<EmbedResult>("nlp.embed", { text, language, type });
+    return getDarwinKit().nlp.embed({ text, language, type });
 }
 
 /**
@@ -95,7 +107,7 @@ export async function textDistance(
     language = "en",
     type: EmbedType = "sentence"
 ): Promise<DistanceResult> {
-    return getDarwinKit().call<DistanceResult>("nlp.distance", { text1, text2, language, type });
+    return getDarwinKit().nlp.distance({ text1, text2, language, type });
 }
 
 /**
@@ -119,7 +131,7 @@ export async function findNeighbors(
     language = "en",
     type: EmbedType = "word"
 ): Promise<NeighborsResult> {
-    return getDarwinKit().call<NeighborsResult>("nlp.neighbors", { text, language, type, count });
+    return getDarwinKit().nlp.neighbors({ text, language, type, count });
 }
 
 /**
