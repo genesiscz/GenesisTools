@@ -1,0 +1,83 @@
+{
+  "name": "@genesis-tools/utils",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Utility library for GenesisTools - storage, formatting, rate limiting, and more",
+  "author": "Martin",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./storage": {
+      "import": "./dist/core/storage/index.js",
+      "types": "./dist/core/storage/index.d.ts"
+    },
+    "./formatting": {
+      "import": "./dist/core/formatting.js",
+      "types": "./dist/core/formatting.d.ts"
+    },
+    "./path": {
+      "import": "./dist/core/path.js",
+      "types": "./dist/core/path.d.ts"
+    },
+    "./diff": {
+      "import": "./dist/core/diff.js",
+      "types": "./dist/core/diff.d.ts"
+    },
+    "./rate-limit": {
+      "import": "./dist/core/rate-limit.js",
+      "types": "./dist/core/rate-limit.d.ts"
+    },
+    "./logger": {
+      "import": "./dist/core/logger.js",
+      "types": "./dist/core/logger.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "chalk": "^5.0.0",
+    "pino": "^9.0.0",
+    "pino-pretty": "^11.0.0"
+  },
+  "peerDependenciesMeta": {
+    "chalk": {
+      "optional": true
+    },
+    "pino": {
+      "optional": true
+    },
+    "pino-pretty": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "genesis-tools",
+    "utilities",
+    "storage",
+    "cache",
+    "formatting",
+    "rate-limit"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/genesis-tools.git"
+  }
+}
