@@ -79,5 +79,9 @@ echo ""
 echo "🎉 Setup complete."
 
 if [ "$SHELL_CONFIG_CHANGED" = true ]; then
-    echo "   Please restart your terminal or run 'source ~/.zshrc' and/or 'source ~/.bashrc' for the changes to take effect."
+    case "$SHELL" in
+        */zsh)  echo "   Sourcing ~/.zshrc..."; source "$HOME/.zshrc" ;;
+        */bash) echo "   Sourcing ~/.bashrc..."; source "$HOME/.bashrc" ;;
+        *)      echo "   Please restart your terminal or source your shell config for the changes to take effect." ;;
+    esac
 fi
