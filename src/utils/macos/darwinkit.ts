@@ -8,14 +8,21 @@ export { DarwinKit, DarwinKitError } from "@genesiscz/darwinkit";
 let _instance: DarwinKit | null = null;
 
 export function getDarwinKit(options?: DarwinKitOptions): DarwinKit {
-    if (!_instance) {
-        _instance = new DarwinKit({
-            timeout: 15_000,
-            logger,
-            logLevel: "warn",
-            ...options,
-        });
+    if (_instance) {
+        if (options && Object.keys(options).length > 0) {
+            throw new Error("DarwinKit is already initialized. Call closeDarwinKit() before changing options.");
+        }
+
+        return _instance;
     }
+
+    _instance = new DarwinKit({
+        timeout: 15_000,
+        logger,
+        logLevel: "warn",
+        ...options,
+    });
+
     return _instance;
 }
 

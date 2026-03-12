@@ -1,4 +1,10 @@
 import { afterAll, describe, expect, it } from "bun:test";
+
+if (process.platform !== "darwin") {
+    console.log("Skipping darwinkit tests on non-macOS platform");
+    process.exit(0);
+}
+
 import { closeDarwinKit } from "./darwinkit";
 import { analyzeSentiment, detectLanguage, embedText, tagText, textDistance } from "./nlp";
 
