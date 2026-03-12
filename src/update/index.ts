@@ -61,22 +61,31 @@ const program = new Command()
         if (runClaudeUpdates) {
             if (inClaudeCode) {
                 console.log(pc.dim("\n  Adding marketplace (if needed)..."));
-                await Bun.spawn(["claude", "plugin", "marketplace", "add", "https://github.com/genesiscz/GenesisTools"], {
-                    stdio: ["inherit", "inherit", "inherit"],
-                }).exited;
+                await Bun.spawn(
+                    ["claude", "plugin", "marketplace", "add", "https://github.com/genesiscz/GenesisTools"],
+                    {
+                        stdio: ["inherit", "inherit", "inherit"],
+                    }
+                ).exited;
 
                 console.log(pc.dim("\n  Installing plugin (if needed)..."));
-                const pluginInstallCode = await Bun.spawn(["claude", "plugin", "install", "genesis-tools@genesis-tools"], {
-                    stdio: ["inherit", "inherit", "inherit"],
-                }).exited;
+                const pluginInstallCode = await Bun.spawn(
+                    ["claude", "plugin", "install", "genesis-tools@genesis-tools"],
+                    {
+                        stdio: ["inherit", "inherit", "inherit"],
+                    }
+                ).exited;
                 if (pluginInstallCode !== 0) {
                     console.log(pc.yellow("  Plugin install had issues (may already be installed)"));
                 }
 
                 console.log(pc.dim("\n  Updating Claude Code plugin..."));
-                const pluginUpdateCode = await Bun.spawn(["claude", "plugin", "update", "genesis-tools@genesis-tools"], {
-                    stdio: ["inherit", "inherit", "inherit"],
-                }).exited;
+                const pluginUpdateCode = await Bun.spawn(
+                    ["claude", "plugin", "update", "genesis-tools@genesis-tools"],
+                    {
+                        stdio: ["inherit", "inherit", "inherit"],
+                    }
+                ).exited;
                 if (pluginUpdateCode !== 0) {
                     console.log(pc.yellow("  Plugin update had issues"));
                 }
@@ -87,14 +96,20 @@ const program = new Command()
                 }).exited;
 
                 console.log(pc.dim("\n  Adding marketplace..."));
-                await Bun.spawn(["claude", "plugin", "marketplace", "add", "https://github.com/genesiscz/GenesisTools"], {
-                    stdio: ["inherit", "inherit", "inherit"],
-                }).exited;
+                await Bun.spawn(
+                    ["claude", "plugin", "marketplace", "add", "https://github.com/genesiscz/GenesisTools"],
+                    {
+                        stdio: ["inherit", "inherit", "inherit"],
+                    }
+                ).exited;
 
                 console.log(pc.dim("\n  Installing plugin..."));
-                const pluginInstallCode = await Bun.spawn(["claude", "plugin", "install", "genesis-tools@genesis-tools"], {
-                    stdio: ["inherit", "inherit", "inherit"],
-                }).exited;
+                const pluginInstallCode = await Bun.spawn(
+                    ["claude", "plugin", "install", "genesis-tools@genesis-tools"],
+                    {
+                        stdio: ["inherit", "inherit", "inherit"],
+                    }
+                ).exited;
                 if (pluginInstallCode !== 0) {
                     console.log(pc.yellow("  Plugin install had issues"));
                 }
