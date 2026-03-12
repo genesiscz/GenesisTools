@@ -16,31 +16,31 @@ const program = new Command()
 
         // 1. Git pull
         console.log(pc.dim("  Pulling latest changes..."));
-        const pull = Bun.spawnSync(["git", "pull"], {
+        const pull = Bun.spawn(["git", "pull"], {
             cwd: genesisPath,
             stdio: ["inherit", "inherit", "inherit"],
         });
-        if (pull.exitCode !== 0) {
+        if ((await pull.exited) !== 0) {
             console.error(pc.red("  Failed to git pull"));
             process.exit(1);
         }
 
         // 2. Install dependencies (clean retry if first attempt fails)
         console.log(pc.dim("\n  Installing dependencies..."));
-        const install = Bun.spawnSync(["bun", "install"], {
+        const install = Bun.spawn(["bun", "install"], {
             cwd: genesisPath,
             stdio: ["inherit", "inherit", "inherit"],
         });
 
-        if (install.exitCode !== 0) {
+        if ((await install.exited) !== 0) {
             console.log(pc.yellow("  Install failed, retrying with clean node_modules..."));
             rmSync(join(genesisPath, "node_modules"), { recursive: true, force: true });
-            const retry = Bun.spawnSync(["bun", "install"], {
+            const retry = Bun.spawn(["bun", "install"], {
                 cwd: genesisPath,
                 stdio: ["inherit", "inherit", "inherit"],
             });
 
-            if (retry.exitCode !== 0) {
+            if ((await retry.exited) !== 0) {
                 console.error(pc.red("  Failed to install dependencies"));
                 process.exit(1);
             }
@@ -61,41 +61,41 @@ const program = new Command()
         if (runClaudeUpdates) {
             if (inClaudeCode) {
                 console.log(pc.dim("\n  Adding marketplace (if needed)..."));
-                Bun.spawnSync(["claude", "plugin", "marketplace", "add", "https://github.com/genesiscz/GenesisTools"], {
+                await Bun.spawn(["claude", "plugin", "marketplace", "add", "https://github.com/genesiscz/GenesisTools"], {
                     stdio: ["inherit", "inherit", "inherit"],
-                });
+                }).exited;
 
                 console.log(pc.dim("\n  Installing plugin (if needed)..."));
-                const pluginInstall = Bun.spawnSync(["claude", "plugin", "install", "genesis-tools@genesis-tools"], {
+                const pluginInstallCode = await Bun.spawn(["claude", "plugin", "install", "genesis-tools@genesis-tools"], {
                     stdio: ["inherit", "inherit", "inherit"],
-                });
-                if (pluginInstall.exitCode !== 0) {
+                }).exited;
+                if (pluginInstallCode !== 0) {
                     console.log(pc.yellow("  Plugin install had issues (may already be installed)"));
                 }
 
                 console.log(pc.dim("\n  Updating Claude Code plugin..."));
-                const pluginUpdate = Bun.spawnSync(["claude", "plugin", "update", "genesis-tools@genesis-tools"], {
+                const pluginUpdateCode = await Bun.spawn(["claude", "plugin", "update", "genesis-tools@genesis-tools"], {
                     stdio: ["inherit", "inherit", "inherit"],
-                });
-                if (pluginUpdate.exitCode !== 0) {
+                }).exited;
+                if (pluginUpdateCode !== 0) {
                     console.log(pc.yellow("  Plugin update had issues"));
                 }
             } else {
                 console.log(pc.dim("\n  Updating Claude Code marketplace..."));
-                Bun.spawnSync(["claude", "plugin", "marketplace", "update"], {
+                await Bun.spawn(["claude", "plugin", "marketplace", "update"], {
                     stdio: ["inherit", "inherit", "inherit"],
-                });
+                }).exited;
 
                 console.log(pc.dim("\n  Adding marketplace..."));
-                Bun.spawnSync(["claude", "plugin", "marketplace", "add", "https://github.com/genesiscz/GenesisTools"], {
+                await Bun.spawn(["claude", "plugin", "marketplace", "add", "https://github.com/genesiscz/GenesisTools"], {
                     stdio: ["inherit", "inherit", "inherit"],
-                });
+                }).exited;
 
                 console.log(pc.dim("\n  Installing plugin..."));
-                const pluginInstall = Bun.spawnSync(["claude", "plugin", "install", "genesis-tools@genesis-tools"], {
+                const pluginInstallCode = await Bun.spawn(["claude", "plugin", "install", "genesis-tools@genesis-tools"], {
                     stdio: ["inherit", "inherit", "inherit"],
-                });
-                if (pluginInstall.exitCode !== 0) {
+                }).exited;
+                if (pluginInstallCode !== 0) {
                     console.log(pc.yellow("  Plugin install had issues"));
                 }
             }

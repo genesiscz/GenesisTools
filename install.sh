@@ -55,8 +55,9 @@ add_to_shell_config() {
             SHELL_CONFIG_CHANGED=true
         fi
     else
-        # Create the file and add the export line if the file does not exist
-        echo "$EXPORT_LINE" > "$shell_config_file"
+        # Create the file and add both lines
+        echo "$TOOLS_LINE" > "$shell_config_file"
+        echo "$EXPORT_LINE" >> "$shell_config_file"
         echo "➕ Created $shell_config_file and added $CURRENT_DIR to PATH"
         SHELL_CONFIG_CHANGED=true
     fi
@@ -73,7 +74,10 @@ export PATH="$CURRENT_DIR:$PATH"
 
 # Run update (plugin setup, changelog, etc.)
 echo "🔄 Running tools update..."
-tools update
+if ! tools update; then
+    echo "❌ tools update failed"
+    exit 1
+fi
 
 echo ""
 echo "🎉 Setup complete."
