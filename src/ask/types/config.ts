@@ -40,3 +40,20 @@ export interface AppConfig {
     streaming?: boolean;
     conversationsDir?: string;
 }
+
+export interface ClaudeSubscriptionConfig {
+    accountRef?: string; // tools claude account name (e.g. "martin")
+    independentToken?: string; // Standalone OAuth token (not linked to tools claude)
+    accountLabel?: string; // Cached label for footer (e.g. "pro")
+    accountName?: string; // Cached account key for footer (e.g. "martin")
+}
+
+export interface EnvTokenConfig {
+    enabled: boolean; // Master switch (default true)
+    disabledProviders?: string[]; // Specific providers to skip env tokens for
+}
+
+export interface AskConfig extends AppConfig {
+    claude?: ClaudeSubscriptionConfig;
+    envTokens?: EnvTokenConfig;
+}

@@ -62,8 +62,16 @@ class ASKTool {
                 process.exit(0);
             }
 
-            // Handle models subcommand
+            // Handle subcommands
             const firstArg = argv._[0]?.toLowerCase();
+
+            // Configure command
+            if (firstArg === "configure" || firstArg === "config") {
+                const { runConfigureWizard } = await import("@ask/commands/configure");
+                await runConfigureWizard();
+                return;
+            }
+
             if (firstArg === "models" || firstArg === "model") {
                 const modelsOptions: ModelsOptions = {
                     provider: argv.provider,
@@ -73,6 +81,18 @@ class ASKTool {
                 };
                 await showPricing(modelsOptions);
                 return;
+            }
+
+            // Apply config defaults
+            const { loadAskConfig } = await import("@ask/config");
+            const askConfig = await loadAskConfig();
+
+            if (!argv.provider && askConfig.defaultProvider) {
+                argv.provider = askConfig.defaultProvider;
+            }
+
+            if (!argv.model && askConfig.defaultModel) {
+                argv.model = askConfig.defaultModel;
             }
 
             // Validate options
@@ -233,7 +253,13 @@ class ASKTool {
                             },
                         ];
 
-                        console.log(await outputManager.formatCostBreakdown(breakdown));
+                        const { loadAskConfig: loadAskCfg } = await import("@ask/config");
+                        const cfg = await loadAskCfg();
+                        const accountInfo = cfg.claude?.accountName
+                            ? { label: cfg.claude.accountLabel, name: cfg.claude.accountName }
+                            : undefined;
+
+                        console.log(await outputManager.formatCostBreakdown(breakdown, accountInfo));
                     }
                 }
             }
@@ -376,7 +402,13 @@ class ASKTool {
                         },
                     ];
 
-                    console.log(await outputManager.formatCostBreakdown(breakdown));
+                    const { loadAskConfig: loadCfgForFooter } = await import("@ask/config");
+                    const footerCfg = await loadCfgForFooter();
+                    const footerAccountInfo = footerCfg.claude?.accountName
+                        ? { label: footerCfg.claude.accountLabel, name: footerCfg.claude.accountName }
+                        : undefined;
+
+                    console.log(await outputManager.formatCostBreakdown(breakdown, footerAccountInfo));
                 }
 
                 console.log(); // Add spacing
