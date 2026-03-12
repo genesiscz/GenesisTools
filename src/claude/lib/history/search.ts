@@ -604,10 +604,7 @@ async function processFileForCommit(
  * Fast commit hash search: uses git log + SQLite cache + raw text scanning
  * to avoid parsing all JSONL files.
  */
-async function searchCommitHashFast(
-    hashPrefix: string,
-    filters: SearchFilters
-): Promise<SearchResult[]> {
+async function searchCommitHashFast(hashPrefix: string, filters: SearchFilters): Promise<SearchResult[]> {
     const hashLower = hashPrefix.toLowerCase();
 
     // Step 1: Resolve full hash + date via git log
@@ -656,7 +653,9 @@ async function searchCommitHashFast(
         });
 
         candidateFiles = candidates.map((s) => s.filePath);
-        logger.debug(`Commit search: narrowed to ${candidateFiles.length} files from cache (±2 days of ${commitInfo.date.toISOString()})`);
+        logger.debug(
+            `Commit search: narrowed to ${candidateFiles.length} files from cache (±2 days of ${commitInfo.date.toISOString()})`
+        );
     } else {
         // No git info — fall back to all files (but still use raw text filter)
         candidateFiles = await findConversationFiles(filters);

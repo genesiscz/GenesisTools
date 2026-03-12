@@ -265,7 +265,9 @@ export function listServers(): ServerInfo[] {
     const servers: ServerInfo[] = [];
     for (const file of files) {
         try {
-            const info: ServerInfo = SafeJSON.parse(readFileSync(path.join(SERVERS_DIR, file), "utf-8"), { strict: true });
+            const info: ServerInfo = SafeJSON.parse(readFileSync(path.join(SERVERS_DIR, file), "utf-8"), {
+                strict: true,
+            });
             servers.push(info);
         } catch (_error) {
             // Ignore errors for corrupt files
