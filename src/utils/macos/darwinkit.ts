@@ -58,7 +58,9 @@ export class DarwinKitClient {
 
         // If we already tried and failed, don't retry
         if (existsSync(DarwinKitClient.UNAVAILABLE_MARKER)) {
-            throw new Error("darwinkit is not available (install failed previously, remove ~/.genesis-tools/.darwinkit-unavailable to retry)");
+            throw new Error(
+                "darwinkit is not available (install failed previously, remove ~/.genesis-tools/.darwinkit-unavailable to retry)"
+            );
         }
 
         logger.info("DarwinKitClient: darwinkit not found, installing...");
