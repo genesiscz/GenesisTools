@@ -45,7 +45,7 @@ add_to_shell_config() {
 
     if [ -f "$shell_config_file" ]; then
         # Check if the line already exists in the file
-        if grep -q "export PATH=\"$CURRENT_DIR:\$PATH" "$shell_config_file" && grep -q "$CURRENT_DIR" "$shell_config_file"; then
+        if grep -q "GENESIS_TOOLS_PATH" "$shell_config_file"; then
             echo "✅ $CURRENT_DIR is already in PATH in $shell_config_file"
         else
             # Append the export line if not found
