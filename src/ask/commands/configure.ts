@@ -288,7 +288,7 @@ async function configureIndependent(config: AskConfig): Promise<void> {
     if (tokenType === "api-key") {
         // Set as env-style: user should add to their shell config
         p.note(
-            `Add this to your shell config (~/.zshrc or ~/.bashrc):\n\n` + `  export ANTHROPIC_API_KEY="${token}"`,
+            `Add this to your shell config (~/.zshrc or ~/.bashrc):\n\n  export ANTHROPIC_API_KEY="${token}"`,
             "API Key Setup"
         );
         p.log.info("The ask tool will detect it automatically via environment variable.");
@@ -392,7 +392,7 @@ function showCurrentConfig(config: AskConfig): void {
         );
         lines.push(`  Source:   tools claude config`);
     } else if (config.claude?.independentToken) {
-        lines.push(`  Token:    ${pc.dim(config.claude.independentToken.slice(0, 20) + "...")}`);
+        lines.push(`  Token:    ${pc.dim(`${config.claude.independentToken.slice(0, 20)}...`)}`);
         lines.push(`  Name:     ${config.claude.accountName ?? pc.dim("unknown")}`);
     } else {
         lines.push(`  ${pc.dim("(not configured)")}`);
