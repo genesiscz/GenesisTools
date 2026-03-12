@@ -67,6 +67,7 @@ export interface GitHubFileUrl {
     ref: string;
     lineStart?: number;
     lineEnd?: number;
+    isDirectory?: boolean;
 }
 
 export interface FetchMetadataRecord {

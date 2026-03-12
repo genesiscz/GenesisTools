@@ -82,7 +82,11 @@ async function fetchFileContent(
 
     // Handle directory response
     if (Array.isArray(data)) {
-        throw new Error(`Path is a directory, not a file: ${path}`);
+        throw new Error(
+            `Path is a directory, not a file: ${path}\n` +
+                `Use a tree URL to fetch directory contents: ` +
+                `https://github.com/${owner}/${repo}/tree/${ref}/${path}`
+        );
     }
 
     // Handle file response
@@ -101,6 +105,80 @@ async function fetchFileContent(
         sha: data.sha,
         url: data.html_url || `https://github.com/${owner}/${repo}/blob/${ref}/${path}`,
     };
+}
+
+interface DirectoryEntry {
+    name: string;
+    path: string;
+    type: "file" | "dir" | "symlink" | "submodule";
+    size: number;
+    download_url: string | null;
+}
+
+/**
+ * Fetch all file contents from a GitHub directory
+ */
+async function fetchDirectoryContents(
+    owner: string,
+    repo: string,
+    path: string,
+    ref: string,
+    options: GetOptions
+): Promise<string> {
+    const octokit = getOctokit();
+
+    verbose(options, `Fetching directory listing: ${owner}/${repo}/${path}@${ref}`);
+
+    const { data } = await withRetry(
+        () =>
+            octokit.rest.repos.getContent({
+                owner,
+                repo,
+                path,
+                ref,
+            }),
+        { label: `GET /repos/${owner}/${repo}/contents/${path}` }
+    );
+
+    if (!Array.isArray(data)) {
+        throw new Error(`Expected directory listing but got a single file: ${path}`);
+    }
+
+    const entries = data as DirectoryEntry[];
+    const files = entries.filter((entry) => entry.type === "file");
+
+    if (files.length === 0) {
+        return `Directory ${path} contains no files (${entries.length} entries total, all subdirectories).`;
+    }
+
+    verbose(options, `Found ${files.length} files in directory (${entries.length} total entries)`);
+
+    const parts: string[] = [];
+
+    for (const file of files) {
+        if (!file.download_url) {
+            verbose(options, `Skipping ${file.path}: no download URL`);
+            continue;
+        }
+
+        verbose(options, `Fetching: ${file.path}`);
+
+        const response = await fetch(file.download_url);
+
+        if (!response.ok) {
+            parts.push(`--- FILE: ${file.path} ---`);
+            parts.push(`[Error fetching file: ${response.status} ${response.statusText}]`);
+            parts.push("");
+            continue;
+        }
+
+        const content = await response.text();
+        parts.push(`--- FILE: ${file.path} ---`);
+        parts.push(content);
+        parts.push("");
+    }
+
+    return parts.join("\n");
 }
 
 /**
@@ -138,6 +216,7 @@ export async function getCommand(input: string, options: GetOptions): Promise<vo
         console.error(chalk.dim("\nSupported formats:"));
         console.error(chalk.dim("  https://github.com/owner/repo/blob/branch/path/to/file"));
         console.error(chalk.dim("  https://github.com/owner/repo/blame/tag/path/to/file"));
+        console.error(chalk.dim("  https://github.com/owner/repo/tree/branch/path/to/dir"));
         console.error(chalk.dim("  https://raw.githubusercontent.com/owner/repo/ref/path"));
         console.error(chalk.dim("  https://github.com/owner/repo/commit/SHA"));
         console.error(chalk.dim("  Any of the above with #L10 or #L10-L20 line references"));
@@ -168,6 +247,23 @@ export async function getCommand(input: string, options: GetOptions): Promise<vo
     }
 
     try {
+        // Handle directory URLs
+        if (parsed.isDirectory) {
+            const content = await fetchDirectoryContents(parsed.owner, parsed.repo, parsed.path, ref, options);
+
+            if (options.clipboard) {
+                await copyToClipboard(content, { silent: true });
+                console.log(chalk.green(`✔ Copied directory ${parsed.path} to clipboard`));
+            } else if (options.output) {
+                await Bun.write(options.output, content);
+                console.log(chalk.green(`✔ Written to ${options.output}`));
+            } else {
+                console.log(content);
+            }
+
+            return;
+        }
+
         // Fetch file content
         const file = await fetchFileContent(parsed.owner, parsed.repo, parsed.path, ref, options.raw ?? false);
 
@@ -277,8 +373,8 @@ async function handleCommitUrl(parsed: GitHubCommitUrl, options: GetOptions): Pr
 
 export function createGetCommand(): Command {
     const cmd = new Command("get")
-        .description("Get file content from a GitHub URL")
-        .argument("<url>", "GitHub file URL (blob, blame, or raw)")
+        .description("Get file or directory content from a GitHub URL")
+        .argument("<url>", "GitHub file URL (blob, blame, tree, or raw)")
         .option("-r, --ref <ref>", "Override branch/tag/commit ref")
         .option("-l, --lines <range>", "Line range (e.g., 10 or 10-20)")
         .option("-o, --output <file>", "Write to file")
@@ -310,6 +406,9 @@ Examples:
 
   # Use URL with line references
   tools github get "https://github.com/owner/repo/blob/main/file.ts#L10-L20"
+
+  # Get all files in a directory
+  tools github get https://github.com/owner/repo/tree/main/src/utils
 
   # Get commit diff
   tools github get https://github.com/owner/repo/commit/abc1234
