@@ -37,7 +37,7 @@ The CLI tool never imports from `@genesiscz/darwinkit` directly — it only call
 - `icloudDelete(path)` → returns `{ ok }`
 - `icloudMove(source, destination)` → returns `{ ok }`
 - `icloudCopy(source, destination)` → returns `{ ok }`
-- `icloudList(path)` → returns `{ entries: [...] }`
+- `icloudList(path)` → returns `ICloudDirEntry[]`
 - `icloudMkdir(path)` → returns `{ ok }`
 - `icloudStartMonitoring()` / `icloudStopMonitoring()`
 
