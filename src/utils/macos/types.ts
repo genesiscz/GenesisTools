@@ -1,10 +1,20 @@
 // Re-export types from @genesiscz/darwinkit package
 export type {
+    AuthAvailableResult,
+    AuthenticateResult,
+    BiometryType,
     CapabilitiesResult,
     DistanceResult,
     EmbedResult,
     EmbedType,
+    ICloudDirEntry,
+    ICloudListDirResult,
+    ICloudOkResult,
+    ICloudReadResult,
+    ICloudStatusResult,
     LanguageResult,
+    MethodCapability,
+    Neighbor,
     NeighborsResult,
     OCRBlock as OcrBlock,
     OCRBounds as OcrBounds,
@@ -27,11 +37,6 @@ export interface TaggedToken {
 
 export interface TagResult {
     tokens: TaggedToken[];
-}
-
-export interface Neighbor {
-    text: string;
-    distance: number;
 }
 
 // ─── Higher-level Utility Types ───────────────────────────────────────────────
