@@ -5,6 +5,7 @@ export type {
     EmbedResult,
     EmbedType,
     LanguageResult,
+    Neighbor,
     NeighborsResult,
     OCRBlock as OcrBlock,
     OCRBounds as OcrBounds,
@@ -27,11 +28,6 @@ export interface TaggedToken {
 
 export interface TagResult {
     tokens: TaggedToken[];
-}
-
-export interface Neighbor {
-    text: string;
-    distance: number;
 }
 
 // ─── Higher-level Utility Types ───────────────────────────────────────────────

@@ -62,6 +62,7 @@ export type {
     LanguageItem,
     LanguageResult,
     NamedEntity,
+    Neighbor,
     NeighborsResult,
     NlpScheme,
     OcrBlock,
