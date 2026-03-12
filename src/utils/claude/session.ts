@@ -65,7 +65,7 @@ export interface PromptContentOptions {
     /** Maximum token budget for the prepared content. */
     tokenBudget: number;
     /** Content selection strategy when the session exceeds the budget. */
-    priority: "balanced" | "user-first" | "assistant-first";
+    priority: "balanced" | "user-first" | "assistant-first" | "summary-first";
     /** Include tool result blocks. Default: false */
     includeToolResults?: boolean;
     /** Include thinking/reasoning blocks. Default: false */
@@ -1172,7 +1172,10 @@ export class ClaudeSession {
      * - `[Thinking]: <text>` only if `includeThinking` is true
      *
      * Priority modes:
-     * - `balanced` — chronological order, stops when budget is reached
+     * - `balanced` — summary-aware: always includes compaction summaries + recent
+     *   post-summary context (70% budget) + early context (30% budget)
+     * - `summary-first` — aggressive: summaries first, then all post-last-summary,
+     *   then fill remaining chronologically
      * - `user-first` — all user messages first, then assistant, then tools
      * - `assistant-first` — all assistant text first, then user, then tools
      *
@@ -1273,12 +1276,15 @@ export class ClaudeSession {
             return lines;
         };
 
-        // Determine message order based on priority
+        // Use summary-aware algorithm for balanced/summary-first priorities
+        if (priority === "balanced" || priority === "summary-first") {
+            return this._buildSummaryAwareContent(formatMessage, tokenBudget, priority);
+        }
+
+        // Legacy priority modes: user-first / assistant-first
         let orderedMessages: ConversationMessage[];
 
-        if (priority === "balanced") {
-            orderedMessages = [...this._messages];
-        } else if (priority === "user-first") {
+        if (priority === "user-first") {
             const user = this._messages.filter((m) => m.type === "user");
             const assistant = this._messages.filter((m) => m.type === "assistant");
             const other = this._messages.filter((m) => m.type !== "user" && m.type !== "assistant");
@@ -1359,6 +1365,191 @@ export class ClaudeSession {
         const totalMessages = this._messages.length;
         const truncationInfo = truncated
             ? `Included ${includedCount} of ${totalMessages} messages (${priority} priority). Budget: ${tokenBudget} tokens.`
+            : `All ${totalMessages} messages included within ${tokenBudget} token budget.`;
+
+        return {
+            content,
+            tokenCount: estimateTokens(content),
+            truncated,
+            truncationInfo,
+            stats: this._buildPreparedStats(),
+        };
+    }
+
+    /**
+     * Summary-aware content selection for balanced/summary-first priorities.
+     *
+     * Tier 1 (always): Bookends + all compaction summaries
+     * Tier 2 (high priority): Messages after the last summary (recent unsummarized context)
+     * Tier 3 (fill): Early context and between-summary messages
+     *
+     * For "balanced": 70% remaining budget to tier 2, 30% to tier 3
+     * For "summary-first": 85% to tier 2, 15% to tier 3
+     */
+    private _buildSummaryAwareContent(
+        formatMessage: (msg: ConversationMessage) => string[],
+        tokenBudget: number,
+        priority: "balanced" | "summary-first"
+    ): PreparedContent {
+        const totalMessages = this._messages.length;
+
+        // Identify summary message indices
+        const summaryIndices: number[] = [];
+        for (let i = 0; i < totalMessages; i++) {
+            if (this._messages[i].type === "summary") {
+                summaryIndices.push(i);
+            }
+        }
+
+        const lastSummaryIdx = summaryIndices.length > 0 ? summaryIndices[summaryIndices.length - 1] : -1;
+
+        // Tier 1: bookends (first + last) + all summaries — always included
+        const tier1Indices = new Set<number>();
+        if (totalMessages > 0) {
+            tier1Indices.add(0);
+        }
+        if (totalMessages > 1) {
+            tier1Indices.add(totalMessages - 1);
+        }
+        for (const idx of summaryIndices) {
+            tier1Indices.add(idx);
+        }
+
+        // Format tier 1 and calculate token cost
+        const tier1Formatted = new Map<number, string>();
+        let tier1Tokens = 0;
+
+        for (const idx of tier1Indices) {
+            const lines = formatMessage(this._messages[idx]);
+            if (lines.length > 0) {
+                const text = lines.join("\n");
+                tier1Formatted.set(idx, text);
+                tier1Tokens += estimateTokens(text);
+            }
+        }
+
+        // If tier 1 alone exceeds budget, return just what fits
+        if (tier1Tokens >= tokenBudget) {
+            const sortedEntries = [...tier1Formatted.entries()].sort((a, b) => a[0] - b[0]);
+            const parts: string[] = [];
+            let usedTokens = 0;
+
+            for (const [, text] of sortedEntries) {
+                const tokens = estimateTokens(text);
+                if (usedTokens + tokens > tokenBudget) {
+                    break;
+                }
+
+                parts.push(text);
+                usedTokens += tokens;
+            }
+
+            const content = parts.join("\n\n");
+            return {
+                content,
+                tokenCount: estimateTokens(content),
+                truncated: true,
+                truncationInfo: `Session has ${totalMessages} messages; only summaries + bookends fit within ${tokenBudget} token budget.`,
+                stats: this._buildPreparedStats(),
+            };
+        }
+
+        const remainingBudget = tokenBudget - tier1Tokens;
+
+        // Tier 2: messages after the last summary (recent unsummarized context)
+        // These are filled backwards from the end to prioritize the most recent
+        const tier2Indices: number[] = [];
+        if (lastSummaryIdx >= 0) {
+            for (let i = totalMessages - 2; i > lastSummaryIdx; i--) {
+                if (!tier1Indices.has(i)) {
+                    tier2Indices.push(i);
+                }
+            }
+        } else {
+            // No summaries: treat last 70% of messages as "recent"
+            const recentStart = Math.floor(totalMessages * 0.3);
+            for (let i = totalMessages - 2; i >= recentStart; i--) {
+                if (!tier1Indices.has(i)) {
+                    tier2Indices.push(i);
+                }
+            }
+        }
+
+        // Tier 3: everything else (early + between-summary context), forward order
+        const tier2Set = new Set(tier2Indices);
+        const tier3Indices: number[] = [];
+        for (let i = 1; i < totalMessages - 1; i++) {
+            if (!tier1Indices.has(i) && !tier2Set.has(i)) {
+                tier3Indices.push(i);
+            }
+        }
+
+        // Budget split: balanced = 70/30, summary-first = 85/15
+        const tier2Ratio = priority === "summary-first" ? 0.85 : 0.7;
+        let tier2Budget = Math.floor(remainingBudget * tier2Ratio);
+        let tier3Budget = remainingBudget - tier2Budget;
+
+        // Fill tier 2 (recent context, backwards from end)
+        const includedIndices = new Set<number>(tier1Indices);
+        const formattedMap = new Map<number, string>(tier1Formatted);
+        let tier2Used = 0;
+
+        for (const idx of tier2Indices) {
+            const lines = formatMessage(this._messages[idx]);
+            if (lines.length === 0) {
+                continue;
+            }
+
+            const text = lines.join("\n");
+            const tokens = estimateTokens(text);
+
+            if (tier2Used + tokens > tier2Budget) {
+                continue; // Try smaller messages
+            }
+
+            formattedMap.set(idx, text);
+            includedIndices.add(idx);
+            tier2Used += tokens;
+        }
+
+        // Give unused tier 2 budget to tier 3
+        tier3Budget += tier2Budget - tier2Used;
+
+        // Fill tier 3 (early context, forward from start)
+        let tier3Used = 0;
+
+        for (const idx of tier3Indices) {
+            const lines = formatMessage(this._messages[idx]);
+            if (lines.length === 0) {
+                continue;
+            }
+
+            const text = lines.join("\n");
+            const tokens = estimateTokens(text);
+
+            if (tier3Used + tokens > tier3Budget) {
+                continue; // Try smaller messages
+            }
+
+            formattedMap.set(idx, text);
+            includedIndices.add(idx);
+            tier3Used += tokens;
+        }
+
+        // Reassemble in chronological order
+        const sortedEntries = [...formattedMap.entries()].sort((a, b) => a[0] - b[0]);
+        const contentParts = sortedEntries.map(([, text]) => text);
+        const content = contentParts.join("\n\n");
+
+        const includedCount = includedIndices.size;
+        const truncated = includedCount < totalMessages;
+
+        const summaryCount = summaryIndices.filter((i) => includedIndices.has(i)).length;
+        const recentCount = tier2Indices.filter((i) => includedIndices.has(i)).length;
+        const earlyCount = tier3Indices.filter((i) => includedIndices.has(i)).length;
+
+        const truncationInfo = truncated
+            ? `Included ${includedCount} of ${totalMessages} messages (${priority}: ${summaryCount} summaries + ${recentCount} recent + ${earlyCount} early). Budget: ${tokenBudget} tokens.`
             : `All ${totalMessages} messages included within ${tokenBudget} token budget.`;
 
         return {

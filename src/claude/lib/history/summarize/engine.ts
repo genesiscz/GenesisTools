@@ -39,7 +39,7 @@ export interface SummarizeOptions {
     tokenBudget?: number;
     includeToolResults?: boolean;
     includeThinking?: boolean;
-    priority?: "balanced" | "user-first" | "assistant-first";
+    priority?: "balanced" | "user-first" | "assistant-first" | "summary-first";
 
     // Chunking
     thorough?: boolean;
@@ -417,7 +417,28 @@ export class SummarizeEngine {
 
         // If prompt-only mode, return the prompt without calling LLM
         if (this.options.promptOnly) {
-            const fullPrompt = `=== SYSTEM PROMPT ===\n\n${systemPrompt}\n\n=== USER PROMPT ===\n\n${userPrompt}`;
+            let fullPrompt: string;
+
+            if (this.options.thorough) {
+                // Show what thorough mode would send to the LLM
+                const chunkSize = this.options.chunkSize ?? 100_000;
+                const chunks = this.splitIntoChunks(prepared.content, chunkSize);
+
+                const parts: string[] = [];
+                parts.push(`=== SYSTEM PROMPT ===\n\n${systemPrompt}`);
+                parts.push(`=== THOROUGH MODE: ${chunks.length} chunk${chunks.length > 1 ? "s" : ""} ===`);
+
+                for (let i = 0; i < chunks.length; i++) {
+                    const chunkTokens = estimateTokens(chunks[i]);
+                    parts.push(`\n=== CHUNK ${i + 1}/${chunks.length} (~${chunkTokens.toLocaleString()} tokens) ===\n\n${chunks[i]}`);
+                }
+
+                parts.push(`\n=== SYNTHESIS PROMPT ===\n\n${userPrompt}`);
+                fullPrompt = parts.join("\n\n");
+            } else {
+                fullPrompt = `=== SYSTEM PROMPT ===\n\n${systemPrompt}\n\n=== USER PROMPT ===\n\n${userPrompt}`;
+            }
+
             const outputPaths = await this.formatOutput(fullPrompt);
 
             // If no output target specified, write to stdout
