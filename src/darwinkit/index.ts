@@ -131,7 +131,6 @@ async function handleCommandAction(cmd: CommandDef, sub: Command, actionArgs: un
         }
 
         sub.help();
-        return;
     }
 
     const format: OutputFormat = (opts.format as OutputFormat) ?? defaultFormat();
