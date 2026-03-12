@@ -1,9 +1,23 @@
-// Client
-
+// Auth
+export { authenticate, checkBiometry } from "./auth";
 // Classification
 export { classifyBatch, classifyText, groupByCategory } from "./classification";
 export type { DarwinKitOptions } from "./darwinkit";
 export { closeDarwinKit, DarwinKit, DarwinKitError, getDarwinKit } from "./darwinkit";
+// iCloud
+export {
+    icloudCopy,
+    icloudDelete,
+    icloudList,
+    icloudMkdir,
+    icloudMove,
+    icloudRead,
+    icloudStartMonitoring,
+    icloudStatus,
+    icloudStopMonitoring,
+    icloudWrite,
+    icloudWriteBytes,
+} from "./icloud";
 // NLP
 export {
     analyzeSentiment,
@@ -28,6 +42,8 @@ export {
     recognizeText,
     recognizeTextFromBuffer,
 } from "./ocr";
+// System
+export { getCapabilities } from "./system";
 export type {
     BatchSentimentOptions,
     ClusterOptions,
@@ -51,6 +67,9 @@ export { listVoices, speak } from "./tts";
 
 // Types
 export type {
+    AuthAvailableResult,
+    AuthenticateResult,
+    BiometryType,
     CapabilitiesResult,
     ClassificationItem,
     ClassificationResult,
@@ -58,9 +77,15 @@ export type {
     DistanceResult,
     EmbedResult,
     EmbedType,
+    ICloudDirEntry,
+    ICloudListDirResult,
+    ICloudOkResult,
+    ICloudReadResult,
+    ICloudStatusResult,
     Keyword,
     LanguageItem,
     LanguageResult,
+    MethodCapability,
     NamedEntity,
     Neighbor,
     NeighborsResult,
