@@ -78,19 +78,27 @@ export class Storage {
     // ============================================
 
     /**
-     * Read the entire config object
-     * @returns The config object or null if not found
+     * Read the entire config object.
+     * Returns null if the file does not exist.
+     * Throws if the file exists but cannot be parsed (corrupt JSON).
      */
     async getConfig<T extends object>(): Promise<T | null> {
+        if (!existsSync(this.configPath)) {
+            return null;
+        }
+
         try {
-            if (!existsSync(this.configPath)) {
-                return null;
-            }
             const content = await Bun.file(this.configPath).text();
             return SafeJSON.parse(content) as T;
         } catch (error) {
-            logger.error(`Failed to read config: ${error}`);
-            return null;
+            const msg = error instanceof Error ? error.message : String(error);
+            throw new Error(
+                `Failed to parse config at ${this.configPath}: ${msg}\n` +
+                    `  The config file exists but contains invalid JSON.\n` +
+                    `  Suggested actions:\n` +
+                    `    1. Open and fix manually: $EDITOR "${this.configPath}"\n` +
+                    `    2. Backup first: cp "${this.configPath}" "${this.configPath}.bak"`
+            );
         }
     }
 

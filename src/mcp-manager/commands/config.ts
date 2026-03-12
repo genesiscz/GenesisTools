@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import logger from "@app/logger";
 import { getUnifiedConfigPath } from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
@@ -17,9 +18,10 @@ export async function openConfig(options: ConfigOptions = {}): Promise<void> {
     await storage.ensureDirs();
     const configPath = getUnifiedConfigPath();
 
-    // Create default config if it doesn't exist
-    const existingConfig = await storage.getConfig<UnifiedMCPConfig>();
-    if (!existingConfig) {
+    // Only create default config if file doesn't exist on disk.
+    // Don't rely on getConfig() returning null — that also happens on parse errors,
+    // and we must not overwrite a corrupted config (user can fix it in editor).
+    if (!existsSync(configPath)) {
         const defaultConfig: UnifiedMCPConfig = {
             mcpServers: {},
         };
