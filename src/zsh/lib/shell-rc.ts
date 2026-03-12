@@ -30,7 +30,7 @@ export async function installHook(rcPath: string, hookMode: "static" | "dynamic"
     }
     const sourceLine =
         hookMode === "static"
-            ? '[ -f ~/.genesis-tools/zsh/hook.sh ] && source ~/.genesis-tools/zsh/hook.sh'
+            ? "[ -f ~/.genesis-tools/zsh/hook.sh ] && source ~/.genesis-tools/zsh/hook.sh"
             : 'eval "$(tools zsh hook 2>/dev/null)"';
 
     const block = `\n${MARKER_START}\n${sourceLine}\n${MARKER_END}\n`;

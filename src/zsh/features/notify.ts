@@ -45,7 +45,7 @@ __genesis_notify_precmd() {
 
         if [[ "$active_app" != "$term_app" ]]; then
             local escaped_cmd="\${cmd//\\\\/\\\\\\\\}"
-            escaped_cmd="\${escaped_cmd//\\"/\\\\\\\\\\\\\"}"
+            escaped_cmd="\${escaped_cmd//\\"/\\\\\\\\\\\\"}"
             osascript -e "display notification \\"\${icon} \${escaped_cmd} — \${duration}\\" with title \\"Command Finished\\" sound name \\"Ping\\"" 2>/dev/null & disown 2>/dev/null
         fi
     fi

@@ -1,7 +1,7 @@
-import type { ZshFeature } from "./types.ts";
 import { dotdotdotFeature } from "./dotdotdot.ts";
 import { notifyFeature } from "./notify.ts";
 import { portFeature } from "./port.ts";
+import type { ZshFeature } from "./types.ts";
 
 export const ALL_FEATURES: ZshFeature[] = [dotdotdotFeature, notifyFeature, portFeature];
 

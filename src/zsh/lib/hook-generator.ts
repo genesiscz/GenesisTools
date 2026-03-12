@@ -46,4 +46,3 @@ export async function writeHookFile(config: ZshConfig): Promise<string> {
     await Bun.write(hookPath, content);
     return hookPath;
 }
-

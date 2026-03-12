@@ -2,11 +2,11 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { Storage } from "@app/utils/storage/storage.ts";
+import { formatTable } from "@app/utils/table.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
-import { formatTable } from "@app/utils/table.ts";
-import { Storage } from "@app/utils/storage/storage.ts";
 import { ALL_FEATURES, getFeature, getFeatureNames } from "./features/index.ts";
 import type { ZshConfig } from "./features/types.ts";
 import { generateHookScript, writeHookFile } from "./lib/hook-generator.ts";
