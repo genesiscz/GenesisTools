@@ -169,7 +169,7 @@ async function promptForParam(param: ParamDef): Promise<unknown> {
             message: `${param.name} ${pc.dim(`(${param.description})`)}`,
             placeholder: param.default !== undefined ? String(param.default) : undefined,
             validate: (v) => {
-                if (param.required && (!v || v.trim() === "")) {
+                if (param.required && (!v || (v as string).trim() === "")) {
                     return `${param.name} is required`;
                 }
             },
