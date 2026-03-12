@@ -37,7 +37,9 @@ export async function runConfigureWizard(): Promise<void> {
                 {
                     value: "default-model",
                     label: "Default provider & model",
-                    hint: config.defaultProvider ? `${config.defaultProvider}/${config.defaultModel ?? "auto"}` : "not set",
+                    hint: config.defaultProvider
+                        ? `${config.defaultProvider}/${config.defaultModel ?? "auto"}`
+                        : "not set",
                 },
                 {
                     value: "show-config",
@@ -286,8 +288,7 @@ async function configureIndependent(config: AskConfig): Promise<void> {
     if (tokenType === "api-key") {
         // Set as env-style: user should add to their shell config
         p.note(
-            `Add this to your shell config (~/.zshrc or ~/.bashrc):\n\n` +
-                `  export ANTHROPIC_API_KEY="${token}"`,
+            `Add this to your shell config (~/.zshrc or ~/.bashrc):\n\n` + `  export ANTHROPIC_API_KEY="${token}"`,
             "API Key Setup"
         );
         p.log.info("The ask tool will detect it automatically via environment variable.");
@@ -386,7 +387,9 @@ function showCurrentConfig(config: AskConfig): void {
     lines.push(pc.bold("Claude Subscription:"));
 
     if (config.claude?.accountRef) {
-        lines.push(`  Account:  ${pc.cyan(config.claude.accountRef)}${config.claude.accountLabel ? ` (${config.claude.accountLabel})` : ""}`);
+        lines.push(
+            `  Account:  ${pc.cyan(config.claude.accountRef)}${config.claude.accountLabel ? ` (${config.claude.accountLabel})` : ""}`
+        );
         lines.push(`  Source:   tools claude config`);
     } else if (config.claude?.independentToken) {
         lines.push(`  Token:    ${pc.dim(config.claude.independentToken.slice(0, 20) + "...")}`);
