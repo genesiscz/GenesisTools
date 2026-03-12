@@ -15,12 +15,12 @@ describe("SafeJSON", () => {
         expect(SafeJSON.stringify({ a: 1 })).toBe('{"a":1}');
     });
 
-    it("stringify produces standard JSON (no comment preservation)", () => {
+    it("preserves comments through stringify", () => {
         const input = '{\n  // greeting\n  "name": "world"\n}';
         const obj = SafeJSON.parse(input);
         (obj as Record<string, string>).name = "updated";
         const output = SafeJSON.stringify(obj, null, 2);
-        expect(output).not.toContain("// greeting");
+        expect(output).toContain("// greeting");
         expect(output).toContain('"updated"');
     });
 
@@ -28,15 +28,44 @@ describe("SafeJSON", () => {
         expect(SafeJSON.stringify({ a: 1 }, ["a"])).toBe('{"a":1}');
     });
 
-    it("strict mode uses native JSON.parse (rejects comments)", () => {
-        expect(SafeJSON.parse('{"a":1}', null, { strict: true })).toEqual({ a: 1 });
-        expect(() => SafeJSON.parse("{ /* comment */ }", null, { strict: true })).toThrow();
+    it("uses native JSON.parse with { jsonl: true }", () => {
+        const result = SafeJSON.parse('{"a":1}', { jsonl: true });
+        expect(result).toEqual({ a: 1 });
+    });
+
+    it("rejects comments with { jsonl: true }", () => {
+        expect(() => SafeJSON.parse('{ /* comment */ "a": 1 }', { jsonl: true })).toThrow();
+    });
+
+    it("strict mode uses native JSON.parse (same as jsonl)", () => {
+        expect(SafeJSON.parse('{"a":1}', { strict: true })).toEqual({ a: 1 });
+        expect(() => SafeJSON.parse("{ /* comment */ }", { strict: true })).toThrow();
+    });
+
+    it("uses native JSON.stringify with { jsonl: true }", () => {
+        const result = SafeJSON.stringify({ a: 1 }, { jsonl: true });
+        expect(result).toBe('{"a":1}');
+    });
+
+    it("uses native JSON.stringify with { strict: true }", () => {
+        const result = SafeJSON.stringify({ a: 1 }, { strict: true });
+        expect(result).toBe('{"a":1}');
+    });
+
+    it("supports reviver with { jsonl: false }", () => {
+        const result = SafeJSON.parse('{"a":"1"}', {
+            jsonl: false,
+            reviver: (key, value) => (typeof value === "string" ? Number.parseInt(value, 10) : value),
+        });
+        expect(result).toEqual({ a: 1 });
     });
 });
 
 describe("parseJSON", () => {
     it("parses valid JSON", () => {
         expect(parseJSON<Record<string, number>>('{"a":1}')).toEqual({ a: 1 });
+        expect(parseJSON<number>("123")).toBe(123);
+        expect(parseJSON<string>('"hello"')).toBe("hello");
     });
 
     it("parses JSONC (comments, trailing commas)", () => {

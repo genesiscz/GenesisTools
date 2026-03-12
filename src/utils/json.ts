@@ -1,30 +1,50 @@
-import { parse } from "comment-json";
+import { parse, stringify } from "comment-json";
 
 type Reviver = (key: string | number, value: unknown) => unknown;
 
-interface SafeParseOptions {
-    /** Use native JSON.parse for strict validation (API boundaries, JSONL, etc.) */
+type ParseOptions = {
+    jsonl?: boolean;
     strict?: boolean;
-}
+    reviver?: Reviver | null;
+};
+
+type StringifyOptions = {
+    jsonl?: boolean;
+    strict?: boolean;
+};
 
 /**
  * Drop-in replacement for the global JSON object, powered by comment-json.
  * parse: handles // comments, multi-line comments, trailing commas.
- *        Pass `{ strict: true }` as 3rd arg to use native JSON.parse instead.
- * stringify: uses native JSON.stringify — always produces standard JSON output.
+ *        Comments are preserved as Symbol-keyed properties on the result.
+ *        Pass { jsonl: true } or { strict: true } to use native JSON.parse (rejects comments).
+ * stringify: produces standard JSON output with comments preserved.
+ *            Pass { jsonl: true } or { strict: true } to use native JSON.stringify.
  */
 export const SafeJSON = {
     // biome-ignore lint/suspicious/noExplicitAny: match native JSON.parse return type for drop-in compatibility
-    parse: (text: string, reviver?: Reviver | null, options?: SafeParseOptions): any => {
-        if (options?.strict) {
-            // biome-ignore lint/style/noRestrictedGlobals: intentional native JSON.parse for strict mode
-            return JSON.parse(text, reviver as Parameters<typeof JSON.parse>[1]);
+    parse: (text: string, reviverOrOptions?: Reviver | ParseOptions | null): any => {
+        if (reviverOrOptions && typeof reviverOrOptions === "object" && ("jsonl" in reviverOrOptions || "strict" in reviverOrOptions)) {
+            const options = reviverOrOptions as ParseOptions;
+            if (options.jsonl || options.strict) {
+                return JSON.parse(text, options.reviver ?? undefined);
+            }
+            return parse(text, options.reviver);
         }
-
-        return parse(text, reviver);
+        // Legacy: reviver function or null
+        return parse(text, reviverOrOptions as Reviver | null);
     },
-    // biome-ignore lint/style/noRestrictedGlobals: stringify always uses native JSON for standard output
-    stringify: JSON.stringify,
+    // biome-ignore lint/suspicious/noExplicitAny: match native JSON.stringify parameter types
+    stringify: (value: any, replacerOrOptions?: any, space?: string | number): string => {
+        if (replacerOrOptions && typeof replacerOrOptions === "object" && ("jsonl" in replacerOrOptions || "strict" in replacerOrOptions)) {
+            const options = replacerOrOptions as StringifyOptions;
+            if (options.jsonl || options.strict) {
+                return JSON.stringify(value);
+            }
+        }
+        // Default: use comment-json stringify with all params
+        return stringify(value, replacerOrOptions, space);
+    },
 } as const;
 
 /**
