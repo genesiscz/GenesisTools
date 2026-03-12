@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { discoverTools } from "@app/tools/lib/discovery";
 import * as p from "@clack/prompts";
@@ -25,17 +25,25 @@ const program = new Command()
             process.exit(1);
         }
 
-        // 2. Clean install dependencies (rm node_modules to avoid stale nested deps)
-        console.log(pc.dim("\n  Installing dependencies (clean)..."));
-        const nodeModulesPath = join(genesisPath, "node_modules");
-        Bun.spawnSync(["rm", "-rf", nodeModulesPath], { stdio: ["inherit", "inherit", "inherit"] });
+        // 2. Install dependencies (clean retry if first attempt fails)
+        console.log(pc.dim("\n  Installing dependencies..."));
         const install = Bun.spawnSync(["bun", "install"], {
             cwd: genesisPath,
             stdio: ["inherit", "inherit", "inherit"],
         });
+
         if (install.exitCode !== 0) {
-            console.error(pc.red("  Failed to bun install"));
-            process.exit(1);
+            console.log(pc.yellow("  Install failed, retrying with clean node_modules..."));
+            rmSync(join(genesisPath, "node_modules"), { recursive: true, force: true });
+            const retry = Bun.spawnSync(["bun", "install"], {
+                cwd: genesisPath,
+                stdio: ["inherit", "inherit", "inherit"],
+            });
+
+            if (retry.exitCode !== 0) {
+                console.error(pc.red("  Failed to install dependencies"));
+                process.exit(1);
+            }
         }
 
         // 3. Claude Code plugin management
