@@ -26,17 +26,37 @@ export class ProviderManager {
             return Array.from(this.detectedProviders.values());
         }
 
+        // Load ask config for env token control and subscription settings
+        const { loadAskConfig } = await import("@ask/config");
+        const askConfig = await loadAskConfig();
+
         const configs = getProviderConfigs();
         const detected: DetectedProvider[] = [];
 
         for (const config of configs) {
+            // Check env token control
+            if (askConfig.envTokens?.enabled === false) {
+                continue;
+            }
+
+            if (askConfig.envTokens?.disabledProviders?.includes(config.name)) {
+                continue;
+            }
+
+            // Skip anthropic env key if subscription account is configured (subscription takes priority)
+            if (config.name === "anthropic" && (askConfig.claude?.accountRef || askConfig.claude?.independentToken)) {
+                continue;
+            }
+
             const apiKey = process.env[config.envKey];
+
             if (!apiKey) {
-                continue; // Skip providers without API keys
+                continue;
             }
 
             try {
                 const provider = await this.createProvider(config);
+
                 if (provider) {
                     const models = await this.getAvailableModels(config, provider);
                     const detectedProvider: DetectedProvider = {
@@ -58,6 +78,11 @@ export class ProviderManager {
             }
         }
 
+        // Check for anthropic subscription token if not already detected via env key
+        if (!this.detectedProviders.has("anthropic")) {
+            await this.detectAnthropicSubscription(askConfig, detected);
+        }
+
         this.initialized = true;
 
         if (detected.length === 0) {
@@ -66,6 +91,60 @@ export class ProviderManager {
         }
 
         return detected;
+    }
+
+    private async detectAnthropicSubscription(
+        askConfig: import("@ask/types/config").AskConfig,
+        detected: DetectedProvider[]
+    ): Promise<void> {
+        if (!askConfig.claude?.accountRef && !askConfig.claude?.independentToken) {
+            return;
+        }
+
+        try {
+            let token: string;
+
+            if (askConfig.claude.accountRef) {
+                const { resolveAccountToken } = await import("@app/utils/claude/subscription-auth");
+                const result = await resolveAccountToken(askConfig.claude.accountRef);
+                token = result.token;
+            } else {
+                token = askConfig.claude.independentToken!;
+            }
+
+            const { createAnthropic } = await import("@ai-sdk/anthropic");
+            const provider = createAnthropic({ apiKey: token });
+
+            const allConfigs = getProviderConfigs();
+            const anthropicConfig = allConfigs.find((c) => c.name === "anthropic") ?? {
+                name: "anthropic",
+                type: "anthropic",
+                envKey: "ANTHROPIC_API_KEY",
+                import: "@ai-sdk/anthropic",
+                description: "Anthropic Claude models",
+                priority: 4,
+            };
+
+            const models = await this.getAvailableModels(anthropicConfig, provider);
+            const accountLabel = askConfig.claude.accountLabel;
+            const hint = accountLabel ? ` (${accountLabel})` : "";
+
+            const detectedProvider: DetectedProvider = {
+                name: "anthropic",
+                type: "anthropic",
+                key: token.slice(0, 20) + "...",
+                provider,
+                models,
+                config: anthropicConfig,
+            };
+
+            detected.push(detectedProvider);
+            this.detectedProviders.set("anthropic", detectedProvider);
+
+            p.log.step(pc.dim(`Detected ${pc.cyan("anthropic")}${pc.dim(hint)} provider via subscription`));
+        } catch (error) {
+            logger.warn(`Failed to initialize anthropic subscription provider: ${error}`);
+        }
     }
 
     private async createProvider(config: ProviderConfig): Promise<ProviderV2> {

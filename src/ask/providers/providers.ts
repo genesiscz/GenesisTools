@@ -167,8 +167,26 @@ export const KNOWN_MODELS = {
     ],
     anthropic: [
         {
+            id: "claude-sonnet-4-20250514",
+            name: "Claude Sonnet 4",
+            contextWindow: 200000,
+            capabilities: ["chat", "vision", "function-calling"],
+        },
+        {
+            id: "claude-opus-4-20250514",
+            name: "Claude Opus 4",
+            contextWindow: 200000,
+            capabilities: ["chat", "vision", "function-calling"],
+        },
+        {
+            id: "claude-haiku-4-5-20251001",
+            name: "Claude Haiku 4.5",
+            contextWindow: 200000,
+            capabilities: ["chat", "vision", "function-calling"],
+        },
+        {
             id: "claude-3-5-sonnet-20241022",
-            name: "Claude 3.5 Sonnet (Latest)",
+            name: "Claude 3.5 Sonnet",
             contextWindow: 200000,
             capabilities: ["chat", "vision", "function-calling"],
         },

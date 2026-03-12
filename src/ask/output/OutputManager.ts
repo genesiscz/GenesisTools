@@ -335,7 +335,8 @@ export class OutputManager {
             totalTokens: number;
             cost: number;
             currency: string;
-        }>
+        }>,
+        accountInfo?: { label?: string; name: string }
     ): Promise<string> {
         if (breakdowns.length === 0) {
             return "";
@@ -378,6 +379,12 @@ export class OutputManager {
         // Cost alerts
         if (totalCost > 0.1) {
             output += pc.yellow("⚠️  High cost alert: This session has exceeded $0.10\n");
+        }
+
+        // Account info line
+        if (accountInfo && breakdowns.length > 0) {
+            const labelPart = accountInfo.label ? ` (${accountInfo.label})` : "";
+            output += pc.dim(`Provider: ${breakdowns[0].provider}${labelPart} · ${accountInfo.name}\n`);
         }
 
         return output;
