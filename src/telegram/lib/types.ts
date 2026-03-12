@@ -50,7 +50,7 @@ export const DEFAULTS = {
     typingIntervalMs: 4000,
     askTimeoutMs: 60_000,
     askProvider: "openai",
-    askModel: "gpt-4o-mini",
+    askModel: "gpt-5-chat-latest",
     maxContextMessages: 30,
     historyFetchLimit: 100,
 } as const;

@@ -94,6 +94,15 @@ export function registerListenCommand(program: Command): void {
 
             const me = await client.getMe();
             const myName = me.firstName || "Me";
+
+            // Fetch dialogs to populate gramjs entity cache — required for
+            // resolving userIds when sending messages / fetching history.
+            try {
+                await client.getDialogs(100);
+            } catch (err) {
+                logger.warn(`Failed to prefetch dialogs (entity cache may be incomplete): ${err}`);
+            }
+
             spinner.stop(`Connected as ${myName}`);
 
             const store = new TelegramHistoryStore();
