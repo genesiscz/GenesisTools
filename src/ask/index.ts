@@ -95,6 +95,43 @@ class ASKTool {
                 argv.model = askConfig.defaultModel;
             }
 
+            // Fuzzy model matching: resolve partial model names
+            const originalModel = argv.model;
+            let fuzzyResolved = false;
+
+            if (argv.model) {
+                const resolved = await this.resolveModelFuzzy(argv.model, argv.provider);
+                if (resolved) {
+                    argv.provider = resolved.provider;
+                    argv.model = resolved.model;
+                    fuzzyResolved = true;
+                }
+            }
+
+            // Non-TTY guard: require provider/model when stdin is piped
+            const isTTY = process.stdin.isTTY ?? false;
+
+            if (!isTTY) {
+                const hasMessage = argv._.length > 0;
+
+                if (!hasMessage && !argv.sst && !argv.interactive) {
+                    this.exitWithUsageHint("No message provided in non-interactive mode.");
+                }
+
+                // Model was given but didn't resolve to a known model
+                if (hasMessage && originalModel && !fuzzyResolved) {
+                    await this.exitWithModelHint(argv.provider, originalModel);
+                }
+
+                if (hasMessage && (!argv.provider || !argv.model)) {
+                    await this.exitWithModelHint(argv.provider, argv.model);
+                }
+
+                if (argv.interactive) {
+                    this.exitWithUsageHint("Interactive mode (-i) requires a TTY terminal.");
+                }
+            }
+
             // Validate options
             const validation = validateOptions(argv);
             if (!validation.valid) {
@@ -114,6 +151,10 @@ class ASKTool {
             // Handle single message vs interactive mode
             const interactive = isInteractiveMode(argv, argv);
 
+            if (!isTTY && interactive) {
+                this.exitWithUsageHint("No message provided in non-interactive mode.");
+            }
+
             if (interactive) {
                 await this.startInteractiveChat(argv);
             } else {
@@ -128,6 +169,85 @@ class ASKTool {
     private suggestCommand(provider: string, model: string): void {
         const cmd = `tools ask -p ${provider} -m ${model} "your message"`;
         p.log.info(pc.dim(`Non-interactive: ${cmd}`));
+    }
+
+    private exitWithUsageHint(reason: string): never {
+        console.error(pc.red(reason));
+        console.error("");
+        console.error(pc.dim("Usage examples:"));
+        console.error(pc.dim(`  tools ask -p anthropic -m claude-sonnet-4-20250514 "your message"`));
+        console.error(pc.dim(`  tools ask -p openai -m gpt-4o "your message"`));
+        console.error(pc.dim(`  echo "your message" | tools ask -p anthropic -m claude-sonnet-4-20250514`));
+        console.error("");
+        console.error(pc.dim("Configure defaults:  tools ask config"));
+        console.error(pc.dim("List providers:      tools ask models"));
+        process.exit(1);
+    }
+
+    private async exitWithModelHint(provider?: string, model?: string): Promise<never> {
+        const missing = !provider && !model ? "provider and model" : !provider ? "provider (-p)" : "model (-m)";
+        console.error(pc.red(`Missing ${missing} for non-interactive mode.`));
+
+        // Show fuzzy matches if partial model was given
+        if (model) {
+            // First try scoped to provider, then fallback to all providers
+            let { matches } = await modelSelector.fuzzyMatchModel(model, provider);
+
+            if (matches.length === 0 && provider) {
+                ({ matches } = await modelSelector.fuzzyMatchModel(model));
+            }
+
+            if (matches.length > 0) {
+                console.error("");
+                console.error(pc.yellow("Did you mean one of these?"));
+                for (const m of matches.slice(0, 8)) {
+                    console.error(pc.dim(`  tools ask -p ${m.provider.name} -m ${m.model.id} "your message"`));
+                }
+            }
+        }
+
+        // Show available providers
+        const { providerManager: pm } = await import("@ask/providers/ProviderManager");
+        const providers = await pm.detectProviders();
+
+        if (providers.length > 0) {
+            console.error("");
+            console.error(pc.dim("Available providers:"));
+            for (const prov of providers) {
+                const topModels = prov.models.slice(0, 3).map((m) => m.id);
+                const suffix = prov.models.length > 3 ? ` +${prov.models.length - 3} more` : "";
+                console.error(pc.dim(`  ${prov.name}: ${topModels.join(", ")}${suffix}`));
+            }
+        }
+
+        console.error("");
+        console.error(pc.dim("Configure defaults:  tools ask config"));
+        process.exit(1);
+    }
+
+    private async resolveModelFuzzy(
+        query: string,
+        providerName?: string
+    ): Promise<{ provider: string; model: string } | null> {
+        // Try scoped to provider first
+        const scoped = await modelSelector.fuzzyMatchModel(query, providerName);
+
+        if (scoped.exact || scoped.matches.length === 1) {
+            const match = scoped.matches[0];
+            return { provider: match.provider.name, model: match.model.id };
+        }
+
+        // If scoped search failed, try globally (e.g., user passed -m gpt-4o with default provider anthropic)
+        if (providerName) {
+            const global = await modelSelector.fuzzyMatchModel(query);
+
+            if (global.exact || global.matches.length === 1) {
+                const match = global.matches[0];
+                return { provider: match.provider.name, model: match.model.id };
+            }
+        }
+
+        return null;
     }
 
     private async handleSpeechToText(filePath: string, argv: Args): Promise<void> {
