@@ -56,7 +56,7 @@ async function httpHandler(step: PresetStep, ctx: StepContext): Promise<StepResu
         if (typeof params.body === "string") {
             body = ctx.interpolate(params.body);
         } else {
-            body = SafeJSON.stringify(params.body, (_key, value) => {
+            body = SafeJSON.stringify(params.body, (_key: string, value: unknown) => {
                 if (typeof value === "string" && value.includes("{{")) {
                     return ctx.interpolate(value);
                 }

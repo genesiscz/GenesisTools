@@ -47,7 +47,7 @@ export class ClarityApi {
         }
 
         try {
-            return SafeJSON.parse(text) as T;
+            return SafeJSON.parse(text, { strict: true }) as T;
         } catch {
             const isHtml = text.trimStart().startsWith("<");
             const hint = isHtml ? "Session expired — re-authenticate in Settings" : text.slice(0, 300);
@@ -119,7 +119,7 @@ export class ClarityApi {
         let responseBody: unknown;
 
         try {
-            responseBody = SafeJSON.parse(text);
+            responseBody = SafeJSON.parse(text, { strict: true });
         } catch {
             responseBody = text.slice(0, 2000);
         }

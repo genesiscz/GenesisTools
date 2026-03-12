@@ -171,7 +171,7 @@ export class SessionManager {
 
         for (const line of lines) {
             try {
-                entries.push(SafeJSON.parse(line) as LogEntry);
+                entries.push(SafeJSON.parse(line, { strict: true }) as LogEntry);
             } catch {
                 entries.push({ level: "raw", msg: line, ts: 0 });
             }

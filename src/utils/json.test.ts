@@ -55,7 +55,7 @@ describe("SafeJSON", () => {
     it("supports reviver with { jsonl: false }", () => {
         const result = SafeJSON.parse('{"a":"1"}', {
             jsonl: false,
-            reviver: (key, value) => (typeof value === "string" ? Number.parseInt(value, 10) : value),
+            reviver: (_key, value) => (typeof value === "string" ? Number.parseInt(value, 10) : value),
         });
         expect(result).toEqual({ a: 1 });
     });

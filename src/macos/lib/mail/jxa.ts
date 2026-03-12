@@ -102,7 +102,7 @@ export async function searchBodies(
         try {
             const result = await runJxa(script, 60_000);
             if (result.exitCode === 0 && result.stdout) {
-                const rowids = SafeJSON.parse(result.stdout) as number[];
+                const rowids = SafeJSON.parse(result.stdout, { strict: true }) as number[];
                 for (const r of rowids) {
                     matchedRowids.add(r);
                 }
@@ -156,7 +156,7 @@ export async function getMessageBody(subject: string, _dateSent: Date, senderAdd
     try {
         const result = await runJxa(script, 30_000);
         if (result.exitCode === 0 && result.stdout) {
-            const parsed = SafeJSON.parse(result.stdout) as { body: string | null };
+            const parsed = SafeJSON.parse(result.stdout, { strict: true }) as { body: string | null };
             return parsed.body;
         }
     } catch (err) {
@@ -220,7 +220,7 @@ export async function saveAttachment(
     try {
         const result = await runJxa(script, 30_000);
         if (result.exitCode === 0 && result.stdout) {
-            const parsed = SafeJSON.parse(result.stdout) as { saved: boolean };
+            const parsed = SafeJSON.parse(result.stdout, { strict: true }) as { saved: boolean };
             return parsed.saved;
         }
     } catch (err) {

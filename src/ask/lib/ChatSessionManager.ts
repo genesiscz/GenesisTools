@@ -45,7 +45,7 @@ export class ChatSessionManager implements ChatSessionManagerRef {
             }
 
             try {
-                entries.push(SafeJSON.parse(trimmed) as SessionEntry);
+                entries.push(SafeJSON.parse(trimmed, { strict: true }) as SessionEntry);
             } catch {
                 // Skip malformed lines
             }

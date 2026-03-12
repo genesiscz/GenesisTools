@@ -255,7 +255,7 @@ export function registerTaskCommand(parent: Command): void {
 
             const preset = await loadPreset(schedule.preset_name);
             const vars = schedule.vars_json
-                ? (SafeJSON.parse(schedule.vars_json) as Record<string, string>)
+                ? (SafeJSON.parse(schedule.vars_json, { strict: true }) as Record<string, string>)
                 : undefined;
             const runLogger = createRunLogger(preset.name, schedule.id, "manual");
 

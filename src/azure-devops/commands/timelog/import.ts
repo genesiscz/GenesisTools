@@ -30,7 +30,7 @@ export function registerImportSubcommand(parent: Command): void {
 
             try {
                 const content = readFileSync(file, "utf-8");
-                data = SafeJSON.parse(content);
+                data = SafeJSON.parse(content, { strict: true });
             } catch (e) {
                 console.error(`Invalid JSON: ${(e as Error).message}`);
                 process.exit(1);

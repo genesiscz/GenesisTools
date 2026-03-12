@@ -425,7 +425,7 @@ async function processDay(
             return { rawEntries: [], summary: "" };
         }
 
-        const entries = SafeJSON.parse(rawData) as ProcessedEntry[];
+        const entries = SafeJSON.parse(rawData, { strict: true }) as ProcessedEntry[];
         const workEntriesRaw = entries.filter((e) => isWorkRelated(e));
 
         const workEntries = workEntriesRaw.map(extractDetailedContext);

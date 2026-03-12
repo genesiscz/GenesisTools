@@ -86,14 +86,14 @@ async function fetchFunctionsKey(orgName: string): Promise<string> {
         queryParams: { "api-version": "7.1-preview" },
     })}"`.quiet();
 
-    const data = SafeJSON.parse(result.text());
+    const data = SafeJSON.parse(result.text(), { strict: true });
     const configDoc = data.find((d: { id: string }) => d.id === "Config");
 
     if (!configDoc?.value) {
         throw new Error("TimeLog extension not configured in Azure DevOps");
     }
 
-    const settings = SafeJSON.parse(configDoc.value);
+    const settings = SafeJSON.parse(configDoc.value, { strict: true });
     const apiKey = settings.find((s: { id: string }) => s.id === "ApiKeyTextBox")?.value;
 
     if (!apiKey) {

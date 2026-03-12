@@ -26,7 +26,7 @@ const startServer = () => {
         if (messages.length > 0) {
             log.info(`Sending ${messages.length} existing messages to new client...`);
             messages.forEach((msg) => {
-                ws.send(SafeJSON.stringify(msg)); // Send each individual message object
+                ws.send(SafeJSON.stringify(msg));
             });
             log.info("Finished sending existing messages.");
         }

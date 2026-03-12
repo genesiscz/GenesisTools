@@ -24,7 +24,7 @@ async function jsonHandler(step: PresetStep, ctx: StepContext): Promise<StepResu
                 }
 
                 const input = ctx.interpolate(params.input);
-                const parsed = SafeJSON.parse(input);
+                const parsed = SafeJSON.parse(input, { strict: true });
                 return makeResult("success", parsed, start);
             }
 

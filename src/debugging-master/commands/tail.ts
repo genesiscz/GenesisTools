@@ -73,7 +73,7 @@ export function registerTailCommand(program: Command): void {
                     for (const line of lines) {
                         entryIndex++;
                         try {
-                            const entry = SafeJSON.parse(line) as LogEntry;
+                            const entry = SafeJSON.parse(line, { strict: true }) as LogEntry;
                             const indexed: IndexedLogEntry = { ...entry, index: entryIndex };
 
                             if (levels && !levels.includes(entry.level) && entry.level !== "raw") {

@@ -18,7 +18,7 @@ function parseJSONL(input: string): unknown[] | null {
 
     // First, try parsing as a single JSON object/array
     try {
-        SafeJSON.parse(trimmed);
+        SafeJSON.parse(trimmed, { strict: true });
         return null; // It's regular JSON, not JSONL
     } catch {
         // Not a single JSON, try JSONL
@@ -62,7 +62,7 @@ function parseJSONL(input: string): unknown[] | null {
             if (depth === 0) {
                 // Found a complete JSON object
                 try {
-                    const parsed = SafeJSON.parse(currentObject.trim());
+                    const parsed = SafeJSON.parse(currentObject.trim(), { strict: true });
                     objects.push(parsed);
                     currentObject = "";
                     // Skip whitespace and newlines before next object
@@ -104,7 +104,7 @@ function extractEmbeddedJson(input: string): string | null {
         const candidate = input.slice(startIdx, endIdx + 1);
 
         try {
-            SafeJSON.parse(candidate);
+            SafeJSON.parse(candidate, { strict: true });
             return candidate;
         } catch {
             // Not valid JSON, try next
@@ -117,7 +117,7 @@ function extractEmbeddedJson(input: string): string | null {
 function detectFormat(input: string): Format {
     // Try JSON first
     try {
-        SafeJSON.parse(input);
+        SafeJSON.parse(input, { strict: true });
         return "json";
     } catch {
         // Try JSONL (newline-delimited JSON)
@@ -288,9 +288,9 @@ async function main(): Promise<void> {
             jsonData = jsonlData;
         } else if (detectedFormat === "embedded-json") {
             const extracted = extractEmbeddedJson(input);
-            jsonData = SafeJSON.parse(extracted!);
+            jsonData = SafeJSON.parse(extracted!, { strict: true });
         } else if (detectedFormat === "json") {
-            jsonData = SafeJSON.parse(input);
+            jsonData = SafeJSON.parse(input, { strict: true });
         }
 
         const formatLabel =

@@ -227,7 +227,7 @@ export async function parseJsonlFile(filePath: string): Promise<ConversationMess
     for await (const line of rl) {
         if (line.trim()) {
             try {
-                const parsed = SafeJSON.parse(line) as ConversationMessage;
+                const parsed = SafeJSON.parse(line, { strict: true }) as ConversationMessage;
                 messages.push(parsed);
             } catch {
                 // Skip invalid JSON lines
@@ -1501,7 +1501,7 @@ async function extractSessionMetadataFromFile(filePath: string, mtime: number): 
             }
 
             try {
-                const obj = SafeJSON.parse(line);
+                const obj = SafeJSON.parse(line, { strict: true });
 
                 // Always capture summary/custom-title (latest wins)
                 if (obj.type === "summary" && obj.summary) {
@@ -1663,7 +1663,7 @@ export async function rgExtractSnippet(query: string, filePath: string): Promise
 
         // Try to extract readable text from the JSON line
         try {
-            const obj = SafeJSON.parse(line);
+            const obj = SafeJSON.parse(line, { strict: true });
             const text = extractTextFromMessage(obj as ConversationMessage, true);
 
             if (!text) {

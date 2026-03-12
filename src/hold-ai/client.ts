@@ -28,7 +28,7 @@ const waitForCompletion = async (): Promise<string> => {
             // Handle messages
             ws.on("message", (data) => {
                 try {
-                    const message = SafeJSON.parse(data.toString());
+                    const message = SafeJSON.parse(data.toString(), { strict: true });
 
                     messages.push(message);
                     // Check if the completion message exists

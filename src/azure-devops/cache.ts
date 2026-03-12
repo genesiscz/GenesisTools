@@ -203,7 +203,7 @@ export async function migrateHistoryCache(): Promise<number> {
         const id = parseInt(idMatch[1], 10);
         try {
             const content = await Bun.file(join(cacheDir, file)).text();
-            const oldHistory = SafeJSON.parse(content) as {
+            const oldHistory = SafeJSON.parse(content, { strict: true }) as {
                 workItemId: number;
                 updates: WorkItemUpdate[];
                 fetchedAt: string;

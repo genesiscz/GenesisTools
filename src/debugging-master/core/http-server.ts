@@ -31,7 +31,7 @@ const VALID_LEVELS = new Set([
 
 function normalizeEntry(body: string): LogEntry {
     try {
-        const parsed = SafeJSON.parse(body);
+        const parsed = SafeJSON.parse(body, { strict: true });
         const level = VALID_LEVELS.has(parsed.level) ? parsed.level : "raw";
         return {
             ...parsed,

@@ -43,7 +43,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
         const infoPath = getServerInfoPath(cwd);
         if (existsSync(infoPath)) {
             try {
-                const info: ServerInfo = SafeJSON.parse(readFileSync(infoPath, "utf-8"));
+                const info: ServerInfo = SafeJSON.parse(readFileSync(infoPath, "utf-8"), { strict: true });
                 logger.debug(
                     {
                         component: "mcp-tsc",
@@ -109,7 +109,7 @@ export async function getPersistentServer(cwd: string, debug: boolean = false): 
     const infoPath = getServerInfoPath(cwd);
     if (existsSync(infoPath)) {
         try {
-            const info: ServerInfo = SafeJSON.parse(readFileSync(infoPath, "utf-8"));
+            const info: ServerInfo = SafeJSON.parse(readFileSync(infoPath, "utf-8"), { strict: true });
             logger.warn(
                 {
                     component: "mcp-tsc",
@@ -236,7 +236,7 @@ export async function killAllServers(): Promise<number> {
     for (const file of files) {
         try {
             const infoPath = path.join(SERVERS_DIR, file);
-            const info: ServerInfo = SafeJSON.parse(readFileSync(infoPath, "utf-8"));
+            const info: ServerInfo = SafeJSON.parse(readFileSync(infoPath, "utf-8"), { strict: true });
 
             // Try to kill in-memory server
             const server = persistentServers.get(info.cwd);
@@ -265,7 +265,7 @@ export function listServers(): ServerInfo[] {
     const servers: ServerInfo[] = [];
     for (const file of files) {
         try {
-            const info: ServerInfo = SafeJSON.parse(readFileSync(path.join(SERVERS_DIR, file), "utf-8"));
+            const info: ServerInfo = SafeJSON.parse(readFileSync(path.join(SERVERS_DIR, file), "utf-8"), { strict: true });
             servers.push(info);
         } catch (_error) {
             // Ignore errors for corrupt files

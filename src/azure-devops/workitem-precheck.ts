@@ -68,7 +68,7 @@ async function fetchWorkItem(id: number, org: string): Promise<AzWorkItemRaw> {
             throw new Error(`Empty response for work item #${id}`);
         }
 
-        return SafeJSON.parse(text) as AzWorkItemRaw;
+        return SafeJSON.parse(text, { strict: true }) as AzWorkItemRaw;
     } catch (error) {
         const stderr = (error as { stderr?: { toString(): string } })?.stderr?.toString?.()?.trim();
         const message = stderr || (error instanceof Error ? error.message : String(error));

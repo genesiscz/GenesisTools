@@ -281,7 +281,7 @@ export async function getKeychainCredentials(): Promise<KeychainCredentials | nu
             return null;
         }
 
-        const data = SafeJSON.parse(text.trim());
+        const data = SafeJSON.parse(text.trim(), { strict: true });
         const oauth = data.claudeAiOauth;
         if (!oauth?.accessToken) {
             return null;

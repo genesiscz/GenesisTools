@@ -112,7 +112,7 @@ function stringify(data: unknown): string {
     try {
         return SafeJSON.stringify(
             data,
-            (_key, value) => {
+            (_key: string, value: unknown) => {
                 if (value && typeof value === "object") {
                     return Object.getOwnPropertyNames(value).reduce((acc: Record<string, unknown>, prop) => {
                         acc[prop] = (value as Record<string, unknown>)[prop];

@@ -619,7 +619,7 @@ export class Api {
         const queries: Array<{ name: string; queryId: string }> = [];
         for (const widget of widgetsData.widgets || []) {
             try {
-                const settings = SafeJSON.parse(widget.settings);
+                const settings = SafeJSON.parse(widget.settings, { strict: true });
                 const queryId = settings.queryId || settings.query?.queryId;
                 if (queryId) {
                     queries.push({ name: widget.name, queryId });

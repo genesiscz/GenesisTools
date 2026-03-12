@@ -54,7 +54,7 @@ function getCachedWorkItems(): CachedWorkItem[] {
             const id = parseInt(match[1], 10);
             let title = `#${id}`;
             try {
-                const data = SafeJSON.parse(readFileSync(join(cacheDir, file), "utf-8"));
+                const data = SafeJSON.parse(readFileSync(join(cacheDir, file), "utf-8"), { strict: true });
                 if (data.title) {
                     title = data.title;
                 }

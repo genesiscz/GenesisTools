@@ -68,7 +68,7 @@ export async function executeStep(
     // Try to parse stdout as JSON for structured access via expressions
     let output: unknown = stdout.trim();
     try {
-        output = SafeJSON.parse(stdout);
+        output = SafeJSON.parse(stdout, { strict: true });
     } catch {
         // Keep as raw string
     }

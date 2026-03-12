@@ -111,7 +111,7 @@ export class DarwinKitClient {
             const originalHandler = this._handleLine.bind(this);
             this._handleLine = (line: string) => {
                 try {
-                    const msg = SafeJSON.parse(line) as JsonRpcResponse;
+                    const msg = SafeJSON.parse(line, { strict: true }) as JsonRpcResponse;
                     if (!msg.id) {
                         clearTimeout(timer);
                         this._handleLine = originalHandler;
@@ -166,7 +166,7 @@ export class DarwinKitClient {
 
         let msg: JsonRpcResponse;
         try {
-            msg = SafeJSON.parse(line) as JsonRpcResponse;
+            msg = SafeJSON.parse(line, { strict: true }) as JsonRpcResponse;
         } catch {
             logger.warn(`DarwinKitClient: failed to parse line: ${line}`);
             return;
