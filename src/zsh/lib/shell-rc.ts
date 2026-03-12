@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -17,16 +17,16 @@ export async function isInstalled(rcPath: string): Promise<boolean> {
         return false;
     }
 
-    const content = readFileSync(rcPath, "utf-8");
+    const content = await Bun.file(rcPath).text();
     return content.includes(MARKER_START);
 }
 
 export async function installHook(rcPath: string, hookMode: "static" | "dynamic"): Promise<void> {
-    let updated = existsSync(rcPath) ? readFileSync(rcPath, "utf-8") : "";
+    let updated = existsSync(rcPath) ? await Bun.file(rcPath).text() : "";
 
     if (updated.includes(MARKER_START)) {
         await uninstallHook(rcPath);
-        updated = readFileSync(rcPath, "utf-8");
+        updated = await Bun.file(rcPath).text();
     }
     const sourceLine =
         hookMode === "static"
@@ -42,7 +42,7 @@ export async function uninstallHook(rcPath: string): Promise<void> {
         return;
     }
 
-    const content = readFileSync(rcPath, "utf-8");
+    const content = await Bun.file(rcPath).text();
     const startIdx = content.indexOf(MARKER_START);
 
     if (startIdx === -1) {

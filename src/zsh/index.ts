@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 
+import { homedir } from "node:os";
+import { join } from "node:path";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -41,8 +43,8 @@ program
 
         if (rcPaths.length === 0) {
             p.log.warn("No shell rc files found. Will create default locations.");
-            const home = process.env.HOME || require("os").homedir();
-            rcPaths = [require("path").join(home, ".zshrc"), require("path").join(home, ".bashrc")];
+            const home = process.env.HOME || homedir();
+            rcPaths = [join(home, ".zshrc"), join(home, ".bashrc")];
         }
 
         const alreadyInstalled = [];
@@ -309,9 +311,16 @@ program
 
         if (isTTY) {
             const coloredLines = table.split("\n").map((line, idx) => {
-                if (idx === 0 || idx === 1) return line;
+                if (idx === 0 || idx === 1) {
+                    return line;
+                }
+
                 const row = ALL_FEATURES[idx - 2];
-                if (!row) return line;
+
+                if (!row) {
+                    return line;
+                }
+
                 const enabled = config.enabled.includes(row.name);
                 const statusColMatch = line.match(/(\s+)(enabled|disabled)(\s+)/);
                 if (statusColMatch) {

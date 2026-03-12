@@ -45,7 +45,7 @@ function parseLsofOutput(output: string): PortProcess[] {
 
         const pid = parseInt(parts[1], 10);
 
-        if (isNaN(pid) || pid === ownPid) {
+        if (Number.isNaN(pid) || pid === ownPid) {
             continue;
         }
 
@@ -208,7 +208,7 @@ program
     .action(async (portArg: string) => {
         const port = parseInt(portArg, 10);
 
-        if (isNaN(port) || port < 1 || port > 65535) {
+        if (Number.isNaN(port) || port < 1 || port > 65535) {
             p.log.error(`Invalid port number: ${pc.bold(portArg)}. Must be between 1 and 65535.`);
             process.exit(1);
         }
