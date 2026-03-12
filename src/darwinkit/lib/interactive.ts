@@ -3,7 +3,7 @@ import { handleCancel, isCancelled, withCancel } from "@app/utils/prompts/clack/
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { type CommandDef, commands, GROUP_LABELS, GROUP_ORDER, getCommandsByGroup, type ParamDef } from "./commands";
-import { defaultFormat, formatOutput } from "./format";
+import { defaultFormat, formatOutput, type OutputFormat } from "./format";
 
 /**
  * Run the full interactive menu: group -> command -> params -> execute
@@ -48,7 +48,8 @@ export async function runInteractiveMenu(): Promise<void> {
  */
 export async function runCommandInteractive(
     cmd: CommandDef,
-    providedArgs: Record<string, unknown> = {}
+    providedArgs: Record<string, unknown> = {},
+    formatOverride?: OutputFormat
 ): Promise<void> {
     const usage = buildUsageLine(cmd);
     p.log.info(pc.dim(usage));
@@ -78,7 +79,7 @@ export async function runCommandInteractive(
         const result = await cmd.run(args);
         spin.stop(`${cmd.name} complete`);
 
-        const format = defaultFormat();
+        const format = formatOverride ?? defaultFormat();
         const output = formatOutput(result, format);
         console.log(output);
     } catch (error) {
@@ -134,7 +135,16 @@ async function promptForParam(param: ParamDef): Promise<unknown> {
                 placeholder: param.default ? String(param.default) : undefined,
             })
         );
-        return (result as string).split(",").map((s) => s.trim());
+        const str = (result as string).trim();
+
+        if (str === "") {
+            return [];
+        }
+
+        return str
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
     }
 
     if (param.type === "number") {

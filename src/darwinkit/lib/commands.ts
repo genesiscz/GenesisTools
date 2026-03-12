@@ -5,6 +5,7 @@ import {
     authenticate,
     batchSentiment,
     checkBiometry,
+    classifyBatch,
     classifyText,
     clusterBySimilarity,
     deduplicateTexts,
@@ -15,6 +16,7 @@ import {
     findNeighbors,
     getCapabilities,
     getKeywords,
+    groupByCategory,
     groupByLanguage,
     icloudCopy,
     icloudDelete,
@@ -22,8 +24,11 @@ import {
     icloudMkdir,
     icloudMove,
     icloudRead,
+    icloudStartMonitoring,
     icloudStatus,
+    icloudStopMonitoring,
     icloudWrite,
+    icloudWriteBytes,
     lemmatize,
     listVoices,
     rankBySimilarity,
@@ -415,6 +420,59 @@ export const commands: CommandDef[] = [
             }),
     },
 
+    {
+        name: "classify-batch",
+        group: "classification",
+        description: "Classify multiple texts into categories",
+        params: [
+            {
+                name: "items",
+                type: "string[]",
+                required: true,
+                description: "Texts to classify (comma-separated)",
+            },
+            {
+                name: "categories",
+                type: "string[]",
+                required: true,
+                description: "Candidate categories (comma-separated)",
+            },
+            { name: "language", type: "string", required: false, description: "BCP-47 code", default: "en" },
+        ],
+        run: async (args) => {
+            const items = (args.items as string[]).map((text, i) => ({ text, id: String(i) }));
+            return classifyBatch(items, args.categories as string[], {
+                language: (args.language as string) ?? "en",
+            });
+        },
+    },
+    {
+        name: "group-by-category",
+        group: "classification",
+        description: "Group texts by their classified category",
+        params: [
+            {
+                name: "items",
+                type: "string[]",
+                required: true,
+                description: "Texts to group (comma-separated)",
+            },
+            {
+                name: "categories",
+                type: "string[]",
+                required: true,
+                description: "Candidate categories (comma-separated)",
+            },
+            { name: "language", type: "string", required: false, description: "BCP-47 code", default: "en" },
+        ],
+        run: async (args) => {
+            const items = (args.items as string[]).map((text) => ({ text }));
+            return groupByCategory(items, args.categories as string[], {
+                language: (args.language as string) ?? "en",
+            });
+        },
+    },
+
     // ── TTS ──────────────────────────────────────────────────────────────────
     {
         name: "speak",
@@ -493,6 +551,16 @@ export const commands: CommandDef[] = [
         run: async (args) => icloudWrite(args.path as string, args.content as string),
     },
     {
+        name: "icloud-write-bytes",
+        group: "icloud",
+        description: "Write binary data (base64-encoded) to iCloud Drive",
+        params: [
+            { name: "path", type: "string", required: true, positional: true, description: "File path in iCloud" },
+            { name: "data", type: "string", required: true, description: "Base64-encoded data" },
+        ],
+        run: async (args) => icloudWriteBytes(args.path as string, args.data as string),
+    },
+    {
         name: "icloud-delete",
         group: "icloud",
         description: "Delete a file from iCloud Drive",
@@ -534,6 +602,20 @@ export const commands: CommandDef[] = [
         description: "Create a directory in iCloud Drive",
         params: [{ name: "path", type: "string", required: true, positional: true, description: "Directory path" }],
         run: async (args) => icloudMkdir(args.path as string),
+    },
+    {
+        name: "icloud-start-monitoring",
+        group: "icloud",
+        description: "Start monitoring iCloud Drive for file changes",
+        params: [],
+        run: async () => icloudStartMonitoring(),
+    },
+    {
+        name: "icloud-stop-monitoring",
+        group: "icloud",
+        description: "Stop monitoring iCloud Drive for file changes",
+        params: [],
+        run: async () => icloudStopMonitoring(),
     },
 
     // ── System ───────────────────────────────────────────────────────────────

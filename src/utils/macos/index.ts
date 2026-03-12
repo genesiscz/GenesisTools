@@ -17,6 +17,7 @@ export {
     icloudStopMonitoring,
     icloudWrite,
     icloudWriteBytes,
+    onIcloudFilesChanged,
 } from "./icloud";
 // NLP
 export {

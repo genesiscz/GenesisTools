@@ -86,3 +86,12 @@ export async function icloudStartMonitoring(): Promise<ICloudOkResult> {
 export async function icloudStopMonitoring(): Promise<ICloudOkResult> {
     return getDarwinKit().icloud.stopMonitoring();
 }
+
+/**
+ * Subscribe to iCloud Drive file change notifications.
+ * Call icloudStartMonitoring() first to begin receiving events.
+ * @returns Unsubscribe function
+ */
+export function onIcloudFilesChanged(handler: (notification: { paths: string[] }) => void): () => void {
+    return getDarwinKit().icloud.onFilesChanged(handler);
+}

@@ -113,11 +113,31 @@ async function handleCommandAction(cmd: CommandDef, sub: Command, actionArgs: un
 
     for (const param of cmd.params.filter((pm) => !pm.positional)) {
         const camelName = param.name.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+        const rawValue = opts[camelName] ?? opts[param.name];
 
-        if (opts[camelName] !== undefined) {
-            args[param.name] = param.type === "number" ? Number(opts[camelName]) : opts[camelName];
-        } else if (opts[param.name] !== undefined) {
-            args[param.name] = param.type === "number" ? Number(opts[param.name]) : opts[param.name];
+        if (rawValue === undefined) {
+            continue;
+        }
+
+        if (param.type === "number") {
+            const num = Number(rawValue);
+
+            if (Number.isNaN(num)) {
+                console.error(`Invalid number for --${param.name}: ${rawValue}`);
+                process.exit(1);
+            }
+
+            args[param.name] = num;
+        } else if (param.type === "string[]") {
+            args[param.name] =
+                typeof rawValue === "string"
+                    ? rawValue
+                          .split(",")
+                          .map((s: string) => s.trim())
+                          .filter(Boolean)
+                    : rawValue;
+        } else {
+            args[param.name] = rawValue;
         }
     }
 
@@ -126,14 +146,19 @@ async function handleCommandAction(cmd: CommandDef, sub: Command, actionArgs: un
     if (missing.length > 0) {
         if (process.stdout.isTTY) {
             p.intro(LOGO);
-            await runCommandInteractive(cmd, args);
+            const fmtOpt = opts.format as string | undefined;
+            await runCommandInteractive(cmd, args, fmtOpt as OutputFormat | undefined);
             return;
         }
 
-        sub.help();
+        sub.outputHelp();
+        process.exit(0);
     }
 
-    const format: OutputFormat = (opts.format as OutputFormat) ?? defaultFormat();
+    const validFormats = new Set<OutputFormat>(["json", "pretty", "raw"]);
+    const formatOpt = opts.format as string | undefined;
+    const format: OutputFormat =
+        formatOpt && validFormats.has(formatOpt as OutputFormat) ? (formatOpt as OutputFormat) : defaultFormat();
 
     try {
         const result = await cmd.run(args);
