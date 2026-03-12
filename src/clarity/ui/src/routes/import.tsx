@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
@@ -39,7 +40,7 @@ async function fetchFillPreview(month: number, year: number) {
     const res = await fetch("/api/fill/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month, year }),
+        body: SafeJSON.stringify({ month, year }),
     });
 
     if (!res.ok) {
@@ -54,7 +55,7 @@ async function executeFillApi(month: number, year: number, weekIds: number[]): P
     const res = await fetch("/api/fill/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month, year, weekIds }),
+        body: SafeJSON.stringify({ month, year, weekIds }),
     });
 
     if (!res.ok) {
@@ -390,7 +391,6 @@ function FillResultsCard({ result }: { result: ExecuteFillResult }) {
                                     {entry.status}
                                 </Badge>
                             </button>
-
                             {isExpanded && (
                                 <div className="ml-10 mb-2 space-y-2">
                                     {/* Entry metadata */}
@@ -442,14 +442,14 @@ function FillResultsCard({ result }: { result: ExecuteFillResult }) {
                                                     {entry.debug!.method} {entry.debug!.url}
                                                 </span>
                                                 {"\n\n"}
-                                                {JSON.stringify(entry.debug!.requestBody, null, 2)}
+                                                {SafeJSON.stringify(entry.debug!.requestBody, null, 2)}
                                             </pre>
 
                                             <div className="text-[10px] font-mono text-gray-500 uppercase tracking-wider mt-2">
                                                 HTTP Response ({entry.debug!.responseStatus})
                                             </div>
                                             <pre className="text-xs font-mono text-gray-400 overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap">
-                                                {JSON.stringify(entry.debug!.responseBody, null, 2)}
+                                                {SafeJSON.stringify(entry.debug!.responseBody, null, 2)}
                                             </pre>
                                         </div>
                                     )}

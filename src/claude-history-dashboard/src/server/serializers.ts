@@ -1,6 +1,8 @@
 import type { getAllConversations } from "@app/claude/lib/history/search";
 import type { ConversationMessage, ToolResultBlock, ToolUseBlock } from "@app/utils/claude/types";
 
+import { SafeJSON } from "@app/utils/json";
+
 // Serializable types for client/server communication
 export interface SerializableConversation {
 	filePath: string;
@@ -151,7 +153,7 @@ export function extractToolResults(
 		.filter((b): b is ToolResultBlock => typeof b === "object" && b !== null && "type" in b && b.type === "tool_result")
 		.map((b) => ({
 			toolUseId: b.tool_use_id,
-			content: typeof b.content === "string" ? b.content : (JSON.stringify(b.content, null, 2) ?? ""),
+			content: typeof b.content === "string" ? b.content : (SafeJSON.stringify(b.content, null, 2) ?? ""),
 			isError: b.is_error,
 		}));
 }

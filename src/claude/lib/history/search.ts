@@ -11,6 +11,7 @@ import { basename, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import logger from "@app/logger";
 import { Executor } from "@app/utils/cli";
+import { SafeJSON } from "@app/utils/json";
 import { glob } from "glob";
 import {
     invalidateToday as _invalidateToday,
@@ -226,7 +227,7 @@ export async function parseJsonlFile(filePath: string): Promise<ConversationMess
     for await (const line of rl) {
         if (line.trim()) {
             try {
-                const parsed = JSON.parse(line) as ConversationMessage;
+                const parsed = SafeJSON.parse(line, { strict: true }) as ConversationMessage;
                 messages.push(parsed);
             } catch {
                 // Skip invalid JSON lines
@@ -1499,7 +1500,7 @@ async function extractSessionMetadataFromFile(filePath: string, mtime: number): 
             }
 
             try {
-                const obj = JSON.parse(line);
+                const obj = SafeJSON.parse(line, { strict: true });
 
                 // Always capture summary/custom-title (latest wins)
                 if (obj.type === "summary" && obj.summary) {
@@ -1661,7 +1662,7 @@ export async function rgExtractSnippet(query: string, filePath: string): Promise
 
         // Try to extract readable text from the JSON line
         try {
-            const obj = JSON.parse(line);
+            const obj = SafeJSON.parse(line, { strict: true });
             const text = extractTextFromMessage(obj as ConversationMessage, true);
 
             if (!text) {

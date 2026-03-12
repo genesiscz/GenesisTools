@@ -4,6 +4,7 @@ import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/util
 import type { TimeEntryRecord, TimeSeriesValue } from "@app/utils/clarity";
 import { ClarityApi } from "@app/utils/clarity";
 import { addDay, formatDate, getWeekRange, subtractDay } from "@app/utils/date";
+import { SafeJSON } from "@app/utils/json";
 import Table from "cli-table3";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -326,8 +327,8 @@ export function registerFillCommand(program: Command): void {
                         if (verbose) {
                             console.log(pc.dim(`     PUT ${debug.url}`));
                             console.log(pc.dim(`     Status: ${debug.responseStatus}`));
-                            console.log(pc.dim(`     Request:  ${JSON.stringify(debug.requestBody)}`));
-                            console.log(pc.dim(`     Response: ${JSON.stringify(debug.responseBody)}`));
+                            console.log(pc.dim(`     Request:  ${SafeJSON.stringify(debug.requestBody)}`));
+                            console.log(pc.dim(`     Response: ${SafeJSON.stringify(debug.responseBody)}`));
                         }
                     } catch (err) {
                         errorCount++;
@@ -338,7 +339,7 @@ export function registerFillCommand(program: Command): void {
                             const debug = (err as Error & { debug?: unknown }).debug;
 
                             if (debug) {
-                                console.log(pc.dim(`     Debug: ${JSON.stringify(debug)}`));
+                                console.log(pc.dim(`     Debug: ${SafeJSON.stringify(debug)}`));
                             }
                         }
                     }

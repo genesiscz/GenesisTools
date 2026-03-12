@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:
 import { homedir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import type { StoredCredential } from "./types";
 
 const CREDENTIALS_DIR = join(homedir(), ".genesis-tools", "automate", "credentials");
@@ -30,7 +31,7 @@ function ensureDir(): void {
 export async function saveCredential(credential: StoredCredential): Promise<void> {
     ensureDir();
     const filePath = join(CREDENTIALS_DIR, `${safeName(credential.name)}.json`);
-    await Bun.write(filePath, JSON.stringify(credential, null, 2));
+    await Bun.write(filePath, SafeJSON.stringify(credential, null, 2));
     chmodSync(filePath, 0o600);
     logger.debug(`Credential saved: ${credential.name}`);
 }
@@ -47,7 +48,7 @@ export async function loadCredential(name: string): Promise<StoredCredential | n
 
     try {
         const content = await Bun.file(filePath).text();
-        return JSON.parse(content) as StoredCredential;
+        return SafeJSON.parse(content) as StoredCredential;
     } catch (error) {
         logger.error(`Failed to load credential "${name}": ${error}`);
         return null;

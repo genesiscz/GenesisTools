@@ -2,6 +2,7 @@ import { printFormatted, truncatePath } from "@app/har-analyzer/core/formatter";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { HarEntry, HarHeader, OutputOptions } from "@app/har-analyzer/types";
+import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 
 type Severity = "HIGH" | "MEDIUM" | "LOW";
@@ -42,7 +43,7 @@ function decodeBase64Url(str: string): string {
 
 function tryDecodeJwtPart(part: string): Record<string, unknown> | null {
     try {
-        return JSON.parse(decodeBase64Url(part)) as Record<string, unknown>;
+        return SafeJSON.parse(decodeBase64Url(part)) as Record<string, unknown>;
     } catch {
         return null;
     }

@@ -3,6 +3,7 @@ import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/co
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName, PerProjectEnabledState, ProviderEnabledState } from "@app/mcp-manager/utils/types.js";
 import { DiffUtil } from "@app/utils/diff";
+import { SafeJSON } from "@app/utils/json";
 import { ExitPromptError } from "@inquirer/core";
 import { checkbox, select } from "@inquirer/prompts";
 import chalk from "chalk";
@@ -255,8 +256,8 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
             logger.info(`Provider: ${chalk.magenta(conflict.provider)}\n`);
 
             // Show diff
-            const existingJson = JSON.stringify(conflict.existing, null, 2);
-            const incomingJson = JSON.stringify(conflict.incoming, null, 2);
+            const existingJson = SafeJSON.stringify(conflict.existing, null, 2);
+            const incomingJson = SafeJSON.stringify(conflict.incoming, null, 2);
 
             await DiffUtil.showDiff(
                 existingJson,

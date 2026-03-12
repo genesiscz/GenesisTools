@@ -1,5 +1,6 @@
 import logger, { consoleLog } from "@app/logger";
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
+import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 
 /**
@@ -25,7 +26,7 @@ export async function showServerConfig(serverName: string, providers: MCPProvide
     consoleLog.info(`\nConfiguration for '${serverName}':\n`);
     for (const { provider, config } of configs) {
         consoleLog.info(`${chalk.bold(provider)}:`);
-        consoleLog.info(JSON.stringify(config, null, 2));
+        consoleLog.info(SafeJSON.stringify(config, null, 2));
         consoleLog.info("");
     }
 }

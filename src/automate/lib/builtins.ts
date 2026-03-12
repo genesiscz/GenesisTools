@@ -1,5 +1,6 @@
 // src/automate/lib/builtins.ts
 
+import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import { resolveExpression, resolveParams } from "./expressions.ts";
 import type { ExecutionContext, PresetStep, StepResult } from "./types.ts";
@@ -144,7 +145,7 @@ async function handleShell(step: PresetStep, ctx: ExecutionContext, start: numbe
     // Try to parse stdout as JSON for structured access
     let output: unknown = stdout.trim();
     try {
-        output = JSON.parse(stdout);
+        output = SafeJSON.parse(stdout);
     } catch {
         // Keep as raw string
     }

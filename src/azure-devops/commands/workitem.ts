@@ -35,6 +35,7 @@ import {
     requireConfig,
 } from "@app/azure-devops/utils";
 import logger, { consoleLog } from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 
 // Silent mode for JSON output - suppresses progress messages
@@ -304,7 +305,7 @@ export async function handleWorkItem(
             const freshMeta = queryMetadata.get(id);
             if (freshMeta && freshMeta.changed === cache.changed && freshMeta.rev === cache.rev) {
                 logger.debug(`[workitem] #${id} unchanged (rev=${cache.rev}), using cache`);
-                const cachedItem = JSON.parse(readFileSync(existingJsonPath, "utf-8")) as WorkItemFull;
+                const cachedItem = SafeJSON.parse(readFileSync(existingJsonPath, "utf-8")) as WorkItemFull;
                 cachedResults.set(id, cachedItem);
                 cacheTimes.set(id, new Date(cache.cache?.fieldsFetchedAt ?? 0));
                 skippedCount++;
@@ -318,7 +319,7 @@ export async function handleWorkItem(
             const ageMinutes = (Date.now() - cacheDate.getTime()) / 60000;
             if (ageMinutes < WORKITEM_FRESHNESS_MINUTES) {
                 logger.debug(`[workitem] #${id} cache fresh (${ageMinutes.toFixed(1)} min old), using cache`);
-                const cachedItem = JSON.parse(readFileSync(existingJsonPath, "utf-8")) as WorkItemFull;
+                const cachedItem = SafeJSON.parse(readFileSync(existingJsonPath, "utf-8")) as WorkItemFull;
                 cachedResults.set(id, cachedItem);
                 cacheTimes.set(id, cacheDate);
                 skippedCount++;
@@ -426,7 +427,7 @@ export async function handleWorkItem(
         }
 
         logger.debug(`[workitem] #${id} saving JSON: ${jsonPath}`);
-        writeFileSync(jsonPath, JSON.stringify(item, null, 2));
+        writeFileSync(jsonPath, SafeJSON.stringify(item, null, 2));
         const imageMap = inlineImageMaps.get(id);
         logger.debug(`[workitem] #${id} saving MD: ${mdPath}`);
         writeFileSync(mdPath, generateWorkItemMarkdown(item, imageMap));

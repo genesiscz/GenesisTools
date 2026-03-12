@@ -7,6 +7,8 @@ import { dirname, join, resolve } from "node:path";
 import type { AzureConfig, AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import { formatRelativeTime } from "@app/utils/format";
 
+import { SafeJSON } from "@app/utils/json";
+
 export function getRelativeTime(date: Date): string {
     return formatRelativeTime(date, { rounding: "round" });
 }
@@ -55,7 +57,7 @@ export function loadConfig(): AzureConfig | null {
     }
 
     try {
-        return JSON.parse(readFileSync(configPath, "utf-8"));
+        return SafeJSON.parse(readFileSync(configPath, "utf-8"));
     } catch {
         return null;
     }

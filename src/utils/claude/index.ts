@@ -12,6 +12,8 @@ import { homedir } from "node:os";
 import { basename, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 
+import { SafeJSON } from "@app/utils/json";
+
 export const CLAUDE_DIR = resolve(homedir(), ".claude");
 export const PROJECTS_DIR = resolve(CLAUDE_DIR, "projects");
 
@@ -42,7 +44,7 @@ export async function parseJsonlTranscript<T = Record<string, unknown>>(filePath
     for await (const line of rl) {
         if (line.trim()) {
             try {
-                messages.push(JSON.parse(line) as T);
+                messages.push(SafeJSON.parse(line) as T);
             } catch {
                 // Skip invalid JSON lines
             }

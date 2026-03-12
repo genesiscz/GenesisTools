@@ -1,6 +1,7 @@
 import type { IndexedLogEntry, OutputFormat, SessionStats } from "@app/debugging-master/types";
 import { suggestCommand } from "@app/utils/cli/executor";
 import { formatBytes, formatDuration } from "@app/utils/format";
+import { SafeJSON } from "@app/utils/json";
 import { stripAnsi } from "@app/utils/string";
 import chalk from "chalk";
 
@@ -23,7 +24,7 @@ export function formatEntryLine(entry: IndexedLogEntry, pretty: boolean): string
 
     let suffix = "";
     if (entry.refId) {
-        suffix = `[ref:${entry.refId}] ${formatBytes(JSON.stringify(entry.data ?? entry.vars ?? entry.stack ?? "").length)}`;
+        suffix = `[ref:${entry.refId}] ${formatBytes(SafeJSON.stringify(entry.data ?? entry.vars ?? entry.stack ?? "").length)}`;
     }
     if (entry.level === "timer-end" && entry.durationMs != null) {
         suffix = formatDuration(entry.durationMs, "ms");
@@ -176,7 +177,7 @@ export function formatTip(entries: IndexedLogEntry[]): string {
 export function wrapOutput(content: string, format: OutputFormat, tip?: string): string {
     switch (format) {
         case "json":
-            return JSON.stringify({ output: stripAnsi(content) });
+            return SafeJSON.stringify({ output: stripAnsi(content) });
         case "md":
             return content + (tip ?? "");
         default:

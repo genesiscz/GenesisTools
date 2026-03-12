@@ -1,4 +1,5 @@
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import WebSocket from "ws";
 
 interface IMessage {
@@ -27,7 +28,7 @@ const waitForCompletion = async (): Promise<string> => {
             // Handle messages
             ws.on("message", (data) => {
                 try {
-                    const message = JSON.parse(data.toString());
+                    const message = SafeJSON.parse(data.toString(), { strict: true });
 
                     messages.push(message);
                     // Check if the completion message exists

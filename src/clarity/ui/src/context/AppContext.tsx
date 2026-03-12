@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 import { createContext, use, useCallback, useEffect, useState } from "react";
 
 interface AppState {
@@ -48,7 +49,7 @@ function readStoredState(defaultState: AppState): AppState {
     }
 
     try {
-        const parsed = JSON.parse(raw) as Partial<AppState> | null;
+        const parsed = SafeJSON.parse(raw) as Partial<AppState> | null;
 
         if (typeof parsed !== "object" || parsed === null) {
             return defaultState;
@@ -78,7 +79,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             return;
         }
 
-        window.localStorage.setItem(APP_CONTEXT_STORAGE_KEY, JSON.stringify(nextState));
+        window.localStorage.setItem(APP_CONTEXT_STORAGE_KEY, SafeJSON.stringify(nextState));
     }, []);
 
     const setMonthYear = (m: number, y: number): void => {

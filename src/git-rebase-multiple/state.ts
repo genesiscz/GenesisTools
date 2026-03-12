@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 import { git } from "./git";
 import type { RebasePhase, RebaseState } from "./types";
 
@@ -36,7 +37,7 @@ export const stateManager = {
 
         try {
             const content = await file.text();
-            return JSON.parse(content) as RebaseState;
+            return SafeJSON.parse(content) as RebaseState;
         } catch {
             return null;
         }
@@ -47,7 +48,7 @@ export const stateManager = {
      */
     async save(state: RebaseState): Promise<void> {
         const path = await getStateFilePath();
-        await Bun.write(path, JSON.stringify(state, null, 2));
+        await Bun.write(path, SafeJSON.stringify(state, null, 2));
     },
 
     /**

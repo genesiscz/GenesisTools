@@ -16,6 +16,7 @@ import type {
 } from "@app/azure-devops/types";
 import { WORKITEM_CACHE_VERSION } from "@app/azure-devops/types";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage";
 
 // Shared storage instance
@@ -56,7 +57,7 @@ export async function saveGlobalCache<T>(type: "query" | "workitem" | "dashboard
  * Format data as JSON
  */
 export function formatJSON<T>(data: T): string {
-    return JSON.stringify(data, null, 2);
+    return SafeJSON.stringify(data, null, 2);
 }
 
 /**
@@ -202,7 +203,7 @@ export async function migrateHistoryCache(): Promise<number> {
         const id = parseInt(idMatch[1], 10);
         try {
             const content = await Bun.file(join(cacheDir, file)).text();
-            const oldHistory = JSON.parse(content) as {
+            const oldHistory = SafeJSON.parse(content, { strict: true }) as {
                 workItemId: number;
                 updates: WorkItemUpdate[];
                 fetchedAt: string;

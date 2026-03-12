@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Button } from "@ui/components/button";
@@ -21,7 +22,7 @@ async function updateAuthApi(curl: string) {
     const res = await fetch("/api/update-auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ curl }),
+        body: SafeJSON.stringify({ curl }),
     });
 
     if (!res.ok) {

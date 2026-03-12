@@ -3,6 +3,7 @@ import type { TimelyService } from "@app/timely/api/service";
 import type { TimelyEvent } from "@app/timely/types";
 import { formatDuration, getDatesInMonth, getMonthDateRange } from "@app/timely/utils/date";
 import { generateReportMarkdown } from "@app/timely/utils/entry-processor";
+import { SafeJSON } from "@app/utils/json";
 import type { Storage } from "@app/utils/storage";
 import chalk from "chalk";
 import Table from "cli-table3";
@@ -164,7 +165,7 @@ async function exportMonthAction(
  * Export events as JSON format
  */
 function exportAsJson(events: TimelyEvent[]): void {
-    console.log(JSON.stringify(events, null, 2));
+    console.log(SafeJSON.stringify(events, null, 2));
 }
 
 /**

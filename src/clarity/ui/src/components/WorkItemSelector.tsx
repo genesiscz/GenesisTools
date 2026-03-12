@@ -1,5 +1,6 @@
 import type { WorkItemTypeColor } from "@app/azure-devops/lib/work-item-enrichment";
 import type { AdoWorkItem, TimelogWorkItem } from "@app/clarity/lib/types";
+import { SafeJSON } from "@app/utils/json";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
@@ -28,7 +29,7 @@ async function fetchTimelogEntries(month: number, year: number): Promise<{ workI
     const res = await fetch("/api/timelog-entries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month, year }),
+        body: SafeJSON.stringify({ month, year }),
     });
 
     if (!res.ok) {
@@ -64,7 +65,7 @@ async function searchAdoWorkItems(query: string): Promise<{ items: AdoWorkItem[]
     const res = await fetch("/api/ado-workitems", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
+        body: SafeJSON.stringify({ query }),
     });
 
     if (!res.ok) {
@@ -79,7 +80,7 @@ async function addMappingApi(data: Record<string, unknown>) {
     const res = await fetch("/api/mappings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: SafeJSON.stringify(data),
     });
 
     if (!res.ok) {

@@ -31,6 +31,7 @@ import {
     saveTemplate,
 } from "@app/azure-devops/utils";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { ExitPromptError } from "@inquirer/core";
 import { confirm, editor, input, select } from "@inquirer/prompts";
 import type { Command } from "commander";
@@ -448,7 +449,7 @@ async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void
 
                 console.log("\n⏳ Creating work item...");
                 logger.debug(`[create] Creating ${state.type} with ${operations.length} operations`);
-                logger.debug(`[create] Operations: ${JSON.stringify(operations.map((o) => o.path))}`);
+                logger.debug(`[create] Operations: ${SafeJSON.stringify(operations.map((o) => o.path))}`);
                 const created = await activeApi.createWorkItem(state.type!, operations);
                 logger.debug(`[create] Created work item #${created.id}`);
 
@@ -614,7 +615,7 @@ async function createFromFile(api: Api, config: AzureConfig, filePath: string): 
     let template: WorkItemTemplate;
 
     try {
-        template = JSON.parse(content);
+        template = SafeJSON.parse(content);
     } catch {
         throw new Error(`Invalid JSON in template file: ${filePath}`);
     }

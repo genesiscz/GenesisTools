@@ -3,6 +3,7 @@ import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { filterEntries } from "@app/har-analyzer/core/query-engine";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, HarEntry, HarFile, OutputOptions } from "@app/har-analyzer/types";
+import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 
 const SENSITIVE_HEADER_NAMES = new Set([
@@ -17,7 +18,7 @@ const SENSITIVE_HEADER_NAMES = new Set([
 const SENSITIVE_QS_NAMES = new Set(["api_key", "apikey", "key", "token", "secret", "password", "access_token"]);
 
 function sanitizeEntry(entry: HarEntry): HarEntry {
-    const clone = JSON.parse(JSON.stringify(entry)) as HarEntry;
+    const clone = SafeJSON.parse(SafeJSON.stringify(entry)) as HarEntry;
 
     // Sanitize request headers
     for (const h of clone.request.headers) {
@@ -52,7 +53,7 @@ function sanitizeEntry(entry: HarEntry): HarEntry {
 }
 
 function stripBodies(entry: HarEntry): HarEntry {
-    const clone = JSON.parse(JSON.stringify(entry)) as HarEntry;
+    const clone = SafeJSON.parse(SafeJSON.stringify(entry)) as HarEntry;
 
     if (clone.request.postData) {
         clone.request.postData.text = undefined;
@@ -117,7 +118,7 @@ export function registerExportCommand(program: Command): void {
                     },
                 };
 
-                const json = JSON.stringify(exportedHar, null, 2);
+                const json = SafeJSON.stringify(exportedHar, null, 2);
 
                 if (options.output) {
                     const outPath = resolve(options.output);

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import type { LanguageModelUsage } from "ai";
 
 export interface UsageRecord {
@@ -107,7 +108,7 @@ export class UsageDatabase {
     ): Promise<number> {
         // DEBUG: Log what we're storing
         logger.debug(`[UsageDatabase] recordUsage called for ${provider}/${model}`);
-        logger.debug({ usage: JSON.stringify(usage, null, 2) }, `[UsageDatabase] usage object`);
+        logger.debug({ usage: SafeJSON.stringify(usage, null, 2) }, `[UsageDatabase] usage object`);
 
         // Extract tokens using new API naming
         const inputTokens = usage.inputTokens ?? 0;

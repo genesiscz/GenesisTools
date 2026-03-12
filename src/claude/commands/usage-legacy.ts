@@ -2,6 +2,7 @@ import { loadConfig } from "@app/claude/lib/config";
 import { fetchAllAccountsUsage, fetchUsage } from "@app/claude/lib/usage/api";
 import { renderAccountUsage, renderAllAccounts } from "@app/claude/lib/usage/display";
 import { watchUsage } from "@app/claude/lib/usage/watch";
+import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 
@@ -22,7 +23,7 @@ export function registerUsageLegacyCommand(program: Command): void {
                 const usage = await fetchUsage(opts.token);
                 const account = { accountName: "token", usage };
                 if (opts.json) {
-                    console.log(JSON.stringify(account, null, 2));
+                    console.log(SafeJSON.stringify(account, null, 2));
                 } else {
                     console.log(renderAccountUsage(account));
                 }
@@ -65,7 +66,7 @@ export function registerUsageLegacyCommand(program: Command): void {
             // One-shot
             const results = await fetchAllAccountsUsage(accounts);
             if (opts.json) {
-                console.log(JSON.stringify(results, null, 2));
+                console.log(SafeJSON.stringify(results, null, 2));
             } else {
                 console.log(renderAllAccounts(results));
             }

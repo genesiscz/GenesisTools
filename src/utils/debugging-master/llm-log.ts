@@ -68,6 +68,7 @@ function write(entry: Record<string, unknown>): void {
     ensureDir();
     const { file, line } = getCallerLocation();
     const full = { ...entry, ts: Date.now(), file, line };
+    // biome-ignore lint/style/noRestrictedGlobals: self-contained file — no external deps
     appendFileSync(sessionPath, `${JSON.stringify(full)}\n`);
 }
 

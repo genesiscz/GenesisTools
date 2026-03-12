@@ -9,6 +9,7 @@ import {
 } from "@app/debugging-master/core/log-parser";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import type { IndexedLogEntry, OutputFormat } from "@app/debugging-master/types";
+import { SafeJSON } from "@app/utils/json";
 import { REF_THRESHOLD } from "@app/utils/references";
 import type { Command } from "commander";
 
@@ -26,7 +27,7 @@ function assignRefIds(entries: IndexedLogEntry[]): void {
             continue;
         }
 
-        const dataStr = JSON.stringify(entry.data ?? entry.vars ?? entry.stack ?? "");
+        const dataStr = SafeJSON.stringify(entry.data ?? entry.vars ?? entry.stack ?? "");
         if (dataStr.length <= REF_THRESHOLD) {
             continue;
         }

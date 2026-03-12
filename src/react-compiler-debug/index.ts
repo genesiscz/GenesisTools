@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-
 /**
  * React Compiler Debug Tool
  *
@@ -27,6 +26,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import logger from "@app/logger";
 import { copyToClipboard } from "@app/utils/clipboard";
+
+import { SafeJSON } from "@app/utils/json";
 
 // Resolve babel-plugin-react-compiler from GenesisTools installation
 const __filename = fileURLToPath(import.meta.url);
@@ -93,7 +94,7 @@ function createCompilerOptions(options: ProgramOptions): CompilerOptions {
                 console.error(
                     chalk.dim("[Compiler Event]"),
                     chalk.cyan(filename || "unknown"),
-                    JSON.stringify(event, null, 2)
+                    SafeJSON.stringify(event, null, 2)
                 );
             },
         };

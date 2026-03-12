@@ -1,4 +1,5 @@
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import type { Storage } from "@app/utils/storage";
 import { ExitPromptError } from "@inquirer/core";
 import { confirm } from "@inquirer/prompts";
@@ -20,7 +21,7 @@ export function registerCacheCommand(program: Command, storage: Storage): void {
             }
 
             if (options.format === "json") {
-                console.log(JSON.stringify(files, null, 2));
+                console.log(SafeJSON.stringify(files, null, 2));
                 return;
             }
 

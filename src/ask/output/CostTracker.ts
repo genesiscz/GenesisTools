@@ -1,4 +1,5 @@
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { CostBreakdown } from "@ask/types";
 import type { LanguageModelUsage } from "ai";
@@ -44,7 +45,7 @@ export class CostTracker {
     ): Promise<void> {
         // DEBUG: Log the usage object received
         logger.debug(`[CostTracker] trackUsage called for ${provider}/${model}, sessionId: ${sessionId}`);
-        logger.debug({ usage: JSON.stringify(usage, null, 2) }, `[CostTracker] usage object`);
+        logger.debug({ usage: SafeJSON.stringify(usage, null, 2) }, `[CostTracker] usage object`);
         logger.debug({ usageType: typeof usage }, `[CostTracker] usage type`);
         logger.debug({ keys: Object.keys(usage || {}) }, `[CostTracker] usage keys`);
         logger.debug({ inputTokens: usage.inputTokens }, `[CostTracker] usage.inputTokens`);

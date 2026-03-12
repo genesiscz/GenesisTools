@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 import type {
     ApiDebugInfo,
     CarouselEntry,
@@ -46,7 +47,7 @@ export class ClarityApi {
         }
 
         try {
-            return JSON.parse(text) as T;
+            return SafeJSON.parse(text, { strict: true }) as T;
         } catch {
             const isHtml = text.trimStart().startsWith("<");
             const hint = isHtml ? "Session expired — re-authenticate in Settings" : text.slice(0, 300);
@@ -86,7 +87,7 @@ export class ClarityApi {
     async updateTimeEntry(timesheetId: number, timeEntryId: number, body: UpdateTimeEntryRequest): Promise<unknown> {
         return this.request(`/timesheets/${timesheetId}/timeEntries/${timeEntryId}`, {
             method: "PUT",
-            body: JSON.stringify(body),
+            body: SafeJSON.stringify(body),
         });
     }
 
@@ -98,7 +99,7 @@ export class ClarityApi {
     ): Promise<{ data: unknown; debug: ApiDebugInfo }> {
         const path = `/timesheets/${timesheetId}/timeEntries/${timeEntryId}`;
         const url = `${this.config.baseUrl}/ppm/rest/v1${path}`;
-        const bodyStr = JSON.stringify(body);
+        const bodyStr = SafeJSON.stringify(body);
 
         const response = await fetch(url, {
             method: "PUT",
@@ -118,7 +119,7 @@ export class ClarityApi {
         let responseBody: unknown;
 
         try {
-            responseBody = JSON.parse(text);
+            responseBody = SafeJSON.parse(text, { strict: true });
         } catch {
             responseBody = text.slice(0, 2000);
         }
@@ -145,7 +146,7 @@ export class ClarityApi {
         const body: UpdateTimesheetStatusRequest = { status: "1" };
         return this.request(`/timesheets/${timesheetId}`, {
             method: "PUT",
-            body: JSON.stringify(body),
+            body: SafeJSON.stringify(body),
             headers: { "x-api-include-additional-messages": "true" },
         });
     }
@@ -155,7 +156,7 @@ export class ClarityApi {
         const body: UpdateTimesheetStatusRequest = { status: "2" };
         return this.request(`/timesheets/${timesheetId}`, {
             method: "PUT",
-            body: JSON.stringify(body),
+            body: SafeJSON.stringify(body),
             headers: { "x-api-include-additional-messages": "true" },
         });
     }

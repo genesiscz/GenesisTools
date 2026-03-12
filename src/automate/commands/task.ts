@@ -4,6 +4,7 @@ import { computeNextRunAt, parseInterval } from "@app/automate/lib/interval-pars
 import { createRunLogger } from "@app/automate/lib/run-logger";
 import { listPresets, loadPreset } from "@app/automate/lib/storage";
 import { formatDuration } from "@app/utils/format";
+import { SafeJSON } from "@app/utils/json";
 import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -253,7 +254,9 @@ export function registerTaskCommand(parent: Command): void {
             p.intro(pc.bgCyan(pc.black(` task run: ${schedule.preset_name} `)));
 
             const preset = await loadPreset(schedule.preset_name);
-            const vars = schedule.vars_json ? (JSON.parse(schedule.vars_json) as Record<string, string>) : undefined;
+            const vars = schedule.vars_json
+                ? (SafeJSON.parse(schedule.vars_json, { strict: true }) as Record<string, string>)
+                : undefined;
             const runLogger = createRunLogger(preset.name, schedule.id, "manual");
 
             const result = await runPreset(

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { LogEntry, SessionMeta } from "@app/debugging-master/types";
 import { suggestCommand } from "@app/utils/cli/executor";
+import { SafeJSON } from "@app/utils/json";
 import { fuzzyFind } from "@app/utils/string";
 import { ConfigManager } from "./config-manager";
 
@@ -47,7 +48,7 @@ export class SessionManager {
         };
 
         await Bun.write(jsonlPath, "");
-        await Bun.write(metaPath, JSON.stringify(meta, null, "\t"));
+        await Bun.write(metaPath, SafeJSON.stringify(meta, null, "\t"));
 
         await this.config.setRecentSession(name);
 
@@ -147,7 +148,7 @@ export class SessionManager {
         try {
             const meta = (await Bun.file(metaPath).json()) as SessionMeta;
             meta.lastActivityAt = Date.now();
-            await Bun.write(metaPath, JSON.stringify(meta, null, "\t"));
+            await Bun.write(metaPath, SafeJSON.stringify(meta, null, "\t"));
         } catch {
             // Silently ignore corrupted meta files
         }
@@ -170,7 +171,7 @@ export class SessionManager {
 
         for (const line of lines) {
             try {
-                entries.push(JSON.parse(line) as LogEntry);
+                entries.push(SafeJSON.parse(line, { strict: true }) as LogEntry);
             } catch {
                 entries.push({ level: "raw", msg: line, ts: 0 });
             }

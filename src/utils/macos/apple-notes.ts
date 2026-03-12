@@ -6,6 +6,8 @@
 import { spawnSync } from "node:child_process";
 import { unlinkSync, writeFileSync } from "node:fs";
 
+import { SafeJSON } from "@app/utils/json";
+
 export interface AppleNotesFolder {
     name: string;
     id: string;
@@ -56,7 +58,7 @@ for (const account of accounts) {
 JSON.stringify(result);
 `;
 
-    return JSON.parse(runJxa(script));
+    return SafeJSON.parse(runJxa(script));
 }
 
 /**

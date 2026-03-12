@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 import { render } from "ink";
 import { App } from "./app";
@@ -25,7 +26,7 @@ export function registerUsageCommand(program: Command): void {
                     const account = { accountName: "token", usage };
 
                     if (opts.json) {
-                        console.log(JSON.stringify(account, null, 2));
+                        console.log(SafeJSON.stringify(account, null, 2));
                     } else {
                         console.log(renderAccountUsage(account));
                     }
@@ -54,7 +55,7 @@ export function registerUsageCommand(program: Command): void {
                 const results = await fetchAllAccountsUsage(accounts);
 
                 if (opts.json) {
-                    console.log(JSON.stringify(results, null, 2));
+                    console.log(SafeJSON.stringify(results, null, 2));
                 } else {
                     console.log(renderAllAccounts(results));
                 }

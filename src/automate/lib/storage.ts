@@ -2,6 +2,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage/storage.ts";
 import { validatePreset, validateStepGraph } from "./schema.ts";
 import type { Preset, PresetMeta } from "./types.ts";
@@ -67,7 +68,7 @@ export async function loadPreset(nameOrPath: string): Promise<Preset> {
     const content = await Bun.file(filePath).text();
     let data: unknown;
     try {
-        data = JSON.parse(content);
+        data = SafeJSON.parse(content);
     } catch {
         throw new Error(`Invalid JSON in preset file: ${filePath}`);
     }
@@ -109,7 +110,7 @@ export async function listPresets(): Promise<
     for (const file of files) {
         try {
             const content = await Bun.file(join(presetsDir, file)).text();
-            const data = JSON.parse(content);
+            const data = SafeJSON.parse(content);
             const preset = validatePreset(data);
             const meta = await getPresetMeta(preset.name);
 
@@ -137,7 +138,7 @@ export async function savePreset(preset: Preset): Promise<string> {
         .replace(/^-|-$/g, "");
 
     const filePath = join(getPresetsDir(), `${fileName}.json`);
-    await Bun.write(filePath, JSON.stringify(preset, null, 2));
+    await Bun.write(filePath, SafeJSON.stringify(preset, null, 2));
     return filePath;
 }
 

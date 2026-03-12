@@ -11,6 +11,7 @@
 import { extractFromMessage, loadWorkitemPatternsAsync } from "@app/git/workitem-patterns";
 import { Executor } from "@app/utils/cli";
 import type { DetailedCommitInfo } from "@app/utils/git";
+import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage";
 import chalk from "chalk";
 import type { Command } from "commander";
@@ -245,7 +246,7 @@ function outputJson(
         workitemSummary,
     };
 
-    console.log(JSON.stringify(output, null, 2));
+    console.log(SafeJSON.stringify(output, null, 2));
 }
 
 async function handleCommits(options: CommitsOptions): Promise<void> {

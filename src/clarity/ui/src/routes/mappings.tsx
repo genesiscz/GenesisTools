@@ -1,5 +1,6 @@
 import type { TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityTask } from "@app/clarity/lib/types";
+import { SafeJSON } from "@app/utils/json";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
@@ -52,7 +53,7 @@ async function fetchWeeks(month: number, year: number): Promise<{ weeks: Timeshe
     const res = await fetch("/api/clarity-weeks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month, year }),
+        body: SafeJSON.stringify({ month, year }),
     });
 
     if (!res.ok) {
@@ -66,7 +67,7 @@ async function fetchClarityTasks(timesheetId: number): Promise<{ tasks: ClarityT
     const res = await fetch("/api/clarity-tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ timesheetId }),
+        body: SafeJSON.stringify({ timesheetId }),
     });
 
     if (!res.ok) {
@@ -80,7 +81,7 @@ async function deleteMappingApi(adoWorkItemId: number) {
     const res = await fetch("/api/mappings", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ adoWorkItemId }),
+        body: SafeJSON.stringify({ adoWorkItemId }),
     });
 
     if (!res.ok) {
@@ -103,7 +104,7 @@ async function moveMappingApi(
     const res = await fetch("/api/move-mapping", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ adoWorkItemId, target }),
+        body: SafeJSON.stringify({ adoWorkItemId, target }),
     });
 
     if (!res.ok) {

@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 import type {
     SessionAssistantEntry,
     SessionConfigEntry,
@@ -220,9 +221,9 @@ export class ChatSession {
     async export(format: "jsonl" | "json" | "markdown" | "text"): Promise<string> {
         switch (format) {
             case "jsonl":
-                return this.entries.map((e) => JSON.stringify(e)).join("\n");
+                return this.entries.map((e) => SafeJSON.stringify(e)).join("\n");
             case "json":
-                return JSON.stringify(this.entries, null, 2);
+                return SafeJSON.stringify(this.entries, null, 2);
             case "markdown":
                 return this.exportMarkdown();
             case "text":

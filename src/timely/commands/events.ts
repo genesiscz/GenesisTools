@@ -5,6 +5,7 @@ import { formatDuration } from "@app/timely/utils/date";
 import { buildSubEntryMap, fetchMemoriesForDates } from "@app/timely/utils/memories";
 import type { FuzzyMatchResult } from "@app/utils/fuzzy-match";
 import { fuzzyMatchBest } from "@app/utils/fuzzy-match";
+import { SafeJSON } from "@app/utils/json";
 import type { Storage } from "@app/utils/storage";
 import chalk from "chalk";
 import { type Command, Option } from "commander";
@@ -241,9 +242,9 @@ function outputJson(
     if (!options.withoutDetails) {
         // Full raw event objects
         if (fetchEntries && hasUnlinked) {
-            console.log(JSON.stringify({ events, unlinked: buildUnlinkedSlim(unlinkedByDay) }, null, 2));
+            console.log(SafeJSON.stringify({ events, unlinked: buildUnlinkedSlim(unlinkedByDay) }, null, 2));
         } else {
-            console.log(JSON.stringify(events, null, 2));
+            console.log(SafeJSON.stringify(events, null, 2));
         }
         return;
     }
@@ -273,9 +274,9 @@ function outputJson(
     });
 
     if (fetchEntries && hasUnlinked) {
-        console.log(JSON.stringify({ events: slim, unlinked: buildUnlinkedSlim(unlinkedByDay) }, null, 2));
+        console.log(SafeJSON.stringify({ events: slim, unlinked: buildUnlinkedSlim(unlinkedByDay) }, null, 2));
     } else {
-        console.log(JSON.stringify(slim, null, 2));
+        console.log(SafeJSON.stringify(slim, null, 2));
     }
 }
 

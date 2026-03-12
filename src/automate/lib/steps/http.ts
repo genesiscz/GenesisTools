@@ -4,6 +4,7 @@ import { loadCredential, resolveCredentialHeaders } from "@app/automate/lib/cred
 import type { StepContext } from "@app/automate/lib/registry";
 import { registerStepCatalog, registerStepHandler } from "@app/automate/lib/registry";
 import type { HttpStepParams, PresetStep, StepResult } from "@app/automate/lib/types";
+import { SafeJSON } from "@app/utils/json";
 import { makeResult } from "./helpers";
 
 async function httpHandler(step: PresetStep, ctx: StepContext): Promise<StepResult> {
@@ -55,7 +56,7 @@ async function httpHandler(step: PresetStep, ctx: StepContext): Promise<StepResu
         if (typeof params.body === "string") {
             body = ctx.interpolate(params.body);
         } else {
-            body = JSON.stringify(params.body, (_key, value) => {
+            body = SafeJSON.stringify(params.body, (_key: string, value: unknown) => {
                 if (typeof value === "string" && value.includes("{{")) {
                     return ctx.interpolate(value);
                 }

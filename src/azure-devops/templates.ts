@@ -5,6 +5,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { WorkItem, WorkItemFull, WorkItemTemplate, WorkItemType } from "@app/azure-devops/types";
+import { SafeJSON } from "@app/utils/json";
 import { htmlToMarkdown } from "@app/utils/markdown/html-to-md";
 import { extractUsedValues } from "./field-schema";
 import { parseRelations } from "./relations";
@@ -478,7 +479,7 @@ export function saveTemplate(template: WorkItemTemplate, baseDir?: string): stri
     }
 
     const filePath = join(dir, filename);
-    writeFileSync(filePath, JSON.stringify(template, null, 2));
+    writeFileSync(filePath, SafeJSON.stringify(template, null, 2));
 
     return filePath;
 }

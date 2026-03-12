@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { resolvePathWithTilde } from "@app/utils";
+import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
 import boxen from "boxen";
 import chalk from "chalk";
@@ -84,7 +85,7 @@ const loadConfig = (configPath?: string): Record<string, unknown> => {
 
     if (configFile && fs.existsSync(configFile)) {
         try {
-            const config = JSON.parse(fs.readFileSync(configFile, "utf8"));
+            const config = SafeJSON.parse(fs.readFileSync(configFile, "utf8"));
             logger.debug(`Loaded config from ${configFile}`);
             return config;
         } catch (e) {
@@ -474,7 +475,7 @@ class EnhancedPackageComparison {
             },
         };
 
-        fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify(packageJson, null, 2));
+        fs.writeFileSync(path.join(dir, "package.json"), SafeJSON.stringify(packageJson, null, 2));
 
         // Prepare install command based on package manager
         let installCmd: string;
@@ -1228,7 +1229,7 @@ class EnhancedPackageComparison {
                 patch: this.options.includePatchInJson ? r.patch : undefined,
             })),
         };
-        return JSON.stringify(summary, null, 2);
+        return SafeJSON.stringify(summary, null, 2);
     }
 
     async outputResults(): Promise<void> {

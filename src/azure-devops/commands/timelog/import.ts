@@ -7,6 +7,7 @@ import type { AllowedTypeConfig, TimeLogImportFile } from "@app/azure-devops/typ
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { precheckWorkItem } from "@app/azure-devops/workitem-precheck";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -29,7 +30,7 @@ export function registerImportSubcommand(parent: Command): void {
 
             try {
                 const content = readFileSync(file, "utf-8");
-                data = JSON.parse(content);
+                data = SafeJSON.parse(content, { strict: true });
             } catch (e) {
                 console.error(`Invalid JSON: ${(e as Error).message}`);
                 process.exit(1);

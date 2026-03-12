@@ -1,6 +1,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { SafeJSON } from "@app/utils/json";
+
 export interface OAuthProfileAccount {
     uuid: string;
     full_name: string;
@@ -121,7 +123,7 @@ export class ClaudeOAuthClient {
         const res = await fetch(TOKEN_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+            body: SafeJSON.stringify({
                 grant_type: "authorization_code",
                 client_id: CLAUDE_CODE_CLIENT_ID,
                 code,
@@ -158,7 +160,7 @@ export class ClaudeOAuthClient {
         const res = await fetch(TOKEN_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+            body: SafeJSON.stringify({
                 grant_type: "refresh_token",
                 refresh_token: refreshToken,
                 client_id: CLAUDE_CODE_CLIENT_ID,
@@ -279,7 +281,7 @@ export async function getKeychainCredentials(): Promise<KeychainCredentials | nu
             return null;
         }
 
-        const data = JSON.parse(text.trim());
+        const data = SafeJSON.parse(text.trim(), { strict: true });
         const oauth = data.claudeAiOauth;
         if (!oauth?.accessToken) {
             return null;

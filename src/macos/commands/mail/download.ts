@@ -6,6 +6,7 @@ import { generateEmailMarkdown, generateIndexMarkdown, generateSlug } from "@app
 import { getMessageBody, saveAttachment } from "@app/macos/lib/mail/jxa";
 import { cleanup, getRecipients } from "@app/macos/lib/mail/sqlite";
 import type { MailMessage } from "@app/macos/lib/mail/types";
+import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 
@@ -18,7 +19,7 @@ function loadLastSearchResults(): MailMessage[] | null {
 
     try {
         const raw = readFileSync(path, "utf-8");
-        const parsed = JSON.parse(raw) as Array<Record<string, unknown>>;
+        const parsed = SafeJSON.parse(raw) as Array<Record<string, unknown>>;
         return parsed.map((m) => ({
             ...m,
             dateSent: new Date(m.dateSent as string),

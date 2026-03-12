@@ -1,6 +1,7 @@
 // Shared utility functions for GitHub commands
 
 import type { CommentData, CommentRecord, GitHubReactions } from "@app/github/types";
+import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 
 /**
@@ -79,7 +80,7 @@ export function toCommentRecord(comment: CommentData, issueId: number): CommentR
         created_at: comment.createdAt,
         updated_at: comment.updatedAt,
         reaction_count: sumReactions(comment.reactions),
-        reactions_json: JSON.stringify(comment.reactions),
+        reactions_json: SafeJSON.stringify(comment.reactions),
         is_bot: comment.isBot ? 1 : 0,
     };
 }
@@ -102,7 +103,7 @@ const DEFAULT_REACTIONS = {
 export function fromCommentRecord(record: CommentRecord): CommentData {
     let reactions = { ...DEFAULT_REACTIONS };
     try {
-        const parsed = JSON.parse(record.reactions_json || "{}");
+        const parsed = SafeJSON.parse(record.reactions_json || "{}");
         reactions = { ...DEFAULT_REACTIONS, ...parsed };
     } catch {
         // Invalid JSON, use empty reactions

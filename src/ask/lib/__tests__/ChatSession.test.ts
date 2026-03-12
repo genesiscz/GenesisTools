@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { SafeJSON } from "@app/utils/json";
 import { ChatSession } from "../ChatSession";
 
 describe("ChatSession", () => {
@@ -120,7 +121,7 @@ describe("ChatSession", () => {
         const jsonl = await session.export("jsonl");
         const lines = jsonl.split("\n");
         expect(lines).toHaveLength(2);
-        const parsed = JSON.parse(lines[0]);
+        const parsed = SafeJSON.parse(lines[0]);
         expect(parsed.type).toBe("user");
         expect(parsed.content).toBe("hello");
     });

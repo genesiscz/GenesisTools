@@ -15,6 +15,8 @@ import type {
 } from "@app/github/types";
 import { sumReactions } from "@app/utils/github/utils";
 
+import { SafeJSON } from "@app/utils/json";
+
 type OutputFormat = "ai" | "md" | "json";
 
 interface FormatOptions {
@@ -36,7 +38,7 @@ const COMMENTS_PER_INDEX_GROUP = 10;
 export function formatIssue(data: IssueData, format: OutputFormat, options: FormatOptions = {}): string {
     switch (format) {
         case "json":
-            return JSON.stringify(data, null, 2);
+            return SafeJSON.stringify(data, null, 2);
         case "ai":
             return formatIssueSummary(data, options);
         default:
@@ -50,7 +52,7 @@ export function formatIssue(data: IssueData, format: OutputFormat, options: Form
 export function formatPR(data: PRData, format: OutputFormat, options: FormatOptions = {}): string {
     switch (format) {
         case "json":
-            return JSON.stringify(data, null, 2);
+            return SafeJSON.stringify(data, null, 2);
         case "ai":
             return formatPRSummary(data, options);
         default:
@@ -64,7 +66,7 @@ export function formatPR(data: PRData, format: OutputFormat, options: FormatOpti
 export function formatSearchResults(results: SearchResult[], format: OutputFormat): string {
     switch (format) {
         case "json":
-            return JSON.stringify(results, null, 2);
+            return SafeJSON.stringify(results, null, 2);
         default:
             return formatSearchMarkdown(results);
     }
@@ -76,7 +78,7 @@ export function formatSearchResults(results: SearchResult[], format: OutputForma
 export function formatRepoResults(repos: RepoSearchResult[], format: OutputFormat): string {
     switch (format) {
         case "json":
-            return JSON.stringify(repos, null, 2);
+            return SafeJSON.stringify(repos, null, 2);
         default:
             return formatRepoMarkdown(repos);
     }
@@ -573,7 +575,7 @@ function formatSearchMarkdown(results: SearchResult[]): string {
 
 export function formatNotifications(items: NotificationItem[], format: "ai" | "md" | "json"): string {
     if (format === "json") {
-        return JSON.stringify(items, null, 2);
+        return SafeJSON.stringify(items, null, 2);
     }
 
     const lines: string[] = [];
@@ -610,7 +612,7 @@ export function formatNotifications(items: NotificationItem[], format: "ai" | "m
 
 export function formatActivity(items: ActivityItem[], format: "ai" | "md" | "json"): string {
     if (format === "json") {
-        return JSON.stringify(items, null, 2);
+        return SafeJSON.stringify(items, null, 2);
     }
 
     const lines: string[] = [];

@@ -14,6 +14,7 @@ import {
     type ToolUseBlock,
     type UserMessage,
 } from "@app/claude/lib/history/search";
+import { SafeJSON } from "@app/utils/json";
 import { input, search, select } from "@inquirer/prompts";
 import { spawn } from "bun";
 import chalk from "chalk";
@@ -133,7 +134,7 @@ function formatResultsAsMarkdown(results: SearchResult[], filters: SearchFilters
 }
 
 function formatResultsAsJson(results: SearchResult[]): string {
-    return JSON.stringify(results, null, 2);
+    return SafeJSON.stringify(results, null, 2);
 }
 
 // =============================================================================

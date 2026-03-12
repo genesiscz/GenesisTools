@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { CliArgs, HoverResult, TSServer } from "@app/mcp-tsc/core/interfaces.js";
+import { SafeJSON } from "@app/utils/json";
 import ts from "typescript";
 
 export class HoverCommand {
@@ -100,7 +101,7 @@ export class HoverCommand {
                 if (hover.raw) {
                     output.raw = hover.raw;
                 }
-                console.log(JSON.stringify(output, null, 2));
+                console.log(SafeJSON.stringify(output, null, 2));
             } else {
                 console.log(`File: ${filePath}`);
                 console.log(`Line: ${lineNumber}`);

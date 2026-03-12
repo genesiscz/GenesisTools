@@ -1,6 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { Executor } from "@app/utils/cli";
+import { SafeJSON } from "@app/utils/json";
 import { isPromptCancelled } from "@app/utils/prompt-helpers.js";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { confirm, input, number } from "@inquirer/prompts";
@@ -524,7 +525,7 @@ fi
     // Set up environment for rebase
     const env = {
         ...process.env,
-        GIT_SEQUENCE_EDITOR: `sh -c ${JSON.stringify(sequenceEditorCmd)} _`,
+        GIT_SEQUENCE_EDITOR: `sh -c ${SafeJSON.stringify(sequenceEditorCmd)} _`,
         GIT_EDITOR: editorScriptPath,
     };
 

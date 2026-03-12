@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 import type { MessageRow } from "./types";
 
 export type ExportFormat = "json" | "csv" | "txt";
@@ -7,7 +8,7 @@ export const VALID_EXPORT_FORMATS: ExportFormat[] = ["json", "csv", "txt"];
 export function formatMessages(messages: MessageRow[], format: ExportFormat, contactName: string): string {
     switch (format) {
         case "json":
-            return JSON.stringify(messages, null, 2);
+            return SafeJSON.stringify(messages, null, 2);
 
         case "csv": {
             const header = "id,date,sender,direction,text,media";

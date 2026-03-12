@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+
+import { SafeJSON } from "@app/utils/json";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
@@ -137,7 +139,7 @@ class JenkinsServer {
         this.setupToolHandlers();
 
         // Error handling and graceful shutdown
-        this.server.onerror = (error) => console.error("[MCP Error]", error);
+        this.server.onerror = (error: Error) => console.error("[MCP Error]", error);
         process.on("SIGINT", async () => {
             await this.server.close();
             process.exit(0);
@@ -336,7 +338,7 @@ class JenkinsServer {
             content: [
                 {
                     type: "text",
-                    text: JSON.stringify(
+                    text: SafeJSON.stringify(
                         {
                             building: response.data.building,
                             result: response.data.result,
@@ -422,7 +424,7 @@ class JenkinsServer {
             content: [
                 {
                     type: "text",
-                    text: JSON.stringify(
+                    text: SafeJSON.stringify(
                         {
                             folderPath: folderPath || "root",
                             totalJobs: jobList.length,
@@ -464,7 +466,7 @@ class JenkinsServer {
             content: [
                 {
                     type: "text",
-                    text: JSON.stringify(
+                    text: SafeJSON.stringify(
                         {
                             jobPath: args.jobPath,
                             totalBuilds: buildHistory.length,
@@ -520,7 +522,7 @@ class JenkinsServer {
             content: [
                 {
                     type: "text",
-                    text: JSON.stringify(
+                    text: SafeJSON.stringify(
                         {
                             totalQueueItems: queue.length,
                             queue: queue,
@@ -570,7 +572,7 @@ class JenkinsServer {
             content: [
                 {
                     type: "text",
-                    text: JSON.stringify(config, null, 2),
+                    text: SafeJSON.stringify(config, null, 2),
                 },
             ],
         };

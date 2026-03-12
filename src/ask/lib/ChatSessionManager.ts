@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
+import { SafeJSON } from "@app/utils/json";
 import type { ChatSessionManagerRef } from "./ChatSession";
 import { ChatSession } from "./ChatSession";
 import type { SessionEntry } from "./types";
@@ -44,7 +45,7 @@ export class ChatSessionManager implements ChatSessionManagerRef {
             }
 
             try {
-                entries.push(JSON.parse(trimmed) as SessionEntry);
+                entries.push(SafeJSON.parse(trimmed, { strict: true }) as SessionEntry);
             } catch {
                 // Skip malformed lines
             }
@@ -59,7 +60,7 @@ export class ChatSessionManager implements ChatSessionManagerRef {
     async save(session: ChatSession): Promise<void> {
         const filePath = this.getFilePath(session.id);
         const entries = session.getAllEntries();
-        const content = `${entries.map((e) => JSON.stringify(e)).join("\n")}\n`;
+        const content = `${entries.map((e) => SafeJSON.stringify(e)).join("\n")}\n`;
         await Bun.write(filePath, content);
     }
 

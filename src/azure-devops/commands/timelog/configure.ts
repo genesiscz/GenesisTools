@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { AzureConfigWithTimeLog, TimeLogConfig } from "@app/azure-devops/types";
 import { findConfigPath, loadConfig } from "@app/azure-devops/utils";
+import { SafeJSON } from "@app/utils/json";
 import { buildUrl } from "@app/utils/url";
 import * as p from "@clack/prompts";
 import { $ } from "bun";
@@ -49,7 +50,7 @@ function loadExistingConfig(): { config: AzureConfigWithTimeLog; configPath: str
 }
 
 function saveConfig(configPath: string, config: AzureConfigWithTimeLog): void {
-    writeFileSync(configPath, JSON.stringify(config, null, 2));
+    writeFileSync(configPath, SafeJSON.stringify(config, null, 2));
 }
 
 function extractOrgName(config: AzureConfigWithTimeLog): string {
@@ -85,14 +86,14 @@ async function fetchFunctionsKey(orgName: string): Promise<string> {
         queryParams: { "api-version": "7.1-preview" },
     })}"`.quiet();
 
-    const data = JSON.parse(result.text());
+    const data = SafeJSON.parse(result.text(), { strict: true });
     const configDoc = data.find((d: { id: string }) => d.id === "Config");
 
     if (!configDoc?.value) {
         throw new Error("TimeLog extension not configured in Azure DevOps");
     }
 
-    const settings = JSON.parse(configDoc.value);
+    const settings = SafeJSON.parse(configDoc.value, { strict: true });
     const apiKey = settings.find((s: { id: string }) => s.id === "ApiKeyTextBox")?.value;
 
     if (!apiKey) {
@@ -401,7 +402,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
         process.exit(0);
     }
 
-    const fullConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    const fullConfig = SafeJSON.parse(readFileSync(configPath, "utf-8"));
     fullConfig.timelog = config.timelog;
     saveConfig(configPath, fullConfig);
 
@@ -439,7 +440,7 @@ function parseStatesForType(mappings: string[]): Record<string, string[]> {
 
 function handleNonInteractive(options: ConfigureOptions): void {
     const { configPath } = loadExistingConfig();
-    const fullConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    const fullConfig = SafeJSON.parse(readFileSync(configPath, "utf-8"));
     fullConfig.timelog = fullConfig.timelog || {};
 
     if (options.allowedWorkItemTypes !== undefined) {

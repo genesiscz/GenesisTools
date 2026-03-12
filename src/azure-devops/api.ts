@@ -34,6 +34,7 @@ import type {
 } from "@app/azure-devops/types";
 import logger from "@app/logger";
 import { concurrentMap } from "@app/utils/async";
+import { SafeJSON } from "@app/utils/json";
 import { buildUrl } from "@app/utils/url";
 import { $ } from "bun";
 
@@ -212,7 +213,7 @@ export class Api {
 
         logger.debug(`[api] ${method} ${shortUrl}${description ? ` (${description})` : ""}`);
         if (body !== undefined) {
-            const bodyStr = JSON.stringify(body);
+            const bodyStr = SafeJSON.stringify(body);
             const truncated = bodyStr.length > 500 ? `${bodyStr.slice(0, 500)}... (${bodyStr.length} chars)` : bodyStr;
             logger.debug(`[api] ${method} body: ${truncated}`);
         }
@@ -229,7 +230,7 @@ export class Api {
         const response = await fetch(url, {
             method,
             headers,
-            body: body !== undefined ? JSON.stringify(body) : undefined,
+            body: body !== undefined ? SafeJSON.stringify(body) : undefined,
         });
 
         const elapsed = Date.now() - startTime;
@@ -618,7 +619,7 @@ export class Api {
         const queries: Array<{ name: string; queryId: string }> = [];
         for (const widget of widgetsData.widgets || []) {
             try {
-                const settings = JSON.parse(widget.settings);
+                const settings = SafeJSON.parse(widget.settings, { strict: true });
                 const queryId = settings.queryId || settings.query?.queryId;
                 if (queryId) {
                     queries.push({ name: widget.name, queryId });

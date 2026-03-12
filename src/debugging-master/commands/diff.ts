@@ -2,6 +2,7 @@ import { computeTimerPairs, filterByLevel, indexEntries } from "@app/debugging-m
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import type { IndexedLogEntry, LogLevel } from "@app/debugging-master/types";
 import { formatDuration } from "@app/utils/format";
+import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 
 const COMPARABLE_LEVELS: LogLevel[] = ["checkpoint", "dump", "snapshot", "trace", "assert"];
@@ -100,8 +101,8 @@ export function registerDiffCommand(program: Command): void {
                             }
                             return e.data ?? e.vars ?? "";
                         };
-                        const d1 = JSON.stringify(extractComparable(e1));
-                        const d2 = JSON.stringify(extractComparable(e2));
+                        const d1 = SafeJSON.stringify(extractComparable(e1));
+                        const d2 = SafeJSON.stringify(extractComparable(e2));
                         if (d1 === d2) {
                             matches.push(`  ${label.padEnd(20)} Both present, data identical`);
                         } else {

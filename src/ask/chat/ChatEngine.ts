@@ -1,4 +1,5 @@
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { ChatConfig, ChatMessage } from "@ask/types";
 import type { LanguageModel, LanguageModelUsage } from "ai";
@@ -90,7 +91,7 @@ export class ChatEngine {
             onFinish: async ({ usage }) => {
                 // This is called when the stream completes - usage is available HERE
                 logger.debug(
-                    { usage: JSON.stringify(usage, null, 2) },
+                    { usage: SafeJSON.stringify(usage, null, 2) },
                     `[ChatEngine] onFinish callback called with usage`
                 );
                 if (usage) {
@@ -108,7 +109,7 @@ export class ChatEngine {
         // DEBUG: Log the full result object structure
         logger.debug({ keys: Object.keys(result) }, `[ChatEngine] streamText result object keys`);
         logger.debug(
-            { usage: result.usage ? JSON.stringify(result.usage, null, 2) : "null/undefined" },
+            { usage: result.usage ? SafeJSON.stringify(result.usage, null, 2) : "null/undefined" },
             `[ChatEngine] streamText result.usage`
         );
         logger.debug({ usageType: typeof result.usage }, `[ChatEngine] streamText result.usage type`);
@@ -171,7 +172,7 @@ export class ChatEngine {
         if (finishUsage) {
             // Use usage from onFinish callback (most reliable)
             logger.debug(
-                { usage: JSON.stringify(finishUsage, null, 2) },
+                { usage: SafeJSON.stringify(finishUsage, null, 2) },
                 `[ChatEngine] Using usage from onFinish callback`
             );
             usage = finishUsage;
@@ -180,14 +181,14 @@ export class ChatEngine {
             // If usage is a Promise, await it
             logger.debug(`[ChatEngine] result.usage is a Promise, awaiting...`);
             usage = await result.usage;
-            logger.debug({ usage: JSON.stringify(usage, null, 2) }, `[ChatEngine] Resolved usage from Promise`);
+            logger.debug({ usage: SafeJSON.stringify(usage, null, 2) }, `[ChatEngine] Resolved usage from Promise`);
             if (usage) {
                 cost = await dynamicPricingManager.calculateCost(this.config.provider, this.config.modelName, usage);
             }
         } else if (result.usage) {
             // If usage is already available
             usage = result.usage;
-            logger.debug({ usage: JSON.stringify(usage, null, 2) }, `[ChatEngine] result.usage available directly`);
+            logger.debug({ usage: SafeJSON.stringify(usage, null, 2) }, `[ChatEngine] result.usage available directly`);
             cost = await dynamicPricingManager.calculateCost(this.config.provider, this.config.modelName, usage);
         }
 
@@ -237,7 +238,7 @@ export class ChatEngine {
         // DEBUG: Log the full result object structure
         logger.debug({ keys: Object.keys(result) }, `[ChatEngine] generateText result object keys`);
         logger.debug(
-            { usage: result.usage ? JSON.stringify(result.usage, null, 2) : "null/undefined" },
+            { usage: result.usage ? SafeJSON.stringify(result.usage, null, 2) : "null/undefined" },
             `[ChatEngine] generateText result.usage`
         );
         logger.debug({ usageType: typeof result.usage }, `[ChatEngine] generateText result.usage type`);
@@ -260,7 +261,7 @@ export class ChatEngine {
         let cost: number | undefined;
         if (result.usage) {
             logger.debug(
-                { usage: JSON.stringify(result.usage, null, 2) },
+                { usage: SafeJSON.stringify(result.usage, null, 2) },
                 `[ChatEngine] Calculating cost for ${this.config.provider}/${this.config.modelName}`
             );
             cost = await dynamicPricingManager.calculateCost(this.config.provider, this.config.modelName, result.usage);

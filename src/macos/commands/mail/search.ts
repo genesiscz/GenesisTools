@@ -6,6 +6,7 @@ import { searchBodies } from "@app/macos/lib/mail/jxa";
 import { cleanup, getAttachments, getMessageCount, listReceivers, searchMessages } from "@app/macos/lib/mail/sqlite";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import type { MailMessage, SearchOptions } from "@app/macos/lib/mail/types";
+import { SafeJSON } from "@app/utils/json";
 import { closeDarwinKit, rankBySimilarity } from "@app/utils/macos";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -176,7 +177,7 @@ export function registerSearchCommand(program: Command): void {
                     p.log.info(`${messages.length} results. Use 'tools macos mail download <dir>' to export.`);
 
                     // Save results to temp file for download command
-                    const tempResults = JSON.stringify(
+                    const tempResults = SafeJSON.stringify(
                         messages.map((m) => ({
                             ...m,
                             dateSent: m.dateSent.toISOString(),

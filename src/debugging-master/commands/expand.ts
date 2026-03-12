@@ -1,5 +1,6 @@
 import { indexEntries } from "@app/debugging-master/core/log-parser";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
+import { SafeJSON } from "@app/utils/json";
 import { formatSchema } from "@app/utils/json-schema";
 import { search } from "@jmespath-community/jmespath";
 import type { Command } from "commander";
@@ -51,9 +52,9 @@ export function registerExpandCommand(program: Command): void {
 
             if (opts.query) {
                 const result = search(data as never, opts.query);
-                output = JSON.stringify(result, null, 2);
+                output = SafeJSON.stringify(result, null, 2);
             } else if (opts.full) {
-                output = JSON.stringify(data, null, 2);
+                output = SafeJSON.stringify(data, null, 2);
             } else {
                 const schemaMode = opts.schema ?? "skeleton";
                 output = formatSchema(data, schemaMode);

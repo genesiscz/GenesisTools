@@ -1,6 +1,7 @@
 import { exportMonth } from "@app/azure-devops/lib/timelog/export";
 import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
+import { SafeJSON } from "@app/utils/json";
 import Table from "cli-table3";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -30,7 +31,7 @@ export function registerExportMonthSubcommand(parent: Command): void {
             const result = await exportMonth(api, options.month, year, userId);
 
             if (options.format === "json") {
-                const jsonOutput = JSON.stringify(result, null, 2);
+                const jsonOutput = SafeJSON.stringify(result, null, 2);
 
                 if (options.output) {
                     await Bun.write(options.output, jsonOutput);
@@ -107,7 +108,7 @@ export function registerExportMonthSubcommand(parent: Command): void {
             }
 
             if (options.output) {
-                await Bun.write(options.output, JSON.stringify(result, null, 2));
+                await Bun.write(options.output, SafeJSON.stringify(result, null, 2));
                 console.log(`\nFull data exported to ${options.output}`);
             }
         });

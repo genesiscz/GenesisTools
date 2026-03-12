@@ -2,6 +2,8 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, write
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
+import { SafeJSON } from "@app/utils/json";
+
 export const CLAUDE_CODE_SKILLS = join(homedir(), ".claude", "skills");
 export const CLAUDE_DESKTOP_BASE = join(
     homedir(),
@@ -141,12 +143,12 @@ export function installSkill(skill: LocalSkill, manifest: Manifest, manifestPath
 
 export function writeManifest(manifest: Manifest, manifestPath: string): void {
     manifest.lastUpdated = Date.now();
-    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    writeFileSync(manifestPath, SafeJSON.stringify(manifest, null, 2));
 }
 
 export function readManifest(manifestPath: string): Manifest {
     try {
-        return JSON.parse(readFileSync(manifestPath, "utf-8")) as Manifest;
+        return SafeJSON.parse(readFileSync(manifestPath, "utf-8")) as Manifest;
     } catch (e) {
         throw new Error(`Failed to read manifest at ${manifestPath}: ${String(e)}`);
     }

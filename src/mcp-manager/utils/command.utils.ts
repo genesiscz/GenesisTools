@@ -1,4 +1,5 @@
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { ExitPromptError } from "@inquirer/core";
 import { checkbox } from "@inquirer/prompts";
 import type { MCPProvider, UnifiedMCPConfig } from "./providers/types.js";
@@ -166,7 +167,7 @@ export function parseHeaderString(input: string | string[]): Record<string, stri
         // Try JSON format first
         if (trimmed.startsWith("{")) {
             try {
-                const parsed = JSON.parse(trimmed);
+                const parsed = SafeJSON.parse(trimmed);
                 Object.assign(headers, parsed);
                 continue;
             } catch {
@@ -211,7 +212,7 @@ export function parseEnvString(input: string | string[]): Record<string, string>
         // Try JSON format first
         if (trimmed.startsWith("{")) {
             try {
-                const parsed: unknown = JSON.parse(trimmed);
+                const parsed: unknown = SafeJSON.parse(trimmed);
                 // Validate parsed JSON is a Record<string, string>
                 if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
                     for (const [key, value] of Object.entries(parsed)) {

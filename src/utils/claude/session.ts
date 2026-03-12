@@ -15,6 +15,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, resolve, sep } from "node:path";
+import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { glob } from "glob";
 import { encodedProjectDir, PROJECTS_DIR, parseJsonlTranscript } from "./index";
@@ -420,7 +421,7 @@ export class ClaudeSession {
 
                 for (const line of lines) {
                     try {
-                        const obj = JSON.parse(line) as Record<string, unknown>;
+                        const obj = SafeJSON.parse(line) as Record<string, unknown>;
                         messageCount++;
 
                         if (obj.type === "custom-title" && typeof obj.customTitle === "string") {

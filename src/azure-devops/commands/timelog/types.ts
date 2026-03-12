@@ -3,6 +3,7 @@ import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { TimeType } from "@app/azure-devops/types";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
 
 export function registerTypesSubcommand(parent: Command): void {
@@ -35,7 +36,7 @@ export function registerTypesSubcommand(parent: Command): void {
 
             // Output
             if (options.format === "json") {
-                console.log(JSON.stringify(types, null, 2));
+                console.log(SafeJSON.stringify(types, null, 2));
                 return;
             }
 

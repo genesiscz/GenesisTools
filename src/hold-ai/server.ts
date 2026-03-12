@@ -1,4 +1,5 @@
 import log from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
 import { editor } from "@inquirer/prompts";
@@ -25,7 +26,7 @@ const startServer = () => {
         if (messages.length > 0) {
             log.info(`Sending ${messages.length} existing messages to new client...`);
             messages.forEach((msg) => {
-                ws.send(JSON.stringify(msg)); // Send each individual message object
+                ws.send(SafeJSON.stringify(msg));
             });
             log.info("Finished sending existing messages.");
         }
@@ -63,7 +64,7 @@ const startServer = () => {
                 wss.clients.forEach((client) => {
                     if (client.readyState === 1) {
                         // WebSocket.OPEN
-                        client.send(JSON.stringify(completionMessage));
+                        client.send(SafeJSON.stringify(completionMessage));
                         client.close(); // Close connection after sending completion
                     }
                 });
@@ -90,7 +91,7 @@ const startServer = () => {
                 wss.clients.forEach((client) => {
                     if (client.readyState === 1) {
                         // WebSocket.OPEN
-                        client.send(JSON.stringify(newMessage));
+                        client.send(SafeJSON.stringify(newMessage));
                     }
                 });
                 log.info(`Message sent to clients: ${newMessage.message}`);

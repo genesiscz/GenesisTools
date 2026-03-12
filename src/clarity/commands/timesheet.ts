@@ -1,5 +1,6 @@
 import type { TimeEntryRecord, TimesheetRecord } from "@app/utils/clarity";
 import { ClarityApi } from "@app/utils/clarity";
+import { SafeJSON } from "@app/utils/json";
 import * as clack from "@clack/prompts";
 import Table from "cli-table3";
 import type { Command } from "commander";
@@ -135,7 +136,7 @@ export function registerTimesheetCommand(program: Command): void {
             }
 
             if (options.format === "json") {
-                console.log(JSON.stringify(data, null, 2));
+                console.log(SafeJSON.stringify(data, null, 2));
                 return;
             }
 
@@ -170,7 +171,7 @@ export function registerTimesheetCommand(program: Command): void {
             }
 
             if (options.format === "json") {
-                console.log(JSON.stringify(data, null, 2));
+                console.log(SafeJSON.stringify(data, null, 2));
                 return;
             }
 

@@ -23,7 +23,15 @@
             "style": {
                 "useConst": "error",
                 "useBlockStatements": "error",
-                "noNonNullAssertion": "off"
+                "noNonNullAssertion": "off",
+                "noRestrictedGlobals": {
+                    "level": "error",
+                    "options": {
+                        "deniedGlobals": {
+                            "JSON": "Use `import { SafeJSON } from \"@app/utils/json\"` instead"
+                        }
+                    }
+                }
             },
             "complexity": {
                 "noStaticOnlyClass": "off"

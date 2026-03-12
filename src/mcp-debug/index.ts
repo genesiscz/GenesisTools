@@ -1,4 +1,5 @@
 import { Executor } from "@app/utils/cli";
+import { SafeJSON } from "@app/utils/json";
 import { Command } from "commander";
 
 function showHelp() {
@@ -124,7 +125,7 @@ async function main() {
 
     // Log what we're about to execute (to stderr only)
     debugLog(`Working directory: ${process.cwd()}`);
-    debugLog(`Environment variables: ${JSON.stringify(process.env, null, 2)}`);
+    debugLog(`Environment variables: ${SafeJSON.stringify(process.env, null, 2)}`);
 
     // Build list of commands to execute
     const commandsToExecute: string[] = [];
@@ -133,7 +134,7 @@ async function main() {
     if (useEnv) {
         //commandsToExecute.push("env");
         debugLog(`--env flag set, will execute 'env' command`);
-        debugLog(JSON.stringify(process.env, null, 2));
+        debugLog(SafeJSON.stringify(process.env, null, 2));
     }
 
     // Add primary command if provided
@@ -188,7 +189,7 @@ async function main() {
     };
 
     // Write JSON directly to stdout (not console.log which might buffer)
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+    process.stdout.write(`${SafeJSON.stringify(output, null, 2)}\n`);
 
     // Exit with the overall exit code
     process.exit(overallExitCode);
