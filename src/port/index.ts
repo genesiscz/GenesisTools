@@ -221,12 +221,20 @@ program
         });
 
         const stdout = await new Response(proc.stdout).text();
+        const stderr = await new Response(proc.stderr).text();
         const exitCode = await proc.exited;
 
-        if (exitCode !== 0 && stdout.trim() === "") {
-            p.log.info(`No processes found on port ${pc.bold(String(port))}`);
-            p.outro(pc.dim("Port is free."));
-            return;
+        if (exitCode !== 0) {
+            if (stderr.trim() !== "") {
+                p.log.error(`lsof failed: ${stderr.trim()}`);
+                process.exit(1);
+            }
+
+            if (stdout.trim() === "") {
+                p.log.info(`No processes found on port ${pc.bold(String(port))}`);
+                p.outro(pc.dim("Port is free."));
+                return;
+            }
         }
 
         const processes = parseLsofOutput(stdout);

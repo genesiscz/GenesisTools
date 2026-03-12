@@ -37,14 +37,20 @@ program
     .description("Install shell hooks into rc files")
     .action(async () => {
         p.intro(pc.bgCyan(pc.black(" zsh install ")));
-        const rcPaths = getShellRcPaths();
+        let rcPaths = getShellRcPaths();
 
         if (rcPaths.length === 0) {
-            p.log.error("No shell rc files found (~/.zshrc, ~/.bashrc, ~/.bash_profile)");
-            process.exit(1);
+            p.log.warn("No shell rc files found. Will create default locations.");
+            const home = process.env.HOME || require("os").homedir();
+            rcPaths = [require("path").join(home, ".zshrc"), require("path").join(home, ".bashrc")];
         }
 
-        const alreadyInstalled = rcPaths.filter((rc) => isInstalled(rc));
+        const alreadyInstalled = [];
+        for (const rc of rcPaths) {
+            if (await isInstalled(rc)) {
+                alreadyInstalled.push(rc);
+            }
+        }
 
         if (alreadyInstalled.length > 0) {
             const config = await loadConfig();
@@ -69,7 +75,7 @@ program
 
             if (action === "uninstall") {
                 for (const rc of rcPaths) {
-                    uninstallHook(rc);
+                    await uninstallHook(rc);
                 }
 
                 p.log.success("Hooks removed from all rc files");
@@ -102,8 +108,8 @@ program
                 await saveConfig(config);
 
                 for (const rc of rcPaths) {
-                    if (isInstalled(rc)) {
-                        installHook(rc, newMode);
+                    if (await isInstalled(rc)) {
+                        await installHook(rc, newMode);
                     }
                 }
 
@@ -117,7 +123,7 @@ program
 
             // reinstall
             for (const rc of alreadyInstalled) {
-                installHook(rc, config.hookMode);
+                await installHook(rc, config.hookMode);
             }
 
             if (config.hookMode === "static") {
@@ -194,11 +200,12 @@ program
         }
 
         for (const rc of selectedRcs) {
-            installHook(rc, hookMode);
+            await installHook(rc, hookMode);
         }
 
         p.log.success(`Installed into ${selectedRcs.length} rc file(s) with ${selectedFeatures.length} feature(s)`);
-        p.log.info("Restart your shell or run: " + pc.bold("source ~/.zshrc"));
+        const firstRc = selectedRcs[0] || "~/.zshrc";
+        p.log.info("Restart your shell or run: " + pc.bold(`source ${firstRc}`));
     });
 
 program
@@ -209,8 +216,8 @@ program
         let removed = 0;
 
         for (const rc of rcPaths) {
-            if (isInstalled(rc)) {
-                uninstallHook(rc);
+            if (await isInstalled(rc)) {
+                await uninstallHook(rc);
                 removed++;
                 p.log.step(`Removed from ${rc}`);
             }
@@ -292,12 +299,31 @@ program
 
         const rows = ALL_FEATURES.map((f) => {
             const enabled = config.enabled.includes(f.name);
-            const status = enabled ? pc.green("enabled") : pc.dim("disabled");
+            const statusText = enabled ? "enabled" : "disabled";
             const shell = f.shellOnly ?? "both";
-            return [f.name, f.description, status, shell];
+            return [f.name, f.description, statusText, shell];
         });
 
-        console.log(formatTable(rows, ["Name", "Description", "Status", "Shell"]));
+        const table = formatTable(rows, ["Name", "Description", "Status", "Shell"]);
+        const isTTY = process.stdout.isTTY;
+
+        if (isTTY) {
+            const coloredLines = table.split("\n").map((line, idx) => {
+                if (idx === 0 || idx === 1) return line;
+                const row = ALL_FEATURES[idx - 2];
+                if (!row) return line;
+                const enabled = config.enabled.includes(row.name);
+                const statusColMatch = line.match(/(\s+)(enabled|disabled)(\s+)/);
+                if (statusColMatch) {
+                    const colored = enabled ? pc.green(statusColMatch[2]) : pc.dim(statusColMatch[2]);
+                    return line.replace(statusColMatch[0], statusColMatch[1] + colored + statusColMatch[3]);
+                }
+                return line;
+            });
+            console.log(coloredLines.join("\n"));
+        } else {
+            console.log(table);
+        }
     });
 
 program

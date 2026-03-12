@@ -44,7 +44,9 @@ __genesis_notify_precmd() {
         local term_app="\${TERM_PROGRAM:-Terminal}"
 
         if [[ "$active_app" != "$term_app" ]]; then
-            osascript -e "display notification \\"\${icon} \${cmd} — \${duration}\\" with title \\"Command Finished\\" sound name \\"Ping\\"" 2>/dev/null & disown 2>/dev/null
+            local escaped_cmd="\${cmd//\\\\/\\\\\\\\}"
+            escaped_cmd="\${escaped_cmd//\\"/\\\\\\\\\\\\\"}"
+            osascript -e "display notification \\"\${icon} \${escaped_cmd} — \${duration}\\" with title \\"Command Finished\\" sound name \\"Ping\\"" 2>/dev/null & disown 2>/dev/null
         fi
     fi
 
@@ -58,9 +60,22 @@ if [[ -n "$ZSH_VERSION" ]]; then
     add-zsh-hook precmd __genesis_notify_precmd
 fi
 if [[ -n "$BASH_VERSION" ]]; then
-    trap '__genesis_notify_preexec "$BASH_COMMAND"' DEBUG
-    __genesis_notify_orig_prompt_cmd="$PROMPT_COMMAND"
-    PROMPT_COMMAND="__genesis_notify_precmd; \${__genesis_notify_orig_prompt_cmd}"
+    __genesis_notify_install_bash() {
+        trap '__genesis_notify_preexec "$BASH_COMMAND"' DEBUG
+
+        if [[ "\${PROMPT_COMMAND[*]}" =~ __genesis_notify_precmd ]]; then
+            return
+        fi
+
+        if [[ -z "$PROMPT_COMMAND" ]]; then
+            PROMPT_COMMAND="__genesis_notify_precmd"
+        elif declare -p PROMPT_COMMAND 2>/dev/null | grep -q 'declare -a'; then
+            PROMPT_COMMAND+=("__genesis_notify_precmd")
+        else
+            PROMPT_COMMAND="__genesis_notify_precmd; \${PROMPT_COMMAND}"
+        fi
+    }
+    __genesis_notify_install_bash
 fi
 `.trim(),
 };

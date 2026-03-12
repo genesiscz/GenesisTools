@@ -21,8 +21,9 @@ __genesis_dotdotdot_expand() {
         buf="\${buf//\${ndots}/\${chain}}"
     done
     BUFFER="$buf"
-    zle .accept-line
+    zle "\${__genesis_dotdotdot_saved_widget:-accept-line}"
 }
+zle -A accept-line __genesis_dotdotdot_saved_widget
 zle -N accept-line __genesis_dotdotdot_expand
 `.trim(),
 };

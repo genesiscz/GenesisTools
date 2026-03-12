@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -12,7 +12,7 @@ export function getShellRcPaths(): string[] {
     return RC_CANDIDATES.map((name) => join(home, name)).filter((p) => existsSync(p));
 }
 
-export function isInstalled(rcPath: string): boolean {
+export async function isInstalled(rcPath: string): Promise<boolean> {
     if (!existsSync(rcPath)) {
         return false;
     }
@@ -21,11 +21,11 @@ export function isInstalled(rcPath: string): boolean {
     return content.includes(MARKER_START);
 }
 
-export function installHook(rcPath: string, hookMode: "static" | "dynamic"): void {
+export async function installHook(rcPath: string, hookMode: "static" | "dynamic"): Promise<void> {
     let updated = existsSync(rcPath) ? readFileSync(rcPath, "utf-8") : "";
 
     if (updated.includes(MARKER_START)) {
-        uninstallHook(rcPath);
+        await uninstallHook(rcPath);
         updated = readFileSync(rcPath, "utf-8");
     }
     const sourceLine =
@@ -34,10 +34,10 @@ export function installHook(rcPath: string, hookMode: "static" | "dynamic"): voi
             : 'eval "$(tools zsh hook 2>/dev/null)"';
 
     const block = `\n${MARKER_START}\n${sourceLine}\n${MARKER_END}\n`;
-    writeFileSync(rcPath, updated + block);
+    await Bun.write(rcPath, updated + block);
 }
 
-export function uninstallHook(rcPath: string): void {
+export async function uninstallHook(rcPath: string): Promise<void> {
     if (!existsSync(rcPath)) {
         return;
     }
@@ -49,14 +49,14 @@ export function uninstallHook(rcPath: string): void {
         return;
     }
 
-    const endIdx = content.indexOf(MARKER_END);
+    const endIdx = content.indexOf(MARKER_END, startIdx);
 
     if (endIdx === -1) {
-        // Corrupted: start marker without end marker — remove from start marker to next newline
-        const lineEnd = content.indexOf("\n", startIdx);
+        const nextLineEnd = content.indexOf("\n", startIdx);
+        const hookLineEnd = nextLineEnd === -1 ? content.length : content.indexOf("\n", nextLineEnd + 1);
         const before = content.slice(0, startIdx === 0 ? 0 : startIdx - 1);
-        const after = lineEnd === -1 ? "" : content.slice(lineEnd + 1);
-        writeFileSync(rcPath, before + (after ? "\n" + after : ""));
+        const after = hookLineEnd === -1 || hookLineEnd >= content.length ? "" : content.slice(hookLineEnd + 1);
+        await Bun.write(rcPath, before + (after ? "\n" + after : ""));
         return;
     }
 
@@ -65,5 +65,5 @@ export function uninstallHook(rcPath: string): void {
     const after = endLineEnd === -1 ? "" : content.slice(endLineEnd + 1);
 
     const cleaned = before + (after ? "\n" + after : "");
-    writeFileSync(rcPath, cleaned);
+    await Bun.write(rcPath, cleaned);
 }
