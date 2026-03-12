@@ -18,6 +18,6 @@ if git diff --cached --name-only --diff-filter=d | grep -q '^src/claude-history-
 fi
 
 echo "▶ tsgo --noEmit..."
-tsgo --noEmit
+bunx tsgo --noEmit
 
 echo "✔ pre-commit passed"
