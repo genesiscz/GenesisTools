@@ -1,9 +1,7 @@
 ---
 description: Comprehensive security audit - analyze logs, detect attacks, scan for malware/rootkits, generate fail2ban commands
-allowed-tools: *
---
-
-###allowed-tools: Bash, Read, Grep, Glob, Task, WebFetch, WebSearch
+allowed-tools: Bash, Read, Grep, Glob, Task, WebFetch, WebSearch
+---
 
 # Linux Server Security Audit
 
@@ -33,8 +31,10 @@ You are performing a comprehensive security audit on this Linux server. Analyze 
 
 `tail -1000 /var/log/fail2ban.log 2>/dev/null | grep -E "(Ban|Unban|Found)" | tail -200`
 
-### 2.3 Apache/Web Server Attacks (4000+ lines analyzed)
+### 2.3 Apache/Nginx Web Server Attacks (4000+ lines analyzed)
 `cat /var/log/apache2/*.log 2>/dev/null | tail -4000 | grep -iE "(wp-admin|wp-content|wp-includes|\.php.*(shell|cmd|eval|exec|passthru|system|base64)|password\.php|admin\.php|\.env|phpmyadmin|adminer|cgi-bin|UNION.*SELECT|SELECT.*FROM|DROP.*TABLE|1=1|OR.*=|\.\.\/|\.\.%2f|/etc/passwd|\.git|\.svn|\.htaccess|\.htpasswd|xmlrpc\.php|wp-login)" | tail -500`
+
+`cat /var/log/nginx/*.log 2>/dev/null | tail -4000 | grep -iE "(wp-admin|wp-content|wp-includes|\.php.*(shell|cmd|eval|exec|passthru|system|base64)|password\.php|admin\.php|\.env|phpmyadmin|adminer|cgi-bin|UNION.*SELECT|SELECT.*FROM|DROP.*TABLE|1=1|OR.*=|\.\.\/|\.\.%2f|/etc/passwd|\.git|\.svn|\.htaccess|\.htpasswd|xmlrpc\.php|wp-login)" | tail -500`
 
 ### 2.4 High 404 Error Sources (Scanner Detection)
 `cat /var/log/apache2/*.log 2>/dev/null | tail -4000 | grep " 404 " | awk '{print $1}' | sort | uniq -c | sort -rn | head -30`
@@ -121,7 +121,7 @@ Launch a background Task agent with this prompt:
    Run: sudo freshclam
 
 2. Then run a scan on critical directories:
-   Run: sudo clamscan -r --infected --log=/tmp/clamav-audit-$(date +%Y%m%d).log /home /var/www /tmp /var/tmp 2>&1
+   Run: sudo clamscan -r --infected --log=/tmp/clamav-audit-$(date +%Y%m%d-%H%M%S).log /home /var/www /tmp /var/tmp 2>&1
 
 3. Read the scan results and analyze:
    - List any FOUND/INFECTED files
@@ -153,7 +153,7 @@ Launch a background Task agent with this prompt:
    Run: which chkrootkit || echo 'chkrootkit not installed - recommend: apt install chkrootkit'
 
 2. Run the rootkit scan:
-   Run: sudo chkrootkit 2>&1 | tee /tmp/chkrootkit-audit-$(date +%Y%m%d).log
+   Run: sudo chkrootkit 2>&1 | tee /tmp/chkrootkit-audit-$(date +%Y%m%d-%H%M%S).log
 
 3. Analyze the results:
    - Look for any INFECTED entries
@@ -187,7 +187,7 @@ Launch a background Task agent with this prompt:
    Run: sudo rkhunter --update 2>&1
 
 2. Run the rootkit scan:
-   Run: sudo rkhunter --check --skip-keypress --report-warnings-only 2>&1 | tee /tmp/rkhunter-audit-$(date +%Y%m%d).log
+   Run: sudo rkhunter --check --skip-keypress --report-warnings-only 2>&1 | tee /tmp/rkhunter-audit-$(date +%Y%m%d-%H%M%S).log
 
 3. Also check the main log:
    Run: tail -100 /var/log/rkhunter.log 2>/dev/null
@@ -267,19 +267,19 @@ SECTION 3: FAIL2BAN BLOCKING COMMANDS
 Execute these commands to ban the top threat IPs for 1 month (2592000 seconds):
 
 ```bash
-# Ban top threat IPs across all jails
-fail2ban-client set sshd banip X.X.X.X
+# Ban top threat IPs in the appropriate jail
+fail2ban-client set <JAIL> banip X.X.X.X  # Replace <JAIL> with the correct jail, e.g., sshd, apache-badbots
 # ... for each IP
 
-# If you need to set custom ban time for specific IPs:
+# Note: This sets the ban time for ALL future bans in the sshd jail:
 # fail2ban-client set sshd bantime 2592000
+# For per-IP custom times, manually unban and re-ban, or use iptables directly.
 
 # Alternative: Direct iptables blocking (if fail2ban unavailable)
 iptables -I INPUT -s X.X.X.X -j DROP
 # ... for each IP
 
-# Save iptables rules
-iptables-save > /etc/iptables.rules
+# To make rules persistent, use your distribution's recommended method, e.g., iptables-persistent.
 ```
 
 ================================================================================
