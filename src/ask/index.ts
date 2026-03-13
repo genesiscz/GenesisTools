@@ -118,7 +118,7 @@ class ASKTool {
                 modelPreSelected: !!argv.model,
                 raw: !!argv.raw,
                 silent: !!argv.silent,
-                showCost: (process.stdout.isTTY ?? false) || !!argv.cost,
+                showCost: !!argv.cost,
                 outputFormat: argv.format || argv.output,
             });
 
