@@ -139,7 +139,7 @@ export class ModelSelector {
 
         const queryLower = query.toLowerCase();
         const matches: Array<{ provider: DetectedProvider; model: ModelInfo }> = [];
-        let exact = false;
+        const exact = false;
 
         for (const provider of candidates) {
             for (const model of provider.models) {
