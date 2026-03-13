@@ -113,7 +113,10 @@ export class ProviderManager {
             }
 
             const { createAnthropic } = await import("@ai-sdk/anthropic");
-            const provider = createAnthropic({ apiKey: token });
+            // OAuth subscription tokens use Bearer auth, not x-api-key
+            const provider = createAnthropic({
+                headers: { Authorization: `Bearer ${token}` },
+            });
 
             const allConfigs = getProviderConfigs();
             const anthropicConfig = allConfigs.find((c) => c.name === "anthropic") ?? {
