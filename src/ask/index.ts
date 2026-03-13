@@ -258,7 +258,8 @@ class ASKTool {
         // Try scoped to provider first
         const scoped = await modelSelector.fuzzyMatchModel(query, providerName);
 
-        if (scoped.exact || scoped.matches.length === 1) {
+        // Exact match → always auto-select (user typed the full model ID)
+        if (scoped.exact) {
             const match = scoped.matches[0];
             return { provider: match.provider.name, model: match.model.id };
         }
@@ -266,10 +267,10 @@ class ASKTool {
         // If scoped search failed, try globally (e.g., user passed -m gpt-4o with default provider anthropic)
         let allMatches = scoped.matches;
 
-        if (providerName) {
+        if (providerName && allMatches.length === 0) {
             const global = await modelSelector.fuzzyMatchModel(query);
 
-            if (global.exact || global.matches.length === 1) {
+            if (global.exact) {
                 const match = global.matches[0];
                 return { provider: match.provider.name, model: match.model.id };
             }
@@ -277,26 +278,36 @@ class ASKTool {
             allMatches = global.matches;
         }
 
-        // Multiple matches — in TTY, let user disambiguate interactively
-        if (allMatches.length > 1 && (process.stdout.isTTY ?? false)) {
-            const choice = await p.select({
-                message: `"${query}" matches ${allMatches.length} models. Which one?`,
-                options: allMatches.slice(0, 15).map((m) => ({
-                    value: m,
-                    label: `${m.provider.name}/${m.model.id}`,
-                    hint: m.model.name !== m.model.id ? m.model.name : undefined,
-                })),
-            });
-
-            if (p.isCancel(choice)) {
-                return null;
-            }
-
-            const selected = choice as (typeof allMatches)[0];
-            return { provider: selected.provider.name, model: selected.model.id };
+        if (allMatches.length === 0) {
+            return null;
         }
 
-        return null;
+        // Non-TTY: auto-select if unique, otherwise fail (exitWithModelHint handles suggestions)
+        if (!(process.stdout.isTTY ?? false)) {
+            if (allMatches.length === 1) {
+                const match = allMatches[0];
+                return { provider: match.provider.name, model: match.model.id };
+            }
+
+            return null;
+        }
+
+        // TTY: always show interactive picker for fuzzy matches so user confirms the choice
+        const choice = await p.select({
+            message: `"${query}" matches ${allMatches.length} model${allMatches.length > 1 ? "s" : ""}:`,
+            options: allMatches.slice(0, 15).map((m) => ({
+                value: m,
+                label: `${m.provider.name}/${m.model.id}`,
+                hint: m.model.name !== m.model.id ? m.model.name : undefined,
+            })),
+        });
+
+        if (p.isCancel(choice)) {
+            return null;
+        }
+
+        const selected = choice as (typeof allMatches)[0];
+        return { provider: selected.provider.name, model: selected.model.id };
     }
 
     private async handleSpeechToText(filePath: string, argv: Args): Promise<void> {
