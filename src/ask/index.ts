@@ -349,14 +349,11 @@ class ASKTool {
                         );
                     }
 
-                    // Handle output
+                    // Handle non-text output (file, clipboard) — text already streamed above
                     const outputConfig = getOutputFormat(argv);
-                    await outputManager.handleOutput(response.content, outputConfig, {
-                        provider: config.provider,
-                        model: config.model,
-                        cost: response.cost,
-                        usage: response.usage,
-                    });
+                    if (outputConfig?.type && outputConfig.type !== "text") {
+                        await outputManager.handleOutput(response.content, outputConfig);
+                    }
 
                     // Show cost breakdown
                     if (response.cost && response.cost > 0) {
