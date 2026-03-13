@@ -179,6 +179,12 @@ export const KNOWN_MODELS = {
             capabilities: ["chat", "vision", "function-calling"],
         },
         {
+            id: "claude-opus-4-5-20251101",
+            name: "Claude Opus 4.5",
+            contextWindow: 200000,
+            capabilities: ["chat", "vision", "function-calling"],
+        },
+        {
             id: "claude-sonnet-4-5-20250929",
             name: "Claude Sonnet 4.5",
             contextWindow: 200000,

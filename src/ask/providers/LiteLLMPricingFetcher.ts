@@ -1,7 +1,10 @@
 import logger from "@app/logger";
+import { Storage } from "@app/utils/storage/storage";
 import { askUI } from "@ask/output/AskUILogger";
 import type { PricingInfo } from "@ask/types/provider";
 import { z } from "zod";
+
+const storage = new Storage("ask");
 
 export const LITELLM_PRICING_URL =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -183,32 +186,46 @@ export class LiteLLMPricingFetcher {
         }
     }
 
+    private parsePricingData(data: Record<string, unknown>): Map<string, LiteLLMModelPricing> {
+        const pricing = new Map<string, LiteLLMModelPricing>();
+
+        for (const [modelName, modelData] of Object.entries(data)) {
+            if (typeof modelData !== "object" || modelData == null) {
+                continue;
+            }
+
+            const parsed = liteLLMModelPricingSchema.safeParse(modelData);
+            if (!parsed.success) {
+                continue;
+            }
+
+            pricing.set(modelName, parsed.data);
+        }
+
+        return pricing;
+    }
+
     private async loadPricingData(): Promise<Map<string, LiteLLMModelPricing>> {
         if (this.offline) {
             return await this.loadOfflinePricing();
         }
 
-        this.logInfo("Fetching latest model pricing from LiteLLM...");
         try {
-            const response = await fetch(this.url);
-            if (!response.ok) {
-                throw new Error(`Failed to fetch pricing data: ${response.statusText}`);
-            }
+            const data = await storage.getFileOrPut<Record<string, unknown>>(
+                "litellm-pricing.json",
+                async () => {
+                    this.logInfo("Fetching latest model pricing from LiteLLM...");
+                    const response = await fetch(this.url);
+                    if (!response.ok) {
+                        throw new Error(`Failed to fetch pricing data: ${response.statusText}`);
+                    }
 
-            const data = (await response.json()) as Record<string, unknown>;
-            const pricing = new Map<string, LiteLLMModelPricing>();
+                    return (await response.json()) as Record<string, unknown>;
+                },
+                "1 day"
+            );
 
-            for (const [modelName, modelData] of Object.entries(data)) {
-                if (typeof modelData !== "object" || modelData == null) {
-                    continue;
-                }
-                const parsed = liteLLMModelPricingSchema.safeParse(modelData);
-                if (!parsed.success) {
-                    continue;
-                }
-                pricing.set(modelName, parsed.data);
-            }
-
+            const pricing = this.parsePricingData(data);
             this.cachedPricing = pricing;
             return pricing;
         } catch (error) {
