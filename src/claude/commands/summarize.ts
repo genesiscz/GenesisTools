@@ -238,12 +238,15 @@ async function runInteractiveFlow(session: ClaudeSession, opts: SummarizeCommand
         modelName = choice.model.id;
     }
 
-    // Token budget
-    const tokenBudget = opts.maxTokens ? parseInt(opts.maxTokens, 10) : 128_000;
+    // Token budget — undefined when user didn't specify, lets the engine decide
+    // (e.g. --thorough extracts everything, default single-pass uses 128K)
+    const explicitTokenBudget = opts.maxTokens ? parseInt(opts.maxTokens, 10) : undefined;
+    // Preview always needs a concrete number
+    const previewBudget = explicitTokenBudget ?? 128_000;
 
     // Preview: estimate content size and cost
     const prepared = session.toPromptContent({
-        tokenBudget,
+        tokenBudget: previewBudget,
         priority: (opts.priority as "balanced" | "user-first" | "assistant-first" | "summary-first") ?? "balanced",
         includeToolResults: opts.includeToolResults,
         includeThinking: opts.includeThinking,
@@ -293,7 +296,7 @@ async function runInteractiveFlow(session: ClaudeSession, opts: SummarizeCommand
         model: modelName,
         streaming: true,
         promptOnly: opts.promptOnly,
-        tokenBudget,
+        tokenBudget: explicitTokenBudget,
         includeToolResults: opts.includeToolResults,
         includeThinking: opts.includeThinking,
         priority: (opts.priority as "balanced" | "user-first" | "assistant-first" | "summary-first") ?? "balanced",
@@ -312,7 +315,7 @@ async function runInteractiveFlow(session: ClaudeSession, opts: SummarizeCommand
 
 function buildNonInteractiveOptions(session: ClaudeSession, opts: SummarizeCommandOptions): SummarizeOptions {
     const mode = opts.mode ?? "documentation";
-    const tokenBudget = opts.maxTokens ? parseInt(opts.maxTokens, 10) : 128_000;
+    const explicitTokenBudget = opts.maxTokens ? parseInt(opts.maxTokens, 10) : undefined;
 
     if (mode === "custom" && !opts.customPrompt) {
         throw new Error(
@@ -328,7 +331,7 @@ function buildNonInteractiveOptions(session: ClaudeSession, opts: SummarizeComma
         model: opts.model,
         streaming: process.stdout.isTTY,
         promptOnly: opts.promptOnly,
-        tokenBudget,
+        tokenBudget: explicitTokenBudget,
         includeToolResults: opts.includeToolResults,
         includeThinking: opts.includeThinking,
         priority: (opts.priority as "balanced" | "user-first" | "assistant-first" | "summary-first") ?? "balanced",

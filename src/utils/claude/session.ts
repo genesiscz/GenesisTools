@@ -1486,7 +1486,7 @@ export class ClaudeSession {
 
         // Budget split: balanced = 70/30, summary-first = 85/15
         const tier2Ratio = priority === "summary-first" ? 0.85 : 0.7;
-        let tier2Budget = Math.floor(remainingBudget * tier2Ratio);
+        const tier2Budget = Math.floor(remainingBudget * tier2Ratio);
         let tier3Budget = remainingBudget - tier2Budget;
 
         // Fill tier 2 (recent context, backwards from end)

@@ -88,11 +88,16 @@ export class SummarizeEngine {
     private extractContent(): PreparedContent {
         const {
             session,
-            tokenBudget = 128_000,
+            tokenBudget: explicitBudget,
             includeToolResults,
             includeThinking,
             priority = "balanced",
+            thorough,
         } = this.options;
+
+        // With --thorough, extract everything — chunking handles the volume.
+        // User can still override with explicit --max-tokens.
+        const tokenBudget = explicitBudget ?? (thorough ? Infinity : 128_000);
 
         return session.toPromptContent({
             tokenBudget,
@@ -430,7 +435,9 @@ export class SummarizeEngine {
 
                 for (let i = 0; i < chunks.length; i++) {
                     const chunkTokens = estimateTokens(chunks[i]);
-                    parts.push(`\n=== CHUNK ${i + 1}/${chunks.length} (~${chunkTokens.toLocaleString()} tokens) ===\n\n${chunks[i]}`);
+                    parts.push(
+                        `\n=== CHUNK ${i + 1}/${chunks.length} (~${chunkTokens.toLocaleString()} tokens) ===\n\n${chunks[i]}`
+                    );
                 }
 
                 parts.push(`\n=== SYNTHESIS PROMPT ===\n\n${userPrompt}`);
