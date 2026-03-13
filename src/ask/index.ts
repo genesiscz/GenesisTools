@@ -304,6 +304,8 @@ class ASKTool {
             // Resolve provider/model if not specified — prompt in TTY, error in non-TTY
             if (!argv.provider || !argv.model) {
                 if (process.stdout.isTTY) {
+                    askUI().intro();
+
                     const modelChoice = await modelSelector.selectModel();
                     if (!modelChoice) {
                         logger.error("No model selected. Exiting.");
@@ -312,6 +314,7 @@ class ASKTool {
 
                     argv.provider = modelChoice.provider.name;
                     argv.model = modelChoice.model.id;
+                    this.suggestCommand(argv.provider, argv.model);
                 } else {
                     logger.error("Provider (-p) and model (-m) are required for non-interactive mode");
                     process.exit(1);
