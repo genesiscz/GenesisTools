@@ -2,8 +2,8 @@ export interface CLIOptions {
     sst?: string; // Speech-to-text file
     model?: string; // Specific model
     provider?: string; // Specific provider
-    format?: string; // Output format for pricing (table/json)
-    output?: string; // Output format
+    format?: string; // Output format (text/json/jsonl/markdown/clipboard) or models format (table/json)
+    output?: string; // Output file path (implies format=file)
     sort?: string; // Sort order for models (price_input/input/price_output/output/name)
     filterCapabilities?: string; // Filter by capabilities (pipe-separated: "chat|vision|functions|reasoning")
     interactive?: boolean;

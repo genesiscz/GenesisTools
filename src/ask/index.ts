@@ -119,7 +119,7 @@ class ASKTool {
                 raw: !!argv.raw,
                 silent: !!argv.silent,
                 showCost: !!argv.cost,
-                outputFormat: argv.format || argv.output,
+                outputFormat: argv.output ? "file" : argv.format,
             });
 
             // Non-TTY guard: require provider/model when stdin is piped
