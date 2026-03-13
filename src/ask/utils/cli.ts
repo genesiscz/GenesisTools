@@ -38,13 +38,23 @@ export function parseCLIArguments(): Args {
     const args = program.args;
 
     // Build Args object with Commander options mapped to CLIOptions structure
+    // Handle "--output file <filename>" — Commander captures "file" as the value,
+    // the filename ends up as the first positional arg. Merge them.
+    let output: string | undefined = options.output;
+    let positionalArgs = args;
+
+    if (output?.toLowerCase() === "file" && args.length > 0) {
+        output = `file ${args[0]}`;
+        positionalArgs = args.slice(1);
+    }
+
     const result: Args = {
-        _: args,
+        _: positionalArgs,
         sst: options.sst,
         model: options.model,
         provider: options.provider,
         format: options.format,
-        output: options.output,
+        output,
         sort: options.sort,
         filterCapabilities: options.filterCapabilities,
         interactive: options.interactive,
@@ -187,7 +197,9 @@ export function validateOptions(options: CLIOptions): { valid: boolean; errors: 
         const format = options.output.toLowerCase();
 
         if (format !== "file" && !validFormats.includes(format)) {
-            errors.push(`Invalid output format: ${format}. Valid formats: ${validFormats.join(", ")}, file <filename>`);
+            errors.push(
+                `Invalid output format: ${format}. Valid formats: ${validFormats.join(", ")}, file`
+            );
         }
     }
 
