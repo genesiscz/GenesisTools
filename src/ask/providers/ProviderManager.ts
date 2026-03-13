@@ -2,6 +2,7 @@ import type { ProviderV2 } from "@ai-sdk/provider";
 import logger from "@app/logger";
 import { askUI } from "@ask/output/AskUILogger";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
+import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
 import { getProviderConfigs, KNOWN_MODELS } from "@ask/providers/providers";
 import type {
     DetectedProvider,
@@ -207,10 +208,15 @@ export class ProviderManager {
                 return await this.getOpenAIModels();
             }
 
-            // For other providers, use known model lists
+            // For other providers, discover models from LiteLLM pricing data + KNOWN_MODELS fallback
+            const models = await this.getModelsFromLiteLLM(config.name);
+            if (models.length > 0) {
+                return models;
+            }
+
+            // Fallback to KNOWN_MODELS if LiteLLM has no data for this provider
             const knownModels = KNOWN_MODELS[config.name as keyof typeof KNOWN_MODELS];
             if (knownModels) {
-                // Fetch pricing for all models in parallel
                 const modelsWithPricing = await Promise.all(
                     knownModels.map(async (model) => {
                         const pricing = await dynamicPricingManager.getPricing(config.name, model.id);
@@ -222,9 +228,7 @@ export class ProviderManager {
                     })
                 );
 
-                // Sort models alphabetically by name
                 modelsWithPricing.sort((a: ModelInfo, b: ModelInfo) => a.name.localeCompare(b.name));
-
                 return modelsWithPricing;
             }
 
@@ -250,6 +254,94 @@ export class ProviderManager {
                     provider: config.name,
                 },
             ];
+        }
+    }
+
+    /**
+     * Discover models from LiteLLM pricing data for a given provider.
+     * Returns models whose bare ID matches the provider prefix (e.g., "claude-" for anthropic).
+     * Excludes versioned duplicates (dated IDs) when an alias exists.
+     */
+    private async getModelsFromLiteLLM(providerName: string): Promise<ModelInfo[]> {
+        const prefixMap: Record<string, string> = {
+            anthropic: "claude-",
+            groq: "groq/",
+            xai: "xai/",
+        };
+
+        const prefix = prefixMap[providerName];
+        if (!prefix) {
+            return [];
+        }
+
+        try {
+            const allPricing = await liteLLMPricingFetcher.fetchModelPricing();
+            const models: ModelInfo[] = [];
+            const seenAliases = new Set<string>();
+
+            // First pass: collect alias IDs (no date suffix) to skip dated duplicates
+            for (const key of allPricing.keys()) {
+                if (!key.startsWith(prefix)) {
+                    continue;
+                }
+
+                // Skip keys with slashes (provider-prefixed like "anthropic/claude-...")
+                if (key.includes("/") && !prefix.includes("/")) {
+                    continue;
+                }
+
+                // Skip versioned keys like "claude-opus-4-6-20260205" when "claude-opus-4-6" exists
+                if (!/\d{8}/.test(key)) {
+                    seenAliases.add(key);
+                }
+            }
+
+            for (const [key, pricingData] of allPricing) {
+                if (!key.startsWith(prefix)) {
+                    continue;
+                }
+
+                if (key.includes("/") && !prefix.includes("/")) {
+                    continue;
+                }
+
+                // Skip dated versions when alias exists (e.g., skip "claude-opus-4-6-20260205" if "claude-opus-4-6" exists)
+                const dateMatch = key.match(/^(.+)-(\d{8})(-v\d+:\d+)?$/);
+                if (dateMatch && seenAliases.has(dateMatch[1])) {
+                    continue;
+                }
+
+                // Skip v1:0 suffixed keys
+                if (key.endsWith("-v1:0")) {
+                    continue;
+                }
+
+                const pricing = liteLLMPricingFetcher.convertToPricingInfo(pricingData);
+                const contextWindow = pricingData.max_input_tokens ?? pricingData.max_tokens ?? 200000;
+
+                // Use KNOWN_MODELS for display name if available
+                const knownModels = KNOWN_MODELS[providerName as keyof typeof KNOWN_MODELS];
+                const known = knownModels?.find((m) => m.id === key);
+
+                models.push({
+                    id: key,
+                    name: known?.name ?? this.formatModelName(key.replace(/^[^/]+\//, "")),
+                    contextWindow,
+                    capabilities: known?.capabilities ?? ["chat"],
+                    provider: providerName,
+                    pricing,
+                });
+            }
+
+            models.sort((a, b) => {
+                const aPrice = a.pricing?.inputPer1M ?? Infinity;
+                const bPrice = b.pricing?.inputPer1M ?? Infinity;
+                return aPrice - bPrice;
+            });
+            return models;
+        } catch (error) {
+            logger.warn(`Failed to get models from LiteLLM for ${providerName}: ${error}`);
+            return [];
         }
     }
 
