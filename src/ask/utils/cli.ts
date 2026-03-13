@@ -10,8 +10,11 @@ export function parseCLIArguments(): Args {
         .option("-s, --sst <file>", "Transcribe audio file")
         .option("-m, --model <name>", "Model to use")
         .option("-p, --provider <name>", "Provider")
-        .option("-f, --format <fmt>", "Output format (text/json/markdown/clipboard/file) or models format (table/json)")
-        .option("-o, --output <format>", "Output format")
+        .option(
+            "-f, --format <fmt>",
+            "Output format (text/json/jsonl/markdown/clipboard) or models format (table/json)"
+        )
+        .option("-o, --output <file>", "Output file path (implies file output)")
         .option("--sort <order>", "Sort models by: price_input/input/price_output/output/name")
         .option("--filter-capabilities <caps>", "Filter models by capabilities (pipe-separated)")
         .option("-i, --interactive", "Start interactive chat mode")
@@ -24,6 +27,7 @@ export function parseCLIArguments(): Args {
         .option("--silent", "Silent mode")
         .option("--predict-cost", "Show cost prediction before sending")
         .option("--raw", "Output only the raw response content (no metadata, no cost)")
+        .option("--cost", "Show cost breakdown (always shown in TTY, opt-in for piped output)")
         .option("-?, --help-full", "Show detailed help message")
         .option("-V, --version", "Show version information")
         .argument("[prompt...]", "Initial prompt")
@@ -33,7 +37,6 @@ export function parseCLIArguments(): Args {
     const options = program.opts();
     const args = program.args;
 
-    // Build Args object with Commander options mapped to CLIOptions structure
     const result: Args = {
         _: args,
         sst: options.sst,
@@ -52,6 +55,7 @@ export function parseCLIArguments(): Args {
         silent: options.silent,
         predictCost: options.predictCost,
         raw: options.raw,
+        cost: options.cost,
         help: options.helpFull,
         version: options.version,
     };
@@ -77,8 +81,8 @@ Options:
   -s, --sst <file>        Transcribe audio file
   -m, --model <model>     Specify model (e.g., gpt-4-turbo)
   -p, --provider <prov>   Specify provider (e.g., openai)
-  -f, --format <format>   Output format (text/json/markdown/clipboard/file) or models format (table/json)
-  -o, --output <format>   Output format (text/json/markdown/clipboard/file)
+  -f, --format <format>   Output format (text/json/jsonl/markdown/clipboard) or models format (table/json)
+  -o, --output <file>     Output file path (writes response to file)
   --sort <order>          Sort models by: price_input/input/price_output/output/name (default: price_input)
   --filter-capabilities   Filter models by capabilities (pipe-separated: "chat|vision|functions|reasoning")
   -i, --interactive       Start interactive chat mode (default: true)
@@ -118,10 +122,11 @@ Examples:
   tools ask --sst recording.mp3
 
   # Save output to file
-  tools ask --output file response.txt "Generate a story"
+  tools ask -o response.txt "Generate a story"
+  tools ask --format markdown -o out.md "Explain quantum computing"
 
   # Copy to clipboard
-  tools ask --output clipboard "Summarize this topic"
+  tools ask --format clipboard "Summarize this topic"
 
 Interactive Chat Commands:
   /model                  Switch AI model
@@ -176,13 +181,13 @@ export function validateOptions(options: CLIOptions): { valid: boolean; errors: 
         }
     }
 
-    // Validate output format
-    if (options.output) {
-        const validFormats = ["text", "json", "markdown", "clipboard"];
-        const format = options.output.toLowerCase();
+    // Validate format
+    if (options.format) {
+        const validFormats = ["text", "json", "jsonl", "markdown", "clipboard", "table"];
+        const format = options.format.toLowerCase();
 
-        if (format !== "file" && !validFormats.includes(format)) {
-            errors.push(`Invalid output format: ${format}. Valid formats: ${validFormats.join(", ")}, file <filename>`);
+        if (!validFormats.includes(format)) {
+            errors.push(`Invalid format: ${format}. Valid formats: ${validFormats.join(", ")}`);
         }
     }
 
@@ -242,40 +247,28 @@ export function shouldShowVersion(options: CLIOptions): boolean {
     return !!options.version;
 }
 
-export function parseOutputFormat(outputArg?: string): { type: OutputFormat; filename?: string } | undefined {
-    if (!outputArg) {
-        return undefined;
-    }
-
-    const parts = outputArg.toLowerCase().split(/\s+/);
-    const format = parts[0] as OutputFormat;
-
-    if (format === "file" && parts.length > 1) {
-        const filename = parts.slice(1).join(" ");
-        return { type: "file", filename };
-    }
-
-    return { type: format };
-}
-
 /**
- * Get output format from either --output or --format option.
- * Prefers --output if both are provided.
+ * Get output config from -o (file path) and -f (format).
+ *  -o <file>              → file output
+ *  -f json                → json to stdout
+ *  -f markdown -o out.md  → markdown written to file
  */
 export function getOutputFormat(options: CLIOptions): { type: OutputFormat; filename?: string } | undefined {
-    // Prefer --output over --format
+    // -o implies file output
     if (options.output) {
-        return parseOutputFormat(options.output);
+        return { type: "file", filename: options.output };
     }
-    // Use --format as fallback (but only for valid output formats, not pricing-specific ones)
+
+    // -f sets format (skip pricing-specific "table")
     if (options.format) {
         const format = options.format.toLowerCase();
-        // Only use format if it's a valid output format (not "table" which is pricing-specific)
-        const validOutputFormats = ["text", "json", "markdown", "clipboard", "file"];
+        const validOutputFormats = ["text", "json", "jsonl", "markdown", "clipboard"];
+
         if (validOutputFormats.includes(format)) {
-            return parseOutputFormat(options.format);
+            return { type: format as OutputFormat };
         }
     }
+
     return undefined;
 }
 

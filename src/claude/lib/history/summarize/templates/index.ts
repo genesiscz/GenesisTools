@@ -10,6 +10,7 @@ import { ChangelogTemplate } from "./changelog.ts";
 import { CustomTemplate } from "./custom.ts";
 import { DebugPostmortemTemplate } from "./debug-postmortem.ts";
 import { DocumentationTemplate } from "./documentation.ts";
+import { LearningsTemplate } from "./learnings.ts";
 import { MemorizationTemplate } from "./memorization.ts";
 import { OnboardingTemplate } from "./onboarding.ts";
 import { ShortMemoryTemplate } from "./short-memory.ts";
@@ -51,6 +52,7 @@ export type TemplateName =
     | "changelog"
     | "debug-postmortem"
     | "onboarding"
+    | "learnings"
     | "custom";
 
 // =============================================================================
@@ -64,6 +66,7 @@ const templateRegistry: Record<TemplateName, () => PromptTemplate> = {
     changelog: () => new ChangelogTemplate(),
     "debug-postmortem": () => new DebugPostmortemTemplate(),
     onboarding: () => new OnboardingTemplate(),
+    learnings: () => new LearningsTemplate(),
     custom: () => new CustomTemplate(),
 };
 

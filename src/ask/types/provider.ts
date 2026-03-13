@@ -2,13 +2,48 @@ import type { ProviderV2 } from "@ai-sdk/provider";
 import type { LanguageModel } from "ai";
 import type { ModelInfo } from "./chat";
 
-// For OpenAI providers (v5+), prefer .chat() over .languageModel() for better
-// compatibility — .languageModel() defaults to the Responses API endpoint.
+/**
+ * OpenAI has 3 text generation API endpoints:
+ *
+ * 1. /v1/chat/completions (Chat API) — Used by .chat()
+ *    Models: gpt-4o, gpt-4-turbo, gpt-3.5-turbo, o1, o3, gpt-5, etc.
+ *    This is the default and most common endpoint.
+ *
+ * 2. /v1/responses (Responses API) — Used by .responses() / .languageModel()
+ *    Models: Everything in Chat API + gpt-5-codex, gpt-5-pro
+ *    Newer API with tool results, web search, etc.
+ *    Warning: .languageModel() defaults here in ai-sdk v5+
+ *
+ * 3. /v1/completions (Completions API) — Used by .completion()
+ *    Models: gpt-3.5-turbo-instruct only (legacy)
+ *
+ * We prefer .chat() because it's the most established and widely tested.
+ * Models like gpt-5-codex/gpt-5-pro ONLY work on the Responses API.
+ * See: src/ask/docs/selecting-mode-decision.md for full details.
+ */
+
+// Patterns that indicate a model needs the Responses API instead of Chat API
+const RESPONSES_ONLY_PATTERNS = ["codex", "-pro"];
+
 export function getLanguageModel(provider: ProviderV2, modelId: string): LanguageModel {
+    const id = modelId.toLowerCase();
+
+    // For OpenAI-like providers that expose both .chat() and .responses()
     if ("chat" in provider && typeof provider.chat === "function") {
+        // Check if this model needs the Responses API endpoint
+        if (
+            "responses" in provider &&
+            typeof provider.responses === "function" &&
+            RESPONSES_ONLY_PATTERNS.some((p) => id.includes(p))
+        ) {
+            return (provider.responses as (id: string) => LanguageModel)(modelId);
+        }
+
+        // Default: use Chat API
         return (provider.chat as (id: string) => LanguageModel)(modelId);
     }
 
+    // Non-OpenAI providers: use the standard .languageModel()
     return provider.languageModel(modelId);
 }
 

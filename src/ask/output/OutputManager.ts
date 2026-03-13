@@ -59,6 +59,10 @@ export class OutputManager {
                     await this.outputJSON(content, metadata);
                     break;
 
+                case "jsonl":
+                    await this.outputJSONL(content, metadata);
+                    break;
+
                 case "markdown":
                     await this.outputMarkdown(content, metadata);
                     break;
@@ -102,6 +106,15 @@ export class OutputManager {
 
         const jsonOutput = SafeJSON.stringify(response, null, 2);
         console.log(jsonOutput);
+    }
+
+    private async outputJSONL(content: string, metadata?: ResponseMetadata): Promise<void> {
+        const line = SafeJSON.stringify({
+            content,
+            timestamp: new Date().toISOString(),
+            ...(metadata && { metadata }),
+        });
+        console.log(line);
     }
 
     private async outputMarkdown(content: string, metadata?: ResponseMetadata): Promise<void> {
@@ -335,7 +348,8 @@ export class OutputManager {
             totalTokens: number;
             cost: number;
             currency: string;
-        }>
+        }>,
+        accountInfo?: { label?: string; name: string }
     ): Promise<string> {
         if (breakdowns.length === 0) {
             return "";
@@ -378,6 +392,12 @@ export class OutputManager {
         // Cost alerts
         if (totalCost > 0.1) {
             output += pc.yellow("⚠️  High cost alert: This session has exceeded $0.10\n");
+        }
+
+        // Account info line
+        if (accountInfo && breakdowns.length > 0) {
+            const labelPart = accountInfo.label ? ` (${accountInfo.label})` : "";
+            output += pc.dim(`Provider: ${breakdowns[0].provider}${labelPart} · ${accountInfo.name}\n`);
         }
 
         return output;
