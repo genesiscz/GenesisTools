@@ -351,6 +351,47 @@ async function configureProviderSettings(config: AskConfig): Promise<void> {
 }
 
 async function configureDefaultModel(config: AskConfig): Promise<void> {
+    const currentInfo = config.defaultProvider
+        ? `${config.defaultProvider}/${config.defaultModel ?? "auto"}`
+        : "not set";
+
+    const action = await p.select({
+        message: `Default: ${currentInfo}. What do you want to do?`,
+        options: [
+            { value: "set", label: "Set default provider & model" },
+            { value: "unset-both", label: "Unset both", hint: "remove default provider and model" },
+            { value: "unset-model", label: "Unset model only", hint: "keep provider, clear model" },
+            { value: "unset-provider", label: "Unset provider only", hint: "keep model, clear provider" },
+        ],
+    });
+
+    if (p.isCancel(action)) {
+        return;
+    }
+
+    if (action === "unset-both") {
+        config.defaultProvider = undefined;
+        config.defaultModel = undefined;
+        await saveAskConfig(config);
+        p.log.success("Default provider and model unset.");
+        return;
+    }
+
+    if (action === "unset-model") {
+        config.defaultModel = undefined;
+        await saveAskConfig(config);
+        p.log.success("Default model unset.");
+        return;
+    }
+
+    if (action === "unset-provider") {
+        config.defaultProvider = undefined;
+        await saveAskConfig(config);
+        p.log.success("Default provider unset.");
+        return;
+    }
+
+    // Set new defaults
     const spinner = p.spinner();
     spinner.start("Detecting providers...");
     const providers = await providerManager.detectProviders();
