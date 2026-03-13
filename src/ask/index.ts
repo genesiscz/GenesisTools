@@ -122,6 +122,18 @@ class ASKTool {
             const isTTY = process.stdin.isTTY ?? false;
 
             if (!isTTY) {
+                // Read message from stdin if no positional args
+                if (argv._.length === 0 && !argv.sst && !argv.interactive) {
+                    const stdinText = await new Response(Bun.stdin.stream()).text();
+                    const trimmed = stdinText.trim();
+
+                    if (!trimmed) {
+                        this.exitWithUsageHint("No message provided in non-interactive mode.");
+                    }
+
+                    argv._.push(trimmed);
+                }
+
                 const hasMessage = argv._.length > 0;
 
                 if (!hasMessage && !argv.sst && !argv.interactive) {
@@ -289,10 +301,21 @@ class ASKTool {
         }
 
         try {
-            // Use AIChat — no stdout monkey-patching needed
+            // Resolve provider/model if not specified — prompt in TTY, error in non-TTY
             if (!argv.provider || !argv.model) {
-                logger.error("Provider (-p) and model (-m) are required for non-interactive mode");
-                process.exit(1);
+                if (process.stdout.isTTY) {
+                    const modelChoice = await modelSelector.selectModel();
+                    if (!modelChoice) {
+                        logger.error("No model selected. Exiting.");
+                        process.exit(1);
+                    }
+
+                    argv.provider = modelChoice.provider.name;
+                    argv.model = modelChoice.model.id;
+                } else {
+                    logger.error("Provider (-p) and model (-m) are required for non-interactive mode");
+                    process.exit(1);
+                }
             }
 
             const chat = new AIChat({
@@ -332,14 +355,20 @@ class ASKTool {
 
             askUI().logThinking();
 
+            // Determine if output is structured (json/jsonl) — suppress streaming text
+            const outputConfig = getOutputFormat(argv);
+            const isStructured = outputConfig?.type === "json" || outputConfig?.type === "jsonl";
+
             // Stream the response
             for await (const event of chat.send(message)) {
-                if (event.isText()) {
+                if (event.isText() && !isStructured) {
                     process.stdout.write(event.text);
                 }
 
                 if (event.isDone()) {
-                    process.stdout.write("\n");
+                    if (!isStructured) {
+                        process.stdout.write("\n");
+                    }
                     const response = event.response;
 
                     // Track usage
@@ -359,8 +388,7 @@ class ASKTool {
                         );
                     }
 
-                    // Handle non-text output (file, clipboard) — text already streamed above
-                    const outputConfig = getOutputFormat(argv);
+                    // Handle non-text output (file, clipboard, json, jsonl)
                     if (outputConfig?.type && outputConfig.type !== "text") {
                         await outputManager.handleOutput(response.content, outputConfig);
                     }
