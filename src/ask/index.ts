@@ -396,18 +396,19 @@ class ASKTool {
 
             askUI().logThinking();
 
-            // Determine if output is structured (json/jsonl) — suppress streaming text
+            // Suppress streaming text for non-text output formats (json, jsonl, markdown, clipboard, file)
+            // — handleOutput will print the final content in the correct format
             const outputConfig = getOutputFormat(argv);
-            const isStructured = outputConfig?.type === "json" || outputConfig?.type === "jsonl";
+            const suppressStreaming = outputConfig?.type != null && outputConfig.type !== "text";
 
             // Stream the response
             for await (const event of chat.send(message)) {
-                if (event.isText() && !isStructured) {
+                if (event.isText() && !suppressStreaming) {
                     process.stdout.write(event.text);
                 }
 
                 if (event.isDone()) {
-                    if (!isStructured) {
+                    if (!suppressStreaming) {
                         process.stdout.write("\n");
                     }
                     const response = event.response;
