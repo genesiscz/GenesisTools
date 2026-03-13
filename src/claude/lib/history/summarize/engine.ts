@@ -177,7 +177,8 @@ export class SummarizeEngine {
         systemPrompt: string,
         userPrompt: string,
         providerChoice: ProviderChoice,
-        streaming: boolean
+        streaming: boolean,
+        maxTokens?: number
     ): Promise<LLMCallResult> {
         const model = getLanguageModel(providerChoice.provider.provider, providerChoice.model.id);
 
@@ -186,6 +187,7 @@ export class SummarizeEngine {
                 model,
                 system: systemPrompt,
                 prompt: userPrompt,
+                ...(maxTokens ? { maxTokens } : {}),
             });
 
             let fullResponse = "";
@@ -204,6 +206,7 @@ export class SummarizeEngine {
             model,
             system: systemPrompt,
             prompt: userPrompt,
+            ...(maxTokens ? { maxTokens } : {}),
         });
 
         return { content: result.text, usage: result.usage };
@@ -304,6 +307,27 @@ export class SummarizeEngine {
     // Chunked Summarization (--thorough)
     // =========================================================================
 
+    /**
+     * Derive chunk size from model's context window.
+     * Formula: contextWindow - systemOverhead(2K) - outputReserve(20%) - safetyMargin(5%)
+     */
+    private calculateChunkSize(contextWindow?: number): { chunkSize: number; outputReserve: number } {
+        if (this.options.chunkSize) {
+            return { chunkSize: this.options.chunkSize, outputReserve: 0 };
+        }
+
+        if (!contextWindow || contextWindow <= 0) {
+            return { chunkSize: 100_000, outputReserve: 0 };
+        }
+
+        const systemOverhead = 2_000;
+        const outputReserve = Math.floor(contextWindow * 0.2);
+        const safetyMargin = Math.floor(contextWindow * 0.05);
+        const chunkSize = contextWindow - systemOverhead - outputReserve - safetyMargin;
+
+        return { chunkSize: Math.max(chunkSize, 10_000), outputReserve };
+    }
+
     private splitIntoChunks(text: string, chunkTokenSize: number): string[] {
         const chunks: string[] = [];
         // Approximate character count per chunk (~4 chars per token)
@@ -335,13 +359,20 @@ export class SummarizeEngine {
         providerChoice: ProviderChoice,
         streaming: boolean
     ): Promise<LLMCallResult> {
-        const chunkSize = this.options.chunkSize ?? 100_000;
+        const { chunkSize, outputReserve } = this.calculateChunkSize(providerChoice.model.contextWindow);
         const chunks = this.splitIntoChunks(prepared.content, chunkSize);
 
         if (chunks.length <= 1) {
-            // Content fits in a single chunk, use normal pipeline
             const { systemPrompt, userPrompt } = this.buildPrompt(prepared);
             return this.callLLM(systemPrompt, userPrompt, providerChoice, streaming);
+        }
+
+        if (process.stdout.isTTY) {
+            const ctxK = Math.round((providerChoice.model.contextWindow ?? 0) / 1000);
+            const chunkK = Math.round(chunkSize / 1000);
+            process.stderr.write(
+                `Thorough mode: ${chunks.length} chunks (model: ${providerChoice.model.id}, context: ${ctxK}K, chunk: ~${chunkK}K)\n`
+            );
         }
 
         // Phase 1: Summarize each chunk
@@ -360,7 +391,13 @@ export class SummarizeEngine {
                 process.stdout.write(`\n--- Chunk ${i + 1}/${chunks.length} ---\n`);
             }
 
-            const result = await this.callLLM(chunkSystemPrompt, chunkPrompt, providerChoice, false);
+            const result = await this.callLLM(
+                chunkSystemPrompt,
+                chunkPrompt,
+                providerChoice,
+                false,
+                outputReserve || undefined
+            );
             chunkSummaries.push(result.content);
 
             if (result.usage) {
