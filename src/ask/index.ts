@@ -106,6 +106,10 @@ class ASKTool {
                     argv.provider = resolved.provider;
                     argv.model = resolved.model;
                     fuzzyResolved = true;
+                } else {
+                    // Partial model name didn't resolve — clear it so interactive selector or
+                    // non-TTY guard handles it properly instead of passing garbage to AIChat
+                    argv.model = undefined;
                 }
             }
 
@@ -260,6 +264,8 @@ class ASKTool {
         }
 
         // If scoped search failed, try globally (e.g., user passed -m gpt-4o with default provider anthropic)
+        let allMatches = scoped.matches;
+
         if (providerName) {
             const global = await modelSelector.fuzzyMatchModel(query);
 
@@ -267,6 +273,27 @@ class ASKTool {
                 const match = global.matches[0];
                 return { provider: match.provider.name, model: match.model.id };
             }
+
+            allMatches = global.matches;
+        }
+
+        // Multiple matches — in TTY, let user disambiguate interactively
+        if (allMatches.length > 1 && (process.stdout.isTTY ?? false)) {
+            const choice = await p.select({
+                message: `"${query}" matches ${allMatches.length} models. Which one?`,
+                options: allMatches.slice(0, 15).map((m) => ({
+                    value: m,
+                    label: `${m.provider.name}/${m.model.id}`,
+                    hint: m.model.name !== m.model.id ? m.model.name : undefined,
+                })),
+            });
+
+            if (p.isCancel(choice)) {
+                return null;
+            }
+
+            const selected = choice as (typeof allMatches)[0];
+            return { provider: selected.provider.name, model: selected.model.id };
         }
 
         return null;
