@@ -9,6 +9,7 @@ import { ChatEngine } from "@ask/chat/ChatEngine";
 import type { CommandResult } from "@ask/chat/CommandHandler";
 import { commandHandler } from "@ask/chat/CommandHandler";
 import { conversationManager } from "@ask/chat/ConversationManager";
+import { askUI, initAskUI } from "@ask/output/AskUILogger";
 import { costPredictor } from "@ask/output/CostPredictor";
 import { costTracker } from "@ask/output/CostTracker";
 import { outputManager } from "@ask/output/OutputManager";
@@ -39,7 +40,7 @@ import {
     showVersion,
     validateOptions,
 } from "@ask/utils/cli";
-import { colorizeProvider, generateSessionId } from "@ask/utils/helpers";
+import { generateSessionId } from "@ask/utils/helpers";
 
 configureLogger({ logToFile: true });
 
@@ -107,6 +108,15 @@ class ASKTool {
                     fuzzyResolved = true;
                 }
             }
+
+            initAskUI({
+                isTTY: process.stdout.isTTY ?? false,
+                modelPreSelected: !!argv.model,
+                raw: !!argv.raw,
+                silent: !!argv.silent,
+                showCost: (process.stdout.isTTY ?? false) || !!argv.cost,
+                outputFormat: argv.format || argv.output,
+            });
 
             // Non-TTY guard: require provider/model when stdin is piped
             const isTTY = process.stdin.isTTY ?? false;
@@ -304,7 +314,7 @@ class ASKTool {
             // Streaming mode with UI
             // We still need provider/model info for display, so resolve first
             const config = chat.getConfig();
-            p.log.info(`Using ${colorizeProvider(config.provider)}/${config.model}`);
+            askUI().logUsing({ provider: config.provider, model: config.model });
 
             // Optional: Show cost prediction if --predict-cost flag is set
             if (argv.predictCost) {
@@ -320,7 +330,7 @@ class ASKTool {
                 }
             }
 
-            p.log.step(pc.yellow("Thinking..."));
+            askUI().logThinking();
 
             // Stream the response
             for await (const event of chat.send(message)) {
@@ -356,7 +366,7 @@ class ASKTool {
                     }
 
                     // Show cost breakdown (TTY always, non-TTY only with --cost)
-                    const showCost = (process.stdout.isTTY ?? false) || argv.cost;
+                    const showCost = askUI().shouldShowCost();
                     if (showCost && response.cost && response.cost > 0) {
                         const breakdown = [
                             {
@@ -388,10 +398,7 @@ class ASKTool {
     }
 
     private async startInteractiveChat(argv: Args): Promise<void> {
-        if (process.stdout.isTTY) {
-            p.intro(pc.bgCyan(pc.black(" ASK ")));
-        }
-
+        askUI().intro();
         p.log.info(pc.dim("Type /help for available commands, /quit to exit"));
 
         // Select initial model
@@ -401,7 +408,7 @@ class ASKTool {
             process.exit(1);
         }
 
-        p.log.step(`Starting with ${colorizeProvider(modelChoice.provider.name)}/${modelChoice.model.name}`);
+        askUI().logStarting({ provider: modelChoice.provider.name, model: modelChoice.model.name });
 
         this.suggestCommand(modelChoice.provider.name, modelChoice.model.id);
 
@@ -485,7 +492,7 @@ class ASKTool {
                 const duration = Date.now() - startTime;
 
                 // Show timing info
-                console.log(pc.dim(`\nResponse time: ${formatElapsedTime(duration)}`));
+                askUI().logResponseTime({ duration: formatElapsedTime(duration) });
 
                 // Track usage
                 if (response.usage) {
@@ -542,15 +549,13 @@ class ASKTool {
         await convManager.saveConversation(session);
 
         // Show session summary
-        p.log.info(pc.dim(`Session saved: ${sessionId}`));
-        p.log.info(pc.dim(`Messages: ${session.messages.length}`));
-        p.log.info(pc.dim(`Duration: ${formatElapsedTime(Date.now() - new Date(session.startTime).getTime())}`));
+        askUI().logSessionSummary({
+            id: sessionId,
+            messages: session.messages.length,
+            duration: formatElapsedTime(Date.now() - new Date(session.startTime).getTime()),
+        });
 
-        if (process.stdout.isTTY) {
-            p.outro(pc.green("Goodbye!"));
-        } else {
-            console.log("Goodbye!");
-        }
+        askUI().outro();
     }
 
     private async createChatConfig(modelChoice: ProviderChoice, argv: CLIOptions): Promise<ChatConfig> {

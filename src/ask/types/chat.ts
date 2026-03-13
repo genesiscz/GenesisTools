@@ -81,7 +81,7 @@ export interface ModelInfo {
 }
 
 // Output and formatting types
-export type OutputFormat = "text" | "json" | "markdown" | "clipboard" | "file";
+export type OutputFormat = "text" | "json" | "jsonl" | "markdown" | "clipboard" | "file";
 
 export interface OutputConfig {
     type: OutputFormat;

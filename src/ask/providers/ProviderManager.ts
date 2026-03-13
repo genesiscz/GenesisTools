@@ -1,5 +1,6 @@
 import type { ProviderV2 } from "@ai-sdk/provider";
 import logger from "@app/logger";
+import { askUI } from "@ask/output/AskUILogger";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { getProviderConfigs, KNOWN_MODELS } from "@ask/providers/providers";
 import type {
@@ -13,9 +14,7 @@ import type {
     ProviderConfig,
 } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
-import * as p from "@clack/prompts";
 import { generateText } from "ai";
-import pc from "picocolors";
 
 export class ProviderManager {
     private detectedProviders: Map<string, DetectedProvider> = new Map();
@@ -71,7 +70,7 @@ export class ProviderManager {
                     detected.push(detectedProvider);
                     this.detectedProviders.set(config.name, detectedProvider);
 
-                    p.log.step(pc.dim(`Detected ${pc.cyan(config.name)} provider with ${models.length} models`));
+                    askUI().logDetected({ provider: config.name, count: models.length });
                 }
             } catch (error) {
                 logger.warn(`Failed to initialize ${config.name} provider: ${error}`);
@@ -150,7 +149,7 @@ export class ProviderManager {
             detected.push(detectedProvider);
             this.detectedProviders.set("anthropic", detectedProvider);
 
-            p.log.step(pc.dim(`Detected ${pc.cyan("anthropic")}${pc.dim(hint)} provider via subscription`));
+            askUI().logDetectedSubscription({ provider: "anthropic", hint });
         } catch (error) {
             logger.warn(`Failed to initialize anthropic subscription provider: ${error}`);
         }

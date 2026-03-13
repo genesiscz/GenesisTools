@@ -59,6 +59,10 @@ export class OutputManager {
                     await this.outputJSON(content, metadata);
                     break;
 
+                case "jsonl":
+                    await this.outputJSONL(content, metadata);
+                    break;
+
                 case "markdown":
                     await this.outputMarkdown(content, metadata);
                     break;
@@ -102,6 +106,15 @@ export class OutputManager {
 
         const jsonOutput = SafeJSON.stringify(response, null, 2);
         console.log(jsonOutput);
+    }
+
+    private async outputJSONL(content: string, metadata?: ResponseMetadata): Promise<void> {
+        const line = SafeJSON.stringify({
+            content,
+            timestamp: new Date().toISOString(),
+            ...(metadata && { metadata }),
+        });
+        console.log(line);
     }
 
     private async outputMarkdown(content: string, metadata?: ResponseMetadata): Promise<void> {

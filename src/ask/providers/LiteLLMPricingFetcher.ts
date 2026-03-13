@@ -1,7 +1,6 @@
 import logger from "@app/logger";
+import { askUI } from "@ask/output/AskUILogger";
 import type { PricingInfo } from "@ask/types/provider";
-import * as p from "@clack/prompts";
-import pc from "picocolors";
 import { z } from "zod";
 
 export const LITELLM_PRICING_URL =
@@ -427,7 +426,7 @@ export const liteLLMPricingFetcher = new LiteLLMPricingFetcher({
                 typeof msg === "object" && msg !== null && "msg" in (msg as Record<string, unknown>)
                     ? String((msg as Record<string, unknown>).msg)
                     : String(msg);
-            p.log.step(pc.dim(text));
+            askUI().logFetching({ source: text });
         },
         warn: (msg: unknown, ...args: unknown[]) => {
             if (typeof msg === "object" && msg !== null) {

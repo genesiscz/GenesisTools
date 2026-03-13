@@ -10,7 +10,10 @@ export function parseCLIArguments(): Args {
         .option("-s, --sst <file>", "Transcribe audio file")
         .option("-m, --model <name>", "Model to use")
         .option("-p, --provider <name>", "Provider")
-        .option("-f, --format <fmt>", "Output format (text/json/markdown/clipboard/file) or models format (table/json)")
+        .option(
+            "-f, --format <fmt>",
+            "Output format (text/json/jsonl/markdown/clipboard/file) or models format (table/json)"
+        )
         .option("-o, --output <format>", "Output format")
         .option("--sort <order>", "Sort models by: price_input/input/price_output/output/name")
         .option("--filter-capabilities <caps>", "Filter models by capabilities (pipe-separated)")
@@ -79,8 +82,8 @@ Options:
   -s, --sst <file>        Transcribe audio file
   -m, --model <model>     Specify model (e.g., gpt-4-turbo)
   -p, --provider <prov>   Specify provider (e.g., openai)
-  -f, --format <format>   Output format (text/json/markdown/clipboard/file) or models format (table/json)
-  -o, --output <format>   Output format (text/json/markdown/clipboard/file)
+  -f, --format <format>   Output format (text/json/jsonl/markdown/clipboard/file) or models format (table/json)
+  -o, --output <format>   Output format (text/json/jsonl/markdown/clipboard/file)
   --sort <order>          Sort models by: price_input/input/price_output/output/name (default: price_input)
   --filter-capabilities   Filter models by capabilities (pipe-separated: "chat|vision|functions|reasoning")
   -i, --interactive       Start interactive chat mode (default: true)
@@ -180,7 +183,7 @@ export function validateOptions(options: CLIOptions): { valid: boolean; errors: 
 
     // Validate output format
     if (options.output) {
-        const validFormats = ["text", "json", "markdown", "clipboard"];
+        const validFormats = ["text", "json", "jsonl", "markdown", "clipboard"];
         const format = options.output.toLowerCase();
 
         if (format !== "file" && !validFormats.includes(format)) {
@@ -273,7 +276,7 @@ export function getOutputFormat(options: CLIOptions): { type: OutputFormat; file
     if (options.format) {
         const format = options.format.toLowerCase();
         // Only use format if it's a valid output format (not "table" which is pricing-specific)
-        const validOutputFormats = ["text", "json", "markdown", "clipboard", "file"];
+        const validOutputFormats = ["text", "json", "jsonl", "markdown", "clipboard", "file"];
         if (validOutputFormats.includes(format)) {
             return parseOutputFormat(options.format);
         }
