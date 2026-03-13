@@ -113,9 +113,15 @@ export class ProviderManager {
             }
 
             const { createAnthropic } = await import("@ai-sdk/anthropic");
-            // OAuth subscription tokens use Bearer auth, not x-api-key
+            // OAuth tokens need Bearer auth + beta header. Pass apiKey to satisfy
+            // SDK validation, then override with correct auth headers.
             const provider = createAnthropic({
-                headers: { Authorization: `Bearer ${token}` },
+                apiKey: token,
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "x-api-key": "",
+                    "anthropic-beta": "oauth-2025-04-20",
+                },
             });
 
             const allConfigs = getProviderConfigs();
@@ -135,7 +141,7 @@ export class ProviderManager {
             const detectedProvider: DetectedProvider = {
                 name: "anthropic",
                 type: "anthropic",
-                key: token.slice(0, 20) + "...",
+                key: `${token.slice(0, 20)}...`,
                 provider,
                 models,
                 config: anthropicConfig,
