@@ -17,6 +17,7 @@ export interface CLIOptions {
     silent?: boolean;
     predictCost?: boolean;
     raw?: boolean;
+    cost?: boolean;
     // Aliases
     s?: string;
     m?: string;

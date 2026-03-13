@@ -355,8 +355,9 @@ class ASKTool {
                         await outputManager.handleOutput(response.content, outputConfig);
                     }
 
-                    // Show cost breakdown
-                    if (response.cost && response.cost > 0) {
+                    // Show cost breakdown (TTY always, non-TTY only with --cost)
+                    const showCost = (process.stdout.isTTY ?? false) || argv.cost;
+                    if (showCost && response.cost && response.cost > 0) {
                         const breakdown = [
                             {
                                 provider: config.provider,

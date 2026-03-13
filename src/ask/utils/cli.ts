@@ -24,6 +24,7 @@ export function parseCLIArguments(): Args {
         .option("--silent", "Silent mode")
         .option("--predict-cost", "Show cost prediction before sending")
         .option("--raw", "Output only the raw response content (no metadata, no cost)")
+        .option("--cost", "Show cost breakdown (always shown in TTY, opt-in for piped output)")
         .option("-?, --help-full", "Show detailed help message")
         .option("-V, --version", "Show version information")
         .argument("[prompt...]", "Initial prompt")
@@ -52,6 +53,7 @@ export function parseCLIArguments(): Args {
         silent: options.silent,
         predictCost: options.predictCost,
         raw: options.raw,
+        cost: options.cost,
         help: options.helpFull,
         version: options.version,
     };
