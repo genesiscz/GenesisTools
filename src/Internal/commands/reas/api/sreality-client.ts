@@ -29,6 +29,12 @@ interface SrealityEstateRaw {
     locality: string;
     gps: { lat: number; lon: number };
     labels: string[];
+    seo?: {
+        category_main_cb: number;
+        category_sub_cb: number;
+        category_type_cb: number;
+        locality: string;
+    };
 }
 
 interface SrealityListResponse {
@@ -122,6 +128,16 @@ function buildCacheKeyParams(filters: AnalysisFilters): Record<string, unknown> 
     };
 }
 
+function buildSrealityLink(raw: SrealityEstateRaw): string {
+    const seoLocality = raw.seo?.locality ?? "";
+
+    if (seoLocality) {
+        return `https://www.sreality.cz/detail/pronajem/byt/${seoLocality}/${raw.hash_id}`;
+    }
+
+    return `https://www.sreality.cz/detail/pronajem/byt/${raw.hash_id}`;
+}
+
 function mapEstate(raw: SrealityEstateRaw): SrealityRental {
     const parsed = parseSrealityName(raw.name);
 
@@ -134,6 +150,7 @@ function mapEstate(raw: SrealityEstateRaw): SrealityRental {
         labels: raw.labels ?? [],
         disposition: parsed.disposition,
         area: parsed.area,
+        link: buildSrealityLink(raw),
     };
 }
 
