@@ -13,6 +13,7 @@ export interface ReasListing {
     point: { type: string; coordinates: [number, number] };
     cadastralAreaSlug: string;
     municipalitySlug: string;
+    link: string;
 }
 
 export interface SrealityRental {
@@ -24,6 +25,7 @@ export interface SrealityRental {
     labels: string[];
     disposition?: string;
     area?: number;
+    link?: string;
 }
 
 export interface MfRentalBenchmark {

@@ -1,11 +1,11 @@
-import pc from "picocolors";
 import { formatTable } from "@app/utils/table";
-import type { SrealityRental, MfRentalBenchmark, TargetProperty, AnalysisFilters } from "../types";
+import pc from "picocolors";
+import type { AnalysisFilters, MfRentalBenchmark, SrealityRental, TargetProperty } from "../types";
 import type { ComparablesResult } from "./comparables";
-import type { TrendsResult } from "./trends";
+import type { DiscountResult } from "./discount";
 import type { YieldResult } from "./rental-yield";
 import type { TimeOnMarketResult } from "./time-on-market";
-import type { DiscountResult } from "./discount";
+import type { TrendsResult } from "./trends";
 
 export interface FullAnalysis {
     comparables: ComparablesResult;
@@ -102,17 +102,23 @@ function renderSoldComparables(analysis: FullAnalysis): string {
 
     const title = `SOLD COMPARABLES \u2014 ${disp} ${filters.estateType}, ${filters.district.name}, ${periodLabels} (N=${count})`;
     const lines: string[] = [sectionHeader(title)];
+    lines.push(`  ${pc.dim("Source: reas.cz (sold property register, linkedToTransfer=true)")}`);
 
     const headers = ["#", "Address", "m\u00B2", "Sold Price", "CZK/m\u00B2", "Listed\u2192Sold", "Discount"];
-    const rows = comparables.listings.map((l, i) => [
-        String(i + 1),
-        truncAddr(l.formattedAddress),
-        fmt(l.utilityArea),
-        fmt(l.soldPrice),
-        fmt(l.pricePerM2),
-        l.daysOnMarket > 0 ? `${Math.round(l.daysOnMarket)} days` : "n/a",
-        `${fmtDec(l.discount, 1)}%`,
-    ]);
+    const rows: string[][] = [];
+
+    for (let i = 0; i < comparables.listings.length; i++) {
+        const l = comparables.listings[i];
+        rows.push([
+            String(i + 1),
+            truncAddr(l.formattedAddress),
+            fmt(l.utilityArea),
+            fmt(l.soldPrice),
+            fmt(l.pricePerM2),
+            l.daysOnMarket > 0 ? `${Math.round(l.daysOnMarket)} days` : "n/a",
+            `${fmtDec(l.discount, 1)}%`,
+        ]);
+    }
 
     lines.push("");
     lines.push(
@@ -121,6 +127,18 @@ function renderSoldComparables(analysis: FullAnalysis): string {
             maxColWidth: 36,
         })
     );
+
+    // Source links for each listing
+    lines.push("");
+    lines.push(`  ${pc.dim("Links:")}`);
+
+    for (let i = 0; i < comparables.listings.length; i++) {
+        const l = comparables.listings[i];
+
+        if (l.link) {
+            lines.push(`  ${pc.dim(`${String(i + 1).padStart(2)}. ${l.link}`)}`);
+        }
+    }
 
     const { pricePerM2 } = comparables;
     const targetPpm2 = target.area > 0 ? target.price / target.area : 0;
@@ -145,6 +163,9 @@ function renderRentalListings(analysis: FullAnalysis): string {
 
     const title = `RENTAL LISTINGS \u2014 Flats, ${filters.district.name} (N=${count}, showing relevant)`;
     const lines: string[] = [sectionHeader(title)];
+    lines.push(`  ${pc.dim("Source: sreality.cz (active rental listings)")}`);
+    lines.push(`  ${pc.dim("Benchmark: MF cenova mapa XLSX (mf.gov.cz)")}`);
+
 
     const headers = ["#", "Locality", "m\u00B2", "Disp", "Rent/mo", "CZK/m\u00B2"];
     const rows = rentalListings.map((l, i) => {
@@ -196,17 +217,23 @@ function renderRentalListings(analysis: FullAnalysis): string {
 
     const rentPpm2 = target.area > 0 ? target.monthlyRent / target.area : 0;
 
+    // Source links for each rental listing
+    lines.push("");
+    lines.push(`  ${pc.dim("Links:")}`);
+
+    for (let i = 0; i < rentalListings.length; i++) {
+        const l = rentalListings[i];
+
+        if (l.link) {
+            lines.push(`  ${pc.dim(`${String(i + 1).padStart(2)}. ${l.link}`)}`);
+        }
+    }
+
     lines.push("");
     lines.push(`    ${pc.dim(`Rental stats (${disp} ${filters.estateType}, ${filters.district.name}):`)}`);
-    lines.push(
-        labelValue("Sreality avg:", `${fmt(srealityAvg)} CZK/month (${fmt(srealityPpm2)} CZK/m\u00B2)`, 6)
-    );
-    lines.push(
-        labelValue("MF official:", `${fmt(mfMonthly)} CZK/month (${fmt(mfPpm2)} CZK/m\u00B2)`, 6)
-    );
-    lines.push(
-        labelValue("Your estimate:", `${fmt(target.monthlyRent)} CZK/month (${fmt(rentPpm2)} CZK/m\u00B2)`, 6)
-    );
+    lines.push(labelValue("Sreality avg:", `${fmt(srealityAvg)} CZK/month (${fmt(srealityPpm2)} CZK/m\u00B2)`, 6));
+    lines.push(labelValue("MF official:", `${fmt(mfMonthly)} CZK/month (${fmt(mfPpm2)} CZK/m\u00B2)`, 6));
+    lines.push(labelValue("Your estimate:", `${fmt(target.monthlyRent)} CZK/month (${fmt(rentPpm2)} CZK/m\u00B2)`, 6));
 
     return lines.join("\n");
 }
@@ -216,6 +243,7 @@ function renderPriceTrend(analysis: FullAnalysis): string {
 
     const title = "PRICE TREND";
     const lines: string[] = [sectionHeader(title)];
+    lines.push(`  ${pc.dim("Source: reas.cz sold data, grouped by quarter")}`);
 
     const headers = ["Period", "Median CZK/m\u00B2", "Change", "N"];
     const rows = trends.periods.map((p) => [
@@ -232,7 +260,12 @@ function renderPriceTrend(analysis: FullAnalysis): string {
         })
     );
 
-    const dirArrow = trends.direction === "rising" ? pc.green("\u2191") : trends.direction === "falling" ? pc.red("\u2193") : pc.dim("\u2192");
+    const dirArrow =
+        trends.direction === "rising"
+            ? pc.green("\u2191")
+            : trends.direction === "falling"
+              ? pc.red("\u2193")
+              : pc.dim("\u2192");
     const dirLabel = trends.direction.charAt(0).toUpperCase() + trends.direction.slice(1);
 
     lines.push("");
@@ -251,6 +284,7 @@ function renderTimeOnMarket(analysis: FullAnalysis): string {
 
     const title = "TIME ON MARKET";
     const lines: string[] = [sectionHeader(title)];
+    lines.push(`  ${pc.dim("Source: reas.cz (firstVisibleAt → soldAt)")}`);
 
     lines.push("");
     lines.push(labelValue("Median days to sell:", `${Math.round(timeOnMarket.median)}`));
@@ -266,22 +300,15 @@ function renderDiscountAnalysis(analysis: FullAnalysis): string {
 
     const title = "DISCOUNT ANALYSIS";
     const lines: string[] = [sectionHeader(title)];
+    lines.push(`  ${pc.dim("Source: reas.cz (originalPrice → soldPrice)")}`);
 
-    const noPct =
-        discount.totalCount > 0
-            ? Math.round((discount.noDiscountCount / discount.totalCount) * 100)
-            : 0;
+    const noPct = discount.totalCount > 0 ? Math.round((discount.noDiscountCount / discount.totalCount) * 100) : 0;
 
     lines.push("");
     lines.push(labelValue("Avg discount:", `${fmtDec(discount.avgDiscount, 1)}%`));
     lines.push(labelValue("Median discount:", `${fmtDec(discount.medianDiscount, 1)}%`));
     lines.push(labelValue("Max discount:", `${fmtDec(discount.maxDiscount, 1)}%`));
-    lines.push(
-        labelValue(
-            "No discount:",
-            `${discount.noDiscountCount} of ${discount.totalCount} (${noPct}%)`
-        )
-    );
+    lines.push(labelValue("No discount:", `${discount.noDiscountCount} of ${discount.totalCount} (${noPct}%)`));
 
     if (discount.medianDiscount < 0) {
         const estimated = target.price * (1 + discount.medianDiscount / 100);
@@ -310,12 +337,7 @@ function renderInvestmentYield(analysis: FullAnalysis): string {
     lines.push("");
     lines.push(labelValue("Gross yield:", `${fmtDec(yld.grossYield, 2)}%`));
     lines.push(labelValue("Net yield:", `${fmtDec(yld.netYield, 2)}%`));
-    lines.push(
-        labelValue(
-            "Payback period:",
-            yld.paybackYears < 1000 ? `${fmtDec(yld.paybackYears, 1)} years` : "n/a"
-        )
-    );
+    lines.push(labelValue("Payback period:", yld.paybackYears < 1000 ? `${fmtDec(yld.paybackYears, 1)} years` : "n/a"));
 
     lines.push("");
     lines.push(`    ${pc.dim("Comparison:")}`);
@@ -325,11 +347,7 @@ function renderInvestmentYield(analysis: FullAnalysis): string {
     }
 
     lines.push(
-        labelValue(
-            `${filters.district.name} avg:`,
-            `~${fmtDec(yld.atMarketPrice.netYield, 1)}% (at market price)`,
-            6
-        )
+        labelValue(`${filters.district.name} avg:`, `~${fmtDec(yld.atMarketPrice.netYield, 1)}% (at market price)`, 6)
     );
 
     lines.push("");
