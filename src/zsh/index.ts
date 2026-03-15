@@ -207,7 +207,7 @@ program
 
         p.log.success(`Installed into ${selectedRcs.length} rc file(s) with ${selectedFeatures.length} feature(s)`);
         const firstRc = selectedRcs[0] || "~/.zshrc";
-        p.log.info("Restart your shell or run: " + pc.bold(`source ${firstRc}`));
+        p.log.info(`Restart your shell or run: ${pc.bold(`source ${firstRc}`)}`);
     });
 
 program

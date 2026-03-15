@@ -681,18 +681,14 @@ class ASKTool {
         return Object.keys(tools).length > 0 ? tools : undefined;
     }
 
-    private async getAccountInfoForFooter(
-        providerName: string
-    ): Promise<{ label?: string; name: string } | undefined> {
+    private async getAccountInfoForFooter(providerName: string): Promise<{ label?: string; name: string } | undefined> {
         if (providerName !== "anthropic") {
             return undefined;
         }
 
         const { loadAskConfig } = await import("@ask/config");
         const cfg = await loadAskConfig();
-        return cfg.claude?.accountName
-            ? { label: cfg.claude.accountLabel, name: cfg.claude.accountName }
-            : undefined;
+        return cfg.claude?.accountName ? { label: cfg.claude.accountLabel, name: cfg.claude.accountName } : undefined;
     }
 
     private async handleCommandResult(

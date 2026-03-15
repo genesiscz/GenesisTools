@@ -1,5 +1,6 @@
 // Get file content command implementation
 
+import { resolve } from "node:path";
 import type { GitHubCommitUrl } from "@app/github/types";
 import logger from "@app/logger";
 import { copyToClipboard } from "@app/utils/clipboard";
@@ -10,7 +11,6 @@ import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import { Command } from "commander";
-import { resolve } from "node:path";
 
 interface GetOptions {
     ref?: string;

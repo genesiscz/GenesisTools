@@ -1,6 +1,5 @@
 import type { ProviderV2 } from "@ai-sdk/provider";
 import logger from "@app/logger";
-import type { AskConfig } from "@ask/types/config";
 import { askUI } from "@ask/output/AskUILogger";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
@@ -16,6 +15,7 @@ import type {
     ProviderConfig,
 } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
+import type { AskConfig } from "@ask/types/config";
 import { generateText } from "ai";
 
 export class ProviderManager {
@@ -91,10 +91,7 @@ export class ProviderManager {
         return detected;
     }
 
-    private async detectAnthropicSubscription(
-        askConfig: AskConfig,
-        detected: DetectedProvider[]
-    ): Promise<void> {
+    private async detectAnthropicSubscription(askConfig: AskConfig, detected: DetectedProvider[]): Promise<void> {
         if (!askConfig.claude?.accountRef && !askConfig.claude?.independentToken) {
             return;
         }
