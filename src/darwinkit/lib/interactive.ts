@@ -57,7 +57,9 @@ export async function runCommandInteractive(
     const args = { ...providedArgs };
 
     for (const param of cmd.params) {
-        if (args[param.name] !== undefined) {
+        const existing = args[param.name];
+
+        if (existing !== undefined && !(Array.isArray(existing) && existing.length === 0)) {
             continue;
         }
 
@@ -85,6 +87,7 @@ export async function runCommandInteractive(
     } catch (error) {
         spin.stop(pc.red(`${cmd.name} failed`));
         p.log.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
     } finally {
         closeDarwinKit();
     }

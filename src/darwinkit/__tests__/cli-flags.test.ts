@@ -40,7 +40,6 @@ describe("darwinkit CLI flags", () => {
         it("pretty format outputs key-value pairs, not JSON braces", async () => {
             const { stdout, exitCode } = await runDarwinKitRaw("sentiment", "Great!", "--format", "pretty");
             expect(exitCode).toBe(0);
-            // Pretty format for objects should be "key: value" lines, not JSON
             expect(stdout).not.toContain("{");
             expect(stdout).toContain("label:");
             expect(stdout).toContain("score:");
@@ -49,8 +48,6 @@ describe("darwinkit CLI flags", () => {
         it("raw format outputs simplified output", async () => {
             const { stdout, exitCode } = await runDarwinKitRaw("sentiment", "Great!", "--format", "raw");
             expect(exitCode).toBe(0);
-            // Raw format for objects without text/content falls back to JSON,
-            // but should be distinguishable from pretty format
             expect(stdout.length).toBeGreaterThan(0);
         });
     });

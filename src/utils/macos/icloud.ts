@@ -74,7 +74,7 @@ export async function icloudMkdir(path: string): Promise<ICloudOkResult> {
 
 /**
  * Start monitoring iCloud Drive for file changes.
- * Use `getDarwinKit().icloud.onFilesChanged(handler)` to listen for changes.
+ * Use `onIcloudFilesChanged(handler)` to listen for changes.
  */
 export async function icloudStartMonitoring(): Promise<ICloudOkResult> {
     return getDarwinKit().icloud.startMonitoring();

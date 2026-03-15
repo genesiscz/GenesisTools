@@ -5,7 +5,7 @@ type Reviver = (key: string | number, value: unknown) => unknown;
 type ParseOptions = {
     jsonl?: boolean;
     strict?: boolean;
-    /** Unwrap boxed primitives (Boolean{}, String{}, Number{}) that comment-json produces for top-level primitive values */
+    /** Skip comment preservation — avoids boxing primitives (Boolean{}, String{}, Number{}) while still supporting comment-tolerant parsing */
     unbox?: boolean;
     reviver?: Reviver | null;
 };
@@ -29,7 +29,7 @@ export const SafeJSON = {
         if (
             reviverOrOptions &&
             typeof reviverOrOptions === "object" &&
-            ("jsonl" in reviverOrOptions || "strict" in reviverOrOptions || "unbox" in reviverOrOptions)
+            ("jsonl" in reviverOrOptions || "strict" in reviverOrOptions || "unbox" in reviverOrOptions || "reviver" in reviverOrOptions)
         ) {
             const options = reviverOrOptions as ParseOptions;
 
@@ -38,19 +38,11 @@ export const SafeJSON = {
                 return JSON.parse(text, options.reviver ?? undefined);
             }
 
-            const result = parse(text, options.reviver);
-
-            if (options.unbox && result !== null && result !== undefined && typeof result === "object") {
-                // comment-json wraps top-level primitives as Boolean{}, String{}, Number{} objects
-                if (result instanceof Boolean || result instanceof String || result instanceof Number) {
-                    return result.valueOf();
-                }
-            }
-
-            return result;
+            // comment-json's 3rd arg `no_comments` skips primitive boxing at the source
+            return parse(text, options.reviver, options.unbox);
         }
         // Legacy: reviver function or null
-        return parse(text, reviverOrOptions as Reviver | null);
+        return parse(text, typeof reviverOrOptions === "function" ? reviverOrOptions : null);
     },
     // biome-ignore lint/suspicious/noExplicitAny: match native JSON.stringify parameter types
     stringify: (value: any, replacerOrOptions?: any, space?: string | number): string => {

@@ -132,24 +132,30 @@ async function handleCommandAction(cmd: CommandDef, sub: Command, actionArgs: un
         }
     }
 
-    const missing = cmd.params.filter((pm) => pm.required && args[pm.name] === undefined);
-
-    if (missing.length > 0) {
-        if (process.stdout.isTTY) {
-            p.intro(LOGO);
-            const fmtOpt = opts.format as string | undefined;
-            await runCommandInteractive(cmd, args, fmtOpt as OutputFormat | undefined);
-            return;
+    const missing = cmd.params.filter((pm) => {
+        if (!pm.required) {
+            return false;
         }
 
-        sub.outputHelp();
-        process.exit(0);
-    }
+        const value = args[pm.name];
+        return value === undefined || (Array.isArray(value) && value.length === 0);
+    });
 
     const validFormats = new Set<OutputFormat>(["json", "pretty", "raw"]);
     const formatOpt = opts.format as string | undefined;
     const format: OutputFormat =
         formatOpt && validFormats.has(formatOpt as OutputFormat) ? (formatOpt as OutputFormat) : defaultFormat();
+
+    if (missing.length > 0) {
+        if (process.stdout.isTTY) {
+            p.intro(LOGO);
+            await runCommandInteractive(cmd, args, format);
+            return;
+        }
+
+        sub.outputHelp();
+        process.exit(1);
+    }
 
     try {
         const result = await cmd.run(args);
