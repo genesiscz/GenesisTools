@@ -8,7 +8,7 @@ program
     .name("internal")
     .description("Internal tools — not for public use");
 
-const { registerReasCommand } = await import("./commands/reas/index.ts");
+const { registerReasCommand } = await import("./commands/reas/index");
 registerReasCommand(program);
 
 program.parse();

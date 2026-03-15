@@ -6,7 +6,7 @@ export interface ReasListing {
     price: number;
     originalPrice: number;
     disposition: string;
-    floorArea: number;
+    utilityArea: number;
     displayArea: number;
     soldAt: string;
     firstVisibleAt: string;
