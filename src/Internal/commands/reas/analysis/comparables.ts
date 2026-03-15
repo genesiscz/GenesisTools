@@ -56,9 +56,7 @@ export function analyzeComparables(listings: ReasListing[], target: TargetProper
             const daysOnMarket = l.firstVisibleAt
                 ? Math.max(0, (new Date(l.soldAt).getTime() - new Date(l.firstVisibleAt).getTime()) / 86_400_000)
                 : 0;
-            const discount = l.originalPrice > 0
-                ? ((l.soldPrice - l.originalPrice) / l.originalPrice) * 100
-                : 0;
+            const discount = l.originalPrice > 0 ? ((l.soldPrice - l.originalPrice) / l.originalPrice) * 100 : 0;
 
             return { ...l, pricePerM2, daysOnMarket, discount };
         })
