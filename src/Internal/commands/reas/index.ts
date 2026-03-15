@@ -1,3 +1,4 @@
+import { stripAnsi } from "@app/utils/string";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -11,7 +12,6 @@ import { fetchMfRentalData } from "./api/mf-rental";
 import { fetchSoldListings } from "./api/reas-client";
 import { fetchRentalListings } from "./api/sreality-client";
 import { clearCache } from "./cache/index";
-import { stripAnsi } from "@app/utils/string";
 import type { AnalysisFilters, DateRange, ReasListing, TargetProperty } from "./types";
 
 interface ReasOptions {
@@ -71,14 +71,17 @@ const PERIOD_OPTIONS: Array<{ value: string; label: string }> = [
 ];
 
 function parsePeriod(period: string): DateRange {
-    if (period === "last6m") {
+    const relativeMatch = /^last(\d+)m$/i.exec(period);
+
+    if (relativeMatch) {
+        const months = parseInt(relativeMatch[1], 10);
         const now = new Date();
-        const sixMonthsAgo = new Date(now);
-        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+        const from = new Date(now);
+        from.setMonth(from.getMonth() - months);
 
         return {
-            label: "Last 6 months",
-            from: sixMonthsAgo,
+            label: `Last ${months} months`,
+            from,
             to: now,
         };
     }
@@ -86,7 +89,7 @@ function parsePeriod(period: string): DateRange {
     const year = parseInt(period, 10);
 
     if (Number.isNaN(year)) {
-        throw new Error(`Invalid period: "${period}". Expected a year (e.g. 2024) or "last6m".`);
+        throw new Error(`Invalid period: "${period}". Expected a year (e.g. 2024), "last6m", "last12m", etc.`);
     }
 
     return {
