@@ -1,6 +1,8 @@
 import type { ProviderV2 } from "@ai-sdk/provider";
 import logger from "@app/logger";
+import { askUI } from "@ask/output/AskUILogger";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
+import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
 import { getProviderConfigs, KNOWN_MODELS } from "@ask/providers/providers";
 import type {
     DetectedProvider,
@@ -13,9 +15,8 @@ import type {
     ProviderConfig,
 } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
-import * as p from "@clack/prompts";
+import type { AskConfig } from "@ask/types/config";
 import { generateText } from "ai";
-import pc from "picocolors";
 
 export class ProviderManager {
     private detectedProviders: Map<string, DetectedProvider> = new Map();
@@ -26,17 +27,34 @@ export class ProviderManager {
             return Array.from(this.detectedProviders.values());
         }
 
+        // Load ask config for env token control and subscription settings
+        const { loadAskConfig } = await import("@ask/config");
+        const askConfig = await loadAskConfig();
+
         const configs = getProviderConfigs();
         const detected: DetectedProvider[] = [];
 
         for (const config of configs) {
+            if (
+                askConfig.envTokens?.enabled === false ||
+                askConfig.envTokens?.disabledProviders?.includes(config.name)
+            ) {
+                continue;
+            }
+
+            // Skip anthropic env key if subscription account is configured (subscription takes priority)
+            if (config.name === "anthropic" && (askConfig.claude?.accountRef || askConfig.claude?.independentToken)) {
+                continue;
+            }
+
             const apiKey = process.env[config.envKey];
             if (!apiKey) {
-                continue; // Skip providers without API keys
+                continue;
             }
 
             try {
                 const provider = await this.createProvider(config);
+
                 if (provider) {
                     const models = await this.getAvailableModels(config, provider);
                     const detectedProvider: DetectedProvider = {
@@ -51,11 +69,16 @@ export class ProviderManager {
                     detected.push(detectedProvider);
                     this.detectedProviders.set(config.name, detectedProvider);
 
-                    p.log.step(pc.dim(`Detected ${pc.cyan(config.name)} provider with ${models.length} models`));
+                    askUI().logDetected({ provider: config.name, count: models.length });
                 }
             } catch (error) {
                 logger.warn(`Failed to initialize ${config.name} provider: ${error}`);
             }
+        }
+
+        // Check for anthropic subscription token if not already detected via env key
+        if (!this.detectedProviders.has("anthropic")) {
+            await this.detectAnthropicSubscription(askConfig, detected);
         }
 
         this.initialized = true;
@@ -66,6 +89,91 @@ export class ProviderManager {
         }
 
         return detected;
+    }
+
+    private async detectAnthropicSubscription(askConfig: AskConfig, detected: DetectedProvider[]): Promise<void> {
+        if (!askConfig.claude?.accountRef && !askConfig.claude?.independentToken) {
+            return;
+        }
+
+        try {
+            let token: string;
+
+            if (askConfig.claude.accountRef) {
+                const { resolveAccountToken } = await import("@app/utils/claude/subscription-auth");
+                const result = await resolveAccountToken(askConfig.claude.accountRef);
+                token = result.token;
+            } else {
+                token = askConfig.claude.independentToken!;
+            }
+
+            const { createAnthropic } = await import("@ai-sdk/anthropic");
+            // OAuth tokens need Bearer auth + beta header. Pass apiKey to satisfy
+            // SDK validation, then override with correct auth headers.
+            const provider = createAnthropic({
+                apiKey: token,
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "x-api-key": "",
+                    "anthropic-beta": "oauth-2025-04-20",
+                },
+            });
+
+            const allConfigs = getProviderConfigs();
+            const anthropicConfig = allConfigs.find((c) => c.name === "anthropic");
+            if (!anthropicConfig) {
+                throw new Error("anthropic provider config missing from PROVIDER_CONFIGS");
+            }
+
+            const models = await this.getAvailableModels(anthropicConfig, provider);
+            const accountLabel = askConfig.claude.accountLabel;
+            const hint = accountLabel ? ` (${accountLabel})` : "";
+
+            const detectedProvider: DetectedProvider = {
+                name: "anthropic",
+                type: "anthropic",
+                key: `${token.slice(0, 20)}...`,
+                provider,
+                models,
+                config: anthropicConfig,
+            };
+
+            detected.push(detectedProvider);
+            this.detectedProviders.set("anthropic", detectedProvider);
+
+            askUI().logDetectedSubscription({ provider: "anthropic", hint });
+        } catch (error) {
+            logger.warn(`Failed to initialize anthropic subscription provider: ${error}`);
+
+            // Fallback: try env-key if subscription detection failed
+            const envKey = process.env.ANTHROPIC_API_KEY;
+            if (envKey) {
+                logger.info("Falling back to ANTHROPIC_API_KEY environment variable");
+                try {
+                    const allConfigs = getProviderConfigs();
+                    const cfg = allConfigs.find((c) => c.name === "anthropic");
+                    if (cfg) {
+                        const provider = await this.createProvider(cfg);
+                        if (provider) {
+                            const models = await this.getAvailableModels(cfg, provider);
+                            const detectedProvider: DetectedProvider = {
+                                name: "anthropic",
+                                type: "anthropic",
+                                key: envKey,
+                                provider,
+                                models,
+                                config: cfg,
+                            };
+                            detected.push(detectedProvider);
+                            this.detectedProviders.set("anthropic", detectedProvider);
+                            askUI().logDetected({ provider: "anthropic", count: models.length });
+                        }
+                    }
+                } catch (fallbackErr) {
+                    logger.warn(`Anthropic env-key fallback also failed: ${fallbackErr}`);
+                }
+            }
+        }
     }
 
     private async createProvider(config: ProviderConfig): Promise<ProviderV2> {
@@ -120,10 +228,15 @@ export class ProviderManager {
                 return await this.getOpenAIModels();
             }
 
-            // For other providers, use known model lists
+            // For other providers, discover models from LiteLLM pricing data + KNOWN_MODELS fallback
+            const models = await this.getModelsFromLiteLLM(config.name);
+            if (models.length > 0) {
+                return models;
+            }
+
+            // Fallback to KNOWN_MODELS if LiteLLM has no data for this provider
             const knownModels = KNOWN_MODELS[config.name as keyof typeof KNOWN_MODELS];
             if (knownModels) {
-                // Fetch pricing for all models in parallel
                 const modelsWithPricing = await Promise.all(
                     knownModels.map(async (model) => {
                         const pricing = await dynamicPricingManager.getPricing(config.name, model.id);
@@ -135,9 +248,7 @@ export class ProviderManager {
                     })
                 );
 
-                // Sort models alphabetically by name
                 modelsWithPricing.sort((a: ModelInfo, b: ModelInfo) => a.name.localeCompare(b.name));
-
                 return modelsWithPricing;
             }
 
@@ -166,6 +277,94 @@ export class ProviderManager {
         }
     }
 
+    /**
+     * Discover models from LiteLLM pricing data for a given provider.
+     * Returns models whose bare ID matches the provider prefix (e.g., "claude-" for anthropic).
+     * Excludes versioned duplicates (dated IDs) when an alias exists.
+     */
+    private async getModelsFromLiteLLM(providerName: string): Promise<ModelInfo[]> {
+        const prefixMap: Record<string, string> = {
+            anthropic: "claude-",
+            groq: "groq/",
+            xai: "xai/",
+        };
+
+        const prefix = prefixMap[providerName];
+        if (!prefix) {
+            return [];
+        }
+
+        try {
+            const allPricing = await liteLLMPricingFetcher.fetchModelPricing();
+            const models: ModelInfo[] = [];
+            const seenAliases = new Set<string>();
+
+            // First pass: collect alias IDs (no date suffix) to skip dated duplicates
+            for (const key of allPricing.keys()) {
+                if (!key.startsWith(prefix)) {
+                    continue;
+                }
+
+                // Skip keys with slashes (provider-prefixed like "anthropic/claude-...")
+                if (key.includes("/") && !prefix.includes("/")) {
+                    continue;
+                }
+
+                // Skip versioned keys like "claude-opus-4-6-20260205" when "claude-opus-4-6" exists
+                if (!/\d{8}/.test(key)) {
+                    seenAliases.add(key);
+                }
+            }
+
+            for (const [key, pricingData] of allPricing) {
+                if (!key.startsWith(prefix)) {
+                    continue;
+                }
+
+                if (key.includes("/") && !prefix.includes("/")) {
+                    continue;
+                }
+
+                // Skip dated versions when alias exists (e.g., skip "claude-opus-4-6-20260205" if "claude-opus-4-6" exists)
+                const dateMatch = key.match(/^(.+)-(\d{8})(-v\d+:\d+)?$/);
+                if (dateMatch && seenAliases.has(dateMatch[1])) {
+                    continue;
+                }
+
+                // Skip v1:0 suffixed keys
+                if (key.endsWith("-v1:0")) {
+                    continue;
+                }
+
+                const pricing = liteLLMPricingFetcher.convertToPricingInfo(pricingData);
+                const contextWindow = pricingData.max_input_tokens ?? pricingData.max_tokens ?? 200000;
+
+                // Use KNOWN_MODELS for display name if available
+                const knownModels = KNOWN_MODELS[providerName as keyof typeof KNOWN_MODELS];
+                const known = knownModels?.find((m) => m.id === key);
+
+                models.push({
+                    id: key,
+                    name: known?.name ?? this.formatModelName(key.replace(/^[^/]+\//, "")),
+                    contextWindow,
+                    capabilities: known?.capabilities ?? ["chat"],
+                    provider: providerName,
+                    pricing,
+                });
+            }
+
+            models.sort((a, b) => {
+                const aPrice = a.pricing?.inputPer1M ?? Infinity;
+                const bPrice = b.pricing?.inputPer1M ?? Infinity;
+                return aPrice - bPrice;
+            });
+            return models;
+        } catch (error) {
+            logger.warn(`Failed to get models from LiteLLM for ${providerName}: ${error}`);
+            return [];
+        }
+    }
+
     private async getOpenAIModels(): Promise<ModelInfo[]> {
         try {
             const apiKey = process.env.OPENAI_API_KEY;
@@ -189,25 +388,52 @@ export class ProviderManager {
             const knownModels = KNOWN_MODELS.openai || [];
             const knownModelsMap = new Map(knownModels.map((m) => [m.id, m]));
 
-            // Filter to only chat models (exclude embeddings, fine-tuning, image, audio, etc.)
-            const chatModelPrefixes = ["gpt-", "o1-", "o3-"];
-            const excludedPatterns = [
-                "image",
-                "audio",
-                "embedding",
-                "whisper",
-                "tts",
-                "dall-e",
-                "moderation",
-                "instruct",
+            // Known chat model prefixes (from @ai-sdk/openai OpenAIChatModelId type)
+            const chatModelPrefixes = [
+                "gpt-3.5-turbo",
+                "gpt-4-turbo",
+                "gpt-5-mini",
+                "gpt-5-nano",
+                "chatgpt-",
+                "gpt-4.1",
+                "gpt-4.5",
+                "gpt-4o",
+                "gpt-4",
+                "gpt-5",
+                "o1",
+                "o3",
             ];
-            const chatModels = data.data.filter(
-                (model) =>
-                    chatModelPrefixes.some((prefix) => model.id.startsWith(prefix)) &&
-                    !excludedPatterns.some((pattern) => model.id.toLowerCase().includes(pattern)) &&
-                    // Only include models owned by OpenAI (exclude user-created fine-tuned models)
-                    (model.owned_by === "openai" || model.owned_by === "system")
-            );
+
+            // Models that match gpt- prefix but are NOT chat models
+            const nonChatPatterns = [
+                "codex", // gpt-5-codex, gpt-5.2-codex — code execution, Responses API only
+                "-pro", // gpt-5-pro — specialized, Responses API only
+                "instruct", // gpt-3.5-turbo-instruct — legacy completion API
+                "image", // gpt-image-1 — image generation model
+                "transcribe", // gpt-4o-transcribe — audio transcription
+                "tts", // gpt-4o-mini-tts — text-to-speech
+                "embedding", // text-embedding models
+                "whisper", // whisper models
+                "dall-e", // image generation
+                "moderation", // content moderation
+            ];
+
+            const chatModels = data.data.filter((model) => {
+                const id = model.id.toLowerCase();
+
+                // Must NOT match any non-chat pattern
+                if (nonChatPatterns.some((p) => id.includes(p))) {
+                    return false;
+                }
+
+                // Must match a known chat prefix
+                if (!chatModelPrefixes.some((prefix) => id.startsWith(prefix))) {
+                    return false;
+                }
+
+                // Must be owned by OpenAI
+                return model.owned_by === "openai" || model.owned_by === "system";
+            });
 
             const models: ModelInfo[] = await Promise.all(
                 chatModels.map(async (model) => {

@@ -18,6 +18,20 @@ import chalk from "chalk";
 import type { Command } from "commander";
 
 // =============================================================================
+// Helpers
+// =============================================================================
+
+const VALID_PRIORITIES = ["balanced", "user-first", "assistant-first", "summary-first"] as const;
+type Priority = (typeof VALID_PRIORITIES)[number];
+
+function parsePriority(value: string | undefined): Priority {
+    if (value && (VALID_PRIORITIES as readonly string[]).includes(value)) {
+        return value as Priority;
+    }
+    return "balanced";
+}
+
+// =============================================================================
 // Types
 // =============================================================================
 
@@ -238,13 +252,16 @@ async function runInteractiveFlow(session: ClaudeSession, opts: SummarizeCommand
         modelName = choice.model.id;
     }
 
-    // Token budget
-    const tokenBudget = opts.maxTokens ? parseInt(opts.maxTokens, 10) : 128_000;
+    // Token budget — undefined when user didn't specify, lets the engine decide
+    // (e.g. --thorough extracts everything, default single-pass uses 128K)
+    const explicitTokenBudget = opts.maxTokens ? parseInt(opts.maxTokens, 10) : undefined;
+    // Preview always needs a concrete number
+    const previewBudget = explicitTokenBudget ?? 128_000;
 
     // Preview: estimate content size and cost
     const prepared = session.toPromptContent({
-        tokenBudget,
-        priority: (opts.priority as "balanced" | "user-first" | "assistant-first") ?? "balanced",
+        tokenBudget: previewBudget,
+        priority: parsePriority(opts.priority),
         includeToolResults: opts.includeToolResults,
         includeThinking: opts.includeThinking,
     });
@@ -293,10 +310,10 @@ async function runInteractiveFlow(session: ClaudeSession, opts: SummarizeCommand
         model: modelName,
         streaming: true,
         promptOnly: opts.promptOnly,
-        tokenBudget,
+        tokenBudget: explicitTokenBudget,
         includeToolResults: opts.includeToolResults,
         includeThinking: opts.includeThinking,
-        priority: (opts.priority as "balanced" | "user-first" | "assistant-first") ?? "balanced",
+        priority: parsePriority(opts.priority),
         thorough: opts.thorough,
         outputPath: opts.output,
         clipboard: opts.clipboard,
@@ -312,7 +329,7 @@ async function runInteractiveFlow(session: ClaudeSession, opts: SummarizeCommand
 
 function buildNonInteractiveOptions(session: ClaudeSession, opts: SummarizeCommandOptions): SummarizeOptions {
     const mode = opts.mode ?? "documentation";
-    const tokenBudget = opts.maxTokens ? parseInt(opts.maxTokens, 10) : 128_000;
+    const explicitTokenBudget = opts.maxTokens ? parseInt(opts.maxTokens, 10) : undefined;
 
     if (mode === "custom" && !opts.customPrompt) {
         throw new Error(
@@ -328,10 +345,10 @@ function buildNonInteractiveOptions(session: ClaudeSession, opts: SummarizeComma
         model: opts.model,
         streaming: process.stdout.isTTY,
         promptOnly: opts.promptOnly,
-        tokenBudget,
+        tokenBudget: explicitTokenBudget,
         includeToolResults: opts.includeToolResults,
         includeThinking: opts.includeThinking,
-        priority: (opts.priority as "balanced" | "user-first" | "assistant-first") ?? "balanced",
+        priority: parsePriority(opts.priority),
         thorough: opts.thorough,
         outputPath: opts.output,
         clipboard: opts.clipboard,
@@ -404,7 +421,7 @@ export function registerSummarizeCommand(program: Command): void {
         .option("--max-tokens <n>", "Token budget (default: 128000)")
         .option("--include-tool-results", "Include tool results in extraction")
         .option("--include-thinking", "Include thinking blocks")
-        .option("--priority <type>", "balanced|user-first|assistant-first (default: balanced)")
+        .option("--priority <type>", "balanced|summary-first|user-first|assistant-first (default: balanced)")
         .option("-i, --interactive", "Interactive flow with prompts")
         .option("--custom-prompt <text>", "Custom prompt text (for custom mode)")
         .option("--memory-dir <path>", "Output dir for memorization topic files")

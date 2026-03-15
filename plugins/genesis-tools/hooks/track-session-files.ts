@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { SafeJSON } from "../../../src/utils/json";
 
 interface HookInput {
     session_id: string;
@@ -82,7 +83,7 @@ function trackFile(sessionId: string, filePath: string) {
     let sessionData: SessionData;
     if (existsSync(sessionFile)) {
         try {
-            sessionData = JSON.parse(readFileSync(sessionFile, "utf-8"));
+            sessionData = SafeJSON.parse(readFileSync(sessionFile, "utf-8")) as SessionData;
         } catch (_err) {
             // Corrupted JSON - backup and recreate
             console.warn(`[track-session-files] Corrupted session file, recreating: ${sessionFile}`);
@@ -105,18 +106,18 @@ function trackFile(sessionId: string, filePath: string) {
 
     // Atomic write: write to temp file then rename (avoids race conditions)
     const tempFile = `${sessionFile}.tmp.${Date.now()}`;
-    writeFileSync(tempFile, JSON.stringify(sessionData, null, 2));
+    writeFileSync(tempFile, SafeJSON.stringify(sessionData, null, 2));
     renameSync(tempFile, sessionFile);
 }
 
 async function main() {
-    const input: HookInput = JSON.parse(await Bun.stdin.text());
+    const input: HookInput = SafeJSON.parse(await Bun.stdin.text()) as HookInput;
     const { session_id, hook_event_name, tool_input, tool_response } = input;
 
     // On SessionStart, output session ID and clean up old sessions
     if (hook_event_name === "SessionStart") {
         console.log(
-            JSON.stringify({
+            SafeJSON.stringify({
                 hookSpecificOutput: {
                     hookEventName: "SessionStart",
                     additionalContext: `📌 Session ID: ${session_id}\n\n**Modified files tracking:** All files you modify are tracked in ~/.genesis-tools/claude-code/sessions/${session_id}.json`,

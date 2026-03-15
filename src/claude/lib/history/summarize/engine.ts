@@ -39,7 +39,7 @@ export interface SummarizeOptions {
     tokenBudget?: number;
     includeToolResults?: boolean;
     includeThinking?: boolean;
-    priority?: "balanced" | "user-first" | "assistant-first";
+    priority?: "balanced" | "user-first" | "assistant-first" | "summary-first";
 
     // Chunking
     thorough?: boolean;
@@ -88,11 +88,16 @@ export class SummarizeEngine {
     private extractContent(): PreparedContent {
         const {
             session,
-            tokenBudget = 128_000,
+            tokenBudget: explicitBudget,
             includeToolResults,
             includeThinking,
             priority = "balanced",
+            thorough,
         } = this.options;
+
+        // With --thorough, extract everything — chunking handles the volume.
+        // User can still override with explicit --max-tokens.
+        const tokenBudget = explicitBudget ?? (thorough ? Infinity : 128_000);
 
         return session.toPromptContent({
             tokenBudget,
@@ -168,12 +173,19 @@ export class SummarizeEngine {
         return { provider: firstProvider, model: firstModel };
     }
 
-    private async callLLM(
-        systemPrompt: string,
-        userPrompt: string,
-        providerChoice: ProviderChoice,
-        streaming: boolean
-    ): Promise<LLMCallResult> {
+    private async callLLM({
+        systemPrompt,
+        userPrompt,
+        providerChoice,
+        streaming,
+        maxTokens,
+    }: {
+        systemPrompt: string;
+        userPrompt: string;
+        providerChoice: ProviderChoice;
+        streaming: boolean;
+        maxTokens?: number;
+    }): Promise<LLMCallResult> {
         const model = getLanguageModel(providerChoice.provider.provider, providerChoice.model.id);
 
         if (streaming) {
@@ -181,6 +193,7 @@ export class SummarizeEngine {
                 model,
                 system: systemPrompt,
                 prompt: userPrompt,
+                ...(maxTokens ? { maxTokens } : {}),
             });
 
             let fullResponse = "";
@@ -199,6 +212,7 @@ export class SummarizeEngine {
             model,
             system: systemPrompt,
             prompt: userPrompt,
+            ...(maxTokens ? { maxTokens } : {}),
         });
 
         return { content: result.text, usage: result.usage };
@@ -299,6 +313,27 @@ export class SummarizeEngine {
     // Chunked Summarization (--thorough)
     // =========================================================================
 
+    /**
+     * Derive chunk size from model's context window.
+     * Formula: contextWindow - systemOverhead(2K) - outputReserve(20%) - safetyMargin(5%)
+     */
+    private calculateChunkSize(contextWindow?: number): { chunkSize: number; outputReserve: number } {
+        if (this.options.chunkSize) {
+            return { chunkSize: this.options.chunkSize, outputReserve: 0 };
+        }
+
+        if (!contextWindow || contextWindow <= 0) {
+            return { chunkSize: 100_000, outputReserve: 0 };
+        }
+
+        const systemOverhead = 2_000;
+        const outputReserve = Math.floor(contextWindow * 0.2);
+        const safetyMargin = Math.floor(contextWindow * 0.05);
+        const chunkSize = contextWindow - systemOverhead - outputReserve - safetyMargin;
+
+        return { chunkSize: Math.max(chunkSize, 10_000), outputReserve };
+    }
+
     private splitIntoChunks(text: string, chunkTokenSize: number): string[] {
         const chunks: string[] = [];
         // Approximate character count per chunk (~4 chars per token)
@@ -330,13 +365,20 @@ export class SummarizeEngine {
         providerChoice: ProviderChoice,
         streaming: boolean
     ): Promise<LLMCallResult> {
-        const chunkSize = this.options.chunkSize ?? 100_000;
+        const { chunkSize, outputReserve } = this.calculateChunkSize(providerChoice.model.contextWindow);
         const chunks = this.splitIntoChunks(prepared.content, chunkSize);
 
         if (chunks.length <= 1) {
-            // Content fits in a single chunk, use normal pipeline
             const { systemPrompt, userPrompt } = this.buildPrompt(prepared);
-            return this.callLLM(systemPrompt, userPrompt, providerChoice, streaming);
+            return this.callLLM({ systemPrompt, userPrompt, providerChoice, streaming });
+        }
+
+        if (process.stdout.isTTY) {
+            const ctxK = Math.round((providerChoice.model.contextWindow ?? 0) / 1000);
+            const chunkK = Math.round(chunkSize / 1000);
+            process.stderr.write(
+                `Thorough mode: ${chunks.length} chunks (model: ${providerChoice.model.id}, context: ${ctxK}K, chunk: ~${chunkK}K)\n`
+            );
         }
 
         // Phase 1: Summarize each chunk
@@ -355,7 +397,13 @@ export class SummarizeEngine {
                 process.stdout.write(`\n--- Chunk ${i + 1}/${chunks.length} ---\n`);
             }
 
-            const result = await this.callLLM(chunkSystemPrompt, chunkPrompt, providerChoice, false);
+            const result = await this.callLLM({
+                systemPrompt: chunkSystemPrompt,
+                userPrompt: chunkPrompt,
+                providerChoice,
+                streaming: false,
+                maxTokens: outputReserve || undefined,
+            });
             chunkSummaries.push(result.content);
 
             if (result.usage) {
@@ -387,7 +435,12 @@ export class SummarizeEngine {
             "Synthesize these partial summaries into a single cohesive document.";
         const synthesisUser = this.template.buildUserPrompt(synthesisContext);
 
-        const synthesisResult = await this.callLLM(synthesisSystem, synthesisUser, providerChoice, streaming);
+        const synthesisResult = await this.callLLM({
+            systemPrompt: synthesisSystem,
+            userPrompt: synthesisUser,
+            providerChoice,
+            streaming,
+        });
 
         if (synthesisResult.usage) {
             totalUsage.inputTokens += synthesisResult.usage.inputTokens ?? 0;
@@ -415,9 +468,51 @@ export class SummarizeEngine {
         // Step 2: Build prompt
         const { systemPrompt, userPrompt } = this.buildPrompt(prepared);
 
+        // Resolve model early when --thorough is set (needed for chunk sizing in --prompt-only too)
+        let providerChoice: ProviderChoice | undefined;
+        if (this.options.thorough && !this.options.promptOnly) {
+            providerChoice = await this.resolveModel();
+        }
+
         // If prompt-only mode, return the prompt without calling LLM
         if (this.options.promptOnly) {
-            const fullPrompt = `=== SYSTEM PROMPT ===\n\n${systemPrompt}\n\n=== USER PROMPT ===\n\n${userPrompt}`;
+            let fullPrompt: string;
+
+            if (this.options.thorough) {
+                // Try to resolve model for chunk sizing info (best-effort, fallback to defaults)
+                let modelForSizing: ProviderChoice | undefined;
+                if (this.options.provider || this.options.model) {
+                    try {
+                        modelForSizing = await this.resolveModel();
+                    } catch {
+                        // Model not resolvable in prompt-only, use defaults
+                    }
+                }
+
+                const { chunkSize } = this.calculateChunkSize(modelForSizing?.model.contextWindow);
+                const chunks = this.splitIntoChunks(prepared.content, chunkSize);
+
+                const parts: string[] = [];
+                parts.push(`=== SYSTEM PROMPT ===\n\n${systemPrompt}`);
+
+                const modelInfo = modelForSizing
+                    ? ` (model: ${modelForSizing.model.id}, context: ${Math.round((modelForSizing.model.contextWindow ?? 0) / 1000)}K, chunk: ~${Math.round(chunkSize / 1000)}K)`
+                    : ` (chunk: ~${Math.round(chunkSize / 1000)}K)`;
+                parts.push(`=== THOROUGH MODE: ${chunks.length} chunk${chunks.length > 1 ? "s" : ""}${modelInfo} ===`);
+
+                for (let i = 0; i < chunks.length; i++) {
+                    const chunkTokens = estimateTokens(chunks[i]);
+                    parts.push(
+                        `\n=== CHUNK ${i + 1}/${chunks.length} (~${chunkTokens.toLocaleString()} tokens) ===\n\n${chunks[i]}`
+                    );
+                }
+
+                parts.push(`\n=== SYNTHESIS PROMPT ===\n\n${userPrompt}`);
+                fullPrompt = parts.join("\n\n");
+            } else {
+                fullPrompt = `=== SYSTEM PROMPT ===\n\n${systemPrompt}\n\n=== USER PROMPT ===\n\n${userPrompt}`;
+            }
+
             const outputPaths = await this.formatOutput(fullPrompt);
 
             // If no output target specified, write to stdout
@@ -434,8 +529,10 @@ export class SummarizeEngine {
             };
         }
 
-        // Step 3: Resolve model
-        const providerChoice = await this.resolveModel();
+        // Step 3: Resolve model (if not already resolved for --thorough)
+        if (!providerChoice) {
+            providerChoice = await this.resolveModel();
+        }
 
         // Determine streaming preference
         const streaming = this.options.streaming ?? !!process.stdout.isTTY;
@@ -445,7 +542,7 @@ export class SummarizeEngine {
         if (this.options.thorough) {
             llmResult = await this.runChunkedSummarization(prepared, providerChoice, streaming);
         } else {
-            llmResult = await this.callLLM(systemPrompt, userPrompt, providerChoice, streaming);
+            llmResult = await this.callLLM({ systemPrompt, userPrompt, providerChoice, streaming });
         }
 
         // Step 4: Calculate cost

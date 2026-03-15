@@ -132,6 +132,13 @@ See `.claude/docs/tool-template.md` for complete templates (@inquirer + @clack/p
   doSomething(value);
   ```
 
+## Code Style: Function Parameters
+
+- **3+ params or optional params → use an object:** `callLLM({ systemPrompt, userPrompt, providerChoice, streaming })`
+- **1-2 required, obvious params → positional is fine:** `estimateTokens(text)`, `resolve(base, path)`
+- **Mix of required + optional → object with required fields + optional:** `({ session, mode, tokenBudget? })`
+- Rule of thumb: if you'd need to look at the signature to know which arg is which, use an object.
+
 ## Code Style: Type Safety
 
 - **No `as any`** — use proper type narrowing, type guards, or explicit interfaces.

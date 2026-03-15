@@ -9,6 +9,7 @@ import { ChatEngine } from "@ask/chat/ChatEngine";
 import type { CommandResult } from "@ask/chat/CommandHandler";
 import { commandHandler } from "@ask/chat/CommandHandler";
 import { conversationManager } from "@ask/chat/ConversationManager";
+import { askUI, initAskUI } from "@ask/output/AskUILogger";
 import { costPredictor } from "@ask/output/CostPredictor";
 import { costTracker } from "@ask/output/CostTracker";
 import { outputManager } from "@ask/output/OutputManager";
@@ -39,7 +40,7 @@ import {
     showVersion,
     validateOptions,
 } from "@ask/utils/cli";
-import { colorizeProvider, generateSessionId } from "@ask/utils/helpers";
+import { generateSessionId } from "@ask/utils/helpers";
 
 configureLogger({ logToFile: true });
 
@@ -62,8 +63,16 @@ class ASKTool {
                 process.exit(0);
             }
 
-            // Handle models subcommand
+            // Handle subcommands
             const firstArg = argv._[0]?.toLowerCase();
+
+            // Configure command
+            if (firstArg === "configure" || firstArg === "config") {
+                const { runConfigureWizard } = await import("@ask/commands/configure");
+                await runConfigureWizard();
+                return;
+            }
+
             if (firstArg === "models" || firstArg === "model") {
                 const modelsOptions: ModelsOptions = {
                     provider: argv.provider,
@@ -73,6 +82,80 @@ class ASKTool {
                 };
                 await showPricing(modelsOptions);
                 return;
+            }
+
+            // Apply config defaults
+            const { loadAskConfig } = await import("@ask/config");
+            const askConfig = await loadAskConfig();
+
+            if (!argv.provider && askConfig.defaultProvider) {
+                argv.provider = askConfig.defaultProvider;
+            }
+
+            if (!argv.model && askConfig.defaultModel) {
+                argv.model = askConfig.defaultModel;
+            }
+
+            // Fuzzy model matching: resolve partial model names
+            const originalModel = argv.model;
+            let fuzzyResolved = false;
+
+            if (argv.model) {
+                const resolved = await this.resolveModelFuzzy(argv.model, argv.provider);
+                if (resolved) {
+                    argv.provider = resolved.provider;
+                    argv.model = resolved.model;
+                    fuzzyResolved = true;
+                } else {
+                    // Partial model name didn't resolve — clear it so interactive selector or
+                    // non-TTY guard handles it properly instead of passing garbage to AIChat
+                    argv.model = undefined;
+                }
+            }
+
+            initAskUI({
+                isTTY: process.stdout.isTTY ?? false,
+                modelPreSelected: !!argv.model,
+                raw: !!argv.raw,
+                silent: !!argv.silent,
+                showCost: !!argv.cost,
+                outputFormat: argv.output ? "file" : argv.format,
+            });
+
+            // Non-TTY guard: require provider/model when stdin is piped
+            const isTTY = process.stdin.isTTY ?? false;
+
+            if (!isTTY) {
+                // Read message from stdin if no positional args
+                if (argv._.length === 0 && !argv.sst && !argv.interactive) {
+                    const stdinText = await new Response(Bun.stdin.stream()).text();
+                    const trimmed = stdinText.trim();
+
+                    if (!trimmed) {
+                        this.exitWithUsageHint("No message provided in non-interactive mode.");
+                    }
+
+                    argv._.push(trimmed);
+                }
+
+                const hasMessage = argv._.length > 0;
+
+                if (!hasMessage && !argv.sst && !argv.interactive) {
+                    this.exitWithUsageHint("No message provided in non-interactive mode.");
+                }
+
+                // Model was given but didn't resolve to a known model
+                if (hasMessage && originalModel && !fuzzyResolved) {
+                    await this.exitWithModelHint(argv.provider, originalModel);
+                }
+
+                if (hasMessage && (!argv.provider || !argv.model)) {
+                    await this.exitWithModelHint(argv.provider, argv.model);
+                }
+
+                if (argv.interactive) {
+                    this.exitWithUsageHint("Interactive mode (-i) requires a TTY terminal.");
+                }
             }
 
             // Validate options
@@ -94,6 +177,10 @@ class ASKTool {
             // Handle single message vs interactive mode
             const interactive = isInteractiveMode(argv, argv);
 
+            if (!isTTY && interactive) {
+                this.exitWithUsageHint("No message provided in non-interactive mode.");
+            }
+
             if (interactive) {
                 await this.startInteractiveChat(argv);
             } else {
@@ -108,6 +195,119 @@ class ASKTool {
     private suggestCommand(provider: string, model: string): void {
         const cmd = `tools ask -p ${provider} -m ${model} "your message"`;
         p.log.info(pc.dim(`Non-interactive: ${cmd}`));
+    }
+
+    private exitWithUsageHint(reason: string): never {
+        console.error(pc.red(reason));
+        console.error("");
+        console.error(pc.dim("Usage examples:"));
+        console.error(pc.dim(`  tools ask -p anthropic -m claude-sonnet-4-20250514 "your message"`));
+        console.error(pc.dim(`  tools ask -p openai -m gpt-4o "your message"`));
+        console.error(pc.dim(`  echo "your message" | tools ask -p anthropic -m claude-sonnet-4-20250514`));
+        console.error("");
+        console.error(pc.dim("Configure defaults:  tools ask config"));
+        console.error(pc.dim("List providers:      tools ask models"));
+        process.exit(1);
+    }
+
+    private async exitWithModelHint(provider?: string, model?: string): Promise<never> {
+        const missing = !provider && !model ? "provider and model" : !provider ? "provider (-p)" : "model (-m)";
+        console.error(pc.red(`Missing ${missing} for non-interactive mode.`));
+
+        // Show fuzzy matches if partial model was given
+        if (model) {
+            // First try scoped to provider, then fallback to all providers
+            let { matches } = await modelSelector.fuzzyMatchModel(model, provider);
+
+            if (matches.length === 0 && provider) {
+                ({ matches } = await modelSelector.fuzzyMatchModel(model));
+            }
+
+            if (matches.length > 0) {
+                console.error("");
+                console.error(pc.yellow("Did you mean one of these?"));
+                for (const m of matches.slice(0, 8)) {
+                    console.error(pc.dim(`  tools ask -p ${m.provider.name} -m ${m.model.id} "your message"`));
+                }
+            }
+        }
+
+        // Show available providers
+        const { providerManager: pm } = await import("@ask/providers/ProviderManager");
+        const providers = await pm.detectProviders();
+
+        if (providers.length > 0) {
+            console.error("");
+            console.error(pc.dim("Available providers:"));
+            for (const prov of providers) {
+                const topModels = prov.models.slice(0, 3).map((m) => m.id);
+                const suffix = prov.models.length > 3 ? ` +${prov.models.length - 3} more` : "";
+                console.error(pc.dim(`  ${prov.name}: ${topModels.join(", ")}${suffix}`));
+            }
+        }
+
+        console.error("");
+        console.error(pc.dim("Configure defaults:  tools ask config"));
+        process.exit(1);
+    }
+
+    private async resolveModelFuzzy(
+        query: string,
+        providerName?: string
+    ): Promise<{ provider: string; model: string } | null> {
+        // Try scoped to provider first
+        const scoped = await modelSelector.fuzzyMatchModel(query, providerName);
+
+        // Exact match → always auto-select (user typed the full model ID)
+        if (scoped.exact) {
+            const match = scoped.matches[0];
+            return { provider: match.provider.name, model: match.model.id };
+        }
+
+        // If scoped search failed, try globally (e.g., user passed -m gpt-4o with default provider anthropic)
+        let allMatches = scoped.matches;
+
+        if (providerName && allMatches.length === 0) {
+            const global = await modelSelector.fuzzyMatchModel(query);
+
+            if (global.exact) {
+                const match = global.matches[0];
+                return { provider: match.provider.name, model: match.model.id };
+            }
+
+            allMatches = global.matches;
+        }
+
+        if (allMatches.length === 0) {
+            return null;
+        }
+
+        // Non-TTY: auto-select if unique, otherwise fail (exitWithModelHint handles suggestions)
+        if (!(process.stdout.isTTY ?? false)) {
+            if (allMatches.length === 1) {
+                const match = allMatches[0];
+                return { provider: match.provider.name, model: match.model.id };
+            }
+
+            return null;
+        }
+
+        // TTY: always show interactive picker for fuzzy matches so user confirms the choice
+        const choice = await p.select({
+            message: `"${query}" matches ${allMatches.length} model${allMatches.length > 1 ? "s" : ""}:`,
+            options: allMatches.slice(0, 15).map((m) => ({
+                value: m,
+                label: `${m.provider.name}/${m.model.id}`,
+                hint: m.model.name !== m.model.id ? m.model.name : undefined,
+            })),
+        });
+
+        if (p.isCancel(choice)) {
+            return null;
+        }
+
+        const selected = choice as (typeof allMatches)[0];
+        return { provider: selected.provider.name, model: selected.model.id };
     }
 
     private async handleSpeechToText(filePath: string, argv: Args): Promise<void> {
@@ -139,10 +339,24 @@ class ASKTool {
         }
 
         try {
-            // Use AIChat — no stdout monkey-patching needed
+            // Resolve provider/model if not specified — prompt in TTY, error in non-TTY
             if (!argv.provider || !argv.model) {
-                logger.error("Provider (-p) and model (-m) are required for non-interactive mode");
-                process.exit(1);
+                if (process.stdout.isTTY) {
+                    askUI().intro();
+
+                    const modelChoice = await modelSelector.selectModel();
+                    if (!modelChoice) {
+                        logger.error("No model selected. Exiting.");
+                        process.exit(1);
+                    }
+
+                    argv.provider = modelChoice.provider.name;
+                    argv.model = modelChoice.model.id;
+                    this.suggestCommand(argv.provider, argv.model);
+                } else {
+                    logger.error("Provider (-p) and model (-m) are required for non-interactive mode");
+                    process.exit(1);
+                }
             }
 
             const chat = new AIChat({
@@ -164,7 +378,7 @@ class ASKTool {
             // Streaming mode with UI
             // We still need provider/model info for display, so resolve first
             const config = chat.getConfig();
-            p.log.info(`Using ${colorizeProvider(config.provider)}/${config.model}`);
+            askUI().logUsing({ provider: config.provider, model: config.model });
 
             // Optional: Show cost prediction if --predict-cost flag is set
             if (argv.predictCost) {
@@ -180,16 +394,23 @@ class ASKTool {
                 }
             }
 
-            p.log.step(pc.yellow("Thinking..."));
+            askUI().logThinking();
+
+            // Suppress streaming text for non-text output formats (json, jsonl, markdown, clipboard, file)
+            // — handleOutput will print the final content in the correct format
+            const outputConfig = getOutputFormat(argv);
+            const suppressStreaming = outputConfig?.type != null && outputConfig.type !== "text";
 
             // Stream the response
             for await (const event of chat.send(message)) {
-                if (event.isText()) {
+                if (event.isText() && !suppressStreaming) {
                     process.stdout.write(event.text);
                 }
 
                 if (event.isDone()) {
-                    process.stdout.write("\n");
+                    if (!suppressStreaming) {
+                        process.stdout.write("\n");
+                    }
                     const response = event.response;
 
                     // Track usage
@@ -209,17 +430,14 @@ class ASKTool {
                         );
                     }
 
-                    // Handle output
-                    const outputConfig = getOutputFormat(argv);
-                    await outputManager.handleOutput(response.content, outputConfig, {
-                        provider: config.provider,
-                        model: config.model,
-                        cost: response.cost,
-                        usage: response.usage,
-                    });
+                    // Handle non-text output (file, clipboard, json, jsonl)
+                    if (outputConfig?.type && outputConfig.type !== "text") {
+                        await outputManager.handleOutput(response.content, outputConfig);
+                    }
 
-                    // Show cost breakdown
-                    if (response.cost && response.cost > 0) {
+                    // Show cost breakdown (TTY always, non-TTY only with --cost)
+                    const showCost = askUI().shouldShowCost();
+                    if (showCost && response.cost && response.cost > 0) {
                         const breakdown = [
                             {
                                 provider: config.provider,
@@ -233,7 +451,9 @@ class ASKTool {
                             },
                         ];
 
-                        console.log(await outputManager.formatCostBreakdown(breakdown));
+                        const accountInfo = await this.getAccountInfoForFooter(config.provider);
+
+                        console.log(await outputManager.formatCostBreakdown(breakdown, accountInfo));
                     }
                 }
             }
@@ -244,10 +464,7 @@ class ASKTool {
     }
 
     private async startInteractiveChat(argv: Args): Promise<void> {
-        if (process.stdout.isTTY) {
-            p.intro(pc.bgCyan(pc.black(" ASK ")));
-        }
-
+        askUI().intro();
         p.log.info(pc.dim("Type /help for available commands, /quit to exit"));
 
         // Select initial model
@@ -257,7 +474,7 @@ class ASKTool {
             process.exit(1);
         }
 
-        p.log.step(`Starting with ${colorizeProvider(modelChoice.provider.name)}/${modelChoice.model.name}`);
+        askUI().logStarting({ provider: modelChoice.provider.name, model: modelChoice.model.name });
 
         this.suggestCommand(modelChoice.provider.name, modelChoice.model.id);
 
@@ -341,7 +558,7 @@ class ASKTool {
                 const duration = Date.now() - startTime;
 
                 // Show timing info
-                console.log(pc.dim(`\nResponse time: ${formatElapsedTime(duration)}`));
+                askUI().logResponseTime({ duration: formatElapsedTime(duration) });
 
                 // Track usage
                 if (response.usage) {
@@ -376,7 +593,9 @@ class ASKTool {
                         },
                     ];
 
-                    console.log(await outputManager.formatCostBreakdown(breakdown));
+                    const footerAccountInfo = await this.getAccountInfoForFooter(modelChoice.provider.name);
+
+                    console.log(await outputManager.formatCostBreakdown(breakdown, footerAccountInfo));
                 }
 
                 console.log(); // Add spacing
@@ -392,15 +611,13 @@ class ASKTool {
         await convManager.saveConversation(session);
 
         // Show session summary
-        p.log.info(pc.dim(`Session saved: ${sessionId}`));
-        p.log.info(pc.dim(`Messages: ${session.messages.length}`));
-        p.log.info(pc.dim(`Duration: ${formatElapsedTime(Date.now() - new Date(session.startTime).getTime())}`));
+        askUI().logSessionSummary({
+            id: sessionId,
+            messages: session.messages.length,
+            duration: formatElapsedTime(Date.now() - new Date(session.startTime).getTime()),
+        });
 
-        if (process.stdout.isTTY) {
-            p.outro(pc.green("Goodbye!"));
-        } else {
-            console.log("Goodbye!");
-        }
+        askUI().outro();
     }
 
     private async createChatConfig(modelChoice: ProviderChoice, argv: CLIOptions): Promise<ChatConfig> {
@@ -462,6 +679,16 @@ class ASKTool {
         }
 
         return Object.keys(tools).length > 0 ? tools : undefined;
+    }
+
+    private async getAccountInfoForFooter(providerName: string): Promise<{ label?: string; name: string } | undefined> {
+        if (providerName !== "anthropic") {
+            return undefined;
+        }
+
+        const { loadAskConfig } = await import("@ask/config");
+        const cfg = await loadAskConfig();
+        return cfg.claude?.accountName ? { label: cfg.claude.accountLabel, name: cfg.claude.accountName } : undefined;
     }
 
     private async handleCommandResult(

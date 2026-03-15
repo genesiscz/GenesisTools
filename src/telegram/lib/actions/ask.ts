@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import logger from "@app/logger";
+import { SafeJSON } from "@app/utils/json";
 import { AIChat } from "@ask/AIChat";
 import type { ActionHandler } from "../types";
 
@@ -54,14 +55,14 @@ export const handleAsk: ActionHandler = async (message, contact, client, convers
         typing.stop();
 
         logger.debug(
-            `[ask] Response: content=${response.content.length} chars, cost=${response.cost}, usage=${JSON.stringify(response.usage)}`
+            `[ask] Response: content=${response.content.length} chars, cost=${response.cost}, usage=${SafeJSON.stringify(response.usage)}`
         );
 
         if (!response.content) {
             logger.warn(
                 `[ask] Empty LLM response for ${contact.askProvider}/${contact.askModel}. ` +
                     `Input: "${message.contentForLLM.slice(0, 200)}". ` +
-                    `Usage: ${JSON.stringify(response.usage)}. Cost: ${response.cost}`
+                    `Usage: ${SafeJSON.stringify(response.usage)}. Cost: ${response.cost}`
             );
 
             return {

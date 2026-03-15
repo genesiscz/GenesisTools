@@ -125,6 +125,40 @@ export class ModelSelector {
         return tokens.toString();
     }
 
+    /**
+     * Fuzzy-match a model query across all (or one) provider's models.
+     * Returns exact match first, then substring matches.
+     * If exactly one match is found, returns it. If multiple, returns all for disambiguation.
+     */
+    async fuzzyMatchModel(
+        query: string,
+        providerName?: string
+    ): Promise<{ matches: Array<{ provider: DetectedProvider; model: ModelInfo }>; exact: boolean }> {
+        const providers = await providerManager.detectProviders();
+        const candidates = providerName ? providers.filter((p) => p.name === providerName) : providers;
+
+        const queryLower = query.toLowerCase();
+        const matches: Array<{ provider: DetectedProvider; model: ModelInfo }> = [];
+        const exact = false;
+
+        for (const provider of candidates) {
+            for (const model of provider.models) {
+                const idLower = model.id.toLowerCase();
+                const nameLower = (model.name || model.id).toLowerCase();
+
+                if (idLower === queryLower || nameLower === queryLower) {
+                    return { matches: [{ provider, model }], exact: true };
+                }
+
+                if (idLower.includes(queryLower) || nameLower.includes(queryLower)) {
+                    matches.push({ provider, model });
+                }
+            }
+        }
+
+        return { matches, exact };
+    }
+
     async selectModelByName(providerName?: string, modelName?: string): Promise<ProviderChoice | null> {
         try {
             const providers = await providerManager.detectProviders();

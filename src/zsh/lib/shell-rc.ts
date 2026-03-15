@@ -56,7 +56,7 @@ export async function uninstallHook(rcPath: string): Promise<void> {
         const hookLineEnd = nextLineEnd === -1 ? content.length : content.indexOf("\n", nextLineEnd + 1);
         const before = content.slice(0, startIdx === 0 ? 0 : startIdx - 1);
         const after = hookLineEnd === -1 || hookLineEnd >= content.length ? "" : content.slice(hookLineEnd + 1);
-        await Bun.write(rcPath, before + (after ? "\n" + after : ""));
+        await Bun.write(rcPath, before + (after ? `\n${after}` : ""));
         return;
     }
 
@@ -64,6 +64,6 @@ export async function uninstallHook(rcPath: string): Promise<void> {
     const before = content.slice(0, startIdx === 0 ? 0 : startIdx - 1);
     const after = endLineEnd === -1 ? "" : content.slice(endLineEnd + 1);
 
-    const cleaned = before + (after ? "\n" + after : "");
+    const cleaned = before + (after ? `\n${after}` : "");
     await Bun.write(rcPath, cleaned);
 }

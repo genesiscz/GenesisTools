@@ -183,6 +183,7 @@ export async function detectRepoFromGit(): Promise<string | null> {
  * Supported formats:
  * - https://github.com/owner/repo/blob/ref/path/to/file
  * - https://github.com/owner/repo/blame/ref/path/to/file
+ * - https://github.com/owner/repo/tree/ref/path/to/dir (directory)
  * - https://raw.githubusercontent.com/owner/repo/ref/path/to/file
  * - https://raw.githubusercontent.com/owner/repo/refs/heads/branch/path
  * - https://raw.githubusercontent.com/owner/repo/refs/tags/tag/path
@@ -199,10 +200,14 @@ export function parseGitHubFileUrl(input: string): GitHubFileUrl | null {
         input = input.replace(/#L\d+(?:-L\d+)?$/, "");
     }
 
-    // Pattern 1: github.com blob/blame URLs
+    // Detect directory (tree) URLs before stripping line references
+    const isDirectory = input.includes("/tree/");
+
+    // Pattern 1: github.com blob/blame/tree URLs
     // https://github.com/owner/repo/blob/ref/path/to/file
     // https://github.com/owner/repo/blame/ref/path/to/file
-    const githubMatch = input.match(/github\.com\/([^/]+)\/([^/]+)\/(?:blob|blame)\/([^/]+)\/(.+)/);
+    // https://github.com/owner/repo/tree/ref/path/to/dir
+    const githubMatch = input.match(/github\.com\/([^/]+)\/([^/]+)\/(?:blob|blame|tree)\/([^/]+)\/(.+)/);
     if (githubMatch) {
         return {
             owner: githubMatch[1],
@@ -211,6 +216,7 @@ export function parseGitHubFileUrl(input: string): GitHubFileUrl | null {
             path: githubMatch[4],
             lineStart,
             lineEnd,
+            isDirectory,
         };
     }
 
