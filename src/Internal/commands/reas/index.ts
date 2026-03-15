@@ -410,7 +410,9 @@ async function runSearch(query: string, options: ReasOptions): Promise<void> {
         alignRight: [0, 3, 4, 5],
     });
 
-    console.log(`\n${pc.cyan(pc.bold(`Search results for "${query}"`))} — ${pc.bold(String(matched.length))} listing${matched.length === 1 ? "" : "s"} found\n`);
+    console.log(
+        `\n${pc.cyan(pc.bold(`Search results for "${query}"`))} — ${pc.bold(String(matched.length))} listing${matched.length === 1 ? "" : "s"} found\n`
+    );
     console.log(table);
     console.log();
 }
