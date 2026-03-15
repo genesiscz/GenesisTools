@@ -26,7 +26,12 @@ try! png.write(to: URL(fileURLWithPath: "${TEST_IMAGE}"))
         ],
         { stdout: "pipe", stderr: "pipe" }
     );
-    await proc.exited;
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+        throw new Error(`Failed to generate OCR test image (exit ${exitCode}): ${stderr.trim()}`);
+    }
 });
 
 afterAll(async () => {
