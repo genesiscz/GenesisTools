@@ -33,7 +33,7 @@ function computeYields(price: number, monthlyRent: number, monthlyCosts: number)
 export function analyzeRentalYield(
     target: TargetProperty,
     medianPricePerM2: number,
-    rentalEstimate: number,
+    rentalEstimate: number
 ): YieldResult {
     const monthlyRent = rentalEstimate > 0 ? rentalEstimate : target.monthlyRent;
     const monthlyCosts = target.monthlyCosts;
