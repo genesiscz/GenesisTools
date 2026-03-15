@@ -394,8 +394,8 @@ export class OutputManager {
             output += pc.yellow("⚠️  High cost alert: This session has exceeded $0.10\n");
         }
 
-        // Account info line
-        if (accountInfo && breakdowns.length > 0) {
+        // Account info line (only when all breakdowns share the same provider)
+        if (accountInfo && breakdowns.length > 0 && breakdowns.every((b) => b.provider === breakdowns[0].provider)) {
             const labelPart = accountInfo.label ? ` (${accountInfo.label})` : "";
             output += pc.dim(`Provider: ${breakdowns[0].provider}${labelPart} · ${accountInfo.name}\n`);
         }

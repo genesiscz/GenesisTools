@@ -18,6 +18,20 @@ import chalk from "chalk";
 import type { Command } from "commander";
 
 // =============================================================================
+// Helpers
+// =============================================================================
+
+const VALID_PRIORITIES = ["balanced", "user-first", "assistant-first", "summary-first"] as const;
+type Priority = (typeof VALID_PRIORITIES)[number];
+
+function parsePriority(value: string | undefined): Priority {
+    if (value && (VALID_PRIORITIES as readonly string[]).includes(value)) {
+        return value as Priority;
+    }
+    return "balanced";
+}
+
+// =============================================================================
 // Types
 // =============================================================================
 
@@ -247,7 +261,7 @@ async function runInteractiveFlow(session: ClaudeSession, opts: SummarizeCommand
     // Preview: estimate content size and cost
     const prepared = session.toPromptContent({
         tokenBudget: previewBudget,
-        priority: (opts.priority as "balanced" | "user-first" | "assistant-first" | "summary-first") ?? "balanced",
+        priority: parsePriority(opts.priority),
         includeToolResults: opts.includeToolResults,
         includeThinking: opts.includeThinking,
     });
@@ -299,7 +313,7 @@ async function runInteractiveFlow(session: ClaudeSession, opts: SummarizeCommand
         tokenBudget: explicitTokenBudget,
         includeToolResults: opts.includeToolResults,
         includeThinking: opts.includeThinking,
-        priority: (opts.priority as "balanced" | "user-first" | "assistant-first" | "summary-first") ?? "balanced",
+        priority: parsePriority(opts.priority),
         thorough: opts.thorough,
         outputPath: opts.output,
         clipboard: opts.clipboard,
@@ -334,7 +348,7 @@ function buildNonInteractiveOptions(session: ClaudeSession, opts: SummarizeComma
         tokenBudget: explicitTokenBudget,
         includeToolResults: opts.includeToolResults,
         includeThinking: opts.includeThinking,
-        priority: (opts.priority as "balanced" | "user-first" | "assistant-first" | "summary-first") ?? "balanced",
+        priority: parsePriority(opts.priority),
         thorough: opts.thorough,
         outputPath: opts.output,
         clipboard: opts.clipboard,

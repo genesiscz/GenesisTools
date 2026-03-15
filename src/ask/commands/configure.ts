@@ -155,7 +155,8 @@ async function authWithSubscription(config: AskConfig): Promise<void> {
     }
 
     if (openBrowser) {
-        Bun.spawn(["open", authUrl], { stdio: ["ignore", "ignore", "ignore"] });
+        const { Browser } = await import("@app/utils/browser");
+        await Browser.open(authUrl);
     }
 
     const code = await p.text({
@@ -184,8 +185,15 @@ async function authWithSubscription(config: AskConfig): Promise<void> {
     }
 
     spinner.start("Fetching account profile...");
-    const profile = await fetchOAuthProfile(tokens.accessToken);
-    spinner.stop("Profile fetched.");
+    let profile: Awaited<ReturnType<typeof fetchOAuthProfile>> | null = null;
+
+    try {
+        profile = await fetchOAuthProfile(tokens.accessToken);
+        spinner.stop("Profile fetched.");
+    } catch (err) {
+        spinner.stop(pc.yellow(`Profile fetch failed: ${err instanceof Error ? err.message : err}`));
+        p.log.warn("Continuing without profile info — token is still valid.");
+    }
 
     const infoLines: string[] = [];
 
@@ -205,7 +213,7 @@ async function authWithSubscription(config: AskConfig): Promise<void> {
 
     // Determine label
     const { determineAccountLabel } = await import("@app/claude/lib/config");
-    const label = determineAccountLabel(profile);
+    const label = determineAccountLabel(profile ?? undefined);
 
     config.claude = {
         independentToken: tokens.accessToken,
@@ -288,7 +296,7 @@ async function configureIndependent(config: AskConfig): Promise<void> {
     if (tokenType === "api-key") {
         // Set as env-style: user should add to their shell config
         p.note(
-            `Add this to your shell config (~/.zshrc or ~/.bashrc):\n\n  export ANTHROPIC_API_KEY="${token}"`,
+            `Add this to your shell config (~/.zshrc or ~/.bashrc):\n\n  export ANTHROPIC_API_KEY="<paste your key here>"`,
             "API Key Setup"
         );
         p.log.info("The ask tool will detect it automatically via environment variable.");
@@ -320,14 +328,10 @@ async function configureProviderSettings(config: AskConfig): Promise<void> {
         return;
     }
 
-    config.envTokens = {
-        enabled: masterToggle as boolean,
-        disabledProviders: config.envTokens?.disabledProviders,
-    };
-
     if (masterToggle) {
+        // Mirrors PROVIDER_CONFIGS names — update if providers.ts changes
         const allProviders = ["openai", "groq", "openrouter", "anthropic", "google", "xai", "jinaai"];
-        const currentlyDisabled = new Set(config.envTokens.disabledProviders ?? []);
+        const currentlyDisabled = new Set(config.envTokens?.disabledProviders ?? []);
 
         const enabled = await p.multiselect({
             message: "Which providers should use env tokens?",
@@ -343,7 +347,15 @@ async function configureProviderSettings(config: AskConfig): Promise<void> {
         }
 
         const enabledSet = new Set(enabled as string[]);
-        config.envTokens.disabledProviders = allProviders.filter((name) => !enabledSet.has(name));
+        config.envTokens = {
+            enabled: true,
+            disabledProviders: allProviders.filter((name) => !enabledSet.has(name)),
+        };
+    } else {
+        config.envTokens = {
+            enabled: false,
+            disabledProviders: config.envTokens?.disabledProviders,
+        };
     }
 
     await saveAskConfig(config);
@@ -433,7 +445,7 @@ function showCurrentConfig(config: AskConfig): void {
         );
         lines.push(`  Source:   tools claude config`);
     } else if (config.claude?.independentToken) {
-        lines.push(`  Token:    ${pc.dim(`${config.claude.independentToken.slice(0, 20)}...`)}`);
+        lines.push(`  Token:    ${pc.dim("(configured)")}`);
         lines.push(`  Name:     ${config.claude.accountName ?? pc.dim("unknown")}`);
     } else {
         lines.push(`  ${pc.dim("(not configured)")}`);

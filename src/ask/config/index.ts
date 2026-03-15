@@ -11,7 +11,7 @@ export async function loadAskConfig(): Promise<AskConfig> {
     const saved = await storage.getConfig<Partial<AskConfig>>();
 
     if (!saved) {
-        return { ...DEFAULT_CONFIG };
+        return { ...DEFAULT_CONFIG, envTokens: { ...DEFAULT_CONFIG.envTokens! } };
     }
 
     return {

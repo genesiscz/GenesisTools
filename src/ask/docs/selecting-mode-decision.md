@@ -25,7 +25,7 @@ The ask tool routes OpenAI models to the correct API endpoint automatically.
 
 ## How the Ask Tool Decides
 
-```
+```text
 getLanguageModel(provider, modelId):
   1. Does the provider have .chat() method?
      → No: use .languageModel() (non-OpenAI providers)
@@ -48,7 +48,7 @@ Non-chat models are filtered from the model selector using pattern matching:
 
 **Excluded patterns:** `codex`, `-pro`, `instruct`, `image`, `transcribe`, `tts`, `embedding`, `whisper`, `dall-e`, `moderation`
 
-These models still work if explicitly specified via `-m` flag — they route to `.responses()`.
+Only `codex` and `-pro` models still work if explicitly specified via `-m` flag — they route to `.responses()`.
 
 ## Adding New Models
 

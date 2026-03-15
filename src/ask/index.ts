@@ -451,11 +451,7 @@ class ASKTool {
                             },
                         ];
 
-                        const { loadAskConfig: loadAskCfg } = await import("@ask/config");
-                        const cfg = await loadAskCfg();
-                        const accountInfo = cfg.claude?.accountName
-                            ? { label: cfg.claude.accountLabel, name: cfg.claude.accountName }
-                            : undefined;
+                        const accountInfo = await this.getAccountInfoForFooter(config.provider);
 
                         console.log(await outputManager.formatCostBreakdown(breakdown, accountInfo));
                     }
@@ -597,11 +593,7 @@ class ASKTool {
                         },
                     ];
 
-                    const { loadAskConfig: loadCfgForFooter } = await import("@ask/config");
-                    const footerCfg = await loadCfgForFooter();
-                    const footerAccountInfo = footerCfg.claude?.accountName
-                        ? { label: footerCfg.claude.accountLabel, name: footerCfg.claude.accountName }
-                        : undefined;
+                    const footerAccountInfo = await this.getAccountInfoForFooter(modelChoice.provider.name);
 
                     console.log(await outputManager.formatCostBreakdown(breakdown, footerAccountInfo));
                 }
@@ -687,6 +679,20 @@ class ASKTool {
         }
 
         return Object.keys(tools).length > 0 ? tools : undefined;
+    }
+
+    private async getAccountInfoForFooter(
+        providerName: string
+    ): Promise<{ label?: string; name: string } | undefined> {
+        if (providerName !== "anthropic") {
+            return undefined;
+        }
+
+        const { loadAskConfig } = await import("@ask/config");
+        const cfg = await loadAskConfig();
+        return cfg.claude?.accountName
+            ? { label: cfg.claude.accountLabel, name: cfg.claude.accountName }
+            : undefined;
     }
 
     private async handleCommandResult(

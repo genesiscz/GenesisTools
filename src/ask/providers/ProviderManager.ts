@@ -1,5 +1,6 @@
 import type { ProviderV2 } from "@ai-sdk/provider";
 import logger from "@app/logger";
+import type { AskConfig } from "@ask/types/config";
 import { askUI } from "@ask/output/AskUILogger";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
@@ -34,12 +35,10 @@ export class ProviderManager {
         const detected: DetectedProvider[] = [];
 
         for (const config of configs) {
-            // Check env token control
-            if (askConfig.envTokens?.enabled === false) {
-                continue;
-            }
-
-            if (askConfig.envTokens?.disabledProviders?.includes(config.name)) {
+            if (
+                askConfig.envTokens?.enabled === false ||
+                askConfig.envTokens?.disabledProviders?.includes(config.name)
+            ) {
                 continue;
             }
 
@@ -49,7 +48,6 @@ export class ProviderManager {
             }
 
             const apiKey = process.env[config.envKey];
-
             if (!apiKey) {
                 continue;
             }
@@ -94,7 +92,7 @@ export class ProviderManager {
     }
 
     private async detectAnthropicSubscription(
-        askConfig: import("@ask/types/config").AskConfig,
+        askConfig: AskConfig,
         detected: DetectedProvider[]
     ): Promise<void> {
         if (!askConfig.claude?.accountRef && !askConfig.claude?.independentToken) {
@@ -125,14 +123,10 @@ export class ProviderManager {
             });
 
             const allConfigs = getProviderConfigs();
-            const anthropicConfig = allConfigs.find((c) => c.name === "anthropic") ?? {
-                name: "anthropic",
-                type: "anthropic",
-                envKey: "ANTHROPIC_API_KEY",
-                import: "@ai-sdk/anthropic",
-                description: "Anthropic Claude models",
-                priority: 4,
-            };
+            const anthropicConfig = allConfigs.find((c) => c.name === "anthropic");
+            if (!anthropicConfig) {
+                throw new Error("anthropic provider config missing from PROVIDER_CONFIGS");
+            }
 
             const models = await this.getAvailableModels(anthropicConfig, provider);
             const accountLabel = askConfig.claude.accountLabel;
@@ -153,6 +147,35 @@ export class ProviderManager {
             askUI().logDetectedSubscription({ provider: "anthropic", hint });
         } catch (error) {
             logger.warn(`Failed to initialize anthropic subscription provider: ${error}`);
+
+            // Fallback: try env-key if subscription detection failed
+            const envKey = process.env.ANTHROPIC_API_KEY;
+            if (envKey) {
+                logger.info("Falling back to ANTHROPIC_API_KEY environment variable");
+                try {
+                    const allConfigs = getProviderConfigs();
+                    const cfg = allConfigs.find((c) => c.name === "anthropic");
+                    if (cfg) {
+                        const provider = await this.createProvider(cfg);
+                        if (provider) {
+                            const models = await this.getAvailableModels(cfg, provider);
+                            const detectedProvider: DetectedProvider = {
+                                name: "anthropic",
+                                type: "anthropic",
+                                key: envKey,
+                                provider,
+                                models,
+                                config: cfg,
+                            };
+                            detected.push(detectedProvider);
+                            this.detectedProviders.set("anthropic", detectedProvider);
+                            askUI().logDetected({ provider: "anthropic", count: models.length });
+                        }
+                    }
+                } catch (fallbackErr) {
+                    logger.warn(`Anthropic env-key fallback also failed: ${fallbackErr}`);
+                }
+            }
         }
     }
 
@@ -369,14 +392,11 @@ export class ProviderManager {
             const knownModelsMap = new Map(knownModels.map((m) => [m.id, m]));
 
             // Known chat model prefixes (from @ai-sdk/openai OpenAIChatModelId type)
-            // Sorted by length descending so longer prefixes match first
             const chatModelPrefixes = [
                 "gpt-3.5-turbo",
                 "gpt-4-turbo",
                 "gpt-5-mini",
                 "gpt-5-nano",
-                "gpt-5-chat",
-                "gpt-5-2025",
                 "chatgpt-",
                 "gpt-4.1",
                 "gpt-4.5",

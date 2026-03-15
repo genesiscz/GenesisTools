@@ -22,19 +22,18 @@ import type { ModelInfo } from "./chat";
  * See: src/ask/docs/selecting-mode-decision.md for full details.
  */
 
-// Patterns that indicate a model needs the Responses API instead of Chat API
-const RESPONSES_ONLY_PATTERNS = ["codex", "-pro"];
+// Patterns that indicate an OpenAI model needs the Responses API instead of Chat API.
+// Only applied when the provider is OpenAI (has both .chat() and .responses()).
+const RESPONSES_ONLY_PATTERNS = [/codex/i, /^gpt-5(?:\.\d+)?-pro$/i];
 
 export function getLanguageModel(provider: ProviderV2, modelId: string): LanguageModel {
-    const id = modelId.toLowerCase();
-
     // For OpenAI-like providers that expose both .chat() and .responses()
     if ("chat" in provider && typeof provider.chat === "function") {
         // Check if this model needs the Responses API endpoint
         if (
             "responses" in provider &&
             typeof provider.responses === "function" &&
-            RESPONSES_ONLY_PATTERNS.some((p) => id.includes(p))
+            RESPONSES_ONLY_PATTERNS.some((p) => p.test(modelId))
         ) {
             return (provider.responses as (id: string) => LanguageModel)(modelId);
         }

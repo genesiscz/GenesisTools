@@ -47,7 +47,15 @@ export async function resolveAccountToken(
         const acc = config.accounts[name];
 
         // Check if token needs refresh
-        if (acc.refreshToken && acc.expiresAt && claudeOAuth.needsRefresh(acc.expiresAt)) {
+        const needsRefresh = acc.expiresAt ? claudeOAuth.needsRefresh(acc.expiresAt) : false;
+
+        if (needsRefresh) {
+            if (!acc.refreshToken) {
+                throw new Error(
+                    `Account "${name}" needs re-authentication (no refresh token). Run \`tools claude login\` first.`
+                );
+            }
+
             try {
                 const newTokens = await claudeOAuth.refresh(acc.refreshToken);
                 // Update config with new tokens (refresh token is single-use!)
@@ -55,9 +63,10 @@ export async function resolveAccountToken(
                 acc.refreshToken = newTokens.refreshToken;
                 acc.expiresAt = newTokens.expiresAt;
                 await saveConfig(config);
-            } catch {
-                // If refresh fails, try using the existing token anyway
-                // It might still be valid if the expiry check was overly cautious
+            } catch (err) {
+                throw new Error(
+                    `Failed to refresh token for account "${name}": ${err instanceof Error ? err.message : err}. Run \`tools claude login\` again.`
+                );
             }
         }
 

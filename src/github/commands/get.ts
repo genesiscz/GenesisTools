@@ -10,6 +10,7 @@ import { setGlobalVerbose, verbose } from "@app/utils/github/utils";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import { Command } from "commander";
+import { resolve } from "node:path";
 
 interface GetOptions {
     ref?: string;
@@ -156,26 +157,33 @@ async function fetchDirectoryContents(
     const parts: string[] = [];
 
     for (const file of files) {
-        if (!file.download_url) {
-            verbose(options, `Skipping ${file.path}: no download URL`);
-            continue;
-        }
-
         verbose(options, `Fetching: ${file.path}`);
 
-        const response = await fetch(file.download_url);
+        try {
+            const { data } = await withRetry(() =>
+                octokit.rest.repos.getContent({
+                    owner,
+                    repo,
+                    path: file.path,
+                    ref,
+                })
+            );
 
-        if (!response.ok) {
+            if ("content" in data && data.content) {
+                const content = Buffer.from(data.content, "base64").toString("utf-8");
+                parts.push(`--- FILE: ${file.path} ---`);
+                parts.push(content);
+                parts.push("");
+            } else {
+                parts.push(`--- FILE: ${file.path} ---`);
+                parts.push(`[No content available]`);
+                parts.push("");
+            }
+        } catch (err) {
             parts.push(`--- FILE: ${file.path} ---`);
-            parts.push(`[Error fetching file: ${response.status} ${response.statusText}]`);
+            parts.push(`[Error fetching file: ${err instanceof Error ? err.message : err}]`);
             parts.push("");
-            continue;
         }
-
-        const content = await response.text();
-        parts.push(`--- FILE: ${file.path} ---`);
-        parts.push(content);
-        parts.push("");
     }
 
     return parts.join("\n");
@@ -255,8 +263,9 @@ export async function getCommand(input: string, options: GetOptions): Promise<vo
                 await copyToClipboard(content, { silent: true });
                 console.log(chalk.green(`✔ Copied directory ${parsed.path} to clipboard`));
             } else if (options.output) {
-                await Bun.write(options.output, content);
-                console.log(chalk.green(`✔ Written to ${options.output}`));
+                const outputPath = resolve(options.output);
+                await Bun.write(outputPath, content);
+                console.log(chalk.green(`✔ Written to ${outputPath}`));
             } else {
                 console.log(content);
             }
@@ -278,8 +287,9 @@ export async function getCommand(input: string, options: GetOptions): Promise<vo
                 console.log(chalk.dim(`  Lines: ${lineStart}${lineEnd ? `-${lineEnd}` : ""}`));
             }
         } else if (options.output) {
-            await Bun.write(options.output, content);
-            console.log(chalk.green(`✔ Written to ${options.output}`));
+            const outputPath = resolve(options.output);
+            await Bun.write(outputPath, content);
+            console.log(chalk.green(`✔ Written to ${outputPath}`));
         } else {
             // Output to stdout
             console.log(content);
@@ -364,8 +374,9 @@ async function handleCommitUrl(parsed: GitHubCommitUrl, options: GetOptions): Pr
         await copyToClipboard(content, { silent: true });
         console.log(chalk.green(`✔ Copied commit ${commit.sha.slice(0, 7)} to clipboard`));
     } else if (options.output) {
-        await Bun.write(options.output, content);
-        console.log(chalk.green(`✔ Written to ${options.output}`));
+        const outputPath = resolve(options.output);
+        await Bun.write(outputPath, content);
+        console.log(chalk.green(`✔ Written to ${outputPath}`));
     } else {
         console.log(content);
     }
