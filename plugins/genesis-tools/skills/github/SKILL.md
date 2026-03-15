@@ -548,6 +548,7 @@ Options:
 For workflow run analysis, cost estimation, and CI management, see `references/actions.md`.
 
 Use the bundled script for cost calculations:
+
 ```bash
 bun <skill-dir>/scripts/actions-cost.ts --repo owner/repo --date YYYY-MM-DD
 ```

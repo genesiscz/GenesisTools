@@ -95,7 +95,7 @@ per-minute billing math, and cross-repo scanning.
 
 ### Script CLI
 
-```
+```text
 bun <skill-dir>/scripts/actions-cost.ts [options]
 
 Options:
@@ -116,13 +116,13 @@ Options:
 
 | Runner OS | $/min | Multiplier |
 |-----------|-------|------------|
-| Linux | 0.008 | 1x |
-| Linux 4-core | 0.016 | 2x |
-| Linux 8-core | 0.032 | 4x |
-| Linux 16-core | 0.064 | 8x |
-| Windows | 0.016 | 2x |
-| macOS | 0.08 | 10x |
-| macOS (xlarge) | 0.12 | 15x |
+| Linux (2-core) | 0.006 | 1x |
+| Linux 4-core | 0.012 | 2x |
+| Linux 8-core | 0.022 | 3.7x |
+| Linux 16-core | 0.042 | 7x |
+| Windows (2-core) | 0.010 | 1.7x |
+| macOS (3/4-core) | 0.062 | 10.3x |
+| macOS 12-core (xlarge) | 0.077 | 12.8x |
 
 Free tier: 2,000 min/month (Linux equivalent). Non-Linux minutes consumed at multiplied rate.
 
@@ -179,7 +179,7 @@ bun <skill-dir>/scripts/actions-cost.ts \
   --verbose
 ```
 
-Uses `gh repo list <org> --json nameWithOwner --limit 100` to discover repos.
+Uses `gh repo list <org> --json nameWithOwner --limit 1000` to discover repos.
 
 ## Workflow Efficiency Metrics
 
@@ -241,10 +241,10 @@ Determine runner OS from job labels:
 
 | Label pattern | Runner OS | Rate |
 |---------------|-----------|------|
-| `ubuntu-latest`, `ubuntu-*` | Linux | $0.008/min |
-| `windows-latest`, `windows-*` | Windows | $0.016/min |
-| `macos-latest`, `macos-*` | macOS | $0.08/min |
-| `macos-*-xlarge` | macOS (xlarge) | $0.12/min |
-| Custom / self-hosted | Assume Linux | $0.008/min |
+| `ubuntu-latest`, `ubuntu-*` | Linux (2-core) | $0.006/min |
+| `windows-latest`, `windows-*` | Windows (2-core) | $0.010/min |
+| `macos-latest`, `macos-*` | macOS (3/4-core) | $0.062/min |
+| `macos-*-xlarge` | macOS 12-core (xlarge) | $0.077/min |
+| Custom / self-hosted | Assume Linux | $0.006/min |
 
 For larger Linux runners, detect from label: `ubuntu-latest-4-cores` → 4-core ($0.016/min).
