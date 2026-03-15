@@ -37,7 +37,7 @@ Search, fetch, and analyze GitHub issues, PRs, and comments with caching.
 | List workflow runs | `gh run list --repo owner/repo --created YYYY-MM-DD --limit 200` |
 | CI cost breakdown | `bun <skill-dir>/scripts/actions-cost.ts --repo owner/repo --date YYYY-MM-DD` |
 | Cross-repo cost scan | `bun <skill-dir>/scripts/actions-cost.ts --org <org> --date YYYY-MM-DD --cross-repo` |
-| Cost per branch | `bun <skill-dir>/scripts/actions-cost.ts --repo owner/repo --branch <branch>` |
+| Cost per branch | `bun <skill-dir>/scripts/actions-cost.ts --repo owner/repo --branch <branch> --from YYYY-MM-DD --to YYYY-MM-DD` |
 | Re-run failed jobs | `gh run rerun <run-id> --failed` |
 | Cancel a run | `gh run cancel <run-id>` |
 | Cache usage | `gh api /repos/{owner}/{repo}/actions/cache/usage` |

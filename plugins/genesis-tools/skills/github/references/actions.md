@@ -247,4 +247,4 @@ Determine runner OS from job labels:
 | `macos-*-xlarge` | macOS 12-core (xlarge) | $0.077/min |
 | Custom / self-hosted | Assume Linux | $0.006/min |
 
-For larger Linux runners, detect from label: `ubuntu-latest-4-cores` → 4-core ($0.016/min).
+For larger Linux runners, detect from label: `ubuntu-latest-4-cores` → 4-core ($0.012/min).
