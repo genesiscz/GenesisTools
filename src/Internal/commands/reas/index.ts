@@ -1,4 +1,5 @@
 import { stripAnsi } from "@app/utils/string";
+import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -25,6 +26,7 @@ interface ReasOptions {
     monthlyCosts?: string;
     output?: string;
     refresh?: boolean;
+    search?: string;
 }
 
 interface DistrictInfo {
@@ -341,10 +343,87 @@ async function fetchAndAnalyze(
     }
 }
 
+const SEARCH_DEFAULT_PERIODS = "2024,2025,2026";
+const SEARCH_DEFAULT_DISTRICT = "Hradec Králové";
+const SEARCH_CONSTRUCTION_TYPES = ["panel", "brick"];
+
+function formatCzk(value: number): string {
+    return value.toLocaleString("cs-CZ");
+}
+
+async function runSearch(query: string, options: ReasOptions): Promise<void> {
+    const district = resolveDistrict(options.district ?? SEARCH_DEFAULT_DISTRICT);
+    const periods = parsePeriods(options.periods ?? SEARCH_DEFAULT_PERIODS);
+    const constructionTypes = options.type ? [options.type] : SEARCH_CONSTRUCTION_TYPES;
+    const refresh = !!options.refresh;
+    const queryLower = query.toLowerCase();
+
+    const spinner = p.spinner();
+    spinner.start(`Searching sold listings for "${query}"...`);
+
+    const allListings: ReasListing[] = [];
+
+    for (const constructionType of constructionTypes) {
+        const filters: AnalysisFilters = {
+            estateType: "flat",
+            constructionType,
+            periods,
+            district,
+        };
+
+        for (const period of periods) {
+            const listings = await fetchSoldListings(filters, period, refresh);
+            allListings.push(...listings);
+        }
+    }
+
+    const matched = allListings.filter((l) => l.formattedAddress.toLowerCase().includes(queryLower));
+
+    spinner.stop(`Fetched ${allListings.length} listings, filtering by "${query}".`);
+
+    if (matched.length === 0) {
+        console.log(pc.yellow(`\nNo listings found matching "${query}".`));
+        return;
+    }
+
+    matched.sort((a, b) => new Date(b.soldAt).getTime() - new Date(a.soldAt).getTime());
+
+    const rows = matched.map((listing, idx) => {
+        const pricePerM2 = listing.utilityArea > 0 ? Math.round(listing.soldPrice / listing.utilityArea) : 0;
+        const soldDate = listing.soldAt ? listing.soldAt.slice(0, 10) : "—";
+        const link = listing.link || "—";
+
+        return [
+            String(idx + 1),
+            listing.formattedAddress,
+            listing.disposition,
+            String(Math.round(listing.utilityArea)),
+            formatCzk(listing.soldPrice),
+            formatCzk(pricePerM2),
+            soldDate,
+            link,
+        ];
+    });
+
+    const headers = ["#", "Address", "Disp", "m²", "Sold Price", "CZK/m²", "Sold", "Link"];
+    const table = formatTable(rows, headers, {
+        alignRight: [0, 3, 4, 5],
+    });
+
+    console.log(`\n${pc.cyan(pc.bold(`Search results for "${query}"`))} — ${pc.bold(String(matched.length))} listing${matched.length === 1 ? "" : "s"} found\n`);
+    console.log(table);
+    console.log();
+}
+
 async function runReasAnalysis(options: ReasOptions): Promise<void> {
     if (options.refresh) {
         await clearCache();
         console.log(pc.dim("Cache cleared."));
+    }
+
+    if (options.search) {
+        await runSearch(options.search, options);
+        return;
     }
 
     if (hasSufficientFlags(options)) {
@@ -369,6 +448,7 @@ export function registerReasCommand(program: Command): void {
         .option("--area <m2>", "Target property area in m²")
         .option("--rent <czk>", "Expected monthly rent in CZK")
         .option("--monthly-costs <czk>", "Monthly costs (fond oprav + utilities) in CZK")
+        .option("--search <query>", "Search sold listings by address (e.g. 'Gebauerova')")
         .option("-o, --output <path>", "Write report to file")
         .option("--refresh", "Force re-fetch (ignore cache)")
         .action(async (opts: ReasOptions) => {
