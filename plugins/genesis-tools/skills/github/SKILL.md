@@ -1,7 +1,7 @@
 ---
 name: genesis-tools:github
 description: |
-  Use whenever the user wants to READ or SEARCH GitHub content: fetching an issue or PR from a URL, getting comments (including after a specific comment anchor like #issuecomment-XXX), viewing PR review threads without making code changes, searching a repository's issues/PRs/code (e.g. "find how library X handles Y", "are there issues about Z"), browsing notifications or activity. Triggers on any "look up", "show me", "find", "check", "summarize", or "search" intent on GitHub URLs or repositories. Do NOT use when the task is to implement code fixes, address PR feedback, or make commits — use genesis-tools:github-pr for that.
+  Use whenever the user wants to READ or SEARCH GitHub content: fetching an issue or PR from a URL, getting comments (including after a specific comment anchor like #issuecomment-XXX), viewing PR review threads without making code changes, searching a repository's issues/PRs/code (e.g. "find how library X handles Y", "are there issues about Z"), browsing notifications or activity. Also use for GitHub Actions analysis: workflow run history, CI costs, billing breakdown, billable minutes, failure waste, cross-repo usage scanning, and run management (cancel, rerun). Triggers on any "look up", "show me", "find", "check", "summarize", or "search" intent on GitHub URLs or repositories, AND on "actions", "CI", "billing", "cost", "workflow runs", "billable minutes", "failed runs", or "rerun" intents. Do NOT use when the task is to implement code fixes, address PR feedback, or make commits — use genesis-tools:github-pr for that.
 ---
 
 # GitHub Tool Usage Guide
@@ -34,6 +34,13 @@ Search, fetch, and analyze GitHub issues, PRs, and comments with caching.
 | Get file content | `tools github get <file-url>` |
 | Get specific lines | `tools github get <file-url> --lines 10-50` |
 | Get file to clipboard | `tools github get <file-url> -c` |
+| List workflow runs | `gh run list --repo owner/repo --created YYYY-MM-DD --limit 200` |
+| CI cost breakdown | `bun <skill-dir>/scripts/actions-cost.ts --repo owner/repo --date YYYY-MM-DD` |
+| Cross-repo cost scan | `bun <skill-dir>/scripts/actions-cost.ts --org <org> --date YYYY-MM-DD --cross-repo` |
+| Cost per branch | `bun <skill-dir>/scripts/actions-cost.ts --repo owner/repo --branch <branch> --from YYYY-MM-DD --to YYYY-MM-DD` |
+| Re-run failed jobs | `gh run rerun <run-id> --failed` |
+| Cancel a run | `gh run cancel <run-id>` |
+| Cache usage | `gh api /repos/{owner}/{repo}/actions/cache/usage` |
 
 ## URL Parsing
 
@@ -534,6 +541,16 @@ Options:
   -f, --format <format>       Output: ai|md|json
   -o, --output <file>         Output path
   -v, --verbose               Enable verbose logging
+```
+
+## GitHub Actions (CI/Billing)
+
+For workflow run analysis, cost estimation, and CI management, see `references/actions.md`.
+
+Use the bundled script for cost calculations:
+
+```bash
+bun <skill-dir>/scripts/actions-cost.ts --repo owner/repo --date YYYY-MM-DD
 ```
 
 ## Interactive Mode
