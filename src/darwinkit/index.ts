@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { parseVariadic } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { closeDarwinKit } from "@app/utils/macos";
 import { handleReadmeFlag } from "@app/utils/readme";
@@ -54,11 +55,7 @@ function printFullHelp(): void {
 function buildProgram(): Command {
     const program = new Command();
 
-    program
-        .name("darwinkit")
-        .description("Apple on-device ML from the terminal")
-        .version("1.0.0")
-        .option("--format <format>", "Output format: json, pretty, raw");
+    program.name("darwinkit").description("Apple on-device ML from the terminal").version("1.0.0");
 
     for (const cmd of commands) {
         const sub = program.command(cmd.name).description(cmd.description);
@@ -129,13 +126,7 @@ async function handleCommandAction(cmd: CommandDef, sub: Command, actionArgs: un
 
             args[param.name] = num;
         } else if (param.type === "string[]") {
-            args[param.name] =
-                typeof rawValue === "string"
-                    ? rawValue
-                          .split(",")
-                          .map((s: string) => s.trim())
-                          .filter(Boolean)
-                    : rawValue;
+            args[param.name] = parseVariadic(rawValue);
         } else {
             args[param.name] = rawValue;
         }
