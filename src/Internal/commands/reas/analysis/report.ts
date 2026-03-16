@@ -166,7 +166,6 @@ function renderRentalListings(analysis: FullAnalysis): string {
     lines.push(`  ${pc.dim("Source: sreality.cz (active rental listings)")}`);
     lines.push(`  ${pc.dim("Benchmark: MF cenova mapa XLSX (mf.gov.cz)")}`);
 
-
     const headers = ["#", "Locality", "m\u00B2", "Disp", "Rent/mo", "CZK/m\u00B2"];
     const rows = rentalListings.map((l, i) => {
         const area = l.area ?? 0;
@@ -413,5 +412,5 @@ export function renderReport(analysis: FullAnalysis): string {
         renderVerdict(analysis),
     ];
 
-    return sections.join("\n") + "\n";
+    return `${sections.join("\n")}\n`;
 }

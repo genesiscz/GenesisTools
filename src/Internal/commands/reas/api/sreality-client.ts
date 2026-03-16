@@ -1,5 +1,5 @@
-import { getCached, setCache, cacheKey, SREALITY_TTL } from "../cache/index";
-import type { SrealityRental, AnalysisFilters, CacheEntry } from "../types";
+import { cacheKey, getCached, SREALITY_TTL, setCache } from "../cache/index";
+import type { AnalysisFilters, CacheEntry, SrealityRental } from "../types";
 
 const BASE_URL = "https://www.sreality.cz/api/cs/v2";
 const PER_PAGE = 60;
@@ -158,10 +158,7 @@ function mapEstate(raw: SrealityEstateRaw): SrealityRental {
  * Fetch rental listings from Sreality.cz with auto-pagination.
  * Results are cached for 6 hours; pass refresh=true to bypass cache.
  */
-export async function fetchRentalListings(
-    filters: AnalysisFilters,
-    refresh = false,
-): Promise<SrealityRental[]> {
+export async function fetchRentalListings(filters: AnalysisFilters, refresh = false): Promise<SrealityRental[]> {
     const keyParams = buildCacheKeyParams(filters);
     const key = cacheKey(keyParams);
 
