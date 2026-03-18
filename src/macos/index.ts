@@ -10,6 +10,12 @@
  *   tools macos mail list [mailbox] [options]
  *   tools macos mail download <output-dir> [options]
  *
+ *   tools macos voice-memos list
+ *   tools macos voice-memos play <id>
+ *   tools macos voice-memos export <id> [dest]
+ *   tools macos voice-memos transcribe [id] [--all] [--force]
+ *   tools macos voice-memos search <query>
+ *
  * Future subcommands:
  *   tools macos calendar events
  *   tools macos contacts search
@@ -18,6 +24,7 @@
 import logger from "@app/logger";
 import { registerMailCommand } from "@app/macos/commands/mail/index";
 import { registerSleepCommand } from "@app/macos/commands/sleep/index";
+import { registerVoiceMemosCommand } from "@app/macos/commands/voice-memos/index";
 import { Command } from "commander";
 
 const program = new Command();
@@ -30,6 +37,7 @@ program
 
 registerMailCommand(program);
 registerSleepCommand(program);
+registerVoiceMemosCommand(program);
 
 async function main(): Promise<void> {
     try {
