@@ -128,10 +128,7 @@ export async function runBenchmark(suite: BenchmarkSuite, opts: RunOptions = {})
     const args = ["hyperfine"];
 
     // Warmup: CLI > suite default > 3
-    // Commander's --no-warmup sets opts.warmup to false (boolean negation)
-    const warmup = opts.warmup === false || opts.noWarmup
-        ? 0
-        : (opts.warmup ?? suite.warmup ?? 3);
+    const warmup = opts.noWarmup ? 0 : (opts.warmup ?? suite.warmup ?? 3);
     args.push("--warmup", String(warmup));
 
     // Runs: CLI > suite default > omit (let hyperfine auto-detect)

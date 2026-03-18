@@ -159,6 +159,13 @@ program
         []
     )
     .action(async (suiteName: string | undefined, opts: RunOptions) => {
+        // Commander's --no-warmup sets opts.warmup to false (negation of --warmup <n>).
+        // Normalize here so downstream code only checks opts.noWarmup.
+        if ((opts as Record<string, unknown>).warmup === false) {
+            opts.noWarmup = true;
+            opts.warmup = undefined;
+        }
+
         if (suiteName) {
             await cmdRun(suiteName, opts);
         } else if (opts.ci) {

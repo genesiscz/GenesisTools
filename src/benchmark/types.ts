@@ -57,7 +57,7 @@ export interface SavedResult {
 export interface RunOptions {
     compare?: boolean;
     runs?: number;
-    warmup?: number | false;  // false when Commander's --no-warmup is used
+    warmup?: number;
     noWarmup?: boolean;
     only?: string;
     setup?: string;
