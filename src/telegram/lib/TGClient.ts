@@ -14,6 +14,10 @@ export interface AuthCallbacks {
     password: () => Promise<string>;
 }
 
+interface StopHandle {
+    stop: () => void;
+}
+
 export class TGClient {
     private client: TelegramClient;
 
@@ -92,7 +96,7 @@ export class TGClient {
         );
     }
 
-    startTypingLoop(userId: string, username?: string): { stop: () => void } {
+    startTypingLoop(userId: string, username?: string): StopHandle {
         let stopped = false;
 
         const tick = async () => {
