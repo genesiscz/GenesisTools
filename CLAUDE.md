@@ -55,6 +55,16 @@ GenesisTools is a TypeScript-based CLI toolkit that runs on Bun. The architectur
 -   **MCP Integration**: Several tools implement Model Context Protocol servers for AI assistant integration
 -   **No Build Step**: Bun executes TypeScript directly without compilation
 
+### Performance Benchmarks (2026-03-16, hyperfine, Apple Silicon)
+
+| What | Mean | Notes |
+|---|---|---|
+| Bun tool invocation (`tools <cmd>`) | **~86ms** | Baseline for any tool |
+| `osascript` notification | **~120ms** | Unreliable banners on modern macOS |
+| `terminal-notifier` native binary | **~295ms** | Reliable; bypass rbenv shim (adds +120ms) |
+
+When spawning tools from shell hooks, always background (`&`) — 86ms Bun startup is invisible when async.
+
 ### Utility Convention
 
 When creating a new tool and writing helper functions, check if the utility is **general-purpose** (usable by other tools). If so, place it in `src/utils/` instead of inside the tool directory:
