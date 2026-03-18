@@ -125,6 +125,7 @@ See `.claude/docs/tool-template.md` for complete templates (@inquirer + @clack/p
 - **No file-path comments**: Never add `// src/path/to/file.ts` as first line of files
 - **No obvious comments**: Don't add comments that restate what the code already says (e.g. `// Build initial context` before `buildContext()`)
 - **Concise commit messages**: Just a title line, no per-file breakdown in the body. Keep it short and focused on the "why"
+- **Always use `@app/` alias imports** — never use relative `../` imports. Use `@app/utils/format` not `../../utils/format`. Index files (`index.ts`) may use `./` for same-directory imports (e.g. `./commands/run`, `./lib/display`).
 
 ## Code Style: Conditionals & Spacing
 

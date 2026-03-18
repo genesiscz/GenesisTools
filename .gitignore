@@ -197,3 +197,7 @@ vercel-skills
 
 # HAR network captures
 *.har
+
+.claude/*.lock
+
+.claude/worktrees/
