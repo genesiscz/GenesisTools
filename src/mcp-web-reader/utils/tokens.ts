@@ -1,5 +1,11 @@
 import { decode, encode } from "gpt-3-encoder";
 
+interface TokenLimitResult {
+    text: string;
+    tokens: number;
+    truncated: boolean;
+}
+
 export function countTokens(text: string): number {
     try {
         return encode(text).length;
@@ -9,7 +15,7 @@ export function countTokens(text: string): number {
     }
 }
 
-export function limitToTokens(text: string, maxTokens?: number): { text: string; tokens: number; truncated: boolean } {
+export function limitToTokens(text: string, maxTokens?: number): TokenLimitResult {
     const tokens = countTokens(text);
 
     if (!maxTokens || tokens <= maxTokens) {
