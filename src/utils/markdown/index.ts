@@ -149,7 +149,12 @@ interface TableData {
     rows: string[][];
 }
 
-function parseTableTokens(tokens: Token[], startIdx: number): { data: TableData; endIdx: number } {
+interface ParsedTableTokens {
+    data: TableData;
+    endIdx: number;
+}
+
+function parseTableTokens(tokens: Token[], startIdx: number): ParsedTableTokens {
     const data: TableData = { headers: [], alignments: [], rows: [] };
     let idx = startIdx;
 
