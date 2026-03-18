@@ -67,6 +67,9 @@ export interface RunOptions {
     format?: "table" | "md" | "csv" | "json";
     clipboard?: boolean;
     param?: string[];  // CLI override: --param variant=on runs only that value
+    ci?: boolean;      // CI mode: no prompts, JSON stdout, exit 1 on regression
+    postToPr?: number; // Post comparison as GitHub PR comment
+    baseline?: string; // Compare against results from a specific git ref
 }
 
 export interface AddOptions {

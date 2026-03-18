@@ -149,6 +149,9 @@ program
     )
     .option("--format <format>", "Output format: table (default), md, csv, json")
     .option("-c, --clipboard", "Copy formatted output to clipboard (use with --format)")
+    .option("--ci", "CI mode: no prompts, JSON stdout, exit 1 on regression (implies --format json --compare --fail-threshold 10)")
+    .option("--baseline <ref>", "Compare against results from a specific git ref (SHA, branch, tag)")
+    .option("--post-to-pr <number>", "Post benchmark comparison as a GitHub PR comment", (v) => parseInt(v, 10))
     .option(
         "--param <name=value>",
         "Override parameter value for parameterized suites (repeatable, e.g. --param variant=on)",
@@ -158,6 +161,9 @@ program
     .action(async (suiteName: string | undefined, opts: RunOptions) => {
         if (suiteName) {
             await cmdRun(suiteName, opts);
+        } else if (opts.ci) {
+            console.error(JSON.stringify({ error: "Suite name required in CI mode" }));
+            process.exit(2);
         } else {
             await interactiveMode();
         }
