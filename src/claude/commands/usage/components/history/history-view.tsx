@@ -91,16 +91,20 @@ export function HistoryView({ db, dbVersion }: HistoryViewProps) {
             return new Map<string, SnapshotWithDelta[]>();
         }
 
-        const pairs = db.getAllAccountBuckets();
-        const result = new Map<string, SnapshotWithDelta[]>();
+        try {
+            const pairs = db.getAllAccountBuckets();
+            const result = new Map<string, SnapshotWithDelta[]>();
 
-        for (const { accountName, bucket } of pairs) {
-            const snapshots = db.getSnapshots(accountName, bucket, timeRange);
-            const key = `${accountName}:${bucket}`;
-            result.set(key, computeDeltas(snapshots).reverse());
+            for (const { accountName, bucket } of pairs) {
+                const snapshots = db.getSnapshots(accountName, bucket, timeRange);
+                const key = `${accountName}:${bucket}`;
+                result.set(key, computeDeltas(snapshots).reverse());
+            }
+
+            return result;
+        } catch {
+            return new Map<string, SnapshotWithDelta[]>();
         }
-
-        return result;
     }, [db, timeRange, dbVersion]);
 
     const allRows = useMemo(() => {
