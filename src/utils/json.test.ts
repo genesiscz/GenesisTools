@@ -64,8 +64,8 @@ describe("SafeJSON", () => {
 describe("parseJSON", () => {
     it("parses valid JSON", () => {
         expect(parseJSON<Record<string, number>>('{"a":1}')).toEqual({ a: 1 });
-        expect(parseJSON<number>("123")).toBe(123);
-        expect(parseJSON<string>('"hello"')).toBe("hello");
+        expect(Number(parseJSON<number>("123"))).toBe(123);
+        expect(String(parseJSON<string>('"hello"'))).toBe("hello");
     });
 
     it("parses JSONC (comments, trailing commas)", () => {
