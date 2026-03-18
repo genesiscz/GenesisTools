@@ -49,6 +49,9 @@ export interface RunOptions {
     setup?: string;
     prepare?: string;
     cleanup?: string;
+    failThreshold?: number;   // exit 1 if any command regresses by more than N%
+    format?: "table" | "md" | "csv" | "json";
+    clipboard?: boolean;
 }
 
 export interface AddOptions {

@@ -5,6 +5,7 @@ import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
 import { cmdAdd } from "@app/benchmark/commands/add";
+import { cmdHistory } from "@app/benchmark/commands/history";
 import { cmdList } from "@app/benchmark/commands/list";
 import { cmdRemove } from "@app/benchmark/commands/remove";
 import { cmdRun } from "@app/benchmark/commands/run";
@@ -140,6 +141,13 @@ program
     .option("--setup <cmd>", "Shell command run once before all timing runs begin")
     .option("--prepare <cmd>", "Shell command run before each timing run (all commands)")
     .option("--cleanup <cmd>", "Shell command run after all runs complete for each command")
+    .option(
+        "--fail-threshold <percent>",
+        "Exit 1 if any command regresses by more than N% vs previous run (implies --compare)",
+        (v) => parseFloat(v)
+    )
+    .option("--format <format>", "Output format: table (default), md, csv, json")
+    .option("-c, --clipboard", "Copy formatted output to clipboard (use with --format)")
     .action(async (suiteName: string | undefined, opts: RunOptions) => {
         if (suiteName) {
             await cmdRun(suiteName, opts);
@@ -181,6 +189,15 @@ program
     .description("List all benchmark suites")
     .action(async () => {
         await cmdList();
+    });
+
+program
+    .command("history")
+    .description("Show past benchmark results for a suite — useful for spotting trends over time")
+    .argument("<suite>", "Suite name to show history for")
+    .option("--limit <n>", "Maximum number of past runs to show (default: 20)", (v) => parseInt(v, 10))
+    .action(async (suite: string, opts: { limit?: number }) => {
+        await cmdHistory(suite, opts.limit ?? 20);
     });
 
 async function main(): Promise<void> {
