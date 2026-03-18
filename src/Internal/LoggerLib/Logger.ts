@@ -707,7 +707,13 @@ export const consoleTransport: ITransport = {
     },
 };
 
-export const fileTransport = (options: { filePath: string; append?: boolean; encoding?: string }): ITransport => ({
+interface FileTransportOptions {
+    filePath: string;
+    append?: boolean;
+    encoding?: string;
+}
+
+export const fileTransport = (options: FileTransportOptions): ITransport => ({
     log(props) {
         // Here you would implement file writing logic
         // Using appropriate React Native or Node.js APIs

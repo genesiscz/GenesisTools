@@ -3,6 +3,16 @@ import { SafeJSON } from "@app/utils/json";
 import type { Args, CLIOptions, OutputFormat } from "@ask/types";
 import { Command } from "commander";
 
+interface ValidationResult {
+    valid: boolean;
+    errors: string[];
+}
+
+interface OutputFormatResult {
+    type: OutputFormat;
+    filename?: string;
+}
+
 export function parseCLIArguments(): Args {
     const program = new Command()
         .name("ask")
@@ -162,7 +172,7 @@ export function showVersion(): void {
     console.log("Multi-provider LLM chat application for GenesisTools");
 }
 
-export function validateOptions(options: CLIOptions): { valid: boolean; errors: string[] } {
+export function validateOptions(options: CLIOptions): ValidationResult {
     const errors: string[] = [];
 
     // Validate temperature
@@ -253,7 +263,7 @@ export function shouldShowVersion(options: CLIOptions): boolean {
  *  -f json                → json to stdout
  *  -f markdown -o out.md  → markdown written to file
  */
-export function getOutputFormat(options: CLIOptions): { type: OutputFormat; filename?: string } | undefined {
+export function getOutputFormat(options: CLIOptions): OutputFormatResult | undefined {
     // -o implies file output
     if (options.output) {
         return { type: "file", filename: options.output };

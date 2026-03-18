@@ -16,6 +16,11 @@ interface GitHubRelease {
     html_url: string;
 }
 
+interface RepoIdentity {
+    owner: string;
+    repo: string;
+}
+
 interface ScriptOptions {
     owner: string;
     repo: string;
@@ -124,7 +129,7 @@ function generateMarkdown(releases: GitHubRelease[], owner: string, repo: string
     return headerContent + releasesContent;
 }
 
-function parseRepoArg(repoArg: string): { owner: string; repo: string } | null {
+function parseRepoArg(repoArg: string): RepoIdentity | null {
     // Accepts owner/repo or full github.com URL
     if (!repoArg) {
         return null;

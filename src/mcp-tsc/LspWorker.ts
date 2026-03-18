@@ -64,6 +64,16 @@ interface LspDiagnostic {
     message: string;
 }
 
+interface LspDiagnosticsNotification {
+    uri: string;
+    diagnostics: LspDiagnostic[];
+}
+
+interface QueueStats {
+    length: number;
+    isProcessing: boolean;
+}
+
 // Error types for classification
 export class LspError extends Error {
     constructor(
@@ -275,7 +285,7 @@ export class LspWorker {
             // Handle diagnostics notifications
             this.endpoint.on(
                 "textDocument/publishDiagnostics",
-                (params: { uri: string; diagnostics: LspDiagnostic[] }) => {
+                (params: LspDiagnosticsNotification) => {
                     this.handleDiagnosticsNotification(params);
                 }
             );
@@ -897,7 +907,7 @@ export class LspWorker {
     }
 
     // For testing/debugging
-    getQueueStats(): { length: number; isProcessing: boolean } {
+    getQueueStats(): QueueStats {
         return {
             length: this.requestQueue.length,
             isProcessing: this.requestQueue.isProcessing,

@@ -19,6 +19,11 @@ import { providerManager } from "@ask/providers/ProviderManager";
 import type { ChatConfig } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
 
+interface EngineWithRestore {
+    engine: ChatEngine;
+    restore: () => void;
+}
+
 const DEFAULT_SESSION_DIR = resolve(homedir(), ".genesis-tools/ai-chat/sessions");
 
 export class AIChat {
@@ -241,7 +246,7 @@ export class AIChat {
     /** Get a ChatEngine instance with optional per-call overrides.
      * Returns a restore function that resets the engine to its previous state.
      */
-    private _getEngine(override?: SendOptions["override"]): { engine: ChatEngine; restore: () => void } {
+    private _getEngine(override?: SendOptions["override"]): EngineWithRestore {
         if (!this._engine) {
             throw new Error("AIChat not initialized");
         }

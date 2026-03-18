@@ -42,6 +42,27 @@ interface PrepareImportFile {
     entries: StoredEntry[];
 }
 
+interface TimelogAddOptions {
+    from?: string;
+    to?: string;
+    name?: string;
+    entry: string;
+}
+
+interface TimelogRemoveOptions {
+    name: string;
+    id: string;
+}
+
+interface TimelogListOptions {
+    name: string;
+    format?: string;
+}
+
+interface TimelogClearOptions {
+    name: string;
+}
+
 // ============= Helpers =============
 
 const storage = new Storage("azure-devops");
@@ -83,7 +104,7 @@ function printEntry(entry: StoredEntry): void {
 
 // ============= Subcommand Actions =============
 
-async function handleAdd(options: { from?: string; to?: string; name?: string; entry: string }): Promise<void> {
+async function handleAdd(options: TimelogAddOptions): Promise<void> {
     const fileName = resolveFileName(options);
 
     // Parse and validate entry JSON
@@ -187,7 +208,7 @@ async function handleAdd(options: { from?: string; to?: string; name?: string; e
     printEntry(storedEntry);
 }
 
-async function handleRemove(options: { name: string; id: string }): Promise<void> {
+async function handleRemove(options: TimelogRemoveOptions): Promise<void> {
     const key = cacheKey(options.name);
 
     const updated = await storage.atomicUpdate<PrepareImportFile>(key, (current) => {
@@ -207,7 +228,7 @@ async function handleRemove(options: { name: string; id: string }): Promise<void
     console.log(`Entry ${options.id} removed. ${updated.entries.length} entries remaining.`);
 }
 
-async function handleList(options: { name: string; format?: string }): Promise<void> {
+async function handleList(options: TimelogListOptions): Promise<void> {
     const key = cacheKey(options.name);
     const data = await storage.getCacheFile<PrepareImportFile>(key, "30 days");
 
@@ -276,7 +297,7 @@ async function handleList(options: { name: string; format?: string }): Promise<v
     console.log(`\nGrand total: ${formatMinutes(grandTotal)}`);
 }
 
-async function handleClear(options: { name: string }): Promise<void> {
+async function handleClear(options: TimelogClearOptions): Promise<void> {
     const key = cacheKey(options.name);
     await storage.deleteCacheFile(key);
     console.log(`Prepare-import file "${options.name}" cleared.`);

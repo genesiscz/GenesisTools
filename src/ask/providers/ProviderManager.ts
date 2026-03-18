@@ -18,6 +18,11 @@ import { getLanguageModel } from "@ask/types";
 import type { AskConfig } from "@ask/types/config";
 import { generateText } from "ai";
 
+interface ModelMetadata {
+    id: string;
+    description?: string;
+}
+
 export class ProviderManager {
     private detectedProviders: Map<string, DetectedProvider> = new Map();
     private initialized = false;
@@ -598,7 +603,7 @@ export class ProviderManager {
         };
     }
 
-    private parseCapabilities(model: { id: string; description?: string }): string[] {
+    private parseCapabilities(model: ModelMetadata): string[] {
         const capabilities: string[] = ["chat"];
 
         if (model.description?.toLowerCase().includes("vision") || model.id.toLowerCase().includes("vision")) {

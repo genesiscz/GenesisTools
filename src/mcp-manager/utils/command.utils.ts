@@ -4,6 +4,16 @@ import { ExitPromptError } from "@inquirer/core";
 import { checkbox } from "@inquirer/prompts";
 import type { MCPProvider, UnifiedMCPConfig } from "./providers/types.js";
 
+interface ParsedCommand {
+    command: string;
+    args: string[];
+}
+
+interface KeyValuePair {
+    key: string;
+    value: string;
+}
+
 /**
  * Show help message for the mcp-manager tool
  */
@@ -101,7 +111,7 @@ Non-Interactive Examples (for scripts and AI assistants):
  * Parse a command string into command and args.
  * Example: "npx -y @modelcontextprotocol/server-github" -> { command: "npx", args: ["-y", "@modelcontextprotocol/server-github"] }
  */
-export function parseCommandString(commandString: string): { command: string; args: string[] } {
+export function parseCommandString(commandString: string): ParsedCommand {
     const parts = commandString.trim().split(/\s+/);
     if (parts.length === 0) {
         throw new Error("Command string cannot be empty");
@@ -118,7 +128,7 @@ export function parseCommandString(commandString: string): { command: string; ar
  * @param separator - The separator character (e.g., ":" or "=")
  * @returns The key-value pair, or null if invalid format
  */
-function parseSinglePair(input: string, separator: string): { key: string; value: string } | null {
+function parseSinglePair(input: string, separator: string): KeyValuePair | null {
     const str = input.trim();
     if (!str) {
         return null;

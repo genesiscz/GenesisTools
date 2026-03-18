@@ -5,6 +5,13 @@ import { type MarkdownRenderOptions, renderMarkdownToCli } from "@app/utils/mark
 import chokidar from "chokidar";
 import { Command, Option } from "commander";
 
+interface MarkdownCLIOptions {
+    watch?: boolean;
+    width?: number;
+    theme?: string;
+    color?: boolean;
+}
+
 const program = new Command();
 
 program
@@ -19,7 +26,7 @@ program
             .default("dark")
     )
     .option("--no-color", "Strip ANSI color codes from output")
-    .action((file?: string, opts?: { watch?: boolean; width?: number; theme?: string; color?: boolean }) => {
+    .action((file?: string, opts?: MarkdownCLIOptions) => {
         const renderOpts: MarkdownRenderOptions = {
             width: opts?.width && !Number.isNaN(opts.width) ? opts.width : undefined,
             theme: (opts?.theme as MarkdownRenderOptions["theme"]) || "dark",
