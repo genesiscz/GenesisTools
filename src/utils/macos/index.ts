@@ -19,6 +19,8 @@ export {
     icloudWriteBytes,
     onIcloudFilesChanged,
 } from "./icloud";
+// MacOS namespace
+export { MacOS } from "./MacOS";
 // NLP
 export {
     analyzeSentiment,
@@ -62,10 +64,9 @@ export {
     groupByLanguage,
     rankBySimilarity,
 } from "./text-analysis";
-export type { SpeakOptions } from "./tts";
+export type { SayConfig, SpeakOptions, VoiceInfo } from "./tts";
 // TTS
-export { listVoices, speak } from "./tts";
-
+export { getConfigForRead, getVoiceMap, listVoices, setConfig as setTtsConfig, speak } from "./tts";
 // Types
 export type {
     AuthAvailableResult,
@@ -102,3 +103,13 @@ export type {
     TagResult,
     TextItem,
 } from "./types";
+export type { TranscriptionResult, TranscriptSegment, VoiceMemo } from "./voice-memos";
+// Voice Memos
+export {
+    extractTranscript,
+    getMemo,
+    hasTranscript,
+    listMemos,
+    searchMemos,
+    VoiceMemosError,
+} from "./voice-memos";

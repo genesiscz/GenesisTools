@@ -180,3 +180,20 @@ ccusage
 vercel-skills
 .claude/settings.local.json
 .worktrees/
+
+# Audio/video files (never commit — voice memos, test artifacts, yt-dlp downloads)
+*.wav
+*.m4a
+*.qta
+*.mp3
+*.aac
+*.ogg
+*.flac
+*.wma
+*.opus
+*.webm
+*.mp4
+*.mov
+
+# HAR network captures
+*.har
