@@ -111,6 +111,24 @@ interface CommandPerformance {
     timestamp: Date;
 }
 
+interface MemoizedHeaderProps {
+    children: React.ReactNode;
+    sortBy: "cpu" | "pid" | "files";
+}
+
+interface MemoizedCellProps {
+    children: React.ReactNode;
+    column: number;
+}
+
+interface MemoizedNotificationsPanelProps {
+    notifications: Notification[];
+}
+
+interface MemoizedCommandPanelProps {
+    commandHistory: CommandPerformance[];
+}
+
 // Custom Table component using Ink's Box and Text
 // const Table: React.FC<{
 //     data: Array<Record<string, string>>;
@@ -147,7 +165,7 @@ const generateTableData = (processes: ProcessInfo[], selectedIndex: number) => {
 
 // Memoized header component
 const MemoizedHeader = React.memo(
-    ({ children, sortBy }: { children: React.ReactNode; sortBy: "cpu" | "pid" | "files" }) => {
+    ({ children, sortBy }: MemoizedHeaderProps) => {
         const headerText = String(children);
         let sortIndicator = "";
         let color = "blue";
@@ -173,7 +191,7 @@ const MemoizedHeader = React.memo(
 );
 
 // Memoized cell component
-const MemoizedCell = React.memo(({ children, column }: { children: React.ReactNode; column: number }) => {
+const MemoizedCell = React.memo(({ children, column }: MemoizedCellProps) => {
     return (
         <Text color={column === 0 ? "green" : column === 2 ? "yellow" : column === 4 ? "cyan" : undefined}>
             {children}
@@ -182,7 +200,7 @@ const MemoizedCell = React.memo(({ children, column }: { children: React.ReactNo
 });
 
 // Memoized notifications panel
-const MemoizedNotificationsPanel = React.memo(({ notifications }: { notifications: Notification[] }) => {
+const MemoizedNotificationsPanel = React.memo(({ notifications }: MemoizedNotificationsPanelProps) => {
     return (
         <Box flexDirection="column" width="25%" height="50" marginLeft={1} borderStyle="single">
             <Box marginBottom={1}>
@@ -204,7 +222,7 @@ const MemoizedNotificationsPanel = React.memo(({ notifications }: { notification
 });
 
 // Memoized command performance panel
-const MemoizedCommandPanel = React.memo(({ commandHistory }: { commandHistory: CommandPerformance[] }) => {
+const MemoizedCommandPanel = React.memo(({ commandHistory }: MemoizedCommandPanelProps) => {
     return (
         <Box flexDirection="column" width="25%" height="50%" marginLeft={1} borderStyle="single" overflow="hidden">
             <Box marginBottom={1}>
