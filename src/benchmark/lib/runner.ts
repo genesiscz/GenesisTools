@@ -2,8 +2,94 @@ import { existsSync } from "node:fs";
 import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import type { BenchmarkSuite, HyperfineOutput, HyperfineResult, RunOptions, SavedResult } from "@app/benchmark/types";
+import type { BenchmarkCommand, BenchmarkSuite, HyperfineOutput, HyperfineResult, RunOptions, SavedResult } from "@app/benchmark/types";
+import { captureEnv, formatEnvSummary } from "@app/benchmark/lib/env-capture";
 import { getResultPath } from "@app/benchmark/lib/results";
+
+/**
+ * Expand parameterized commands. For each command with {param} in cmd/label,
+ * generate one BenchmarkCommand per param value combination.
+ * CLI --param overrides filter to specific values.
+ */
+function expandParams(suite: BenchmarkSuite, paramOverrides?: string[]): BenchmarkCommand[] {
+    if (!suite.params || Object.keys(suite.params).length === 0) {
+        return suite.commands;
+    }
+
+    // Parse CLI overrides: ["variant=on", "size=small"] → { variant: ["on"], size: ["small"] }
+    const overrides = new Map<string, string[]>();
+
+    for (const p of paramOverrides ?? []) {
+        const eqIdx = p.indexOf("=");
+
+        if (eqIdx !== -1) {
+            const key = p.slice(0, eqIdx);
+            const val = p.slice(eqIdx + 1);
+            const existing = overrides.get(key) ?? [];
+            existing.push(val);
+            overrides.set(key, existing);
+        }
+    }
+
+    // Build effective param values: override > suite default
+    const paramEntries: Array<[string, string[]]> = [];
+
+    for (const [key, values] of Object.entries(suite.params)) {
+        const effective = overrides.get(key) ?? values;
+        paramEntries.push([key, effective]);
+    }
+
+    // Generate cartesian product of all param values
+    const combinations = cartesian(paramEntries);
+    const expanded: BenchmarkCommand[] = [];
+
+    for (const cmd of suite.commands) {
+        const hasParam = paramEntries.some(([key]) => cmd.cmd.includes(`{${key}}`));
+
+        if (!hasParam) {
+            expanded.push(cmd);
+            continue;
+        }
+
+        for (const combo of combinations) {
+            let label = cmd.label;
+            let cmdStr = cmd.cmd;
+            let prepare = cmd.prepare;
+
+            for (const [key, val] of combo) {
+                label = label.replaceAll(`{${key}}`, val);
+                cmdStr = cmdStr.replaceAll(`{${key}}`, val);
+
+                if (prepare) {
+                    prepare = prepare.replaceAll(`{${key}}`, val);
+                }
+            }
+
+            expanded.push({ ...cmd, label, cmd: cmdStr, prepare });
+        }
+    }
+
+    return expanded;
+}
+
+function cartesian(entries: Array<[string, string[]]>): Array<Array<[string, string]>> {
+    if (entries.length === 0) {
+        return [[]];
+    }
+
+    const [first, ...rest] = entries;
+    const [key, values] = first;
+    const restCombos = cartesian(rest);
+    const result: Array<Array<[string, string]>> = [];
+
+    for (const val of values) {
+        for (const combo of restCombos) {
+            result.push([[key, val], ...combo]);
+        }
+    }
+
+    return result;
+}
 
 async function ensureHyperfine(): Promise<boolean> {
     const proc = Bun.spawn(["which", "hyperfine"], { stdout: "pipe", stderr: "pipe" });
@@ -23,9 +109,10 @@ export async function runBenchmark(suite: BenchmarkSuite, opts: RunOptions = {})
         return null;
     }
 
-    // Filter commands if --only specified
-    let commands = suite.commands;
+    // Expand parameterized commands: {param} placeholders → one command per value
+    let commands = expandParams(suite, opts.param);
 
+    // Filter commands if --only specified
     if (opts.only) {
         commands = commands.filter((c) => c.label === opts.only);
 
@@ -136,12 +223,17 @@ export async function runBenchmark(suite: BenchmarkSuite, opts: RunOptions = {})
     const content = await Bun.file(resultPath).text();
     const output = SafeJSON.parse(content) as HyperfineOutput;
 
+    const env = await captureEnv();
+
     const saved: SavedResult = {
         suite: suite.name,
         date: new Date().toISOString(),
         results: output.results,
+        env,
     };
     await Bun.write(resultPath, SafeJSON.stringify(saved, null, 2));
+
+    p.log.step(pc.dim(formatEnvSummary(env)));
 
     return output.results;
 }

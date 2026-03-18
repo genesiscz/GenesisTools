@@ -74,6 +74,27 @@ export async function cmdAdd(name: string, commandPairs: string[], opts: AddOpti
         suite.cleanup = opts.cleanup;
     }
 
+    // Parse --param entries: "variant=on,off" → { variant: ["on", "off"] }
+    if (opts.param && opts.param.length > 0) {
+        const params: Record<string, string[]> = {};
+
+        for (const p of opts.param) {
+            const eqIdx = p.indexOf("=");
+
+            if (eqIdx === -1) {
+                continue;
+            }
+
+            const key = p.slice(0, eqIdx);
+            const values = p.slice(eqIdx + 1).split(",").map((v) => v.trim()).filter(Boolean);
+            params[key] = values;
+        }
+
+        if (Object.keys(params).length > 0) {
+            suite.params = params;
+        }
+    }
+
     const custom = await getCustomSuites();
     const existing = custom.findIndex((s) => s.name === name);
 

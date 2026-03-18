@@ -7,6 +7,7 @@ import pc from "picocolors";
 import { cmdAdd } from "@app/benchmark/commands/add";
 import { cmdHistory } from "@app/benchmark/commands/history";
 import { cmdList } from "@app/benchmark/commands/list";
+import { cmdMultiRun } from "@app/benchmark/commands/multi-run";
 import { cmdRemove } from "@app/benchmark/commands/remove";
 import { cmdRun } from "@app/benchmark/commands/run";
 import { displayComparison, displayResults } from "@app/benchmark/lib/display";
@@ -148,6 +149,12 @@ program
     )
     .option("--format <format>", "Output format: table (default), md, csv, json")
     .option("-c, --clipboard", "Copy formatted output to clipboard (use with --format)")
+    .option(
+        "--param <name=value>",
+        "Override parameter value for parameterized suites (repeatable, e.g. --param variant=on)",
+        collectPrepareFor,
+        []
+    )
     .action(async (suiteName: string | undefined, opts: RunOptions) => {
         if (suiteName) {
             await cmdRun(suiteName, opts);
@@ -169,6 +176,12 @@ program
     .option(
         "--prepare-for <label=cmd>",
         "Per-command prepare: runs before each timing run for that specific command (repeatable)",
+        collectPrepareFor,
+        []
+    )
+    .option(
+        "--param <name=val1,val2,...>",
+        "Define a parameter with values — commands use {name} placeholders (repeatable)",
         collectPrepareFor,
         []
     )
@@ -198,6 +211,17 @@ program
     .option("--limit <n>", "Maximum number of past runs to show (default: 20)", (v) => parseInt(v, 10))
     .action(async (suite: string, opts: { limit?: number }) => {
         await cmdHistory(suite, opts.limit ?? 20);
+    });
+
+program
+    .command("run")
+    .description("Run multiple suites sequentially: tools benchmark run startup notify --runs 1")
+    .argument("<suites...>", "Suite names to run")
+    .option("--runs <n>", "Number of timing runs", (v) => parseInt(v, 10))
+    .option("--warmup <n>", "Number of warmup runs", (v) => parseInt(v, 10))
+    .option("--no-warmup", "Skip warmup")
+    .action(async (suites: string[], opts: RunOptions) => {
+        await cmdMultiRun(suites, opts);
     });
 
 async function main(): Promise<void> {

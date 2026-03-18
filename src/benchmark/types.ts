@@ -16,6 +16,7 @@ export interface BenchmarkSuite {
     prepare?: string;    // --prepare (before each timing run, all commands)
     conclude?: string;   // --conclude (after each timing run, all commands)
     cleanup?: string;    // --cleanup (after all runs per command)
+    params?: Record<string, string[]>;  // { variant: ["on", "off"] } — expand {variant} in commands
 }
 
 export interface HyperfineResult {
@@ -34,10 +35,23 @@ export interface HyperfineOutput {
     results: HyperfineResult[];
 }
 
+export interface EnvSnapshot {
+    cpuModel: string;
+    cpuCores: number;
+    memoryTotalGB: number;
+    memoryFreeGB: number;
+    loadAvg: [number, number, number];
+    thermalPressure?: string;
+    gitSha?: string;
+    gitBranch?: string;
+    gitDirty?: boolean;
+}
+
 export interface SavedResult {
     suite: string;
     date: string;
     results: HyperfineResult[];
+    env?: EnvSnapshot;
 }
 
 export interface RunOptions {
@@ -52,6 +66,7 @@ export interface RunOptions {
     failThreshold?: number;   // exit 1 if any command regresses by more than N%
     format?: "table" | "md" | "csv" | "json";
     clipboard?: boolean;
+    param?: string[];  // CLI override: --param variant=on runs only that value
 }
 
 export interface AddOptions {
@@ -61,4 +76,5 @@ export interface AddOptions {
     prepare?: string;
     cleanup?: string;
     prepareFor?: string[];
+    param?: string[];  // --param variant=on,off — define parameter with comma-separated values
 }
