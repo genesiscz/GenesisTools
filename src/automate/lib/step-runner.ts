@@ -5,7 +5,7 @@ import { executeBuiltin, isBuiltinAction } from "./builtins.ts";
 import { resolveExpression, resolveParams } from "./expressions.ts";
 import type { StepContext } from "./registry.ts";
 import { resolveStepHandler } from "./registry.ts";
-import type { ExecutionContext, PresetStep, StepResult } from "./types.ts";
+import type { ExecutionContext, PresetStep, StepHandlerResult, StepResult } from "./types.ts";
 
 /**
  * Execute a single step.
@@ -18,7 +18,7 @@ export async function executeStep(
     step: PresetStep,
     ctx: ExecutionContext,
     options: { dryRun?: boolean; verbose?: boolean }
-): Promise<{ result: StepResult; jumpTo?: string }> {
+): Promise<StepHandlerResult> {
     // Dispatch built-in actions
     if (isBuiltinAction(step.action)) {
         if (options.dryRun) {

@@ -75,6 +75,12 @@ export interface StepResult {
     error?: string;
 }
 
+/** Result from a step handler, with optional jump target for branching */
+export interface StepHandlerResult {
+    result: StepResult;
+    jumpTo?: string;
+}
+
 /** Run options from CLI flags */
 export interface RunOptions {
     dryRun?: boolean;
