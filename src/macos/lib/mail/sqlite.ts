@@ -2,6 +2,8 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import logger from "@app/logger";
 import { ENVELOPE_INDEX_PATH } from "@app/macos/lib/mail/constants";
+import { detectTerminalApp } from "@app/utils/terminal";
+import { MacOS } from "@app/utils/macos/MacOS";
 import type {
     MailAttachment,
     MailMessageRow,
@@ -34,7 +36,29 @@ export function getDatabase(): Database {
     }
 
     logger.debug(`Opening Mail database at ${ENVELOPE_INDEX_PATH} (readonly)`);
-    _db = new Database(ENVELOPE_INDEX_PATH, { readonly: true });
+
+    try {
+        _db = new Database(ENVELOPE_INDEX_PATH, { readonly: true });
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+
+        if (message.includes("authorization denied") || message.includes("not authorized") || message.includes("EPERM")) {
+            const termApp = detectTerminalApp();
+
+            MacOS.settings.openFullDiskAccess();
+
+            throw new Error(
+                [
+                    "Full Disk Access is required to read the Mail database.",
+                    `Opening System Settings → Privacy & Security → Full Disk Access...`,
+                    `Add "${termApp}" to the list, then restart your terminal.`,
+                ].join("\n")
+            );
+        }
+
+        throw err;
+    }
+
     return _db;
 }
 
