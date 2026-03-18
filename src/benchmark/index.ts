@@ -178,7 +178,7 @@ program
 
 program
     .command("add")
-    .description('Add a custom benchmark suite: tools benchmark add "name" "label:cmd" "label2:cmd2"')
+    .description('Add a benchmark suite (1+ commands): tools benchmark add "name" "label:cmd" ["label2:cmd2"]')
     .argument("<name>", "Suite name")
     .argument("<commands...>", 'Commands in "label:command" format')
     .option("--runs <n>", "Default number of timing runs for this suite", (v) => parseInt(v, 10))

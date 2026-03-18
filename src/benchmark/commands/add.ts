@@ -47,11 +47,6 @@ export async function cmdAdd(name: string, commandPairs: string[], opts: AddOpti
         commands.push(cmd);
     }
 
-    if (commands.length < 2) {
-        p.log.error("A benchmark suite needs at least 2 commands to compare.");
-        process.exit(1);
-    }
-
     const suite: BenchmarkSuite = { name, commands };
 
     if (opts.runs) {
