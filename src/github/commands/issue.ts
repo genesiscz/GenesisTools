@@ -1,7 +1,7 @@
 // Issue command implementation
 
 import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
     getComments as getCachedComments,
     getCommentCount,
@@ -19,6 +19,7 @@ import { calculateStats, formatIssue } from "@app/github/lib/output";
 import { detectCrossReferences, findReplyTarget, processQuotes } from "@app/github/lib/quotes";
 import type {
     CommentData,
+    CommentPreview,
     CommentRecord,
     GitHubComment,
     GitHubIssue,
@@ -221,7 +222,7 @@ async function fetchLinkedIssue(owner: string, repo: string, number: number): Pr
 /**
  * Convert GitHub comment to our format
  */
-function toCommentData(comment: GitHubComment, previousComments: { id: number; body: string }[]): CommentData {
+function toCommentData(comment: GitHubComment, previousComments: CommentPreview[]): CommentData {
     const username = comment.user?.login || "unknown";
     const botFlag = isBot(username, comment.user?.type);
 
@@ -466,7 +467,7 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
             });
 
             // Convert and store
-            const previousComments: { id: number; body: string }[] = [];
+            const previousComments: CommentPreview[] = [];
             const commentData: CommentData[] = [];
 
             for (const apiComment of apiComments) {
@@ -610,23 +611,30 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
     const format = options.format || "ai";
     verbose(options, `Output format: ${format}`);
 
-    // For AI format: auto-save full content and show summary
     if (format === "ai") {
-        // Save full markdown content to file
-        const localDir = options.output ? join(options.output, "..") : join(process.cwd(), ".claude", "github");
-        if (!existsSync(localDir)) {
-            mkdirSync(localDir, { recursive: true });
+        const saveTarget = options.output || (options.save !== undefined ? options.save : undefined);
+
+        if (saveTarget) {
+            // Resolve file path
+            const filepath = options.output
+                ? options.output
+                : join(
+                      typeof options.save === "string" ? options.save : join(process.cwd(), ".claude", "github"),
+                      `${owner}-${repo}-${number}.md`
+                  );
+            const dir = dirname(filepath);
+            if (dir && !existsSync(dir)) {
+                mkdirSync(dir, { recursive: true });
+            }
+            const fullContent = formatIssue(outputData, "md", { noIndex: options.noIndex });
+            await Bun.write(filepath, fullContent);
+            verbose(options, `Full content saved to: ${filepath}`);
+            const summary = formatIssue(outputData, "ai", { noIndex: options.noIndex, filePath: filepath });
+            console.log(summary);
+        } else {
+            // No save — print full markdown to stdout
+            console.log(formatIssue(outputData, "md", { noIndex: options.noIndex }));
         }
-        const filename = options.output || join(localDir, `${owner}-${repo}-${number}.md`);
-
-        // Generate full markdown content for the file
-        const fullContent = formatIssue(outputData, "md", { noIndex: options.noIndex });
-        await Bun.write(filename, fullContent);
-        verbose(options, `Full content saved to: ${filename}`);
-
-        // Generate AI summary for console output
-        const summary = formatIssue(outputData, "ai", { noIndex: options.noIndex, filePath: filename });
-        console.log(summary);
     } else {
         // For md and json formats
         const output = formatIssue(outputData, format, { noIndex: options.noIndex });
@@ -634,8 +642,8 @@ async function issueSingleCommand(input: string, options: IssueCommandOptions): 
         if (options.output) {
             await Bun.write(options.output, output);
             console.log(chalk.green(`✔ Output written to ${options.output}`));
-        } else if (options.saveLocally) {
-            const localDir = join(process.cwd(), ".claude", "github");
+        } else if (options.save !== undefined) {
+            const localDir = typeof options.save === "string" ? options.save : join(process.cwd(), ".claude", "github");
             if (!existsSync(localDir)) {
                 mkdirSync(localDir, { recursive: true });
             }
@@ -689,7 +697,7 @@ export function createIssueCommand(): Command {
         .option("--no-resolve-refs", "Skip resolving linked issues (auto by default)")
         .option("--full", "Force full refetch")
         .option("--refresh", "Update cache with new data")
-        .option("--save-locally", "Save to .claude/github/")
+        .option("--save [path]", "Save to file (optional dir, defaults to .claude/github/)")
         .option("-f, --format <format>", "Output format: ai|md|json", "ai")
         .option("-o, --output <file>", "Custom output path")
         .option("--stats", "Show comment statistics")

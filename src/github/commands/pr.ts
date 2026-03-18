@@ -359,8 +359,8 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
     if (options.output) {
         await Bun.write(options.output, output);
         console.log(chalk.green(`✔ Output written to ${options.output}`));
-    } else if (options.saveLocally) {
-        const localDir = join(process.cwd(), ".claude", "github");
+    } else if (options.save !== undefined) {
+        const localDir = typeof options.save === "string" ? options.save : join(process.cwd(), ".claude", "github");
         if (!existsSync(localDir)) {
             mkdirSync(localDir, { recursive: true });
         }
@@ -412,7 +412,7 @@ export function createPRCommand(): Command {
         .option("--resolve-refs", "Fetch linked issues")
         .option("--full", "Force full refetch")
         .option("--refresh", "Update cache with new data")
-        .option("--save-locally", "Save to .claude/github/")
+        .option("--save [path]", "Save to file (optional dir, defaults to .claude/github/)")
         .option("-f, --format <format>", "Output format: ai|md|json", "ai")
         .option("-o, --output <file>", "Custom output path")
         .option("--stats", "Show comment statistics")
