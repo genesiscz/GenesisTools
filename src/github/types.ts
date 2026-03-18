@@ -207,12 +207,17 @@ export interface IssueCommandOptions {
     noResolveRefs?: boolean;
     full?: boolean;
     refresh?: boolean;
-    saveLocally?: boolean;
+    save?: string | boolean;
     format?: "ai" | "md" | "json";
     output?: string;
     stats?: boolean;
     noIndex?: boolean;
     verbose?: boolean;
+}
+
+export interface CommentPreview {
+    id: number;
+    body: string;
 }
 
 export interface PRCommandOptions extends IssueCommandOptions {
