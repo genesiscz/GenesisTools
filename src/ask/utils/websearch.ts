@@ -1,6 +1,12 @@
 import logger from "@app/logger";
 import type { SearchResult, WebSearchOptions } from "@ask/types";
 
+interface WebSearchParams {
+    query: string;
+    numResults?: number;
+    safeSearch?: string;
+}
+
 export class WebSearchTool {
     private apiKey?: string;
     private baseURL = "https://api.search.brave.com/res/v1";
@@ -175,7 +181,7 @@ export class WebSearchTool {
                     optional: true,
                 },
             },
-            execute: async (params: { query: string; numResults?: number; safeSearch?: string }) => {
+            execute: async (params: WebSearchParams) => {
                 try {
                     const results = await this.searchWeb(params.query, {
                         numResults: params.numResults,
