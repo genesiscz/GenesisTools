@@ -4,9 +4,6 @@ import { join } from "node:path";
 /** Path to the Mail.app Envelope Index SQLite database */
 export const ENVELOPE_INDEX_PATH = join(homedir(), "Library/Mail/V10/MailData/Envelope Index");
 
-/** Temp directory prefix for copied database */
-export const TEMP_DB_PREFIX = "MailEnvelopeIndex";
-
 /**
  * Parse a mailbox URL into account identifier and mailbox name.
  * Examples:

@@ -1,9 +1,7 @@
 import { Database } from "bun:sqlite";
-import { copyFileSync, existsSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
 import logger from "@app/logger";
-import { ENVELOPE_INDEX_PATH, TEMP_DB_PREFIX } from "@app/macos/lib/mail/constants";
+import { ENVELOPE_INDEX_PATH } from "@app/macos/lib/mail/constants";
 import type {
     MailAttachment,
     MailMessageRow,
@@ -12,7 +10,6 @@ import type {
     SearchOptions,
 } from "@app/macos/lib/mail/types";
 
-let _tempDbPath: string | null = null;
 let _db: Database | null = null;
 
 /** Escape LIKE metacharacters so user input is treated as literal text */
@@ -21,8 +18,8 @@ function escapeLike(s: string): string {
 }
 
 /**
- * Copy the Envelope Index to a temp file and open it.
- * Reuses the same copy within a single CLI invocation.
+ * Open the Envelope Index directly in readonly mode.
+ * Reuses the same connection within a single CLI invocation.
  */
 export function getDatabase(): Database {
     if (_db) {
@@ -36,41 +33,16 @@ export function getDatabase(): Database {
         );
     }
 
-    _tempDbPath = join(tmpdir(), `${TEMP_DB_PREFIX}-${Date.now()}.sqlite`);
-    logger.debug(`Copying Mail database to ${_tempDbPath}`);
-    copyFileSync(ENVELOPE_INDEX_PATH, _tempDbPath);
-
-    // Also copy WAL and SHM if they exist (for consistency)
-    const walPath = `${ENVELOPE_INDEX_PATH}-wal`;
-    const shmPath = `${ENVELOPE_INDEX_PATH}-shm`;
-    if (existsSync(walPath)) {
-        copyFileSync(walPath, `${_tempDbPath}-wal`);
-    }
-    if (existsSync(shmPath)) {
-        copyFileSync(shmPath, `${_tempDbPath}-shm`);
-    }
-
-    _db = new Database(_tempDbPath, { readonly: true });
+    logger.debug(`Opening Mail database at ${ENVELOPE_INDEX_PATH} (readonly)`);
+    _db = new Database(ENVELOPE_INDEX_PATH, { readonly: true });
     return _db;
 }
 
-/** Clean up the temp database file */
+/** Close the database connection */
 export function cleanup(): void {
     if (_db) {
         _db.close();
         _db = null;
-    }
-    if (_tempDbPath) {
-        try {
-            unlinkSync(_tempDbPath);
-        } catch {}
-        try {
-            unlinkSync(`${_tempDbPath}-wal`);
-        } catch {}
-        try {
-            unlinkSync(`${_tempDbPath}-shm`);
-        } catch {}
-        _tempDbPath = null;
     }
 }
 
