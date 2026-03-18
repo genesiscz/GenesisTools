@@ -5,6 +5,8 @@ type Reviver = (key: string | number, value: unknown) => unknown;
 type ParseOptions = {
     jsonl?: boolean;
     strict?: boolean;
+    /** Skip comment preservation — avoids boxing primitives (Boolean{}, String{}, Number{}) while still supporting comment-tolerant parsing */
+    unbox?: boolean;
     reviver?: Reviver | null;
 };
 
@@ -27,17 +29,20 @@ export const SafeJSON = {
         if (
             reviverOrOptions &&
             typeof reviverOrOptions === "object" &&
-            ("jsonl" in reviverOrOptions || "strict" in reviverOrOptions)
+            ("jsonl" in reviverOrOptions || "strict" in reviverOrOptions || "unbox" in reviverOrOptions || "reviver" in reviverOrOptions)
         ) {
             const options = reviverOrOptions as ParseOptions;
+
             if (options.jsonl || options.strict) {
                 // biome-ignore lint/style/noRestrictedGlobals: intentional strict-mode fallback to native JSON.parse
                 return JSON.parse(text, options.reviver ?? undefined);
             }
-            return parse(text, options.reviver);
+
+            // comment-json's 3rd arg `no_comments` skips primitive boxing at the source
+            return parse(text, options.reviver, options.unbox);
         }
         // Legacy: reviver function or null
-        return parse(text, reviverOrOptions as Reviver | null);
+        return parse(text, typeof reviverOrOptions === "function" ? reviverOrOptions : null);
     },
     // biome-ignore lint/suspicious/noExplicitAny: match native JSON.stringify parameter types
     stringify: (value: any, replacerOrOptions?: any, space?: string | number): string => {

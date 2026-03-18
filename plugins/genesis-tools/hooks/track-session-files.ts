@@ -11,7 +11,9 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { SafeJSON } from "../../../src/utils/json";
+
+// biome-ignore lint/style/noRestrictedGlobals: standalone hook script — cannot import @app/utils/json
+const SafeJSON = JSON;
 
 interface HookInput {
     session_id: string;
