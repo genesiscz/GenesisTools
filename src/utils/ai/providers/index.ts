@@ -1,0 +1,80 @@
+import type { AIConfig } from "../AIConfig";
+import type { AIProvider, AIProviderType, AITask } from "../types";
+import { AICloudProvider } from "./AICloudProvider";
+import { AIDarwinKitProvider } from "./AIDarwinKitProvider";
+import { AILocalProvider } from "./AILocalProvider";
+
+const providers = new Map<AIProviderType, AIProvider>();
+
+export function getProvider(type: AIProviderType): AIProvider {
+    const existing = providers.get(type);
+
+    if (existing) {
+        return existing;
+    }
+
+    let provider: AIProvider;
+
+    switch (type) {
+        case "cloud":
+            provider = new AICloudProvider();
+            break;
+        case "local-hf":
+            provider = new AILocalProvider();
+            break;
+        case "darwinkit":
+            provider = new AIDarwinKitProvider();
+            break;
+        default:
+            throw new Error(`Unknown provider type: ${type}`);
+    }
+
+    providers.set(type, provider);
+    return provider;
+}
+
+export async function getProviderForTask(task: AITask, config: AIConfig): Promise<AIProvider> {
+    const preferred = config.getProvider(task);
+    const provider = getProvider(preferred);
+
+    if (provider.supports(task) && (await provider.isAvailable())) {
+        return provider;
+    }
+
+    // Fallback order: cloud -> local-hf -> darwinkit
+    const fallbackOrder: AIProviderType[] = ["cloud", "local-hf", "darwinkit"];
+
+    for (const type of fallbackOrder) {
+        if (type === preferred) {
+            continue;
+        }
+
+        const fallback = getProvider(type);
+
+        if (fallback.supports(task) && (await fallback.isAvailable())) {
+            return fallback;
+        }
+    }
+
+    throw new Error(
+        `No available provider supports task "${task}". ` +
+            `Preferred: ${preferred}. Tried fallbacks: ${fallbackOrder.join(", ")}.`
+    );
+}
+
+export function getAllProviders(): AIProvider[] {
+    const types: AIProviderType[] = ["cloud", "local-hf", "darwinkit"];
+    return types.map((type) => getProvider(type));
+}
+
+export function disposeAll(): void {
+    for (const provider of providers.values()) {
+        provider.dispose?.();
+    }
+
+    providers.clear();
+}
+
+export { AICloudProvider } from "./AICloudProvider";
+export { AIDarwinKitProvider } from "./AIDarwinKitProvider";
+export { AILocalProvider } from "./AILocalProvider";
