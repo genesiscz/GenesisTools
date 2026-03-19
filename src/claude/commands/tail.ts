@@ -298,15 +298,18 @@ async function resolveIncludeSpec(opts: TailOptions): Promise<IncludeSpec> {
         return IncludeSpec.parse(opts.include);
     }
 
-    if (opts.interactive) {
-        return await runInteractiveSetup();
-    }
-
     if (opts.raw) {
         return IncludeSpec.defaults();
     }
 
-    // Default: use defaults (no interactive prompt unless -i)
+    if (opts.interactive) {
+        return await runInteractiveSetup();
+    }
+
+    if (opts.follow && process.stdout.isTTY) {
+        return await runInteractiveSetup();
+    }
+
     return IncludeSpec.defaults();
 }
 

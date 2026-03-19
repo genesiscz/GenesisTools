@@ -1,20 +1,28 @@
-import { closeSync, type FSWatcher, openSync, readSync, statSync, watch } from "node:fs";
+import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { parseJsonl, parseJsonlChunk } from "@app/utils/jsonl";
-import type { AssistantMessage, ConversationMessage } from "./types";
+import { FileWatcher } from "@app/utils/storage/fs";
+import type { ConversationMessage } from "./types";
+
+/** Shape of the shorthand "A" variant that some JSONL sessions use for assistant. */
+interface ShorthandAssistant {
+    type: "A";
+    message?: { stop_reason?: string | null };
+}
 
 function isAssistantEndTurn(record: ConversationMessage): boolean {
     if (record.type === "assistant") {
-        return (record as AssistantMessage).message?.stop_reason === "end_turn";
+        return record.message?.stop_reason === "end_turn";
     }
 
-    // "A" is a shorthand for "assistant" in some JSONL variants
-    const raw = record as unknown as { type: string; message?: { stop_reason?: string } };
+    // parseJsonlChunk casts to ConversationMessage, but some sessions use
+    // shorthand type "A" for assistant — falls outside the discriminated union.
+    const raw = record as unknown as ShorthandAssistant;
 
-    if (raw.type === "A") {
-        return raw.message?.stop_reason === "end_turn";
+    if (raw.type !== "A") {
+        return false;
     }
 
-    return false;
+    return raw.message?.stop_reason === "end_turn";
 }
 
 interface TailerOptions {
@@ -32,25 +40,11 @@ interface TailerOptions {
 
 /**
  * Streams JSONL records from a Claude session/agent file.
- *
- * Uses fs.watch for instant notifications + 300ms setInterval as safety fallback.
- * Handles partial lines via remainder buffering.
- *
- * Architecture:
- *   fs.watch + poll fallback
- *       | onData(newBytes)
- *       v
- *   parseJsonlChunk<ConversationMessage>(newBytes, remainder)
- *       | values[]
- *       v
- *   emit parsed records via onRecord()
+ * Composes FileWatcher for fs.watch + poll fallback, adds JSONL parsing on top.
  */
 export class ClaudeSessionTailer {
-    private offset = 0;
     private remainder: Buffer<ArrayBuffer> = Buffer.alloc(0);
-    private watcher: FSWatcher | null = null;
-    private pollInterval: ReturnType<typeof setInterval> | null = null;
-    private checkScheduled = false;
+    private watcher: FileWatcher | null = null;
 
     private newTurnCount = 0;
     private newCallCount = 0;
@@ -66,20 +60,14 @@ export class ClaudeSessionTailer {
             return;
         }
 
-        this.offset = statSync(this.options.filePath).size;
         this.remainder = Buffer.alloc(0);
 
-        this.watcher = watch(this.options.filePath, () => {
-            if (!this.checkScheduled) {
-                this.checkScheduled = true;
-                queueMicrotask(() => {
-                    this.checkScheduled = false;
-                    this.checkForNewData();
-                });
-            }
+        this.watcher = new FileWatcher({
+            filePath: this.options.filePath,
+            onData: (newBytes) => this.handleNewData(newBytes),
         });
 
-        this.pollInterval = setInterval(() => this.checkForNewData(), 300);
+        this.watcher.start();
     }
 
     stop(): void {
@@ -88,13 +76,8 @@ export class ClaudeSessionTailer {
         }
 
         this.stopped = true;
-        this.watcher?.close();
+        this.watcher?.stop();
         this.watcher = null;
-
-        if (this.pollInterval) {
-            clearInterval(this.pollInterval);
-            this.pollInterval = null;
-        }
 
         if (this.staleTimer) {
             clearTimeout(this.staleTimer);
@@ -103,41 +86,13 @@ export class ClaudeSessionTailer {
     }
 
     isActive(): boolean {
-        try {
-            const mtime = statSync(this.options.filePath).mtimeMs;
-            return Date.now() - mtime < 10_000;
-        } catch {
-            return false;
-        }
+        return this.watcher?.isActive() ?? false;
     }
 
-    private checkForNewData(): void {
+    private handleNewData(newBytes: Buffer): void {
         if (this.stopped) {
             return;
         }
-
-        let currentSize: number;
-
-        try {
-            currentSize = statSync(this.options.filePath).size;
-        } catch {
-            return;
-        }
-
-        if (currentSize < this.offset) {
-            this.offset = 0;
-            this.remainder = Buffer.alloc(0);
-        }
-
-        if (currentSize <= this.offset) {
-            return;
-        }
-
-        const fd = openSync(this.options.filePath, "r");
-        const newBytes = Buffer.alloc(currentSize - this.offset);
-        readSync(fd, newBytes, 0, newBytes.length, this.offset);
-        closeSync(fd);
-        this.offset = currentSize;
 
         const result = parseJsonlChunk<ConversationMessage>(newBytes, this.remainder);
         this.remainder = result.remainder;
@@ -161,9 +116,7 @@ export class ClaudeSessionTailer {
 
         this.newCallCount++;
 
-        const isEndTurn = isAssistantEndTurn(record);
-
-        if (isEndTurn) {
+        if (isAssistantEndTurn(record)) {
             this.scheduleStaleCheck();
         }
     }

@@ -8,8 +8,14 @@ export interface JsonlParseResult<T = unknown> {
 }
 
 const hasBunJsonl = typeof Bun !== "undefined" && typeof Bun.JSONL?.parseChunk === "function";
+let warnedFallback = false;
 
-if (!hasBunJsonl) {
+function warnFallback(): void {
+    if (warnedFallback) {
+        return;
+    }
+
+    warnedFallback = true;
     console.error(
         "[jsonl] Bun.JSONL not available — using slower JS fallback.\n" +
             "        Run `bun upgrade` to get native C++ JSONL parsing (requires Bun ≥1.3.6).\n"
@@ -34,6 +40,7 @@ export function parseJsonlChunk<T = unknown>(data: Buffer, existingRemainder?: B
         };
     }
 
+    warnFallback();
     return parseJsonlChunkFallback<T>(combined);
 }
 
@@ -46,6 +53,7 @@ export function parseJsonl<T = unknown>(data: Buffer | string): T[] {
         return Bun.JSONL.parse(buf) as T[];
     }
 
+    warnFallback();
     return parseJsonlFallback<T>(data);
 }
 

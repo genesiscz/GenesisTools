@@ -1,18 +1,16 @@
 import { createWriteStream, type WriteStream } from "node:fs";
+import { SafeJSON } from "@app/utils/json";
 import pc from "picocolors";
 import type { IncludeSpec } from "./cli/dsl";
 import type { TailTarget } from "./session.types";
 import type {
     AssistantMessage,
-    AssistantMessageContent,
     ConversationMessage,
     SubagentMessage,
     TextBlock,
-    ThinkingBlock,
     ToolResultBlock,
     ToolUseBlock,
     UserMessage,
-    UserMessageContent,
 } from "./types";
 
 interface FormatterOptions {
@@ -95,8 +93,6 @@ function extractToolResultText(block: ToolResultBlock): string {
     return "";
 }
 
-import { SafeJSON } from "@app/utils/json";
-
 /**
  * Formats JSONL records into colorized terminal output.
  * Handles agent bordered sections, content truncation, and dual output.
@@ -124,13 +120,13 @@ export class ClaudeSessionFormatter {
 
         switch (record.type) {
             case "user":
-                this.formatUserMessage(record as UserMessage, timestamp);
+                this.formatUserMessage(record, timestamp);
                 break;
             case "assistant":
-                this.formatAssistantMessage(record as AssistantMessage, timestamp);
+                this.formatAssistantMessage(record, timestamp);
                 break;
             case "subagent":
-                this.formatSubagentMessage(record as SubagentMessage, timestamp);
+                this.formatSubagentMessage(record, timestamp);
                 break;
             case "system":
                 break;
@@ -208,19 +204,18 @@ export class ClaudeSessionFormatter {
 
             for (const block of content) {
                 if (block.type === "text") {
-                    textParts.push((block as TextBlock).text);
+                    textParts.push(block.text);
                 }
             }
 
             text = textParts.join("\n");
 
-            // Also emit tool results if included
             if (this.options.includeSpec.shouldShow("tools:out")) {
                 for (const block of content) {
                     if (block.type === "tool_result") {
-                        const result = extractToolResultText(block as ToolResultBlock);
+                        const result = extractToolResultText(block);
                         const maxChars = this.options.includeSpec.truncationLength("tools:out");
-                        const isError = (block as ToolResultBlock).is_error;
+                        const isError = block.is_error;
 
                         if (result) {
                             const truncated = truncate(result.trim(), maxChars);
@@ -265,7 +260,7 @@ export class ClaudeSessionFormatter {
 
         for (const block of blocks) {
             if (block.type === "thinking" && this.options.includeSpec.shouldShow("thinking")) {
-                const thinking = (block as ThinkingBlock).thinking.trim();
+                const thinking = block.thinking.trim();
 
                 if (thinking) {
                     const firstLine = thinking.split("\n")[0];
@@ -277,7 +272,7 @@ export class ClaudeSessionFormatter {
             }
 
             if (block.type === "text") {
-                const text = (block as TextBlock).text.trim();
+                const text = block.text.trim();
 
                 if (text) {
                     hasTextOutput = true;
@@ -309,17 +304,16 @@ export class ClaudeSessionFormatter {
             }
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("tools:in")) {
-                const tool = block as ToolUseBlock;
-                const inputSummary = extractToolInputSummary(tool);
+                const inputSummary = extractToolInputSummary(block);
                 const maxChars = this.options.includeSpec.truncationLength("tools:in");
                 const truncated = truncate(inputSummary, maxChars);
 
                 if (this.options.colors) {
                     this.writeLine(
-                        `${pc.dim(hasTextOutput ? "        " : time)}   ${pc.dim(`[${tool.name}]`)} ${pc.dim(truncated)}`
+                        `${pc.dim(hasTextOutput ? "        " : time)}   ${pc.dim(`[${block.name}]`)} ${pc.dim(truncated)}`
                     );
                 } else {
-                    this.writeLine(`${hasTextOutput ? "        " : time}   [${tool.name}] ${truncated}`);
+                    this.writeLine(`${hasTextOutput ? "        " : time}   [${block.name}] ${truncated}`);
                 }
             }
         }
@@ -328,13 +322,14 @@ export class ClaudeSessionFormatter {
     private formatSubagentMessage(msg: SubagentMessage, timestamp: string): void {
         const agentId = msg.agentId || "unknown";
         const time = formatTime(timestamp);
+        const message = msg.message;
 
-        if (msg.role === "user") {
+        if (message.role === "user") {
             if (!this.options.includeSpec.shouldShow("agents:input")) {
                 return;
             }
 
-            const content = (msg.message as UserMessageContent).content;
+            const content = message.content;
             let text = "";
 
             if (typeof content === "string") {
@@ -350,13 +345,11 @@ export class ClaudeSessionFormatter {
                 return;
             }
 
-            // Open agent section if needed
             this.openAgentSection(agentId, text.trim().split("\n")[0], timestamp);
             return;
         }
 
-        // Assistant role — agent response
-        const assistantContent = (msg.message as AssistantMessageContent).content;
+        const assistantContent = message.content;
 
         if (!Array.isArray(assistantContent)) {
             return;
@@ -367,7 +360,7 @@ export class ClaudeSessionFormatter {
 
         for (const block of assistantContent) {
             if (block.type === "thinking" && this.options.includeSpec.shouldShow("agents:thinking")) {
-                const thinking = (block as ThinkingBlock).thinking.trim();
+                const thinking = block.thinking.trim();
 
                 if (thinking) {
                     const firstLine = thinking.split("\n")[0];
@@ -382,7 +375,7 @@ export class ClaudeSessionFormatter {
                     continue;
                 }
 
-                const text = (block as TextBlock).text.trim();
+                const text = block.text.trim();
 
                 if (text) {
                     const firstLine = text.split("\n")[0];
@@ -396,21 +389,19 @@ export class ClaudeSessionFormatter {
             }
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("agents:tools:in")) {
-                const tool = block as ToolUseBlock;
-                const inputSummary = extractToolInputSummary(tool);
+                const inputSummary = extractToolInputSummary(block);
                 const maxChars = this.options.includeSpec.truncationLength("agents:tools:in");
                 const truncated = truncate(inputSummary, maxChars);
 
                 if (this.options.colors) {
-                    this.writeLine(`${prefix}${pc.dim(`  [${tool.name}]`)} ${pc.dim(truncated)}`);
+                    this.writeLine(`${prefix}${pc.dim(`  [${block.name}]`)} ${pc.dim(truncated)}`);
                 } else {
-                    this.writeLine(`${prefix}  [${tool.name}] ${truncated}`);
+                    this.writeLine(`${prefix}  [${block.name}] ${truncated}`);
                 }
             }
         }
 
-        // Check for agent completion
-        const stopReason = (msg.message as AssistantMessageContent).stop_reason;
+        const stopReason = message.stop_reason;
 
         if (stopReason === "end_turn" && this.activeAgentId === agentId) {
             this.closeAgentSection();
