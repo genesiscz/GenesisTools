@@ -86,7 +86,7 @@ export function registerTailCommand(program: Command): void {
                 });
             }
 
-            const lastTurns = opts.lastCalls ? undefined : (opts.lastTurns ? Number.parseInt(opts.lastTurns, 10) : 5);
+            const lastTurns = opts.lastCalls ? undefined : opts.lastTurns ? Number.parseInt(opts.lastTurns, 10) : 5;
             const lastCalls = opts.lastCalls ? Number.parseInt(opts.lastCalls, 10) : undefined;
 
             const tailer = new ClaudeSessionTailer({

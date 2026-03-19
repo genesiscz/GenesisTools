@@ -12,7 +12,7 @@
  * ```
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, dirname, resolve, sep } from "node:path";
 import { SafeJSON } from "@app/utils/json";
@@ -56,15 +56,15 @@ import type {
 
 // Re-export types and utils for backward compatibility
 export type {
-    ExtractTextOptions,
-    PromptContentOptions,
-    PreparedContent,
-    SessionStats,
-    SessionInfo,
-    SessionDiscoveryOptions,
-    ToolCallSummary,
-    TailTarget,
     AgentMeta,
+    ExtractTextOptions,
+    PreparedContent,
+    PromptContentOptions,
+    SessionDiscoveryOptions,
+    SessionInfo,
+    SessionStats,
+    TailTarget,
+    ToolCallSummary,
 } from "./session.types";
 export {
     extractFilePathFromInput,
@@ -80,6 +80,7 @@ export {
 } from "./session.utils";
 
 import type {
+    AgentMeta,
     ExtractTextOptions,
     PreparedContent,
     PromptContentOptions,
@@ -88,7 +89,6 @@ import type {
     SessionStats,
     TailTarget,
     ToolCallSummary,
-    AgentMeta,
 } from "./session.types";
 
 /**
@@ -318,11 +318,7 @@ export class ClaudeSession {
      *
      * @returns Array of `TailTarget` sorted by file mtime (newest first).
      */
-    static findSubagents(options: {
-        query?: string;
-        project?: string;
-        sessionId?: string;
-    } = {}): TailTarget[] {
+    static findSubagents(options: { query?: string; project?: string; sessionId?: string } = {}): TailTarget[] {
         const { query, project, sessionId } = options;
 
         const baseDir = project

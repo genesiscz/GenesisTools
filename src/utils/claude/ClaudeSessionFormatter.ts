@@ -176,9 +176,7 @@ export class ClaudeSessionFormatter {
 
         this.writeLine(header);
         this.writeLine(
-            c
-                ? `${pc.cyan("│")} Including: ${includeSpec.describe()}`
-                : `│ Including: ${includeSpec.describe()}`
+            c ? `${pc.cyan("│")} Including: ${includeSpec.describe()}` : `│ Including: ${includeSpec.describe()}`
         );
         this.writeLine(
             c
@@ -228,11 +226,7 @@ export class ClaudeSessionFormatter {
                             const truncated = truncate(result.trim(), maxChars);
                             const prefix = isError ? "  ✗ " : "  → ";
                             const line = `${prefix}${truncated}`;
-                            const formatted = this.options.colors
-                                ? isError
-                                    ? pc.red(line)
-                                    : pc.dim(line)
-                                : line;
+                            const formatted = this.options.colors ? (isError ? pc.red(line) : pc.dim(line)) : line;
                             this.writeLine(formatted);
                         }
                     }

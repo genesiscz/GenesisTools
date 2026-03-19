@@ -226,7 +226,6 @@ export class IncludeSpec {
 
             if (part === "agents:thinking") {
                 this.agentsThinking = true;
-                continue;
             }
         }
     }
