@@ -18,9 +18,23 @@ export interface VectorHit {
     distance: number;
 }
 
-export function vectorSearch(db: Database, table: string, queryVec: Float32Array, limit: number): VectorHit[] {
-    const embTable = `${table}_embeddings`;
-    const rows = db.query(`SELECT doc_id, embedding FROM ${embTable}`).all() as Array<{
+export interface VectorSearchTableConfig {
+    /** Override the embeddings table name (default: `${table}_embeddings`) */
+    table?: string;
+    /** Column name for the doc ID (default: `doc_id`) */
+    docIdColumn?: string;
+}
+
+export function vectorSearch(
+    db: Database,
+    table: string,
+    queryVec: Float32Array,
+    limit: number,
+    tableConfig?: VectorSearchTableConfig
+): VectorHit[] {
+    const embTable = tableConfig?.table ?? `${table}_embeddings`;
+    const docIdCol = tableConfig?.docIdColumn ?? "doc_id";
+    const rows = db.query(`SELECT ${docIdCol} AS doc_id, embedding FROM ${embTable}`).all() as Array<{
         doc_id: string;
         embedding: Buffer;
     }>;
