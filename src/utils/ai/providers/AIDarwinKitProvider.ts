@@ -1,9 +1,10 @@
-import type { AIProvider, AITask } from "../types";
+import type { AIEmbeddingProvider, AIProvider, AITask, EmbedOptions, EmbeddingResult } from "../types";
 
 const SUPPORTED_TASKS: AITask[] = ["classify", "embed", "sentiment"];
 
-export class AIDarwinKitProvider implements AIProvider {
+export class AIDarwinKitProvider implements AIProvider, AIEmbeddingProvider {
     readonly type = "darwinkit" as const;
+    readonly dimensions = 512;
 
     async isAvailable(): Promise<boolean> {
         return process.platform === "darwin";
@@ -26,6 +27,14 @@ export class AIDarwinKitProvider implements AIProvider {
     async embedText(text: string, language = "en"): Promise<{ vector: number[]; dimension: number }> {
         const { embedText } = await import("@app/utils/macos/nlp");
         return embedText(text, language);
+    }
+
+    async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
+        const result = await this.embedText(text, options?.language ?? "en");
+        return {
+            vector: new Float32Array(result.vector),
+            dimensions: result.dimension,
+        };
     }
 
     async classify(

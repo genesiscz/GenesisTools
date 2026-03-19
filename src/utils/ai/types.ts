@@ -114,6 +114,21 @@ export interface AISummarizationProvider extends AIProvider {
     summarize(text: string, options?: SummarizeOptions): Promise<SummarizationResult>;
 }
 
+export interface EmbeddingResult {
+    vector: Float32Array;
+    dimensions: number;
+}
+
+export interface EmbedOptions {
+    language?: string;
+    model?: string;
+}
+
+export interface AIEmbeddingProvider extends AIProvider {
+    embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult>;
+    readonly dimensions: number;
+}
+
 export interface TaskConfig {
     provider: AIProviderType;
     model?: string;
