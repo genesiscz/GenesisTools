@@ -7,6 +7,7 @@ import { registerDesktopCommand } from "./commands/desktop";
 import { registerHistoryCommand } from "./commands/history";
 import { registerMigrateCommand } from "./commands/migrate";
 import { registerResumeCommand } from "./commands/resume";
+import { registerTailCommand } from "./commands/tail";
 import { registerUsageCommand } from "./commands/usage";
 
 const program = new Command();
@@ -19,6 +20,7 @@ program
 
 registerHistoryCommand(program);
 registerResumeCommand(program);
+registerTailCommand(program);
 registerDesktopCommand(program);
 registerUsageCommand(program);
 registerConfigCommand(program);
