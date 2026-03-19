@@ -1,6 +1,7 @@
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { parseJsonl, parseJsonlChunk } from "@app/utils/jsonl";
 import { FileWatcher } from "@app/utils/storage/fs";
+import type { IncludeSpec } from "./cli/dsl";
 import type { ConversationMessage } from "./types";
 
 /** Shape of the shorthand "A" variant that some JSONL sessions use for assistant. */
@@ -29,6 +30,7 @@ interface TailerOptions {
     filePath: string;
     onRecord: (record: ConversationMessage) => void;
     onFinished?: () => void;
+    includeSpec?: IncludeSpec;
     lastTurns?: number;
     lastCalls?: number;
     maxTurns?: number;
@@ -109,12 +111,23 @@ export class ClaudeSessionTailer {
         }
     }
 
+    /**
+     * A record is displayable if the formatter would actually render it.
+     * Non-visible record types (progress, system, queue-operation, etc.) are skipped.
+     */
+    private isDisplayableRecord(record: ConversationMessage): boolean {
+        const type = record.type as string;
+        return type === "user" || type === "assistant" || type === "A" || type === "subagent";
+    }
+
     private trackCompletion(record: ConversationMessage): void {
         if (record.type === "user") {
             this.newTurnCount++;
         }
 
-        this.newCallCount++;
+        if (this.isDisplayableRecord(record)) {
+            this.newCallCount++;
+        }
 
         if (isAssistantEndTurn(record)) {
             this.scheduleStaleCheck();
@@ -180,7 +193,7 @@ export class ClaudeSessionTailer {
         if (this.options.lastTurns !== undefined) {
             startIndex = this.findTurnStart(allRecords, this.options.lastTurns);
         } else if (this.options.lastCalls !== undefined) {
-            startIndex = Math.max(0, allRecords.length - this.options.lastCalls);
+            startIndex = this.findCallStart(allRecords, this.options.lastCalls);
         }
 
         for (let i = startIndex; i < allRecords.length; i++) {
@@ -202,5 +215,21 @@ export class ClaudeSessionTailer {
         }
 
         return turnStarts[turnStarts.length - lastTurns];
+    }
+
+    private findCallStart(records: ConversationMessage[], lastCalls: number): number {
+        const displayableIndices: number[] = [];
+
+        for (let i = 0; i < records.length; i++) {
+            if (this.isDisplayableRecord(records[i])) {
+                displayableIndices.push(i);
+            }
+        }
+
+        if (displayableIndices.length <= lastCalls) {
+            return 0;
+        }
+
+        return displayableIndices[displayableIndices.length - lastCalls];
     }
 }

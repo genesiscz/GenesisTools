@@ -106,6 +106,7 @@ export function registerTailCommand(program: Command): void {
 
                     process.exit(0);
                 },
+                includeSpec: effectiveSpec,
                 lastTurns,
                 lastCalls,
                 maxTurns: opts.maxTurns ? Number.parseInt(opts.maxTurns, 10) : undefined,
@@ -147,6 +148,7 @@ async function resolveTarget(query: string | undefined, opts: TailOptions): Prom
         const agents = ClaudeSession.findSubagents({
             query,
             project: projectPath,
+            allProjects: !projectPath,
         });
 
         if (agents.length === 1) {
@@ -164,40 +166,51 @@ async function resolveTarget(query: string | undefined, opts: TailOptions): Prom
     return findMostRecentSession(projectPath);
 }
 
-function findSessionByPrefix(prefix: string, projectPath?: string): TailTarget | null {
-    const baseDir = projectPath
-        ? resolve(PROJECTS_DIR, encodedProjectDir(projectPath))
-        : resolve(PROJECTS_DIR, encodedProjectDir());
-
-    if (!existsSync(baseDir)) {
-        return null;
+function getProjectDirs(projectPath?: string): string[] {
+    if (projectPath) {
+        const dir = resolve(PROJECTS_DIR, encodedProjectDir(projectPath));
+        return existsSync(dir) ? [dir] : [];
     }
 
-    const lowerPrefix = prefix.toLowerCase();
+    if (!existsSync(PROJECTS_DIR)) {
+        return [];
+    }
 
     try {
-        const entries = readdirSync(baseDir);
-
-        for (const entry of entries) {
-            if (entry.endsWith(".jsonl") && entry.toLowerCase().startsWith(lowerPrefix)) {
-                const filePath = resolve(baseDir, entry);
-                const sessionId = entry.replace(".jsonl", "");
-                return {
-                    filePath,
-                    label: sessionId,
-                    sessionId,
-                    isAgent: false,
-                };
-            }
-        }
+        return readdirSync(PROJECTS_DIR)
+            .map((d) => resolve(PROJECTS_DIR, d))
+            .filter((d) => statSync(d).isDirectory());
     } catch {
-        // Ignore
+        return [];
+    }
+}
+
+function findSessionByPrefix(prefix: string, projectPath?: string): TailTarget | null {
+    const lowerPrefix = prefix.toLowerCase();
+
+    for (const baseDir of getProjectDirs(projectPath)) {
+        try {
+            for (const entry of readdirSync(baseDir)) {
+                if (entry.endsWith(".jsonl") && entry.toLowerCase().startsWith(lowerPrefix)) {
+                    return {
+                        filePath: resolve(baseDir, entry),
+                        label: entry.replace(".jsonl", ""),
+                        sessionId: entry.replace(".jsonl", ""),
+                        isAgent: false,
+                    };
+                }
+            }
+        } catch {
+            continue;
+        }
     }
 
     return null;
 }
 
 function findMostRecentSession(projectPath?: string): TailTarget | null {
+    const dirs = getProjectDirs(projectPath);
+
     // Use statusline files to find the most recently active session
     if (existsSync(STATUSLINE_DIR)) {
         try {
@@ -210,20 +223,18 @@ function findMostRecentSession(projectPath?: string): TailTarget | null {
                 }))
                 .sort((a, b) => b.mtime - a.mtime);
 
-            const baseDir = projectPath
-                ? resolve(PROJECTS_DIR, encodedProjectDir(projectPath))
-                : resolve(PROJECTS_DIR, encodedProjectDir());
-
             for (const file of files) {
-                const jsonlPath = resolve(baseDir, `${file.sessionId}.jsonl`);
+                for (const baseDir of dirs) {
+                    const jsonlPath = resolve(baseDir, `${file.sessionId}.jsonl`);
 
-                if (existsSync(jsonlPath)) {
-                    return {
-                        filePath: jsonlPath,
-                        label: file.sessionId,
-                        sessionId: file.sessionId,
-                        isAgent: false,
-                    };
+                    if (existsSync(jsonlPath)) {
+                        return {
+                            filePath: jsonlPath,
+                            label: file.sessionId,
+                            sessionId: file.sessionId,
+                            isAgent: false,
+                        };
+                    }
                 }
             }
         } catch {
@@ -231,39 +242,38 @@ function findMostRecentSession(projectPath?: string): TailTarget | null {
         }
     }
 
-    // Fallback: scan project directory for most recently modified .jsonl
-    const baseDir = projectPath
-        ? resolve(PROJECTS_DIR, encodedProjectDir(projectPath))
-        : resolve(PROJECTS_DIR, encodedProjectDir());
+    // Fallback: scan all project directories for most recently modified .jsonl
+    let best: { filePath: string; sessionId: string; mtime: number } | null = null;
 
-    if (!existsSync(baseDir)) {
-        return null;
-    }
+    for (const baseDir of dirs) {
+        try {
+            for (const f of readdirSync(baseDir)) {
+                if (!f.endsWith(".jsonl")) {
+                    continue;
+                }
 
-    try {
-        const jsonlFiles = readdirSync(baseDir)
-            .filter((f) => f.endsWith(".jsonl"))
-            .map((f) => ({
-                name: f,
-                mtime: statSync(resolve(baseDir, f)).mtimeMs,
-            }))
-            .sort((a, b) => b.mtime - a.mtime);
+                const filePath = resolve(baseDir, f);
+                const mtime = statSync(filePath).mtimeMs;
 
-        if (jsonlFiles.length === 0) {
-            return null;
+                if (!best || mtime > best.mtime) {
+                    best = { filePath, sessionId: f.replace(".jsonl", ""), mtime };
+                }
+            }
+        } catch {
+            continue;
         }
+    }
 
-        const most = jsonlFiles[0];
-        const sessionId = most.name.replace(".jsonl", "");
-        return {
-            filePath: resolve(baseDir, most.name),
-            label: sessionId,
-            sessionId,
-            isAgent: false,
-        };
-    } catch {
+    if (!best) {
         return null;
     }
+
+    return {
+        filePath: best.filePath,
+        label: best.sessionId,
+        sessionId: best.sessionId,
+        isAgent: false,
+    };
 }
 
 async function promptSelectTarget(targets: TailTarget[]): Promise<TailTarget | null> {

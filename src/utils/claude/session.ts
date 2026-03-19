@@ -178,25 +178,36 @@ export class ClaudeSession {
      * @returns Array of `SessionInfo` sorted by start date (newest first).
      */
     static async findSessions(options: SessionDiscoveryOptions = {}): Promise<SessionInfo[]> {
-        const { project, since, until, includeSubagents = false, limit } = options;
-
-        // Determine search directory
-        const baseDir = project
-            ? resolve(PROJECTS_DIR, encodedProjectDir(project))
-            : resolve(PROJECTS_DIR, encodedProjectDir());
+        const { project, allProjects = false, since, until, includeSubagents = false, limit } = options;
 
         // Build glob patterns
         const patterns: string[] = [];
-        if (existsSync(baseDir)) {
-            patterns.push(resolve(baseDir, "*.jsonl"));
+
+        if (allProjects) {
+            patterns.push(resolve(PROJECTS_DIR, "*", "*.jsonl"));
+
             if (includeSubagents) {
-                patterns.push(resolve(baseDir, "subagents", "*.jsonl"));
+                patterns.push(resolve(PROJECTS_DIR, "*", "subagents", "*.jsonl"));
             }
-        } else if (project) {
-            // Fallback: glob for any dir containing the project name
-            patterns.push(`${PROJECTS_DIR}/*${project}*/*.jsonl`);
-            if (includeSubagents) {
-                patterns.push(`${PROJECTS_DIR}/*${project}*/subagents/*.jsonl`);
+        } else {
+            // Determine search directory
+            const baseDir = project
+                ? resolve(PROJECTS_DIR, encodedProjectDir(project))
+                : resolve(PROJECTS_DIR, encodedProjectDir());
+
+            if (existsSync(baseDir)) {
+                patterns.push(resolve(baseDir, "*.jsonl"));
+
+                if (includeSubagents) {
+                    patterns.push(resolve(baseDir, "subagents", "*.jsonl"));
+                }
+            } else if (project) {
+                // Fallback: glob for any dir containing the project name
+                patterns.push(`${PROJECTS_DIR}/*${project}*/*.jsonl`);
+
+                if (includeSubagents) {
+                    patterns.push(`${PROJECTS_DIR}/*${project}*/subagents/*.jsonl`);
+                }
             }
         }
 
@@ -318,52 +329,74 @@ export class ClaudeSession {
      *
      * @returns Array of `TailTarget` sorted by file mtime (newest first).
      */
-    static findSubagents(options: { query?: string; project?: string; sessionId?: string } = {}): TailTarget[] {
-        const { query, project, sessionId } = options;
+    static findSubagents(
+        options: { query?: string; project?: string; sessionId?: string; allProjects?: boolean } = {},
+    ): TailTarget[] {
+        const { query, project, sessionId, allProjects = false } = options;
 
-        const baseDir = project
-            ? resolve(PROJECTS_DIR, encodedProjectDir(project))
-            : resolve(PROJECTS_DIR, encodedProjectDir());
+        const baseDirs: string[] = [];
 
-        if (!existsSync(baseDir)) {
+        if (allProjects) {
+            if (existsSync(PROJECTS_DIR)) {
+                try {
+                    for (const entry of readdirSync(PROJECTS_DIR, { withFileTypes: true })) {
+                        if (entry.isDirectory()) {
+                            baseDirs.push(resolve(PROJECTS_DIR, entry.name));
+                        }
+                    }
+                } catch {
+                    // Skip unreadable
+                }
+            }
+        } else {
+            const dir = project
+                ? resolve(PROJECTS_DIR, encodedProjectDir(project))
+                : resolve(PROJECTS_DIR, encodedProjectDir());
+
+            if (existsSync(dir)) {
+                baseDirs.push(dir);
+            }
+        }
+
+        if (baseDirs.length === 0) {
             return [];
         }
 
         const results: TailTarget[] = [];
         const lowerQuery = query?.toLowerCase();
 
-        // If scoped to a session, only look in that session's subagents dir
+        // Collect subagent dirs from all base dirs
         const sessionDirs: string[] = [];
 
-        if (sessionId) {
-            // Find directories matching the session ID prefix
-            try {
-                for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
-                    if (entry.isDirectory() && entry.name.toLowerCase().startsWith(sessionId.toLowerCase())) {
-                        const subagentsDir = resolve(baseDir, entry.name, "subagents");
+        for (const baseDir of baseDirs) {
+            if (sessionId) {
+                try {
+                    for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
+                        if (entry.isDirectory() && entry.name.toLowerCase().startsWith(sessionId.toLowerCase())) {
+                            const subagentsDir = resolve(baseDir, entry.name, "subagents");
 
-                        if (existsSync(subagentsDir)) {
-                            sessionDirs.push(subagentsDir);
+                            if (existsSync(subagentsDir)) {
+                                sessionDirs.push(subagentsDir);
+                            }
                         }
                     }
+                } catch {
+                    // Skip unreadable directories
                 }
-            } catch {
-                // Skip unreadable directories
-            }
-        } else {
-            // Scan all session directories
-            try {
-                for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
-                    if (entry.isDirectory()) {
-                        const subagentsDir = resolve(baseDir, entry.name, "subagents");
+            } else {
+                try {
+                    for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
+                        if (entry.isDirectory()) {
+                            const subagentsDir = resolve(baseDir, entry.name, "subagents");
 
-                        if (existsSync(subagentsDir)) {
-                            sessionDirs.push(subagentsDir);
+                            if (existsSync(subagentsDir)) {
+                                sessionDirs.push(subagentsDir);
+                            }
                         }
                     }
+                } catch {
+                    // Skip unreadable directories
                 }
-            } catch {
-                // Skip unreadable directories
             }
         }
 

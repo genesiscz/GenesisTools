@@ -97,6 +97,8 @@ export interface SessionInfo {
 export interface SessionDiscoveryOptions {
     /** Project name (directory basename) to scope to. */
     project?: string;
+    /** Search all project dirs under ~/.claude/projects/. Default: false (current project only). */
+    allProjects?: boolean;
     /** Only include sessions starting on or after this date. */
     since?: Date;
     /** Only include sessions starting on or before this date. */
