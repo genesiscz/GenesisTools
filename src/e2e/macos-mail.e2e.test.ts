@@ -64,6 +64,18 @@ describe("tools macos mail", () => {
         });
     });
 
+    describe("monitor", () => {
+        it("monitor --help exits 0 and mentions --limit, --notify-telegram, --dry-run", async () => {
+            const r = await runTool(["macos", "mail", "monitor", "--help"]);
+            expect(r.exitCode).toBe(0);
+            const out = stripAnsi(r.stdout);
+
+            expect(out).toContain("--limit");
+            expect(out).toContain("--notify-telegram");
+            expect(out).toContain("--dry-run");
+        });
+    });
+
     describe("format flag", () => {
         it("list --format json --limit 1 accepts the format flag", async () => {
             const r = await runTool(["macos", "mail", "list", "--format", "json", "--limit", "1"], 30_000);

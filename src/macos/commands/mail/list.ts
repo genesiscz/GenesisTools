@@ -6,18 +6,22 @@ import {
     RECIPIENT_COLUMNS,
 } from "@app/macos/lib/mail/columns";
 import { formatResultsTable } from "@app/macos/lib/mail/format";
+import { SeenStore } from "@app/macos/lib/mail/seen-store";
 import { cleanup, getAttachments, getRecipients, listMessages } from "@app/macos/lib/mail/sqlite";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
-import { SafeJSON } from "@app/utils/json";
 import type { MailMessage } from "@app/macos/lib/mail/types";
 import { parseVariadic } from "@app/utils/cli/variadic";
+import { SafeJSON } from "@app/utils/json";
+import { Storage } from "@app/utils/storage/storage";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
+import { join } from "node:path";
 
 interface ListOptions {
     limit?: string;
     columns?: string | true;
     format?: string;
+    sinceLastCheck?: boolean;
 }
 
 function resolveColumns(rawColumns: string | true | undefined): MailColumnKey[] | "interactive" {
@@ -92,6 +96,7 @@ export function registerListCommand(program: Command): void {
         .option("--limit <n>", "Number of emails to show", "20")
         .option("--columns [cols]", "Columns to show (" + ALL_COLUMN_KEYS.join(",") + ")")
         .option("-f, --format <type>", "Output format: table, json, toon", "table")
+        .option("--since-last-check", "Show only emails since last monitor check")
         .action(async (mailbox: string | undefined, options: ListOptions) => {
             try {
                 const targetMailbox = mailbox ?? "INBOX";
@@ -119,7 +124,17 @@ export function registerListCommand(program: Command): void {
                 const spinner = p.spinner();
                 spinner.start(`Fetching latest ${limit} emails from ${targetMailbox}...`);
 
-                const rows = listMessages(targetMailbox, limit);
+                let rows = listMessages(targetMailbox, limit);
+
+                if (options.sinceLastCheck) {
+                    const storage = new Storage("macos-mail");
+                    const dbPath = join(storage.getBaseDir(), "seen.db");
+                    const store = new SeenStore(dbPath);
+                    const maxSeen = store.getMaxSeenRowid();
+                    store.close();
+
+                    rows = rows.filter((r) => r.rowid > maxSeen);
+                }
 
                 if (rows.length === 0) {
                     spinner.stop(`No messages found in ${targetMailbox}.`);
