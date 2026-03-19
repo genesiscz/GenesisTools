@@ -4,7 +4,7 @@ export interface JsonlParseResult<T = unknown> {
     values: T[];
     read: number;
     done: boolean;
-    remainder: Buffer;
+    remainder: Buffer<ArrayBuffer>;
 }
 
 /**
@@ -51,7 +51,7 @@ export function parseJsonlChunk<T = unknown>(data: Buffer, existingRemainder?: B
         values,
         read,
         done: read >= combined.length,
-        remainder: combined.subarray(read),
+        remainder: Buffer.from(combined.subarray(read)),
     };
 }
 
