@@ -7,14 +7,54 @@ export interface JsonlParseResult<T = unknown> {
     remainder: Buffer<ArrayBuffer>;
 }
 
+const hasBunJsonl = typeof Bun !== "undefined" && typeof Bun.JSONL?.parseChunk === "function";
+
+if (!hasBunJsonl) {
+    console.error(
+        "[jsonl] Bun.JSONL not available — using slower JS fallback.\n" +
+            "        Run `bun upgrade` to get native C++ JSONL parsing (requires Bun ≥1.3.6).\n"
+    );
+}
+
 /**
  * Parse a chunk of JSONL data, handling partial lines.
- * Returns parsed values and any unconsumed remainder (partial last line).
+ * Uses native Bun.JSONL.parseChunk() when available (C++, ~10x faster),
+ * falls back to manual line splitting + JSON.parse otherwise.
  */
 export function parseJsonlChunk<T = unknown>(data: Buffer, existingRemainder?: Buffer): JsonlParseResult<T> {
     const combined = existingRemainder?.length ? Buffer.concat([existingRemainder, data]) : data;
-    const text = combined.toString("utf-8");
 
+    if (hasBunJsonl && Bun.JSONL) {
+        const result = Bun.JSONL.parseChunk(combined);
+        return {
+            values: result.values as T[],
+            read: result.read,
+            done: result.done,
+            remainder: Buffer.from(combined.subarray(result.read)),
+        };
+    }
+
+    return parseJsonlChunkFallback<T>(combined);
+}
+
+/**
+ * Parse an entire JSONL buffer (no streaming/remainder).
+ */
+export function parseJsonl<T = unknown>(data: Buffer | string): T[] {
+    if (hasBunJsonl && Bun.JSONL) {
+        const buf = typeof data === "string" ? Buffer.from(data) : data;
+        return Bun.JSONL.parse(buf) as T[];
+    }
+
+    return parseJsonlFallback<T>(data);
+}
+
+// ---------------------------------------------------------------------------
+// Fallback implementations (no Bun.JSONL)
+// ---------------------------------------------------------------------------
+
+function parseJsonlChunkFallback<T>(combined: Buffer): JsonlParseResult<T> {
+    const text = combined.toString("utf-8");
     const values: T[] = [];
     let lastNewline = -1;
 
@@ -41,7 +81,7 @@ export function parseJsonlChunk<T = unknown>(data: Buffer, existingRemainder?: B
         try {
             values.push(SafeJSON.parse(trimmed, { strict: true }) as T);
         } catch {
-            // Skip invalid JSON lines
+            // skip malformed lines
         }
     }
 
@@ -55,10 +95,7 @@ export function parseJsonlChunk<T = unknown>(data: Buffer, existingRemainder?: B
     };
 }
 
-/**
- * Parse an entire JSONL buffer (no streaming/remainder).
- */
-export function parseJsonl<T = unknown>(data: Buffer | string): T[] {
+function parseJsonlFallback<T>(data: Buffer | string): T[] {
     const text = typeof data === "string" ? data : data.toString("utf-8");
     const values: T[] = [];
 
@@ -72,7 +109,7 @@ export function parseJsonl<T = unknown>(data: Buffer | string): T[] {
         try {
             values.push(SafeJSON.parse(trimmed, { strict: true }) as T);
         } catch {
-            // Skip invalid JSON lines
+            // skip malformed lines
         }
     }
 

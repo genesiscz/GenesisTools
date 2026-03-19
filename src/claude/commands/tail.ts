@@ -89,6 +89,11 @@ export function registerTailCommand(program: Command): void {
             const lastTurns = opts.lastCalls ? undefined : opts.lastTurns ? Number.parseInt(opts.lastTurns, 10) : 5;
             const lastCalls = opts.lastCalls ? Number.parseInt(opts.lastCalls, 10) : undefined;
 
+            if (lastTurns === 0 || lastCalls === 0) {
+                p.log.error("-t/--last-turns and -c/--last-calls must be ≥ 1 (use --no-follow to skip history)");
+                process.exit(1);
+            }
+
             const tailer = new ClaudeSessionTailer({
                 filePath: target.filePath,
                 onRecord: (record) => formatter.format(record),
