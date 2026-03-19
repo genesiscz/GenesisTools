@@ -1,12 +1,15 @@
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { LogEntry, SessionMeta } from "@app/debugging-master/types";
 import { suggestCommand } from "@app/utils/cli/executor";
+import { parseVariadic } from "@app/utils/cli/variadic";
+import { formatRelativeTime } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
 import { fuzzyFind } from "@app/utils/string";
+import { formatTable } from "@app/utils/table";
 import { ConfigManager } from "./config-manager";
 
-export const ACTIVE_THRESHOLD_MS = 60 * 60 * 1000;
+export const ACTIVE_THRESHOLD_MS = 2 * 60 * 60 * 1000;
 const TOOL_NAME = "tools debugging-master";
 
 export class SessionManager {
@@ -183,5 +186,144 @@ export class SessionManager {
     async getSessionPath(name: string): Promise<string> {
         const dir = await this.getSessionsDir();
         return join(dir, `${name}.jsonl`);
+    }
+
+    async deleteSession(name: string): Promise<boolean> {
+        const dir = await this.getSessionsDir();
+        const jsonlPath = join(dir, `${name}.jsonl`);
+        const metaPath = join(dir, `${name}.meta.json`);
+
+        if (!existsSync(jsonlPath) && !existsSync(metaPath)) {
+            return false;
+        }
+
+        if (existsSync(jsonlPath)) {
+            unlinkSync(jsonlPath);
+        }
+
+        if (existsSync(metaPath)) {
+            unlinkSync(metaPath);
+        }
+
+        const recent = await this.config.getRecentSession();
+
+        if (recent === name) {
+            const cfg = await this.config.load();
+            delete cfg.recentSession;
+            await this.config.save();
+        }
+
+        return true;
+    }
+
+    async getInactiveSessions(thresholdMs: number = 24 * 60 * 60 * 1000): Promise<SessionMeta[]> {
+        const names = await this.listSessionNames();
+        const now = Date.now();
+        const inactive: SessionMeta[] = [];
+
+        for (const name of names) {
+            const meta = await this.getSessionMeta(name);
+
+            if (meta && now - meta.lastActivityAt >= thresholdMs) {
+                inactive.push(meta);
+            }
+        }
+
+        return inactive;
+    }
+
+    async resolveSessionInteractive(sessionFlag?: string): Promise<string[]> {
+        if (sessionFlag) {
+            const requested = parseVariadic(sessionFlag);
+            const names = await this.listSessionNames();
+            const resolved: string[] = [];
+
+            for (const req of requested) {
+                if (names.includes(req)) {
+                    resolved.push(req);
+                    continue;
+                }
+
+                const match = fuzzyFind(req, names);
+
+                if (match) {
+                    resolved.push(match);
+                } else {
+                    throw new Error(`Session "${req}" not found. Available: ${names.join(", ") || "(none)"}`);
+                }
+            }
+
+            return resolved;
+        }
+
+        const names = await this.listSessionNames();
+
+        if (names.length === 0) {
+            throw new Error(`No sessions found. Start one with:\n  ${TOOL_NAME} start --session <name>`);
+        }
+
+        if (names.length === 1) {
+            return [names[0]];
+        }
+
+        if (process.stdout.isTTY) {
+            const { multiselect } = await import("@clack/prompts");
+            const allMeta: Array<{ name: string; meta: SessionMeta | null }> = [];
+
+            for (const name of names) {
+                const meta = await this.getSessionMeta(name);
+                allMeta.push({ name, meta });
+            }
+
+            const now = Date.now();
+            const options = allMeta.map(({ name, meta }) => {
+                const isActive = meta ? now - meta.lastActivityAt < ACTIVE_THRESHOLD_MS : false;
+                const lastStr = meta?.lastActivityAt
+                    ? formatRelativeTime(new Date(meta.lastActivityAt), { compact: true })
+                    : "unknown";
+                const project = meta?.projectPath ? basename(meta.projectPath) : "";
+                const hint = [lastStr, project, isActive ? "active" : ""].filter(Boolean).join(" | ");
+                return { value: name, label: name, hint };
+            });
+
+            const selected = await multiselect({
+                message: "Select session(s)",
+                options,
+                required: true,
+            });
+
+            if (typeof selected === "symbol") {
+                throw new Error("Session selection cancelled.");
+            }
+
+            return selected as string[];
+        }
+
+        const allMeta: Array<{ name: string; meta: SessionMeta | null }> = [];
+
+        for (const name of names) {
+            const meta = await this.getSessionMeta(name);
+            allMeta.push({ name, meta });
+        }
+
+        const now = Date.now();
+        const headers = ["Name", "Last Activity", "Project", "Status"];
+        const rows = allMeta.map(({ name, meta }) => {
+            const isActive = meta ? now - meta.lastActivityAt < ACTIVE_THRESHOLD_MS : false;
+            const lastStr = meta?.lastActivityAt
+                ? formatRelativeTime(new Date(meta.lastActivityAt), { compact: true })
+                : "unknown";
+            const project = meta?.projectPath ? basename(meta.projectPath) : "unknown";
+            return [name, lastStr, project, isActive ? "active" : ""];
+        });
+
+        console.log(formatTable(rows, headers));
+        console.log("");
+
+        for (const { name } of allMeta) {
+            console.log(`  ${suggestCommand(TOOL_NAME, { add: ["--session", name] })}`);
+        }
+
+        throw new Error("Multiple sessions found. Specify one with --session (see above).");
     }
 }

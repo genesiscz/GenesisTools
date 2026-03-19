@@ -14,7 +14,6 @@ export type {
     ICloudStatusResult,
     LanguageResult,
     MethodCapability,
-    Neighbor,
     NeighborsResult,
     OCRBlock as OcrBlock,
     OCRBounds as OcrBounds,

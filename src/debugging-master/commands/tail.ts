@@ -1,10 +1,19 @@
-import { readFileSync, statSync, watch } from "node:fs";
+import { type FSWatcher, readFileSync, statSync, watch } from "node:fs";
 import { formatEntryLine } from "@app/debugging-master/core/formatter";
 import { filterByLevel, indexEntries } from "@app/debugging-master/core/log-parser";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import type { IndexedLogEntry, LogEntry } from "@app/debugging-master/types";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
+import pc from "picocolors";
+
+interface SessionTailState {
+    name: string;
+    filePath: string;
+    offset: number;
+    entryIndex: number;
+    currentFile: string;
+}
 
 export function registerTailCommand(program: Command): void {
     program
@@ -15,98 +24,148 @@ export function registerTailCommand(program: Command): void {
         .action(async (opts) => {
             const globalOpts = program.opts();
             const sm = new SessionManager();
-            const sessionName = await sm.resolveSession(globalOpts.session);
-            const filePath = await sm.getSessionPath(sessionName);
+            const sessionNames = await sm.resolveSessionInteractive(globalOpts.session);
             const pretty = globalOpts.pretty ?? process.stdout.isTTY ?? false;
             const levels = opts.level?.split(",").map((l: string) => l.trim());
             const lastCount = parseInt(opts.n, 10);
+            const multiSession = sessionNames.length > 1;
 
-            const raw = await sm.readEntries(sessionName);
-            let existing = indexEntries(raw);
-            if (levels) {
-                existing = filterByLevel(existing, levels);
+            const allEntries: Array<IndexedLogEntry & { session: string }> = [];
+
+            for (const sessionName of sessionNames) {
+                const raw = await sm.readEntries(sessionName);
+                let existing = indexEntries(raw);
+
+                if (levels) {
+                    existing = filterByLevel(existing, levels);
+                }
+
+                for (const entry of existing) {
+                    allEntries.push({ ...entry, session: sessionName });
+                }
             }
-            const tail = existing.slice(-lastCount);
 
-            console.log(`Tailing session: ${sessionName} (${raw.length} entries, showing last ${tail.length})`);
+            allEntries.sort((a, b) => a.ts - b.ts);
+            const tail = allEntries.slice(-lastCount);
+
+            if (multiSession) {
+                console.log(
+                    `Tailing ${sessionNames.length} sessions: ${sessionNames.join(", ")} (showing last ${tail.length})`
+                );
+            } else {
+                const raw = await sm.readEntries(sessionNames[0]);
+                console.log(`Tailing session: ${sessionNames[0]} (${raw.length} entries, showing last ${tail.length})`);
+            }
+
             console.log("");
 
-            let currentFile = "";
+            const currentFiles: Record<string, string> = {};
+
             for (const entry of tail) {
+                const prefix = multiSession ? pc.dim(`[${entry.session}] `) : "";
                 const file = entry.file ?? "unknown";
-                if (file !== currentFile) {
-                    currentFile = file;
-                    console.log(`File: ${file}`);
+
+                if (file !== (currentFiles[entry.session] ?? "")) {
+                    currentFiles[entry.session] = file;
+                    console.log(`${prefix}File: ${file}`);
                 }
-                console.log(formatEntryLine(entry, pretty));
+
+                console.log(`${prefix}${formatEntryLine(entry, pretty)}`);
             }
 
             console.log("");
             console.log("--- Watching for new entries (Ctrl+C to stop) ---");
 
-            let offset = 0;
-            try {
-                offset = statSync(filePath).size;
-            } catch {
-                // File might not exist yet
+            const states: SessionTailState[] = [];
+
+            for (const sessionName of sessionNames) {
+                const filePath = await sm.getSessionPath(sessionName);
+                const raw = await sm.readEntries(sessionName);
+                let offset = 0;
+
+                try {
+                    offset = statSync(filePath).size;
+                } catch {
+                    // File might not exist yet
+                }
+
+                states.push({
+                    name: sessionName,
+                    filePath,
+                    offset,
+                    entryIndex: raw.length,
+                    currentFile: currentFiles[sessionName] ?? "",
+                });
             }
 
-            let entryIndex = raw.length;
+            const watchers: FSWatcher[] = [];
 
-            const processNewData = () => {
-                try {
-                    const currentSize = statSync(filePath).size;
-                    if (currentSize < offset) {
-                        offset = 0;
-                    }
-                    if (currentSize <= offset) {
-                        return;
-                    }
+            for (const state of states) {
+                const processNewData = () => {
+                    try {
+                        const currentSize = statSync(state.filePath).size;
 
-                    const buffer = readFileSync(filePath);
-                    const newBytes = buffer.subarray(offset, currentSize);
-                    offset = currentSize;
-
-                    const text = new TextDecoder().decode(newBytes);
-                    const lines = text.split("\n").filter(Boolean);
-
-                    for (const line of lines) {
-                        entryIndex++;
-                        try {
-                            const entry = SafeJSON.parse(line, { strict: true }) as LogEntry;
-                            const indexed: IndexedLogEntry = { ...entry, index: entryIndex };
-
-                            if (levels && !levels.includes(entry.level) && entry.level !== "raw") {
-                                continue;
-                            }
-
-                            const file = indexed.file ?? "unknown";
-                            if (file !== currentFile) {
-                                currentFile = file;
-                                console.log(`File: ${file}`);
-                            }
-                            console.log(formatEntryLine(indexed, pretty));
-                        } catch {
-                            const fallback: IndexedLogEntry = {
-                                level: "raw",
-                                msg: line,
-                                ts: Date.now(),
-                                index: entryIndex,
-                            };
-                            console.log(formatEntryLine(fallback, pretty));
+                        if (currentSize < state.offset) {
+                            state.offset = 0;
                         }
-                    }
-                } catch {
-                    // Ignore read errors during watch
-                }
-            };
 
-            const watcher = watch(filePath, () => {
-                processNewData();
-            });
+                        if (currentSize <= state.offset) {
+                            return;
+                        }
+
+                        const buffer = readFileSync(state.filePath);
+                        const newBytes = buffer.subarray(state.offset, currentSize);
+                        state.offset = currentSize;
+
+                        const text = new TextDecoder().decode(newBytes);
+                        const lines = text.split("\n").filter(Boolean);
+                        const prefix = multiSession ? pc.dim(`[${state.name}] `) : "";
+
+                        for (const line of lines) {
+                            state.entryIndex++;
+
+                            try {
+                                const entry = SafeJSON.parse(line, { strict: true }) as LogEntry;
+                                const indexed: IndexedLogEntry = { ...entry, index: state.entryIndex };
+
+                                if (levels && !levels.includes(entry.level) && entry.level !== "raw") {
+                                    continue;
+                                }
+
+                                const file = indexed.file ?? "unknown";
+
+                                if (file !== state.currentFile) {
+                                    state.currentFile = file;
+                                    console.log(`${prefix}File: ${file}`);
+                                }
+
+                                console.log(`${prefix}${formatEntryLine(indexed, pretty)}`);
+                            } catch {
+                                const fallback: IndexedLogEntry = {
+                                    level: "raw",
+                                    msg: line,
+                                    ts: Date.now(),
+                                    index: state.entryIndex,
+                                };
+                                console.log(`${prefix}${formatEntryLine(fallback, pretty)}`);
+                            }
+                        }
+                    } catch {
+                        // Ignore read errors during watch
+                    }
+                };
+
+                const watcher = watch(state.filePath, () => {
+                    processNewData();
+                });
+                watchers.push(watcher);
+            }
 
             process.on("SIGINT", () => {
-                watcher.close();
+                for (const watcher of watchers) {
+                    watcher.close();
+                }
+
                 console.log("\nStopped tailing.");
                 process.exit(0);
             });

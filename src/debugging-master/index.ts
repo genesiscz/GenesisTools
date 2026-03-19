@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { registerCleanupCommand } from "./commands/cleanup";
+import { registerDeleteSessionCommand } from "./commands/delete-session";
 import { registerDiffCommand } from "./commands/diff";
 import { registerExpandCommand } from "./commands/expand";
 import { registerGetCommand } from "./commands/get";
@@ -26,5 +27,6 @@ registerSessionsCommand(program);
 registerTailCommand(program);
 registerCleanupCommand(program);
 registerDiffCommand(program);
+registerDeleteSessionCommand(program);
 
 program.parse();
