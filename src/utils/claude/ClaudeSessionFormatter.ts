@@ -284,21 +284,10 @@ export class ClaudeSessionFormatter {
                         this.writeLine(`${time} Claude: ${firstLine}`);
                     }
 
-                    // Print remaining lines indented
-                    const remainingLines = text.split("\n").slice(1);
-
-                    for (const line of remainingLines.slice(0, 5)) {
+                    for (const line of text.split("\n").slice(1)) {
                         if (line.trim()) {
                             this.writeLine(`         ${line}`);
                         }
-                    }
-
-                    if (remainingLines.length > 5) {
-                        this.writeLine(
-                            this.options.colors
-                                ? pc.dim(`         ... (${remainingLines.length - 5} more lines)`)
-                                : `         ... (${remainingLines.length - 5} more lines)`
-                        );
                     }
                 }
             }
