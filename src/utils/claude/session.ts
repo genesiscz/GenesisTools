@@ -12,13 +12,25 @@
  * ```
  */
 
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { basename, resolve, sep } from "node:path";
+import { basename, dirname, resolve, sep } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { glob } from "glob";
 import { encodedProjectDir, PROJECTS_DIR, parseJsonlTranscript } from "./index";
+import {
+    extractFilePathFromInput,
+    extractUserText,
+    getSubagentToolUseBlocks,
+    getToolUseBlocks,
+    hasCwd,
+    hasGitBranch,
+    hasSessionId,
+    hasTimestamp,
+    isSubagentFile,
+    readHeadTailLines,
+} from "./session.utils";
 import type {
     AssistantMessage,
     AssistantMessageContent,
@@ -42,241 +54,42 @@ import type {
     UserMessageContent,
 } from "./types";
 
-// =============================================================================
-// Exported Interface Types
-// =============================================================================
+// Re-export types and utils for backward compatibility
+export type {
+    ExtractTextOptions,
+    PromptContentOptions,
+    PreparedContent,
+    SessionStats,
+    SessionInfo,
+    SessionDiscoveryOptions,
+    ToolCallSummary,
+    TailTarget,
+    AgentMeta,
+} from "./session.types";
+export {
+    extractFilePathFromInput,
+    extractUserText,
+    getSubagentToolUseBlocks,
+    getToolUseBlocks,
+    hasCwd,
+    hasGitBranch,
+    hasSessionId,
+    hasTimestamp,
+    isSubagentFile,
+    readHeadTailLines,
+} from "./session.utils";
 
-/** Options for extracting plain text from session messages. */
-export interface ExtractTextOptions {
-    /** Include tool result content in the extracted text. Default: false */
-    includeToolResults?: boolean;
-    /** Include thinking/reasoning blocks. Default: false */
-    includeThinking?: boolean;
-    /** Include system messages (errors, stop hooks). Default: false */
-    includeSystemMessages?: boolean;
-    /** Prefix tool calls with their name (e.g. "[Edit]"). Default: true */
-    includeToolNames?: boolean;
-    /** Maximum character length for the returned string. */
-    maxLength?: number;
-}
-
-/** Options for preparing session content for an LLM prompt. */
-export interface PromptContentOptions {
-    /** Maximum token budget for the prepared content. */
-    tokenBudget: number;
-    /** Content selection strategy when the session exceeds the budget. */
-    priority: "balanced" | "user-first" | "assistant-first" | "summary-first";
-    /** Include tool result blocks. Default: false */
-    includeToolResults?: boolean;
-    /** Include thinking/reasoning blocks. Default: false */
-    includeThinking?: boolean;
-    /** Prefix each message with its ISO timestamp. Default: false */
-    includeTimestamps?: boolean;
-}
-
-/** Result of `toPromptContent()` — token-budgeted session transcript. */
-export interface PreparedContent {
-    /** The formatted transcript string. */
-    content: string;
-    /** Estimated token count of `content`. */
-    tokenCount: number;
-    /** Whether the content was truncated to fit the budget. */
-    truncated: boolean;
-    /** Human-readable description of what was truncated. */
-    truncationInfo: string;
-    /** Summary statistics for the prepared content. */
-    stats: {
-        userMessages: number;
-        assistantMessages: number;
-        toolCalls: number;
-        filesModified: string[];
-    };
-}
-
-/** Aggregated statistics for a session. */
-export interface SessionStats {
-    /** Total number of JSONL entries (all types). */
-    messageCount: number;
-    /** Number of user-role messages. */
-    userMessageCount: number;
-    /** Number of assistant-role messages. */
-    assistantMessageCount: number;
-    /** Number of system messages (errors, stop hooks, etc.). */
-    systemMessageCount: number;
-    /** Number of subagent messages. */
-    subagentMessageCount: number;
-    /** Number of progress messages. */
-    progressMessageCount: number;
-    /** Number of PR link messages. */
-    prLinkCount: number;
-    /** Total number of tool_use blocks across all assistant and subagent messages. */
-    toolCallCount: number;
-    /** Tool name -> invocation count. */
-    toolUsage: Record<string, number>;
-    /** Aggregated API token usage from assistant message metadata. */
-    tokenUsage: { input: number; output: number; cached: number };
-    /** Distinct model IDs seen in assistant messages. */
-    modelsUsed: string[];
-    /** Unique file paths referenced in tool calls. */
-    filesModified: string[];
-    /** Duration in milliseconds between first and last timestamp. */
-    duration: number;
-    /** Earliest message timestamp. */
-    firstTimestamp: Date | null;
-    /** Latest message timestamp. */
-    lastTimestamp: Date | null;
-}
-
-/** Lightweight metadata for a discovered session file (no full parse). */
-export interface SessionInfo {
-    filePath: string;
-    sessionId: string | null;
-    title: string | null;
-    summary: string | null;
-    gitBranch: string | null;
-    project: string | null;
-    startDate: Date | null;
-    fileSize: number;
-    messageCount: number;
-    isSubagent: boolean;
-}
-
-/** Options for `ClaudeSession.findSessions()`. */
-export interface SessionDiscoveryOptions {
-    /** Project name (directory basename) to scope to. */
-    project?: string;
-    /** Only include sessions starting on or after this date. */
-    since?: Date;
-    /** Only include sessions starting on or before this date. */
-    until?: Date;
-    /** Include subagent sessions. Default: false */
-    includeSubagents?: boolean;
-    /** Maximum number of sessions to return. */
-    limit?: number;
-}
-
-/** Summary of a single tool invocation. */
-export interface ToolCallSummary {
-    /** Tool name (e.g. "Edit", "Bash"). */
-    name: string;
-    /** Full input object passed to the tool. */
-    input: Record<string, unknown>;
-    /** File path argument, if the tool accepts one. */
-    filePath?: string;
-    /** ISO timestamp of the parent message (if available). */
-    timestamp?: string;
-}
-
-// =============================================================================
-// Internal Helpers
-// =============================================================================
-
-/** Type guard for messages that carry a timestamp field. */
-function hasTimestamp(msg: ConversationMessage): msg is ConversationMessage & { timestamp: string } {
-    return "timestamp" in msg && typeof (msg as unknown as { timestamp: unknown }).timestamp === "string";
-}
-
-/** Type guard for messages that carry a sessionId field. */
-function hasSessionId(msg: ConversationMessage): msg is ConversationMessage & { sessionId: string } {
-    return "sessionId" in msg && typeof (msg as unknown as { sessionId: unknown }).sessionId === "string";
-}
-
-/** Type guard for messages with gitBranch. */
-function hasGitBranch(msg: ConversationMessage): msg is ConversationMessage & { gitBranch: string } {
-    return "gitBranch" in msg && typeof (msg as unknown as { gitBranch: unknown }).gitBranch === "string";
-}
-
-/** Type guard for messages with cwd. */
-function hasCwd(msg: ConversationMessage): msg is ConversationMessage & { cwd: string } {
-    return "cwd" in msg && typeof (msg as unknown as { cwd: unknown }).cwd === "string";
-}
-
-/** Extract readable text from a single user message content field. */
-function extractUserText(content: string | ContentBlock[]): string {
-    if (typeof content === "string") {
-        return content;
-    }
-    const parts: string[] = [];
-    for (const block of content) {
-        if (block.type === "text") {
-            parts.push((block as TextBlock).text);
-        } else if (block.type === "tool_result") {
-            const tr = block as ToolResultBlock;
-            if (typeof tr.content === "string") {
-                parts.push(tr.content);
-            } else if (Array.isArray(tr.content)) {
-                for (const inner of tr.content) {
-                    if (inner.type === "text") {
-                        parts.push((inner as TextBlock).text);
-                    } else if (inner.type === "image") {
-                        parts.push(`[Image: ${(inner as ImageBlock).source.media_type}]`);
-                    } else if (inner.type === "tool_reference") {
-                        parts.push(`[Tool Reference: ${(inner as ToolReferenceBlock).tool_name}]`);
-                    }
-                }
-            }
-        } else if (block.type === "image") {
-            parts.push(`[Image: ${(block as ImageBlock).source.media_type}]`);
-        } else if (block.type === "tool_reference") {
-            parts.push(`[Tool Reference: ${(block as ToolReferenceBlock).tool_name}]`);
-        }
-    }
-    return parts.join("\n");
-}
-
-/** Extract tool_use blocks from an assistant message. */
-function getToolUseBlocks(msg: AssistantMessage): ToolUseBlock[] {
-    if (!Array.isArray(msg.message?.content)) {
-        return [];
-    }
-    return msg.message.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
-}
-
-/** Extract tool_use blocks from a subagent assistant message. */
-function getSubagentToolUseBlocks(msg: SubagentMessage): ToolUseBlock[] {
-    if (msg.role !== "assistant") {
-        return [];
-    }
-    const content = (msg.message as AssistantMessageContent).content;
-    if (!Array.isArray(content)) {
-        return [];
-    }
-    return content.filter((b): b is ToolUseBlock => b.type === "tool_use");
-}
-
-/** Extract file path from a tool input object, checking common field names. */
-function extractFilePathFromInput(input: Record<string, unknown>): string | undefined {
-    for (const field of ["file_path", "path", "filePath", "notebook_path"]) {
-        if (field in input && typeof input[field] === "string") {
-            return input[field] as string;
-        }
-    }
-    return undefined;
-}
-
-/** Check whether a JSONL file is from a subagent. */
-function isSubagentFile(filePath: string): boolean {
-    return filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
-}
-
-/**
- * Read just the first N and last N lines from a JSONL file for fast metadata extraction.
- * Uses Bun.file for performance.
- */
-async function readHeadTailLines(filePath: string, headCount: number, tailCount: number): Promise<string[]> {
-    const text = await Bun.file(filePath).text();
-    const allLines = text.split("\n").filter((l) => l.trim());
-    if (allLines.length <= headCount + tailCount) {
-        return allLines;
-    }
-    const head = allLines.slice(0, headCount);
-    const tail = allLines.slice(-tailCount);
-    return [...head, ...tail];
-}
-
-// =============================================================================
-// ClaudeSession Class
-// =============================================================================
+import type {
+    ExtractTextOptions,
+    PreparedContent,
+    PromptContentOptions,
+    SessionDiscoveryOptions,
+    SessionInfo,
+    SessionStats,
+    TailTarget,
+    ToolCallSummary,
+    AgentMeta,
+} from "./session.types";
 
 /**
  * A fully-typed, immutable wrapper around a Claude Code JSONL session file.
@@ -496,6 +309,132 @@ export class ClaudeSession {
         });
 
         return limit ? results.slice(0, limit) : results;
+    }
+
+    /**
+     * Discover subagent files matching a query (ID prefix or description substring).
+     *
+     * Scans `<session-id>/subagents/` directories for `agent-*.meta.json` files.
+     *
+     * @returns Array of `TailTarget` sorted by file mtime (newest first).
+     */
+    static findSubagents(options: {
+        query?: string;
+        project?: string;
+        sessionId?: string;
+    } = {}): TailTarget[] {
+        const { query, project, sessionId } = options;
+
+        const baseDir = project
+            ? resolve(PROJECTS_DIR, encodedProjectDir(project))
+            : resolve(PROJECTS_DIR, encodedProjectDir());
+
+        if (!existsSync(baseDir)) {
+            return [];
+        }
+
+        const results: TailTarget[] = [];
+        const lowerQuery = query?.toLowerCase();
+
+        // If scoped to a session, only look in that session's subagents dir
+        const sessionDirs: string[] = [];
+
+        if (sessionId) {
+            // Find directories matching the session ID prefix
+            try {
+                for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
+                    if (entry.isDirectory() && entry.name.toLowerCase().startsWith(sessionId.toLowerCase())) {
+                        const subagentsDir = resolve(baseDir, entry.name, "subagents");
+
+                        if (existsSync(subagentsDir)) {
+                            sessionDirs.push(subagentsDir);
+                        }
+                    }
+                }
+            } catch {
+                // Skip unreadable directories
+            }
+        } else {
+            // Scan all session directories
+            try {
+                for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
+                    if (entry.isDirectory()) {
+                        const subagentsDir = resolve(baseDir, entry.name, "subagents");
+
+                        if (existsSync(subagentsDir)) {
+                            sessionDirs.push(subagentsDir);
+                        }
+                    }
+                }
+            } catch {
+                // Skip unreadable directories
+            }
+        }
+
+        for (const subagentsDir of sessionDirs) {
+            let entries: string[];
+
+            try {
+                entries = readdirSync(subagentsDir);
+            } catch {
+                continue;
+            }
+
+            // Find all meta.json files
+            const metaFiles = entries.filter((e) => e.endsWith(".meta.json"));
+
+            for (const metaFile of metaFiles) {
+                const agentId = metaFile.replace(".meta.json", "").replace("agent-", "");
+                const jsonlFile = metaFile.replace(".meta.json", ".jsonl");
+                const jsonlPath = resolve(subagentsDir, jsonlFile);
+
+                if (!existsSync(jsonlPath)) {
+                    continue;
+                }
+
+                let meta: AgentMeta | null = null;
+
+                try {
+                    const metaText = readFileSync(resolve(subagentsDir, metaFile), "utf-8");
+                    meta = SafeJSON.parse(metaText, { strict: true }) as AgentMeta;
+                } catch {
+                    // Skip unreadable meta files
+                }
+
+                // Derive session ID from parent directory name
+                const parentDir = basename(dirname(subagentsDir));
+
+                // Match against query
+                if (lowerQuery) {
+                    const idMatch = agentId.toLowerCase().startsWith(lowerQuery);
+                    const descMatch = meta?.description?.toLowerCase().includes(lowerQuery) ?? false;
+
+                    if (!idMatch && !descMatch) {
+                        continue;
+                    }
+                }
+
+                results.push({
+                    filePath: jsonlPath,
+                    label: meta?.description ?? `agent-${agentId}`,
+                    sessionId: parentDir,
+                    agentId,
+                    agentDescription: meta?.description,
+                    isAgent: true,
+                });
+            }
+        }
+
+        // Sort by file mtime (newest first)
+        results.sort((a, b) => {
+            try {
+                return statSync(b.filePath).mtimeMs - statSync(a.filePath).mtimeMs;
+            } catch {
+                return 0;
+            }
+        });
+
+        return results;
     }
 
     // =========================================================================
@@ -759,7 +698,7 @@ export class ClaudeSession {
             const timestamp = hasTimestamp(msg) ? msg.timestamp : undefined;
 
             if (msg.type === "assistant") {
-                for (const block of getToolUseBlocks(msg as AssistantMessage)) {
+                for (const block of getToolUseBlocks((msg as AssistantMessage).message.content)) {
                     calls.push({
                         name: block.name,
                         input: block.input,
@@ -796,7 +735,7 @@ export class ClaudeSession {
         for (const msg of this._messages) {
             let toolBlocks: ToolUseBlock[] = [];
             if (msg.type === "assistant") {
-                toolBlocks = getToolUseBlocks(msg as AssistantMessage);
+                toolBlocks = getToolUseBlocks((msg as AssistantMessage).message.content);
             } else if (msg.type === "subagent") {
                 toolBlocks = getSubagentToolUseBlocks(msg as SubagentMessage);
             }
@@ -918,7 +857,7 @@ export class ClaudeSession {
         for (const msg of this._messages) {
             let tools: ToolUseBlock[] = [];
             if (msg.type === "assistant") {
-                tools = getToolUseBlocks(msg as AssistantMessage);
+                tools = getToolUseBlocks((msg as AssistantMessage).message.content);
             } else if (msg.type === "subagent") {
                 tools = getSubagentToolUseBlocks(msg as SubagentMessage);
             }
@@ -1092,7 +1031,7 @@ export class ClaudeSession {
                 }
 
                 // Tool calls
-                for (const tool of getToolUseBlocks(assistantMsg)) {
+                for (const tool of getToolUseBlocks(assistantMsg.message.content)) {
                     toolCallCount++;
                     toolUsage[tool.name] = (toolUsage[tool.name] || 0) + 1;
                     const fp = extractFilePathFromInput(tool.input);
