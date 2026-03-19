@@ -65,7 +65,11 @@ export class FTS5SearchEngine<TDoc extends Record<string, unknown> = Record<stri
         const docId = String(id);
 
         this.db.run(`DELETE FROM ${contentTable} WHERE id = ?`, [docId]);
-        removeEmbedding(this.db, this.config.tableName, docId);
+
+        if (this.embedder) {
+            removeEmbedding(this.db, this.config.tableName, docId);
+        }
+
         this.docCount = this.queryCount();
     }
 
@@ -115,10 +119,7 @@ export class FTS5SearchEngine<TDoc extends Record<string, unknown> = Record<stri
         const placeholders = columns.map(() => "?").join(", ");
         const values = [docId, ...textFields.map((f) => String(doc[f] ?? ""))];
 
-        this.db.run(
-            `INSERT OR REPLACE INTO ${contentTable} (${columns.join(", ")}) VALUES (${placeholders})`,
-            values
-        );
+        this.db.run(`INSERT OR REPLACE INTO ${contentTable} (${columns.join(", ")}) VALUES (${placeholders})`, values);
 
         if (this.embedder && this.config.schema.vectorField) {
             const textForEmbed = String(doc[this.config.schema.vectorField] ?? "");
