@@ -89,7 +89,6 @@ export type {
     LanguageResult,
     MethodCapability,
     NamedEntity,
-    Neighbor,
     NeighborsResult,
     NlpScheme,
     OcrBlock,
