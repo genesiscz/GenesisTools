@@ -257,6 +257,8 @@ Include specifiers (comma-separated):
   agents:result           Agent final response
   agents:thinking         Agent thinking blocks
 
+Note: later specifiers override earlier ones (e.g. "tools:in:100,tools" resets in to 500).
+
 Examples:
   --include thinking,tools,agents           Everything (with defaults)
   --include tools:in:200,agents:result      Tool inputs (200 chars) + agent results only

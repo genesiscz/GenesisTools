@@ -187,7 +187,7 @@ export class ClaudeSession {
             patterns.push(resolve(PROJECTS_DIR, "*", "*.jsonl"));
 
             if (includeSubagents) {
-                patterns.push(resolve(PROJECTS_DIR, "*", "subagents", "*.jsonl"));
+                patterns.push(resolve(PROJECTS_DIR, "*", "*", "subagents", "*.jsonl"));
             }
         } else {
             // Determine search directory
@@ -199,14 +199,14 @@ export class ClaudeSession {
                 patterns.push(resolve(baseDir, "*.jsonl"));
 
                 if (includeSubagents) {
-                    patterns.push(resolve(baseDir, "subagents", "*.jsonl"));
+                    patterns.push(resolve(baseDir, "*", "subagents", "*.jsonl"));
                 }
             } else if (project) {
                 // Fallback: glob for any dir containing the project name
                 patterns.push(`${PROJECTS_DIR}/*${project}*/*.jsonl`);
 
                 if (includeSubagents) {
-                    patterns.push(`${PROJECTS_DIR}/*${project}*/subagents/*.jsonl`);
+                    patterns.push(`${PROJECTS_DIR}/*${project}*/*/subagents/*.jsonl`);
                 }
             }
         }
@@ -454,14 +454,18 @@ export class ClaudeSession {
             }
         }
 
-        // Sort by file mtime (newest first)
-        results.sort((a, b) => {
+        // Pre-compute mtimes to avoid repeated statSync calls in comparator
+        const mtimeMap = new Map<string, number>();
+
+        for (const target of results) {
             try {
-                return statSync(b.filePath).mtimeMs - statSync(a.filePath).mtimeMs;
+                mtimeMap.set(target.filePath, statSync(target.filePath).mtimeMs);
             } catch {
-                return 0;
+                mtimeMap.set(target.filePath, 0);
             }
-        });
+        }
+
+        results.sort((a, b) => (mtimeMap.get(b.filePath) ?? 0) - (mtimeMap.get(a.filePath) ?? 0));
 
         return results;
     }

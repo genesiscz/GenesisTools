@@ -5,6 +5,7 @@ import type { IncludeSpec } from "./cli/dsl";
 import type { TailTarget } from "./session.types";
 import type {
     AssistantMessage,
+    AssistantMessageContent,
     ConversationMessage,
     SubagentMessage,
     TextBlock,
@@ -12,6 +13,13 @@ import type {
     ToolUseBlock,
     UserMessage,
 } from "./types";
+
+/** Shorthand "A" variant that some JSONL sessions use for assistant messages. */
+interface ShorthandAssistant {
+    type: "A";
+    message?: AssistantMessageContent;
+    timestamp?: string;
+}
 
 interface FormatterOptions {
     includeSpec: IncludeSpec;
@@ -136,8 +144,18 @@ export class ClaudeSessionFormatter {
                 break;
             case "summary":
                 break;
-            default:
+            default: {
+                const raw = record as unknown as ShorthandAssistant;
+
+                if (raw.type === "A" && raw.message) {
+                    this.formatAssistantMessage(
+                        { type: "assistant", message: raw.message } as AssistantMessage,
+                        raw.timestamp ?? timestamp,
+                    );
+                }
+
                 break;
+            }
         }
     }
 
@@ -184,13 +202,19 @@ export class ClaudeSessionFormatter {
         this.writeLine("");
     }
 
-    close(): void {
+    close(): Promise<void> {
         this.closeAgentSection();
 
-        if (this.fileStream) {
-            this.fileStream.end();
-            this.fileStream = null;
+        if (!this.fileStream) {
+            return Promise.resolve();
         }
+
+        return new Promise((resolve) => {
+            this.fileStream!.end(() => {
+                this.fileStream = null;
+                resolve();
+            });
+        });
     }
 
     private formatUserMessage(msg: UserMessage, timestamp: string): void {
@@ -314,11 +338,32 @@ export class ClaudeSessionFormatter {
         const message = msg.message;
 
         if (message.role === "user") {
+            const content = message.content;
+
+            if (typeof content !== "string" && this.options.includeSpec.shouldShow("agents:tools:out")) {
+                for (const block of content) {
+                    if (block.type === "tool_result") {
+                        const result = extractToolResultText(block);
+                        const maxChars = this.options.includeSpec.truncationLength("agents:tools:out");
+                        const isError = block.is_error;
+
+                        if (result) {
+                            const truncated = truncate(result.trim(), maxChars);
+                            const colorFn = this.getAgentColor(agentId);
+                            const prefix = this.activeAgentId === agentId ? colorFn("  │ ") : "    ";
+                            const marker = isError ? "  ✗ " : "  → ";
+                            const line = `${prefix}${marker}${truncated}`;
+                            const formatted = this.options.colors ? (isError ? pc.red(line) : pc.dim(line)) : line;
+                            this.writeLine(formatted);
+                        }
+                    }
+                }
+            }
+
             if (!this.options.includeSpec.shouldShow("agents:input")) {
                 return;
             }
 
-            const content = message.content;
             let text = "";
 
             if (typeof content === "string") {

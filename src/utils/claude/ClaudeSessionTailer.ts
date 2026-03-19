@@ -29,7 +29,7 @@ function isAssistantEndTurn(record: ConversationMessage): boolean {
 interface TailerOptions {
     filePath: string;
     onRecord: (record: ConversationMessage) => void;
-    onFinished?: () => void;
+    onFinished?: () => void | Promise<void>;
     includeSpec?: IncludeSpec;
     lastTurns?: number;
     lastCalls?: number;
@@ -56,7 +56,7 @@ export class ClaudeSessionTailer {
     constructor(private options: TailerOptions) {}
 
     async start(): Promise<void> {
-        this.loadHistory();
+        const historyOffset = this.loadHistory();
 
         if (this.options.follow === false) {
             return;
@@ -69,7 +69,7 @@ export class ClaudeSessionTailer {
             onData: (newBytes) => this.handleNewData(newBytes),
         });
 
-        this.watcher.start();
+        this.watcher.start(historyOffset);
     }
 
     stop(): void {
@@ -87,8 +87,8 @@ export class ClaudeSessionTailer {
         }
     }
 
-    isActive(): boolean {
-        return this.watcher?.isActive() ?? false;
+    isActive(thresholdMs?: number): boolean {
+        return this.watcher?.isActive(thresholdMs) ?? false;
     }
 
     private handleNewData(newBytes: Buffer): void {
@@ -145,7 +145,7 @@ export class ClaudeSessionTailer {
 
         const timeout = this.options.isAgent ? 5_000 : 30_000;
         this.staleTimer = setTimeout(() => {
-            if (!this.isActive()) {
+            if (!this.isActive(timeout)) {
                 this.stop();
                 this.options.onFinished?.();
             }
@@ -164,14 +164,15 @@ export class ClaudeSessionTailer {
         return false;
     }
 
-    private loadHistory(): void {
+    private loadHistory(): number {
         let fileContent: Buffer;
+        let size: number;
 
         try {
-            const size = statSync(this.options.filePath).size;
+            size = statSync(this.options.filePath).size;
 
             if (size === 0) {
-                return;
+                return 0;
             }
 
             const fd = openSync(this.options.filePath, "r");
@@ -179,13 +180,13 @@ export class ClaudeSessionTailer {
             readSync(fd, fileContent, 0, size, 0);
             closeSync(fd);
         } catch {
-            return;
+            return 0;
         }
 
         const allRecords = parseJsonl<ConversationMessage>(fileContent);
 
         if (allRecords.length === 0) {
-            return;
+            return size;
         }
 
         let startIndex = 0;
@@ -199,6 +200,16 @@ export class ClaudeSessionTailer {
         for (let i = startIndex; i < allRecords.length; i++) {
             this.options.onRecord(allRecords[i]);
         }
+
+        // t21: Seed completion detection — if the last record looks like a finished
+        // session and stopOnFinish is set, schedule a stale check immediately.
+        const lastRecord = allRecords[allRecords.length - 1];
+
+        if (this.options.stopOnFinish && isAssistantEndTurn(lastRecord)) {
+            this.scheduleStaleCheck();
+        }
+
+        return size;
     }
 
     private findTurnStart(records: ConversationMessage[], lastTurns: number): number {

@@ -12,6 +12,21 @@ import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 
+function validatePositiveInt(value: string | undefined, name: string): number | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    const parsed = Number.parseInt(value, 10);
+
+    if (Number.isNaN(parsed) || parsed <= 0) {
+        console.error(pc.red(`--${name} must be a positive integer, got "${value}"`));
+        process.exit(1);
+    }
+
+    return parsed;
+}
+
 const STATUSLINE_DIR = resolve(homedir(), ".claude", "statusline");
 
 interface TailOptions {
@@ -19,7 +34,7 @@ interface TailOptions {
     stopOnFinish: boolean;
     include?: string;
     interactive: boolean;
-    noColors: boolean;
+    colors: boolean;
     raw: boolean;
     lastTurns?: string;
     lastCalls?: string;
@@ -61,7 +76,7 @@ export function registerTailCommand(program: Command): void {
             const isAgent = target.isAgent;
             const effectiveSpec = isAgent ? includeSpec.forAgent() : includeSpec;
 
-            const useColors = opts.noColors ? false : (process.stdout.isTTY ?? false);
+            const useColors = opts.colors !== false && (process.stdout.isTTY ?? false);
             const cliOutput = opts.output ? opts.outputCli : true;
 
             if (opts.output && !opts.outputCli) {
@@ -86,19 +101,16 @@ export function registerTailCommand(program: Command): void {
                 });
             }
 
-            const lastTurns = opts.lastCalls ? undefined : opts.lastTurns ? Number.parseInt(opts.lastTurns, 10) : 5;
-            const lastCalls = opts.lastCalls ? Number.parseInt(opts.lastCalls, 10) : undefined;
-
-            if (lastTurns === 0 || lastCalls === 0) {
-                p.log.error("-t/--last-turns and -c/--last-calls must be ≥ 1 (use --no-follow to skip history)");
-                process.exit(1);
-            }
+            const lastCalls = validatePositiveInt(opts.lastCalls, "last-calls");
+            const lastTurns = lastCalls ? undefined : validatePositiveInt(opts.lastTurns, "last-turns") ?? 5;
+            const maxTurns = validatePositiveInt(opts.maxTurns, "max-turns");
+            const maxCalls = validatePositiveInt(opts.maxCalls, "max-calls");
 
             const tailer = new ClaudeSessionTailer({
                 filePath: target.filePath,
                 onRecord: (record) => formatter.format(record),
-                onFinished: () => {
-                    formatter.close();
+                onFinished: async () => {
+                    await formatter.close();
 
                     if (opts.output) {
                         console.log(pc.dim(`\nOutput written to ${opts.output}`));
@@ -109,16 +121,16 @@ export function registerTailCommand(program: Command): void {
                 includeSpec: effectiveSpec,
                 lastTurns,
                 lastCalls,
-                maxTurns: opts.maxTurns ? Number.parseInt(opts.maxTurns, 10) : undefined,
-                maxCalls: opts.maxCalls ? Number.parseInt(opts.maxCalls, 10) : undefined,
+                maxTurns,
+                maxCalls,
                 follow: opts.follow,
                 stopOnFinish: opts.stopOnFinish,
                 isAgent,
             });
 
-            process.on("SIGINT", () => {
+            process.on("SIGINT", async () => {
                 tailer.stop();
-                formatter.close();
+                await formatter.close();
                 console.log(pc.dim("\nStopped tailing."));
                 process.exit(0);
             });
@@ -128,23 +140,21 @@ export function registerTailCommand(program: Command): void {
             if (opts.follow) {
                 await new Promise(() => {});
             } else {
-                formatter.close();
+                await formatter.close();
             }
         });
 }
 
 async function resolveTarget(query: string | undefined, opts: TailOptions): Promise<TailTarget | null> {
-    const projectPath = opts.project;
+    const projectPath = opts.project ? resolve(opts.project) : undefined;
 
     if (query) {
-        // Try session ID prefix first
-        const sessionTarget = findSessionByPrefix(query, projectPath);
+        const sessionTarget = await findSessionByPrefix(query, projectPath);
 
         if (sessionTarget) {
             return sessionTarget;
         }
 
-        // Try agent search
         const agents = ClaudeSession.findSubagents({
             query,
             project: projectPath,
@@ -185,22 +195,31 @@ function getProjectDirs(projectPath?: string): string[] {
     }
 }
 
-function findSessionByPrefix(prefix: string, projectPath?: string): TailTarget | null {
+async function findSessionByPrefix(prefix: string, projectPath?: string): Promise<TailTarget | null> {
     const lowerPrefix = prefix.toLowerCase();
+    const matches: TailTarget[] = [];
 
     for (const baseDir of getProjectDirs(projectPath)) {
         try {
             for (const entry of readdirSync(baseDir)) {
                 if (entry.endsWith(".jsonl") && entry.toLowerCase().startsWith(lowerPrefix)) {
-                    return {
+                    matches.push({
                         filePath: resolve(baseDir, entry),
                         label: entry.replace(".jsonl", ""),
                         sessionId: entry.replace(".jsonl", ""),
                         isAgent: false,
-                    };
+                    });
                 }
             }
         } catch {}
+    }
+
+    if (matches.length === 1) {
+        return matches[0];
+    }
+
+    if (matches.length > 1) {
+        return await promptSelectTarget(matches);
     }
 
     return null;
@@ -309,20 +328,24 @@ async function resolveIncludeSpec(opts: TailOptions): Promise<IncludeSpec> {
     }
 
     if (opts.interactive) {
-        return await runInteractiveSetup();
+        return await runInteractiveSetup(true);
     }
 
     if (opts.follow && process.stdout.isTTY) {
-        return await runInteractiveSetup();
+        return await runInteractiveSetup(false);
     }
 
     return IncludeSpec.defaults();
 }
 
-async function runInteractiveSetup(): Promise<IncludeSpec> {
+async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
     if (!process.stdout.isTTY) {
-        console.log(INCLUDE_HELP);
-        process.exit(0);
+        if (explicit) {
+            console.error(pc.red("--interactive requires a TTY. Pipe-friendly alternative: --include <spec>"));
+            process.exit(1);
+        }
+
+        return IncludeSpec.defaults();
     }
 
     p.intro(pc.cyan("Configure tail output"));
