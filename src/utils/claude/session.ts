@@ -330,7 +330,7 @@ export class ClaudeSession {
      * @returns Array of `TailTarget` sorted by file mtime (newest first).
      */
     static findSubagents(
-        options: { query?: string; project?: string; sessionId?: string; allProjects?: boolean } = {},
+        options: { query?: string; project?: string; sessionId?: string; allProjects?: boolean } = {}
     ): TailTarget[] {
         const { query, project, sessionId, allProjects = false } = options;
 

@@ -200,9 +200,7 @@ function findSessionByPrefix(prefix: string, projectPath?: string): TailTarget |
                     };
                 }
             }
-        } catch {
-            continue;
-        }
+        } catch {}
     }
 
     return null;
@@ -259,9 +257,7 @@ function findMostRecentSession(projectPath?: string): TailTarget | null {
                     best = { filePath, sessionId: f.replace(".jsonl", ""), mtime };
                 }
             }
-        } catch {
-            continue;
-        }
+        } catch {}
     }
 
     if (!best) {
