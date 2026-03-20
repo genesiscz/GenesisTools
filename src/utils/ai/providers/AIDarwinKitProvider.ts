@@ -5,6 +5,15 @@ const SUPPORTED_TASKS: AITask[] = ["classify", "embed", "sentiment"];
 export class AIDarwinKitProvider implements AIProvider, AIEmbeddingProvider {
     readonly type = "darwinkit" as const;
     readonly dimensions = 512;
+    private nlpModule: typeof import("@app/utils/macos/nlp") | null = null;
+
+    private async getNlp() {
+        if (!this.nlpModule) {
+            this.nlpModule = await import("@app/utils/macos/nlp");
+        }
+
+        return this.nlpModule;
+    }
 
     async isAvailable(): Promise<boolean> {
         return process.platform === "darwin";
@@ -15,18 +24,18 @@ export class AIDarwinKitProvider implements AIProvider, AIEmbeddingProvider {
     }
 
     async detectLanguage(text: string): Promise<{ language: string; confidence: number }> {
-        const { detectLanguage } = await import("@app/utils/macos/nlp");
-        return detectLanguage(text);
+        const nlp = await this.getNlp();
+        return nlp.detectLanguage(text);
     }
 
     async analyzeSentiment(text: string): Promise<{ score: number; label: string }> {
-        const { analyzeSentiment } = await import("@app/utils/macos/nlp");
-        return analyzeSentiment(text);
+        const nlp = await this.getNlp();
+        return nlp.analyzeSentiment(text);
     }
 
     async embedText(text: string, language = "en"): Promise<{ vector: number[]; dimension: number }> {
-        const { embedText } = await import("@app/utils/macos/nlp");
-        return embedText(text, language);
+        const nlp = await this.getNlp();
+        return nlp.embedText(text, language);
     }
 
     async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
@@ -41,7 +50,7 @@ export class AIDarwinKitProvider implements AIProvider, AIEmbeddingProvider {
         text: string,
         categories: string[]
     ): Promise<{ category: string; confidence: number; scores: Array<{ category: string; score: number }> }> {
-        const { textDistance } = await import("@app/utils/macos/nlp");
+        const { textDistance } = await this.getNlp();
 
         // Use embedding-based classification: embed text + each category, find closest
         const scores: Array<{ category: string; score: number }> = [];

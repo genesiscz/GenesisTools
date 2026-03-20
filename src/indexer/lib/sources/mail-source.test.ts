@@ -111,7 +111,7 @@ describe.skipIf(!hasMailDb)("MailSource", () => {
             const hash1 = source.hashEntry(entries[0]);
             const hash2 = source.hashEntry(entries[0]);
             expect(hash1).toBe(hash2);
-            expect(hash1.length).toBe(64); // SHA-256 hex
+            expect(hash1.length).toBeGreaterThan(0); // xxHash64 hex
         }
     }, 30_000);
 });

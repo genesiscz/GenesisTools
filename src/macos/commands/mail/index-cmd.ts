@@ -1,4 +1,5 @@
 import { IndexerManager } from "@app/indexer/lib/manager";
+import { createProgressCallbacks } from "@app/indexer/lib/progress";
 import { MailSource } from "@app/indexer/lib/sources/mail-source";
 import type { IndexConfig } from "@app/indexer/lib/types";
 import { formatBytes, formatDuration } from "@app/utils/format";
@@ -8,6 +9,26 @@ import pc from "picocolors";
 
 const MAIL_INDEX_NAME = "macos-mail";
 
+interface DateRange {
+    fromDate?: Date;
+    toDate?: Date;
+}
+
+function parseDate(str: string | undefined, label: string): Date | undefined {
+    if (!str) {
+        return undefined;
+    }
+
+    const d = new Date(str);
+
+    if (Number.isNaN(d.getTime())) {
+        p.log.error(`Invalid ${label} date: "${str}". Use YYYY-MM-DD format.`);
+        process.exit(1);
+    }
+
+    return d;
+}
+
 export function registerIndexCommand(program: Command): void {
     program
         .command("index")
@@ -15,32 +36,77 @@ export function registerIndexCommand(program: Command): void {
         .option("--model <id>", "Embedding model ID (see: tools indexer models --type mail)")
         .option("--limit <n>", "Max emails to index", parseInt)
         .option("--no-embed", "Disable embeddings (fulltext-only)")
-        .option("--rebuild", "Force full reindex")
-        .action(async (opts: { model?: string; limit?: number; embed?: boolean; rebuild?: boolean }) => {
-            p.intro(pc.bgCyan(pc.white(" mail index ")));
+        .option("--rebuild-fulltext", "Drop and re-scan all emails (full reindex)")
+        .option("--rebuild-embeddings", "Re-embed all chunks (keeps FTS index)")
+        .option("--force", "Skip confirmation for destructive operations")
+        .option("--from <date>", "Only index emails from this date (YYYY-MM-DD)")
+        .option("--to <date>", "Only index emails up to this date (YYYY-MM-DD)")
+        .action(
+            async (opts: {
+                model?: string;
+                limit?: number;
+                embed?: boolean;
+                rebuildFulltext?: boolean;
+                rebuildEmbeddings?: boolean;
+                force?: boolean;
+                from?: string;
+                to?: string;
+            }) => {
+                p.intro(pc.bgCyan(pc.white(" mail index ")));
 
-            const manager = await IndexerManager.load();
+                const fromDate = parseDate(opts.from, "--from");
+                const toDate = parseDate(opts.to, "--to");
 
-            try {
-                const existingNames = manager.getIndexNames();
-                const exists = existingNames.includes(MAIL_INDEX_NAME);
+                const manager = await IndexerManager.load();
 
-                if (exists && !opts.rebuild) {
-                    await incrementalSync(manager);
-                } else {
-                    if (exists && opts.rebuild) {
-                        p.log.info("Rebuilding mail index from scratch...");
-                        await manager.removeIndex(MAIL_INDEX_NAME);
+                try {
+                    const existingNames = manager.getIndexNames();
+                    const exists = existingNames.includes(MAIL_INDEX_NAME);
+
+                    if (exists && opts.rebuildEmbeddings) {
+                        await rebuildEmbeddings(manager, opts, { fromDate, toDate });
+                    } else if (exists && !opts.rebuildFulltext) {
+                        await incrementalSync(manager, { fromDate, toDate });
+                    } else {
+                        if (exists && opts.rebuildFulltext) {
+                            if (!opts.force) {
+                                if (!process.stdout.isTTY) {
+                                    p.log.error(
+                                        "--rebuild-fulltext is destructive. Use in interactive mode or add --force."
+                                    );
+                                    process.exit(1);
+                                }
+
+                                const meta = manager.listIndexes().find((m) => m.name === MAIL_INDEX_NAME);
+                                const chunkCount = meta?.stats.totalChunks ?? 0;
+                                const embCount = meta?.stats.totalEmbeddings ?? 0;
+
+                                const confirmed = await p.confirm({
+                                    message: `This will delete the entire mail index (${chunkCount.toLocaleString()} chunks, ${embCount.toLocaleString()} embeddings) and rebuild from scratch. Continue?`,
+                                });
+
+                                if (p.isCancel(confirmed) || !confirmed) {
+                                    p.log.info("Cancelled");
+                                    p.outro("Aborted");
+                                    return;
+                                }
+                            } else {
+                                p.log.info("Rebuilding (--force, skipping confirmation)...");
+                            }
+
+                            p.log.info("Rebuilding mail index from scratch...");
+                            await manager.removeIndex(MAIL_INDEX_NAME);
+                        }
+
+                        await createAndSync(manager, opts);
                     }
-
-                    await createAndSync(manager, opts);
+                } finally {
+                    await manager.close();
                 }
-            } finally {
-                await manager.close();
-            }
 
-            p.outro("Done");
-        });
+                p.outro("Done");
+            }
+        );
 }
 
 async function createAndSync(
@@ -87,25 +153,7 @@ async function createAndSync(
     spinner.start("Indexing emails...");
 
     try {
-        // Use addIndex but listen for progress events via callbacks
-        const indexer = await manager.addIndex(config, {
-            onScanProgress: (payload) => {
-                const pct = payload.total > 0 ? Math.round((payload.scanned / payload.total) * 100) : 0;
-                spinner.message(
-                    `Scanning... ${payload.scanned.toLocaleString()}/${payload.total.toLocaleString()} (${pct}%)`
-                );
-            },
-            onScanComplete: (payload) => {
-                spinner.message(`Stored ${payload.added.toLocaleString()} messages`);
-            },
-            onChunkFile: (payload) => {
-                spinner.message(`Chunking: ${payload.filePath.slice(-60)}`);
-            },
-            onEmbedProgress: (payload) => {
-                const pct = Math.round((payload.completed / payload.total) * 100);
-                spinner.message(`Embedding... ${payload.completed}/${payload.total} (${pct}%)`);
-            },
-        });
+        const indexer = await manager.addIndex(config, createProgressCallbacks(spinner));
 
         const stats = indexer.stats;
         spinner.stop("Indexing complete");
@@ -128,7 +176,114 @@ async function createAndSync(
     }
 }
 
-async function incrementalSync(manager: IndexerManager): Promise<void> {
+async function rebuildEmbeddings(
+    manager: IndexerManager,
+    opts: { model?: string; force?: boolean },
+    dateRange: DateRange = {}
+): Promise<void> {
+    const metas = manager.listIndexes();
+    const meta = metas.find((m) => m.name === MAIL_INDEX_NAME);
+
+    if (!meta) {
+        p.log.error("Mail index not found. Run without --rebuild-embeddings first.");
+        process.exit(1);
+    }
+
+    const currentModel = meta.indexEmbedding?.model ?? "darwinkit";
+    const newModel = opts.model ?? currentModel;
+
+    p.log.info(`Index: ${pc.bold(MAIL_INDEX_NAME)}`);
+    p.log.info(`  ${pc.dim("Chunks:")} ${meta.stats.totalChunks.toLocaleString()}`);
+    p.log.info(`  ${pc.dim("Current model:")} ${currentModel}`);
+
+    if (opts.model && opts.model !== currentModel) {
+        p.log.info(`  ${pc.dim("New model:")} ${pc.bold(newModel)}`);
+    }
+
+    if (dateRange.fromDate || dateRange.toDate) {
+        const range = [
+            dateRange.fromDate ? dateRange.fromDate.toISOString().slice(0, 10) : "beginning",
+            dateRange.toDate ? dateRange.toDate.toISOString().slice(0, 10) : "now",
+        ];
+        p.log.info(`  ${pc.dim("Date range:")} ${range[0]} → ${range[1]}`);
+    }
+
+    const embCount = meta.stats.totalEmbeddings;
+
+    if (embCount > 0 && !opts.force) {
+        if (!process.stdout.isTTY) {
+            p.log.error("--rebuild-embeddings is destructive. Use in interactive mode or add --force.");
+            process.exit(1);
+        }
+
+        const scopeMsg =
+            dateRange.fromDate || dateRange.toDate ? "in the date range" : `(all ${embCount.toLocaleString()})`;
+
+        const confirmed = await p.confirm({
+            message: `This will drop embeddings ${scopeMsg} and re-generate them. Continue?`,
+        });
+
+        if (p.isCancel(confirmed) || !confirmed) {
+            p.log.info("Cancelled");
+            p.outro("Aborted");
+            return;
+        }
+    } else if (opts.force && embCount > 0) {
+        p.log.info("Rebuilding embeddings (--force, skipping confirmation)...");
+    }
+
+    const spinner = p.spinner();
+    spinner.start("Dropping old embeddings...");
+
+    try {
+        const indexer = await manager.getIndex(MAIL_INDEX_NAME);
+
+        let embedded: number;
+
+        if (dateRange.fromDate || dateRange.toDate) {
+            const mailSource = await MailSource.create();
+            const entries = await mailSource.scan({ fromDate: dateRange.fromDate, toDate: dateRange.toDate });
+            mailSource.dispose();
+
+            const sourceIds = entries.map((e) => e.id);
+            p.log.info(`  ${pc.dim("Scoped to:")} ${sourceIds.length.toLocaleString()} emails in date range`);
+
+            embedded = await indexer.reembedBySourceIds(sourceIds, {
+                onEmbedProgress: (payload) => {
+                    const pct = Math.round((payload.completed / payload.total) * 100);
+                    spinner.message(
+                        `Embedding... ${payload.completed.toLocaleString()}/${payload.total.toLocaleString()} (${pct}%)`
+                    );
+                },
+            });
+        } else {
+            embedded = await indexer.reembed({
+                onEmbedProgress: (payload) => {
+                    const pct = Math.round((payload.completed / payload.total) * 100);
+                    spinner.message(
+                        `Embedding... ${payload.completed.toLocaleString()}/${payload.total.toLocaleString()} (${pct}%)`
+                    );
+                },
+            });
+        }
+
+        spinner.stop("Embeddings rebuilt");
+        p.log.success(`Generated ${pc.bold(String(embedded))} embeddings with ${newModel}`);
+
+        await indexer.close();
+    } catch (err) {
+        spinner.stop("Rebuild failed");
+        const msg = err instanceof Error ? err.message : String(err);
+
+        if (msg) {
+            p.log.error(msg);
+        }
+
+        process.exit(1);
+    }
+}
+
+async function incrementalSync(manager: IndexerManager, dateRange: DateRange = {}): Promise<void> {
     // Show current index state
     const metas = manager.listIndexes();
     const meta = metas.find((m) => m.name === MAIL_INDEX_NAME);
@@ -152,12 +307,20 @@ async function incrementalSync(manager: IndexerManager): Promise<void> {
         }
     }
 
+    if (dateRange.fromDate || dateRange.toDate) {
+        const range = [
+            dateRange.fromDate ? dateRange.fromDate.toISOString().slice(0, 10) : "beginning",
+            dateRange.toDate ? dateRange.toDate.toISOString().slice(0, 10) : "now",
+        ];
+        p.log.info(`  ${pc.dim("Date range:")} ${range[0]} → ${range[1]}`);
+    }
+
     // Get total emails in Mail.app for comparison
     const mailSource = await MailSource.create();
-    const totalInMail = await mailSource.estimateTotal();
+    const totalInMail = await mailSource.estimateTotal({ fromDate: dateRange.fromDate, toDate: dateRange.toDate });
     mailSource.dispose();
 
-    const indexed = meta?.stats.totalChunks ?? 0;
+    const indexed = meta?.stats.totalFiles ?? 0;
     const diff = totalInMail - indexed;
 
     if (diff > 0) {
@@ -175,26 +338,8 @@ async function incrementalSync(manager: IndexerManager): Promise<void> {
         const indexer = await manager.getIndex(MAIL_INDEX_NAME);
 
         const stats = await indexer.sync({
-            onScanProgress: (payload) => {
-                const pct = payload.total > 0 ? Math.round((payload.scanned / payload.total) * 100) : 0;
-                spinner.message(
-                    `Scanning... ${payload.scanned.toLocaleString()}/${payload.total.toLocaleString()} (${pct}%)`
-                );
-            },
-            onScanComplete: (payload) => {
-                if (payload.added > 0) {
-                    spinner.message(`Scanned: ${payload.added.toLocaleString()} new messages stored`);
-                } else {
-                    spinner.message("Index is up to date");
-                }
-            },
-            onChunkFile: (payload) => {
-                spinner.message(`Chunking: ${payload.filePath.slice(-60)}`);
-            },
-            onEmbedProgress: (payload) => {
-                const pct = Math.round((payload.completed / payload.total) * 100);
-                spinner.message(`Embedding... ${payload.completed}/${payload.total} (${pct}%)`);
-            },
+            scanOptions: { fromDate: dateRange.fromDate, toDate: dateRange.toDate },
+            ...createProgressCallbacks(spinner),
         });
 
         spinner.stop("Sync complete");

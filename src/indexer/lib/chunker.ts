@@ -80,11 +80,9 @@ function estimateTokens(text: string): number {
     return Math.ceil(text.length / 4);
 }
 
-// ─── SHA-256 hash using Bun.CryptoHasher ────────────────────────
-function sha256(content: string): string {
-    const hasher = new Bun.CryptoHasher("sha256");
-    hasher.update(content);
-    return hasher.digest("hex");
+// ─── Content hash using xxHash64 (fast, non-cryptographic) ──────
+function contentHash(content: string): string {
+    return Bun.hash(content).toString(16);
 }
 
 // ─── Split a chunk at line boundaries when it exceeds maxTokens ─
@@ -104,7 +102,7 @@ function splitChunkByLines(opts: {
         const lines = content.split("\n");
         return [
             {
-                id: sha256(content),
+                id: contentHash(content),
                 filePath,
                 startLine,
                 endLine: startLine + lines.length - 1,
@@ -131,7 +129,7 @@ function splitChunkByLines(opts: {
 
             if (chunkContent.trim().length > 0) {
                 chunks.push({
-                    id: sha256(chunkContent),
+                    id: contentHash(chunkContent),
                     filePath,
                     startLine: currentStartLine,
                     endLine: currentStartLine + currentLines.length - 1,
@@ -310,7 +308,7 @@ function chunkByLine(opts: { filePath: string; content: string; maxTokens: numbe
             if (chunkContent.trim().length > 0) {
                 const chunkLines = chunkContent.split("\n").length;
                 chunks.push({
-                    id: sha256(chunkContent),
+                    id: contentHash(chunkContent),
                     filePath,
                     startLine: currentStartLine,
                     endLine: currentStartLine + chunkLines - 1,
@@ -536,7 +534,7 @@ function chunkByJson(opts: { filePath: string; content: string; maxTokens: numbe
         // Primitive value, single chunk
         const stringified = SafeJSON.stringify(parsed, null, 2);
         chunks.push({
-            id: sha256(stringified),
+            id: contentHash(stringified),
             filePath,
             startLine: 0,
             endLine: 0,

@@ -44,6 +44,18 @@ export class SqliteVectorStore implements VectorStore {
                 row.embedding.byteOffset,
                 row.embedding.byteLength / 4
             );
+
+            // Skip zero-magnitude vectors (failed embeddings)
+            let mag = 0;
+
+            for (let i = 0; i < storedVec.length; i++) {
+                mag += storedVec[i] * storedVec[i];
+            }
+
+            if (mag === 0) {
+                continue;
+            }
+
             const distance = cosineDistance(queryVector, storedVec);
             scored.push({ docId: row.doc_id, score: 1 - distance });
         }
