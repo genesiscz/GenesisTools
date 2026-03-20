@@ -2,9 +2,10 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
-import type { SearchEngine, SearchOptions, SearchResult } from "../../types";
+import { SqliteVectorStore } from "../../stores/sqlite-vector-store";
+import type { VectorStore } from "../../stores/vector-store";
+import type { SearchEngine as ISearchEngine, SearchOptions, SearchResult } from "../../types";
 import { createEmbeddingTable, createFTS5Table } from "./schema";
-import { removeEmbedding, storeEmbedding, vectorSearch } from "./vector";
 
 export interface FTS5TableOverrides {
     /** Override the content table name (default: `${tableName}_content`) */
@@ -17,7 +18,7 @@ export interface FTS5TableOverrides {
     embeddingsDocIdColumn?: string;
 }
 
-export interface FTS5SearchEngineConfig<TDoc extends Record<string, unknown>> {
+export interface SearchEngineConfig<TDoc extends Record<string, unknown>> {
     dbPath: string;
     tableName: string;
     schema: {
@@ -31,18 +32,21 @@ export interface FTS5SearchEngineConfig<TDoc extends Record<string, unknown>> {
     tableOverrides?: FTS5TableOverrides;
     /** Skip schema creation (tables already exist) */
     skipSchemaInit?: boolean;
+    /** Override the default SQLite brute-force vector store */
+    vectorStore?: VectorStore;
 }
 
-export class FTS5SearchEngine<TDoc extends Record<string, unknown> = Record<string, unknown>>
-    implements SearchEngine<TDoc>
+export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, unknown>>
+    implements ISearchEngine<TDoc>
 {
     private db: Database;
-    private config: FTS5SearchEngineConfig<TDoc>;
+    private config: SearchEngineConfig<TDoc>;
     private embedder?: Embedder;
+    private vectorStore?: VectorStore;
     private docCount = 0;
     private ownsDb: boolean;
 
-    constructor(config: FTS5SearchEngineConfig<TDoc>) {
+    constructor(config: SearchEngineConfig<TDoc>) {
         this.config = config;
         this.embedder = config.embedder;
         this.ownsDb = true;
@@ -60,19 +64,20 @@ export class FTS5SearchEngine<TDoc extends Record<string, unknown> = Record<stri
             this.initSchema();
         }
 
+        this.initStores();
         this.docCount = this.queryCount();
     }
 
     /**
-     * Create an FTS5SearchEngine on an existing Database instance.
+     * Create a SearchEngine on an existing Database instance.
      * Use this when the database is owned by another component (e.g. TelegramHistoryStore)
      * and already has FTS5/embedding tables set up.
      */
     static fromDatabase<T extends Record<string, unknown>>(
         db: Database,
-        config: Omit<FTS5SearchEngineConfig<T>, "dbPath">
-    ): FTS5SearchEngine<T> {
-        const engine = Object.create(FTS5SearchEngine.prototype) as FTS5SearchEngine<T>;
+        config: Omit<SearchEngineConfig<T>, "dbPath">
+    ): SearchEngine<T> {
+        const engine = Object.create(SearchEngine.prototype) as SearchEngine<T>;
         engine.db = db;
         engine.config = { ...config, dbPath: "" };
         engine.embedder = config.embedder;
@@ -82,6 +87,7 @@ export class FTS5SearchEngine<TDoc extends Record<string, unknown> = Record<stri
             engine.initSchema();
         }
 
+        engine.initStores();
         engine.docCount = engine.queryCount();
         return engine;
     }
@@ -109,8 +115,8 @@ export class FTS5SearchEngine<TDoc extends Record<string, unknown> = Record<stri
 
         this.db.run(`DELETE FROM ${this.contentTableName} WHERE id = ?`, [docId]);
 
-        if (this.embedder) {
-            removeEmbedding(this.db, this.config.tableName, docId);
+        if (this.vectorStore) {
+            this.vectorStore.remove(docId);
         }
 
         this.docCount = this.queryCount();
@@ -150,14 +156,6 @@ export class FTS5SearchEngine<TDoc extends Record<string, unknown> = Record<stri
         return this.config.tableOverrides?.ftsTable ?? `${this.config.tableName}_fts`;
     }
 
-    private get embTableName(): string {
-        return this.config.tableOverrides?.embeddingsTable ?? `${this.config.tableName}_embeddings`;
-    }
-
-    private get embDocIdColumn(): string {
-        return this.config.tableOverrides?.embeddingsDocIdColumn ?? "doc_id";
-    }
-
     private initSchema(): void {
         createFTS5Table({
             db: this.db,
@@ -171,6 +169,17 @@ export class FTS5SearchEngine<TDoc extends Record<string, unknown> = Record<stri
         }
     }
 
+    private initStores(): void {
+        if (this.config.vectorStore) {
+            this.vectorStore = this.config.vectorStore;
+        } else if (this.embedder) {
+            this.vectorStore = new SqliteVectorStore(this.db, {
+                tableName: this.config.tableName,
+                dimensions: this.embedder.dimensions,
+            });
+        }
+    }
+
     private insertSync(doc: TDoc): void {
         const { textFields, idField } = this.config.schema;
         const docId = String(doc[idField]);
@@ -179,16 +188,19 @@ export class FTS5SearchEngine<TDoc extends Record<string, unknown> = Record<stri
         const placeholders = columns.map(() => "?").join(", ");
         const values = [docId, ...textFields.map((f) => String(doc[f] ?? ""))];
 
-        this.db.run(`INSERT OR REPLACE INTO ${this.contentTableName} (${columns.join(", ")}) VALUES (${placeholders})`, values);
+        this.db.run(
+            `INSERT OR REPLACE INTO ${this.contentTableName} (${columns.join(", ")}) VALUES (${placeholders})`,
+            values
+        );
 
-        if (this.embedder && this.config.schema.vectorField) {
+        if (this.embedder && this.vectorStore && this.config.schema.vectorField) {
             const textForEmbed = String(doc[this.config.schema.vectorField] ?? "");
 
             if (textForEmbed) {
                 this.embedder
                     .embed(textForEmbed)
                     .then((result) => {
-                        storeEmbedding(this.db, this.config.tableName, docId, result.vector);
+                        this.vectorStore!.store(docId, result.vector);
                     })
                     .catch(() => {
                         // Embedding failure is non-fatal
@@ -239,9 +251,9 @@ export class FTS5SearchEngine<TDoc extends Record<string, unknown> = Record<stri
             LIMIT ?
         `;
 
-        const rows = this.db
-            .query(sql)
-            .all(ftsQuery, ...filterParams, limit) as Array<Record<string, unknown> & { rank: number }>;
+        const rows = this.db.query(sql).all(ftsQuery, ...filterParams, limit) as Array<
+            Record<string, unknown> & { rank: number }
+        >;
 
         return rows.map((row) => {
             const { rank, ...rest } = row;
@@ -263,6 +275,10 @@ export class FTS5SearchEngine<TDoc extends Record<string, unknown> = Record<stri
         limit: number,
         filters?: { sql: string; params: Array<string | number> }
     ): Promise<SearchResult<TDoc>[]> {
+        if (!this.vectorStore) {
+            throw new Error("Vector search requires an embedder or a pre-computed embedding");
+        }
+
         let queryVec: Float32Array;
 
         if (query instanceof Float32Array) {
@@ -276,13 +292,7 @@ export class FTS5SearchEngine<TDoc extends Record<string, unknown> = Record<stri
             queryVec = queryResult.vector;
         }
 
-        const hits = vectorSearch(
-            this.db,
-            this.config.tableName,
-            queryVec,
-            filters ? limit * 5 : limit,
-            { table: this.embTableName, docIdColumn: this.embDocIdColumn }
-        );
+        const hits = this.vectorStore.search(queryVec, filters ? limit * 5 : limit);
 
         const filterClause = filters?.sql ? ` AND ${filters.sql}` : "";
         const filterParams = filters?.params ?? [];
@@ -290,13 +300,15 @@ export class FTS5SearchEngine<TDoc extends Record<string, unknown> = Record<stri
 
         for (const hit of hits) {
             const doc = this.db
-                .query(`SELECT c.* FROM ${this.contentTableName} c WHERE c.${this.config.schema.idField} = ?${filterClause}`)
+                .query(
+                    `SELECT c.* FROM ${this.contentTableName} c WHERE c.${this.config.schema.idField} = ?${filterClause}`
+                )
                 .get(hit.docId, ...filterParams) as TDoc | null;
 
             if (doc) {
                 results.push({
                     doc,
-                    score: 1 - hit.distance,
+                    score: hit.score,
                     method: "cosine",
                 });
             }

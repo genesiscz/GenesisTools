@@ -1,6 +1,7 @@
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import { registerAddCommand } from "./commands/add";
+import { registerModelsCommand } from "./commands/models";
 import { registerRebuildCommand } from "./commands/rebuild";
 import { registerRemoveCommand } from "./commands/remove";
 import { registerSearchCommand } from "./commands/search";
@@ -16,6 +17,7 @@ program
     .showHelpAfterError(true);
 
 registerAddCommand(program);
+registerModelsCommand(program);
 registerStatusCommand(program);
 registerSearchCommand(program);
 registerWatchCommand(program);

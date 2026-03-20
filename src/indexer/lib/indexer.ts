@@ -1,6 +1,4 @@
-import type { Dirent } from "node:fs";
-import { readdirSync } from "node:fs";
-import { extname, join, relative, resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { detectChanges } from "./change-detector";
@@ -9,166 +7,69 @@ import { chunkFile } from "./chunker";
 import type { IndexerCallbacks, SyncStats } from "./events";
 import { IndexerEventEmitter } from "./events";
 import { buildMerkleTree } from "./merkle";
+import type { ModelInfo } from "./model-registry";
+import { formatModelTable, getModelsForType } from "./model-registry";
+import { FileSource } from "./sources/file-source";
+import type { IndexerSource } from "./sources/source";
 import type { IndexStore } from "./store";
 import { createIndexStore } from "./store";
-import type { ChunkRecord, IndexConfig, IndexStats } from "./types";
+import type { ChunkRecord, IndexConfig, IndexStats, MerkleNode } from "./types";
 
 export class EmbeddingSetupError extends Error {
     readonly reason: string;
     readonly requestedProvider?: string;
+    readonly recommendedModels?: ModelInfo[];
 
-    constructor(reason: string, requestedProvider?: string) {
-        const providers = [
-            "darwinkit  — macOS on-device NaturalLanguage.framework (512-dim, free)",
-            "local-hf   — HuggingFace all-MiniLM-L6-v2 (384-dim, ~25MB download)",
-            "cloud      — OpenAI text-embedding-3-small (1536-dim, requires OPENAI_API_KEY)",
-        ];
+    constructor(reason: string, requestedProvider?: string, recommendedModels?: ModelInfo[]) {
+        const lines = [`Embedding setup failed: ${reason}`, ""];
 
-        const msg = [
-            `Embedding setup failed: ${reason}`,
-            "",
-            "Available providers:",
-            ...providers.map((p) => `  ${p}`),
-            "",
-            "Fix with one of:",
-            `  tools indexer add <path> --provider darwinkit`,
-            `  tools indexer add <path> --provider local-hf`,
-            `  tools indexer add <path> --provider cloud`,
-            "",
-            "Or disable embeddings (fulltext-only search, no semantic):",
-            `  tools indexer add <path> --no-embed`,
-        ].join("\n");
+        if (recommendedModels && recommendedModels.length > 0) {
+            lines.push("Recommended models for this index type:");
+            lines.push("");
+            lines.push(formatModelTable(recommendedModels));
+            lines.push("");
+            lines.push("Fix with:");
+            lines.push(`  tools indexer add <path> --model <model-id>`);
+        } else {
+            const providers = [
+                "darwinkit  — macOS on-device NaturalLanguage.framework (512-dim, free)",
+                "local-hf   — HuggingFace all-MiniLM-L6-v2 (384-dim, ~25MB download)",
+                "cloud      — OpenAI text-embedding-3-small (1536-dim, requires OPENAI_API_KEY)",
+            ];
 
-        super(msg);
+            lines.push("Available providers:");
+            lines.push(...providers.map((p) => `  ${p}`));
+            lines.push("");
+            lines.push("Fix with one of:");
+            lines.push(`  tools indexer add <path> --provider darwinkit`);
+            lines.push(`  tools indexer add <path> --provider local-hf`);
+            lines.push(`  tools indexer add <path> --provider cloud`);
+        }
+
+        lines.push("");
+        lines.push("Or disable embeddings (fulltext-only search, no semantic):");
+        lines.push(`  tools indexer add <path> --no-embed`);
+
+        super(lines.join("\n"));
         this.name = "EmbeddingSetupError";
         this.reason = reason;
         this.requestedProvider = requestedProvider;
+        this.recommendedModels = recommendedModels;
     }
-}
-
-interface FileEntry {
-    path: string;
-    content: string;
-}
-
-async function scanFiles(opts: {
-    baseDir: string;
-    respectGitIgnore?: boolean;
-    includedSuffixes?: string[];
-    ignoredPaths?: string[];
-}): Promise<FileEntry[]> {
-    const { baseDir, respectGitIgnore, includedSuffixes, ignoredPaths } = opts;
-    const absBaseDir = resolve(baseDir);
-
-    let filePaths: string[];
-
-    if (respectGitIgnore) {
-        const isGit = await checkIsGitRepo(absBaseDir);
-
-        if (isGit) {
-            filePaths = await getGitTrackedFiles(absBaseDir);
-        } else {
-            filePaths = walkDirectory(absBaseDir);
-        }
-    } else {
-        filePaths = walkDirectory(absBaseDir);
-    }
-
-    if (includedSuffixes && includedSuffixes.length > 0) {
-        const suffixSet = new Set(includedSuffixes.map((s) => (s.startsWith(".") ? s : `.${s}`)));
-        filePaths = filePaths.filter((f) => suffixSet.has(extname(f).toLowerCase()));
-    }
-
-    if (ignoredPaths && ignoredPaths.length > 0) {
-        filePaths = filePaths.filter((f) => {
-            const rel = relative(absBaseDir, f);
-            return !ignoredPaths.some((pattern) => rel.startsWith(pattern) || rel.includes(pattern));
-        });
-    }
-
-    const entries: FileEntry[] = [];
-
-    for (const filePath of filePaths) {
-        try {
-            const content = await Bun.file(filePath).text();
-            entries.push({ path: filePath, content });
-        } catch {
-            // Skip unreadable files
-        }
-    }
-
-    return entries;
-}
-
-async function checkIsGitRepo(baseDir: string): Promise<boolean> {
-    const proc = Bun.spawn(["git", "rev-parse", "--is-inside-work-tree"], {
-        cwd: baseDir,
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-    await proc.exited;
-    return proc.exitCode === 0;
-}
-
-async function getGitTrackedFiles(baseDir: string): Promise<string[]> {
-    const proc = Bun.spawn(["git", "ls-files", "--cached", "--others", "--exclude-standard"], {
-        cwd: baseDir,
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-
-    const stdout = await new Response(proc.stdout).text();
-    await proc.exited;
-
-    return stdout
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0)
-        .map((rel) => join(baseDir, rel));
-}
-
-function walkDirectory(baseDir: string): string[] {
-    const result: string[] = [];
-
-    function walk(dir: string): void {
-        let entries: Dirent[];
-
-        try {
-            entries = readdirSync(dir, { withFileTypes: true }) as Dirent[];
-        } catch {
-            return;
-        }
-
-        for (const entry of entries) {
-            const name = String(entry.name);
-            const fullPath = join(dir, name);
-
-            if (entry.isDirectory()) {
-                if (name.startsWith(".") || name === "node_modules") {
-                    continue;
-                }
-
-                walk(fullPath);
-            } else if (entry.isFile()) {
-                result.push(fullPath);
-            }
-        }
-    }
-
-    walk(baseDir);
-    return result;
 }
 
 export class Indexer extends IndexerEventEmitter {
     private store: IndexStore;
     private config: IndexConfig;
+    private source: IndexerSource;
     private embedder: Embedder | null = null;
     private watchTimer: ReturnType<typeof setInterval> | null = null;
 
-    private constructor(store: IndexStore, config: IndexConfig) {
+    private constructor(store: IndexStore, config: IndexConfig, source: IndexerSource) {
         super();
         this.store = store;
         this.config = config;
+        this.source = source;
     }
 
     static async create(config: IndexConfig): Promise<Indexer> {
@@ -184,12 +85,22 @@ export class Indexer extends IndexerEventEmitter {
                 });
             } catch (err) {
                 const reason = err instanceof Error ? err.message : String(err);
-                throw new EmbeddingSetupError(reason, config.embedding?.provider);
+                const models = getModelsForType(config.type ?? "files");
+                throw new EmbeddingSetupError(reason, config.embedding?.provider, models);
             }
         }
 
+        const source =
+            config.source ??
+            new FileSource({
+                baseDir: config.baseDir,
+                respectGitIgnore: config.respectGitIgnore,
+                includedSuffixes: config.includedSuffixes,
+                ignoredPaths: config.ignoredPaths,
+            });
+
         const store = await createIndexStore(config, embedder ?? undefined);
-        const indexer = new Indexer(store, config);
+        const indexer = new Indexer(store, config, source);
         indexer.embedder = embedder;
 
         return indexer;
@@ -215,6 +126,19 @@ export class Indexer extends IndexerEventEmitter {
         query: string,
         opts?: Partial<SearchOptions> & { callbacks?: IndexerCallbacks }
     ): Promise<SearchResult<ChunkRecord>[]> {
+        const meta = this.store.getMeta();
+        const wantsVector = opts?.mode === "vector" || opts?.mode === "hybrid";
+
+        if (wantsVector && meta.indexEmbedding && this.embedder) {
+            if (meta.indexEmbedding.dimensions !== this.embedder.dimensions) {
+                throw new Error(
+                    `Index "${this.name}" was built with ${meta.indexEmbedding.model} (${meta.indexEmbedding.dimensions}-dim).\n` +
+                        `Current model has ${this.embedder.dimensions} dimensions — incompatible.\n` +
+                        `Run: tools indexer rebuild ${this.name} --model ${meta.indexEmbedding.model}`
+                );
+            }
+        }
+
         const start = performance.now();
         const searchOpts: SearchOptions = {
             query,
@@ -333,12 +257,8 @@ export class Indexer extends IndexerEventEmitter {
         }
 
         try {
-            const files = await scanFiles({
-                baseDir: this.config.baseDir,
-                respectGitIgnore: this.config.respectGitIgnore,
-                includedSuffixes: this.config.includedSuffixes,
-                ignoredPaths: this.config.ignoredPaths,
-            });
+            const sourceEntries = await this.source.scan();
+            const files = sourceEntries.map((e) => ({ path: e.path, content: e.content }));
 
             const strategy = this.config.chunking ?? "auto";
             const maxTokens = this.config.chunkMaxTokens ?? 500;
@@ -362,7 +282,27 @@ export class Indexer extends IndexerEventEmitter {
             }
 
             const watchStrategy = this.config.watch?.strategy ?? "merkle";
-            const previousMerkle = mode === "full" ? null : await this.store.loadMerkle();
+            let previousMerkle: MerkleNode | null = null;
+
+            if (mode !== "full") {
+                // Build previous Merkle tree from stored per-file chunk hashes
+                const prevHashes = this.store.getPathHashStore().getAllFiles();
+
+                if (prevHashes.size > 0) {
+                    // path_hashes stores: relPath -> sorted chunk IDs joined with \0
+                    // Reconstruct the Merkle tree using the same format as the current build
+                    previousMerkle = buildMerkleTree({
+                        baseDir: this.config.baseDir,
+                        files: Array.from(prevHashes.entries()).map(([relPath, chunkHashStr]) => ({
+                            path: resolve(this.config.baseDir, relPath),
+                            chunkHashes: chunkHashStr.split("\0"),
+                        })),
+                    });
+                } else {
+                    // Fall back to legacy merkle_tree blob for migration
+                    previousMerkle = await this.store.loadMerkle();
+                }
+            }
 
             this.emit("scan:start", {
                 indexName: this.config.name,
@@ -571,15 +511,23 @@ export class Indexer extends IndexerEventEmitter {
                 await this.store.insertChunks(newChunks, embeddingsMap);
             }
 
-            const merkleTree = buildMerkleTree({
+            // Build Merkle tree for diffing (computed, not serialized as blob)
+            const merkleFiles = Array.from(chunkHashesPerFile.entries()).map(([path, hashes]) => ({
+                path,
+                chunkHashes: hashes,
+            }));
+            buildMerkleTree({
                 baseDir: this.config.baseDir,
-                files: Array.from(chunkHashesPerFile.entries()).map(([path, hashes]) => ({
-                    path,
-                    chunkHashes: hashes,
-                })),
+                files: merkleFiles,
             });
 
-            await this.store.saveMerkle(merkleTree);
+            // Persist per-file chunk hashes to path_hashes table for incremental sync
+            const pathEntries = Array.from(chunkHashesPerFile.entries()).map(([filePath, hashes]) => ({
+                path: relative(resolve(this.config.baseDir), filePath),
+                hash: hashes.sort().join("\0"),
+                isFile: true,
+            }));
+            this.store.getPathHashStore().bulkSync(pathEntries);
 
             const durationMs = performance.now() - syncStart;
 
@@ -599,6 +547,14 @@ export class Indexer extends IndexerEventEmitter {
                 uniqueFiles.add(chunk.filePath);
             }
 
+            const embeddingModelInfo = this.embedder
+                ? {
+                      model: this.config.embedding?.model ?? "unknown",
+                      provider: this.config.embedding?.provider ?? "unknown",
+                      dimensions: this.embedder.dimensions,
+                  }
+                : undefined;
+
             this.store.updateMeta({
                 lastSyncAt: Date.now(),
                 stats: {
@@ -611,6 +567,7 @@ export class Indexer extends IndexerEventEmitter {
                     searchCount: this.store.getStats().searchCount,
                     avgSearchDurationMs: this.store.getStats().avgSearchDurationMs,
                 },
+                indexEmbedding: embeddingModelInfo,
             });
 
             this.emit("sync:complete", {
