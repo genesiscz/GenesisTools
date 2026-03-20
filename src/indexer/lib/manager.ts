@@ -3,7 +3,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage/storage";
-import type { SyncStats } from "./events";
+import type { IndexerCallbacks, SyncStats } from "./events";
 import { Indexer } from "./indexer";
 import type { IndexConfig, IndexMeta, IndexStats } from "./types";
 
@@ -29,7 +29,7 @@ export class IndexerManager {
         return manager;
     }
 
-    async addIndex(config: IndexConfig): Promise<Indexer> {
+    async addIndex(config: IndexConfig, callbacks?: IndexerCallbacks): Promise<Indexer> {
         const managerConfig = await this.loadConfig();
 
         if (managerConfig.indexes[config.name]) {
@@ -42,7 +42,7 @@ export class IndexerManager {
         const indexer = await Indexer.create(config);
         this.indexers.set(config.name, indexer);
 
-        await indexer.sync();
+        await indexer.sync(callbacks);
 
         return indexer;
     }

@@ -1,3 +1,4 @@
+import { cosineDistance } from "@app/utils/math";
 import type { VectorSearchHit, VectorStore } from "./vector-store";
 
 interface ArrowVector {
@@ -203,7 +204,7 @@ export class LanceDBVectorStore implements VectorStore {
         const hits: VectorSearchHit[] = [];
 
         for (const [docId, storedVec] of this.memoryIndex) {
-            const score = cosineSimilarity(queryVector, storedVec);
+            const score = 1 - cosineDistance(queryVector, storedVec);
             hits.push({ docId, score });
         }
 
@@ -244,22 +245,4 @@ export class LanceDBVectorStore implements VectorStore {
     }
 }
 
-function cosineSimilarity(a: Float32Array, b: Float32Array): number {
-    let dot = 0;
-    let normA = 0;
-    let normB = 0;
 
-    for (let i = 0; i < a.length; i++) {
-        dot += a[i] * b[i];
-        normA += a[i] * a[i];
-        normB += b[i] * b[i];
-    }
-
-    const denom = Math.sqrt(normA) * Math.sqrt(normB);
-
-    if (denom === 0) {
-        return 0;
-    }
-
-    return dot / denom;
-}
