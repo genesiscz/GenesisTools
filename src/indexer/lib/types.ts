@@ -1,7 +1,12 @@
+import type { IndexerSource } from "./sources/source";
+
 export interface IndexConfig {
     name: string;
     baseDir: string;
     type?: "code" | "files" | "mail" | "chat";
+
+    /** Custom data source (default: FileSource from baseDir) */
+    source?: IndexerSource;
 
     // File filtering
     respectGitIgnore?: boolean;
@@ -35,12 +40,20 @@ export interface IndexConfig {
     };
 }
 
+export interface EmbeddingModelInfo {
+    model: string;
+    provider: string;
+    dimensions: number;
+}
+
 export interface IndexMeta {
     name: string;
     config: IndexConfig;
     stats: IndexStats;
     lastSyncAt: number | null;
     createdAt: number;
+    indexEmbedding?: EmbeddingModelInfo;
+    searchEmbedding?: EmbeddingModelInfo;
 }
 
 export interface IndexStats {

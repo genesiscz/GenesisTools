@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FTS5SearchEngine } from "./index";
+import { SearchEngine } from "./index";
 
 interface TestDoc extends Record<string, unknown> {
     id: string;
@@ -10,15 +10,15 @@ interface TestDoc extends Record<string, unknown> {
     body: string;
 }
 
-describe("FTS5SearchEngine", () => {
+describe("SearchEngine", () => {
     let tmpDir: string;
     let dbPath: string;
-    let engine: FTS5SearchEngine<TestDoc>;
+    let engine: SearchEngine<TestDoc>;
 
     beforeEach(() => {
         tmpDir = mkdtempSync(join(tmpdir(), "fts5-test-"));
         dbPath = join(tmpDir, "test.db");
-        engine = new FTS5SearchEngine<TestDoc>({
+        engine = new SearchEngine<TestDoc>({
             dbPath,
             tableName: "docs",
             schema: {

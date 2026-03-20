@@ -3,7 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import logger from "@app/logger";
-import { FTS5SearchEngine } from "@app/utils/search";
+import { SearchEngine } from "@app/utils/search";
 import { vectorSearch } from "@app/utils/search/drivers/sqlite-fts5/vector";
 import type { SerializedMessage } from "./TelegramMessage";
 import type {
@@ -28,12 +28,12 @@ import type {
 
 const DB_PATH = join(homedir(), ".genesis-tools", "telegram", "history.db");
 
-/** MessageRow with index signature so it satisfies Record<string, unknown> for FTS5SearchEngine */
+/** MessageRow with index signature so it satisfies Record<string, unknown> for SearchEngine */
 type IndexableMessageRow = MessageRow & Record<string, unknown>;
 
 export class TelegramHistoryStore {
     private db: Database | null = null;
-    private searchEngine: FTS5SearchEngine<IndexableMessageRow> | null = null;
+    private searchEngine: SearchEngine<IndexableMessageRow> | null = null;
 
     open(dbPath: string = DB_PATH): void {
         if (this.db) {
@@ -72,7 +72,7 @@ export class TelegramHistoryStore {
         return this.db;
     }
 
-    private getSearchEngine(): FTS5SearchEngine<IndexableMessageRow> {
+    private getSearchEngine(): SearchEngine<IndexableMessageRow> {
         if (!this.searchEngine) {
             throw new Error("Search engine not initialized. Call open() first.");
         }
@@ -83,7 +83,7 @@ export class TelegramHistoryStore {
     private initSearchEngine(): void {
         const db = this.getDb();
 
-        this.searchEngine = FTS5SearchEngine.fromDatabase<IndexableMessageRow>(db, {
+        this.searchEngine = SearchEngine.fromDatabase<IndexableMessageRow>(db, {
             tableName: "messages",
             schema: {
                 textFields: ["text"],

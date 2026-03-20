@@ -7,11 +7,11 @@ import type { IndexConfig } from "./types";
 
 /**
  * These tests verify that vector and hybrid search modes work end-to-end
- * through the Indexer → IndexStore → FTS5SearchEngine pipeline.
+ * through the Indexer → IndexStore → SearchEngine pipeline.
  *
- * Bug hypothesis: createIndexStore() creates FTS5SearchEngine without
+ * Bug hypothesis: createIndexStore() creates SearchEngine without
  * passing the embedder. When search() is called with mode "vector" or
- * "hybrid", FTS5SearchEngine.cosineSearch() tries to embed the query
+ * "hybrid", SearchEngine.cosineSearch() tries to embed the query
  * string but has no embedder, throwing:
  *   "Vector search requires an embedder or a pre-computed embedding"
  *
