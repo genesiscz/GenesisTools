@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
@@ -108,7 +108,7 @@ export class EmlxBodyExtractor {
      */
     async parseEmlxFile(filePath: string): Promise<string | null> {
         try {
-            const content = readFileSync(filePath);
+            const content = Buffer.from(await Bun.file(filePath).bytes());
             const newlineIdx = content.indexOf(10); // '\n'
 
             if (newlineIdx < 0) {

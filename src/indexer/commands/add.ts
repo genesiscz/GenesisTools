@@ -6,6 +6,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { EmbeddingSetupError } from "../lib/indexer";
 import { IndexerManager } from "../lib/manager";
+import { createProgressCallbacks } from "../lib/progress";
 import { getModelsForType, MODEL_REGISTRY } from "../lib/model-registry";
 import type { IndexConfig } from "../lib/types";
 
@@ -199,12 +200,53 @@ export function registerAddCommand(program: Command): void {
 
                 const name = opts.name ?? basename(absPath);
                 const type = opts.type ?? autoDetectType(absPath);
-                const provider = opts.model ? resolveProvider(opts.model) : undefined;
+                let model = opts.model;
+                let provider = model ? resolveProvider(model) : undefined;
 
                 p.intro(pc.bgCyan(pc.white(" indexer add ")));
                 p.log.info(`Path: ${pc.dim(absPath)}`);
                 p.log.info(`Name: ${pc.bold(name)}`);
                 p.log.info(`Type: ${type}`);
+
+                // Interactive model selection when no --model flag and embeddings enabled
+                if (opts.embed !== false && !model && process.stdout.isTTY) {
+                    const recommended = getModelsForType(type);
+
+                    if (recommended.length > 0) {
+                        const selected = await p.select({
+                            message: "Embedding model",
+                            options: [
+                                ...recommended.slice(0, 5).map((m) => ({
+                                    value: m.id,
+                                    label: `${m.name} (${m.dimensions}-dim, ${m.provider})`,
+                                    hint: m.description,
+                                })),
+                                { value: "__none__", label: "No embeddings (fulltext-only)" },
+                            ],
+                        });
+
+                        if (p.isCancel(selected)) {
+                            p.cancel("Cancelled");
+                            return;
+                        }
+
+                        if (selected === "__none__") {
+                            opts.embed = false;
+                        } else {
+                            model = selected as string;
+                            provider = resolveProvider(model);
+                        }
+                    }
+                }
+
+                if (model) {
+                    const found = MODEL_REGISTRY.find((m) => m.id === model);
+                    p.log.info(`Model: ${pc.bold(found?.name ?? model)} (${found?.dimensions ?? "??"}-dim, ${found?.provider ?? "unknown"})`);
+                } else if (opts.embed !== false) {
+                    p.log.info(`Embeddings: ${pc.dim("disabled (no model selected)")}`);
+                }
+
+                p.log.info(`Chunking: ${pc.bold(opts.chunking ?? "auto")}`);
 
                 config = {
                     name,
@@ -217,7 +259,7 @@ export function registerAddCommand(program: Command): void {
                     embedding: {
                         enabled: opts.embed !== false,
                         provider,
-                        model: opts.model,
+                        model,
                     },
                 };
 
@@ -235,7 +277,7 @@ export function registerAddCommand(program: Command): void {
 
             try {
                 const manager = await IndexerManager.load();
-                const indexer = await manager.addIndex(config);
+                const indexer = await manager.addIndex(config, createProgressCallbacks(spinner));
                 const stats = indexer.stats;
 
                 spinner.stop("Indexing complete");

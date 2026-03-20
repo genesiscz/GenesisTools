@@ -31,6 +31,18 @@ export class PathHashStore {
         return row?.hash ?? null;
     }
 
+    getFileCount(): number {
+        const row = this.db.query("SELECT COUNT(*) AS cnt FROM path_hashes WHERE is_file = 1").get() as { cnt: number };
+        return row.cnt;
+    }
+
+    getMaxNumericPath(): number {
+        const row = this.db.query(
+            "SELECT MAX(CAST(path AS INTEGER)) AS maxId FROM path_hashes WHERE is_file = 1 AND path GLOB '[0-9]*'"
+        ).get() as { maxId: number | null };
+        return row.maxId ?? 0;
+    }
+
     getAllFiles(): Map<string, string> {
         const rows = this.db.query("SELECT path, hash FROM path_hashes WHERE is_file = 1").all() as Array<{
             path: string;

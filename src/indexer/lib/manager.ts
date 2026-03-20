@@ -5,7 +5,7 @@ import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage/storage";
 import type { IndexerCallbacks, SyncStats } from "./events";
 import { Indexer } from "./indexer";
-import type { IndexConfig, IndexMeta, IndexStats } from "./types";
+import { emptyStats, type IndexConfig, type IndexMeta } from "./types";
 
 interface ManagerConfig {
     indexes: Record<string, IndexConfig>;
@@ -153,9 +153,9 @@ export class IndexerManager {
         return result;
     }
 
-    async rebuildIndex(name: string): Promise<SyncStats> {
+    async rebuildIndex(name: string, callbacks?: IndexerCallbacks): Promise<SyncStats> {
         const indexer = await this.getIndex(name);
-        return indexer.reindex();
+        return indexer.reindex(callbacks);
     }
 
     async syncAll(): Promise<Map<string, SyncStats>> {
@@ -206,15 +206,3 @@ export class IndexerManager {
     }
 }
 
-function emptyStats(): IndexStats {
-    return {
-        totalFiles: 0,
-        totalChunks: 0,
-        totalEmbeddings: 0,
-        embeddingDimensions: 0,
-        dbSizeBytes: 0,
-        lastSyncDurationMs: 0,
-        searchCount: 0,
-        avgSearchDurationMs: 0,
-    };
-}

@@ -2,7 +2,15 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { DetectChangesOptions, IndexerSource, ScanOptions, SourceChanges, SourceEntry } from "./source";
+import {
+    defaultDetectChanges,
+    defaultHashEntry,
+    type DetectChangesOptions,
+    type IndexerSource,
+    type ScanOptions,
+    type SourceChanges,
+    type SourceEntry,
+} from "./source";
 
 const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "telegram", "history.db");
 
@@ -74,6 +82,8 @@ export class TelegramSource implements IndexerSource {
 
         const total = rows.length;
         const entries: SourceEntry[] = [];
+        const batchSize = opts?.batchSize ?? 500;
+        let batch: SourceEntry[] = [];
 
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
@@ -91,7 +101,7 @@ export class TelegramSource implements IndexerSource {
                 .filter((line) => line !== null)
                 .join("\n");
 
-            entries.push({
+            const entry: SourceEntry = {
                 id: `${row.chat_id}:${row.id}`,
                 content,
                 path: `${chatTitle}/${row.date_iso}`,
@@ -105,55 +115,30 @@ export class TelegramSource implements IndexerSource {
                     dateUnix: row.date_unix,
                     hasMedia: !!row.media_desc,
                 },
-            });
+            };
+
+            entries.push(entry);
+            batch.push(entry);
+
+            if (opts?.onBatch && batch.length >= batchSize) {
+                await opts.onBatch(batch);
+                batch = [];
+            }
 
             if (opts?.onProgress) {
                 opts.onProgress(i + 1, total);
             }
         }
 
+        if (opts?.onBatch && batch.length > 0) {
+            await opts.onBatch(batch);
+        }
+
         return entries;
     }
 
     detectChanges(opts: DetectChangesOptions): SourceChanges {
-        const { previousHashes, currentEntries, full } = opts;
-
-        if (!previousHashes || full) {
-            return {
-                added: currentEntries,
-                modified: [],
-                deleted: [],
-                unchanged: [],
-            };
-        }
-
-        const added: SourceEntry[] = [];
-        const modified: SourceEntry[] = [];
-        const unchanged: string[] = [];
-        const currentIds = new Set<string>();
-
-        for (const entry of currentEntries) {
-            currentIds.add(entry.id);
-            const prevHash = previousHashes.get(entry.id);
-
-            if (!prevHash) {
-                added.push(entry);
-            } else if (prevHash !== this.hashEntry(entry)) {
-                modified.push(entry);
-            } else {
-                unchanged.push(entry.id);
-            }
-        }
-
-        const deleted: string[] = [];
-
-        for (const id of previousHashes.keys()) {
-            if (!currentIds.has(id)) {
-                deleted.push(id);
-            }
-        }
-
-        return { added, modified, deleted, unchanged };
+        return defaultDetectChanges(opts, this.hashEntry.bind(this));
     }
 
     async estimateTotal(): Promise<number> {
@@ -174,9 +159,7 @@ export class TelegramSource implements IndexerSource {
     }
 
     hashEntry(entry: SourceEntry): string {
-        const hasher = new Bun.CryptoHasher("sha256");
-        hasher.update(entry.content);
-        return hasher.digest("hex");
+        return defaultHashEntry(entry);
     }
 
     dispose(): void {

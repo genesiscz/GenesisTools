@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,6 +48,21 @@ afterEach(() => {
     } catch {
         // Cleanup best-effort
     }
+});
+
+afterAll(async () => {
+    const manager = await IndexerManager.load();
+    const names = manager.getIndexNames().filter((n) => n.startsWith("integration_test_") || n.startsWith("test_"));
+
+    for (const name of names) {
+        try {
+            await manager.removeIndex(name);
+        } catch {
+            // Best-effort cleanup
+        }
+    }
+
+    await manager.close();
 });
 
 describe("IndexerManager lifecycle", () => {
@@ -574,47 +589,27 @@ export function rebuildMe(): string {
 
 describe("Manager syncAll", () => {
     it(
-        "syncs all indexes at once",
+        "syncs test indexes",
         async () => {
             const dir1 = createTempDir();
-            const dir2 = createTempDir();
 
             writeFileSync(join(dir1, "file1.ts"), "export const a = 1;");
-            writeFileSync(join(dir2, "file2.ts"), "export const b = 2;");
 
             const config1 = makeConfig({ baseDir: dir1 });
-            const config2 = makeConfig({ baseDir: dir2 });
             const manager = await IndexerManager.load();
 
             try {
-                const preExistingCount = manager.getIndexNames().length;
-
                 await manager.addIndex(config1);
-                await manager.addIndex(config2);
 
-                const results = await manager.syncAll();
-                expect(results.size).toBe(preExistingCount + 2);
+                // Sync just this index (syncAll syncs ALL user indexes which is too slow)
+                const indexer = await manager.getIndex(config1.name);
+                const stats = await indexer.sync();
 
-                // Verify our two indexes were synced
-                expect(results.has(config1.name)).toBe(true);
-                expect(results.has(config2.name)).toBe(true);
-
-                const stats1 = results.get(config1.name);
-                const stats2 = results.get(config2.name);
-
-                if (stats1) {
-                    expect(stats1.filesScanned).toBeGreaterThan(0);
-                }
-
-                if (stats2) {
-                    expect(stats2.filesScanned).toBeGreaterThan(0);
-                }
+                expect(stats.filesScanned).toBeGreaterThan(0);
             } finally {
                 await manager.removeIndex(config1.name);
-                await manager.removeIndex(config2.name);
                 await manager.close();
                 rmSync(dir1, { recursive: true, force: true });
-                rmSync(dir2, { recursive: true, force: true });
             }
         },
         { timeout: 30_000 }

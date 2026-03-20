@@ -25,6 +25,10 @@ export interface ScanOptions {
     onBatch?: (entries: SourceEntry[]) => Promise<void>;
     /** Batch size for onBatch (default: 500) */
     batchSize?: number;
+    /** Only include entries on or after this date */
+    fromDate?: Date;
+    /** Only include entries on or before this date */
+    toDate?: Date;
 }
 
 export interface DetectChangesOptions {
@@ -34,6 +38,51 @@ export interface DetectChangesOptions {
     currentEntries: SourceEntry[];
     /** Whether to force full reindex (ignore previous state) */
     full?: boolean;
+}
+
+/** Default change detection — shared across all sources */
+export function defaultDetectChanges(
+    opts: DetectChangesOptions,
+    hashFn: (entry: SourceEntry) => string
+): SourceChanges {
+    const { previousHashes, currentEntries, full } = opts;
+
+    if (!previousHashes || full) {
+        return { added: currentEntries, modified: [], deleted: [], unchanged: [] };
+    }
+
+    const added: SourceEntry[] = [];
+    const modified: SourceEntry[] = [];
+    const unchanged: string[] = [];
+    const currentIds = new Set<string>();
+
+    for (const entry of currentEntries) {
+        currentIds.add(entry.id);
+        const prevHash = previousHashes.get(entry.id);
+
+        if (!prevHash) {
+            added.push(entry);
+        } else if (prevHash !== hashFn(entry)) {
+            modified.push(entry);
+        } else {
+            unchanged.push(entry.id);
+        }
+    }
+
+    const deleted: string[] = [];
+
+    for (const id of previousHashes.keys()) {
+        if (!currentIds.has(id)) {
+            deleted.push(id);
+        }
+    }
+
+    return { added, modified, deleted, unchanged };
+}
+
+/** Default content hash using xxHash64 (consistent with chunker) */
+export function defaultHashEntry(entry: SourceEntry): string {
+    return Bun.hash(entry.content).toString(16);
 }
 
 export interface IndexerSource {
@@ -48,4 +97,7 @@ export interface IndexerSource {
 
     /** Compute a content hash for a source entry (for Merkle/change detection) */
     hashEntry(entry: SourceEntry): string;
+
+    /** Release resources (DB connections, file handles) */
+    dispose?(): void;
 }

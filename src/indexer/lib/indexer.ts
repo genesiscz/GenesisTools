@@ -12,6 +12,16 @@ import type { IndexStore } from "./store";
 import { createIndexStore } from "./store";
 import type { ChunkRecord, IndexConfig, IndexStats } from "./types";
 
+export interface SyncOptions extends IndexerCallbacks {
+    scanOptions?: Pick<import("./sources/source").ScanOptions, "fromDate" | "toDate">;
+}
+
+interface RunSyncOptions {
+    mode: "incremental" | "full";
+    callbacks?: IndexerCallbacks;
+    scanOptions?: SyncOptions["scanOptions"];
+}
+
 export class EmbeddingSetupError extends Error {
     readonly reason: string;
     readonly requestedProvider?: string;
@@ -55,12 +65,15 @@ export class EmbeddingSetupError extends Error {
     }
 }
 
+const MAX_EMBED_CHARS = 500;
+
 export class Indexer extends IndexerEventEmitter {
     private store: IndexStore;
     private config: IndexConfig;
     private source: IndexerSource;
     private embedder: Embedder | null = null;
     private watchTimer: ReturnType<typeof setInterval> | null = null;
+    private isSyncing = false;
 
     private constructor(store: IndexStore, config: IndexConfig, source: IndexerSource) {
         super();
@@ -118,12 +131,42 @@ export class Indexer extends IndexerEventEmitter {
         return this.store.getStats();
     }
 
+    getConsistencyInfo(): {
+        pathHashCount: number;
+        contentCount: number;
+        embeddingCount: number;
+        unembeddedCount: number;
+        dbSizeBytes: number;
+        integrityCheck: string;
+    } {
+        return {
+            pathHashCount: this.store.getPathHashStore().getFileCount(),
+            contentCount: this.store.getContentCount(),
+            embeddingCount: this.store.getEmbeddingCount(),
+            unembeddedCount: this.store.getUnembeddedCount(),
+            dbSizeBytes: this.store.getStats().dbSizeBytes,
+            integrityCheck: this.store.checkIntegrity(),
+        };
+    }
+
     async reindex(callbacks?: IndexerCallbacks): Promise<SyncStats> {
         return this.runSync({ mode: "full", callbacks });
     }
 
-    async sync(callbacks?: IndexerCallbacks): Promise<SyncStats> {
-        return this.runSync({ mode: "incremental", callbacks });
+    async sync(opts?: SyncOptions): Promise<SyncStats> {
+        return this.runSync({ mode: "incremental", callbacks: opts, scanOptions: opts?.scanOptions });
+    }
+
+    /** Drop all embeddings and re-embed. Keeps FTS content intact. */
+    async reembed(callbacks?: IndexerCallbacks): Promise<number> {
+        this.store.clearEmbeddings();
+        return this.embedUnembeddedChunks(callbacks);
+    }
+
+    /** Drop embeddings for specific source IDs and re-embed their chunks. */
+    async reembedBySourceIds(sourceIds: string[], callbacks?: IndexerCallbacks): Promise<number> {
+        this.store.clearEmbeddingsBySourceIds(sourceIds);
+        return this.embedUnembeddedChunks(callbacks);
     }
 
     async search(
@@ -213,10 +256,20 @@ export class Indexer extends IndexerEventEmitter {
             );
         }
 
-        this.watchTimer = setInterval(() => {
-            this.sync(callbacks).catch(() => {
+        this.watchTimer = setInterval(async () => {
+            if (this.isSyncing) {
+                return;
+            }
+
+            this.isSyncing = true;
+
+            try {
+                await this.sync(callbacks);
+            } catch {
                 // Watch sync errors are non-fatal
-            });
+            } finally {
+                this.isSyncing = false;
+            }
         }, interval);
     }
 
@@ -239,6 +292,7 @@ export class Indexer extends IndexerEventEmitter {
             this.embedder = null;
         }
 
+        this.source.dispose?.();
         await this.store.close();
     }
 
@@ -259,22 +313,7 @@ export class Indexer extends IndexerEventEmitter {
 
     /** Find highest stored numeric ID for sinceId (mail ROWIDs) */
     private computeSinceId(): string | undefined {
-        const storedHashes = this.store.getPathHashStore().getAllFiles();
-
-        if (storedHashes.size === 0) {
-            return undefined;
-        }
-
-        let maxId = 0;
-
-        for (const key of storedHashes.keys()) {
-            const num = parseInt(key, 10);
-
-            if (!Number.isNaN(num) && num > maxId) {
-                maxId = num;
-            }
-        }
-
+        const maxId = this.store.getPathHashStore().getMaxNumericPath();
         return maxId > 0 ? String(maxId) : undefined;
     }
 
@@ -301,8 +340,10 @@ export class Indexer extends IndexerEventEmitter {
                 indexType: this.config.type,
             });
 
-            if (entry.metadata) {
-                for (const chunk of result.chunks) {
+            for (const chunk of result.chunks) {
+                chunk.sourceId = entry.id;
+
+                if (entry.metadata) {
                     chunk.metadata = entry.metadata;
                 }
             }
@@ -342,11 +383,13 @@ export class Indexer extends IndexerEventEmitter {
             return [];
         }
 
-        // For FileSource, deleted paths are relative — resolve to absolute for content table lookup
-        const lookupPaths =
-            this.source instanceof FileSource ? deletedPaths.map((p) => resolve(this.config.baseDir, p)) : deletedPaths;
+        if (this.source instanceof FileSource) {
+            const lookupPaths = deletedPaths.map((p) => resolve(this.config.baseDir, p));
+            return this.store.getChunkIdsBySourcePaths(lookupPaths);
+        }
 
-        return this.store.getChunkIdsBySourcePaths(lookupPaths);
+        // Non-file sources (mail, telegram): look up by source entry ID
+        return this.store.getChunkIdsBySourceIds(deletedPaths);
     }
 
     /** Embed all unembedded chunks in streaming pages, return count */
@@ -383,10 +426,9 @@ export class Indexer extends IndexerEventEmitter {
 
         const embedStart = performance.now();
         const dbPageSize = 1000;
-        const maxEmbedChars = 200;
         let embedded = 0;
 
-        // Stream pages: query → embed → store → next page
+        // Stream pages: query → embed sequentially → store → next page
         while (true) {
             const page = this.store.getUnembeddedChunksPage(dbPageSize);
 
@@ -397,23 +439,16 @@ export class Indexer extends IndexerEventEmitter {
             const batchEmbeddings = new Map<string, Float32Array>();
             const zeroDims = this.embedder.dimensions;
 
-            // Embed all concurrently — allSettled so one failure doesn't kill the batch
-            const validPage = page.filter((c) => c.content.length >= 5);
-            const results = await Promise.allSettled(
-                validPage.map((c) => this.embedder!.embed(c.content.slice(0, maxEmbedChars)))
-            );
-
-            for (let j = 0; j < results.length; j++) {
-                const r = results[j];
-                batchEmbeddings.set(
-                    validPage[j].id,
-                    r.status === "fulfilled" ? r.value.vector : new Float32Array(zeroDims)
-                );
-            }
-
-            // Mark tiny chunks with zero vector so they don't re-appear
             for (const c of page) {
                 if (c.content.length < 5) {
+                    batchEmbeddings.set(c.id, new Float32Array(zeroDims));
+                    continue;
+                }
+
+                try {
+                    const result = await this.embedder.embed(c.content.slice(0, MAX_EMBED_CHARS));
+                    batchEmbeddings.set(c.id, result.vector);
+                } catch {
                     batchEmbeddings.set(c.id, new Float32Array(zeroDims));
                 }
             }
@@ -452,7 +487,7 @@ export class Indexer extends IndexerEventEmitter {
 
     // ─── Main sync pipeline ──────────────────────────────────────────
 
-    private async runSync(opts: { mode: "incremental" | "full"; callbacks?: IndexerCallbacks }): Promise<SyncStats> {
+    private async runSync(opts: RunSyncOptions): Promise<SyncStats> {
         const { mode, callbacks } = opts;
         const syncStart = performance.now();
         const strategy = this.config.chunking ?? "auto";
@@ -466,6 +501,7 @@ export class Indexer extends IndexerEventEmitter {
             const sinceId = mode === "incremental" ? this.computeSinceId() : undefined;
             const storedInBatch = new Set<string>();
             let chunksAddedInBatch = 0;
+            let batchCount = 0;
 
             // Snapshot previous hashes BEFORE scan so onBatch upserts don't pollute them.
             // Skip for sinceId scans — we only process new entries, no deletion detection needed.
@@ -483,6 +519,8 @@ export class Indexer extends IndexerEventEmitter {
             const sourceEntries = await this.source.scan({
                 sinceId,
                 batchSize: 500,
+                fromDate: opts.scanOptions?.fromDate,
+                toDate: opts.scanOptions?.toDate,
                 onBatch: async (batch) => {
                     const { chunks, pathEntries, perEntry } = this.chunkEntries(batch, strategy, maxTokens);
 
@@ -500,29 +538,31 @@ export class Indexer extends IndexerEventEmitter {
                     }
 
                     chunksAddedInBatch += chunks.length;
+                    batchCount++;
 
-                    // Update metadata after each batch so "Indexed: N" is accurate
-                    const currentStats = this.store.getStats();
-                    this.store.updateMeta({
-                        lastSyncAt: Date.now(),
-                        stats: {
-                            totalFiles: pathHashStore.getAllFiles().size,
-                            totalChunks: currentStats.totalChunks,
-                            totalEmbeddings: currentStats.totalEmbeddings,
-                            embeddingDimensions: this.embedder?.dimensions ?? 0,
-                            dbSizeBytes: currentStats.dbSizeBytes,
-                            lastSyncDurationMs: currentStats.lastSyncDurationMs,
-                            searchCount: currentStats.searchCount,
-                            avgSearchDurationMs: currentStats.avgSearchDurationMs,
-                        },
-                        indexEmbedding: this.embedder
-                            ? {
-                                  model: this.config.embedding?.model ?? "darwinkit",
-                                  provider: this.config.embedding?.provider ?? "darwinkit",
-                                  dimensions: this.embedder.dimensions,
-                              }
-                            : undefined,
-                    });
+                    // Update metadata every 10 batches for crash-recovery display
+                    if (batchCount % 10 === 0) {
+                        this.store.updateMeta({
+                            lastSyncAt: Date.now(),
+                            stats: {
+                                totalFiles: pathHashStore.getFileCount(),
+                                totalChunks: this.store.getStats().totalChunks,
+                                totalEmbeddings: 0,
+                                embeddingDimensions: this.embedder?.dimensions ?? 0,
+                                dbSizeBytes: 0,
+                                lastSyncDurationMs: 0,
+                                searchCount: 0,
+                                avgSearchDurationMs: 0,
+                            },
+                            indexEmbedding: this.embedder
+                                ? {
+                                      model: this.config.embedding?.model ?? "darwinkit",
+                                      provider: this.config.embedding?.provider ?? "darwinkit",
+                                      dimensions: this.embedder.dimensions,
+                                  }
+                                : undefined,
+                        });
+                    }
 
                     for (const [entryId, info] of perEntry) {
                         this.emitAndDispatch(
@@ -551,105 +591,119 @@ export class Indexer extends IndexerEventEmitter {
             });
 
             // ── Phase 2: DETECT CHANGES + STORE REMAINING ────────────
-            // When using sinceId, scan only returns NEW entries — pass null hashes
-            // to avoid marking all previous entries as "deleted"
-            const changes = this.source.detectChanges({
-                previousHashes: sinceId ? null : previousHashes.size > 0 ? previousHashes : null,
-                currentEntries: sourceEntries,
-                full: mode === "full",
-            });
-
-            // Count entries stored by onBatch as "added" for display purposes
-            const totalAdded = changes.added.length + storedInBatch.size;
-
-            this.emitAndDispatch(
-                "scan:complete",
-                {
-                    indexName: this.config.name,
-                    added: totalAdded,
-                    modified: changes.modified.length,
-                    deleted: changes.deleted.length,
-                    unchanged: changes.unchanged.length,
-                },
-                callbacks
-            );
-
-            // Process entries NOT already stored via onBatch
-            const remaining = [...changes.added, ...changes.modified].filter((entry) => !storedInBatch.has(entry.id));
-
             let chunksFromRemaining = 0;
+            let chunksRemoved = 0;
+            let unchangedCount = 0;
 
-            if (remaining.length > 0) {
-                const { chunks, perEntry } = this.chunkEntries(remaining, strategy, maxTokens);
-
-                if (chunks.length > 0) {
-                    await this.store.insertChunks(chunks);
-                    chunksFromRemaining = chunks.length;
-                }
-
-                for (const [entryId, info] of perEntry) {
-                    this.emitAndDispatch(
-                        "chunk:file",
-                        {
-                            indexName: this.config.name,
-                            filePath: entryId,
-                            chunks: info.chunkCount,
-                            parser: info.parser as "ast" | "line" | "heading" | "message" | "json",
-                        },
-                        callbacks
-                    );
-                }
-            }
-
-            // Update path_hashes for all processed entries (added + modified)
-            for (const entry of [...changes.added, ...changes.modified]) {
-                const hash = this.source.hashEntry(entry);
-                pathHashStore.upsert(this.pathHashKey(entry), hash, true);
-            }
-
-            // Emit skip for unchanged entries
-            for (const unchangedId of changes.unchanged) {
+            if (sinceId) {
+                // sinceId scan: all entries already stored via onBatch.
+                // No deletion detection (mail is append-only by ROWID).
                 this.emitAndDispatch(
-                    "chunk:skip",
+                    "scan:complete",
                     {
                         indexName: this.config.name,
-                        filePath: unchangedId,
-                        reason: "unchanged",
+                        added: storedInBatch.size,
+                        modified: 0,
+                        deleted: 0,
+                        unchanged: 0,
                     },
                     callbacks
                 );
-            }
+            } else {
+                const changes = this.source.detectChanges({
+                    previousHashes: previousHashes.size > 0 ? previousHashes : null,
+                    currentEntries: sourceEntries,
+                    full: mode === "full",
+                });
 
-            // Handle deletions
-            let chunksRemoved = 0;
+                const totalAdded = changes.added.filter((e) => !storedInBatch.has(e.id)).length + storedInBatch.size;
 
-            if (changes.deleted.length > 0) {
-                const deletedChunkIds = this.resolveDeletedChunks(changes.deleted);
+                this.emitAndDispatch(
+                    "scan:complete",
+                    {
+                        indexName: this.config.name,
+                        added: totalAdded,
+                        modified: changes.modified.length,
+                        deleted: changes.deleted.length,
+                        unchanged: changes.unchanged.length,
+                    },
+                    callbacks
+                );
 
-                if (deletedChunkIds.length > 0) {
-                    await this.store.removeChunks(deletedChunkIds);
-                    chunksRemoved = deletedChunkIds.length;
+                unchangedCount = changes.unchanged.length;
+
+                // Process entries NOT already stored via onBatch
+                const remaining = [...changes.added, ...changes.modified].filter(
+                    (entry) => !storedInBatch.has(entry.id)
+                );
+
+                if (remaining.length > 0) {
+                    const { chunks, perEntry } = this.chunkEntries(remaining, strategy, maxTokens);
+
+                    if (chunks.length > 0) {
+                        await this.store.insertChunks(chunks);
+                        chunksFromRemaining = chunks.length;
+                    }
+
+                    for (const [entryId, info] of perEntry) {
+                        this.emitAndDispatch(
+                            "chunk:file",
+                            {
+                                indexName: this.config.name,
+                                filePath: entryId,
+                                chunks: info.chunkCount,
+                                parser: info.parser as "ast" | "line" | "heading" | "message" | "json",
+                            },
+                            callbacks
+                        );
+                    }
                 }
 
-                for (const deletedPath of changes.deleted) {
-                    pathHashStore.remove(deletedPath);
+                // Update path_hashes for all processed entries (added + modified)
+                for (const entry of [...changes.added, ...changes.modified]) {
+                    const hash = this.source.hashEntry(entry);
+                    pathHashStore.upsert(this.pathHashKey(entry), hash, true);
+                }
+
+                // Handle deletions
+                if (changes.deleted.length > 0) {
+                    const deletedChunkIds = this.resolveDeletedChunks(changes.deleted);
+
+                    if (deletedChunkIds.length > 0) {
+                        await this.store.removeChunks(deletedChunkIds);
+                        chunksRemoved = deletedChunkIds.length;
+                    }
+
+                    for (const deletedPath of changes.deleted) {
+                        pathHashStore.remove(deletedPath);
+                    }
                 }
             }
 
             // ── Phase 3: EMBED ───────────────────────────────────────
-            const embeddingsGenerated = await this.embedUnembeddedChunks(callbacks);
+            let embeddingsGenerated = 0;
+
+            try {
+                embeddingsGenerated = await this.embedUnembeddedChunks(callbacks);
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.emitAndDispatch("sync:error", {
+                    indexName: this.config.name,
+                    error: `Embedding failed (FTS still works): ${msg}`,
+                }, callbacks);
+            }
 
             // ── FINALIZE ─────────────────────────────────────────────
             const durationMs = performance.now() - syncStart;
-            const totalFiles = pathHashStore.getAllFiles().size;
+            const totalFiles = pathHashStore.getFileCount();
             const totalChunksAdded = chunksAddedInBatch + chunksFromRemaining;
 
             const syncStats: SyncStats = {
-                filesScanned: sourceEntries.length,
+                filesScanned: sinceId ? storedInBatch.size : sourceEntries.length,
                 chunksAdded: totalChunksAdded,
                 chunksUpdated: 0,
                 chunksRemoved,
-                chunksUnchanged: changes.unchanged.length,
+                chunksUnchanged: unchangedCount,
                 embeddingsGenerated,
                 durationMs,
             };
@@ -659,20 +713,24 @@ export class Indexer extends IndexerEventEmitter {
                       model: this.config.embedding?.model ?? "unknown",
                       provider: this.config.embedding?.provider ?? "unknown",
                       dimensions: this.embedder.dimensions,
+                      maxEmbedChars: MAX_EMBED_CHARS,
                   }
                 : undefined;
+
+            const finalStats = this.store.getStats();
+            const embeddedCount = finalStats.totalChunks - this.store.getUnembeddedCount();
 
             this.store.updateMeta({
                 lastSyncAt: Date.now(),
                 stats: {
                     totalFiles,
-                    totalChunks: this.store.getStats().totalChunks,
-                    totalEmbeddings: embeddingsGenerated,
+                    totalChunks: finalStats.totalChunks,
+                    totalEmbeddings: embeddedCount,
                     embeddingDimensions: this.embedder?.dimensions ?? 0,
-                    dbSizeBytes: this.store.getStats().dbSizeBytes,
+                    dbSizeBytes: finalStats.dbSizeBytes,
                     lastSyncDurationMs: durationMs,
-                    searchCount: this.store.getStats().searchCount,
-                    avgSearchDurationMs: this.store.getStats().avgSearchDurationMs,
+                    searchCount: finalStats.searchCount,
+                    avgSearchDurationMs: finalStats.avgSearchDurationMs,
                 },
                 indexEmbedding: embeddingModelInfo,
             });

@@ -44,6 +44,20 @@ export interface EmbeddingModelInfo {
     model: string;
     provider: string;
     dimensions: number;
+    maxEmbedChars?: number;
+}
+
+export function emptyStats(): IndexStats {
+    return {
+        totalFiles: 0,
+        totalChunks: 0,
+        totalEmbeddings: 0,
+        embeddingDimensions: 0,
+        dbSizeBytes: 0,
+        lastSyncDurationMs: 0,
+        searchCount: 0,
+        avgSearchDurationMs: 0,
+    };
 }
 
 export interface IndexMeta {
@@ -79,6 +93,8 @@ export interface ChunkRecord {
     parentChunkId?: string;
     /** Source-specific metadata (mail: sender, date, read; telegram: chat, direction) */
     metadata?: Record<string, unknown>;
+    /** Original source entry ID (ROWID for mail, file path for files) */
+    sourceId?: string;
 }
 
 export interface MerkleNode {
