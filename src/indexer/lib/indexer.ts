@@ -172,15 +172,13 @@ export class Indexer extends IndexerEventEmitter {
     }
 
     static async create(config: IndexConfig): Promise<Indexer> {
-        const store = await createIndexStore(config);
-        const indexer = new Indexer(store, config);
-
+        let embedder: Embedder | null = null;
         const embeddingEnabled = config.embedding?.enabled !== false;
 
         if (embeddingEnabled) {
             try {
                 const { Embedder: EmbedderClass } = await import("@app/utils/ai/tasks/Embedder");
-                indexer.embedder = await EmbedderClass.create({
+                embedder = await EmbedderClass.create({
                     provider: config.embedding?.provider,
                     model: config.embedding?.model,
                 });
@@ -189,6 +187,10 @@ export class Indexer extends IndexerEventEmitter {
                 throw new EmbeddingSetupError(reason, config.embedding?.provider);
             }
         }
+
+        const store = await createIndexStore(config, embedder ?? undefined);
+        const indexer = new Indexer(store, config);
+        indexer.embedder = embedder;
 
         return indexer;
     }

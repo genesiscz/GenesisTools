@@ -1,11 +1,12 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { SafeJSON } from "@app/utils/json";
+import { FTS5SearchEngine } from "@app/utils/search/drivers/sqlite-fts5/index";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { Storage } from "@app/utils/storage/storage";
-import { FTS5SearchEngine } from "@app/utils/search/drivers/sqlite-fts5/index";
-import { serializeMerkleTree, deserializeMerkleTree } from "./merkle";
+import { deserializeMerkleTree, serializeMerkleTree } from "./merkle";
 import type { ChunkRecord, IndexConfig, IndexMeta, IndexStats, MerkleNode } from "./types";
 
 export interface IndexStore {
@@ -57,7 +58,7 @@ function readMeta(db: Database, config: IndexConfig, createdAt: number): IndexMe
     return SafeJSON.parse(row.value) as IndexMeta;
 }
 
-export async function createIndexStore(config: IndexConfig): Promise<IndexStore> {
+export async function createIndexStore(config: IndexConfig, embedder?: Embedder): Promise<IndexStore> {
     const storage = new Storage("indexer");
     const indexDir = join(storage.getBaseDir(), config.name);
 
@@ -120,6 +121,7 @@ export async function createIndexStore(config: IndexConfig): Promise<IndexStore>
             idField: "id",
             vectorField: "content",
         },
+        embedder,
     });
 
     const store: IndexStore = {
@@ -132,10 +134,12 @@ export async function createIndexStore(config: IndexConfig): Promise<IndexStore>
 
             const tx = db.transaction(() => {
                 for (const chunk of chunks) {
-                    db.run(
-                        `INSERT OR REPLACE INTO ${contentTable} (id, content, name, filePath) VALUES (?, ?, ?, ?)`,
-                        [chunk.id, chunk.content, chunk.name ?? "", chunk.filePath]
-                    );
+                    db.run(`INSERT OR REPLACE INTO ${contentTable} (id, content, name, filePath) VALUES (?, ?, ?, ?)`, [
+                        chunk.id,
+                        chunk.content,
+                        chunk.name ?? "",
+                        chunk.filePath,
+                    ]);
                 }
 
                 if (embeddings && embeddings.size > 0) {
@@ -186,9 +190,10 @@ export async function createIndexStore(config: IndexConfig): Promise<IndexStore>
                 // File may not exist yet
             }
 
-            const logStats = db
-                .query("SELECT COUNT(*) AS cnt, AVG(duration_ms) AS avg_ms FROM search_log")
-                .get() as { cnt: number; avg_ms: number | null };
+            const logStats = db.query("SELECT COUNT(*) AS cnt, AVG(duration_ms) AS avg_ms FROM search_log").get() as {
+                cnt: number;
+                avg_ms: number | null;
+            };
 
             const meta = readMeta(db, config, createdAt);
 

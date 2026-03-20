@@ -1,11 +1,11 @@
-import { formatTable } from "@app/utils/table";
 import { SafeJSON } from "@app/utils/json";
+import type { SearchResult } from "@app/utils/search/types";
+import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { IndexerManager } from "../lib/manager";
 import type { ChunkRecord } from "../lib/types";
-import type { SearchResult } from "@app/utils/search/types";
 
 interface SearchCommandOptions {
     index?: string;
@@ -114,9 +114,7 @@ export function registerSearchCommand(program: Command): void {
                 const headers = ["File", "Name/Kind", "Score", "Method", "Preview"];
                 const rows = allResults.map((r) => {
                     const filePath = r.result.doc.filePath;
-                    const shortPath = filePath.length > 40
-                        ? `...${filePath.slice(-37)}`
-                        : filePath;
+                    const shortPath = filePath.length > 40 ? `...${filePath.slice(-37)}` : filePath;
 
                     return [
                         shortPath,

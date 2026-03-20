@@ -14,7 +14,7 @@ export interface IndexConfig {
 
     // Embedding (enabled by default with auto-fallback: darwinkit → local-hf → cloud)
     embedding?: {
-        enabled?: boolean;     // default: true
+        enabled?: boolean; // default: true
         provider?: string;
         model?: string;
     };

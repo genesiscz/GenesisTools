@@ -66,7 +66,9 @@ export function registerWatchCommand(program: Command): void {
                     indexer.startWatch(callbacks);
                     p.log.info(`Watching ${pc.bold(indexName)}`);
                 } catch (err) {
-                    p.log.error(`Failed to start watch for "${indexName}": ${err instanceof Error ? err.message : String(err)}`);
+                    p.log.error(
+                        `Failed to start watch for "${indexName}": ${err instanceof Error ? err.message : String(err)}`
+                    );
                 }
             }
 

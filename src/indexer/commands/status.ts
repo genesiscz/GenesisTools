@@ -36,9 +36,7 @@ function showOverview(manager: IndexerManager): void {
     const headers = ["Name", "Type", "Files", "Chunks", "Embeddings", "Last Sync", "DB Size"];
 
     const rows = indexes.map((meta) => {
-        const lastSync = meta.lastSyncAt
-            ? formatRelativeTime(new Date(meta.lastSyncAt), { compact: true })
-            : "never";
+        const lastSync = meta.lastSyncAt ? formatRelativeTime(new Date(meta.lastSyncAt), { compact: true }) : "never";
 
         return [
             meta.name,
@@ -85,12 +83,7 @@ async function showDetailedStatus(manager: IndexerManager, name: string): Promis
         ],
         ["Searches", String(meta.stats.searchCount)],
         ["Avg Search", meta.stats.avgSearchDurationMs > 0 ? formatDuration(meta.stats.avgSearchDurationMs) : "n/a"],
-        [
-            "Created",
-            meta.createdAt > 0
-                ? formatRelativeTime(new Date(meta.createdAt))
-                : "unknown",
-        ],
+        ["Created", meta.createdAt > 0 ? formatRelativeTime(new Date(meta.createdAt)) : "unknown"],
     ];
 
     if (meta.config.ignoredPaths && meta.config.ignoredPaths.length > 0) {
@@ -102,7 +95,10 @@ async function showDetailedStatus(manager: IndexerManager, name: string): Promis
     }
 
     if (meta.config.watch?.enabled) {
-        entries.push(["Watch", `${meta.config.watch.strategy ?? "merkle"} (${meta.config.watch.interval ?? 300000}ms)`]);
+        entries.push([
+            "Watch",
+            `${meta.config.watch.strategy ?? "merkle"} (${meta.config.watch.interval ?? 300000}ms)`,
+        ]);
     }
 
     for (const [label, value] of entries) {
