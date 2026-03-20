@@ -143,7 +143,7 @@ Sub section content.
                     { id: 3, name: "Charlie" },
                 ],
                 null,
-                2,
+                2
             );
 
             const result = chunkFile({
@@ -167,7 +167,7 @@ Sub section content.
                     version: "1.0",
                 },
                 null,
-                2,
+                2
             );
 
             const result = chunkFile({

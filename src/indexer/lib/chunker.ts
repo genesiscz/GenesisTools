@@ -1,7 +1,7 @@
 import { extname } from "node:path";
+import { SafeJSON } from "@app/utils/json";
 import type { SgNode } from "@ast-grep/napi";
 import { Lang, parse } from "@ast-grep/napi";
-import { SafeJSON } from "@app/utils/json";
 import type { ChunkRecord } from "./types";
 
 export interface ChunkResult {
