@@ -1,5 +1,5 @@
 ---
-name: genesis-tools:github-pr-old
+name: gt:github-pr-old
 description: "Legacy PR review workflow (without --llm mode)"
 argument-hint: "<pr-number-or-url> [-u] [--open] [--open-only]"
 ---
@@ -17,7 +17,7 @@ Fetch PR review comments, let user select which to fix, implement fixes, and com
 /github-pr <pr-number-or-url> --open-only  # Open in Cursor only, wait for input
 ```
 
-> **Underlying CLI:** This command uses `tools github review` under the hood. See the `genesis-tools:github` skill for full CLI reference and options.
+> **Underlying CLI:** This command uses `tools github review` under the hood. See the `gt:github` skill for full CLI reference and options.
 
 ## Input: $ARGUMENTS
 

@@ -94,7 +94,7 @@ tools github review sessions
 ```
 
 The `-s` flag specifies the session ID. Always use it to avoid cross-session confusion.
-When using the `genesis-tools:github-pr` skill, it automatically generates and uses session IDs.
+When using the `gt:github-pr` skill, it automatically generates and uses session IDs.
 ```
 
 ---

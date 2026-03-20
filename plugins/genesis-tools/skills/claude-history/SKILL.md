@@ -1,5 +1,5 @@
 ---
-name: genesis-tools:claude-history
+name: gt:claude-history
 description: |
   Use when the user wants to find or reference something from a past Claude Code conversation — a fix, solution, discussion, or decision they remember from an earlier session. Applies when they say things like "you helped me fix", "we debugged", "we discussed", "I remember asking you", "I need to reference our conversation", or when they want to locate a specific past interaction by topic, file, date, or vague recollection. Also covers summarizing past Claude sessions. Does NOT apply when searching codebases, git history, browser history, Slack logs, or any non-Claude source.
 ---

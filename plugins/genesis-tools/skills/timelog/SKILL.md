@@ -1,5 +1,5 @@
 ---
-name: genesis-tools:timelog
+name: gt:timelog
 description: Sync time from Timely to Azure DevOps, and fill Clarity PPM timesheets. Use when user says "sync timely", "log my time from timely", "propose time entries", "what did I work on today", "sync my tracked time", "fill clarity", "sync to clarity", "clarity timesheet", "export timelog", "ppm". Analyzes Timely auto-tracked activities and git commits to generate Azure DevOps time log proposals, and bridges ADO timelogs to CA PPM Clarity timesheets.
 ---
 

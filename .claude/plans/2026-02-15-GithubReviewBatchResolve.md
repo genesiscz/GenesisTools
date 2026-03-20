@@ -303,7 +303,7 @@ tools github review <pr> --respond "Fixed in abc1234" --resolve-thread -t <threa
 **Step 2:** Add a cross-reference to the github skill near the top of the file (after the Usage section or in a new "Dependencies" note):
 
 ```markdown
-> **Underlying CLI:** This command uses `tools github review` under the hood. See the `genesis-tools:github` skill for full CLI reference and options.
+> **Underlying CLI:** This command uses `tools github review` under the hood. See the `gt:github` skill for full CLI reference and options.
 ```
 
 ---

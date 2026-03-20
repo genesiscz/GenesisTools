@@ -1,7 +1,7 @@
 ---
-name: genesis-tools:github
+name: gt:github
 description: |
-  Use whenever the user wants to READ or SEARCH GitHub content: fetching an issue or PR from a URL, getting comments (including after a specific comment anchor like #issuecomment-XXX), viewing PR review threads without making code changes, searching a repository's issues/PRs/code (e.g. "find how library X handles Y", "are there issues about Z"), browsing notifications or activity. Also use for GitHub Actions analysis: workflow run history, CI costs, billing breakdown, billable minutes, failure waste, cross-repo usage scanning, and run management (cancel, rerun). Triggers on any "look up", "show me", "find", "check", "summarize", or "search" intent on GitHub URLs or repositories, AND on "actions", "CI", "billing", "cost", "workflow runs", "billable minutes", "failed runs", or "rerun" intents. Do NOT use when the task is to implement code fixes, address PR feedback, or make commits — use genesis-tools:github-pr for that.
+  Use whenever the user wants to READ or SEARCH GitHub content: fetching an issue or PR from a URL, getting comments (including after a specific comment anchor like #issuecomment-XXX), viewing PR review threads without making code changes, searching a repository's issues/PRs/code (e.g. "find how library X handles Y", "are there issues about Z"), browsing notifications or activity. Also use for GitHub Actions analysis: workflow run history, CI costs, billing breakdown, billable minutes, failure waste, cross-repo usage scanning, and run management (cancel, rerun). Triggers on any "look up", "show me", "find", "check", "summarize", or "search" intent on GitHub URLs or repositories, AND on "actions", "CI", "billing", "cost", "workflow runs", "billable minutes", "failed runs", or "rerun" intents. Do NOT use when the task is to implement code fixes, address PR feedback, or make commits — use gt:github-pr for that.
 ---
 
 # GitHub Tool Usage Guide
@@ -348,9 +348,9 @@ tools github review sessions
 ```
 
 The `-s` flag specifies the session ID. Always use it to avoid cross-session confusion.
-When using the `genesis-tools:github-pr` skill, it automatically generates and uses session IDs.
+When using the `gt:github-pr` skill, it automatically generates and uses session IDs.
 
-> **PR review fix workflow:** If the user asks to fix, address, or analyze PR review comments — or provides multiple PR URLs — use the `/genesis-tools:github-pr` command (via the `Skill` tool). It handles the full end-to-end flow: fetch threads, critically evaluate each comment (pushing back on false positives), implement fixes, commit, reply to reviewers, and for multiple PRs: spawn parallel agents and produce a consolidated report.
+> **PR review fix workflow:** If the user asks to fix, address, or analyze PR review comments — or provides multiple PR URLs — use the `/gt:github-pr` command (via the `Skill` tool). It handles the full end-to-end flow: fetch threads, critically evaluate each comment (pushing back on false positives), implement fixes, commit, reply to reviewers, and for multiple PRs: spawn parallel agents and produce a consolidated report.
 
 ### Resolving Review Threads
 
@@ -389,7 +389,7 @@ When fixing PR review comments:
 5. **Reply to threads:** `tools github review <pr> --respond "Fixed in [sha](url)" -t <thread-ids>`
 6. **Resolve threads** (only when user explicitly approves): `tools github review <pr> --resolve-thread -t <thread-ids>`
 
-> For the full automated flow (fetch, triage, fix, commit, reply), use the `/genesis-tools:github-pr` command instead.
+> For the full automated flow (fetch, triage, fix, commit, reply), use the `/gt:github-pr` command instead.
 
 ## Caching Behavior
 
