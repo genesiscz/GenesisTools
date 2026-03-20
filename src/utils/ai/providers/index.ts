@@ -3,6 +3,7 @@ import type { AIProvider, AIProviderType, AITask } from "../types";
 import { AICloudProvider } from "./AICloudProvider";
 import { AIDarwinKitProvider } from "./AIDarwinKitProvider";
 import { AILocalProvider } from "./AILocalProvider";
+import { AICoreMLProvider } from "./AICoreMLProvider";
 
 const providers = new Map<AIProviderType, AIProvider>();
 
@@ -25,6 +26,15 @@ export function getProvider(type: AIProviderType): AIProvider {
         case "darwinkit":
             provider = new AIDarwinKitProvider();
             break;
+        case "coreml":
+            provider = new AICoreMLProvider({
+                modelId: "coreml-contextual",
+                modelPath: "",
+                dimensions: 512,
+                contextual: true,
+                language: "en",
+            });
+            break;
         default:
             throw new Error(`Unknown provider type: ${type}`);
     }
@@ -41,8 +51,8 @@ export async function getProviderForTask(task: AITask, config: AIConfig): Promis
         return provider;
     }
 
-    // Fallback order: cloud -> local-hf -> darwinkit
-    const fallbackOrder: AIProviderType[] = ["cloud", "local-hf", "darwinkit"];
+    // Fallback order: cloud -> local-hf -> coreml -> darwinkit
+    const fallbackOrder: AIProviderType[] = ["cloud", "local-hf", "coreml", "darwinkit"];
 
     for (const type of fallbackOrder) {
         if (type === preferred) {
@@ -63,7 +73,7 @@ export async function getProviderForTask(task: AITask, config: AIConfig): Promis
 }
 
 export function getAllProviders(): AIProvider[] {
-    const types: AIProviderType[] = ["cloud", "local-hf", "darwinkit"];
+    const types: AIProviderType[] = ["cloud", "local-hf", "darwinkit", "coreml"];
     return types.map((type) => getProvider(type));
 }
 
@@ -78,3 +88,4 @@ export function disposeAll(): void {
 export { AICloudProvider } from "./AICloudProvider";
 export { AIDarwinKitProvider } from "./AIDarwinKitProvider";
 export { AILocalProvider } from "./AILocalProvider";
+export { AICoreMLProvider } from "./AICoreMLProvider";
