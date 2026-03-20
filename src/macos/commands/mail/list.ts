@@ -1,92 +1,17 @@
-import {
-    ALL_COLUMN_KEYS,
-    DEFAULT_LIST_COLUMNS,
-    MAIL_COLUMNS,
-    type MailColumnKey,
-    RECIPIENT_COLUMNS,
-} from "@app/macos/lib/mail/columns";
-import { formatResultsTable } from "@app/macos/lib/mail/format";
-import { SeenStore } from "@app/macos/lib/mail/seen-store";
+import { ALL_COLUMN_KEYS } from "@app/macos/lib/mail/columns";
+import { needsRecipients, outputFormattedResults, resolveColumnsFromFlag } from "@app/macos/lib/mail/command-helpers";
+import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import { cleanup, getAttachments, getRecipients, listMessages } from "@app/macos/lib/mail/sqlite";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import type { MailMessage } from "@app/macos/lib/mail/types";
-import { parseVariadic } from "@app/utils/cli/variadic";
-import { SafeJSON } from "@app/utils/json";
-import { Storage } from "@app/utils/storage/storage";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
-import { join } from "node:path";
 
 interface ListOptions {
     limit?: string;
     columns?: string | true;
     format?: string;
     sinceLastCheck?: boolean;
-}
-
-function resolveColumns(rawColumns: string | true | undefined): MailColumnKey[] | "interactive" {
-    if (rawColumns === undefined) {
-        return DEFAULT_LIST_COLUMNS;
-    }
-
-    if (rawColumns === true) {
-        return "interactive";
-    }
-
-    const parsed = parseVariadic(rawColumns);
-    const valid: MailColumnKey[] = [];
-
-    for (const col of parsed) {
-        if (ALL_COLUMN_KEYS.includes(col as MailColumnKey)) {
-            valid.push(col as MailColumnKey);
-        } else {
-            p.log.warn(`Unknown column "${col}" — available: ${ALL_COLUMN_KEYS.join(", ")}`);
-        }
-    }
-
-    if (valid.length === 0) {
-        return DEFAULT_LIST_COLUMNS;
-    }
-
-    return valid;
-}
-
-async function pickColumnsInteractively(): Promise<MailColumnKey[] | null> {
-    const result = await p.multiselect({
-        message: "Select columns to display:",
-        options: ALL_COLUMN_KEYS.map((key) => ({
-            value: key,
-            label: MAIL_COLUMNS[key].label,
-            hint: DEFAULT_LIST_COLUMNS.includes(key) ? "default" : undefined,
-        })),
-        initialValues: [...DEFAULT_LIST_COLUMNS],
-        required: true,
-    });
-
-    if (p.isCancel(result)) {
-        p.cancel("Operation cancelled");
-        return null;
-    }
-
-    return result as MailColumnKey[];
-}
-
-function needsRecipients(columns: MailColumnKey[]): boolean {
-    return columns.some((col) => RECIPIENT_COLUMNS.includes(col));
-}
-
-function formatJsonOutput(messages: MailMessage[], columns: MailColumnKey[]): string {
-    const data = messages.map((msg) => {
-        const obj: Record<string, string> = {};
-
-        for (const col of columns) {
-            obj[col] = MAIL_COLUMNS[col].get(msg);
-        }
-
-        return obj;
-    });
-
-    return SafeJSON.stringify(data, null, 2);
 }
 
 export function registerListCommand(program: Command): void {
@@ -102,24 +27,11 @@ export function registerListCommand(program: Command): void {
                 const targetMailbox = mailbox ?? "INBOX";
                 const limit = Number.parseInt(options.limit ?? "20", 10);
 
-                // Resolve columns
-                let columnsResolved = resolveColumns(options.columns);
+                const columns = await resolveColumnsFromFlag(options.columns);
 
-                if (columnsResolved === "interactive") {
-                    if (!process.stdout.isTTY) {
-                        columnsResolved = DEFAULT_LIST_COLUMNS;
-                    } else {
-                        const picked = await pickColumnsInteractively();
-
-                        if (!picked) {
-                            return;
-                        }
-
-                        columnsResolved = picked;
-                    }
+                if (!columns) {
+                    return;
                 }
-
-                const columns = columnsResolved;
 
                 const spinner = p.spinner();
                 spinner.start(`Fetching latest ${limit} emails from ${targetMailbox}...`);
@@ -127,9 +39,8 @@ export function registerListCommand(program: Command): void {
                 let rows = listMessages(targetMailbox, limit);
 
                 if (options.sinceLastCheck) {
-                    const storage = new Storage("macos-mail");
-                    const dbPath = join(storage.getBaseDir(), "seen.db");
-                    const store = new SeenStore(dbPath);
+                    const mailStorage = new MailStorage();
+                    const store = mailStorage.openSeenStore();
                     const maxSeen = store.getMaxSeenRowid();
                     store.close();
 
@@ -162,26 +73,11 @@ export function registerListCommand(program: Command): void {
 
                 spinner.stop(`${messages.length} emails from ${targetMailbox}`);
 
-                const format = options.format ?? "table";
-
-                if (format === "table") {
-                    console.log("");
-                    console.log(formatResultsTable(messages, columns));
-                } else if (format === "json") {
-                    console.log(formatJsonOutput(messages, columns));
-                } else if (format === "toon") {
-                    const jsonStr = formatJsonOutput(messages, columns);
-                    const proc = Bun.spawn(["tools", "json"], {
-                        stdin: new Blob([jsonStr]),
-                        stdout: "inherit",
-                        stderr: "inherit",
-                    });
-                    await proc.exited;
-                } else {
-                    p.log.warn(`Unknown format "${format}" — using table`);
-                    console.log("");
-                    console.log(formatResultsTable(messages, columns));
-                }
+                await outputFormattedResults({
+                    messages,
+                    columns,
+                    format: options.format ?? "table",
+                });
             } catch (error) {
                 p.log.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);

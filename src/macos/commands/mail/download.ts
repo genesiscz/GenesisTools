@@ -1,34 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import logger from "@app/logger";
 import { generateEmailMarkdown, generateIndexMarkdown, generateSlug } from "@app/macos/lib/mail/format";
 import { getMessageBody, saveAttachment } from "@app/macos/lib/mail/jxa";
+import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import { cleanup, getRecipients } from "@app/macos/lib/mail/sqlite";
-import type { MailMessage } from "@app/macos/lib/mail/types";
-import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
-
-/** Load the last search results from temp file */
-function loadLastSearchResults(): MailMessage[] | null {
-    const path = join(tmpdir(), "macos-mail-last-search.json");
-    if (!existsSync(path)) {
-        return null;
-    }
-
-    try {
-        const raw = readFileSync(path, "utf-8");
-        const parsed = SafeJSON.parse(raw) as Array<Record<string, unknown>>;
-        return parsed.map((m) => ({
-            ...m,
-            dateSent: new Date(m.dateSent as string),
-            dateReceived: new Date(m.dateReceived as string),
-        })) as MailMessage[];
-    } catch {
-        return null;
-    }
-}
 
 export function registerDownloadCommand(program: Command): void {
     program
@@ -53,7 +31,9 @@ export function registerDownloadCommand(program: Command): void {
                     const isTTY = process.stdout.isTTY;
 
                     // Load last search results
-                    const messages = loadLastSearchResults();
+                    const mailStorage = new MailStorage();
+                    const messages = mailStorage.loadSearchResults();
+
                     if (!messages || messages.length === 0) {
                         p.log.error("No search results found. Run 'tools macos mail search <query>' first.");
                         process.exit(1);

@@ -1,13 +1,12 @@
+import { existsSync, readFileSync } from "node:fs";
+import { SafeJSON } from "@app/utils/json";
 import { formatResultsTable } from "@app/macos/lib/mail/format";
-import { SeenStore } from "@app/macos/lib/mail/seen-store";
+import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import { cleanup, getAttachments, getRecipients, listMessages } from "@app/macos/lib/mail/sqlite";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import type { MailMessage } from "@app/macos/lib/mail/types";
-import { Storage } from "@app/utils/storage/storage";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 
 // ─── Rule types ──────────────────────────────────────────────
 
@@ -119,11 +118,6 @@ function findMatchingRule(msg: MailMessage, rules: MonitorRule[]): MonitorRule |
 
 // ─── Helpers ─────────────────────────────────────────────────
 
-function getSeenDbPath(): string {
-    const storage = new Storage("macos-mail");
-    return join(storage.getBaseDir(), "seen.db");
-}
-
 function loadRules(rulesPath: string | undefined): MonitorRule[] {
     if (!rulesPath) {
         return DEFAULT_RULES;
@@ -134,7 +128,7 @@ function loadRules(rulesPath: string | undefined): MonitorRule[] {
     }
 
     const content = readFileSync(rulesPath, "utf-8");
-    return JSON.parse(content) as MonitorRule[];
+    return SafeJSON.parse(content) as MonitorRule[];
 }
 
 // ─── Command options ─────────────────────────────────────────
@@ -185,8 +179,8 @@ export function registerMonitorCommand(program: Command): void {
                 });
 
                 // Diff against seen DB
-                const dbPath = getSeenDbPath();
-                const store = new SeenStore(dbPath);
+                const mailStorage = new MailStorage();
+                const store = mailStorage.openSeenStore();
                 const seenRowids = store.getSeenRowids();
 
                 const newMessages = messages.filter((m) => !seenRowids.has(m.rowid));
@@ -209,9 +203,7 @@ export function registerMonitorCommand(program: Command): void {
                     }
                 }
 
-                spinner.stop(
-                    `${newMessages.length} new message(s), ${important.length} important.`
-                );
+                spinner.stop(`${newMessages.length} new message(s), ${important.length} important.`);
 
                 if (important.length > 0) {
                     const importantMsgs = important.map((i) => i.msg);
@@ -228,9 +220,10 @@ export function registerMonitorCommand(program: Command): void {
 
                 // Notify via sayy if requested
                 if (options.notifyTelegram && important.length > 0) {
-                    const summary = important.length === 1
-                        ? `1 important email: ${important[0].msg.subject.slice(0, 40)}`
-                        : `${important.length} important emails`;
+                    const summary =
+                        important.length === 1
+                            ? `1 important email: ${important[0].msg.subject.slice(0, 40)}`
+                            : `${important.length} important emails`;
 
                     const proc = Bun.spawn(["sayy", "0.5", summary], {
                         stdout: "inherit",

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { ALL_COLUMN_KEYS } from "@app/macos/lib/mail/columns";
 import { SafeJSON } from "@app/utils/json";
 import { runTool, stripAnsi } from "./helpers";
 
@@ -30,27 +31,11 @@ describe("tools macos mail", () => {
     });
 
     describe("list --help column names", () => {
-        const ALL_COLUMNS = [
-            "date",
-            "from",
-            "fromEmail",
-            "to",
-            "toEmail",
-            "cc",
-            "subject",
-            "mailbox",
-            "account",
-            "read",
-            "flagged",
-            "size",
-            "attachments",
-        ];
-
         it("list --help output contains all column names", async () => {
             const r = await runTool(["macos", "mail", "list", "--help"]);
             const out = stripAnsi(r.stdout);
 
-            for (const col of ALL_COLUMNS) {
+            for (const col of ALL_COLUMN_KEYS) {
                 expect(out).toContain(col);
             }
         });
@@ -87,9 +72,9 @@ describe("tools macos mail", () => {
             expect(combined).not.toContain("unknown option");
 
             if (r.exitCode === 0 && r.stdout.trim().length > 0) {
-                // The output contains clack spinner control sequences mixed with JSON.
-                // Find the line that starts with '[' and collect until the matching ']'.
-                const lines = r.stdout.split("\n");
+                // Spinner output contains ANSI escapes and Unicode glyphs that
+                // confuse naive indexOf("["). Match lines that are purely "[" or "]".
+                const lines = stripAnsi(r.stdout).split("\n");
                 const startIdx = lines.findIndex((l) => l.trim() === "[");
                 const endIdx = lines.findLastIndex((l) => l.trim() === "]");
 

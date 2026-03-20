@@ -1,15 +1,8 @@
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import logger from "@app/logger";
-import {
-    ALL_COLUMN_KEYS,
-    DEFAULT_LIST_COLUMNS,
-    MAIL_COLUMNS,
-    type MailColumnKey,
-    RECIPIENT_COLUMNS,
-} from "@app/macos/lib/mail/columns";
-import { formatResultsTable } from "@app/macos/lib/mail/format";
+import { ALL_COLUMN_KEYS, type MailColumnKey } from "@app/macos/lib/mail/columns";
+import { needsRecipients, outputFormattedResults, resolveColumnsFromFlag } from "@app/macos/lib/mail/command-helpers";
 import { searchBodies } from "@app/macos/lib/mail/jxa";
+import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import {
     cleanup,
     getAttachments,
@@ -20,8 +13,6 @@ import {
 } from "@app/macos/lib/mail/sqlite";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import type { MailMessage, SearchOptions } from "@app/macos/lib/mail/types";
-import { parseVariadic } from "@app/utils/cli/variadic";
-import { SafeJSON } from "@app/utils/json";
 import { closeDarwinKit, rankBySimilarity } from "@app/utils/macos";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -38,71 +29,6 @@ interface SearchCommandOptions {
     maxDistance?: string;
     columns?: string | true;
     format?: string;
-}
-
-function resolveColumns(rawColumns: string | true | undefined): MailColumnKey[] | "interactive" {
-    if (rawColumns === undefined) {
-        return DEFAULT_LIST_COLUMNS;
-    }
-
-    if (rawColumns === true) {
-        return "interactive";
-    }
-
-    const parsed = parseVariadic(rawColumns);
-    const valid: MailColumnKey[] = [];
-
-    for (const col of parsed) {
-        if (ALL_COLUMN_KEYS.includes(col as MailColumnKey)) {
-            valid.push(col as MailColumnKey);
-        } else {
-            p.log.warn(`Unknown column "${col}" — available: ${ALL_COLUMN_KEYS.join(", ")}`);
-        }
-    }
-
-    if (valid.length === 0) {
-        return DEFAULT_LIST_COLUMNS;
-    }
-
-    return valid;
-}
-
-async function pickColumnsInteractively(): Promise<MailColumnKey[] | null> {
-    const result = await p.multiselect({
-        message: "Select columns to display:",
-        options: ALL_COLUMN_KEYS.map((key) => ({
-            value: key,
-            label: MAIL_COLUMNS[key].label,
-            hint: DEFAULT_LIST_COLUMNS.includes(key) ? "default" : undefined,
-        })),
-        initialValues: [...DEFAULT_LIST_COLUMNS],
-        required: true,
-    });
-
-    if (p.isCancel(result)) {
-        p.cancel("Operation cancelled");
-        return null;
-    }
-
-    return result as MailColumnKey[];
-}
-
-function needsRecipients(columns: MailColumnKey[]): boolean {
-    return columns.some((col) => RECIPIENT_COLUMNS.includes(col));
-}
-
-function formatJsonOutput(messages: MailMessage[], columns: MailColumnKey[]): string {
-    const data = messages.map((msg) => {
-        const obj: Record<string, string> = {};
-
-        for (const col of columns) {
-            obj[col] = MAIL_COLUMNS[col].get(msg);
-        }
-
-        return obj;
-    });
-
-    return SafeJSON.stringify(data, null, 2);
 }
 
 function buildSearchColumns({
@@ -173,23 +99,11 @@ export function registerSearchCommand(program: Command): void {
                 };
 
                 // Resolve columns
-                let columnsResolved = resolveColumns(options.columns);
+                const baseColumns = await resolveColumnsFromFlag(options.columns);
 
-                if (columnsResolved === "interactive") {
-                    if (!process.stdout.isTTY) {
-                        columnsResolved = DEFAULT_LIST_COLUMNS;
-                    } else {
-                        const picked = await pickColumnsInteractively();
-
-                        if (!picked) {
-                            return;
-                        }
-
-                        columnsResolved = picked;
-                    }
+                if (!baseColumns) {
+                    return;
                 }
-
-                const baseColumns = columnsResolved;
 
                 const searchOpts: SearchOptions = {
                     query,
@@ -312,41 +226,19 @@ export function registerSearchCommand(program: Command): void {
                 }
 
                 // Output results
-                const format = options.format ?? "table";
+                await outputFormattedResults({
+                    messages,
+                    columns: finalColumns,
+                    format: options.format ?? "table",
+                });
 
-                if (format === "table") {
-                    console.log("");
-                    console.log(formatResultsTable(messages, finalColumns));
-                    console.log("");
-                    p.log.info(`${messages.length} results. Use 'tools macos mail download <dir>' to export.`);
-                } else if (format === "json") {
-                    console.log(formatJsonOutput(messages, finalColumns));
-                } else if (format === "toon") {
-                    const jsonStr = formatJsonOutput(messages, finalColumns);
-                    const proc = Bun.spawn(["tools", "json"], {
-                        stdin: new Blob([jsonStr]),
-                        stdout: "inherit",
-                        stderr: "inherit",
-                    });
-                    await proc.exited;
-                } else {
-                    p.log.warn(`Unknown format "${format}" — using table`);
-                    console.log("");
-                    console.log(formatResultsTable(messages, finalColumns));
-                    console.log("");
+                if ((options.format ?? "table") === "table") {
                     p.log.info(`${messages.length} results. Use 'tools macos mail download <dir>' to export.`);
                 }
 
-                // Save results to temp file for download command
-                const tempResults = SafeJSON.stringify(
-                    messages.map((m) => ({
-                        ...m,
-                        dateSent: m.dateSent.toISOString(),
-                        dateReceived: m.dateReceived.toISOString(),
-                    }))
-                );
-                const resultsPath = join(tmpdir(), "macos-mail-last-search.json");
-                await Bun.write(resultsPath, tempResults);
+                // Save results for download command
+                const mailStorage = new MailStorage();
+                const resultsPath = mailStorage.saveSearchResults(messages);
                 logger.debug(`Saved search results to ${resultsPath}`);
             } catch (error) {
                 p.log.error(error instanceof Error ? error.message : String(error));
