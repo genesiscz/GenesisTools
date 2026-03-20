@@ -3,6 +3,7 @@ import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { IndexerManager } from "../lib/manager";
+import { createProgressCallbacks } from "../lib/progress";
 
 export function registerRebuildCommand(program: Command): void {
     program
@@ -43,10 +44,25 @@ export function registerRebuildCommand(program: Command): void {
 
                 p.intro(pc.bgCyan(pc.white(` rebuild ${targetName} `)));
 
+                const metas = manager.listIndexes();
+                const meta = metas.find((m) => m.name === targetName);
+                const chunkCount = meta?.stats.totalChunks ?? 0;
+
+                if (process.stdout.isTTY && chunkCount > 0) {
+                    const confirmed = await p.confirm({
+                        message: `Rebuild "${targetName}" (${chunkCount.toLocaleString()} chunks)? This will re-scan all source files.`,
+                    });
+
+                    if (p.isCancel(confirmed) || !confirmed) {
+                        p.log.info("Cancelled");
+                        return;
+                    }
+                }
+
                 const spinner = p.spinner();
                 spinner.start("Rebuilding index...");
 
-                const stats = await manager.rebuildIndex(targetName);
+                const stats = await manager.rebuildIndex(targetName, createProgressCallbacks(spinner));
 
                 spinner.stop("Rebuild complete");
 

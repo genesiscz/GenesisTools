@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { SafeJSON } from "@app/utils/json";
@@ -8,7 +8,7 @@ import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { Storage } from "@app/utils/storage/storage";
 import { deserializeMerkleTree } from "./merkle";
 import { PathHashStore } from "./path-hashes";
-import type { ChunkRecord, IndexConfig, IndexMeta, IndexStats, MerkleNode } from "./types";
+import { emptyStats, type ChunkRecord, type IndexConfig, type IndexMeta, type IndexStats, type MerkleNode } from "./types";
 
 export interface IndexStore {
     insertChunks(chunks: ChunkRecord[], embeddings?: Map<string, Float32Array>): Promise<void>;
@@ -23,13 +23,21 @@ export interface IndexStore {
     getChunkContents(ids: string[]): Array<{ id: string; content: string }>;
     /** Get chunk IDs that belong to the given source file paths */
     getChunkIdsBySourcePaths(paths: string[]): string[];
+    /** Get chunk IDs by source entry ID (stored in source_id column) */
+    getChunkIdsBySourceIds(ids: string[]): string[];
+    /** Drop all embeddings so they get re-generated on next sync */
+    clearEmbeddings(): void;
+    /** Drop embeddings for chunks that belong to the given source IDs */
+    clearEmbeddingsBySourceIds(sourceIds: string[]): void;
     search(opts: SearchOptions): Promise<SearchResult<ChunkRecord>[]>;
     getStats(): IndexStats;
+    getContentCount(): number;
+    getEmbeddingCount(): number;
     getMeta(): IndexMeta;
     updateMeta(updates: Partial<Pick<IndexMeta, "lastSyncAt" | "stats" | "indexEmbedding" | "searchEmbedding">>): void;
     getPathHashStore(): PathHashStore;
-    /** @deprecated Use getPathHashStore().getAllFiles() + buildMerkleTree() instead */
-    loadMerkle(): Promise<MerkleNode | null>;
+    /** Run PRAGMA integrity_check on the underlying SQLite database */
+    checkIntegrity(): string;
     logSearch(entry: { query: string; mode: string; resultsCount: number; durationMs: number }): void;
     close(): Promise<void>;
 }
@@ -52,16 +60,7 @@ function readMeta(db: Database, config: IndexConfig, createdAt: number): IndexMe
         return {
             name: config.name,
             config,
-            stats: {
-                totalFiles: 0,
-                totalChunks: 0,
-                totalEmbeddings: 0,
-                embeddingDimensions: 0,
-                dbSizeBytes: 0,
-                lastSyncDurationMs: 0,
-                searchCount: 0,
-                avgSearchDurationMs: 0,
-            },
+            stats: emptyStats(),
             lastSyncAt: null,
             createdAt,
         };
@@ -163,21 +162,35 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         const initialMeta: IndexMeta = {
             name: config.name,
             config,
-            stats: {
-                totalFiles: 0,
-                totalChunks: 0,
-                totalEmbeddings: 0,
-                embeddingDimensions: 0,
-                dbSizeBytes: 0,
-                lastSyncDurationMs: 0,
-                searchCount: 0,
-                avgSearchDurationMs: 0,
-            },
+            stats: emptyStats(),
             lastSyncAt: null,
             createdAt,
         };
         db.run("INSERT INTO index_meta (key, value) VALUES (?, ?)", ["meta", SafeJSON.stringify(initialMeta)]);
     }
+
+    // Advisory lock — prevent concurrent processes from corrupting the index
+    const lockPath = join(indexDir, "index.lock");
+
+    if (existsSync(lockPath)) {
+        const pid = readFileSync(lockPath, "utf-8").trim();
+
+        try {
+            process.kill(parseInt(pid, 10), 0);
+            throw new Error(
+                `Index "${config.name}" is locked by another process (PID ${pid}). ` +
+                    `If this is stale, delete ${lockPath}`
+            );
+        } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === "ESRCH") {
+                rmSync(lockPath);
+            } else {
+                throw err;
+            }
+        }
+    }
+
+    writeFileSync(lockPath, String(process.pid));
 
     const fts = SearchEngine.fromDatabase<ChunkDoc>(db, {
         tableName,
@@ -189,31 +202,52 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         embedder,
     });
 
+    // ── Cached state ────────────────────────────────────────────────
+    const contentTable = `${tableName}_content`;
+    const embTable = `${tableName}_embeddings`;
+
+    // Cache embeddings table existence (B11)
+    let embTableExists = !!db
+        .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+        .get(embTable);
+
+    // Run source_id column migration once at store creation (B3)
+    const contentTableExists = db
+        .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+        .get(contentTable) as { name: string } | null;
+
+    if (contentTableExists) {
+        const hasSourceId = (
+            db.query(`PRAGMA table_info(${contentTable})`).all() as Array<{ name: string }>
+        ).some((col) => col.name === "source_id");
+
+        if (!hasSourceId) {
+            db.run(`ALTER TABLE ${contentTable} ADD COLUMN source_id TEXT DEFAULT ''`);
+        }
+    }
+
     const store: IndexStore = {
         async insertChunks(chunks: ChunkRecord[], embeddings?: Map<string, Float32Array>): Promise<void> {
             if (chunks.length === 0 && (!embeddings || embeddings.size === 0)) {
                 return;
             }
 
-            const contentTable = `${tableName}_content`;
-
             const tx = db.transaction(() => {
                 for (const chunk of chunks) {
-                    db.run(`INSERT OR REPLACE INTO ${contentTable} (id, content, name, filePath) VALUES (?, ?, ?, ?)`, [
-                        chunk.id,
-                        chunk.content,
-                        chunk.name ?? "",
-                        chunk.filePath,
-                    ]);
+                    db.run(
+                        `INSERT OR REPLACE INTO ${contentTable} (id, content, name, filePath, source_id) VALUES (?, ?, ?, ?, ?)`,
+                        [chunk.id, chunk.content, chunk.name ?? "", chunk.filePath, chunk.sourceId ?? ""]
+                    );
                 }
 
                 if (embeddings && embeddings.size > 0) {
-                    const embTable = `${tableName}_embeddings`;
-
-                    db.run(`CREATE TABLE IF NOT EXISTS ${embTable} (
-                        doc_id TEXT PRIMARY KEY,
-                        embedding BLOB NOT NULL
-                    )`);
+                    if (!embTableExists) {
+                        db.run(`CREATE TABLE IF NOT EXISTS ${embTable} (
+                            doc_id TEXT PRIMARY KEY,
+                            embedding BLOB NOT NULL
+                        )`);
+                        embTableExists = true;
+                    }
 
                     for (const [chunkId, vector] of embeddings) {
                         const blob = Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
@@ -230,22 +264,25 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 return;
             }
 
-            for (const id of chunkIds) {
-                await fts.remove(id);
+            const batchSize = 500;
+            const tx = db.transaction(() => {
+                for (let i = 0; i < chunkIds.length; i += batchSize) {
+                    const batch = chunkIds.slice(i, i + batchSize);
+                    const placeholders = batch.map(() => "?").join(",");
+                    db.run(`DELETE FROM ${contentTable} WHERE id IN (${placeholders})`, batch);
+                }
+            });
+            tx();
+
+            if (fts["vectorStore"]) {
+                for (const id of chunkIds) {
+                    fts["vectorStore"].remove(id);
+                }
             }
         },
 
         getUnembeddedChunkIds(): string[] {
-            const contentTable = `${tableName}_content`;
-            const embTable = `${tableName}_embeddings`;
-
-            // Check if embeddings table exists
-            const tableExists = db
-                .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
-                .get(embTable) as { name: string } | null;
-
-            if (!tableExists) {
-                // No embeddings table → all chunks are unembedded
+            if (!embTableExists) {
                 const rows = db.query(`SELECT id FROM ${contentTable}`).all() as Array<{ id: string }>;
                 return rows.map((r) => r.id);
             }
@@ -259,35 +296,21 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         },
 
         getUnembeddedCount(): number {
-            const contentTable = `${tableName}_content`;
-            const embTable = `${tableName}_embeddings`;
-
-            const tableExists = db
-                .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
-                .get(embTable) as { name: string } | null;
-
-            if (!tableExists) {
+            if (!embTableExists) {
                 const row = db.query(`SELECT COUNT(*) AS cnt FROM ${contentTable}`).get() as { cnt: number };
                 return row.cnt;
             }
 
             const row = db
                 .query(
-                    `SELECT COUNT(*) AS cnt FROM ${contentTable} c LEFT JOIN ${embTable} e ON c.id = e.doc_id WHERE e.doc_id IS NULL`
+                    `SELECT COUNT(*) AS cnt FROM ${contentTable} c WHERE NOT EXISTS (SELECT 1 FROM ${embTable} e WHERE e.doc_id = c.id)`
                 )
                 .get() as { cnt: number };
             return row.cnt;
         },
 
         getUnembeddedChunksPage(limit: number): Array<{ id: string; content: string }> {
-            const contentTable = `${tableName}_content`;
-            const embTable = `${tableName}_embeddings`;
-
-            const tableExists = db
-                .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
-                .get(embTable) as { name: string } | null;
-
-            if (!tableExists) {
+            if (!embTableExists) {
                 return db.query(`SELECT id, content FROM ${contentTable} LIMIT ?`).all(limit) as Array<{
                     id: string;
                     content: string;
@@ -296,7 +319,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
 
             return db
                 .query(
-                    `SELECT c.id, c.content FROM ${contentTable} c LEFT JOIN ${embTable} e ON c.id = e.doc_id WHERE e.doc_id IS NULL LIMIT ?`
+                    `SELECT c.id, c.content FROM ${contentTable} c WHERE NOT EXISTS (SELECT 1 FROM ${embTable} e WHERE e.doc_id = c.id) LIMIT ?`
                 )
                 .all(limit) as Array<{ id: string; content: string }>;
         },
@@ -306,7 +329,6 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 return [];
             }
 
-            const contentTable = `${tableName}_content`;
             const results: Array<{ id: string; content: string }> = [];
             const batchSize = 500;
 
@@ -327,7 +349,6 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 return [];
             }
 
-            const contentTable = `${tableName}_content`;
             const results: string[] = [];
             const batchSize = 500;
 
@@ -343,6 +364,51 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
             return results;
         },
 
+        getChunkIdsBySourceIds(ids: string[]): string[] {
+            if (ids.length === 0) {
+                return [];
+            }
+
+            const results: string[] = [];
+            const batchSize = 500;
+
+            for (let i = 0; i < ids.length; i += batchSize) {
+                const batch = ids.slice(i, i + batchSize);
+                const placeholders = batch.map(() => "?").join(",");
+                const rows = db
+                    .query(`SELECT id FROM ${contentTable} WHERE source_id IN (${placeholders})`)
+                    .all(...batch) as Array<{ id: string }>;
+                results.push(...rows.map((r) => r.id));
+            }
+
+            return results;
+        },
+
+        clearEmbeddings(): void {
+            if (embTableExists) {
+                db.run(`DELETE FROM ${embTable}`);
+            }
+        },
+
+        clearEmbeddingsBySourceIds(sourceIds: string[]): void {
+            if (sourceIds.length === 0 || !embTableExists) {
+                return;
+            }
+
+            const batchSize = 500;
+            const tx = db.transaction(() => {
+                for (let i = 0; i < sourceIds.length; i += batchSize) {
+                    const batch = sourceIds.slice(i, i + batchSize);
+                    const placeholders = batch.map(() => "?").join(",");
+                    db.run(
+                        `DELETE FROM ${embTable} WHERE doc_id IN (SELECT id FROM ${contentTable} WHERE source_id IN (${placeholders}))`,
+                        batch
+                    );
+                }
+            });
+            tx();
+        },
+
         async search(opts: SearchOptions): Promise<SearchResult<ChunkRecord>[]> {
             const results = await fts.search(opts);
             return results.map((r) => ({
@@ -353,9 +419,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         },
 
         getStats(): IndexStats {
-            // Query DB directly — fts.count uses a cached value that's stale
-            // when chunks are inserted via raw SQL (bypassing SearchEngine.insert)
-            const countRow = db.query(`SELECT COUNT(*) AS cnt FROM ${tableName}_content`).get() as { cnt: number };
+            const countRow = db.query(`SELECT COUNT(*) AS cnt FROM ${contentTable}`).get() as { cnt: number };
             const chunkCount = countRow.cnt;
 
             let dbSizeBytes = 0;
@@ -383,6 +447,20 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 searchCount: logStats.cnt,
                 avgSearchDurationMs: logStats.avg_ms ?? 0,
             };
+        },
+
+        getContentCount(): number {
+            const row = db.query(`SELECT COUNT(*) AS cnt FROM ${contentTable}`).get() as { cnt: number };
+            return row.cnt;
+        },
+
+        getEmbeddingCount(): number {
+            if (!embTableExists) {
+                return 0;
+            }
+
+            const row = db.query(`SELECT COUNT(*) AS cnt FROM ${embTable}`).get() as { cnt: number };
+            return row.cnt;
         },
 
         getMeta(): IndexMeta {
@@ -420,23 +498,9 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
             return pathHashStore;
         },
 
-        async loadMerkle(): Promise<MerkleNode | null> {
-            // Check if old merkle_tree table exists for backward compat
-            const tableExists = db
-                .query("SELECT name FROM sqlite_master WHERE type='table' AND name='merkle_tree'")
-                .get() as { name: string } | null;
-
-            if (!tableExists) {
-                return null;
-            }
-
-            const row = db.query("SELECT tree FROM merkle_tree WHERE id = 1").get() as { tree: string } | null;
-
-            if (!row) {
-                return null;
-            }
-
-            return deserializeMerkleTree(row.tree);
+        checkIntegrity(): string {
+            const result = db.query("PRAGMA integrity_check").get() as { integrity_check: string };
+            return result.integrity_check;
         },
 
         logSearch(entry: { query: string; mode: string; resultsCount: number; durationMs: number }): void {
@@ -449,6 +513,12 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         async close(): Promise<void> {
             await fts.close();
             db.close();
+
+            try {
+                rmSync(lockPath);
+            } catch {
+                // Lock may already be removed
+            }
         },
     };
 

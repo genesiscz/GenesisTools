@@ -160,7 +160,7 @@ describe("FileSource", () => {
         const hash2 = source.hashEntry(entry);
 
         expect(hash1).toBe(hash2);
-        expect(hash1.length).toBe(64); // SHA-256 hex
+        expect(hash1.length).toBeGreaterThan(0); // xxHash64 hex
     });
 
     it("estimateTotal returns file count", async () => {

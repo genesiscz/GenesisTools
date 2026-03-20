@@ -346,7 +346,7 @@ This is another email body.`;
 
             // All chunks should have valid IDs
             for (const chunk of result.chunks) {
-                expect(chunk.id).toMatch(/^[a-f0-9]{64}$/);
+                expect(chunk.id).toMatch(/^[a-f0-9]+$/);
             }
         });
     });

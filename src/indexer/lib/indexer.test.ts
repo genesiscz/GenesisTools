@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,6 +45,22 @@ afterEach(() => {
     } catch {
         // Cleanup best-effort
     }
+});
+
+afterAll(async () => {
+    const { IndexerManager } = await import("./manager");
+    const manager = await IndexerManager.load();
+    const names = manager.getIndexNames().filter((n) => n.startsWith("test_index_") || n.startsWith("test_"));
+
+    for (const name of names) {
+        try {
+            await manager.removeIndex(name);
+        } catch {
+            // Best-effort cleanup
+        }
+    }
+
+    await manager.close();
 });
 
 describe("Indexer", () => {

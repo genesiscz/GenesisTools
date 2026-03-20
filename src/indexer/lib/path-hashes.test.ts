@@ -108,4 +108,39 @@ describe("PathHashStore", () => {
 
         expect(store.getHash("nonexistent.ts")).toBeNull();
     });
+
+    it("getFileCount returns count without loading all rows", () => {
+        tmpDir = mkdtempSync(join(tmpdir(), "path-hash-"));
+        db = new Database(join(tmpDir, "test.db"));
+        const store = new PathHashStore(db);
+
+        store.upsert("100", "h1", true);
+        store.upsert("200", "h2", true);
+        store.upsert("dir1", "h3", false);
+
+        expect(store.getFileCount()).toBe(2);
+    });
+
+    it("getMaxNumericPath returns highest numeric path", () => {
+        tmpDir = mkdtempSync(join(tmpdir(), "path-hash-"));
+        db = new Database(join(tmpDir, "test.db"));
+        const store = new PathHashStore(db);
+
+        store.upsert("100", "h1", true);
+        store.upsert("50000", "h2", true);
+        store.upsert("999", "h3", true);
+        store.upsert("not-a-number", "h4", true);
+
+        expect(store.getMaxNumericPath()).toBe(50000);
+    });
+
+    it("getMaxNumericPath returns 0 when no numeric paths", () => {
+        tmpDir = mkdtempSync(join(tmpdir(), "path-hash-"));
+        db = new Database(join(tmpDir, "test.db"));
+        const store = new PathHashStore(db);
+
+        store.upsert("src/foo.ts", "h1", true);
+
+        expect(store.getMaxNumericPath()).toBe(0);
+    });
 });

@@ -6,6 +6,8 @@ import { registerRebuildCommand } from "./commands/rebuild";
 import { registerRemoveCommand } from "./commands/remove";
 import { registerSearchCommand } from "./commands/search";
 import { registerStatusCommand } from "./commands/status";
+import { registerSyncCommand } from "./commands/sync";
+import { registerVerifyCommand } from "./commands/verify";
 import { registerWatchCommand } from "./commands/watch";
 
 const program = new Command();
@@ -20,9 +22,11 @@ registerAddCommand(program);
 registerModelsCommand(program);
 registerStatusCommand(program);
 registerSearchCommand(program);
+registerSyncCommand(program);
 registerWatchCommand(program);
 registerRebuildCommand(program);
 registerRemoveCommand(program);
+registerVerifyCommand(program);
 
 async function main(): Promise<void> {
     if (process.argv.length <= 2) {

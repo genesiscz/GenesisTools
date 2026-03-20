@@ -1,7 +1,16 @@
 import { Database } from "bun:sqlite";
+import { existsSync } from "node:fs";
 import { ENVELOPE_INDEX_PATH, normalizeMailboxName, parseMailboxUrl } from "@app/macos/lib/mail/constants";
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
-import type { DetectChangesOptions, IndexerSource, ScanOptions, SourceChanges, SourceEntry } from "./source";
+import {
+    defaultDetectChanges,
+    defaultHashEntry,
+    type DetectChangesOptions,
+    type IndexerSource,
+    type ScanOptions,
+    type SourceChanges,
+    type SourceEntry,
+} from "./source";
 
 interface MailRow {
     rowid: number;
@@ -26,6 +35,13 @@ export class MailSource implements IndexerSource {
     }
 
     static async create(): Promise<MailSource> {
+        if (!existsSync(ENVELOPE_INDEX_PATH)) {
+            throw new Error(
+                "Mail.app Envelope Index not found. Make sure Mail.app has been opened at least once.\n" +
+                    `Expected: ${ENVELOPE_INDEX_PATH}`
+            );
+        }
+
         const db = new Database(ENVELOPE_INDEX_PATH, { readonly: true });
         const emlx = await EmlxBodyExtractor.create();
         return new MailSource(db, emlx);
@@ -35,17 +51,32 @@ export class MailSource implements IndexerSource {
         const limit = opts?.limit ?? 1_000_000;
         const sinceRowid = opts?.sinceId ? parseInt(opts.sinceId, 10) : 0;
 
-        const whereClause = sinceRowid > 0 ? "WHERE m.deleted = 0 AND m.ROWID > ?" : "WHERE m.deleted = 0";
-        const params = sinceRowid > 0 ? [sinceRowid, limit] : [limit];
+        const conditions: string[] = ["m.deleted = 0"];
+        const params: (number | string)[] = [];
 
-        const countQuery =
-            sinceRowid > 0
-                ? "SELECT COUNT(*) AS cnt FROM messages m WHERE m.deleted = 0 AND m.ROWID > ?"
-                : "SELECT COUNT(*) AS cnt FROM messages m WHERE m.deleted = 0";
-        const countParams = sinceRowid > 0 ? [sinceRowid] : [];
+        if (sinceRowid > 0) {
+            conditions.push("m.ROWID > ?");
+            params.push(sinceRowid);
+        }
 
+        if (opts?.fromDate) {
+            conditions.push("m.date_sent >= ?");
+            params.push(Math.floor(opts.fromDate.getTime() / 1000));
+        }
+
+        if (opts?.toDate) {
+            conditions.push("m.date_sent <= ?");
+            params.push(Math.floor(opts.toDate.getTime() / 1000));
+        }
+
+        const whereClause = `WHERE ${conditions.join(" AND ")}`;
+
+        const countParams = [...params];
+        const countQuery = `SELECT COUNT(*) AS cnt FROM messages m ${whereClause}`;
         const totalRow = this.db.query(countQuery).get(...countParams) as { cnt: number };
         const total = Math.min(totalRow.cnt, limit);
+
+        params.push(limit);
 
         const rows = this.db
             .query(
@@ -125,55 +156,31 @@ export class MailSource implements IndexerSource {
     }
 
     detectChanges(opts: DetectChangesOptions): SourceChanges {
-        const { previousHashes, currentEntries, full } = opts;
-
-        if (!previousHashes || full) {
-            return {
-                added: currentEntries,
-                modified: [],
-                deleted: [],
-                unchanged: [],
-            };
-        }
-
-        const added: SourceEntry[] = [];
-        const modified: SourceEntry[] = [];
-        const unchanged: string[] = [];
-        const currentIds = new Set<string>();
-
-        for (const entry of currentEntries) {
-            currentIds.add(entry.id);
-            const prevHash = previousHashes.get(entry.id);
-
-            if (!prevHash) {
-                added.push(entry);
-            } else if (prevHash !== this.hashEntry(entry)) {
-                modified.push(entry);
-            } else {
-                unchanged.push(entry.id);
-            }
-        }
-
-        const deleted: string[] = [];
-
-        for (const id of previousHashes.keys()) {
-            if (!currentIds.has(id)) {
-                deleted.push(id);
-            }
-        }
-
-        return { added, modified, deleted, unchanged };
+        return defaultDetectChanges(opts, this.hashEntry.bind(this));
     }
 
-    async estimateTotal(): Promise<number> {
-        const row = this.db.query("SELECT COUNT(*) AS cnt FROM messages WHERE deleted = 0").get() as { cnt: number };
+    async estimateTotal(opts?: { fromDate?: Date; toDate?: Date }): Promise<number> {
+        const conditions: string[] = ["deleted = 0"];
+        const params: number[] = [];
+
+        if (opts?.fromDate) {
+            conditions.push("date_sent >= ?");
+            params.push(Math.floor(opts.fromDate.getTime() / 1000));
+        }
+
+        if (opts?.toDate) {
+            conditions.push("date_sent <= ?");
+            params.push(Math.floor(opts.toDate.getTime() / 1000));
+        }
+
+        const row = this.db
+            .query(`SELECT COUNT(*) AS cnt FROM messages WHERE ${conditions.join(" AND ")}`)
+            .get(...params) as { cnt: number };
         return row.cnt;
     }
 
     hashEntry(entry: SourceEntry): string {
-        const hasher = new Bun.CryptoHasher("sha256");
-        hasher.update(entry.content);
-        return hasher.digest("hex");
+        return defaultHashEntry(entry);
     }
 
     dispose(): void {

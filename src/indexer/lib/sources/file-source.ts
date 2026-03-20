@@ -1,7 +1,14 @@
 import type { Dirent } from "node:fs";
 import { readdirSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
-import type { DetectChangesOptions, IndexerSource, ScanOptions, SourceChanges, SourceEntry } from "./source";
+import {
+    defaultHashEntry,
+    type DetectChangesOptions,
+    type IndexerSource,
+    type ScanOptions,
+    type SourceChanges,
+    type SourceEntry,
+} from "./source";
 
 export interface FileSourceOptions {
     baseDir: string;
@@ -134,9 +141,7 @@ export class FileSource implements IndexerSource {
     }
 
     hashEntry(entry: SourceEntry): string {
-        const hasher = new Bun.CryptoHasher("sha256");
-        hasher.update(entry.content);
-        return hasher.digest("hex");
+        return defaultHashEntry(entry);
     }
 
     async estimateTotal(): Promise<number> {
