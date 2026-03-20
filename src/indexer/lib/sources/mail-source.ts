@@ -33,10 +33,18 @@ export class MailSource implements IndexerSource {
 
     async scan(opts?: ScanOptions): Promise<SourceEntry[]> {
         const limit = opts?.limit ?? 1_000_000;
+        const sinceRowid = opts?.sinceId ? parseInt(opts.sinceId, 10) : 0;
 
-        const totalRow = this.db.query("SELECT COUNT(*) AS cnt FROM messages WHERE deleted = 0").get() as {
-            cnt: number;
-        };
+        const whereClause = sinceRowid > 0 ? "WHERE m.deleted = 0 AND m.ROWID > ?" : "WHERE m.deleted = 0";
+        const params = sinceRowid > 0 ? [sinceRowid, limit] : [limit];
+
+        const countQuery =
+            sinceRowid > 0
+                ? "SELECT COUNT(*) AS cnt FROM messages m WHERE m.deleted = 0 AND m.ROWID > ?"
+                : "SELECT COUNT(*) AS cnt FROM messages m WHERE m.deleted = 0";
+        const countParams = sinceRowid > 0 ? [sinceRowid] : [];
+
+        const totalRow = this.db.query(countQuery).get(...countParams) as { cnt: number };
         const total = Math.min(totalRow.cnt, limit);
 
         const rows = this.db
@@ -50,14 +58,16 @@ export class MailSource implements IndexerSource {
             LEFT JOIN subjects s ON m.subject = s.ROWID
             LEFT JOIN addresses a ON m.sender = a.ROWID
             LEFT JOIN mailboxes mb ON m.mailbox = mb.ROWID
-            WHERE m.deleted = 0
-            ORDER BY m.date_received DESC
+            ${whereClause}
+            ORDER BY m.ROWID ASC
             LIMIT ?
         `
             )
-            .all(limit) as MailRow[];
+            .all(...params) as MailRow[];
 
         const entries: SourceEntry[] = [];
+        const batchSize = opts?.batchSize ?? 500;
+        let batch: SourceEntry[] = [];
 
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
@@ -74,7 +84,7 @@ export class MailSource implements IndexerSource {
                 body,
             ].join("\n");
 
-            entries.push({
+            const entry: SourceEntry = {
                 id: String(row.rowid),
                 content,
                 path: `${normalizedMailbox}/${row.subject ?? "(no subject)"}`,
@@ -90,11 +100,25 @@ export class MailSource implements IndexerSource {
                     size: row.size,
                     hasBody: body.length > 0,
                 },
-            });
+            };
+
+            entries.push(entry);
+            batch.push(entry);
+
+            // Flush batch so progress survives cancellation
+            if (opts?.onBatch && batch.length >= batchSize) {
+                await opts.onBatch(batch);
+                batch = [];
+            }
 
             if (opts?.onProgress && (i % 100 === 0 || i === rows.length - 1)) {
                 opts.onProgress(i + 1, total);
             }
+        }
+
+        // Flush remaining batch
+        if (opts?.onBatch && batch.length > 0) {
+            await opts.onBatch(batch);
         }
 
         return entries;

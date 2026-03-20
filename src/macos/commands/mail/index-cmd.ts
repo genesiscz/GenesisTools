@@ -96,8 +96,7 @@ async function createAndSync(
                 );
             },
             onScanComplete: (payload) => {
-                const total = payload.added + payload.modified + payload.deleted + payload.unchanged;
-                spinner.message(`Found ${total} messages, ${payload.added} to index`);
+                spinner.message(`Stored ${payload.added.toLocaleString()} messages`);
             },
             onChunkFile: (payload) => {
                 spinner.message(`Chunking: ${payload.filePath.slice(-60)}`);
@@ -141,7 +140,8 @@ async function incrementalSync(manager: IndexerManager): Promise<void> {
 
         p.log.info(`Index: ${pc.bold(MAIL_INDEX_NAME)}`);
         p.log.info(
-            `  ${pc.dim("Indexed:")} ${meta.stats.totalChunks.toLocaleString()} messages, ` +
+            `  ${pc.dim("Indexed:")} ${meta.stats.totalFiles.toLocaleString()} messages ` +
+                `(${meta.stats.totalChunks.toLocaleString()} chunks), ` +
                 `${formatBytes(meta.stats.dbSizeBytes)} on disk`
         );
         p.log.info(`  ${pc.dim("Model:")} ${model}`);
@@ -161,7 +161,9 @@ async function incrementalSync(manager: IndexerManager): Promise<void> {
     const diff = totalInMail - indexed;
 
     if (diff > 0) {
-        p.log.info(`  ${pc.dim("Mail.app:")} ${totalInMail.toLocaleString()} emails (${pc.green(`+${diff.toLocaleString()}`)} new)`);
+        p.log.info(
+            `  ${pc.dim("Mail.app:")} ${totalInMail.toLocaleString()} emails (${pc.green(`+${diff.toLocaleString()}`)} new)`
+        );
     } else {
         p.log.info(`  ${pc.dim("Mail.app:")} ${totalInMail.toLocaleString()} emails`);
     }
@@ -180,8 +182,11 @@ async function incrementalSync(manager: IndexerManager): Promise<void> {
                 );
             },
             onScanComplete: (payload) => {
-                const total = payload.added + payload.modified + payload.deleted + payload.unchanged;
-                spinner.message(`Scan done: ${total} entries, ${payload.added} new, ${payload.modified} modified`);
+                if (payload.added > 0) {
+                    spinner.message(`Scanned: ${payload.added.toLocaleString()} new messages stored`);
+                } else {
+                    spinner.message("Index is up to date");
+                }
             },
             onChunkFile: (payload) => {
                 spinner.message(`Chunking: ${payload.filePath.slice(-60)}`);
@@ -212,7 +217,12 @@ async function incrementalSync(manager: IndexerManager): Promise<void> {
         }
     } catch (err) {
         spinner.stop("Sync failed");
-        p.log.error(err instanceof Error ? err.message : String(err));
+        const msg = err instanceof Error ? err.message : String(err);
+
+        if (msg) {
+            p.log.error(msg);
+        }
+
         process.exit(1);
     }
 }

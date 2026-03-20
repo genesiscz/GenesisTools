@@ -53,24 +53,38 @@ export class FileSource implements IndexerSource {
 
         const entries: SourceEntry[] = [];
         const total = filePaths.length;
+        const batchSize = scanOpts?.batchSize ?? 500;
+        let batch: SourceEntry[] = [];
 
         for (let i = 0; i < filePaths.length; i++) {
             const filePath = filePaths[i];
 
             try {
                 const content = await Bun.file(filePath).text();
-                entries.push({
+                const entry: SourceEntry = {
                     id: filePath,
                     content,
                     path: filePath,
-                });
+                };
+
+                entries.push(entry);
+                batch.push(entry);
             } catch {
                 // Skip unreadable files
+            }
+
+            if (scanOpts?.onBatch && batch.length >= batchSize) {
+                await scanOpts.onBatch(batch);
+                batch = [];
             }
 
             if (scanOpts?.onProgress) {
                 scanOpts.onProgress(i + 1, total);
             }
+        }
+
+        if (scanOpts?.onBatch && batch.length > 0) {
+            await scanOpts.onBatch(batch);
         }
 
         return entries;

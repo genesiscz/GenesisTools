@@ -403,8 +403,30 @@ function chunkByMessage(opts: { filePath: string; content: string; maxTokens: nu
 function chunkEmailMessages(opts: { filePath: string; content: string; maxTokens: number }): ChunkResult {
     const { filePath, content, maxTokens } = opts;
 
-    // Split by email boundaries (From: or Subject: at start of line after blank line)
-    const parts = content.split(/\n(?=From:|Subject:)/);
+    // Each source entry is already one message (MailSource produces 1 entry per email).
+    // Don't split on "From:" or "Subject:" within a single message — those are headers.
+    // Only split if the content has multiple email blocks separated by blank lines + headers.
+    const hasMultipleMessages = /\n\n(?=From:|Subject:)/.test(content);
+
+    if (!hasMultipleMessages) {
+        // Single message — one chunk
+        const subjectMatch = content.match(/Subject:\s*(.+)/);
+        const name = subjectMatch ? subjectMatch[1].trim() : content.split("\n")[0];
+
+        const subChunks = splitChunkByLines({
+            content: content.trim(),
+            filePath,
+            startLine: 0,
+            kind: "message",
+            name,
+            maxTokens,
+        });
+
+        return { chunks: subChunks, language: null, parser: "message" };
+    }
+
+    // Multiple messages in one content block (e.g., mbox format)
+    const parts = content.split(/\n\n(?=From:|Subject:)/);
     const chunks: ChunkRecord[] = [];
     let lineOffset = 0;
 
@@ -416,7 +438,6 @@ function chunkEmailMessages(opts: { filePath: string; content: string; maxTokens
             continue;
         }
 
-        // Extract subject for the chunk name
         const subjectMatch = trimmed.match(/Subject:\s*(.+)/);
         const name = subjectMatch ? subjectMatch[1].trim() : trimmed.split("\n")[0];
 

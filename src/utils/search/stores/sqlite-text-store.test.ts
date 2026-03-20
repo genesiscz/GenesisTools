@@ -1,5 +1,5 @@
-import { describe, expect, it, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

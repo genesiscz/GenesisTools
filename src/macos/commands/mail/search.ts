@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import logger from "@app/logger";
 import { IndexerManager } from "@app/indexer/lib/manager";
+import logger from "@app/logger";
 import { formatResultsTable } from "@app/macos/lib/mail/format";
 import { searchBodies } from "@app/macos/lib/mail/jxa";
 import { cleanup, getAttachments, getMessageCount, listReceivers, searchMessages } from "@app/macos/lib/mail/sqlite";
@@ -309,9 +309,7 @@ async function legacySearch(query: string, options: SearchCommandOptions): Promi
             semanticActive = true;
 
             const relevantCount = scored.filter((s) => s.distance <= maxDist).length;
-            spinner.stop(
-                `Semantic ranking complete (${relevantCount} relevant results, ${embedder.dimensions}-dim)`
-            );
+            spinner.stop(`Semantic ranking complete (${relevantCount} relevant results, ${embedder.dimensions}-dim)`);
         } catch (err) {
             spinner.stop(`Semantic ranking skipped: ${err instanceof Error ? err.message : String(err)}`);
             logger.warn(`Semantic ranking failed, falling back to keyword order: ${err}`);

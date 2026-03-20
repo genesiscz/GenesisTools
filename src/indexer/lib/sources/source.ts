@@ -19,6 +19,12 @@ export interface SourceChanges {
 export interface ScanOptions {
     onProgress?: (current: number, total: number) => void;
     limit?: number;
+    /** Only return entries newer than this ID (for resumable/incremental sources like mail) */
+    sinceId?: string;
+    /** Process entries in batches as they're scanned (survives cancellation) */
+    onBatch?: (entries: SourceEntry[]) => Promise<void>;
+    /** Batch size for onBatch (default: 500) */
+    batchSize?: number;
 }
 
 export interface DetectChangesOptions {
