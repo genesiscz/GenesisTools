@@ -32,7 +32,7 @@ export class MailSource implements IndexerSource {
     }
 
     async scan(opts?: ScanOptions): Promise<SourceEntry[]> {
-        const limit = opts?.limit ?? 100_000;
+        const limit = opts?.limit ?? 1_000_000;
 
         const totalRow = this.db.query("SELECT COUNT(*) AS cnt FROM messages WHERE deleted = 0").get() as {
             cnt: number;
@@ -57,14 +57,11 @@ export class MailSource implements IndexerSource {
             )
             .all(limit) as MailRow[];
 
-        const rowids = rows.map((r) => r.rowid);
-        const bodies = await this.emlx.getBodies(rowids);
-
         const entries: SourceEntry[] = [];
 
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
-            const body = bodies.get(row.rowid) ?? "";
+            const body = (await this.emlx.getBody(row.rowid)) ?? "";
             const { mailbox } = parseMailboxUrl(row.mailboxUrl ?? "");
             const normalizedMailbox = normalizeMailboxName(mailbox);
 
@@ -95,7 +92,7 @@ export class MailSource implements IndexerSource {
                 },
             });
 
-            if (opts?.onProgress) {
+            if (opts?.onProgress && (i % 100 === 0 || i === rows.length - 1)) {
                 opts.onProgress(i + 1, total);
             }
         }
