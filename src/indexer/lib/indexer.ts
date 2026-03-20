@@ -1,19 +1,16 @@
 import { relative, resolve } from "node:path";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
-import { detectChanges } from "./change-detector";
-import type { ChunkResult } from "./chunker";
 import { chunkFile } from "./chunker";
-import type { IndexerCallbacks, SyncStats } from "./events";
+import type { EventName, IndexerCallbacks, IndexerEventMap, SyncStats } from "./events";
 import { IndexerEventEmitter } from "./events";
-import { buildMerkleTree } from "./merkle";
 import type { ModelInfo } from "./model-registry";
 import { formatModelTable, getModelsForType } from "./model-registry";
 import { FileSource } from "./sources/file-source";
-import type { IndexerSource } from "./sources/source";
+import type { IndexerSource, SourceEntry } from "./sources/source";
 import type { IndexStore } from "./store";
 import { createIndexStore } from "./store";
-import type { ChunkRecord, IndexConfig, IndexStats, MerkleNode } from "./types";
+import type { ChunkRecord, IndexConfig, IndexStats } from "./types";
 
 export class EmbeddingSetupError extends Error {
     readonly reason: string;
@@ -245,348 +242,417 @@ export class Indexer extends IndexerEventEmitter {
         await this.store.close();
     }
 
-    private async runSync(opts: { mode: "incremental" | "full"; callbacks?: IndexerCallbacks }): Promise<SyncStats> {
-        const { mode, callbacks } = opts;
-        const syncStart = performance.now();
+    // ─── Private helpers ────────────────────────────────────────────
 
-        this.emit("sync:start", { indexName: this.config.name, mode });
+    /** Emit event and dispatch inline callback in one call */
+    private emitAndDispatch<K extends EventName>(
+        event: K,
+        payload: Omit<IndexerEventMap[K], "ts">,
+        callbacks?: IndexerCallbacks
+    ): void {
+        this.emit(event, payload);
 
         if (callbacks) {
-            this.dispatchCallbacks(
-                "sync:start",
+            this.dispatchCallbacks(event, { ...payload, ts: Date.now() } as IndexerEventMap[K], callbacks);
+        }
+    }
+
+    /** Find highest stored numeric ID for sinceId (mail ROWIDs) */
+    private computeSinceId(): string | undefined {
+        const storedHashes = this.store.getPathHashStore().getAllFiles();
+
+        if (storedHashes.size === 0) {
+            return undefined;
+        }
+
+        let maxId = 0;
+
+        for (const key of storedHashes.keys()) {
+            const num = parseInt(key, 10);
+
+            if (!Number.isNaN(num) && num > maxId) {
+                maxId = num;
+            }
+        }
+
+        return maxId > 0 ? String(maxId) : undefined;
+    }
+
+    /** Chunk a batch of SourceEntry[] into ChunkRecords + path hash data */
+    private chunkEntries(
+        entries: SourceEntry[],
+        strategy: "ast" | "line" | "heading" | "message" | "json" | "auto",
+        maxTokens: number
+    ): {
+        chunks: ChunkRecord[];
+        pathEntries: Array<{ path: string; hash: string }>;
+        perEntry: Map<string, { chunkCount: number; parser: string }>;
+    } {
+        const chunks: ChunkRecord[] = [];
+        const pathEntries: Array<{ path: string; hash: string }> = [];
+        const perEntry = new Map<string, { chunkCount: number; parser: string }>();
+
+        for (const entry of entries) {
+            const result = chunkFile({
+                filePath: entry.path,
+                content: entry.content,
+                strategy,
+                maxTokens,
+                indexType: this.config.type,
+            });
+
+            if (entry.metadata) {
+                for (const chunk of result.chunks) {
+                    chunk.metadata = entry.metadata;
+                }
+            }
+
+            chunks.push(...result.chunks);
+
+            // Use source's content hash for consistency with detectChanges()
+            pathEntries.push({
+                path: entry.id,
+                hash: this.source.hashEntry(entry),
+            });
+
+            perEntry.set(entry.id, {
+                chunkCount: result.chunks.length,
+                parser: result.parser,
+            });
+        }
+
+        return { chunks, pathEntries, perEntry };
+    }
+
+    /**
+     * Compute the path_hash storage key for an entry.
+     * FileSource uses relative paths; other sources use entry.id directly.
+     */
+    private pathHashKey(entry: SourceEntry): string {
+        if (this.source instanceof FileSource) {
+            return relative(resolve(this.config.baseDir), entry.id);
+        }
+
+        return entry.id;
+    }
+
+    /** Find chunk IDs to remove for deleted source paths */
+    private resolveDeletedChunks(deletedPaths: string[]): string[] {
+        if (deletedPaths.length === 0) {
+            return [];
+        }
+
+        // For FileSource, deleted paths are relative — resolve to absolute for content table lookup
+        const lookupPaths =
+            this.source instanceof FileSource ? deletedPaths.map((p) => resolve(this.config.baseDir, p)) : deletedPaths;
+
+        return this.store.getChunkIdsBySourcePaths(lookupPaths);
+    }
+
+    /** Embed all unembedded chunks in streaming pages, return count */
+    private async embedUnembeddedChunks(callbacks?: IndexerCallbacks): Promise<number> {
+        if (!this.embedder) {
+            return 0;
+        }
+
+        const totalToEmbed = this.store.getUnembeddedCount();
+
+        if (totalToEmbed === 0) {
+            return 0;
+        }
+
+        this.emitAndDispatch(
+            "embed:start",
+            {
+                indexName: this.config.name,
+                totalChunks: totalToEmbed,
+                provider: this.config.embedding?.provider ?? "default",
+                dimensions: this.embedder.dimensions,
+            },
+            callbacks
+        );
+
+        // Warm up the embedding model — first call can fail transiently
+        try {
+            await this.embedder.embed("warmup");
+        } catch {
+            // Retry once after brief delay
+            await new Promise((r) => setTimeout(r, 500));
+            await this.embedder.embed("warmup");
+        }
+
+        const embedStart = performance.now();
+        const dbPageSize = 1000;
+        const maxEmbedChars = 200;
+        let embedded = 0;
+
+        // Stream pages: query → embed → store → next page
+        while (true) {
+            const page = this.store.getUnembeddedChunksPage(dbPageSize);
+
+            if (page.length === 0) {
+                break;
+            }
+
+            const batchEmbeddings = new Map<string, Float32Array>();
+            const zeroDims = this.embedder.dimensions;
+
+            // Embed all concurrently — allSettled so one failure doesn't kill the batch
+            const validPage = page.filter((c) => c.content.length >= 5);
+            const results = await Promise.allSettled(
+                validPage.map((c) => this.embedder!.embed(c.content.slice(0, maxEmbedChars)))
+            );
+
+            for (let j = 0; j < results.length; j++) {
+                const r = results[j];
+                batchEmbeddings.set(
+                    validPage[j].id,
+                    r.status === "fulfilled" ? r.value.vector : new Float32Array(zeroDims)
+                );
+            }
+
+            // Mark tiny chunks with zero vector so they don't re-appear
+            for (const c of page) {
+                if (c.content.length < 5) {
+                    batchEmbeddings.set(c.id, new Float32Array(zeroDims));
+                }
+            }
+
+            // Single DB transaction for all embeddings in this page
+            await this.store.insertChunks([], batchEmbeddings);
+            embedded += batchEmbeddings.size;
+
+            this.emitAndDispatch(
+                "embed:progress",
                 {
-                    ts: Date.now(),
                     indexName: this.config.name,
-                    mode,
+                    completed: embedded,
+                    total: totalToEmbed,
+                    currentFile: page[page.length - 1].id,
                 },
                 callbacks
             );
         }
 
+        const embedDuration = performance.now() - embedStart;
+
+        this.emitAndDispatch(
+            "embed:complete",
+            {
+                indexName: this.config.name,
+                embedded,
+                skipped: 0,
+                durationMs: embedDuration,
+            },
+            callbacks
+        );
+
+        return embedded;
+    }
+
+    // ─── Main sync pipeline ──────────────────────────────────────────
+
+    private async runSync(opts: { mode: "incremental" | "full"; callbacks?: IndexerCallbacks }): Promise<SyncStats> {
+        const { mode, callbacks } = opts;
+        const syncStart = performance.now();
+        const strategy = this.config.chunking ?? "auto";
+        const maxTokens = this.config.chunkMaxTokens ?? 500;
+        const pathHashStore = this.store.getPathHashStore();
+
+        this.emitAndDispatch("sync:start", { indexName: this.config.name, mode }, callbacks);
+
         try {
+            // ── Phase 1: SCAN ────────────────────────────────────────
+            const sinceId = mode === "incremental" ? this.computeSinceId() : undefined;
+            const storedInBatch = new Set<string>();
+            let chunksAddedInBatch = 0;
+
+            // Snapshot previous hashes BEFORE scan so onBatch upserts don't pollute them.
+            // Skip for sinceId scans — we only process new entries, no deletion detection needed.
+            const previousHashes = sinceId ? new Map<string, string>() : pathHashStore.getAllFiles();
+
+            this.emitAndDispatch(
+                "scan:start",
+                {
+                    indexName: this.config.name,
+                    strategy: this.config.watch?.strategy ?? "merkle",
+                },
+                callbacks
+            );
+
             const sourceEntries = await this.source.scan({
-                onProgress: (current, total) => {
-                    this.emit("scan:progress", {
-                        indexName: this.config.name,
-                        scanned: current,
-                        total,
+                sinceId,
+                batchSize: 500,
+                onBatch: async (batch) => {
+                    const { chunks, pathEntries, perEntry } = this.chunkEntries(batch, strategy, maxTokens);
+
+                    if (chunks.length > 0) {
+                        await this.store.insertChunks(chunks);
+                    }
+
+                    // Update path_hashes NOW so progress survives Ctrl+C
+                    for (const pe of pathEntries) {
+                        pathHashStore.upsert(pe.path, pe.hash, true);
+                    }
+
+                    for (const entry of batch) {
+                        storedInBatch.add(entry.id);
+                    }
+
+                    chunksAddedInBatch += chunks.length;
+
+                    // Update metadata after each batch so "Indexed: N" is accurate
+                    const currentStats = this.store.getStats();
+                    this.store.updateMeta({
+                        lastSyncAt: Date.now(),
+                        stats: {
+                            totalFiles: pathHashStore.getAllFiles().size,
+                            totalChunks: currentStats.totalChunks,
+                            totalEmbeddings: currentStats.totalEmbeddings,
+                            embeddingDimensions: this.embedder?.dimensions ?? 0,
+                            dbSizeBytes: currentStats.dbSizeBytes,
+                            lastSyncDurationMs: currentStats.lastSyncDurationMs,
+                            searchCount: currentStats.searchCount,
+                            avgSearchDurationMs: currentStats.avgSearchDurationMs,
+                        },
+                        indexEmbedding: this.embedder
+                            ? {
+                                  model: this.config.embedding?.model ?? "darwinkit",
+                                  provider: this.config.embedding?.provider ?? "darwinkit",
+                                  dimensions: this.embedder.dimensions,
+                              }
+                            : undefined,
                     });
 
-                    if (callbacks) {
-                        this.dispatchCallbacks(
-                            "scan:progress",
-                            { ts: Date.now(), indexName: this.config.name, scanned: current, total },
+                    for (const [entryId, info] of perEntry) {
+                        this.emitAndDispatch(
+                            "chunk:file",
+                            {
+                                indexName: this.config.name,
+                                filePath: entryId,
+                                chunks: info.chunkCount,
+                                parser: info.parser as "ast" | "line" | "heading" | "message" | "json",
+                            },
                             callbacks
                         );
                     }
                 },
-            });
-            const entryMetadata = new Map<string, Record<string, unknown>>();
-
-            for (const entry of sourceEntries) {
-                if (entry.metadata) {
-                    entryMetadata.set(entry.id, entry.metadata);
-                }
-            }
-
-            const strategy = this.config.chunking ?? "auto";
-            const maxTokens = this.config.chunkMaxTokens ?? 500;
-            const fileChunkResults = new Map<string, ChunkResult>();
-            const chunkHashesPerFile = new Map<string, string[]>();
-
-            for (const entry of sourceEntries) {
-                const result = chunkFile({
-                    filePath: entry.path,
-                    content: entry.content,
-                    strategy,
-                    maxTokens,
-                    indexType: this.config.type,
-                });
-
-                // Attach source metadata to each chunk
-                const meta = entryMetadata.get(entry.id);
-
-                if (meta) {
-                    for (const chunk of result.chunks) {
-                        chunk.metadata = meta;
-                    }
-                }
-
-                fileChunkResults.set(entry.path, result);
-                chunkHashesPerFile.set(
-                    entry.path,
-                    result.chunks.map((c) => c.id)
-                );
-            }
-
-            const watchStrategy = this.config.watch?.strategy ?? "merkle";
-            let previousMerkle: MerkleNode | null = null;
-
-            if (mode !== "full") {
-                // Build previous Merkle tree from stored per-file chunk hashes
-                const prevHashes = this.store.getPathHashStore().getAllFiles();
-
-                if (prevHashes.size > 0) {
-                    // path_hashes stores: relPath -> sorted chunk IDs joined with \0
-                    // Reconstruct the Merkle tree using the same format as the current build
-                    previousMerkle = buildMerkleTree({
-                        baseDir: this.config.baseDir,
-                        files: Array.from(prevHashes.entries()).map(([relPath, chunkHashStr]) => ({
-                            path: resolve(this.config.baseDir, relPath),
-                            chunkHashes: chunkHashStr.split("\0"),
-                        })),
-                    });
-                } else {
-                    // Fall back to legacy merkle_tree blob for migration
-                    previousMerkle = await this.store.loadMerkle();
-                }
-            }
-
-            this.emit("scan:start", {
-                indexName: this.config.name,
-                strategy: watchStrategy,
+                onProgress: (current, total) => {
+                    this.emitAndDispatch(
+                        "scan:progress",
+                        {
+                            indexName: this.config.name,
+                            scanned: current,
+                            total,
+                        },
+                        callbacks
+                    );
+                },
             });
 
-            if (callbacks) {
-                this.dispatchCallbacks(
-                    "scan:start",
+            // ── Phase 2: DETECT CHANGES + STORE REMAINING ────────────
+            // When using sinceId, scan only returns NEW entries — pass null hashes
+            // to avoid marking all previous entries as "deleted"
+            const changes = this.source.detectChanges({
+                previousHashes: sinceId ? null : previousHashes.size > 0 ? previousHashes : null,
+                currentEntries: sourceEntries,
+                full: mode === "full",
+            });
+
+            // Count entries stored by onBatch as "added" for display purposes
+            const totalAdded = changes.added.length + storedInBatch.size;
+
+            this.emitAndDispatch(
+                "scan:complete",
+                {
+                    indexName: this.config.name,
+                    added: totalAdded,
+                    modified: changes.modified.length,
+                    deleted: changes.deleted.length,
+                    unchanged: changes.unchanged.length,
+                },
+                callbacks
+            );
+
+            // Process entries NOT already stored via onBatch
+            const remaining = [...changes.added, ...changes.modified].filter((entry) => !storedInBatch.has(entry.id));
+
+            let chunksFromRemaining = 0;
+
+            if (remaining.length > 0) {
+                const { chunks, perEntry } = this.chunkEntries(remaining, strategy, maxTokens);
+
+                if (chunks.length > 0) {
+                    await this.store.insertChunks(chunks);
+                    chunksFromRemaining = chunks.length;
+                }
+
+                for (const [entryId, info] of perEntry) {
+                    this.emitAndDispatch(
+                        "chunk:file",
+                        {
+                            indexName: this.config.name,
+                            filePath: entryId,
+                            chunks: info.chunkCount,
+                            parser: info.parser as "ast" | "line" | "heading" | "message" | "json",
+                        },
+                        callbacks
+                    );
+                }
+            }
+
+            // Update path_hashes for all processed entries (added + modified)
+            for (const entry of [...changes.added, ...changes.modified]) {
+                const hash = this.source.hashEntry(entry);
+                pathHashStore.upsert(this.pathHashKey(entry), hash, true);
+            }
+
+            // Emit skip for unchanged entries
+            for (const unchangedId of changes.unchanged) {
+                this.emitAndDispatch(
+                    "chunk:skip",
                     {
-                        ts: Date.now(),
                         indexName: this.config.name,
-                        strategy: watchStrategy,
-                    },
-                    callbacks
-                );
-            }
-
-            const changes = await detectChanges({
-                baseDir: this.config.baseDir,
-                strategy: watchStrategy,
-                previousMerkle,
-                currentChunks: chunkHashesPerFile,
-                respectGitIgnore: this.config.respectGitIgnore,
-            });
-
-            this.emit("scan:complete", {
-                indexName: this.config.name,
-                added: changes.added.length,
-                modified: changes.modified.length,
-                deleted: changes.deleted.length,
-                unchanged: changes.unchanged.length,
-            });
-
-            if (callbacks) {
-                this.dispatchCallbacks(
-                    "scan:complete",
-                    {
-                        ts: Date.now(),
-                        indexName: this.config.name,
-                        added: changes.added.length,
-                        modified: changes.modified.length,
-                        deleted: changes.deleted.length,
-                        unchanged: changes.unchanged.length,
-                    },
-                    callbacks
-                );
-            }
-
-            const changedFiles = new Set([...changes.added, ...changes.modified]);
-            const newChunks: ChunkRecord[] = [];
-
-            for (const [filePath, result] of fileChunkResults) {
-                const rel = relative(resolve(this.config.baseDir), filePath);
-                const isChanged = changedFiles.has(rel) || changedFiles.has(filePath);
-
-                if (isChanged) {
-                    this.emit("chunk:file", {
-                        indexName: this.config.name,
-                        filePath,
-                        chunks: result.chunks.length,
-                        parser: result.parser,
-                    });
-
-                    if (callbacks) {
-                        this.dispatchCallbacks(
-                            "chunk:file",
-                            {
-                                ts: Date.now(),
-                                indexName: this.config.name,
-                                filePath,
-                                chunks: result.chunks.length,
-                                parser: result.parser,
-                            },
-                            callbacks
-                        );
-                    }
-
-                    newChunks.push(...result.chunks);
-                } else {
-                    this.emit("chunk:skip", {
-                        indexName: this.config.name,
-                        filePath,
+                        filePath: unchangedId,
                         reason: "unchanged",
-                    });
+                    },
+                    callbacks
+                );
+            }
 
-                    if (callbacks) {
-                        this.dispatchCallbacks(
-                            "chunk:skip",
-                            {
-                                ts: Date.now(),
-                                indexName: this.config.name,
-                                filePath,
-                                reason: "unchanged",
-                            },
-                            callbacks
-                        );
-                    }
+            // Handle deletions
+            let chunksRemoved = 0;
+
+            if (changes.deleted.length > 0) {
+                const deletedChunkIds = this.resolveDeletedChunks(changes.deleted);
+
+                if (deletedChunkIds.length > 0) {
+                    await this.store.removeChunks(deletedChunkIds);
+                    chunksRemoved = deletedChunkIds.length;
+                }
+
+                for (const deletedPath of changes.deleted) {
+                    pathHashStore.remove(deletedPath);
                 }
             }
 
-            let embeddingsGenerated = 0;
+            // ── Phase 3: EMBED ───────────────────────────────────────
+            const embeddingsGenerated = await this.embedUnembeddedChunks(callbacks);
 
-            if (this.embedder && newChunks.length > 0) {
-                const textsToEmbed = newChunks.map((c) => c.content);
-
-                this.emit("embed:start", {
-                    indexName: this.config.name,
-                    totalChunks: textsToEmbed.length,
-                    provider: this.config.embedding?.provider ?? "default",
-                    dimensions: this.embedder.dimensions,
-                });
-
-                if (callbacks) {
-                    this.dispatchCallbacks(
-                        "embed:start",
-                        {
-                            ts: Date.now(),
-                            indexName: this.config.name,
-                            totalChunks: textsToEmbed.length,
-                            provider: this.config.embedding?.provider ?? "default",
-                            dimensions: this.embedder.dimensions,
-                        },
-                        callbacks
-                    );
-                }
-
-                const embedStart = performance.now();
-                const batchSize = 32;
-
-                for (let i = 0; i < textsToEmbed.length; i += batchSize) {
-                    const batch = textsToEmbed.slice(i, i + batchSize);
-                    const batchChunks = newChunks.slice(i, i + batchSize);
-                    const results = await this.embedder.embedMany(batch);
-
-                    // Store each batch immediately so progress survives cancellation
-                    const batchEmbeddings = new Map<string, Float32Array>();
-
-                    for (let j = 0; j < results.length; j++) {
-                        batchEmbeddings.set(batchChunks[j].id, results[j].vector);
-                    }
-
-                    await this.store.insertChunks(batchChunks, batchEmbeddings);
-                    embeddingsGenerated += results.length;
-
-                    this.emit("embed:progress", {
-                        indexName: this.config.name,
-                        completed: Math.min(i + batchSize, textsToEmbed.length),
-                        total: textsToEmbed.length,
-                        currentFile: batchChunks[batchChunks.length - 1].filePath,
-                    });
-
-                    if (callbacks) {
-                        this.dispatchCallbacks(
-                            "embed:progress",
-                            {
-                                ts: Date.now(),
-                                indexName: this.config.name,
-                                completed: Math.min(i + batchSize, textsToEmbed.length),
-                                total: textsToEmbed.length,
-                                currentFile: batchChunks[batchChunks.length - 1].filePath,
-                            },
-                            callbacks
-                        );
-                    }
-                }
-
-                const embedDuration = performance.now() - embedStart;
-
-                this.emit("embed:complete", {
-                    indexName: this.config.name,
-                    embedded: embeddingsGenerated,
-                    skipped: 0,
-                    durationMs: embedDuration,
-                });
-
-                if (callbacks) {
-                    this.dispatchCallbacks(
-                        "embed:complete",
-                        {
-                            ts: Date.now(),
-                            indexName: this.config.name,
-                            embedded: embeddingsGenerated,
-                            skipped: 0,
-                            durationMs: embedDuration,
-                        },
-                        callbacks
-                    );
-                }
-            }
-
-            const deletedChunkIds: string[] = [];
-
-            for (const deletedPath of changes.deleted) {
-                const absPath = resolve(this.config.baseDir, deletedPath);
-                const result = fileChunkResults.get(absPath);
-
-                if (result) {
-                    deletedChunkIds.push(...result.chunks.map((c) => c.id));
-                }
-            }
-
-            if (deletedChunkIds.length > 0) {
-                await this.store.removeChunks(deletedChunkIds);
-            }
-
-            if (newChunks.length > 0 && !this.embedder) {
-                // Only insert here if no embedder — with embedder, chunks are inserted per batch above
-                await this.store.insertChunks(newChunks);
-            }
-
-            // Build Merkle tree for diffing (computed, not serialized as blob)
-            const merkleFiles = Array.from(chunkHashesPerFile.entries()).map(([path, hashes]) => ({
-                path,
-                chunkHashes: hashes,
-            }));
-            buildMerkleTree({
-                baseDir: this.config.baseDir,
-                files: merkleFiles,
-            });
-
-            // Persist per-file chunk hashes to path_hashes table for incremental sync
-            const pathEntries = Array.from(chunkHashesPerFile.entries()).map(([filePath, hashes]) => ({
-                path: relative(resolve(this.config.baseDir), filePath),
-                hash: hashes.sort().join("\0"),
-                isFile: true,
-            }));
-            this.store.getPathHashStore().bulkSync(pathEntries);
-
+            // ── FINALIZE ─────────────────────────────────────────────
             const durationMs = performance.now() - syncStart;
+            const totalFiles = pathHashStore.getAllFiles().size;
+            const totalChunksAdded = chunksAddedInBatch + chunksFromRemaining;
 
             const syncStats: SyncStats = {
                 filesScanned: sourceEntries.length,
-                chunksAdded: mode === "full" ? newChunks.length : changes.added.length > 0 ? newChunks.length : 0,
-                chunksUpdated: changes.modified.length > 0 ? newChunks.length : 0,
-                chunksRemoved: deletedChunkIds.length,
+                chunksAdded: totalChunksAdded,
+                chunksUpdated: 0,
+                chunksRemoved,
                 chunksUnchanged: changes.unchanged.length,
                 embeddingsGenerated,
                 durationMs,
             };
-
-            const uniqueFiles = new Set<string>();
-
-            for (const chunk of newChunks) {
-                uniqueFiles.add(chunk.filePath);
-            }
 
             const embeddingModelInfo = this.embedder
                 ? {
@@ -599,7 +665,7 @@ export class Indexer extends IndexerEventEmitter {
             this.store.updateMeta({
                 lastSyncAt: Date.now(),
                 stats: {
-                    totalFiles: sourceEntries.length,
+                    totalFiles,
                     totalChunks: this.store.getStats().totalChunks,
                     totalEmbeddings: embeddingsGenerated,
                     embeddingDimensions: this.embedder?.dimensions ?? 0,
@@ -611,45 +677,28 @@ export class Indexer extends IndexerEventEmitter {
                 indexEmbedding: embeddingModelInfo,
             });
 
-            this.emit("sync:complete", {
-                indexName: this.config.name,
-                durationMs,
-                stats: syncStats,
-            });
-
-            if (callbacks) {
-                this.dispatchCallbacks(
-                    "sync:complete",
-                    {
-                        ts: Date.now(),
-                        indexName: this.config.name,
-                        durationMs,
-                        stats: syncStats,
-                    },
-                    callbacks
-                );
-            }
+            this.emitAndDispatch(
+                "sync:complete",
+                {
+                    indexName: this.config.name,
+                    durationMs,
+                    stats: syncStats,
+                },
+                callbacks
+            );
 
             return syncStats;
         } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
 
-            this.emit("sync:error", {
-                indexName: this.config.name,
-                error: errorMsg,
-            });
-
-            if (callbacks) {
-                this.dispatchCallbacks(
-                    "sync:error",
-                    {
-                        ts: Date.now(),
-                        indexName: this.config.name,
-                        error: errorMsg,
-                    },
-                    callbacks
-                );
-            }
+            this.emitAndDispatch(
+                "sync:error",
+                {
+                    indexName: this.config.name,
+                    error: errorMsg,
+                },
+                callbacks
+            );
 
             throw err;
         }

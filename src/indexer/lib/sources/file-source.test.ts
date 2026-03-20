@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FileSource } from "./file-source";
@@ -100,8 +99,18 @@ describe("FileSource", () => {
         const entries = await source.scan();
 
         const previousHashes = new Map<string, string>();
-        previousHashes.set("keep.ts", source.hashEntry({ id: join(tmpDir, "keep.ts"), content: "unchanged content", path: join(tmpDir, "keep.ts") }));
-        previousHashes.set("modify.ts", source.hashEntry({ id: join(tmpDir, "modify.ts"), content: "old content", path: join(tmpDir, "modify.ts") }));
+        previousHashes.set(
+            "keep.ts",
+            source.hashEntry({
+                id: join(tmpDir, "keep.ts"),
+                content: "unchanged content",
+                path: join(tmpDir, "keep.ts"),
+            })
+        );
+        previousHashes.set(
+            "modify.ts",
+            source.hashEntry({ id: join(tmpDir, "modify.ts"), content: "old content", path: join(tmpDir, "modify.ts") })
+        );
         previousHashes.set("deleted.ts", "some-old-hash");
 
         const changes = source.detectChanges({

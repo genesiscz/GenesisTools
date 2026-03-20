@@ -244,5 +244,3 @@ export class LanceDBVectorStore implements VectorStore {
         }
     }
 }
-
-

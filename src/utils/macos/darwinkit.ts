@@ -17,7 +17,7 @@ export function getDarwinKit(options?: DarwinKitOptions): DarwinKit {
     }
 
     _instance = new DarwinKit({
-        timeout: 15_000,
+        timeout: 60_000,
         logger,
         logLevel: "warn",
         ...options,
