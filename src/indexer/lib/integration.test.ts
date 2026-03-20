@@ -30,6 +30,7 @@ function makeConfig(overrides?: Partial<IndexConfig>): IndexConfig {
         type: "code",
         respectGitIgnore: false,
         chunking: "auto",
+        embedding: { enabled: false },
         watch: {
             strategy: "merkle",
         },

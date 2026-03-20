@@ -12,8 +12,9 @@ export interface IndexConfig {
     chunking?: "ast" | "line" | "heading" | "message" | "json" | "auto";
     chunkMaxTokens?: number;
 
-    // Embedding
+    // Embedding (enabled by default with auto-fallback: darwinkit → local-hf → cloud)
     embedding?: {
+        enabled?: boolean;     // default: true
         provider?: string;
         model?: string;
     };

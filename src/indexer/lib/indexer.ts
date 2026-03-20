@@ -4,14 +4,47 @@ import { extname, join, relative, resolve } from "node:path";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { detectChanges } from "./change-detector";
-import { chunkFile } from "./chunker";
 import type { ChunkResult } from "./chunker";
-import { IndexerEventEmitter } from "./events";
+import { chunkFile } from "./chunker";
 import type { IndexerCallbacks, SyncStats } from "./events";
+import { IndexerEventEmitter } from "./events";
 import { buildMerkleTree } from "./merkle";
-import { createIndexStore } from "./store";
 import type { IndexStore } from "./store";
+import { createIndexStore } from "./store";
 import type { ChunkRecord, IndexConfig, IndexStats } from "./types";
+
+export class EmbeddingSetupError extends Error {
+    readonly reason: string;
+    readonly requestedProvider?: string;
+
+    constructor(reason: string, requestedProvider?: string) {
+        const providers = [
+            "darwinkit  — macOS on-device NaturalLanguage.framework (512-dim, free)",
+            "local-hf   — HuggingFace all-MiniLM-L6-v2 (384-dim, ~25MB download)",
+            "cloud      — OpenAI text-embedding-3-small (1536-dim, requires OPENAI_API_KEY)",
+        ];
+
+        const msg = [
+            `Embedding setup failed: ${reason}`,
+            "",
+            "Available providers:",
+            ...providers.map((p) => `  ${p}`),
+            "",
+            "Fix with one of:",
+            `  tools indexer add <path> --provider darwinkit`,
+            `  tools indexer add <path> --provider local-hf`,
+            `  tools indexer add <path> --provider cloud`,
+            "",
+            "Or disable embeddings (fulltext-only search, no semantic):",
+            `  tools indexer add <path> --no-embed`,
+        ].join("\n");
+
+        super(msg);
+        this.name = "EmbeddingSetupError";
+        this.reason = reason;
+        this.requestedProvider = requestedProvider;
+    }
+}
 
 interface FileEntry {
     path: string;
@@ -142,15 +175,18 @@ export class Indexer extends IndexerEventEmitter {
         const store = await createIndexStore(config);
         const indexer = new Indexer(store, config);
 
-        if (config.embedding) {
+        const embeddingEnabled = config.embedding?.enabled !== false;
+
+        if (embeddingEnabled) {
             try {
                 const { Embedder: EmbedderClass } = await import("@app/utils/ai/tasks/Embedder");
                 indexer.embedder = await EmbedderClass.create({
-                    provider: config.embedding.provider,
-                    model: config.embedding.model,
+                    provider: config.embedding?.provider,
+                    model: config.embedding?.model,
                 });
-            } catch {
-                // Embedding not available — proceed without it
+            } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                throw new EmbeddingSetupError(reason, config.embedding?.provider);
             }
         }
 
@@ -236,11 +272,15 @@ export class Indexer extends IndexerEventEmitter {
         });
 
         if (callbacks) {
-            this.dispatchCallbacks("watch:start", {
-                ts: Date.now(),
-                indexName: this.config.name,
-                strategy,
-            }, callbacks);
+            this.dispatchCallbacks(
+                "watch:start",
+                {
+                    ts: Date.now(),
+                    indexName: this.config.name,
+                    strategy,
+                },
+                callbacks
+            );
         }
 
         this.watchTimer = setInterval(() => {
@@ -272,21 +312,22 @@ export class Indexer extends IndexerEventEmitter {
         await this.store.close();
     }
 
-    private async runSync(opts: {
-        mode: "incremental" | "full";
-        callbacks?: IndexerCallbacks;
-    }): Promise<SyncStats> {
+    private async runSync(opts: { mode: "incremental" | "full"; callbacks?: IndexerCallbacks }): Promise<SyncStats> {
         const { mode, callbacks } = opts;
         const syncStart = performance.now();
 
         this.emit("sync:start", { indexName: this.config.name, mode });
 
         if (callbacks) {
-            this.dispatchCallbacks("sync:start", {
-                ts: Date.now(),
-                indexName: this.config.name,
-                mode,
-            }, callbacks);
+            this.dispatchCallbacks(
+                "sync:start",
+                {
+                    ts: Date.now(),
+                    indexName: this.config.name,
+                    mode,
+                },
+                callbacks
+            );
         }
 
         try {
@@ -312,7 +353,10 @@ export class Indexer extends IndexerEventEmitter {
                 });
 
                 fileChunkResults.set(file.path, result);
-                chunkHashesPerFile.set(file.path, result.chunks.map((c) => c.id));
+                chunkHashesPerFile.set(
+                    file.path,
+                    result.chunks.map((c) => c.id)
+                );
             }
 
             const watchStrategy = this.config.watch?.strategy ?? "merkle";
@@ -324,11 +368,15 @@ export class Indexer extends IndexerEventEmitter {
             });
 
             if (callbacks) {
-                this.dispatchCallbacks("scan:start", {
-                    ts: Date.now(),
-                    indexName: this.config.name,
-                    strategy: watchStrategy,
-                }, callbacks);
+                this.dispatchCallbacks(
+                    "scan:start",
+                    {
+                        ts: Date.now(),
+                        indexName: this.config.name,
+                        strategy: watchStrategy,
+                    },
+                    callbacks
+                );
             }
 
             const changes = await detectChanges({
@@ -348,14 +396,18 @@ export class Indexer extends IndexerEventEmitter {
             });
 
             if (callbacks) {
-                this.dispatchCallbacks("scan:complete", {
-                    ts: Date.now(),
-                    indexName: this.config.name,
-                    added: changes.added.length,
-                    modified: changes.modified.length,
-                    deleted: changes.deleted.length,
-                    unchanged: changes.unchanged.length,
-                }, callbacks);
+                this.dispatchCallbacks(
+                    "scan:complete",
+                    {
+                        ts: Date.now(),
+                        indexName: this.config.name,
+                        added: changes.added.length,
+                        modified: changes.modified.length,
+                        deleted: changes.deleted.length,
+                        unchanged: changes.unchanged.length,
+                    },
+                    callbacks
+                );
             }
 
             const changedFiles = new Set([...changes.added, ...changes.modified]);
@@ -374,13 +426,17 @@ export class Indexer extends IndexerEventEmitter {
                     });
 
                     if (callbacks) {
-                        this.dispatchCallbacks("chunk:file", {
-                            ts: Date.now(),
-                            indexName: this.config.name,
-                            filePath,
-                            chunks: result.chunks.length,
-                            parser: result.parser,
-                        }, callbacks);
+                        this.dispatchCallbacks(
+                            "chunk:file",
+                            {
+                                ts: Date.now(),
+                                indexName: this.config.name,
+                                filePath,
+                                chunks: result.chunks.length,
+                                parser: result.parser,
+                            },
+                            callbacks
+                        );
                     }
 
                     newChunks.push(...result.chunks);
@@ -392,12 +448,16 @@ export class Indexer extends IndexerEventEmitter {
                     });
 
                     if (callbacks) {
-                        this.dispatchCallbacks("chunk:skip", {
-                            ts: Date.now(),
-                            indexName: this.config.name,
-                            filePath,
-                            reason: "unchanged",
-                        }, callbacks);
+                        this.dispatchCallbacks(
+                            "chunk:skip",
+                            {
+                                ts: Date.now(),
+                                indexName: this.config.name,
+                                filePath,
+                                reason: "unchanged",
+                            },
+                            callbacks
+                        );
                     }
                 }
             }
@@ -416,13 +476,17 @@ export class Indexer extends IndexerEventEmitter {
                 });
 
                 if (callbacks) {
-                    this.dispatchCallbacks("embed:start", {
-                        ts: Date.now(),
-                        indexName: this.config.name,
-                        totalChunks: textsToEmbed.length,
-                        provider: this.config.embedding?.provider ?? "default",
-                        dimensions: this.embedder.dimensions,
-                    }, callbacks);
+                    this.dispatchCallbacks(
+                        "embed:start",
+                        {
+                            ts: Date.now(),
+                            indexName: this.config.name,
+                            totalChunks: textsToEmbed.length,
+                            provider: this.config.embedding?.provider ?? "default",
+                            dimensions: this.embedder.dimensions,
+                        },
+                        callbacks
+                    );
                 }
 
                 const embedStart = performance.now();
@@ -448,13 +512,17 @@ export class Indexer extends IndexerEventEmitter {
                     });
 
                     if (callbacks) {
-                        this.dispatchCallbacks("embed:progress", {
-                            ts: Date.now(),
-                            indexName: this.config.name,
-                            completed: Math.min(i + batchSize, textsToEmbed.length),
-                            total: textsToEmbed.length,
-                            currentFile: batchChunks[batchChunks.length - 1].filePath,
-                        }, callbacks);
+                        this.dispatchCallbacks(
+                            "embed:progress",
+                            {
+                                ts: Date.now(),
+                                indexName: this.config.name,
+                                completed: Math.min(i + batchSize, textsToEmbed.length),
+                                total: textsToEmbed.length,
+                                currentFile: batchChunks[batchChunks.length - 1].filePath,
+                            },
+                            callbacks
+                        );
                     }
                 }
 
@@ -468,13 +536,17 @@ export class Indexer extends IndexerEventEmitter {
                 });
 
                 if (callbacks) {
-                    this.dispatchCallbacks("embed:complete", {
-                        ts: Date.now(),
-                        indexName: this.config.name,
-                        embedded: embeddingsGenerated,
-                        skipped: 0,
-                        durationMs: embedDuration,
-                    }, callbacks);
+                    this.dispatchCallbacks(
+                        "embed:complete",
+                        {
+                            ts: Date.now(),
+                            indexName: this.config.name,
+                            embedded: embeddingsGenerated,
+                            skipped: 0,
+                            durationMs: embedDuration,
+                        },
+                        callbacks
+                    );
                 }
             }
 
@@ -546,12 +618,16 @@ export class Indexer extends IndexerEventEmitter {
             });
 
             if (callbacks) {
-                this.dispatchCallbacks("sync:complete", {
-                    ts: Date.now(),
-                    indexName: this.config.name,
-                    durationMs,
-                    stats: syncStats,
-                }, callbacks);
+                this.dispatchCallbacks(
+                    "sync:complete",
+                    {
+                        ts: Date.now(),
+                        indexName: this.config.name,
+                        durationMs,
+                        stats: syncStats,
+                    },
+                    callbacks
+                );
             }
 
             return syncStats;
@@ -564,11 +640,15 @@ export class Indexer extends IndexerEventEmitter {
             });
 
             if (callbacks) {
-                this.dispatchCallbacks("sync:error", {
-                    ts: Date.now(),
-                    indexName: this.config.name,
-                    error: errorMsg,
-                }, callbacks);
+                this.dispatchCallbacks(
+                    "sync:error",
+                    {
+                        ts: Date.now(),
+                        indexName: this.config.name,
+                        error: errorMsg,
+                    },
+                    callbacks
+                );
             }
 
             throw err;

@@ -4,6 +4,7 @@ import { parseVariadic } from "@app/utils/cli/variadic";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { EmbeddingSetupError } from "../lib/indexer";
 import { IndexerManager } from "../lib/manager";
 import type { IndexConfig } from "../lib/types";
 
@@ -12,8 +13,10 @@ interface AddOptions {
     type?: "code" | "files" | "mail" | "chat";
     chunking?: "ast" | "line" | "auto";
     provider?: string;
+    model?: string;
     storage?: "sqlite" | "orama" | "turbopuffer";
     watch?: boolean;
+    embed?: boolean;
     ignore?: string[];
     include?: string[];
 }
@@ -37,7 +40,9 @@ export function registerAddCommand(program: Command): void {
         .option("--name <name>", "Index name (default: directory basename)")
         .option("--type <type>", "Index type: code, files, mail, chat (default: auto-detect)")
         .option("--chunking <mode>", "Chunking strategy: ast, line, auto (default: auto)")
-        .option("--provider <name>", "Embedding provider")
+        .option("--provider <name>", "Embedding provider (default: auto-detect)")
+        .option("--model <name>", "Embedding model override")
+        .option("--no-embed", "Disable embeddings (fulltext-only search)")
         .option("--storage <driver>", "Storage driver: sqlite, orama, turbopuffer (default: sqlite)")
         .option("--watch", "Enable watch mode after indexing")
         .option("--ignore <patterns>", "Additional ignore patterns (comma-separated)", parseVariadic)
@@ -66,11 +71,12 @@ export function registerAddCommand(program: Command): void {
                 chunking: opts.chunking ?? "auto",
                 ignoredPaths: opts.ignore,
                 includedSuffixes: opts.include,
+                embedding: {
+                    enabled: opts.embed !== false,
+                    provider: opts.provider,
+                    model: opts.model,
+                },
             };
-
-            if (opts.provider) {
-                config.embedding = { provider: opts.provider };
-            }
 
             if (opts.storage) {
                 config.storage = { driver: opts.storage };
@@ -112,6 +118,12 @@ export function registerAddCommand(program: Command): void {
                 }
             } catch (err) {
                 spinner.stop("Indexing failed");
+
+                if (err instanceof EmbeddingSetupError) {
+                    p.log.warn(err.message);
+                    process.exit(1);
+                }
+
                 p.log.error(err instanceof Error ? err.message : String(err));
                 process.exit(1);
             }
