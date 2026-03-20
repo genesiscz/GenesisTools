@@ -17,6 +17,7 @@ export interface SyncStats {
 // ─── Event map: single source of truth ──────────────────────────
 export interface IndexerEventMap {
     "scan:start": Ts & { indexName: string; strategy: string };
+    "scan:progress": Ts & { indexName: string; scanned: number; total: number };
     "scan:complete": Ts & {
         indexName: string;
         added: number;

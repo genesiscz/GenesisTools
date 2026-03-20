@@ -90,14 +90,21 @@ export class Indexer extends IndexerEventEmitter {
             }
         }
 
-        const source =
-            config.source ??
-            new FileSource({
+        let source: IndexerSource;
+
+        if (config.source) {
+            source = config.source;
+        } else if (config.type === "mail") {
+            const { MailSource } = await import("./sources/mail-source");
+            source = await MailSource.create();
+        } else {
+            source = new FileSource({
                 baseDir: config.baseDir,
                 respectGitIgnore: config.respectGitIgnore,
                 includedSuffixes: config.includedSuffixes,
                 ignoredPaths: config.ignoredPaths,
             });
+        }
 
         const store = await createIndexStore(config, embedder ?? undefined);
         const indexer = new Indexer(store, config, source);
@@ -257,26 +264,57 @@ export class Indexer extends IndexerEventEmitter {
         }
 
         try {
-            const sourceEntries = await this.source.scan();
-            const files = sourceEntries.map((e) => ({ path: e.path, content: e.content }));
+            const sourceEntries = await this.source.scan({
+                onProgress: (current, total) => {
+                    this.emit("scan:progress", {
+                        indexName: this.config.name,
+                        scanned: current,
+                        total,
+                    });
+
+                    if (callbacks) {
+                        this.dispatchCallbacks(
+                            "scan:progress",
+                            { ts: Date.now(), indexName: this.config.name, scanned: current, total },
+                            callbacks
+                        );
+                    }
+                },
+            });
+            const entryMetadata = new Map<string, Record<string, unknown>>();
+
+            for (const entry of sourceEntries) {
+                if (entry.metadata) {
+                    entryMetadata.set(entry.id, entry.metadata);
+                }
+            }
 
             const strategy = this.config.chunking ?? "auto";
             const maxTokens = this.config.chunkMaxTokens ?? 500;
             const fileChunkResults = new Map<string, ChunkResult>();
             const chunkHashesPerFile = new Map<string, string[]>();
 
-            for (const file of files) {
+            for (const entry of sourceEntries) {
                 const result = chunkFile({
-                    filePath: file.path,
-                    content: file.content,
+                    filePath: entry.path,
+                    content: entry.content,
                     strategy,
                     maxTokens,
                     indexType: this.config.type,
                 });
 
-                fileChunkResults.set(file.path, result);
+                // Attach source metadata to each chunk
+                const meta = entryMetadata.get(entry.id);
+
+                if (meta) {
+                    for (const chunk of result.chunks) {
+                        chunk.metadata = meta;
+                    }
+                }
+
+                fileChunkResults.set(entry.path, result);
                 chunkHashesPerFile.set(
-                    file.path,
+                    entry.path,
                     result.chunks.map((c) => c.id)
                 );
             }
@@ -404,7 +442,6 @@ export class Indexer extends IndexerEventEmitter {
                 }
             }
 
-            let embeddingsMap: Map<string, Float32Array> | undefined;
             let embeddingsGenerated = 0;
 
             if (this.embedder && newChunks.length > 0) {
@@ -433,17 +470,20 @@ export class Indexer extends IndexerEventEmitter {
 
                 const embedStart = performance.now();
                 const batchSize = 32;
-                embeddingsMap = new Map<string, Float32Array>();
 
                 for (let i = 0; i < textsToEmbed.length; i += batchSize) {
                     const batch = textsToEmbed.slice(i, i + batchSize);
                     const batchChunks = newChunks.slice(i, i + batchSize);
                     const results = await this.embedder.embedMany(batch);
 
+                    // Store each batch immediately so progress survives cancellation
+                    const batchEmbeddings = new Map<string, Float32Array>();
+
                     for (let j = 0; j < results.length; j++) {
-                        embeddingsMap.set(batchChunks[j].id, results[j].vector);
+                        batchEmbeddings.set(batchChunks[j].id, results[j].vector);
                     }
 
+                    await this.store.insertChunks(batchChunks, batchEmbeddings);
                     embeddingsGenerated += results.length;
 
                     this.emit("embed:progress", {
@@ -507,8 +547,9 @@ export class Indexer extends IndexerEventEmitter {
                 await this.store.removeChunks(deletedChunkIds);
             }
 
-            if (newChunks.length > 0) {
-                await this.store.insertChunks(newChunks, embeddingsMap);
+            if (newChunks.length > 0 && !this.embedder) {
+                // Only insert here if no embedder — with embedder, chunks are inserted per batch above
+                await this.store.insertChunks(newChunks);
             }
 
             // Build Merkle tree for diffing (computed, not serialized as blob)
@@ -532,7 +573,7 @@ export class Indexer extends IndexerEventEmitter {
             const durationMs = performance.now() - syncStart;
 
             const syncStats: SyncStats = {
-                filesScanned: files.length,
+                filesScanned: sourceEntries.length,
                 chunksAdded: mode === "full" ? newChunks.length : changes.added.length > 0 ? newChunks.length : 0,
                 chunksUpdated: changes.modified.length > 0 ? newChunks.length : 0,
                 chunksRemoved: deletedChunkIds.length,
@@ -558,7 +599,7 @@ export class Indexer extends IndexerEventEmitter {
             this.store.updateMeta({
                 lastSyncAt: Date.now(),
                 stats: {
-                    totalFiles: files.length,
+                    totalFiles: sourceEntries.length,
                     totalChunks: this.store.getStats().totalChunks,
                     totalEmbeddings: embeddingsGenerated,
                     embeddingDimensions: this.embedder?.dimensions ?? 0,

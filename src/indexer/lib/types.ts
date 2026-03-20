@@ -77,6 +77,8 @@ export interface ChunkRecord {
     name?: string;
     language?: string;
     parentChunkId?: string;
+    /** Source-specific metadata (mail: sender, date, read; telegram: chat, direction) */
+    metadata?: Record<string, unknown>;
 }
 
 export interface MerkleNode {

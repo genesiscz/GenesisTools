@@ -2,6 +2,7 @@
 
 import { Command } from "commander";
 import { registerDownloadCommand } from "./download";
+import { registerIndexCommand } from "./index-cmd";
 import { registerListCommand } from "./list";
 import { registerSearchCommand } from "./search";
 
@@ -16,6 +17,7 @@ export function registerMailCommand(program: Command): void {
     registerSearchCommand(mail);
     registerListCommand(mail);
     registerDownloadCommand(mail);
+    registerIndexCommand(mail);
 
     program.addCommand(mail);
 }
