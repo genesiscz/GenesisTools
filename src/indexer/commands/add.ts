@@ -6,13 +6,13 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { EmbeddingSetupError } from "../lib/indexer";
 import { IndexerManager } from "../lib/manager";
+import { MODEL_REGISTRY, getModelsForType } from "../lib/model-registry";
 import type { IndexConfig } from "../lib/types";
 
 interface AddOptions {
     name?: string;
     type?: "code" | "files" | "mail" | "chat";
     chunking?: "ast" | "line" | "auto";
-    provider?: string;
     model?: string;
     storage?: "sqlite" | "orama" | "turbopuffer";
     watch?: boolean;
@@ -32,58 +32,202 @@ function autoDetectType(absPath: string): "code" | "files" {
     return "files";
 }
 
+function resolveProvider(modelId: string): string | undefined {
+    const model = MODEL_REGISTRY.find((m) => m.id === modelId);
+
+    if (!model) {
+        return undefined;
+    }
+
+    return model.provider;
+}
+
+async function runInteractiveFlow(): Promise<IndexConfig | null> {
+    p.intro(pc.bgCyan(pc.white(" indexer add ")));
+
+    const indexPath = await p.text({
+        message: "Path to index",
+        initialValue: process.cwd(),
+        validate: (val) => {
+            if (!val || !existsSync(resolve(val))) {
+                return "Path does not exist";
+            }
+        },
+    });
+
+    if (p.isCancel(indexPath)) {
+        p.cancel("Cancelled");
+        return null;
+    }
+
+    const absPath = resolve(indexPath);
+    const detectedType = autoDetectType(absPath);
+
+    const indexName = await p.text({
+        message: "Index name",
+        initialValue: basename(absPath),
+        validate: (val) => {
+            if (!val?.trim()) {
+                return "Name is required";
+            }
+        },
+    });
+
+    if (p.isCancel(indexName)) {
+        p.cancel("Cancelled");
+        return null;
+    }
+
+    const indexType = await p.select({
+        message: "Index type",
+        initialValue: detectedType,
+        options: [
+            { value: "code" as const, label: "code", hint: "Source code with AST-aware chunking" },
+            { value: "files" as const, label: "files", hint: "General files" },
+            { value: "mail" as const, label: "mail", hint: "Email messages" },
+            { value: "chat" as const, label: "chat", hint: "Chat history" },
+        ],
+    });
+
+    if (p.isCancel(indexType)) {
+        p.cancel("Cancelled");
+        return null;
+    }
+
+    const enableEmbed = await p.confirm({
+        message: "Enable semantic embeddings?",
+        initialValue: true,
+    });
+
+    if (p.isCancel(enableEmbed)) {
+        p.cancel("Cancelled");
+        return null;
+    }
+
+    let selectedModel: string | undefined;
+
+    if (enableEmbed) {
+        const models = getModelsForType(indexType);
+        const top = models.slice(0, 5);
+
+        const modelChoice = await p.select({
+            message: "Embedding model",
+            options: top.map((m) => ({
+                value: m.id,
+                label: m.name,
+                hint: `${m.dimensions}-dim, ${m.provider === "cloud" ? "cloud" : m.provider === "darwinkit" ? "built-in" : `${m.ramGB}GB RAM`} — ${m.description}`,
+            })),
+        });
+
+        if (p.isCancel(modelChoice)) {
+            p.cancel("Cancelled");
+            return null;
+        }
+
+        selectedModel = modelChoice;
+    }
+
+    const provider = selectedModel ? resolveProvider(selectedModel) : undefined;
+
+    p.log.step(`${pc.bold("Path")}: ${absPath}`);
+    p.log.step(`${pc.bold("Name")}: ${indexName}`);
+    p.log.step(`${pc.bold("Type")}: ${indexType}`);
+    p.log.step(`${pc.bold("Embeddings")}: ${enableEmbed ? `${selectedModel}` : "disabled"}`);
+
+    const confirmed = await p.confirm({
+        message: "Create this index?",
+        initialValue: true,
+    });
+
+    if (p.isCancel(confirmed) || !confirmed) {
+        p.cancel("Cancelled");
+        return null;
+    }
+
+    return {
+        name: indexName,
+        baseDir: absPath,
+        type: indexType,
+        respectGitIgnore: indexType === "code",
+        chunking: "auto",
+        embedding: {
+            enabled: enableEmbed,
+            provider,
+            model: selectedModel,
+        },
+    };
+}
+
 export function registerAddCommand(program: Command): void {
     program
         .command("add")
         .description("Add and index a directory")
-        .argument("<path>", "Path to directory to index")
+        .argument("[path]", "Path to directory to index")
         .option("--name <name>", "Index name (default: directory basename)")
         .option("--type <type>", "Index type: code, files, mail, chat (default: auto-detect)")
         .option("--chunking <mode>", "Chunking strategy: ast, line, auto (default: auto)")
-        .option("--provider <name>", "Embedding provider (default: auto-detect)")
-        .option("--model <name>", "Embedding model override")
+        .option("--model <id>", "Embedding model ID (see: tools indexer models)")
         .option("--no-embed", "Disable embeddings (fulltext-only search)")
         .option("--storage <driver>", "Storage driver: sqlite, orama, turbopuffer (default: sqlite)")
         .option("--watch", "Enable watch mode after indexing")
         .option("--ignore <patterns>", "Additional ignore patterns (comma-separated)", parseVariadic)
         .option("--include <suffixes>", "File suffixes to include (comma-separated)", parseVariadic)
-        .action(async (path: string, opts: AddOptions) => {
-            const absPath = resolve(path);
+        .action(async (path: string | undefined, opts: AddOptions) => {
+            let config: IndexConfig;
 
-            if (!existsSync(absPath)) {
-                p.log.error(`Path does not exist: ${absPath}`);
+            if (!path && process.stdout.isTTY) {
+                const result = await runInteractiveFlow();
+
+                if (!result) {
+                    return;
+                }
+
+                config = result;
+            } else if (!path) {
+                p.log.error("Path is required in non-interactive mode");
+                p.log.info("Usage: tools indexer add <path> --model <model-id>");
+                p.log.info("Run 'tools indexer models' to see available models");
                 process.exit(1);
-            }
+                return;
+            } else {
+                const absPath = resolve(path);
 
-            const name = opts.name ?? basename(absPath);
-            const type = opts.type ?? autoDetectType(absPath);
+                if (!existsSync(absPath)) {
+                    p.log.error(`Path does not exist: ${absPath}`);
+                    process.exit(1);
+                }
 
-            p.intro(pc.bgCyan(pc.white(" indexer add ")));
-            p.log.info(`Path: ${pc.dim(absPath)}`);
-            p.log.info(`Name: ${pc.bold(name)}`);
-            p.log.info(`Type: ${type}`);
+                const name = opts.name ?? basename(absPath);
+                const type = opts.type ?? autoDetectType(absPath);
+                const provider = opts.model ? resolveProvider(opts.model) : undefined;
 
-            const config: IndexConfig = {
-                name,
-                baseDir: absPath,
-                type,
-                respectGitIgnore: type === "code",
-                chunking: opts.chunking ?? "auto",
-                ignoredPaths: opts.ignore,
-                includedSuffixes: opts.include,
-                embedding: {
-                    enabled: opts.embed !== false,
-                    provider: opts.provider,
-                    model: opts.model,
-                },
-            };
+                p.intro(pc.bgCyan(pc.white(" indexer add ")));
+                p.log.info(`Path: ${pc.dim(absPath)}`);
+                p.log.info(`Name: ${pc.bold(name)}`);
+                p.log.info(`Type: ${type}`);
 
-            if (opts.storage) {
-                config.storage = { driver: opts.storage };
-            }
+                config = {
+                    name,
+                    baseDir: absPath,
+                    type,
+                    respectGitIgnore: type === "code",
+                    chunking: opts.chunking ?? "auto",
+                    ignoredPaths: opts.ignore,
+                    includedSuffixes: opts.include,
+                    embedding: {
+                        enabled: opts.embed !== false,
+                        provider,
+                        model: opts.model,
+                    },
+                };
 
-            if (opts.watch) {
-                config.watch = { enabled: true };
+                if (opts.storage) {
+                    config.storage = { driver: opts.storage };
+                }
+
+                if (opts.watch) {
+                    config.watch = { enabled: true };
+                }
             }
 
             const spinner = p.spinner();
@@ -101,7 +245,7 @@ export function registerAddCommand(program: Command): void {
                         `${pc.bold(String(stats.totalChunks))} chunks`
                 );
 
-                if (opts.watch) {
+                if (config.watch?.enabled) {
                     p.log.info("Watch mode enabled. Press Ctrl+C to stop.");
                     indexer.startWatch();
 
@@ -111,7 +255,6 @@ export function registerAddCommand(program: Command): void {
                         process.exit(0);
                     });
 
-                    // Keep process alive
                     await new Promise(() => {});
                 } else {
                     await manager.close();

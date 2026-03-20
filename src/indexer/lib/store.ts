@@ -3,10 +3,11 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { SafeJSON } from "@app/utils/json";
-import { FTS5SearchEngine } from "@app/utils/search/drivers/sqlite-fts5/index";
+import { SearchEngine } from "@app/utils/search/drivers/sqlite-fts5/index";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { Storage } from "@app/utils/storage/storage";
-import { deserializeMerkleTree, serializeMerkleTree } from "./merkle";
+import { deserializeMerkleTree } from "./merkle";
+import { PathHashStore } from "./path-hashes";
 import type { ChunkRecord, IndexConfig, IndexMeta, IndexStats, MerkleNode } from "./types";
 
 export interface IndexStore {
@@ -15,8 +16,9 @@ export interface IndexStore {
     search(opts: SearchOptions): Promise<SearchResult<ChunkRecord>[]>;
     getStats(): IndexStats;
     getMeta(): IndexMeta;
-    updateMeta(updates: Partial<Pick<IndexMeta, "lastSyncAt" | "stats">>): void;
-    saveMerkle(tree: MerkleNode): Promise<void>;
+    updateMeta(updates: Partial<Pick<IndexMeta, "lastSyncAt" | "stats" | "indexEmbedding" | "searchEmbedding">>): void;
+    getPathHashStore(): PathHashStore;
+    /** @deprecated Use getPathHashStore().getAllFiles() + buildMerkleTree() instead */
     loadMerkle(): Promise<MerkleNode | null>;
     logSearch(entry: { query: string; mode: string; resultsCount: number; durationMs: number }): void;
     close(): Promise<void>;
@@ -58,6 +60,58 @@ function readMeta(db: Database, config: IndexConfig, createdAt: number): IndexMe
     return SafeJSON.parse(row.value) as IndexMeta;
 }
 
+/**
+ * Migrate from old merkle_tree JSON blob to path_hashes table.
+ * Extracts file leaf nodes from the serialized tree and populates path_hashes.
+ */
+function migrateFromMerkleBlob(db: Database, pathHashStore: PathHashStore): void {
+    const tableExists = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='merkle_tree'").get() as {
+        name: string;
+    } | null;
+
+    if (!tableExists) {
+        return;
+    }
+
+    const row = db.query("SELECT tree FROM merkle_tree WHERE id = 1").get() as { tree: string } | null;
+
+    if (!row) {
+        return;
+    }
+
+    // Check if path_hashes already has data (already migrated)
+    const existing = db.query("SELECT COUNT(*) AS cnt FROM path_hashes").get() as { cnt: number };
+
+    if (existing.cnt > 0) {
+        return;
+    }
+
+    const tree = deserializeMerkleTree(row.tree);
+    const entries: Array<{ path: string; hash: string; isFile: boolean }> = [];
+
+    function collectLeaves(node: MerkleNode): void {
+        if (node.isFile) {
+            entries.push({ path: node.path, hash: node.hash, isFile: true });
+            return;
+        }
+
+        if (node.children) {
+            for (const child of node.children) {
+                collectLeaves(child);
+            }
+        }
+    }
+
+    collectLeaves(tree);
+
+    if (entries.length > 0) {
+        pathHashStore.bulkSync(entries);
+    }
+
+    // Drop the old table after successful migration
+    db.run("DROP TABLE merkle_tree");
+}
+
 export async function createIndexStore(config: IndexConfig, embedder?: Embedder): Promise<IndexStore> {
     const storage = new Storage("indexer");
     const indexDir = join(storage.getBaseDir(), config.name);
@@ -86,10 +140,11 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         searched_at TEXT
     )`);
 
-    db.run(`CREATE TABLE IF NOT EXISTS merkle_tree (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        tree TEXT
-    )`);
+    // PathHashStore creates its own table
+    const pathHashStore = new PathHashStore(db);
+
+    // Migrate old merkle_tree blob to path_hashes if needed
+    migrateFromMerkleBlob(db, pathHashStore);
 
     const createdAt = Date.now();
     const existingMeta = db.query("SELECT value FROM index_meta WHERE key = 'meta'").get() as { value: string } | null;
@@ -114,7 +169,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         db.run("INSERT INTO index_meta (key, value) VALUES (?, ?)", ["meta", SafeJSON.stringify(initialMeta)]);
     }
 
-    const fts = FTS5SearchEngine.fromDatabase<ChunkDoc>(db, {
+    const fts = SearchEngine.fromDatabase<ChunkDoc>(db, {
         tableName,
         schema: {
             textFields: ["content", "name", "filePath"],
@@ -213,7 +268,9 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
             return readMeta(db, config, createdAt);
         },
 
-        updateMeta(updates: Partial<Pick<IndexMeta, "lastSyncAt" | "stats">>): void {
+        updateMeta(
+            updates: Partial<Pick<IndexMeta, "lastSyncAt" | "stats" | "indexEmbedding" | "searchEmbedding">>
+        ): void {
             const current = readMeta(db, config, createdAt);
 
             if (updates.lastSyncAt !== undefined) {
@@ -224,18 +281,34 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 current.stats = { ...current.stats, ...updates.stats };
             }
 
+            if (updates.indexEmbedding) {
+                current.indexEmbedding = updates.indexEmbedding;
+            }
+
+            if (updates.searchEmbedding) {
+                current.searchEmbedding = updates.searchEmbedding;
+            }
+
             db.run("INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)", [
                 "meta",
                 SafeJSON.stringify(current),
             ]);
         },
 
-        async saveMerkle(tree: MerkleNode): Promise<void> {
-            const serialized = serializeMerkleTree(tree);
-            db.run("INSERT OR REPLACE INTO merkle_tree (id, tree) VALUES (1, ?)", [serialized]);
+        getPathHashStore(): PathHashStore {
+            return pathHashStore;
         },
 
         async loadMerkle(): Promise<MerkleNode | null> {
+            // Check if old merkle_tree table exists for backward compat
+            const tableExists = db
+                .query("SELECT name FROM sqlite_master WHERE type='table' AND name='merkle_tree'")
+                .get() as { name: string } | null;
+
+            if (!tableExists) {
+                return null;
+            }
+
             const row = db.query("SELECT tree FROM merkle_tree WHERE id = 1").get() as { tree: string } | null;
 
             if (!row) {

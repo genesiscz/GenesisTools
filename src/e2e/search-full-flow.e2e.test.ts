@@ -75,12 +75,12 @@ describe("Search Full Flow E2E", () => {
 
     describe("FTS5 fulltext-only flow", () => {
         it("indexes dataset and searches with BM25 ranking", async () => {
-            const { FTS5SearchEngine } = await import("@app/utils/search");
+            const { SearchEngine } = await import("@app/utils/search");
 
             tmpDir = mkdtempSync(join(tmpdir(), "search-flow-"));
             const dbPath = join(tmpDir, "articles.db");
 
-            const engine = new FTS5SearchEngine<Article>({
+            const engine = new SearchEngine<Article>({
                 dbPath,
                 tableName: "articles",
                 schema: {
@@ -136,12 +136,12 @@ describe("Search Full Flow E2E", () => {
         });
 
         it("persists data across engine instances", async () => {
-            const { FTS5SearchEngine } = await import("@app/utils/search");
+            const { SearchEngine } = await import("@app/utils/search");
 
             tmpDir = mkdtempSync(join(tmpdir(), "search-persist-"));
             const dbPath = join(tmpDir, "persist.db");
 
-            const engine1 = new FTS5SearchEngine<Article>({
+            const engine1 = new SearchEngine<Article>({
                 dbPath,
                 tableName: "docs",
                 schema: { textFields: ["title", "body"], idField: "id" },
@@ -152,7 +152,7 @@ describe("Search Full Flow E2E", () => {
             await engine1.close();
 
             // Reopen same DB — data should persist
-            const engine2 = new FTS5SearchEngine<Article>({
+            const engine2 = new SearchEngine<Article>({
                 dbPath,
                 tableName: "docs",
                 schema: { textFields: ["title", "body"], idField: "id" },
@@ -168,7 +168,7 @@ describe("Search Full Flow E2E", () => {
 
     describe.skipIf(!isDarwin)("FTS5 with DarwinKit embeddings (vector + hybrid)", () => {
         it("full flow: dataset → embeddings → vector search → hybrid search", async () => {
-            const { FTS5SearchEngine } = await import("@app/utils/search");
+            const { SearchEngine } = await import("@app/utils/search");
             const { Embedder } = await import("@app/utils/ai");
 
             tmpDir = mkdtempSync(join(tmpdir(), "search-vector-"));
@@ -177,7 +177,7 @@ describe("Search Full Flow E2E", () => {
             const embedder = await Embedder.create();
             expect(embedder.dimensions).toBeGreaterThan(0);
 
-            const engine = new FTS5SearchEngine<Article>({
+            const engine = new SearchEngine<Article>({
                 dbPath,
                 tableName: "articles",
                 schema: {
