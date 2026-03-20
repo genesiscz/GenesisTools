@@ -52,6 +52,7 @@
         "@ai-sdk/groq": "^2.0.27",
         "@ai-sdk/openai": "^2.0.59",
         "@ai-sdk/openai-compatible": "^1.0.25",
+        "@ast-grep/napi": "^0.42.0",
         "@babel/core": "^7.28.6",
         "@babel/preset-typescript": "^7.28.5",
         "@clack/prompts": "^1.0.0",
