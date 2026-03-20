@@ -1,6 +1,7 @@
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import { registerAddCommand } from "./commands/add";
+import { registerBenchmarkCommand } from "./commands/benchmark";
 import { registerModelsCommand } from "./commands/models";
 import { registerRebuildCommand } from "./commands/rebuild";
 import { registerRemoveCommand } from "./commands/remove";
@@ -27,6 +28,7 @@ registerWatchCommand(program);
 registerRebuildCommand(program);
 registerRemoveCommand(program);
 registerVerifyCommand(program);
+registerBenchmarkCommand(program);
 
 async function main(): Promise<void> {
     if (process.argv.length <= 2) {

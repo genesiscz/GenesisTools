@@ -8,7 +8,7 @@ export interface ModelInfo {
     ramGB: number;
     speed: "fast" | "medium" | "slow";
     license: string;
-    provider: "local-hf" | "cloud" | "darwinkit";
+    provider: "local-hf" | "cloud" | "darwinkit" | "coreml";
     bestFor: string[];
     description: string;
     installCmd?: string;
@@ -98,6 +98,18 @@ export const MODEL_REGISTRY: ModelInfo[] = [
         provider: "darwinkit",
         bestFor: ["general", "mail"],
         description: "macOS on-device. General-purpose, not code-trained. Free.",
+    },
+    {
+        id: "coreml-contextual",
+        name: "Apple NLContextual",
+        params: "built-in",
+        dimensions: 512,
+        ramGB: 0,
+        speed: "fast",
+        license: "macOS",
+        provider: "coreml",
+        bestFor: ["general", "mail"],
+        description: "macOS 14+ on-device BERT. GPU/Neural Engine accelerated. Contextual embeddings.",
     },
     {
         id: "Xenova/all-MiniLM-L6-v2",
