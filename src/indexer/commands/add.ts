@@ -6,7 +6,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { EmbeddingSetupError } from "../lib/indexer";
 import { IndexerManager } from "../lib/manager";
-import { MODEL_REGISTRY, getModelsForType } from "../lib/model-registry";
+import { getModelsForType, MODEL_REGISTRY } from "../lib/model-registry";
 import type { IndexConfig } from "../lib/types";
 
 interface AddOptions {

@@ -13,6 +13,16 @@ import type { ChunkRecord, IndexConfig, IndexMeta, IndexStats, MerkleNode } from
 export interface IndexStore {
     insertChunks(chunks: ChunkRecord[], embeddings?: Map<string, Float32Array>): Promise<void>;
     removeChunks(chunkIds: string[]): Promise<void>;
+    /** Get chunk IDs that exist in content table but have no embedding */
+    getUnembeddedChunkIds(): string[];
+    /** Count chunks that have no embedding (without loading IDs into memory) */
+    getUnembeddedCount(): number;
+    /** Get a page of unembedded chunks (id + content) for streaming embedding */
+    getUnembeddedChunksPage(limit: number): Array<{ id: string; content: string }>;
+    /** Get chunk content by IDs (for re-embedding) */
+    getChunkContents(ids: string[]): Array<{ id: string; content: string }>;
+    /** Get chunk IDs that belong to the given source file paths */
+    getChunkIdsBySourcePaths(paths: string[]): string[];
     search(opts: SearchOptions): Promise<SearchResult<ChunkRecord>[]>;
     getStats(): IndexStats;
     getMeta(): IndexMeta;
@@ -181,7 +191,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
 
     const store: IndexStore = {
         async insertChunks(chunks: ChunkRecord[], embeddings?: Map<string, Float32Array>): Promise<void> {
-            if (chunks.length === 0) {
+            if (chunks.length === 0 && (!embeddings || embeddings.size === 0)) {
                 return;
             }
 
@@ -225,6 +235,114 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
             }
         },
 
+        getUnembeddedChunkIds(): string[] {
+            const contentTable = `${tableName}_content`;
+            const embTable = `${tableName}_embeddings`;
+
+            // Check if embeddings table exists
+            const tableExists = db
+                .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+                .get(embTable) as { name: string } | null;
+
+            if (!tableExists) {
+                // No embeddings table → all chunks are unembedded
+                const rows = db.query(`SELECT id FROM ${contentTable}`).all() as Array<{ id: string }>;
+                return rows.map((r) => r.id);
+            }
+
+            const rows = db
+                .query(
+                    `SELECT c.id FROM ${contentTable} c LEFT JOIN ${embTable} e ON c.id = e.doc_id WHERE e.doc_id IS NULL`
+                )
+                .all() as Array<{ id: string }>;
+            return rows.map((r) => r.id);
+        },
+
+        getUnembeddedCount(): number {
+            const contentTable = `${tableName}_content`;
+            const embTable = `${tableName}_embeddings`;
+
+            const tableExists = db
+                .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+                .get(embTable) as { name: string } | null;
+
+            if (!tableExists) {
+                const row = db.query(`SELECT COUNT(*) AS cnt FROM ${contentTable}`).get() as { cnt: number };
+                return row.cnt;
+            }
+
+            const row = db
+                .query(
+                    `SELECT COUNT(*) AS cnt FROM ${contentTable} c LEFT JOIN ${embTable} e ON c.id = e.doc_id WHERE e.doc_id IS NULL`
+                )
+                .get() as { cnt: number };
+            return row.cnt;
+        },
+
+        getUnembeddedChunksPage(limit: number): Array<{ id: string; content: string }> {
+            const contentTable = `${tableName}_content`;
+            const embTable = `${tableName}_embeddings`;
+
+            const tableExists = db
+                .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+                .get(embTable) as { name: string } | null;
+
+            if (!tableExists) {
+                return db.query(`SELECT id, content FROM ${contentTable} LIMIT ?`).all(limit) as Array<{
+                    id: string;
+                    content: string;
+                }>;
+            }
+
+            return db
+                .query(
+                    `SELECT c.id, c.content FROM ${contentTable} c LEFT JOIN ${embTable} e ON c.id = e.doc_id WHERE e.doc_id IS NULL LIMIT ?`
+                )
+                .all(limit) as Array<{ id: string; content: string }>;
+        },
+
+        getChunkContents(ids: string[]): Array<{ id: string; content: string }> {
+            if (ids.length === 0) {
+                return [];
+            }
+
+            const contentTable = `${tableName}_content`;
+            const results: Array<{ id: string; content: string }> = [];
+            const batchSize = 500;
+
+            for (let i = 0; i < ids.length; i += batchSize) {
+                const batch = ids.slice(i, i + batchSize);
+                const placeholders = batch.map(() => "?").join(",");
+                const rows = db
+                    .query(`SELECT id, content FROM ${contentTable} WHERE id IN (${placeholders})`)
+                    .all(...batch) as Array<{ id: string; content: string }>;
+                results.push(...rows);
+            }
+
+            return results;
+        },
+
+        getChunkIdsBySourcePaths(paths: string[]): string[] {
+            if (paths.length === 0) {
+                return [];
+            }
+
+            const contentTable = `${tableName}_content`;
+            const results: string[] = [];
+            const batchSize = 500;
+
+            for (let i = 0; i < paths.length; i += batchSize) {
+                const batch = paths.slice(i, i + batchSize);
+                const placeholders = batch.map(() => "?").join(",");
+                const rows = db
+                    .query(`SELECT id FROM ${contentTable} WHERE filePath IN (${placeholders})`)
+                    .all(...batch) as Array<{ id: string }>;
+                results.push(...rows.map((r) => r.id));
+            }
+
+            return results;
+        },
+
         async search(opts: SearchOptions): Promise<SearchResult<ChunkRecord>[]> {
             const results = await fts.search(opts);
             return results.map((r) => ({
@@ -235,7 +353,10 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         },
 
         getStats(): IndexStats {
-            const chunkCount = fts.count;
+            // Query DB directly — fts.count uses a cached value that's stale
+            // when chunks are inserted via raw SQL (bypassing SearchEngine.insert)
+            const countRow = db.query(`SELECT COUNT(*) AS cnt FROM ${tableName}_content`).get() as { cnt: number };
+            const chunkCount = countRow.cnt;
 
             let dbSizeBytes = 0;
 
