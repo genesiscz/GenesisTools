@@ -1,12 +1,15 @@
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import { registerAddCommand } from "./commands/add";
+import { registerBenchVectorsCommand } from "./commands/bench-vectors";
 import { registerBenchmarkCommand } from "./commands/benchmark";
+import { registerGraphCommand } from "./commands/graph";
 import { registerModelsCommand } from "./commands/models";
 import { registerRebuildCommand } from "./commands/rebuild";
 import { registerRemoveCommand } from "./commands/remove";
 import { registerSearchCommand } from "./commands/search";
 import { registerStatusCommand } from "./commands/status";
+import { registerStopCommand } from "./commands/stop";
 import { registerSyncCommand } from "./commands/sync";
 import { registerVerifyCommand } from "./commands/verify";
 import { registerWatchCommand } from "./commands/watch";
@@ -23,12 +26,15 @@ registerAddCommand(program);
 registerModelsCommand(program);
 registerStatusCommand(program);
 registerSearchCommand(program);
+registerStopCommand(program);
 registerSyncCommand(program);
 registerWatchCommand(program);
 registerRebuildCommand(program);
 registerRemoveCommand(program);
 registerVerifyCommand(program);
 registerBenchmarkCommand(program);
+registerBenchVectorsCommand(program);
+registerGraphCommand(program);
 
 async function main(): Promise<void> {
     if (process.argv.length <= 2) {

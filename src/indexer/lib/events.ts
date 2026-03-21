@@ -12,6 +12,7 @@ export interface SyncStats {
     chunksUnchanged: number;
     embeddingsGenerated: number;
     durationMs: number;
+    cancelled?: boolean;
 }
 
 // ─── Event map: single source of truth ──────────────────────────
@@ -62,6 +63,12 @@ export interface IndexerEventMap {
         indexName: string;
         durationMs: number;
         stats: SyncStats;
+    };
+    "sync:cancelled": Ts & {
+        indexName: string;
+        reason: string;
+        embedded: number;
+        totalToEmbed: number;
     };
     "sync:error": Ts & {
         indexName: string;

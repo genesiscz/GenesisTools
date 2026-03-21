@@ -5,6 +5,8 @@ import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { acquireLock, type LockHandle } from "@app/utils/fs/lock";
 import { SafeJSON } from "@app/utils/json";
 import { SearchEngine } from "@app/utils/search/drivers/sqlite-fts5/index";
+import type { QdrantVectorStore } from "@app/utils/search/stores/qdrant-vector-store";
+import type { VectorStore } from "@app/utils/search/stores/vector-store";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { Storage } from "@app/utils/storage/storage";
 import { deserializeMerkleTree } from "./merkle";
@@ -42,7 +44,11 @@ export interface IndexStore {
     getContentCount(): number;
     getEmbeddingCount(): number;
     getMeta(): IndexMeta;
-    updateMeta(updates: Partial<Pick<IndexMeta, "lastSyncAt" | "stats" | "indexEmbedding" | "searchEmbedding" | "indexingStatus">>): void;
+    updateMeta(
+        updates: Partial<
+            Pick<IndexMeta, "lastSyncAt" | "stats" | "indexEmbedding" | "searchEmbedding" | "indexingStatus">
+        >
+    ): void;
     getPathHashStore(): PathHashStore;
     /** Run PRAGMA integrity_check on the underlying SQLite database */
     checkIntegrity(): string;
@@ -200,6 +206,29 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         throw err;
     }
 
+    // Optional Qdrant vector backend
+    let externalVectorStore: VectorStore | undefined;
+    let qdrantStore: QdrantVectorStore | undefined;
+
+    if (config.storage?.vectorDriver === "qdrant") {
+        const qdrantConfig = config.storage.qdrant;
+
+        if (!qdrantConfig?.url) {
+            throw new Error("Qdrant vectorDriver requires storage.qdrant.url to be set");
+        }
+
+        const { QdrantVectorStore: QVS } = await import("@app/utils/search/stores/qdrant-vector-store");
+        qdrantStore = new QVS({
+            collectionName: qdrantConfig.collectionName ?? sanitizeName(config.name),
+            dimensions: embedder?.dimensions ?? 768,
+            url: qdrantConfig.url,
+            apiKey: qdrantConfig.apiKey,
+        });
+
+        await qdrantStore.init();
+        externalVectorStore = qdrantStore;
+    }
+
     const fts = SearchEngine.fromDatabase<ChunkDoc>(db, {
         tableName,
         schema: {
@@ -208,14 +237,25 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
             vectorField: "content",
         },
         embedder,
+        vectorStore: externalVectorStore,
+        vectorDriver: externalVectorStore ? undefined : config.storage?.vectorDriver,
     });
 
     // ── Cached state ────────────────────────────────────────────────
     const contentTable = `${tableName}_content`;
     const embTable = `${tableName}_embeddings`;
+    const vecTable = `${tableName}_vec`;
+
+    // Determine which embedding table to check for unembedded queries.
+    // When sqlite-vec is active, embeddings are in the _vec table.
+    const vecTableExists = !!db
+        .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+        .get(vecTable);
+    const activeEmbTable = vecTableExists ? vecTable : embTable;
 
     // Cache embeddings table existence (B11)
-    let embTableExists = !!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(embTable);
+    let embTableExists =
+        vecTableExists || !!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(embTable);
 
     // Run source_id column migration once at store creation (B3)
     const contentTableExists = db
@@ -247,17 +287,37 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 }
 
                 if (embeddings && embeddings.size > 0) {
-                    if (!embTableExists) {
-                        db.run(`CREATE TABLE IF NOT EXISTS ${embTable} (
-                            doc_id TEXT PRIMARY KEY,
-                            embedding BLOB NOT NULL
-                        )`);
-                        embTableExists = true;
-                    }
+                    const vectorStore = fts["vectorStore"] as VectorStore | undefined;
 
-                    for (const [chunkId, vector] of embeddings) {
-                        const blob = Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
-                        db.run(`INSERT OR REPLACE INTO ${embTable} (doc_id, embedding) VALUES (?, ?)`, [chunkId, blob]);
+                    if (qdrantStore) {
+                        // Qdrant: store with text for hybrid search
+                        for (const [chunkId, vector] of embeddings) {
+                            const chunk = chunks.find((c) => c.id === chunkId);
+                            const text = chunk?.content ?? "";
+                            qdrantStore.storeWithText(chunkId, vector, text);
+                        }
+                    } else if (vectorStore) {
+                        // Route through the SearchEngine's vector store (sqlite-vec or brute-force)
+                        for (const [chunkId, vector] of embeddings) {
+                            vectorStore.store(chunkId, vector);
+                        }
+                    } else {
+                        // Fallback: write directly to the embeddings table
+                        if (!embTableExists) {
+                            db.run(`CREATE TABLE IF NOT EXISTS ${embTable} (
+                                doc_id TEXT PRIMARY KEY,
+                                embedding BLOB NOT NULL
+                            )`);
+                            embTableExists = true;
+                        }
+
+                        for (const [chunkId, vector] of embeddings) {
+                            const blob = Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
+                            db.run(`INSERT OR REPLACE INTO ${embTable} (doc_id, embedding) VALUES (?, ?)`, [
+                                chunkId,
+                                blob,
+                            ]);
+                        }
                     }
                 }
             });
@@ -295,7 +355,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
 
             const rows = db
                 .query(
-                    `SELECT c.id FROM ${contentTable} c LEFT JOIN ${embTable} e ON c.id = e.doc_id WHERE e.doc_id IS NULL`
+                    `SELECT c.id FROM ${contentTable} c LEFT JOIN ${activeEmbTable} e ON c.id = e.doc_id WHERE e.doc_id IS NULL`,
                 )
                 .all() as Array<{ id: string }>;
             return rows.map((r) => r.id);
@@ -309,7 +369,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
 
             const row = db
                 .query(
-                    `SELECT COUNT(*) AS cnt FROM ${contentTable} c WHERE NOT EXISTS (SELECT 1 FROM ${embTable} e WHERE e.doc_id = c.id)`
+                    `SELECT COUNT(*) AS cnt FROM ${contentTable} c WHERE NOT EXISTS (SELECT 1 FROM ${activeEmbTable} e WHERE e.doc_id = c.id)`,
                 )
                 .get() as { cnt: number };
             return row.cnt;
@@ -325,7 +385,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
 
             return db
                 .query(
-                    `SELECT c.id, c.content FROM ${contentTable} c WHERE NOT EXISTS (SELECT 1 FROM ${embTable} e WHERE e.doc_id = c.id) LIMIT ?`
+                    `SELECT c.id, c.content FROM ${contentTable} c WHERE NOT EXISTS (SELECT 1 FROM ${activeEmbTable} e WHERE e.doc_id = c.id) LIMIT ?`,
                 )
                 .all(limit) as Array<{ id: string; content: string }>;
         },
@@ -392,7 +452,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
 
         clearEmbeddings(): void {
             if (embTableExists) {
-                db.run(`DELETE FROM ${embTable}`);
+                db.run(`DELETE FROM ${activeEmbTable}`);
             }
         },
 
@@ -407,8 +467,8 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     const batch = sourceIds.slice(i, i + batchSize);
                     const placeholders = batch.map(() => "?").join(",");
                     db.run(
-                        `DELETE FROM ${embTable} WHERE doc_id IN (SELECT id FROM ${contentTable} WHERE source_id IN (${placeholders}))`,
-                        batch
+                        `DELETE FROM ${activeEmbTable} WHERE doc_id IN (SELECT id FROM ${contentTable} WHERE source_id IN (${placeholders}))`,
+                        batch,
                     );
                 }
             });
@@ -416,7 +476,8 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         },
 
         async search(opts: SearchOptions): Promise<SearchResult<ChunkRecord>[]> {
-            const results = await fts.search(opts);
+            const minScore = opts.minScore ?? config.search?.minScore;
+            const results = await fts.search({ ...opts, minScore });
             return results.map((r) => ({
                 doc: r.doc as unknown as ChunkRecord,
                 score: r.score,
@@ -465,7 +526,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 return 0;
             }
 
-            const row = db.query(`SELECT COUNT(*) AS cnt FROM ${embTable}`).get() as { cnt: number };
+            const row = db.query(`SELECT COUNT(*) AS cnt FROM ${activeEmbTable}`).get() as { cnt: number };
             return row.cnt;
         },
 
@@ -474,7 +535,9 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         },
 
         updateMeta(
-            updates: Partial<Pick<IndexMeta, "lastSyncAt" | "stats" | "indexEmbedding" | "searchEmbedding" | "indexingStatus">>
+            updates: Partial<
+                Pick<IndexMeta, "lastSyncAt" | "stats" | "indexEmbedding" | "searchEmbedding" | "indexingStatus">
+            >
         ): void {
             const current = readMeta(db, config, createdAt);
 
@@ -538,6 +601,11 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         },
 
         async close(): Promise<void> {
+            if (qdrantStore) {
+                await qdrantStore.flush();
+                await qdrantStore.close();
+            }
+
             await fts.close();
             db.close();
             await lockHandle.release();

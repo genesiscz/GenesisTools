@@ -9,12 +9,7 @@ interface CoreMLEmbedResult {
 }
 
 interface CoreMLNamespace {
-    loadModel(params: {
-        id: string;
-        path: string;
-        compute_units?: string;
-        warm_up?: boolean;
-    }): Promise<void>;
+    loadModel(params: { id: string; path: string; compute_units?: string; warm_up?: boolean }): Promise<void>;
     loadContextual(params: { id: string; language?: string }): Promise<void>;
     embed(params: { model_id: string; text: string }): Promise<CoreMLEmbedResult>;
     contextualEmbed(params: { model_id: string; text: string }): Promise<CoreMLEmbedResult>;

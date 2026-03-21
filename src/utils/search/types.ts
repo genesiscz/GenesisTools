@@ -20,6 +20,8 @@ export interface SearchOptions {
     filters?: Record<string, unknown>;
     /** Override the text used for vector embedding (e.g., with a task prefix). FTS still uses `query`. */
     vectorQuery?: string;
+    /** Minimum score threshold -- results below this are filtered out. Default: no filtering. */
+    minScore?: number;
 }
 
 export interface SearchResult<TDoc> {
