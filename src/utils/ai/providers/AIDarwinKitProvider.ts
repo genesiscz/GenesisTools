@@ -1,4 +1,4 @@
-import type { AIEmbeddingProvider, AIProvider, AITask, EmbedOptions, EmbeddingResult } from "../types";
+import type { AIEmbeddingProvider, AIProvider, AITask, EmbeddingResult, EmbedOptions } from "../types";
 
 const SUPPORTED_TASKS: AITask[] = ["classify", "embed", "sentiment"];
 
@@ -44,6 +44,54 @@ export class AIDarwinKitProvider implements AIProvider, AIEmbeddingProvider {
             vector: new Float32Array(result.vector),
             dimensions: result.dimension,
         };
+    }
+
+    async embedBatch(texts: string[], options?: EmbedOptions): Promise<EmbeddingResult[]> {
+        if (texts.length === 0) {
+            return [];
+        }
+
+        const language = options?.language ?? "en";
+
+        // Try CoreML batch endpoint first (GPU/Neural Engine accelerated)
+        try {
+            const nlp = await this.getNlp();
+
+            if ("embedContextualBatch" in nlp) {
+                const batchFn = nlp.embedContextualBatch as (
+                    texts: string[],
+                    lang: string,
+                ) => Promise<Array<{ vector: number[]; dimension: number }>>;
+                const batchResult = await batchFn(texts, language);
+                return batchResult.map((r) => ({
+                    vector: new Float32Array(r.vector),
+                    dimensions: r.dimension,
+                }));
+            }
+
+            if ("embedBatch" in nlp) {
+                const batchFn = nlp.embedBatch as (
+                    texts: string[],
+                    lang: string,
+                ) => Promise<Array<{ vector: number[]; dimension: number }>>;
+                const batchResult = await batchFn(texts, language);
+                return batchResult.map((r) => ({
+                    vector: new Float32Array(r.vector),
+                    dimensions: r.dimension,
+                }));
+            }
+        } catch {
+            // Batch endpoints not available or failed -- fall through to sequential
+        }
+
+        // Sequential fallback for older DarwinKit versions
+        const results: EmbeddingResult[] = [];
+
+        for (const text of texts) {
+            results.push(await this.embed(text, { ...options, language }));
+        }
+
+        return results;
     }
 
     async classify(

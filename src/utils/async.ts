@@ -16,6 +16,12 @@ interface RetryOptions {
     shouldRetry?: (error: unknown) => boolean;
     /** Optional callback invoked before each retry */
     onRetry?: (attempt: number, delay: number) => void;
+    /**
+     * Optional: compute custom delay for a given attempt and error.
+     * Overrides `delay` + `backoff` when provided.
+     * Useful for rate-limit-aware backoff.
+     */
+    getDelay?: (attempt: number, error: unknown) => number;
 }
 
 /**
@@ -42,15 +48,20 @@ export function retry<T>(operation: () => Promise<T>, options?: RetryOptions | n
                 }
 
                 let nextDelay: number;
-                switch (backoff) {
-                    case "linear":
-                        nextDelay = delay * attempt;
-                        break;
-                    case "fixed":
-                        nextDelay = delay;
-                        break;
-                    default: // exponential
-                        nextDelay = delay * 2 ** (attempt - 1);
+
+                if (opts.getDelay) {
+                    nextDelay = opts.getDelay(attempt, error);
+                } else {
+                    switch (backoff) {
+                        case "linear":
+                            nextDelay = delay * attempt;
+                            break;
+                        case "fixed":
+                            nextDelay = delay;
+                            break;
+                        default: // exponential
+                            nextDelay = delay * 2 ** (attempt - 1);
+                    }
                 }
 
                 onRetry?.(attempt, nextDelay);
@@ -60,6 +71,32 @@ export function retry<T>(operation: () => Promise<T>, options?: RetryOptions | n
 
         tryOperation();
     });
+}
+
+/**
+ * Create a getDelay function that uses longer delays for rate-limit errors.
+ * Detects 429, "rate", "RESOURCE_EXHAUSTED", and "quota" in error messages.
+ */
+export function rateLimitAwareDelay(opts?: {
+    baseDelay?: number;
+    rateLimitMinDelay?: number;
+}): (attempt: number, error: unknown) => number {
+    const baseDelay = opts?.baseDelay ?? 500;
+    const rateLimitMinDelay = opts?.rateLimitMinDelay ?? 15_000;
+
+    return (attempt: number, error: unknown): number => {
+        const msg = error instanceof Error ? error.message : String(error);
+        const isRateLimit =
+            msg.includes("429") || msg.includes("rate") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("quota");
+
+        const exponentialDelay = baseDelay * 2 ** (attempt - 1);
+
+        if (isRateLimit) {
+            return Math.max(exponentialDelay, rateLimitMinDelay);
+        }
+
+        return exponentialDelay;
+    };
 }
 
 // ============= Debounce =============

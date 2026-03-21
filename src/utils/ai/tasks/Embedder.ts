@@ -1,6 +1,7 @@
+import { rateLimitAwareDelay, retry } from "@app/utils/async";
 import { AIConfig } from "../AIConfig";
 import { getProviderForTask } from "../providers";
-import type { AIEmbeddingProvider, AIProviderType, EmbedOptions, EmbeddingResult } from "../types";
+import type { AIEmbeddingProvider, AIProviderType, EmbeddingResult, EmbedOptions } from "../types";
 
 export class Embedder {
     private provider: AIEmbeddingProvider;
@@ -29,12 +30,47 @@ export class Embedder {
         return this.provider.dimensions;
     }
 
-    async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
-        return this.provider.embed(text, options);
+    /** Whether the underlying provider supports native batch embedding */
+    get supportsBatch(): boolean {
+        return typeof this.provider.embedBatch === "function";
     }
 
+    async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
+        return retry(() => this.provider.embed(text, options), {
+            maxAttempts: 3,
+            getDelay: rateLimitAwareDelay(),
+        });
+    }
+
+    /**
+     * Embed multiple texts, using native batch if the provider supports it,
+     * otherwise falling back to Promise.all over individual embed() calls.
+     */
+    async embedBatch(texts: string[], options?: EmbedOptions): Promise<EmbeddingResult[]> {
+        if (texts.length === 0) {
+            return [];
+        }
+
+        if (this.provider.embedBatch) {
+            return retry(() => this.provider.embedBatch!(texts, options), {
+                maxAttempts: 3,
+                getDelay: rateLimitAwareDelay(),
+            });
+        }
+
+        return Promise.all(
+            texts.map((t) =>
+                retry(() => this.provider.embed(t, options), {
+                    maxAttempts: 3,
+                    getDelay: rateLimitAwareDelay(),
+                })
+            )
+        );
+    }
+
+    /** @deprecated Use embedBatch() instead */
     async embedMany(texts: string[], options?: EmbedOptions): Promise<EmbeddingResult[]> {
-        return Promise.all(texts.map((t) => this.provider.embed(t, options)));
+        return this.embedBatch(texts, options);
     }
 
     dispose(): void {

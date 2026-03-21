@@ -1,4 +1,4 @@
-export type AIProviderType = "cloud" | "local-hf" | "darwinkit" | "coreml";
+export type AIProviderType = "cloud" | "local-hf" | "darwinkit" | "coreml" | "ollama";
 export type AITask = "transcribe" | "translate" | "summarize" | "classify" | "embed" | "sentiment";
 
 export interface AIProvider {
@@ -126,6 +126,8 @@ export interface EmbedOptions {
 
 export interface AIEmbeddingProvider extends AIProvider {
     embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult>;
+    /** Batch embed multiple texts in a single provider call. Optional -- falls back to sequential embed(). */
+    embedBatch?(texts: string[], options?: EmbedOptions): Promise<EmbeddingResult[]>;
     readonly dimensions: number;
 }
 

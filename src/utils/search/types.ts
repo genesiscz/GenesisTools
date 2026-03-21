@@ -18,6 +18,8 @@ export interface SearchOptions {
     boost?: Record<string, number>;
     hybridWeights?: { text: number; vector: number };
     filters?: Record<string, unknown>;
+    /** Override the text used for vector embedding (e.g., with a task prefix). FTS still uses `query`. */
+    vectorQuery?: string;
 }
 
 export interface SearchResult<TDoc> {

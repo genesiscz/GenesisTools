@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, jest } from "bun:test";
-import { concurrentMap, debounce, retry, throttle, withTimeout } from "./async";
+import { afterEach, beforeEach, describe, expect, it, jest, test } from "bun:test";
+import { concurrentMap, debounce, rateLimitAwareDelay, retry, throttle, withTimeout } from "./async";
 
 // Bun supports advanceTimersByTime at runtime but the type definitions are incomplete
 declare module "bun:test" {
@@ -308,5 +308,80 @@ describe("concurrentMap", () => {
         await expect(concurrentMap({ items: [1], fn: async (n) => n, concurrency: 0 })).rejects.toThrow(
             "concurrency must be >= 1"
         );
+    });
+});
+
+describe("retry with getDelay", () => {
+    test("retries with custom getDelay", async () => {
+        let attempt = 0;
+
+        const result = await retry(
+            async () => {
+                attempt++;
+
+                if (attempt < 3) {
+                    throw new Error("transient");
+                }
+
+                return "success";
+            },
+            {
+                maxAttempts: 5,
+                getDelay: () => 10,
+            }
+        );
+
+        expect(result).toBe("success");
+        expect(attempt).toBe(3);
+    });
+
+    test("respects shouldRetry with getDelay", async () => {
+        let attempt = 0;
+
+        try {
+            await retry(
+                async () => {
+                    attempt++;
+                    throw new Error("fatal");
+                },
+                {
+                    maxAttempts: 5,
+                    shouldRetry: () => false,
+                    getDelay: () => 10,
+                }
+            );
+        } catch (e) {
+            expect((e as Error).message).toBe("fatal");
+        }
+
+        expect(attempt).toBe(1);
+    });
+});
+
+describe("rateLimitAwareDelay", () => {
+    test("returns base exponential delay for normal errors", () => {
+        const getDelay = rateLimitAwareDelay({ baseDelay: 100 });
+
+        expect(getDelay(1, new Error("timeout"))).toBe(100);
+        expect(getDelay(2, new Error("timeout"))).toBe(200);
+        expect(getDelay(3, new Error("timeout"))).toBe(400);
+    });
+
+    test("returns at least rateLimitMinDelay for 429 errors", () => {
+        const getDelay = rateLimitAwareDelay({
+            baseDelay: 100,
+            rateLimitMinDelay: 5000,
+        });
+
+        expect(getDelay(1, new Error("429 Too Many Requests"))).toBe(5000);
+        expect(getDelay(2, new Error("429 Too Many Requests"))).toBe(5000);
+        expect(getDelay(3, new Error("rate limit exceeded"))).toBe(5000);
+    });
+
+    test("detects quota and RESOURCE_EXHAUSTED errors", () => {
+        const getDelay = rateLimitAwareDelay({ rateLimitMinDelay: 10000 });
+
+        expect(getDelay(1, new Error("RESOURCE_EXHAUSTED"))).toBe(10000);
+        expect(getDelay(1, new Error("quota exceeded"))).toBe(10000);
     });
 });
