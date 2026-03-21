@@ -410,7 +410,6 @@ export class Indexer extends IndexerEventEmitter {
         try {
             await this.embedder.embed("warmup");
         } catch {
-            // Retry once after brief delay
             await new Promise((r) => setTimeout(r, 500));
             await this.embedder.embed("warmup");
         }
@@ -418,11 +417,13 @@ export class Indexer extends IndexerEventEmitter {
         const modelId = this.config.embedding?.model ?? "darwinkit";
         const maxEmbedChars = getMaxEmbedChars(modelId);
         const taskPrefix = getTaskPrefix(modelId);
+        const embedBatchSize = 32;
         const embedStart = performance.now();
         const dbPageSize = 1000;
         let embedded = 0;
+        const zeroDims = this.embedder.dimensions;
 
-        // Stream pages: query → embed sequentially → store → next page
+        // Stream pages: query -> batch embed -> store -> next page
         while (true) {
             const page = this.store.getUnembeddedChunksPage(dbPageSize);
 
@@ -431,25 +432,47 @@ export class Indexer extends IndexerEventEmitter {
             }
 
             const batchEmbeddings = new Map<string, Float32Array>();
-            const zeroDims = this.embedder.dimensions;
 
-            for (const c of page) {
-                if (c.content.length < 5) {
-                    batchEmbeddings.set(c.id, new Float32Array(zeroDims));
-                    continue;
-                }
+            // Process page in embedding batches
+            for (let i = 0; i < page.length; i += embedBatchSize) {
+                const batch = page.slice(i, i + embedBatchSize);
+                const textsToEmbed: string[] = [];
+                const idsToEmbed: string[] = [];
 
-                try {
+                for (const c of batch) {
+                    if (c.content.length < 5) {
+                        batchEmbeddings.set(c.id, new Float32Array(zeroDims));
+                        continue;
+                    }
+
                     let text = c.content.slice(0, maxEmbedChars);
 
                     if (taskPrefix) {
                         text = `${taskPrefix.document}${text}`;
                     }
 
-                    const result = await this.embedder.embed(text);
-                    batchEmbeddings.set(c.id, result.vector);
-                } catch {
-                    batchEmbeddings.set(c.id, new Float32Array(zeroDims));
+                    textsToEmbed.push(text);
+                    idsToEmbed.push(c.id);
+                }
+
+                if (textsToEmbed.length > 0) {
+                    try {
+                        const results = await this.embedder.embedBatch(textsToEmbed);
+
+                        for (let j = 0; j < results.length; j++) {
+                            batchEmbeddings.set(idsToEmbed[j], results[j].vector);
+                        }
+                    } catch {
+                        // On batch failure, fall back to individual embedding
+                        for (let j = 0; j < textsToEmbed.length; j++) {
+                            try {
+                                const result = await this.embedder.embed(textsToEmbed[j]);
+                                batchEmbeddings.set(idsToEmbed[j], result.vector);
+                            } catch {
+                                batchEmbeddings.set(idsToEmbed[j], new Float32Array(zeroDims));
+                            }
+                        }
+                    }
                 }
             }
 
