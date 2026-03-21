@@ -50,7 +50,7 @@ export class MailStorage {
 
         try {
             const raw = readFileSync(path, "utf-8");
-            const parsed = SafeJSON.parse(raw) as Array<Record<string, unknown>>;
+            const parsed = SafeJSON.parse(raw, { strict: true }) as Array<Record<string, unknown>>;
             return parsed.map((m) => ({
                 ...m,
                 dateSent: new Date(m.dateSent as string),
