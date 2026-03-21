@@ -36,41 +36,41 @@ describe("getModelsForType", () => {
         const models = getModelsForType("code");
         expect(models.length).toBe(MODEL_REGISTRY.length);
 
-        const firstCodeIdx = models.findIndex((m) => m.bestFor.includes("code"));
         const firstNonCodeIdx = models.findIndex((m) => !m.bestFor.includes("code"));
 
         if (firstNonCodeIdx !== -1) {
-            expect(firstCodeIdx).toBeLessThan(firstNonCodeIdx);
+            expect(models.slice(0, firstNonCodeIdx).every((m) => m.bestFor.includes("code"))).toBe(true);
+            expect(models.slice(firstNonCodeIdx).every((m) => !m.bestFor.includes("code"))).toBe(true);
         }
     });
 
     it("returns code models first for type 'files'", () => {
         const models = getModelsForType("files");
-        const firstCodeIdx = models.findIndex((m) => m.bestFor.includes("code"));
         const firstNonCodeIdx = models.findIndex((m) => !m.bestFor.includes("code"));
 
         if (firstNonCodeIdx !== -1) {
-            expect(firstCodeIdx).toBeLessThan(firstNonCodeIdx);
+            expect(models.slice(0, firstNonCodeIdx).every((m) => m.bestFor.includes("code"))).toBe(true);
+            expect(models.slice(firstNonCodeIdx).every((m) => !m.bestFor.includes("code"))).toBe(true);
         }
     });
 
     it("returns mail models first for type 'mail'", () => {
         const models = getModelsForType("mail");
-        const firstMailIdx = models.findIndex((m) => m.bestFor.includes("mail"));
         const firstNonMailIdx = models.findIndex((m) => !m.bestFor.includes("mail"));
 
         if (firstNonMailIdx !== -1) {
-            expect(firstMailIdx).toBeLessThan(firstNonMailIdx);
+            expect(models.slice(0, firstNonMailIdx).every((m) => m.bestFor.includes("mail"))).toBe(true);
+            expect(models.slice(firstNonMailIdx).every((m) => !m.bestFor.includes("mail"))).toBe(true);
         }
     });
 
     it("returns general models first for type 'chat'", () => {
         const models = getModelsForType("chat");
-        const firstGeneralIdx = models.findIndex((m) => m.bestFor.includes("general"));
         const firstNonGeneralIdx = models.findIndex((m) => !m.bestFor.includes("general"));
 
         if (firstNonGeneralIdx !== -1) {
-            expect(firstGeneralIdx).toBeLessThan(firstNonGeneralIdx);
+            expect(models.slice(0, firstNonGeneralIdx).every((m) => m.bestFor.includes("general"))).toBe(true);
+            expect(models.slice(firstNonGeneralIdx).every((m) => !m.bestFor.includes("general"))).toBe(true);
         }
     });
 

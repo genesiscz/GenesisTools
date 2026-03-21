@@ -75,8 +75,9 @@ describe("Search types", () => {
             },
 
             async remove(id: string | number) {
-                store.delete(String(id));
-                docCount--;
+                if (store.delete(String(id))) {
+                    docCount--;
+                }
             },
 
             async search(opts: SearchOptions): Promise<SearchResult<TestDoc>[]> {

@@ -57,6 +57,11 @@ export class AIConfig {
         this.data.hfToken = token;
     }
 
+    /** Create a shallow copy that can be mutated without affecting the original */
+    clone(): AIConfig {
+        return new AIConfig(this.storage, { ...this.data });
+    }
+
     async save(): Promise<void> {
         await this.storage.setConfig(this.data);
     }

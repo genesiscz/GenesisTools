@@ -1,0 +1,39 @@
+{
+  "timestamp": "2026-03-21T20:11:58.752Z",
+  "target": "/Users/Martin/Tresors/Projects/GenesisTools/src",
+  "indexName": "bench_1774123478280",
+  "phases": {
+    "scanAndChunkMs": 1475,
+    "embedMs": 438734,
+    "totalMs": 440209
+  },
+  "counts": {
+    "filesScanned": 956,
+    "chunksCreated": 9713,
+    "embeddingsGenerated": 9401
+  },
+  "throughput": {
+    "chunksPerSec": 6584,
+    "embeddingsPerSec": 21
+  },
+  "search": {
+    "queries": [
+      "function that handles authentication",
+      "error handling and retry logic",
+      "database connection setup",
+      "import statements and dependencies",
+      "configuration and environment variables"
+    ],
+    "latencies": [
+      49.09,
+      32.04,
+      26.05,
+      26.27,
+      27.56
+    ],
+    "avgLatencyMs": 32.2
+  },
+  "dbSizeBytes": 51732480,
+  "provider": "darwinkit",
+  "model": "default"
+}

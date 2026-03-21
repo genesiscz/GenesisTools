@@ -12,6 +12,7 @@ export class EmlxBodyExtractor {
     private pathIndex: Map<number, string>;
     /** Envelope Index DB for summaries table */
     private summaryDb: Database | null = null;
+    private summaryDbInitAttempted = false;
 
     private constructor(pathIndex: Map<number, string>) {
         this.pathIndex = pathIndex;
@@ -40,15 +41,16 @@ export class EmlxBodyExtractor {
 
                 if (entry.isDirectory()) {
                     scanDir(fullPath);
-                } else if (name.endsWith(".emlx") || name.endsWith(".partial.emlx")) {
+                } else if (name.endsWith(".emlx")) {
                     // Extract rowid from filename: "12345.emlx" or "12345.partial.emlx"
                     const match = name.match(/^(\d+)\./);
 
                     if (match) {
                         const rowid = parseInt(match[1], 10);
+                        const isPartial = name.endsWith(".partial.emlx");
 
                         // Prefer .emlx over .partial.emlx
-                        if (!pathIndex.has(rowid) || name.endsWith(".emlx")) {
+                        if (!pathIndex.has(rowid) || !isPartial) {
                             pathIndex.set(rowid, fullPath);
                         }
                     }
@@ -78,12 +80,18 @@ export class EmlxBodyExtractor {
      * L1: Try summaries table in Envelope Index (instant, ~20% hit rate)
      */
     getSummary(rowid: number): string | null {
-        if (!this.summaryDb) {
+        if (!this.summaryDb && !this.summaryDbInitAttempted) {
+            this.summaryDbInitAttempted = true;
+
             try {
                 this.summaryDb = new Database(ENVELOPE_INDEX_PATH, { readonly: true });
             } catch {
                 return null;
             }
+        }
+
+        if (!this.summaryDb) {
+            return null;
         }
 
         try {
@@ -116,16 +124,16 @@ export class EmlxBodyExtractor {
             }
 
             // First line is byte count of MIME content
-            const firstLine = content.slice(0, newlineIdx).toString().trim();
+            const firstLine = content.subarray(0, newlineIdx).toString().trim();
             const byteCount = parseInt(firstLine, 10);
 
             let mimeContent: Buffer;
 
             if (!Number.isNaN(byteCount) && byteCount > 0) {
-                mimeContent = content.slice(newlineIdx + 1, newlineIdx + 1 + byteCount) as Buffer;
+                mimeContent = content.subarray(newlineIdx + 1, newlineIdx + 1 + byteCount) as Buffer;
             } else {
                 // Fallback: read everything after first line
-                mimeContent = content.slice(newlineIdx + 1) as Buffer;
+                mimeContent = content.subarray(newlineIdx + 1) as Buffer;
             }
 
             const { simpleParser } = await import("mailparser");
@@ -198,5 +206,6 @@ export class EmlxBodyExtractor {
     dispose(): void {
         this.summaryDb?.close();
         this.summaryDb = null;
+        this.summaryDbInitAttempted = false;
     }
 }

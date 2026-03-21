@@ -28,11 +28,13 @@ describe("SearchEngine", () => {
         });
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         try {
-            engine.close();
-        } catch {
-            // already closed
+            await engine.close();
+        } catch (error) {
+            if (!(error instanceof Error && error.message.includes("already closed"))) {
+                throw error;
+            }
         }
 
         rmSync(tmpDir, { recursive: true, force: true });

@@ -277,9 +277,13 @@ async function legacySearch(query: string, options: SearchCommandOptions): Promi
             embedder = await Embedder.create();
             const maxDist = Number.parseFloat(options.maxDistance ?? "1.2");
 
+            if (!Number.isFinite(maxDist) || maxDist < 0) {
+                throw new Error("--max-distance must be a non-negative number.");
+            }
+
             const queryResult = await embedder.embed(query);
             const texts = messages.map((m) => [m.subject, m.senderName, m.senderAddress].filter(Boolean).join(" "));
-            const embeddings = await embedder.embedMany(texts);
+            const embeddings = await embedder.embedBatch(texts);
 
             const scored = messages.map((msg, i) => ({
                 msg,
