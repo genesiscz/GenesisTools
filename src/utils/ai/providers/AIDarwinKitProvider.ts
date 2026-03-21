@@ -2,6 +2,13 @@ import type { AIEmbeddingProvider, AIProvider, AITask, EmbeddingResult, EmbedOpt
 
 const SUPPORTED_TASKS: AITask[] = ["classify", "embed", "sentiment"];
 
+function toEmbeddingResults(raw: Array<{ vector: number[]; dimension: number }>): EmbeddingResult[] {
+    return raw.map((r) => ({
+        vector: new Float32Array(r.vector),
+        dimensions: r.dimension,
+    }));
+}
+
 export class AIDarwinKitProvider implements AIProvider, AIEmbeddingProvider {
     readonly type = "darwinkit" as const;
     readonly dimensions = 512;
@@ -60,25 +67,17 @@ export class AIDarwinKitProvider implements AIProvider, AIEmbeddingProvider {
             if ("embedContextualBatch" in nlp) {
                 const batchFn = nlp.embedContextualBatch as (
                     texts: string[],
-                    lang: string,
+                    lang: string
                 ) => Promise<Array<{ vector: number[]; dimension: number }>>;
-                const batchResult = await batchFn(texts, language);
-                return batchResult.map((r) => ({
-                    vector: new Float32Array(r.vector),
-                    dimensions: r.dimension,
-                }));
+                return toEmbeddingResults(await batchFn(texts, language));
             }
 
             if ("embedBatch" in nlp) {
                 const batchFn = nlp.embedBatch as (
                     texts: string[],
-                    lang: string,
+                    lang: string
                 ) => Promise<Array<{ vector: number[]; dimension: number }>>;
-                const batchResult = await batchFn(texts, language);
-                return batchResult.map((r) => ({
-                    vector: new Float32Array(r.vector),
-                    dimensions: r.dimension,
-                }));
+                return toEmbeddingResults(await batchFn(texts, language));
             }
         } catch {
             // Batch endpoints not available or failed -- fall through to sequential

@@ -326,7 +326,7 @@ export class Indexer extends IndexerEventEmitter {
     /** Chunk a batch of SourceEntry[] into ChunkRecords + path hash data */
     private chunkEntries(
         entries: SourceEntry[],
-        strategy: "ast" | "line" | "heading" | "message" | "json" | "auto",
+        strategy: "ast" | "line" | "heading" | "message" | "json" | "character" | "auto",
         maxTokens: number
     ): {
         chunks: ChunkRecord[];

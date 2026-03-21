@@ -3,6 +3,8 @@ import { AIConfig } from "../AIConfig";
 import { getProviderForTask } from "../providers";
 import type { AIEmbeddingProvider, AIProviderType, EmbeddingResult, EmbedOptions } from "../types";
 
+const RETRY_DELAY = rateLimitAwareDelay();
+
 export class Embedder {
     private provider: AIEmbeddingProvider;
 
@@ -38,7 +40,7 @@ export class Embedder {
     async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
         return retry(() => this.provider.embed(text, options), {
             maxAttempts: 3,
-            getDelay: rateLimitAwareDelay(),
+            getDelay: RETRY_DELAY,
         });
     }
 
@@ -54,7 +56,7 @@ export class Embedder {
         if (this.provider.embedBatch) {
             return retry(() => this.provider.embedBatch!(texts, options), {
                 maxAttempts: 3,
-                getDelay: rateLimitAwareDelay(),
+                getDelay: RETRY_DELAY,
             });
         }
 
@@ -62,7 +64,7 @@ export class Embedder {
             texts.map((t) =>
                 retry(() => this.provider.embed(t, options), {
                     maxAttempts: 3,
-                    getDelay: rateLimitAwareDelay(),
+                    getDelay: RETRY_DELAY,
                 })
             )
         );
