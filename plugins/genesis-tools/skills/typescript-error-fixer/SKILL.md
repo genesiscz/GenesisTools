@@ -1,5 +1,5 @@
 ---
-name: genesis-tools:typescript-error-fixer
+name: gt:typescript-error-fixer
 description: "Fix TypeScript compilation errors and eliminate 'any' types across the codebase. Use when build fails due to type errors, when auditing type safety, or when eliminating 'any' types."
 ---
 

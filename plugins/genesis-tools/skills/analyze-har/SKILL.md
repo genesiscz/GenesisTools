@@ -1,5 +1,5 @@
 ---
-name: genesis-tools:analyze-har
+name: gt:analyze-har
 description: |
   Token-efficient HAR (HTTP Archive) file analysis with reference system. Use when user provides a HAR file, asks to analyze network traffic, debug API calls, investigate HTTP requests/responses, or review web performance. Triggers on "analyze HAR", "HAR file", "network traffic", "HTTP archive", "debug requests", "analyze network", "look at this HAR", or when a .har file path is mentioned. NEVER read HAR files directly with cat/jq - always use this tool.
 ---

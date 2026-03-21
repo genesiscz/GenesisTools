@@ -1,5 +1,5 @@
 ---
-name: genesis-tools:codebase-analysis
+name: gt:codebase-analysis
 description: Deep codebase analysis without cluttering main session
 context: fork
 ---

@@ -454,7 +454,7 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
             output.push(chalk.red("Dependency Error: babel-plugin-react-compiler not found."));
             output.push("");
             output.push(chalk.yellow("This tool requires GenesisTools to be fully installed."));
-            output.push(chalk.dim("Run: /genesis-tools:setup to install the full toolkit."));
+            output.push(chalk.dim("Run: /gt:setup to install the full toolkit."));
         } else {
             output.push(chalk.red(`Compilation error: ${errorMessage}`));
         }

@@ -1,5 +1,5 @@
 ---
-name: genesis-tools:git-rebaser
+name: gt:git-rebaser
 description: Guided git rebase cascade for branch hierarchies. Use when rebasing a parent feature branch onto master/main and then updating child branches. Triggers on "rebase branches", "cascade rebase", "rebase onto master", "update child branches after rebase", "rebase feature branch hierarchy", "git rebaser". Handles reflog lookup, --onto mechanics, commit reporting, and user confirmation before any destructive action.
 ---
 

@@ -21,6 +21,8 @@
 ## 📚 Table of Contents
 
 -   [🎯 Claude Code Plugin](#-claude-code-plugin)
+    -   [Commands](#commands) — `setup`, `github-pr`, `github-pr-old`, `claude-history`, `question`
+    -   [Skills](#skills) — `github`, `azure-devops`, `timelog`, `analyze-har`, and 10 more
 -   [🚀 Quick Start](#-quick-start)
 -   [🛠️ Available Tools](#️-available-tools)
     -   [🔍 Git & Version Control](#-git--version-control)
@@ -33,71 +35,403 @@
 
 ## 🎯 Claude Code Plugin
 
-GenesisTools includes a Claude Code plugin with skills and commands to enhance your AI-assisted development workflow.
+GenesisTools includes a Claude Code plugin with **5 commands** and **14 skills** to enhance your AI-assisted development workflow. Commands are invoked explicitly with `/gt:<name>`. Skills activate automatically when you mention relevant topics.
 
 ### Installation for Claude Code
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/genesiscz/GenesisTools.git
-cd GenesisTools
-
-# 2. Install the marketplace
 # Add this repository as a marketplace in your Claude Code settings
-# The marketplace file is located at: .claude-plugin/marketplace.json
-
-# 3. The plugin includes:
-# - Setup command: Guide you through GenesisTools installation
-# - Azure DevOps skill: Fetch and manage work items, queries, and dashboards
+# The marketplace file is at: .claude-plugin/marketplace.json
 ```
 
-### What's Included in the Plugin
+### Commands
 
-| Component | Name | Description |
-|-----------|------|-------------|
-| **Command** | `setup` | Interactive setup guide for installing GenesisTools globally |
-| **Command** | `claude-history` | Search Claude Code conversation history by keywords, files, or time |
-| **Command** | `claude-resume` | Resume Claude Code sessions by short ID, name, or content search |
-| **Command** | `cc` | Alias for `claude resume` |
-| **Command** | `github-pr` | Fetch PR review comments, select fixes, implement and commit |
-| **Skill** | `azure-devops` | Fetch and manage Azure DevOps work items, queries, and time logging |
-| **Skill** | `react-compiler-debug` | Debug and inspect React Compiler output for memoization issues |
-| **Skill** | `claude-history` | Search past Claude Code conversations by keywords, files, or tools |
-| **Skill** | `github` | Interact with GitHub issues, PRs, and comments via GitHub CLI |
-| **Skill** | `timelog` | Sync tracked time from Timely to Azure DevOps time entries |
-| **Skill** | `analyze-har` | Token-efficient HAR file analysis with reference system |
-
-### Using Commands
-
-Commands are invoked manually with `/genesis-tools:<name>`:
+Commands are invoked manually with `/gt:<name>`:
 
 ```bash
-# Setup GenesisTools globally
-/genesis-tools:setup
-
-# Search Claude Code conversation history
-/genesis-tools:claude-history "refactored auth" --summary-only
-/genesis-tools:claude-history --file "config.ts" --since "7 days ago"
-/genesis-tools:claude-history --commit "27a6fa9"
-
-# Fix PR review comments
-/genesis-tools:github-pr 42          # Fix comments on PR #42
-/genesis-tools:github-pr 42 -u       # Only unresolved threads
-/genesis-tools:github-pr https://github.com/org/repo/pull/42 --open
+/gt:setup                                        # Install GenesisTools globally
+/gt:github-pr 42 -u                              # Fix unresolved PR review comments
+/gt:github-pr https://github.com/org/repo/pull/42 --open
+/gt:claude-history "refactored auth" --summary-only
+/gt:question "how does the caching layer work?"
 ```
 
-### Using Skills
+| Command | Description |
+|---------|-------------|
+| [`gt:setup`](#gtsetup) | Interactive setup guide for installing GenesisTools globally |
+| [`gt:github-pr`](#gtgithub-pr) | Fetch PR review comments, triage with AI, implement fixes, commit, reply |
+| [`gt:github-pr-old`](#gtgithub-pr-old) | Legacy PR review workflow (without `--llm` session mode) |
+| [`gt:claude-history`](#gtclaude-history-command) | Search conversation history by keywords, files, commits, or time range |
+| [`gt:question`](#gtquestion) | Answer-only mode — research and explain without modifying code |
 
-Skills are triggered automatically when you mention relevant topics in conversation:
+### Skills
 
-| Skill | Trigger Phrases | What It Does |
-|-------|----------------|--------------|
-| `azure-devops` | "get workitem 1234", "show query", "log time", Azure DevOps URLs | Fetches work items, runs queries, manages time entries |
-| `react-compiler-debug` | "react compiler", "see compiled output", "why isn't this memoized" | Inspects React Compiler output, debugs memoization |
-| `claude-history` | "find conversation about X", "where did we discuss", "search history" | Searches past Claude Code conversations |
-| `github` | GitHub issue/PR URLs, "find issues matching", "get PR comments" | Fetches GitHub issues, PRs, comments with filtering |
-| `timelog` | "sync timely", "log my time from timely", "what did I work on today" | Syncs Timely tracked time to Azure DevOps |
-| `analyze-har` | "analyze HAR", `.har` file paths, "debug network traffic" | Token-efficient HAR analysis with reference system |
+Skills activate automatically when you mention relevant topics in conversation:
+
+| Skill | Triggers On | What It Does |
+|-------|------------|--------------|
+| [`gt:github`](#gtgithub) | GitHub URLs, "get PR", "search issues", "CI billing" | Read/search GitHub issues, PRs, code, notifications, Actions costs |
+| [`gt:azure-devops`](#gtazure-devops) | "get workitem", "show query", Azure DevOps URLs | Fetch work items, run queries, create items, manage time logs |
+| [`gt:timelog`](#gttimelog) | "sync timely", "log my time", "fill clarity" | Sync Timely auto-tracked time → Azure DevOps → Clarity PPM |
+| [`gt:claude-history`](#gtclaude-history-skill) | "we discussed", "find conversation", "search history" | Search past Claude Code conversations by topic, file, or tool |
+| [`gt:summarize`](#gtsummarize) | "summarize session", "extract learnings", "postmortem" | Summarize Claude Code sessions into docs, changelogs, or memory |
+| [`gt:analyze-har`](#gtanalyze-har) | "analyze HAR", `.har` file paths, "debug network" | Token-efficient HAR analysis with progressive detail levels |
+| [`gt:react-compiler-debug`](#gtreact-compiler-debug) | "react compiler", "why isn't this memoized" | Inspect React Compiler output, debug bail-outs |
+| [`gt:typescript-error-fixer`](#gttypescript-error-fixer) | "fix type errors", "eliminate any types" | Systematic 4-phase TS error fixing with zero `any` tolerance |
+| [`gt:git-rebaser`](#gtgit-rebaser) | "rebase branches", "cascade rebase", "update child branches" | Guided rebase cascade for branch hierarchies with `--onto` |
+| [`gt:automate`](#gtautomate) | "create preset", "run the X preset", "chain tools" | Save and replay multi-step CLI workflows as named presets |
+| [`gt:codebase-analysis`](#gtcodebase-analysis) | "analyze codebase", "find dead code", "audit types" | Deep codebase analysis (dependencies, dead code, security) in a fork |
+| [`gt:living-docs`](#gtliving-docs) | "bootstrap docs", "validate documentation", "audit docs" | Self-maintaining documentation system with context rules |
+| [`gt:writing-plans`](#gtwriting-plans) | "write a plan", "create implementation plan" | Write bite-sized TDD implementation plans with exact file paths |
+| [`debugging-master`](#debugging-master) | "debug runtime", "why is this slow", "add logging" | Hypothesis-driven runtime debugging with instrumentation toolkit |
+
+---
+
+### Command Details
+
+#### `gt:setup`
+
+Interactive setup guide that walks through cloning GenesisTools, installing dependencies, and configuring the global `tools` command.
+
+```bash
+/gt:setup
+```
+
+Checks prerequisites (Bun), asks where to clone, runs `install.sh`, and verifies the installation.
+
+#### `gt:github-pr`
+
+End-to-end PR review fix workflow using `--llm` session mode for efficient thread management.
+
+```bash
+/gt:github-pr 42              # All threads on PR #42
+/gt:github-pr 42 -u           # Only unresolved threads
+/gt:github-pr 42 --open       # Also open review in Cursor
+/gt:github-pr 42 --open-only  # Open in Cursor, wait for input
+```
+
+**What it does:** Fetches review threads → spawns Explore agents to verify each claim against actual source code → assigns verdicts (`VALID`, `FALSE_POSITIVE`, `BY_DESIGN`, `ALREADY_FIXED`) → presents analysis report → asks which to fix → implements fixes → commits → replies to threads on GitHub.
+
+Also supports **multi-PR analysis** — provide multiple URLs and it spawns parallel agents, writes per-PR plans, and presents a consolidated report.
+
+#### `gt:github-pr-old`
+
+Legacy version of the PR review workflow that uses markdown file output instead of `--llm` session mode. Same analysis and fix flow, different transport.
+
+#### `gt:claude-history` (command)
+
+Search Claude Code conversation history from the command line.
+
+```bash
+/gt:claude-history "refactored auth" --summary-only
+/gt:claude-history --file "config.ts" --since "7 days ago"
+/gt:claude-history --commit "27a6fa9"
+```
+
+Supports keyword search, file-based search, commit-based search, tool filtering, regex, and relevance ranking.
+
+#### `gt:question`
+
+Answer-only mode — Claude researches your question (reads files, searches code, browses the web) but **never modifies any files**.
+
+```bash
+/gt:question "how does the caching layer work?"
+/gt:question "what's the difference between timelog add and prepare-import?"
+```
+
+Includes a refinement loop: after each answer, asks if you want it simpler, longer, shorter, or if it's good.
+
+---
+
+### Skill Details
+
+#### `gt:github`
+
+Search, fetch, and analyze GitHub issues, PRs, code, notifications, and CI costs.
+
+<details>
+<summary><b>Key capabilities</b></summary>
+
+- **Issues/PRs**: Fetch with comments, filter by reactions/author/date, exclude bots
+- **Search**: Issues, PRs, repositories, and code with advanced filtering
+- **PR reviews**: Threaded review comments with severity detection, reply and resolve
+- **Notifications**: Filter by reason/type/repo, mark read/done, open in browser
+- **Activity feed**: Your or others' recent GitHub activity
+- **File content**: Fetch raw files from any GitHub URL with line ranges
+- **GitHub Actions**: Workflow run history, CI cost breakdown, billing analysis, cancel/rerun
+
+```bash
+tools github issue https://github.com/org/repo/issues/123 --last 10
+tools github search "memory leak" --repo org/repo --state open --min-reactions 5
+tools github notifications --reason mention --open
+tools github review 42 --llm -u       # LLM-optimized review thread fetching
+tools github activity --since 7d --type Push,PullRequest
+tools github get https://github.com/org/repo/blob/main/src/index.ts --lines 10-50
+```
+
+</details>
+
+#### `gt:azure-devops`
+
+Fetch, manage, and analyze Azure DevOps work items, queries, dashboards, and time logs.
+
+<details>
+<summary><b>Key capabilities</b></summary>
+
+- **Work items**: Fetch by ID, query by name/ID/URL, download with attachments and inline images
+- **Queries**: Fuzzy name matching, state/severity filtering, batch download
+- **Analysis**: Spawn Explore agents per work item, produce `.analysis.md` reports
+- **History**: Track who changed what, time-in-state calculations, WIQL search, bulk sync
+- **Work item creation**: Interactive, from template, from query patterns, or quick CLI mode
+- **Time logging**: Add entries, prepare-import staging, bulk import with validation
+
+```bash
+tools azure-devops workitem 261575 --task-folders --images
+tools azure-devops query "Open Bugs" --download-workitems --category react19
+tools azure-devops history show 261575 --assigned-to "Martin"
+tools azure-devops timelog add -w 268935 -h 2 -t "Development"
+```
+
+</details>
+
+#### `gt:timelog`
+
+Sync time from Timely auto-tracking → Azure DevOps time logs → Clarity PPM timesheets.
+
+<details>
+<summary><b>Key capabilities</b></summary>
+
+- Analyzes Timely events, linked/unlinked memories, and git commits to propose time entries
+- Maps activities to work items using commit messages, branch names, and fixed mappings
+- Supports prepare-import staging workflow for multi-day batch syncing
+- Bridges ADO time logs to Clarity PPM with `tools clarity fill`
+- Generates monthly reports in `.claude/timelog/`
+
+```bash
+tools timely events --day 2026-03-20 --format json --without-details | tools json
+tools git commits --from 2026-03-18 --to 2026-03-20 --format json | tools json
+tools azure-devops timelog prepare-import add --from 2026-03-18 --to 2026-03-20 --entry '{...}'
+tools clarity fill --month 3 --year 2026 --confirm
+```
+
+</details>
+
+#### `gt:claude-history` (skill)
+
+Find or reference past Claude Code conversations by topic, file, date, tool, or vague recollection.
+
+<details>
+<summary><b>Key capabilities</b></summary>
+
+- Keyword search with fuzzy or exact matching, regex support
+- Filter by file modified, tool used, project, date range
+- Summarize sessions in 7 modes: documentation, changelog, debug-postmortem, onboarding, learnings, memorization, short-memory
+- Web-based dashboard for visual exploration
+
+```bash
+tools claude history "backup mcp-manager refactor"
+tools claude history --file "config.ts" --tool Edit --since "7 days ago"
+tools claude history summarize --current --mode debug-postmortem
+tools claude history dashboard
+```
+
+</details>
+
+#### `gt:summarize`
+
+Summarize Claude Code sessions using LLM-powered templates with 7 output modes.
+
+<details>
+<summary><b>Modes</b></summary>
+
+| Mode | Output |
+|------|--------|
+| `documentation` | Full technical doc with problem, changes, patterns, lessons |
+| `changelog` | Added/Changed/Fixed/Removed with file paths |
+| `debug-postmortem` | Symptoms → investigation → dead ends → root cause → fix |
+| `onboarding` | Architecture overview for new developers |
+| `learnings` | Benchmarks tables, key findings, actionable items |
+| `memorization` | Knowledge entries organized by topic tags |
+| `short-memory` | Concise 500-2000 char bullets for MEMORY.md |
+
+Supports `--thorough` chunked processing for large sessions, `--priority` modes for smart truncation, and multiple output destinations (file, clipboard, Apple Notes).
+
+</details>
+
+#### `gt:analyze-har`
+
+Token-efficient HAR (HTTP Archive) analysis with a progressive reference system.
+
+<details>
+<summary><b>Key capabilities</b></summary>
+
+- **Never read HAR files directly** — always use `tools har-analyzer` (10-100x more token-efficient)
+- Reference system: large data gets ref IDs, subsequent views show previews
+- Progressive detail: dashboard → list → domain drill-down → entry detail → full body
+- Security scan: find JWT tokens, API keys, insecure cookies
+- ASCII waterfall timing charts, redirect chain tracking, entry diffing
+
+```bash
+tools har-analyzer load capture.har        # Parse + dashboard
+tools har-analyzer errors                  # All 4xx/5xx with body previews
+tools har-analyzer domain api.example.com  # Drill into specific API
+tools har-analyzer show e14 --raw          # Full entry detail
+tools har-analyzer security                # Find sensitive data
+```
+
+</details>
+
+#### `gt:react-compiler-debug`
+
+Inspect what `babel-plugin-react-compiler` generates from React components.
+
+<details>
+<summary><b>Key capabilities</b></summary>
+
+- Compile files or inline code to see optimized output
+- Understand `useMemoCache`, cache slots, and compiler primitives
+- Diagnose bail-out patterns (mutable refs in render, JSX in try/catch, `for-await`, etc.)
+- Verbose mode shows compiler events
+
+```bash
+tools react-compiler-debug src/Component.tsx --with-original
+tools react-compiler-debug --code "const Foo = ({ x }) => <div>{x}</div>"
+```
+
+</details>
+
+#### `gt:typescript-error-fixer`
+
+Fix all TypeScript compilation errors systematically with zero tolerance for `any` types.
+
+<details>
+<summary><b>Workflow</b></summary>
+
+1. **Discovery** — Run `tsgo --noEmit`, parse all errors, group by file
+2. **Planning** — Analyze dependencies, prioritize type definition files first
+3. **Subagent deployment** — One agent per file, each researches actual types (never guesses)
+4. **Verification** — Re-run compiler, confirm zero new errors
+
+Uses `tools mcp-tsc` for fast per-file checks and LSP hover/goToDefinition for type research.
+
+</details>
+
+#### `gt:git-rebaser`
+
+Guided cascade rebase for branch hierarchies with `git rebase --onto`.
+
+<details>
+<summary><b>Workflow</b></summary>
+
+1. **Gather info** — target branch, parent branch, child branches
+2. **Analyze state** — commit counts, fork points, unique commits per branch
+3. **Rebase parent** — onto target with confirmation, or find pre-rebase ref via reflog/cherry/manual
+4. **Cascade children** — `git rebase --onto <parent> $OLD_PARENT <child>` for each, with commit reporting
+5. **Final report** — tree visualization of the new branch hierarchy
+
+Every destructive step requires explicit user confirmation. Stops on conflicts with guidance.
+
+</details>
+
+#### `gt:automate`
+
+Save and replay multi-step GenesisTools CLI workflows as named presets.
+
+<details>
+<summary><b>Key capabilities</b></summary>
+
+- Chain any `tools` commands into reusable presets with variables and conditions
+- Expression syntax with `{{ vars.x }}`, `{{ steps.id.output }}`, `{{ env.HOME }}`
+- Built-in actions: `if`, `log`, `prompt`, `shell`, `set`
+- Error strategies: stop, continue, skip
+- Dry-run mode for previewing execution
+
+```bash
+tools automate run monthly-invoice-search --var startDate=2026-02-01
+tools automate run my-preset --dry-run
+tools automate list
+tools automate create     # Interactive builder
+```
+
+</details>
+
+#### `gt:codebase-analysis`
+
+Deep codebase analysis in an isolated fork context — heavy Grep/Glob operations stay separate from your main work.
+
+<details>
+<summary><b>Analysis types</b></summary>
+
+| Type | What it finds |
+|------|---------------|
+| `dependencies` | Import graph, circular dependencies, unused imports |
+| `dead-code` | Exported but never-imported functions |
+| `api-surface` | Public exports, REST endpoints, RPC methods |
+| `type-safety` | `any` types, type assertions, missing return types |
+| `error-handling` | Uncaught promises, empty catch blocks |
+| `test-coverage` | Files without test files, untested exports |
+| `security` | Hardcoded secrets, unsanitized inputs, eval usage |
+| `patterns` | Custom pattern matching |
+
+</details>
+
+#### `gt:living-docs`
+
+Self-maintaining documentation system. Bootstraps, validates, refines, and optimizes codebase documentation using context rules.
+
+<details>
+<summary><b>Operating modes</b></summary>
+
+| Mode | What it does |
+|------|-------------|
+| **Bootstrap** | Scan codebase, create doc chunks per functional area, wire CLAUDE.md context rules |
+| **Validate** | Check all file paths, function names, patterns — flag drift |
+| **Update** | After code changes, update only affected doc references |
+| **Refine** | Audit trigger keywords, test activation, optimize for token efficiency |
+| **Migrate** | Convert old trigger formats to context rules |
+
+Philosophy: docs are a search index, not a textbook. Only document what can't be found easily.
+
+</details>
+
+#### `gt:writing-plans`
+
+Write comprehensive TDD implementation plans with bite-sized tasks, exact file paths, and complete code.
+
+<details>
+<summary><b>What you get</b></summary>
+
+- Each step is one action (2-5 minutes): write failing test → verify fail → implement → verify pass → commit
+- Exact file paths, exact commands with expected output
+- Execution handoff: subagent-driven (this session) or parallel session
+
+Plans are saved to `.claude/plans/YYYY-MM-DD-<feature-name>.md`.
+
+</details>
+
+#### `debugging-master`
+
+Hypothesis-driven runtime debugging with a structured instrumentation toolkit. Instrument code → reproduce → analyze real data.
+
+<details>
+<summary><b>Key capabilities</b></summary>
+
+- **Instrumentation API**: `dbg.dump()`, `dbg.timerStart/End()`, `dbg.checkpoint()`, `dbg.snapshot()`, `dbg.assert()`
+- **Progressive detail**: L1 compact timeline → L2 schema view → L3 full data with JMESPath queries
+- **Session management**: Named sessions, hypothesis tagging, session comparison (diff)
+- **Cleanup**: Automated removal of `#region @dbg` blocks, log archiving
+- **Multi-language**: TypeScript and PHP support
+- **HTTP mode**: For browser debugging via fetch-based logging
+
+```bash
+tools debugging-master start --session fix-auth-bug
+tools debugging-master get -l dump,error --last 5
+tools debugging-master expand d2 --query 'data.user.email'
+tools debugging-master diff --session auth-fail --against auth-pass
+tools debugging-master cleanup
+```
+
+</details>
 
 ---
 

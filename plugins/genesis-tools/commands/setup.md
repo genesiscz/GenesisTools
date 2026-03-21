@@ -1,5 +1,5 @@
 ---
-name: genesis-tools:setup
+name: gt:setup
 description: Set up GenesisTools to make the "tools" command function globally
 argument-hint: "[optional: setup details]"
 allowed-tools:
@@ -40,7 +40,7 @@ Bun is required. Install it with:
   curl -fsSL https://bun.sh/install | bash
 ```
 
-Then have them restart their terminal and run `/genesis-tools:setup` again.
+Then have them restart their terminal and run `/gt:setup` again.
 
 ### Step 3: Ask Where to Clone
 

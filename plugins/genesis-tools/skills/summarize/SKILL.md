@@ -1,5 +1,5 @@
 ---
-name: genesis-tools:summarize
+name: gt:summarize
 description: |
   Use when the user wants to summarize a Claude Code session, extract learnings, create documentation, generate a changelog or postmortem, or analyze past work. Triggers on: "summarize this session", "extract learnings", "write up what we did", "create onboarding docs", "what changed", "postmortem", "remember this for later", "document this session". Does NOT apply to general text summarization or non-Claude-Code content.
 ---

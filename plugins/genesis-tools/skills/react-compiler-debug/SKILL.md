@@ -1,5 +1,5 @@
 ---
-name: genesis-tools:react-compiler-debug
+name: gt:react-compiler-debug
 description: Debug and inspect React Compiler (babel-plugin-react-compiler) output. Use when user asks to see what React Compiler generates, debug memoization issues, understand why a component isn't being optimized, or compare original vs compiled code. Triggers on "react compiler", "compiler output", "see compiled", "memoization debug", "why isn't this memoized".
 ---
 
@@ -17,7 +17,7 @@ If you see `Cannot find package 'babel-plugin-react-compiler'`:
 # Check if tools command exists
 which tools
 
-# If not found, use /genesis-tools:setup to install the full toolkit
+# If not found, use /gt:setup to install the full toolkit
 ```
 
 **The `tools` command must be in your PATH** for this to work. The plugin alone doesn't include the babel dependencies.

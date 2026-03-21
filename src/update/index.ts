@@ -146,7 +146,7 @@ const program = new Command()
 
         console.log(pc.cyan("\n  Available skills:"));
         for (const skill of skills) {
-            console.log(`    ${pc.bold(`genesis-tools:${skill.name}`)} - ${pc.dim(skill.description)}`);
+            console.log(`    ${pc.bold(`gt:${skill.name}`)} - ${pc.dim(skill.description)}`);
         }
 
         console.log("");

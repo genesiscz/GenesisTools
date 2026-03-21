@@ -1,5 +1,5 @@
 ---
-name: genesis-tools:azure-devops
+name: gt:azure-devops
 description: Interact with Azure DevOps work items, queries, dashboards, and time logging. Use when user asks to get/fetch/show work items, queries, tasks, bugs from Azure DevOps. Also handles analyzing work items and time logging. Triggers on phrases like "get workitem", "fetch task", "show query", "download tasks", "analyze workitem", "analyze task", "log time", "timelog", "time entry", or Azure DevOps URLs.
 ---
 

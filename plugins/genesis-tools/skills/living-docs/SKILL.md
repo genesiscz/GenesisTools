@@ -1,5 +1,5 @@
 ---
-name: genesis-tools:living-docs
+name: gt:living-docs
 description: "Self-maintaining documentation system. Bootstraps, validates, refines, and optimizes codebase documentation. Creates minimal, token-efficient doc chunks. Use when creating, updating, or auditing project documentation."
 context: fork
 ---
