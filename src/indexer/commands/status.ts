@@ -33,7 +33,7 @@ function showOverview(manager: IndexerManager): void {
         return;
     }
 
-    const headers = ["Name", "Type", "Files", "Chunks", "Embeddings", "Last Sync", "DB Size"];
+    const headers = ["Name", "Type", "Files", "Chunks", "Embeddings", "Status", "Last Sync", "DB Size"];
 
     const rows = indexes.map((meta) => {
         const lastSync = meta.lastSyncAt ? formatRelativeTime(new Date(meta.lastSyncAt), { compact: true }) : "never";
@@ -44,13 +44,14 @@ function showOverview(manager: IndexerManager): void {
             String(meta.stats.totalFiles),
             String(meta.stats.totalChunks),
             String(meta.stats.totalEmbeddings),
+            formatIndexingStatus(meta.indexingStatus),
             lastSync,
             formatBytes(meta.stats.dbSizeBytes),
         ];
     });
 
     console.log("");
-    console.log(formatTable(rows, headers, { alignRight: [2, 3, 4, 6] }));
+    console.log(formatTable(rows, headers, { alignRight: [2, 3, 4, 7] }));
     console.log("");
 }
 
@@ -68,6 +69,7 @@ async function showDetailedStatus(manager: IndexerManager, name: string): Promis
     const entries: Array<[string, string]> = [
         ["Base Dir", meta.config.baseDir],
         ["Type", meta.config.type ?? "auto"],
+        ["Status", formatIndexingStatus(meta.indexingStatus)],
         ["Chunking", meta.config.chunking ?? "auto"],
         ["Git Ignore", String(meta.config.respectGitIgnore ?? false)],
         ["Files", String(meta.stats.totalFiles)],
@@ -105,5 +107,24 @@ async function showDetailedStatus(manager: IndexerManager, name: string): Promis
         p.log.step(`${pc.bold(label)}: ${value}`);
     }
 
+    if (meta.indexingStatus === "in-progress" || meta.indexingStatus === "cancelled") {
+        p.log.warn(`This index was interrupted. Run: tools indexer sync ${name} to resume.`);
+    }
+
     p.outro("");
+}
+
+function formatIndexingStatus(status: string | undefined): string {
+    switch (status) {
+        case "in-progress":
+            return pc.yellow("in-progress");
+        case "completed":
+            return pc.green("completed");
+        case "cancelled":
+            return pc.red("cancelled");
+        case "idle":
+            return pc.dim("idle");
+        default:
+            return pc.dim("idle");
+    }
 }

@@ -3,9 +3,9 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+    type DetectChangesOptions,
     defaultDetectChanges,
     defaultHashEntry,
-    type DetectChangesOptions,
     type IndexerSource,
     type ScanOptions,
     type SourceChanges,

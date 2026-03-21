@@ -6,8 +6,8 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { EmbeddingSetupError } from "../lib/indexer";
 import { IndexerManager } from "../lib/manager";
-import { createProgressCallbacks } from "../lib/progress";
 import { getModelsForType, MODEL_REGISTRY } from "../lib/model-registry";
+import { createProgressCallbacks } from "../lib/progress";
 import type { IndexConfig } from "../lib/types";
 
 interface AddOptions {
@@ -241,7 +241,9 @@ export function registerAddCommand(program: Command): void {
 
                 if (model) {
                     const found = MODEL_REGISTRY.find((m) => m.id === model);
-                    p.log.info(`Model: ${pc.bold(found?.name ?? model)} (${found?.dimensions ?? "??"}-dim, ${found?.provider ?? "unknown"})`);
+                    p.log.info(
+                        `Model: ${pc.bold(found?.name ?? model)} (${found?.dimensions ?? "??"}-dim, ${found?.provider ?? "unknown"})`
+                    );
                 } else if (opts.embed !== false) {
                     p.log.info(`Embeddings: ${pc.dim("disabled (no model selected)")}`);
                 }

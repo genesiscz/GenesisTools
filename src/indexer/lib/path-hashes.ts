@@ -37,9 +37,11 @@ export class PathHashStore {
     }
 
     getMaxNumericPath(): number {
-        const row = this.db.query(
-            "SELECT MAX(CAST(path AS INTEGER)) AS maxId FROM path_hashes WHERE is_file = 1 AND path GLOB '[0-9]*'"
-        ).get() as { maxId: number | null };
+        const row = this.db
+            .query(
+                "SELECT MAX(CAST(path AS INTEGER)) AS maxId FROM path_hashes WHERE is_file = 1 AND path GLOB '[0-9]*'"
+            )
+            .get() as { maxId: number | null };
         return row.maxId ?? 0;
     }
 

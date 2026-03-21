@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, test } from "bun:test";
-import { Embedder } from "./Embedder";
 import type { AIEmbeddingProvider, AITask, EmbeddingResult } from "../types";
+import { Embedder } from "./Embedder";
 
 const isDarwin = process.platform === "darwin";
 

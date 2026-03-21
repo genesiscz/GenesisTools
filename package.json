@@ -87,6 +87,7 @@
         "@orama/plugin-data-persistence": "^3.1.18",
         "@parcel/watcher": "^2.5.6",
         "@pppp606/ink-chart": "^0.2.4",
+        "@qdrant/js-client-rest": "^1.17.0",
         "@toon-format/toon": "^2.1.0",
         "@truto/turndown-plugin-gfm": "^1.0.2",
         "@types/chokidar": "^2.1.7",

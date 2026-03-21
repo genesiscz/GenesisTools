@@ -158,6 +158,32 @@ export class IndexerManager {
         return indexer.reindex(callbacks);
     }
 
+    /** Request cancellation of an in-progress sync (in-process only) */
+    async stopIndex(name: string): Promise<boolean> {
+        const cached = this.indexers.get(name);
+
+        if (!cached) {
+            return false;
+        }
+
+        cached.requestCancellation();
+        return true;
+    }
+
+    /** Check for indexes that were interrupted and may need resuming */
+    getInterruptedIndexes(): Array<{ name: string; meta: IndexMeta }> {
+        const indexes = this.listIndexes();
+        return indexes
+            .filter((meta) => meta.indexingStatus === "in-progress" || meta.indexingStatus === "cancelled")
+            .map((meta) => ({ name: meta.name, meta }));
+    }
+
+    /** Resume an interrupted index by running incremental sync */
+    async resumeIndex(name: string, callbacks?: IndexerCallbacks): Promise<SyncStats> {
+        const indexer = await this.getIndex(name);
+        return indexer.sync(callbacks);
+    }
+
     async syncAll(): Promise<Map<string, SyncStats>> {
         const managerConfig = await this.loadConfig();
         const results = new Map<string, SyncStats>();
@@ -205,4 +231,3 @@ export class IndexerManager {
         await this.storage.setConfig(config);
     }
 }
-

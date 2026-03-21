@@ -14,8 +14,11 @@ const HOMEBREW_SQLITE_PATHS = [
  * Try to swap bun:sqlite to a build that supports extension loading.
  * On macOS, the default bun-bundled sqlite3 does not support loadExtension().
  * This is a best-effort call -- the actual load() call will be the real test.
+ *
+ * MUST be called BEFORE any Database instance is created. Call this early in
+ * your program entry point if you plan to use sqlite-vec.
  */
-function trySetCustomSQLite(): void {
+export function ensureExtensionCapableSQLite(): void {
     if (customSqliteAttempted) {
         return;
     }
@@ -51,7 +54,7 @@ export function loadSqliteVec(db: Database): boolean {
         return false;
     }
 
-    trySetCustomSQLite();
+    ensureExtensionCapableSQLite();
 
     try {
         const sqliteVec = require("sqlite-vec");

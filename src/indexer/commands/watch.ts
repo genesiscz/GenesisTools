@@ -50,6 +50,10 @@ export function registerWatchCommand(program: Command): void {
                 onSyncError(payload) {
                     p.log.error(`${pc.bold(payload.indexName)}: ${payload.error}`);
                 },
+                onWatchChange(payload) {
+                    const icon = payload.event === "add" ? "+" : payload.event === "modify" ? "~" : "-";
+                    p.log.step(`${pc.dim(icon)} ${payload.filePath}`);
+                },
             };
 
             for (const indexName of names) {
@@ -63,7 +67,7 @@ export function registerWatchCommand(program: Command): void {
                             `(${stats.filesScanned} files, ${stats.chunksAdded + stats.chunksUpdated} chunks)`
                     );
 
-                    indexer.startWatch(callbacks);
+                    await indexer.startWatch(callbacks);
                     p.log.info(`Watching ${pc.bold(indexName)}`);
                 } catch (err) {
                     p.log.error(
