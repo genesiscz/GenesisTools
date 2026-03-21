@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { runTool } from "./helpers";
+import { getOutput, runTool } from "@app/utils/e2e/helpers";
 
 describe("tools timer", () => {
     afterAll(async () => {
@@ -49,12 +49,11 @@ describe("tools timer", () => {
         it("starts bg timer, lists it, waits for expiry", async () => {
             const start = await runTool(["timer", "3s", "e2e-bg", "--bg"]);
             expect(start.exitCode).toBe(0);
-            const startOutput = start.stdout + start.stderr;
-            expect(startOutput.toLowerCase()).toMatch(/timer|started|background/i);
+            expect(getOutput(start).toLowerCase()).toMatch(/timer|started|background/i);
 
             const list = await runTool(["timer", "list"]);
             expect(list.exitCode).toBe(0);
-            expect(list.stdout + list.stderr).toContain("e2e-bg");
+            expect(getOutput(list)).toContain("e2e-bg");
 
             await Bun.sleep(4000);
 

@@ -1,7 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { SafeJSON } from "@app/utils/json";
-import { runTool, stripAnsi } from "./helpers";
+import { extractJson, runTool } from "@app/utils/e2e/helpers";
 
 const OUTPUT_FILE = "/tmp/yt-e2e-test.txt";
 
@@ -53,10 +52,7 @@ describe("tools youtube", () => {
         it("fetches captions as JSON", async () => {
             const r = await runTool(["youtube", "transcribe", "dQw4w9WgXcQ", "--format", "json"]);
             expect(r.exitCode).toBe(0);
-            const clean = stripAnsi(r.stdout);
-            const jsonStart = clean.indexOf("{");
-            expect(jsonStart).toBeGreaterThanOrEqual(0);
-            const parsed = SafeJSON.parse(clean.slice(jsonStart));
+            const parsed = extractJson<Record<string, unknown>>(r.stdout);
             expect(parsed).toHaveProperty("text");
             expect(parsed).toHaveProperty("segments");
         }, 30_000);

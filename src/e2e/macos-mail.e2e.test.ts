@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { ALL_COLUMN_KEYS } from "@app/macos/lib/mail/columns";
-import { SafeJSON } from "@app/utils/json";
-import { runTool, stripAnsi } from "./helpers";
+import { extractJson, getOutput, runTool, stripAnsi } from "@app/utils/e2e/helpers";
 
 describe("tools macos mail", () => {
     describe("help", () => {
@@ -44,8 +43,7 @@ describe("tools macos mail", () => {
     describe("invalid column", () => {
         it("list --columns invalid_col should warn about unknown column", async () => {
             const r = await runTool(["macos", "mail", "list", "--columns", "invalid_col"]);
-            const combined = stripAnsi(r.stdout + r.stderr);
-            expect(combined).toContain("Unknown column");
+            expect(getOutput(r)).toContain("Unknown column");
         });
     });
 
@@ -68,21 +66,11 @@ describe("tools macos mail", () => {
             // If mail DB is accessible, we get valid JSON output.
             // If not (e.g. no Full Disk Access), we still verify the flags are accepted
             // by checking it doesn't fail with "unknown option".
-            const combined = stripAnsi(r.stdout + r.stderr);
-            expect(combined).not.toContain("unknown option");
+            expect(getOutput(r)).not.toContain("unknown option");
 
             if (r.exitCode === 0 && r.stdout.trim().length > 0) {
-                // Spinner output contains ANSI escapes and Unicode glyphs that
-                // confuse naive indexOf("["). Match lines that are purely "[" or "]".
-                const lines = stripAnsi(r.stdout).split("\n");
-                const startIdx = lines.findIndex((l) => l.trim() === "[");
-                const endIdx = lines.findLastIndex((l) => l.trim() === "]");
-
-                if (startIdx !== -1 && endIdx > startIdx) {
-                    const jsonStr = lines.slice(startIdx, endIdx + 1).join("\n");
-                    const parsed = SafeJSON.parse(jsonStr);
-                    expect(Array.isArray(parsed)).toBe(true);
-                }
+                const parsed = extractJson<unknown[]>(r.stdout);
+                expect(Array.isArray(parsed)).toBe(true);
             }
         }, 30_000);
     });
