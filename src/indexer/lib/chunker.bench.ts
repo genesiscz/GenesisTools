@@ -1,5 +1,5 @@
-import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { chunkFile } from "./chunker";
 
 const testFiles = [
@@ -30,6 +30,32 @@ for (const { path: filePath, strategy } of testFiles) {
     results.push({
         file: filePath,
         strategy,
+        parser: result.parser,
+        chunks: result.chunks.length,
+        avgChars: Math.round(charSizes.reduce((a, b) => a + b, 0) / charSizes.length),
+        maxChars: Math.max(...charSizes),
+        timeMs: Math.round(elapsed * 100) / 100,
+    });
+}
+
+// Inline fixtures for new features
+const minifiedJs = `var a=1;${"function b(){return a+1;}".repeat(200)}`;
+const manyTypes = Array.from({ length: 20 }, (_, i) => `type T${i} = { field: string };`).join("\n");
+const hugeClass = `class Huge {\n${Array.from({ length: 200 }, (_, i) => `    m${i}(x: number) { return x + ${i}; }`).join("\n")}\n}`;
+
+for (const [name, content, filePath] of [
+    ["minified", minifiedJs, "bundle.min.js"],
+    ["many-types", manyTypes, "types.ts"],
+    ["huge-class", hugeClass, "huge.ts"],
+] as const) {
+    const start = performance.now();
+    const result = chunkFile({ filePath, content, strategy: "auto" });
+    const elapsed = performance.now() - start;
+    const charSizes = result.chunks.map((c) => c.content.length);
+
+    results.push({
+        file: name,
+        strategy: "auto",
         parser: result.parser,
         chunks: result.chunks.length,
         avgChars: Math.round(charSizes.reduce((a, b) => a + b, 0) / charSizes.length),

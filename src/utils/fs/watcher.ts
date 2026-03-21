@@ -1,0 +1,176 @@
+import { resolve } from "node:path";
+import type { AsyncSubscription, Event } from "@parcel/watcher";
+
+export interface WatcherEvent {
+    type: "create" | "update" | "delete";
+    path: string;
+}
+
+export interface WatcherOptions {
+    /** Debounce interval -- collect changes for N ms, fire once. Default: 2000 */
+    debounceMs?: number;
+    /** Glob patterns for directories to ignore at the OS level (e.g. "node_modules"). Default: common ignores */
+    ignorePatterns?: string[];
+    /** Maximum consecutive errors before circuit breaker trips. Default: 10 */
+    maxErrors?: number;
+    /** Custom filter -- return false to ignore an event. Applied after OS-level ignores. */
+    filter?: (event: WatcherEvent) => boolean;
+}
+
+export interface WatcherSubscription {
+    /** Stop watching and release native resources */
+    unsubscribe(): Promise<void>;
+    /** Whether the watcher is still active */
+    readonly active: boolean;
+    /** Number of consecutive errors (resets on successful event) */
+    readonly errorCount: number;
+}
+
+export type WatcherCallback = (events: WatcherEvent[]) => void | Promise<void>;
+
+export const DEFAULT_IGNORE_PATTERNS: string[] = [
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    "out",
+    ".next",
+    "__pycache__",
+    ".venv",
+    "coverage",
+    ".cache",
+    ".turbo",
+    "vendor",
+];
+
+function mapEventType(type: Event["type"]): WatcherEvent["type"] {
+    switch (type) {
+        case "create":
+            return "create";
+        case "update":
+            return "update";
+        case "delete":
+            return "delete";
+        default:
+            return "update";
+    }
+}
+
+export async function createWatcher(
+    dir: string,
+    callback: WatcherCallback,
+    opts?: WatcherOptions
+): Promise<WatcherSubscription> {
+    const resolvedDir = resolve(dir);
+    const debounceMs = opts?.debounceMs ?? 2000;
+    const ignorePatterns = opts?.ignorePatterns ?? DEFAULT_IGNORE_PATTERNS;
+    const maxErrors = opts?.maxErrors ?? 10;
+    const filter = opts?.filter;
+
+    // Accumulate events for debounce (latest event type per path wins)
+    let pendingEvents = new Map<string, WatcherEvent>();
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let consecutiveErrors = 0;
+    let isActive = true;
+
+    // Lazy-import @parcel/watcher (native addon)
+    const watcher = await import("@parcel/watcher");
+
+    const flushEvents = async () => {
+        debounceTimer = null;
+
+        if (pendingEvents.size === 0) {
+            return;
+        }
+
+        const events = Array.from(pendingEvents.values());
+        pendingEvents = new Map();
+
+        try {
+            await callback(events);
+            consecutiveErrors = 0;
+        } catch {
+            consecutiveErrors++;
+
+            if (consecutiveErrors >= maxErrors) {
+                isActive = false;
+                await subscription.unsubscribe();
+            }
+        }
+    };
+
+    const subscription: AsyncSubscription = await watcher.default.subscribe(
+        resolvedDir,
+        (err: Error | null, events: Event[]) => {
+            if (!isActive) {
+                return;
+            }
+
+            if (err) {
+                consecutiveErrors++;
+
+                if (consecutiveErrors >= maxErrors) {
+                    isActive = false;
+                    subscription.unsubscribe().catch(() => {});
+                }
+
+                return;
+            }
+
+            // Reset error count on successful event delivery
+            consecutiveErrors = 0;
+
+            for (const event of events) {
+                const mapped: WatcherEvent = {
+                    type: mapEventType(event.type),
+                    path: event.path,
+                };
+
+                if (filter && !filter(mapped)) {
+                    continue;
+                }
+
+                pendingEvents.set(event.path, mapped);
+            }
+
+            if (pendingEvents.size > 0) {
+                if (debounceTimer) {
+                    clearTimeout(debounceTimer);
+                }
+
+                debounceTimer = setTimeout(flushEvents, debounceMs);
+            }
+        },
+        {
+            ignore: ignorePatterns,
+        }
+    );
+
+    const handle: WatcherSubscription = {
+        async unsubscribe() {
+            if (!isActive) {
+                return;
+            }
+
+            isActive = false;
+
+            if (debounceTimer) {
+                clearTimeout(debounceTimer);
+                debounceTimer = null;
+            }
+
+            pendingEvents.clear();
+            await subscription.unsubscribe();
+        },
+
+        get active() {
+            return isActive;
+        },
+
+        get errorCount() {
+            return consecutiveErrors;
+        },
+    };
+
+    return handle;
+}

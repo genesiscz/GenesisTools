@@ -14,7 +14,7 @@ export interface IndexConfig {
     includedSuffixes?: string[];
 
     // Chunking
-    chunking?: "ast" | "line" | "heading" | "message" | "json" | "auto";
+    chunking?: "ast" | "line" | "heading" | "message" | "json" | "character" | "auto";
     chunkMaxTokens?: number;
 
     // Embedding (enabled by default with auto-fallback: darwinkit → local-hf → cloud)
@@ -35,8 +35,10 @@ export interface IndexConfig {
     // Watch / reindex
     watch?: {
         enabled?: boolean;
-        strategy?: "git" | "merkle" | "git+merkle" | "chokidar";
+        strategy?: "native" | "polling" | "git" | "merkle" | "git+merkle" | "chokidar";
         interval?: number;
+        /** Debounce for native watcher in ms. Default: 2000 */
+        debounceMs?: number;
     };
 }
 
@@ -68,6 +70,8 @@ export interface IndexMeta {
     createdAt: number;
     indexEmbedding?: EmbeddingModelInfo;
     searchEmbedding?: EmbeddingModelInfo;
+    /** Current indexing status. Persisted for crash recovery. */
+    indexingStatus?: "idle" | "in-progress" | "completed" | "cancelled";
 }
 
 export interface IndexStats {

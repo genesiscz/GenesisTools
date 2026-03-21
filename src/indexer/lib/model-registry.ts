@@ -208,26 +208,13 @@ export const MODEL_REGISTRY: ModelInfo[] = [
 ];
 
 /**
- * Known context lengths for embedding models (tokens).
- * Used as fallback when a model isn't in MODEL_REGISTRY.
- * Sources: model cards, Ollama docs, SocratiCode embedding-config.ts.
+ * Fallback context lengths for models NOT in MODEL_REGISTRY.
+ * Models already in MODEL_REGISTRY have contextLength on their entry.
  */
 export const MODEL_CONTEXT_LENGTHS: Record<string, number> = {
-    // Ollama models
-    "nomic-embed-text": 2048,
-    "mxbai-embed-large": 512,
     "snowflake-arctic-embed": 512,
-    "all-minilm": 256,
-    // OpenAI models
-    "text-embedding-3-small": 8191,
     "text-embedding-3-large": 8191,
     "text-embedding-ada-002": 8191,
-    // HuggingFace models
-    "Xenova/all-MiniLM-L6-v2": 256,
-    "jinaai/jina-embeddings-v3": 8192,
-    "jinaai/CodeRankEmbed": 512,
-    "nomic-ai/nomic-embed-code-v1": 2048,
-    // Google
     "gemini-embedding-001": 2048,
 };
 
@@ -239,16 +226,15 @@ const DEFAULT_CHARS_PER_TOKEN = 3;
  * Looks up the model in MODEL_REGISTRY first, then MODEL_CONTEXT_LENGTHS fallback.
  */
 export function getMaxEmbedChars(modelId: string): number {
-    // Try registry first
-    const registered = MODEL_REGISTRY.find((m) => m.id === modelId);
+    const baseId = modelId.replace(/:.*$/, "");
+    const registered = MODEL_REGISTRY.find((m) => m.id === modelId || m.id === baseId);
 
     if (registered?.contextLength) {
         const cpt = registered.charsPerToken ?? DEFAULT_CHARS_PER_TOKEN;
         return registered.contextLength * cpt;
     }
 
-    // Fallback lookup (strip :tag for Ollama-style model names)
-    const baseId = modelId.replace(/:.*$/, "");
+    // Fallback for models not in the registry
     const contextLength = MODEL_CONTEXT_LENGTHS[baseId] ?? MODEL_CONTEXT_LENGTHS[modelId];
 
     if (contextLength) {
@@ -259,12 +245,10 @@ export function getMaxEmbedChars(modelId: string): number {
 }
 
 /**
- * Task prefixes for known embedding models (used for asymmetric retrieval).
- * Fallback for models not in MODEL_REGISTRY.
+ * Fallback task prefixes for models NOT in MODEL_REGISTRY.
+ * Models already in MODEL_REGISTRY have taskPrefix on their entry.
  */
 export const TASK_PREFIXES: Record<string, { document: string; query: string }> = {
-    "nomic-embed-text": { document: "search_document: ", query: "search_query: " },
-    "nomic-ai/nomic-embed-code-v1": { document: "search_document: ", query: "search_query: " },
     "nomic-embed-code": { document: "search_document: ", query: "search_query: " },
 };
 
@@ -272,13 +256,13 @@ export const TASK_PREFIXES: Record<string, { document: string; query: string }> 
  * Get the task prefix config for a model, or null if the model doesn't use task prefixes.
  */
 export function getTaskPrefix(modelId: string): { document: string; query: string } | null {
-    const registered = MODEL_REGISTRY.find((m) => m.id === modelId);
+    const baseId = modelId.replace(/:.*$/, "");
+    const registered = MODEL_REGISTRY.find((m) => m.id === modelId || m.id === baseId);
 
     if (registered?.taskPrefix) {
         return registered.taskPrefix;
     }
 
-    const baseId = modelId.replace(/:.*$/, "");
     return TASK_PREFIXES[baseId] ?? TASK_PREFIXES[modelId] ?? null;
 }
 

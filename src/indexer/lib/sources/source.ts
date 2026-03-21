@@ -1,3 +1,5 @@
+import { detectChangesPreHashed } from "@app/utils/fs/change-detector";
+
 export interface SourceEntry {
     /** Unique identifier -- file path for files, rowid for mail, message_id for chat */
     id: string;
@@ -40,7 +42,7 @@ export interface DetectChangesOptions {
     full?: boolean;
 }
 
-/** Default change detection — shared across all sources */
+/** Default change detection — shared across all sources, delegates to ChangeDetector */
 export function defaultDetectChanges(
     opts: DetectChangesOptions,
     hashFn: (entry: SourceEntry) => string
@@ -51,33 +53,23 @@ export function defaultDetectChanges(
         return { added: currentEntries, modified: [], deleted: [], unchanged: [] };
     }
 
-    const added: SourceEntry[] = [];
-    const modified: SourceEntry[] = [];
-    const unchanged: string[] = [];
-    const currentIds = new Set<string>();
+    // Build current hash map and entry lookup
+    const currentHashMap = new Map<string, string>();
+    const entryById = new Map<string, SourceEntry>();
 
     for (const entry of currentEntries) {
-        currentIds.add(entry.id);
-        const prevHash = previousHashes.get(entry.id);
-
-        if (!prevHash) {
-            added.push(entry);
-        } else if (prevHash !== hashFn(entry)) {
-            modified.push(entry);
-        } else {
-            unchanged.push(entry.id);
-        }
+        currentHashMap.set(entry.id, hashFn(entry));
+        entryById.set(entry.id, entry);
     }
 
-    const deleted: string[] = [];
+    const changeSet = detectChangesPreHashed(currentHashMap, previousHashes);
 
-    for (const id of previousHashes.keys()) {
-        if (!currentIds.has(id)) {
-            deleted.push(id);
-        }
-    }
-
-    return { added, modified, deleted, unchanged };
+    return {
+        added: changeSet.added.map((id) => entryById.get(id)!),
+        modified: changeSet.modified.map((id) => entryById.get(id)!),
+        deleted: changeSet.deleted,
+        unchanged: changeSet.unchanged,
+    };
 }
 
 /** Default content hash using xxHash64 (consistent with chunker) */

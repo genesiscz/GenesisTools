@@ -1,13 +1,16 @@
+import { createRequire } from "node:module";
 import { extname } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import type { SgNode } from "@ast-grep/napi";
-import { Lang, parse } from "@ast-grep/napi";
+import { Lang, parse, registerDynamicLanguage } from "@ast-grep/napi";
 import type { ChunkRecord } from "./types";
+
+const esmRequire = createRequire(import.meta.url);
 
 export interface ChunkResult {
     chunks: ChunkRecord[];
     language: string | null;
-    parser: "ast" | "line" | "heading" | "message" | "json";
+    parser: "ast" | "line" | "heading" | "message" | "json" | "character";
 }
 
 // ─── Extension → Lang mapping ───────────────────────────────────
@@ -40,8 +43,49 @@ const EXT_TO_LANGUAGE_NAME: Record<string, string> = {
     ".md": "markdown",
     ".json": "json",
     ".py": "python",
+    ".pyw": "python",
+    ".pyi": "python",
     ".go": "go",
     ".rs": "rust",
+    ".java": "java",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".hpp": "cpp",
+    ".cc": "cpp",
+    ".hh": "cpp",
+    ".cxx": "cpp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".swift": "swift",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
+    ".scala": "scala",
+    ".cs": "csharp",
+};
+
+/** Extension -> dynamic language string identifier (for registerDynamicLanguage langs) */
+const EXT_TO_DYNAMIC_LANG: Record<string, string> = {
+    ".py": "python",
+    ".pyw": "python",
+    ".pyi": "python",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".hpp": "cpp",
+    ".cc": "cpp",
+    ".hh": "cpp",
+    ".cxx": "cpp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".swift": "swift",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
+    ".scala": "scala",
+    ".cs": "csharp",
 };
 
 // ─── AST node kinds to extract per language ─────────────────────
@@ -73,7 +117,69 @@ const AST_KINDS: Record<string, string[]> = {
     ],
     Html: ["element", "script_element", "style_element"],
     Css: ["rule_set", "media_statement", "keyframes_statement"],
+    python: ["function_definition", "class_definition", "decorated_definition"],
+    go: ["function_declaration", "method_declaration", "type_declaration"],
+    rust: ["function_item", "impl_item", "struct_item", "enum_item", "trait_item"],
+    java: ["class_declaration", "method_declaration", "interface_declaration", "enum_declaration"],
+    c: ["function_definition", "struct_specifier", "enum_specifier", "declaration"],
+    cpp: [
+        "function_definition",
+        "class_specifier",
+        "struct_specifier",
+        "namespace_definition",
+        "declaration",
+    ],
+    ruby: ["method", "class", "module", "singleton_method"],
+    php: ["function_definition", "class_declaration", "method_declaration", "trait_declaration"],
+    swift: ["function_declaration", "class_declaration", "protocol_declaration"],
+    kotlin: ["class_declaration", "function_declaration", "object_declaration"],
+    scala: ["class_definition", "object_definition", "trait_definition", "function_definition"],
+    csharp: ["class_declaration", "interface_declaration", "method_declaration", "namespace_declaration"],
 };
+
+// ─── Dynamic language registration ──────────────────────────────
+let dynamicLangsRegistered = false;
+
+/** Register dynamic language grammars. Safe to call multiple times. */
+function ensureDynamicLanguages(): void {
+    if (dynamicLangsRegistered) {
+        return;
+    }
+
+    dynamicLangsRegistered = true;
+
+    const langPackages: Array<[string, string]> = [
+        ["python", "@ast-grep/lang-python"],
+        ["go", "@ast-grep/lang-go"],
+        ["rust", "@ast-grep/lang-rust"],
+        ["java", "@ast-grep/lang-java"],
+        ["c", "@ast-grep/lang-c"],
+        ["cpp", "@ast-grep/lang-cpp"],
+        ["ruby", "@ast-grep/lang-ruby"],
+        ["php", "@ast-grep/lang-php"],
+        ["swift", "@ast-grep/lang-swift"],
+        ["kotlin", "@ast-grep/lang-kotlin"],
+        ["scala", "@ast-grep/lang-scala"],
+        ["csharp", "@ast-grep/lang-csharp"],
+    ];
+
+    const modules: Record<string, { libraryPath: string; extensions: string[]; languageSymbol?: string }> = {};
+
+    for (const [name, pkg] of langPackages) {
+        try {
+            modules[name] = esmRequire(pkg);
+        } catch {
+            // Grammar not installed — skip
+        }
+    }
+
+    if (Object.keys(modules).length > 0) {
+        registerDynamicLanguage(modules);
+    }
+}
+
+/** Hard character cap per chunk — universal safety net applied to ALL strategies */
+const MAX_CHUNK_CHARS = 2000;
 
 // ─── Rough token estimator (1 token ~ 4 chars) ─────────────────
 function estimateTokens(text: string): number {
@@ -83,6 +189,109 @@ function estimateTokens(text: string): number {
 // ─── Content hash using xxHash64 (fast, non-cryptographic) ──────
 function contentHash(content: string): string {
     return Bun.hash(content).toString(16);
+}
+
+// ─── Universal safety net: cap all chunks at MAX_CHUNK_CHARS ────
+/**
+ * Truncate any chunk exceeding MAX_CHUNK_CHARS.
+ * Tries to truncate at the last safe boundary (newline > space > semicolon).
+ * If no safe boundary is found, hard-truncates at the limit.
+ */
+function applyCharCap(chunks: ChunkRecord[]): ChunkRecord[] {
+    if (chunks.every((c) => c.content.length <= MAX_CHUNK_CHARS)) {
+        return chunks;
+    }
+
+    return chunks.map((chunk) => {
+        if (chunk.content.length <= MAX_CHUNK_CHARS) {
+            return chunk;
+        }
+
+        let end = MAX_CHUNK_CHARS;
+        const breakChars = ["\n", " ", "\t", ";", ","];
+
+        for (let i = end; i > end - 200 && i > 0; i--) {
+            if (breakChars.includes(chunk.content[i])) {
+                end = i;
+                break;
+            }
+        }
+
+        const truncated = chunk.content.slice(0, end);
+        return {
+            ...chunk,
+            content: truncated,
+            id: contentHash(truncated),
+            endLine: chunk.startLine + truncated.split("\n").length - 1,
+        };
+    });
+}
+
+/** Average line length threshold for minified/bundled file detection */
+const MAX_AVG_LINE_LENGTH = 500;
+
+/** Detect minified/bundled content by average line length */
+function isMinified(content: string): boolean {
+    const lines = content.split("\n");
+
+    if (lines.length === 0) {
+        return false;
+    }
+
+    const avgLineLength = content.length / lines.length;
+    return avgLineLength > MAX_AVG_LINE_LENGTH;
+}
+
+// ─── Character-based chunking for minified/bundled content ──────
+/**
+ * Splits at safe boundaries: newline > space > tab > semicolon > comma.
+ * Uses byte offset for chunk IDs since line numbers are meaningless for minified files.
+ */
+function chunkByCharacter(opts: { filePath: string; content: string }): ChunkResult {
+    const { filePath, content } = opts;
+    const ext = extname(filePath).toLowerCase();
+    const language = EXT_TO_LANGUAGE_NAME[ext] ?? null;
+    const chunks: ChunkRecord[] = [];
+    let offset = 0;
+    let currentLine = 0;
+
+    while (offset < content.length) {
+        let end = Math.min(offset + MAX_CHUNK_CHARS, content.length);
+
+        // Scan backwards to find a safe split boundary
+        if (end < content.length) {
+            const breakChars = ["\n", " ", "\t", ";", ","];
+
+            for (let i = end; i > offset; i--) {
+                if (breakChars.includes(content[i])) {
+                    end = i + 1;
+                    break;
+                }
+            }
+        }
+
+        const chunkContent = content.slice(offset, end);
+        const newlineCount = (chunkContent.match(/\n/g) ?? []).length;
+        const startLine = currentLine;
+        const endLine = currentLine + newlineCount;
+
+        if (chunkContent.trim().length > 0) {
+            chunks.push({
+                id: contentHash(chunkContent),
+                filePath,
+                startLine,
+                endLine,
+                content: chunkContent,
+                kind: "character_chunk",
+                language: language ?? undefined,
+            });
+        }
+
+        currentLine = chunkContent.endsWith("\n") ? endLine + 1 : endLine;
+        offset = end;
+    }
+
+    return { chunks, language, parser: "character" };
 }
 
 // ─── Split a chunk at line boundaries when it exceeds maxTokens ─
@@ -95,8 +304,10 @@ function splitChunkByLines(opts: {
     language?: string;
     parentChunkId?: string;
     maxTokens: number;
+    overlap?: number;
 }): ChunkRecord[] {
     const { content, filePath, startLine, kind, name, language, parentChunkId, maxTokens } = opts;
+    const overlap = opts.overlap ?? 0;
 
     if (estimateTokens(content) <= maxTokens) {
         const lines = content.split("\n");
@@ -141,8 +352,10 @@ function splitChunkByLines(opts: {
                 });
             }
 
-            currentLines = [];
-            currentStartLine = startLine + i + 1;
+            // Carry over `overlap` lines from the end of the flushed chunk
+            const overlapLines = chunkContent.split("\n").slice(-overlap);
+            currentLines = overlap > 0 ? [...overlapLines] : [];
+            currentStartLine = startLine + i + 1 - (overlap > 0 ? overlapLines.length : 0);
         }
     }
 
@@ -174,19 +387,191 @@ function extractNodeName(node: SgNode): string | undefined {
     return undefined;
 }
 
+/** Minimum lines for an AST chunk to stand on its own (otherwise merge with neighbors) */
+const MIN_AST_CHUNK_LINES = 5;
+
+/** Maximum lines for a single AST declaration before sub-chunking */
+const MAX_AST_CHUNK_LINES = 150;
+
+// ─── Sub-chunk large AST declarations ───────────────────────────
+/**
+ * Sub-chunk a large AST declaration (>MAX_AST_CHUNK_LINES lines).
+ * Preserves the declaration header (first 2 lines) as context in each sub-chunk.
+ * Uses line-count-based splitting with overlap.
+ */
+function subChunkLargeNode(opts: {
+    content: string;
+    filePath: string;
+    startLine: number;
+    kind: string;
+    name?: string;
+    language?: string;
+    parentChunkId?: string;
+    chunkSize: number;
+    overlap: number;
+}): ChunkRecord[] {
+    const { content, filePath, startLine, kind, name, language, parentChunkId, chunkSize, overlap } = opts;
+
+    const lines = content.split("\n");
+
+    if (lines.length <= MAX_AST_CHUNK_LINES) {
+        return [
+            {
+                id: contentHash(content),
+                filePath,
+                startLine,
+                endLine: startLine + lines.length - 1,
+                content,
+                kind,
+                name,
+                language,
+                parentChunkId,
+            },
+        ];
+    }
+
+    const headerLineCount = Math.min(2, lines.length);
+    const header = lines.slice(0, headerLineCount).join("\n");
+    const bodyLines = lines.slice(headerLineCount);
+    const chunks: ChunkRecord[] = [];
+    const step = Math.max(1, chunkSize - overlap);
+
+    for (let i = 0; i < bodyLines.length; i += step) {
+        const end = Math.min(i + chunkSize, bodyLines.length);
+        const chunkBodyLines = bodyLines.slice(i, end);
+        const isFirst = i === 0;
+        const chunkContent = isFirst
+            ? lines.slice(0, headerLineCount + end).join("\n")
+            : `${header}\n${chunkBodyLines.join("\n")}`;
+
+        const chunkStartLine = isFirst ? startLine : startLine + headerLineCount + i;
+
+        chunks.push({
+            id: contentHash(chunkContent),
+            filePath,
+            startLine: chunkStartLine,
+            endLine: startLine + headerLineCount + end - 1,
+            content: chunkContent,
+            kind,
+            name: name ? `${name} (part ${chunks.length + 1})` : undefined,
+            language,
+            parentChunkId,
+        });
+
+        if (end >= bodyLines.length) {
+            break;
+        }
+    }
+
+    return chunks;
+}
+
+// ─── Merge consecutive small AST chunks ─────────────────────────
+/**
+ * Merge consecutive small AST chunks into larger combined chunks.
+ * A chunk is "small" if it has fewer than MIN_AST_CHUNK_LINES lines.
+ * Merging continues until the combined chunk reaches maxTokens or MAX_CHUNK_CHARS.
+ */
+function mergeSmallChunks(opts: { chunks: ChunkRecord[]; maxTokens: number }): ChunkRecord[] {
+    const { chunks, maxTokens } = opts;
+
+    if (chunks.length <= 1) {
+        return chunks;
+    }
+
+    const result: ChunkRecord[] = [];
+    let pending: ChunkRecord[] = [];
+
+    function flushPending(): void {
+        if (pending.length === 0) {
+            return;
+        }
+
+        if (pending.length === 1) {
+            result.push(pending[0]);
+            pending = [];
+            return;
+        }
+
+        // Merge all pending chunks into one
+        const mergedContent = pending.map((c) => c.content).join("\n\n");
+        const mergedNames = pending
+            .map((c) => c.name)
+            .filter(Boolean)
+            .join(", ");
+
+        result.push({
+            id: contentHash(mergedContent),
+            filePath: pending[0].filePath,
+            startLine: pending[0].startLine,
+            endLine: pending[pending.length - 1].endLine,
+            content: mergedContent,
+            kind: "merged_declarations",
+            name: mergedNames || undefined,
+            language: pending[0].language,
+        });
+
+        pending = [];
+    }
+
+    for (const chunk of chunks) {
+        const chunkLineCount = chunk.content.split("\n").length;
+        const isSmall = chunkLineCount < MIN_AST_CHUNK_LINES;
+
+        if (!isSmall) {
+            flushPending();
+            result.push(chunk);
+            continue;
+        }
+
+        // Check if adding this chunk to pending would exceed limits
+        if (pending.length > 0) {
+            const pendingContent = pending.map((c) => c.content).join("\n\n");
+            const combinedContent = `${pendingContent}\n\n${chunk.content}`;
+
+            if (estimateTokens(combinedContent) > maxTokens || combinedContent.length > MAX_CHUNK_CHARS) {
+                flushPending();
+            }
+        }
+
+        pending.push(chunk);
+    }
+
+    flushPending();
+
+    return result;
+}
+
 // ─── AST strategy ───────────────────────────────────────────────
-function chunkByAst(opts: { filePath: string; content: string; maxTokens: number }): ChunkResult | null {
+function chunkByAst(opts: {
+    filePath: string;
+    content: string;
+    maxTokens: number;
+    overlap: number;
+}): ChunkResult | null {
     const { filePath, content, maxTokens } = opts;
     const ext = extname(filePath).toLowerCase();
-    const lang = EXT_TO_LANG[ext];
+
+    // Try built-in Lang first
+    let lang: Lang | string | undefined = EXT_TO_LANG[ext];
+    let isDynamic = false;
 
     if (!lang) {
-        return null;
+        // Try dynamic language
+        const dynamicLang = EXT_TO_DYNAMIC_LANG[ext];
+
+        if (!dynamicLang) {
+            return null;
+        }
+
+        ensureDynamicLanguages();
+        lang = dynamicLang;
+        isDynamic = true;
     }
 
     const language = EXT_TO_LANGUAGE_NAME[ext] ?? null;
-    const kindList = AST_KINDS[lang] ?? [];
-    const root = parse(lang, content).root();
+    const kindList = AST_KINDS[isDynamic ? (lang as string) : String(lang)] ?? [];
+    const root = parse(lang as Lang, content).root();
     const seen = new Set<number>();
     const chunks: ChunkRecord[] = [];
 
@@ -226,16 +611,35 @@ function chunkByAst(opts: { filePath: string; content: string; maxTokens: number
                 }
             }
 
-            const subChunks = splitChunkByLines({
-                content: text,
-                filePath,
-                startLine,
-                kind,
-                name,
-                language: language ?? undefined,
-                parentChunkId,
-                maxTokens,
-            });
+            const nodeLines = text.split("\n").length;
+
+            let subChunks: ChunkRecord[];
+
+            if (nodeLines > MAX_AST_CHUNK_LINES) {
+                subChunks = subChunkLargeNode({
+                    content: text,
+                    filePath,
+                    startLine,
+                    kind,
+                    name,
+                    language: language ?? undefined,
+                    parentChunkId,
+                    chunkSize: 100,
+                    overlap: opts.overlap,
+                });
+            } else {
+                subChunks = splitChunkByLines({
+                    content: text,
+                    filePath,
+                    startLine,
+                    kind,
+                    name,
+                    language: language ?? undefined,
+                    parentChunkId,
+                    maxTokens,
+                    overlap: opts.overlap,
+                });
+            }
 
             // If this is a class, store its chunk ID for child method lookups
             if (kind === "class_declaration" && subChunks.length > 0) {
@@ -252,7 +656,10 @@ function chunkByAst(opts: { filePath: string; content: string; maxTokens: number
     // Deduplicate: export_statement may contain function_declaration etc.
     const deduped = deduplicateChunks(chunks);
 
-    return { chunks: deduped, language, parser: "ast" };
+    // Merge small adjacent declarations
+    const merged = mergeSmallChunks({ chunks: deduped, maxTokens });
+
+    return { chunks: merged, language, parser: "ast" };
 }
 
 // ─── Remove chunks fully contained within another chunk ─────────
@@ -283,47 +690,39 @@ function deduplicateChunks(chunks: ChunkRecord[]): ChunkRecord[] {
 }
 
 // ─── Line strategy ──────────────────────────────────────────────
-function chunkByLine(opts: { filePath: string; content: string; maxTokens: number }): ChunkResult {
-    const { filePath, content, maxTokens } = opts;
+function chunkByLine(opts: { filePath: string; content: string; maxTokens: number; overlap: number }): ChunkResult {
+    const { filePath, content, maxTokens, overlap } = opts;
     const ext = extname(filePath).toLowerCase();
     const language = EXT_TO_LANGUAGE_NAME[ext] ?? null;
-
-    // Split at double newlines (paragraph boundaries)
-    const blocks = content.split(/\n\n+/);
+    const lines = content.split("\n");
     const chunks: ChunkRecord[] = [];
-    let currentBlocks: string[] = [];
+    let currentLines: string[] = [];
     let currentStartLine = 0;
-    let lineOffset = 0;
 
-    for (let i = 0; i < blocks.length; i++) {
-        const block = blocks[i];
-        const blockLines = block.split("\n").length;
+    for (let i = 0; i < lines.length; i++) {
+        currentLines.push(lines[i]);
+        const joined = currentLines.join("\n");
 
-        currentBlocks.push(block);
-        const merged = currentBlocks.join("\n\n");
-
-        if (estimateTokens(merged) >= maxTokens || i === blocks.length - 1) {
-            const chunkContent = currentBlocks.join("\n\n");
+        if (estimateTokens(joined) >= maxTokens || i === lines.length - 1) {
+            const chunkContent = currentLines.join("\n");
 
             if (chunkContent.trim().length > 0) {
-                const chunkLines = chunkContent.split("\n").length;
                 chunks.push({
                     id: contentHash(chunkContent),
                     filePath,
                     startLine: currentStartLine,
-                    endLine: currentStartLine + chunkLines - 1,
+                    endLine: currentStartLine + currentLines.length - 1,
                     content: chunkContent,
                     kind: "line_chunk",
                     language: language ?? undefined,
                 });
             }
 
-            currentBlocks = [];
-            // Account for the double newline separator (2 lines)
-            currentStartLine = lineOffset + blockLines + 1;
+            // Carry over overlap lines from the end of the flushed chunk
+            const overlapLines = chunkContent.split("\n").slice(-overlap);
+            currentLines = overlap > 0 ? [...overlapLines] : [];
+            currentStartLine = i + 1 - (overlap > 0 ? overlapLines.length : 0);
         }
-
-        lineOffset += blockLines + 1; // +1 for the blank line between blocks
     }
 
     return { chunks, language, parser: "line" };
@@ -492,7 +891,7 @@ function chunkByJson(opts: { filePath: string; content: string; maxTokens: numbe
         parsed = SafeJSON.parse(content, { strict: true });
     } catch {
         // Not valid JSON, fall back to line chunking
-        return chunkByLine({ filePath, content, maxTokens });
+        return chunkByLine({ filePath, content, maxTokens, overlap: 0 });
     }
 
     const chunks: ChunkRecord[] = [];
@@ -568,7 +967,7 @@ function selectAutoStrategy(opts: {
         return "json";
     }
 
-    if (EXT_TO_LANG[ext]) {
+    if (EXT_TO_LANG[ext] || EXT_TO_DYNAMIC_LANG[ext]) {
         return "ast";
     }
 
@@ -579,37 +978,59 @@ function selectAutoStrategy(opts: {
 export function chunkFile(opts: {
     filePath: string;
     content: string;
-    strategy: "ast" | "line" | "heading" | "message" | "json" | "auto";
+    strategy: "ast" | "line" | "heading" | "message" | "json" | "character" | "auto";
     maxTokens?: number;
     indexType?: "code" | "files" | "mail" | "chat";
+    overlap?: number;
 }): ChunkResult {
     const { filePath, content, strategy, indexType } = opts;
     const maxTokens = opts.maxTokens ?? 500;
+    const overlap = opts.overlap ?? 0;
 
     const effectiveStrategy = strategy === "auto" ? selectAutoStrategy({ filePath, indexType }) : strategy;
 
+    // Detect minified/bundled content — override strategy to character-based
+    if (isMinified(content) && effectiveStrategy !== "message" && effectiveStrategy !== "json") {
+        const charResult = chunkByCharacter({ filePath, content });
+        return { ...charResult, chunks: applyCharCap(charResult.chunks) };
+    }
+
+    let result: ChunkResult;
+
     switch (effectiveStrategy) {
         case "ast": {
-            const result = chunkByAst({ filePath, content, maxTokens });
+            const astResult = chunkByAst({ filePath, content, maxTokens, overlap });
 
-            if (result) {
-                return result;
+            if (astResult) {
+                result = astResult;
+            } else {
+                // Fallback to line for unsupported languages
+                result = chunkByLine({ filePath, content, maxTokens, overlap });
             }
 
-            // Fallback to line for unsupported languages
-            return chunkByLine({ filePath, content, maxTokens });
+            break;
         }
 
         case "heading":
-            return chunkByHeading({ filePath, content, maxTokens });
+            result = chunkByHeading({ filePath, content, maxTokens });
+            break;
 
         case "message":
-            return chunkByMessage({ filePath, content, maxTokens });
+            result = chunkByMessage({ filePath, content, maxTokens });
+            break;
 
         case "json":
-            return chunkByJson({ filePath, content, maxTokens });
+            result = chunkByJson({ filePath, content, maxTokens });
+            break;
+
+        case "character":
+            result = chunkByCharacter({ filePath, content });
+            break;
 
         default:
-            return chunkByLine({ filePath, content, maxTokens });
+            result = chunkByLine({ filePath, content, maxTokens, overlap });
+            break;
     }
+
+    return { ...result, chunks: applyCharCap(result.chunks) };
 }
