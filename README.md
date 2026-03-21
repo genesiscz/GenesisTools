@@ -21,7 +21,7 @@
 ## 📚 Table of Contents
 
 -   [🎯 Claude Code Plugin](#-claude-code-plugin)
-    -   [Commands](#commands) — `setup`, `github-pr`, `claude-history`, `question`
+    -   [Commands](#commands) — `setup`, `github-pr`, `github-pr-old`, `claude-history`, `question`
     -   [Skills](#skills) — `github`, `azure-devops`, `timelog`, `analyze-har`, and 10 more
 -   [🚀 Quick Start](#-quick-start)
 -   [🛠️ Available Tools](#️-available-tools)
