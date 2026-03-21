@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, mock } from "bun:test";
-import { QdrantVectorStore } from "./qdrant-vector-store";
+import { describe, expect, it, mock } from "bun:test";
 import type { QdrantClientLike } from "./qdrant-vector-store";
+import { QdrantVectorStore } from "./qdrant-vector-store";
 
 /** In-memory mock of Qdrant client for unit testing */
 function createMockQdrantClient(): QdrantClientLike & {
@@ -24,13 +24,13 @@ function createMockQdrantClient(): QdrantClientLike & {
                         vector: Record<string, number[]>;
                         payload?: Record<string, unknown>;
                     }>;
-                },
+                }
             ) => {
                 for (const p of opts.points) {
-                    const vec = p.vector["dense"] ?? Object.values(p.vector)[0];
+                    const vec = p.vector.dense ?? Object.values(p.vector)[0];
                     points.set(p.id, { id: p.id, vector: vec, payload: p.payload ?? {} });
                 }
-            },
+            }
         ),
 
         delete: mock(async (_collection: string, opts: { points: string[] }) => {
@@ -45,7 +45,7 @@ function createMockQdrantClient(): QdrantClientLike & {
                 opts: {
                     vector: { name: string; vector: number[] };
                     limit: number;
-                },
+                }
             ) => {
                 const queryVec = opts.vector.vector;
                 const scored = [...points.values()].map((p) => {
@@ -66,8 +66,18 @@ function createMockQdrantClient(): QdrantClientLike & {
 
                 scored.sort((a, b) => b.score - a.score);
                 return scored.slice(0, opts.limit);
-            },
+            }
         ),
+
+        query: mock(async (_collection: string, opts: { limit: number }) => {
+            const scored = [...points.values()].map((p) => ({
+                id: p.id,
+                score: 1.0,
+                payload: p.payload,
+            }));
+
+            return { points: scored.slice(0, opts.limit) };
+        }),
 
         count: mock(async () => ({
             count: points.size,

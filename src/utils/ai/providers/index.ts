@@ -31,7 +31,7 @@ export function getProvider(type: AIProviderType): AIProvider {
             provider = new AICoreMLProvider({
                 modelId: "coreml-contextual",
                 modelPath: "",
-                dimensions: 512,
+                dimensions: 768,
                 contextual: true,
                 language: "en",
             });

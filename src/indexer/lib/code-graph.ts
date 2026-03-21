@@ -50,7 +50,7 @@ function getLanguage(filePath: string): string | null {
         case ".tsx":
             return "tsx";
         case ".jsx":
-            return "typescript";
+            return "tsx";
         case ".py":
             return "python";
         case ".go":
@@ -129,7 +129,9 @@ function resolvePythonImport(specifier: string, fileSet: Set<string>): string | 
  * @param baseDir - Base directory for resolving relative imports
  * @returns CodeGraph with nodes and edges
  */
-export function buildCodeGraph(files: Map<string, string>, _baseDir: string): CodeGraph {
+export function buildCodeGraph(files: Map<string, string>, baseDir: string): CodeGraph {
+    // baseDir reserved for future alias/tsconfig path resolution
+    void baseDir;
     const fileSet = new Set(files.keys());
     const edges: CodeGraphEdge[] = [];
     const importCounts = new Map<string, number>();
