@@ -44,7 +44,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
     private db: Database;
     private config: SearchEngineConfig<TDoc>;
     private embedder?: Embedder;
-    private vectorStore?: VectorStore;
+    private _vectorStore?: VectorStore;
     private docCount = 0;
     private ownsDb: boolean;
 
@@ -98,6 +98,11 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         return this.docCount;
     }
 
+    /** Public read-only accessor for the underlying vector store */
+    getVectorStore(): VectorStore | undefined {
+        return this._vectorStore;
+    }
+
     async insert(doc: TDoc): Promise<void> {
         this.insertSync(doc);
     }
@@ -117,8 +122,8 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
 
         this.db.run(`DELETE FROM ${this.contentTableName} WHERE id = ?`, [docId]);
 
-        if (this.vectorStore) {
-            this.vectorStore.remove(docId);
+        if (this._vectorStore) {
+            this._vectorStore.remove(docId);
         }
 
         this.docCount = this.queryCount();
@@ -192,7 +197,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
     private initStores(): void {
         if (this.config.vectorStore) {
             // Externally provided store (e.g. QdrantVectorStore)
-            this.vectorStore = this.config.vectorStore;
+            this._vectorStore = this.config.vectorStore;
             return;
         }
 
@@ -204,7 +209,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
 
         // If explicitly set to brute-force, skip sqlite-vec attempt
         if (forceDriver === "sqlite-brute") {
-            this.vectorStore = new SqliteVectorStore(this.db, {
+            this._vectorStore = new SqliteVectorStore(this.db, {
                 tableName: this.config.tableName,
                 dimensions: this.embedder.dimensions,
             });
@@ -218,7 +223,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
 
             if (vecLoaded) {
                 const { SqliteVecVectorStore } = require("../../stores/sqlite-vec-store");
-                this.vectorStore = new SqliteVecVectorStore(this.db, {
+                this._vectorStore = new SqliteVecVectorStore(this.db, {
                     tableName: this.config.tableName,
                     dimensions: this.embedder.dimensions,
                 });
@@ -228,7 +233,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
             if (forceDriver === "sqlite-vec") {
                 throw new Error(
                     "vectorDriver is set to 'sqlite-vec' but the sqlite-vec extension failed to load. " +
-                        "Install it with: bun add sqlite-vec",
+                        "Install it with: bun add sqlite-vec"
                 );
             }
         } catch (err) {
@@ -240,7 +245,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         }
 
         // Fallback to brute-force
-        this.vectorStore = new SqliteVectorStore(this.db, {
+        this._vectorStore = new SqliteVectorStore(this.db, {
             tableName: this.config.tableName,
             dimensions: this.embedder.dimensions,
         });
@@ -259,14 +264,14 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
             values
         );
 
-        if (this.embedder && this.vectorStore && this.config.schema.vectorField) {
+        if (this.embedder && this._vectorStore && this.config.schema.vectorField) {
             const textForEmbed = String(doc[this.config.schema.vectorField] ?? "");
 
             if (textForEmbed) {
                 this.embedder
                     .embed(textForEmbed)
                     .then((result) => {
-                        this.vectorStore!.store(docId, result.vector);
+                        this._vectorStore!.store(docId, result.vector);
                     })
                     .catch(() => {
                         // Embedding failure is non-fatal
@@ -341,7 +346,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         limit: number,
         filters?: { sql: string; params: Array<string | number> }
     ): Promise<SearchResult<TDoc>[]> {
-        if (!this.vectorStore) {
+        if (!this._vectorStore) {
             throw new Error("Vector search requires an embedder or a pre-computed embedding");
         }
 
@@ -358,7 +363,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
             queryVec = queryResult.vector;
         }
 
-        const hits = this.vectorStore.search(queryVec, filters ? limit * 5 : limit);
+        const hits = this._vectorStore.search(queryVec, filters ? limit * 5 : limit);
 
         const filterClause = filters?.sql ? ` AND ${filters.sql}` : "";
         const filterParams = filters?.params ?? [];
@@ -454,10 +459,10 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         weights?: { text: number; vector: number };
     }): Promise<SearchResult<TDoc>[]> {
         // If using Qdrant with hybrid capability, use server-side RRF
-        if (this.vectorStore && this.embedder && "searchHybridAsync" in this.vectorStore) {
+        if (this._vectorStore && this.embedder && "searchHybridAsync" in this._vectorStore) {
             try {
                 const queryResult = await this.embedder.embed(opts.vectorQuery ?? opts.query);
-                const qdrantStore = this.vectorStore as {
+                const qdrantStore = this._vectorStore as {
                     searchHybridAsync(searchOpts: {
                         queryVector: Float32Array;
                         queryText: string;
@@ -476,9 +481,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
 
                 for (const hit of hits) {
                     const doc = this.db
-                        .query(
-                            `SELECT c.* FROM ${this.contentTableName} c WHERE c.${this.config.schema.idField} = ?`,
-                        )
+                        .query(`SELECT c.* FROM ${this.contentTableName} c WHERE c.${this.config.schema.idField} = ?`)
                         .get(hit.docId) as TDoc | null;
 
                     if (doc) {

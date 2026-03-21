@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { acquireLock, type LockHandle } from "@app/utils/fs/lock";
 import { SafeJSON } from "@app/utils/json";
@@ -248,9 +248,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
 
     // Determine which embedding table to check for unembedded queries.
     // When sqlite-vec is active, embeddings are in the _vec table.
-    const vecTableExists = !!db
-        .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
-        .get(vecTable);
+    const vecTableExists = !!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(vecTable);
     const activeEmbTable = vecTableExists ? vecTable : embTable;
 
     // Cache embeddings table existence (B11)
@@ -287,7 +285,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 }
 
                 if (embeddings && embeddings.size > 0) {
-                    const vectorStore = fts["vectorStore"] as VectorStore | undefined;
+                    const vectorStore = fts.getVectorStore();
 
                     if (qdrantStore) {
                         // Qdrant: store with text for hybrid search
@@ -340,9 +338,11 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
             });
             tx();
 
-            if (fts["vectorStore"]) {
+            const vectorStoreForRemoval = fts.getVectorStore();
+
+            if (vectorStoreForRemoval) {
                 for (const id of chunkIds) {
-                    fts["vectorStore"].remove(id);
+                    vectorStoreForRemoval.remove(id);
                 }
             }
         },
@@ -355,7 +355,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
 
             const rows = db
                 .query(
-                    `SELECT c.id FROM ${contentTable} c LEFT JOIN ${activeEmbTable} e ON c.id = e.doc_id WHERE e.doc_id IS NULL`,
+                    `SELECT c.id FROM ${contentTable} c LEFT JOIN ${activeEmbTable} e ON c.id = e.doc_id WHERE e.doc_id IS NULL`
                 )
                 .all() as Array<{ id: string }>;
             return rows.map((r) => r.id);
@@ -369,7 +369,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
 
             const row = db
                 .query(
-                    `SELECT COUNT(*) AS cnt FROM ${contentTable} c WHERE NOT EXISTS (SELECT 1 FROM ${activeEmbTable} e WHERE e.doc_id = c.id)`,
+                    `SELECT COUNT(*) AS cnt FROM ${contentTable} c WHERE NOT EXISTS (SELECT 1 FROM ${activeEmbTable} e WHERE e.doc_id = c.id)`
                 )
                 .get() as { cnt: number };
             return row.cnt;
@@ -385,7 +385,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
 
             return db
                 .query(
-                    `SELECT c.id, c.content FROM ${contentTable} c WHERE NOT EXISTS (SELECT 1 FROM ${activeEmbTable} e WHERE e.doc_id = c.id) LIMIT ?`,
+                    `SELECT c.id, c.content FROM ${contentTable} c WHERE NOT EXISTS (SELECT 1 FROM ${activeEmbTable} e WHERE e.doc_id = c.id) LIMIT ?`
                 )
                 .all(limit) as Array<{ id: string; content: string }>;
         },
@@ -468,7 +468,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     const placeholders = batch.map(() => "?").join(",");
                     db.run(
                         `DELETE FROM ${activeEmbTable} WHERE doc_id IN (SELECT id FROM ${contentTable} WHERE source_id IN (${placeholders}))`,
-                        batch,
+                        batch
                     );
                 }
             });
@@ -577,16 +577,25 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         },
 
         getAllFileContents(): Map<string, string> {
-            const rows = db.query(`SELECT filePath, content FROM ${contentTable}`).all() as Array<{
+            // Get distinct file paths from the content table
+            const rows = db.query(`SELECT DISTINCT filePath FROM ${contentTable}`).all() as Array<{
                 filePath: string;
-                content: string;
             }>;
             const result = new Map<string, string>();
+            const baseDir = config.baseDir;
 
             for (const row of rows) {
-                // Deduplicate by filePath (chunks share the same filePath)
-                if (!result.has(row.filePath)) {
-                    result.set(row.filePath, row.content);
+                if (result.has(row.filePath)) {
+                    continue;
+                }
+
+                const absPath = isAbsolute(row.filePath) ? row.filePath : resolve(baseDir, row.filePath);
+
+                try {
+                    const content = readFileSync(absPath, "utf-8");
+                    result.set(row.filePath, content);
+                } catch {
+                    // File may have been deleted since indexing — skip
                 }
             }
 

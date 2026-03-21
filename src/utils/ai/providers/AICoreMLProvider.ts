@@ -40,6 +40,7 @@ export class AICoreMLProvider implements AIProvider, AIEmbeddingProvider {
     readonly dimensions: number;
     private options: AICoreMLProviderOptions;
     private loaded = false;
+    private loadingPromise: Promise<DarwinKitWithCoreML> | null = null;
     private darwinkit: DarwinKitWithCoreML | null = null;
 
     constructor(options: AICoreMLProviderOptions) {
@@ -55,6 +56,7 @@ export class AICoreMLProvider implements AIProvider, AIEmbeddingProvider {
         return SUPPORTED_TASKS.includes(task);
     }
 
+    // Model is configured at construction time via options, not per-call
     async embed(text: string, _options?: EmbedOptions): Promise<EmbeddingResult> {
         const dk = await this.ensureLoaded();
 
@@ -81,11 +83,23 @@ export class AICoreMLProvider implements AIProvider, AIEmbeddingProvider {
         };
     }
 
-    private async ensureLoaded(): Promise<DarwinKitWithCoreML> {
+    private ensureLoaded(): Promise<DarwinKitWithCoreML> {
         if (this.darwinkit && this.loaded) {
-            return this.darwinkit;
+            return Promise.resolve(this.darwinkit);
         }
 
+        if (this.loadingPromise) {
+            return this.loadingPromise;
+        }
+
+        this.loadingPromise = this.loadModel().finally(() => {
+            this.loadingPromise = null;
+        });
+
+        return this.loadingPromise;
+    }
+
+    private async loadModel(): Promise<DarwinKitWithCoreML> {
         const { getDarwinKit } = await import("@app/utils/macos/darwinkit");
         this.darwinkit = getDarwinKit() as unknown as DarwinKitWithCoreML;
 

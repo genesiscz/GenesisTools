@@ -12,7 +12,7 @@ export interface QdrantClientLike {
                 vector: Record<string, unknown>;
                 payload?: Record<string, unknown>;
             }>;
-        },
+        }
     ): Promise<void>;
     delete(collection: string, opts: { points: string[] }): Promise<void>;
     search(
@@ -21,8 +21,23 @@ export interface QdrantClientLike {
             vector: { name: string; vector: number[] };
             limit: number;
             with_payload?: boolean;
-        },
+        }
     ): Promise<Array<{ id: string; score: number; payload?: Record<string, unknown> }>>;
+    query(
+        collection: string,
+        opts: {
+            prefetch: Array<{
+                query: number[] | { text: string; model: string };
+                using: string;
+                limit: number;
+                filter?: Record<string, unknown>;
+            }>;
+            query: { fusion: string };
+            limit: number;
+            with_payload?: boolean;
+            filter?: Record<string, unknown>;
+        }
+    ): Promise<{ points: Array<{ id: string; score: number; payload?: Record<string, unknown> }> }>;
     count(collection: string): Promise<{ count: number }>;
 }
 
@@ -202,34 +217,31 @@ export class QdrantVectorStore implements VectorStore {
         }
 
         const prefetchLimit = Math.max(opts.limit * 3, 30);
-        const activeFilter = opts.filter ?? undefined;
+        const activeFilter = opts.filter;
 
         // Use Qdrant query API with prefetch + RRF fusion
-        const results = await (this.client as unknown as Record<string, Function>).query(
-            this.config.collectionName,
-            {
-                prefetch: [
-                    {
-                        query: Array.from(opts.queryVector),
-                        using: this.vectorName,
-                        limit: prefetchLimit,
-                        filter: activeFilter,
-                    },
-                    {
-                        query: { text: opts.queryText, model: "qdrant/bm25" },
-                        using: "bm25",
-                        limit: prefetchLimit,
-                        filter: activeFilter,
-                    },
-                ],
-                query: { fusion: "rrf" },
-                limit: opts.limit,
-                with_payload: true,
-                filter: activeFilter,
-            },
-        );
+        const results = await this.client.query(this.config.collectionName, {
+            prefetch: [
+                {
+                    query: Array.from(opts.queryVector),
+                    using: this.vectorName,
+                    limit: prefetchLimit,
+                    filter: activeFilter,
+                },
+                {
+                    query: { text: opts.queryText, model: "qdrant/bm25" },
+                    using: "bm25",
+                    limit: prefetchLimit,
+                    filter: activeFilter,
+                },
+            ],
+            query: { fusion: "rrf" },
+            limit: opts.limit,
+            with_payload: true,
+            filter: activeFilter,
+        });
 
-        return results.points.map((r: { id: string; score: number }) => ({
+        return results.points.map((r) => ({
             docId: String(r.id),
             score: r.score,
         }));

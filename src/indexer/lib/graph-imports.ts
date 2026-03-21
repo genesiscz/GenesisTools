@@ -9,19 +9,6 @@ export interface ImportInfo {
 
 type AstRoot = ReturnType<ReturnType<typeof parse>["root"]>;
 
-function getLangForExtension(ext: string): Lang | null {
-    const map: Record<string, Lang> = {
-        ".ts": Lang.TypeScript,
-        ".tsx": Lang.Tsx,
-        ".js": Lang.JavaScript,
-        ".jsx": Lang.JavaScript,
-        ".mjs": Lang.JavaScript,
-        ".cjs": Lang.JavaScript,
-    };
-
-    return map[ext] ?? null;
-}
-
 /** Extract JS/TS imports from an ast-grep root node */
 function extractJsTsImports(root: AstRoot): ImportInfo[] {
     const imports: ImportInfo[] = [];
@@ -119,26 +106,6 @@ function extractGoImports(source: string): ImportInfo[] {
 }
 
 /**
- * Detect language from file extension.
- * Returns null for unsupported languages.
- */
-function detectLanguage(ext: string): "typescript" | "python" | "go" | null {
-    if ([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"].includes(ext)) {
-        return "typescript";
-    }
-
-    if (ext === ".py") {
-        return "python";
-    }
-
-    if (ext === ".go") {
-        return "go";
-    }
-
-    return null;
-}
-
-/**
  * Extract import statements from source code.
  * Supports: TypeScript/JavaScript, Python, Go.
  */
@@ -175,24 +142,4 @@ export function extractImports(source: string, language: string): ImportInfo[] {
         default:
             return [];
     }
-}
-
-/**
- * Get the language string from a file extension.
- * Used by buildCodeGraph to determine which extraction mode to use.
- */
-export function getLanguageFromExtension(ext: string): string | null {
-    const lang = detectLanguage(ext);
-
-    if (lang) {
-        return lang;
-    }
-
-    const astLang = getLangForExtension(ext);
-
-    if (astLang === Lang.Tsx) {
-        return "tsx";
-    }
-
-    return lang;
 }
