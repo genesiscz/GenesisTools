@@ -1,14 +1,22 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
+import { acquireLock, type LockHandle } from "@app/utils/fs/lock";
 import { SafeJSON } from "@app/utils/json";
 import { SearchEngine } from "@app/utils/search/drivers/sqlite-fts5/index";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { Storage } from "@app/utils/storage/storage";
 import { deserializeMerkleTree } from "./merkle";
 import { PathHashStore } from "./path-hashes";
-import { emptyStats, type ChunkRecord, type IndexConfig, type IndexMeta, type IndexStats, type MerkleNode } from "./types";
+import {
+    type ChunkRecord,
+    emptyStats,
+    type IndexConfig,
+    type IndexMeta,
+    type IndexStats,
+    type MerkleNode,
+} from "./types";
 
 export interface IndexStore {
     insertChunks(chunks: ChunkRecord[], embeddings?: Map<string, Float32Array>): Promise<void>;
@@ -34,10 +42,12 @@ export interface IndexStore {
     getContentCount(): number;
     getEmbeddingCount(): number;
     getMeta(): IndexMeta;
-    updateMeta(updates: Partial<Pick<IndexMeta, "lastSyncAt" | "stats" | "indexEmbedding" | "searchEmbedding">>): void;
+    updateMeta(updates: Partial<Pick<IndexMeta, "lastSyncAt" | "stats" | "indexEmbedding" | "searchEmbedding" | "indexingStatus">>): void;
     getPathHashStore(): PathHashStore;
     /** Run PRAGMA integrity_check on the underlying SQLite database */
     checkIntegrity(): string;
+    /** Get all file contents from the content table (for graph building) */
+    getAllFileContents(): Map<string, string>;
     logSearch(entry: { query: string; mode: string; resultsCount: number; durationMs: number }): void;
     close(): Promise<void>;
 }
@@ -169,28 +179,26 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         db.run("INSERT INTO index_meta (key, value) VALUES (?, ?)", ["meta", SafeJSON.stringify(initialMeta)]);
     }
 
-    // Advisory lock — prevent concurrent processes from corrupting the index
+    // Cross-process lock via proper-lockfile (stale detection + auto-refresh)
     const lockPath = join(indexDir, "index.lock");
+    let lockHandle: LockHandle;
 
-    if (existsSync(lockPath)) {
-        const pid = readFileSync(lockPath, "utf-8").trim();
-
-        try {
-            process.kill(parseInt(pid, 10), 0);
+    try {
+        lockHandle = await acquireLock(lockPath, {
+            staleMs: 120_000,
+            updateMs: 30_000,
+            retries: 0,
+        });
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ELOCKED") {
             throw new Error(
-                `Index "${config.name}" is locked by another process (PID ${pid}). ` +
-                    `If this is stale, delete ${lockPath}`
+                `Index "${config.name}" is locked by another process. ` +
+                    `If this is stale, it will auto-expire in 2 minutes.`
             );
-        } catch (err) {
-            if ((err as NodeJS.ErrnoException).code === "ESRCH") {
-                rmSync(lockPath);
-            } else {
-                throw err;
-            }
         }
-    }
 
-    writeFileSync(lockPath, String(process.pid));
+        throw err;
+    }
 
     const fts = SearchEngine.fromDatabase<ChunkDoc>(db, {
         tableName,
@@ -207,9 +215,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
     const embTable = `${tableName}_embeddings`;
 
     // Cache embeddings table existence (B11)
-    let embTableExists = !!db
-        .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
-        .get(embTable);
+    let embTableExists = !!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(embTable);
 
     // Run source_id column migration once at store creation (B3)
     const contentTableExists = db
@@ -217,9 +223,9 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         .get(contentTable) as { name: string } | null;
 
     if (contentTableExists) {
-        const hasSourceId = (
-            db.query(`PRAGMA table_info(${contentTable})`).all() as Array<{ name: string }>
-        ).some((col) => col.name === "source_id");
+        const hasSourceId = (db.query(`PRAGMA table_info(${contentTable})`).all() as Array<{ name: string }>).some(
+            (col) => col.name === "source_id"
+        );
 
         if (!hasSourceId) {
             db.run(`ALTER TABLE ${contentTable} ADD COLUMN source_id TEXT DEFAULT ''`);
@@ -468,7 +474,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         },
 
         updateMeta(
-            updates: Partial<Pick<IndexMeta, "lastSyncAt" | "stats" | "indexEmbedding" | "searchEmbedding">>
+            updates: Partial<Pick<IndexMeta, "lastSyncAt" | "stats" | "indexEmbedding" | "searchEmbedding" | "indexingStatus">>
         ): void {
             const current = readMeta(db, config, createdAt);
 
@@ -488,6 +494,10 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 current.searchEmbedding = updates.searchEmbedding;
             }
 
+            if (updates.indexingStatus !== undefined) {
+                current.indexingStatus = updates.indexingStatus;
+            }
+
             db.run("INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)", [
                 "meta",
                 SafeJSON.stringify(current),
@@ -503,6 +513,23 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
             return result.integrity_check;
         },
 
+        getAllFileContents(): Map<string, string> {
+            const rows = db.query(`SELECT filePath, content FROM ${contentTable}`).all() as Array<{
+                filePath: string;
+                content: string;
+            }>;
+            const result = new Map<string, string>();
+
+            for (const row of rows) {
+                // Deduplicate by filePath (chunks share the same filePath)
+                if (!result.has(row.filePath)) {
+                    result.set(row.filePath, row.content);
+                }
+            }
+
+            return result;
+        },
+
         logSearch(entry: { query: string; mode: string; resultsCount: number; durationMs: number }): void {
             db.run(
                 "INSERT INTO search_log (query, mode, results_count, duration_ms, searched_at) VALUES (?, ?, ?, ?, ?)",
@@ -513,12 +540,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         async close(): Promise<void> {
             await fts.close();
             db.close();
-
-            try {
-                rmSync(lockPath);
-            } catch {
-                // Lock may already be removed
-            }
+            await lockHandle.release();
         },
     };
 

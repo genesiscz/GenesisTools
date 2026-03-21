@@ -2,6 +2,29 @@ import type { AIEmbeddingProvider, AIProvider, AITask, EmbeddingResult, EmbedOpt
 
 const SUPPORTED_TASKS: AITask[] = ["embed"];
 
+// CoreML namespace types — implemented in DarwinKit Swift binary but not yet in published @genesiscz/darwinkit types
+interface CoreMLEmbedResult {
+    vector: number[];
+    dimensions: number;
+}
+
+interface CoreMLNamespace {
+    loadModel(params: {
+        id: string;
+        path: string;
+        compute_units?: string;
+        warm_up?: boolean;
+    }): Promise<void>;
+    loadContextual(params: { id: string; language?: string }): Promise<void>;
+    embed(params: { model_id: string; text: string }): Promise<CoreMLEmbedResult>;
+    contextualEmbed(params: { model_id: string; text: string }): Promise<CoreMLEmbedResult>;
+    unloadModel(params: { id: string }): Promise<void>;
+}
+
+interface DarwinKitWithCoreML {
+    coreml: CoreMLNamespace;
+}
+
 interface AICoreMLProviderOptions {
     /** User-assigned model ID for DarwinKit CoreML model cache */
     modelId: string;
@@ -22,7 +45,7 @@ export class AICoreMLProvider implements AIProvider, AIEmbeddingProvider {
     readonly dimensions: number;
     private options: AICoreMLProviderOptions;
     private loaded = false;
-    private darwinkit: ReturnType<typeof import("@app/utils/macos/darwinkit").getDarwinKit> | null = null;
+    private darwinkit: DarwinKitWithCoreML | null = null;
 
     constructor(options: AICoreMLProviderOptions) {
         this.options = options;
@@ -63,13 +86,13 @@ export class AICoreMLProvider implements AIProvider, AIEmbeddingProvider {
         };
     }
 
-    private async ensureLoaded() {
+    private async ensureLoaded(): Promise<DarwinKitWithCoreML> {
         if (this.darwinkit && this.loaded) {
             return this.darwinkit;
         }
 
         const { getDarwinKit } = await import("@app/utils/macos/darwinkit");
-        this.darwinkit = getDarwinKit();
+        this.darwinkit = getDarwinKit() as unknown as DarwinKitWithCoreML;
 
         if (this.options.contextual) {
             await this.darwinkit.coreml.loadContextual({
@@ -91,9 +114,7 @@ export class AICoreMLProvider implements AIProvider, AIEmbeddingProvider {
 
     dispose(): void {
         if (this.darwinkit && this.loaded) {
-            this.darwinkit.coreml
-                .unloadModel({ id: this.options.modelId })
-                .catch(() => {});
+            this.darwinkit.coreml.unloadModel({ id: this.options.modelId }).catch(() => {});
         }
     }
 }

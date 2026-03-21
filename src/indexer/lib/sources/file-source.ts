@@ -60,38 +60,32 @@ export class FileSource implements IndexerSource {
             filePaths = filePaths.slice(0, scanOpts.limit);
         }
 
-        const entries: SourceEntry[] = [];
         const total = filePaths.length;
         const batchSize = scanOpts?.batchSize ?? 500;
+
+        const readResults = await concurrentMap({
+            items: filePaths,
+            fn: async (filePath) => {
+                const content = await Bun.file(filePath).text();
+                return { id: filePath, content, path: filePath } as SourceEntry;
+            },
+            concurrency: 50,
+        });
+
+        const entries: SourceEntry[] = [];
         let batch: SourceEntry[] = [];
-        const ioConcurrency = 50;
 
-        // Process in chunks of ioConcurrency for parallel file reads
-        for (let i = 0; i < filePaths.length; i += ioConcurrency) {
-            const chunk = filePaths.slice(i, i + ioConcurrency);
+        for (const [, entry] of readResults) {
+            entries.push(entry);
+            batch.push(entry);
 
-            const readResults = await concurrentMap({
-                items: chunk,
-                fn: async (filePath) => {
-                    const content = await Bun.file(filePath).text();
-                    return { id: filePath, content, path: filePath } as SourceEntry;
-                },
-                concurrency: ioConcurrency,
-            });
-
-            for (const [, entry] of readResults) {
-                entries.push(entry);
-                batch.push(entry);
-
-                if (scanOpts?.onBatch && batch.length >= batchSize) {
-                    await scanOpts.onBatch(batch);
-                    batch = [];
-                }
+            if (scanOpts?.onBatch && batch.length >= batchSize) {
+                await scanOpts.onBatch(batch);
+                batch = [];
             }
 
-            // Report progress for the chunk
             if (scanOpts?.onProgress) {
-                scanOpts.onProgress(Math.min(i + chunk.length, total), total);
+                scanOpts.onProgress(entries.length, total);
             }
         }
 

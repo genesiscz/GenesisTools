@@ -135,16 +135,16 @@ describe("getMaxEmbedChars", () => {
         expect(chars).toBe(1536);
     });
 
-    it("strips Ollama-style tags for fallback lookup", () => {
+    it("strips Ollama-style tags and finds registry entry", () => {
         const chars = getMaxEmbedChars("nomic-embed-text:latest");
-        // 2048 tokens * 3 chars/token (default) = 6144
-        expect(chars).toBe(6144);
+        // Registry: nomic-embed-text has 2048 tokens * 2 chars/token = 4096
+        expect(chars).toBe(4096);
     });
 
-    it("MODEL_CONTEXT_LENGTHS has entries for common models", () => {
-        expect(MODEL_CONTEXT_LENGTHS["nomic-embed-text"]).toBe(2048);
-        expect(MODEL_CONTEXT_LENGTHS["text-embedding-3-small"]).toBe(8191);
-        expect(MODEL_CONTEXT_LENGTHS["all-minilm"]).toBe(256);
+    it("MODEL_CONTEXT_LENGTHS has fallback entries for non-registry models", () => {
+        expect(MODEL_CONTEXT_LENGTHS["snowflake-arctic-embed"]).toBe(512);
+        expect(MODEL_CONTEXT_LENGTHS["text-embedding-3-large"]).toBe(8191);
+        expect(MODEL_CONTEXT_LENGTHS["text-embedding-ada-002"]).toBe(8191);
     });
 });
 
@@ -169,8 +169,7 @@ describe("getTaskPrefix", () => {
         expect(prefix).toBeNull();
     });
 
-    it("TASK_PREFIXES has entries for nomic models", () => {
-        expect(TASK_PREFIXES["nomic-embed-text"]).toBeTruthy();
+    it("TASK_PREFIXES has fallback entries for non-registry models", () => {
         expect(TASK_PREFIXES["nomic-embed-code"]).toBeTruthy();
     });
 });
