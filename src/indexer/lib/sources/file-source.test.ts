@@ -100,7 +100,7 @@ describe("FileSource", () => {
 
         const previousHashes = new Map<string, string>();
         previousHashes.set(
-            "keep.ts",
+            join(tmpDir, "keep.ts"),
             source.hashEntry({
                 id: join(tmpDir, "keep.ts"),
                 content: "unchanged content",
@@ -108,10 +108,10 @@ describe("FileSource", () => {
             })
         );
         previousHashes.set(
-            "modify.ts",
+            join(tmpDir, "modify.ts"),
             source.hashEntry({ id: join(tmpDir, "modify.ts"), content: "old content", path: join(tmpDir, "modify.ts") })
         );
-        previousHashes.set("deleted.ts", "some-old-hash");
+        previousHashes.set(join(tmpDir, "deleted.ts"), "some-old-hash");
 
         const changes = source.detectChanges({
             previousHashes,
@@ -125,10 +125,10 @@ describe("FileSource", () => {
         expect(changes.modified[0].id).toContain("modify.ts");
 
         expect(changes.deleted.length).toBe(1);
-        expect(changes.deleted[0]).toBe("deleted.ts");
+        expect(changes.deleted[0]).toBe(join(tmpDir, "deleted.ts"));
 
         expect(changes.unchanged.length).toBe(1);
-        expect(changes.unchanged[0]).toBe("keep.ts");
+        expect(changes.unchanged[0]).toBe(join(tmpDir, "keep.ts"));
     });
 
     it("detectChanges with full=true treats all entries as added", async () => {
@@ -161,6 +161,23 @@ describe("FileSource", () => {
 
         expect(hash1).toBe(hash2);
         expect(hash1.length).toBeGreaterThan(0); // xxHash64 hex
+    });
+
+    it("scan reads many files concurrently without errors", async () => {
+        tmpDir = mkdtempSync(join(tmpdir(), "filesource-"));
+
+        for (let i = 0; i < 100; i++) {
+            writeFileSync(join(tmpDir, `file${i}.ts`), `export const x${i} = ${i};`);
+        }
+
+        const source = new FileSource({ baseDir: tmpDir });
+        const entries = await source.scan();
+
+        expect(entries.length).toBe(100);
+
+        for (const entry of entries) {
+            expect(entry.content.length).toBeGreaterThan(0);
+        }
     });
 
     it("estimateTotal returns file count", async () => {
