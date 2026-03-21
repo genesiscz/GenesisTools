@@ -1,9 +1,17 @@
 import { describe, expect, it } from "bun:test";
-import { formatModelTable, getModelsForType, MODEL_REGISTRY } from "./model-registry";
+import {
+    formatModelTable,
+    getMaxEmbedChars,
+    getModelsForType,
+    getTaskPrefix,
+    MODEL_CONTEXT_LENGTHS,
+    MODEL_REGISTRY,
+    TASK_PREFIXES,
+} from "./model-registry";
 
 describe("MODEL_REGISTRY", () => {
-    it("contains 8 models", () => {
-        expect(MODEL_REGISTRY.length).toBe(8);
+    it("contains expected number of models", () => {
+        expect(MODEL_REGISTRY.length).toBeGreaterThanOrEqual(8);
     });
 
     it("each model has required fields", () => {
@@ -13,7 +21,7 @@ describe("MODEL_REGISTRY", () => {
             expect(model.dimensions).toBeGreaterThan(0);
             expect(model.bestFor.length).toBeGreaterThan(0);
             expect(["fast", "medium", "slow"]).toContain(model.speed);
-            expect(["local-hf", "cloud", "darwinkit"]).toContain(model.provider);
+            expect(["local-hf", "cloud", "darwinkit", "coreml", "ollama"]).toContain(model.provider);
         }
     });
 
@@ -105,5 +113,64 @@ describe("formatModelTable", () => {
         const table = formatModelTable(MODEL_REGISTRY);
         expect(table).toContain("cloud");
         expect(table).toContain("built-in");
+    });
+});
+
+describe("getMaxEmbedChars", () => {
+    it("returns correct chars for registered model", () => {
+        // nomic-embed-code: 2048 tokens * 2 chars/token = 4096
+        const chars = getMaxEmbedChars("nomic-ai/nomic-embed-code-v1");
+        expect(chars).toBe(4096);
+    });
+
+    it("returns correct chars for OpenAI model", () => {
+        // 8191 tokens * 4 chars/token = 32764
+        const chars = getMaxEmbedChars("text-embedding-3-small");
+        expect(chars).toBe(32764);
+    });
+
+    it("returns fallback for unknown model", () => {
+        const chars = getMaxEmbedChars("totally-unknown-model");
+        // DEFAULT_CONTEXT_LENGTH (512) * DEFAULT_CHARS_PER_TOKEN (3) = 1536
+        expect(chars).toBe(1536);
+    });
+
+    it("strips Ollama-style tags for fallback lookup", () => {
+        const chars = getMaxEmbedChars("nomic-embed-text:latest");
+        // 2048 tokens * 3 chars/token (default) = 6144
+        expect(chars).toBe(6144);
+    });
+
+    it("MODEL_CONTEXT_LENGTHS has entries for common models", () => {
+        expect(MODEL_CONTEXT_LENGTHS["nomic-embed-text"]).toBe(2048);
+        expect(MODEL_CONTEXT_LENGTHS["text-embedding-3-small"]).toBe(8191);
+        expect(MODEL_CONTEXT_LENGTHS["all-minilm"]).toBe(256);
+    });
+});
+
+describe("getTaskPrefix", () => {
+    it("returns prefix for nomic model", () => {
+        const prefix = getTaskPrefix("nomic-ai/nomic-embed-code-v1");
+        expect(prefix).toEqual({ document: "search_document: ", query: "search_query: " });
+    });
+
+    it("returns prefix for Ollama-style nomic", () => {
+        const prefix = getTaskPrefix("nomic-embed-text:latest");
+        expect(prefix).toEqual({ document: "search_document: ", query: "search_query: " });
+    });
+
+    it("returns null for models without prefixes", () => {
+        const prefix = getTaskPrefix("text-embedding-3-small");
+        expect(prefix).toBeNull();
+    });
+
+    it("returns null for unknown models", () => {
+        const prefix = getTaskPrefix("totally-unknown-model");
+        expect(prefix).toBeNull();
+    });
+
+    it("TASK_PREFIXES has entries for nomic models", () => {
+        expect(TASK_PREFIXES["nomic-embed-text"]).toBeTruthy();
+        expect(TASK_PREFIXES["nomic-embed-code"]).toBeTruthy();
     });
 });

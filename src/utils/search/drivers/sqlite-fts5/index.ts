@@ -126,13 +126,21 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         const mode = opts.mode ?? "fulltext";
         const limit = opts.limit ?? 20;
 
+        const vectorText = opts.vectorQuery ?? opts.query;
+
         switch (mode) {
             case "fulltext":
                 return this.bm25Search(opts.query, limit, opts.boost);
             case "vector":
-                return this.cosineSearch(opts.query, limit);
+                return this.cosineSearch(vectorText, limit);
             case "hybrid":
-                return this.hybridSearch(opts.query, limit, opts.boost, opts.hybridWeights);
+                return this.hybridSearch({
+                    query: opts.query,
+                    vectorQuery: vectorText,
+                    limit,
+                    boost: opts.boost,
+                    weights: opts.hybridWeights,
+                });
             default:
                 return this.bm25Search(opts.query, limit, opts.boost);
         }
@@ -324,6 +332,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
     async rrfHybridSearch(opts: {
         query: string;
         queryEmbedding?: Float32Array;
+        vectorQuery?: string;
         limit: number;
         boost?: Record<string, number>;
         weights?: { text: number; vector: number };
@@ -335,7 +344,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
 
         const bm25Results = this.bm25Search(opts.query, 100, opts.boost, opts.filters);
 
-        const vectorQuery = opts.queryEmbedding ?? opts.query;
+        const vectorQuery = opts.queryEmbedding ?? opts.vectorQuery ?? opts.query;
         const vecResults = await this.cosineSearch(vectorQuery, 100, opts.filters);
 
         const scores = new Map<string, { score: number; doc: TDoc }>();
@@ -376,13 +385,20 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
             }));
     }
 
-    private async hybridSearch(
-        query: string,
-        limit: number,
-        boost?: Record<string, number>,
-        weights?: { text: number; vector: number }
-    ): Promise<SearchResult<TDoc>[]> {
-        return this.rrfHybridSearch({ query, limit, boost, weights });
+    private async hybridSearch(opts: {
+        query: string;
+        vectorQuery?: string;
+        limit: number;
+        boost?: Record<string, number>;
+        weights?: { text: number; vector: number };
+    }): Promise<SearchResult<TDoc>[]> {
+        return this.rrfHybridSearch({
+            query: opts.query,
+            vectorQuery: opts.vectorQuery,
+            limit: opts.limit,
+            boost: opts.boost,
+            weights: opts.weights,
+        });
     }
 
     private queryCount(): number {

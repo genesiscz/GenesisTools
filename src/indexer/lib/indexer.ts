@@ -1,11 +1,10 @@
-import { relative, resolve } from "node:path";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { chunkFile } from "./chunker";
 import type { EventName, IndexerCallbacks, IndexerEventMap, SyncStats } from "./events";
 import { IndexerEventEmitter } from "./events";
 import type { ModelInfo } from "./model-registry";
-import { formatModelTable, getModelsForType } from "./model-registry";
+import { formatModelTable, getMaxEmbedChars, getModelsForType, getTaskPrefix } from "./model-registry";
 import { FileSource } from "./sources/file-source";
 import type { IndexerSource, SourceEntry } from "./sources/source";
 import type { IndexStore } from "./store";
@@ -64,8 +63,6 @@ export class EmbeddingSetupError extends Error {
         this.recommendedModels = recommendedModels;
     }
 }
-
-const MAX_EMBED_CHARS = 500;
 
 export class Indexer extends IndexerEventEmitter {
     private store: IndexStore;
@@ -187,15 +184,24 @@ export class Indexer extends IndexerEventEmitter {
         }
 
         const start = performance.now();
+        const searchMode = opts?.mode ?? "fulltext";
+        const modelId = this.config.embedding?.model ?? "darwinkit";
+        const taskPrefix = getTaskPrefix(modelId);
+
         const searchOpts: SearchOptions = {
             query,
-            mode: opts?.mode ?? "fulltext",
+            mode: searchMode,
             limit: opts?.limit ?? 20,
             fields: opts?.fields,
             boost: opts?.boost,
             hybridWeights: opts?.hybridWeights,
             filters: opts?.filters,
         };
+
+        // Apply query prefix for vector/hybrid search on asymmetric models
+        if (taskPrefix && (searchMode === "vector" || searchMode === "hybrid")) {
+            searchOpts.vectorQuery = `${taskPrefix.query}${query}`;
+        }
 
         const results = await this.store.search(searchOpts);
         const durationMs = performance.now() - start;
@@ -350,7 +356,6 @@ export class Indexer extends IndexerEventEmitter {
 
             chunks.push(...result.chunks);
 
-            // Use source's content hash for consistency with detectChanges()
             pathEntries.push({
                 path: entry.id,
                 hash: this.source.hashEntry(entry),
@@ -365,18 +370,6 @@ export class Indexer extends IndexerEventEmitter {
         return { chunks, pathEntries, perEntry };
     }
 
-    /**
-     * Compute the path_hash storage key for an entry.
-     * FileSource uses relative paths; other sources use entry.id directly.
-     */
-    private pathHashKey(entry: SourceEntry): string {
-        if (this.source instanceof FileSource) {
-            return relative(resolve(this.config.baseDir), entry.id);
-        }
-
-        return entry.id;
-    }
-
     /** Find chunk IDs to remove for deleted source paths */
     private resolveDeletedChunks(deletedPaths: string[]): string[] {
         if (deletedPaths.length === 0) {
@@ -384,11 +377,9 @@ export class Indexer extends IndexerEventEmitter {
         }
 
         if (this.source instanceof FileSource) {
-            const lookupPaths = deletedPaths.map((p) => resolve(this.config.baseDir, p));
-            return this.store.getChunkIdsBySourcePaths(lookupPaths);
+            return this.store.getChunkIdsBySourcePaths(deletedPaths);
         }
 
-        // Non-file sources (mail, telegram): look up by source entry ID
         return this.store.getChunkIdsBySourceIds(deletedPaths);
     }
 
@@ -424,6 +415,9 @@ export class Indexer extends IndexerEventEmitter {
             await this.embedder.embed("warmup");
         }
 
+        const modelId = this.config.embedding?.model ?? "darwinkit";
+        const maxEmbedChars = getMaxEmbedChars(modelId);
+        const taskPrefix = getTaskPrefix(modelId);
         const embedStart = performance.now();
         const dbPageSize = 1000;
         let embedded = 0;
@@ -446,7 +440,13 @@ export class Indexer extends IndexerEventEmitter {
                 }
 
                 try {
-                    const result = await this.embedder.embed(c.content.slice(0, MAX_EMBED_CHARS));
+                    let text = c.content.slice(0, maxEmbedChars);
+
+                    if (taskPrefix) {
+                        text = `${taskPrefix.document}${text}`;
+                    }
+
+                    const result = await this.embedder.embed(text);
                     batchEmbeddings.set(c.id, result.vector);
                 } catch {
                     batchEmbeddings.set(c.id, new Float32Array(zeroDims));
@@ -662,7 +662,7 @@ export class Indexer extends IndexerEventEmitter {
                 // Update path_hashes for all processed entries (added + modified)
                 for (const entry of [...changes.added, ...changes.modified]) {
                     const hash = this.source.hashEntry(entry);
-                    pathHashStore.upsert(this.pathHashKey(entry), hash, true);
+                    pathHashStore.upsert(entry.id, hash, true);
                 }
 
                 // Handle deletions
@@ -687,10 +687,14 @@ export class Indexer extends IndexerEventEmitter {
                 embeddingsGenerated = await this.embedUnembeddedChunks(callbacks);
             } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
-                this.emitAndDispatch("sync:error", {
-                    indexName: this.config.name,
-                    error: `Embedding failed (FTS still works): ${msg}`,
-                }, callbacks);
+                this.emitAndDispatch(
+                    "sync:error",
+                    {
+                        indexName: this.config.name,
+                        error: `Embedding failed (FTS still works): ${msg}`,
+                    },
+                    callbacks
+                );
             }
 
             // ── FINALIZE ─────────────────────────────────────────────
@@ -708,12 +712,13 @@ export class Indexer extends IndexerEventEmitter {
                 durationMs,
             };
 
+            const embeddingModelId = this.config.embedding?.model ?? "darwinkit";
             const embeddingModelInfo = this.embedder
                 ? {
                       model: this.config.embedding?.model ?? "unknown",
                       provider: this.config.embedding?.provider ?? "unknown",
                       dimensions: this.embedder.dimensions,
-                      maxEmbedChars: MAX_EMBED_CHARS,
+                      maxEmbedChars: getMaxEmbedChars(embeddingModelId),
                   }
                 : undefined;
 

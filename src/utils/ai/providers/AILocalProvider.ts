@@ -210,6 +210,32 @@ export class AILocalProvider
         return { vector: new Float32Array(data), dimensions: data.length };
     }
 
+    async embedBatch(texts: string[], options?: EmbedOptions): Promise<EmbeddingResult[]> {
+        if (texts.length === 0) {
+            return [];
+        }
+
+        const model = options?.model ?? "Xenova/all-MiniLM-L6-v2";
+        const pipe = await this.getPipeline("feature-extraction", model);
+
+        // transformers.js feature-extraction pipeline accepts string[]
+        const result = await pipe(texts, { pooling: "mean", normalize: true });
+
+        // Result shape: { data: Float32Array, dims: [batchSize, hiddenSize] } (with pooling)
+        const data = (result as { data: Float32Array; dims: number[] }).data;
+        const dims = (result as { data: Float32Array; dims: number[] }).dims;
+        const hiddenSize = dims[dims.length - 1];
+        const results: EmbeddingResult[] = [];
+
+        for (let i = 0; i < texts.length; i++) {
+            const offset = i * hiddenSize;
+            const vector = new Float32Array(data.buffer, data.byteOffset + offset * 4, hiddenSize);
+            results.push({ vector: new Float32Array(vector), dimensions: hiddenSize });
+        }
+
+        return results;
+    }
+
     private async getPipeline(task: PipelineType, model: string, onProgress?: OnProgress): Promise<PipelineInstance> {
         const key = `${task}:${model}`;
         const existing = this.pipelines.get(key);
