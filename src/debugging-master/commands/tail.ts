@@ -30,10 +30,15 @@ export function registerTailCommand(program: Command): void {
             const lastCount = parseInt(opts.n, 10);
             const multiSession = sessionNames.length > 1;
 
-            const allEntries: Array<IndexedLogEntry & { session: string }> = [];
+            const entriesBySession = new Map<string, LogEntry[]>();
 
             for (const sessionName of sessionNames) {
-                const raw = await sm.readEntries(sessionName);
+                entriesBySession.set(sessionName, await sm.readEntries(sessionName));
+            }
+
+            const allEntries: Array<IndexedLogEntry & { session: string }> = [];
+
+            for (const [sessionName, raw] of entriesBySession) {
                 let existing = indexEntries(raw);
 
                 if (levels) {
@@ -53,7 +58,7 @@ export function registerTailCommand(program: Command): void {
                     `Tailing ${sessionNames.length} sessions: ${sessionNames.join(", ")} (showing last ${tail.length})`
                 );
             } else {
-                const raw = await sm.readEntries(sessionNames[0]);
+                const raw = entriesBySession.get(sessionNames[0])!;
                 console.log(`Tailing session: ${sessionNames[0]} (${raw.length} entries, showing last ${tail.length})`);
             }
 
@@ -80,7 +85,7 @@ export function registerTailCommand(program: Command): void {
 
             for (const sessionName of sessionNames) {
                 const filePath = await sm.getSessionPath(sessionName);
-                const raw = await sm.readEntries(sessionName);
+                const raw = entriesBySession.get(sessionName)!;
                 let offset = 0;
 
                 try {

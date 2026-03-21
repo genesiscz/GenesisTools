@@ -266,14 +266,15 @@ export class SessionManager {
             return [names[0]];
         }
 
+        const allMeta: Array<{ name: string; meta: SessionMeta | null }> = [];
+
+        for (const name of names) {
+            const meta = await this.getSessionMeta(name);
+            allMeta.push({ name, meta });
+        }
+
         if (process.stdout.isTTY) {
             const { multiselect } = await import("@clack/prompts");
-            const allMeta: Array<{ name: string; meta: SessionMeta | null }> = [];
-
-            for (const name of names) {
-                const meta = await this.getSessionMeta(name);
-                allMeta.push({ name, meta });
-            }
 
             const now = Date.now();
             const options = allMeta.map(({ name, meta }) => {
@@ -297,13 +298,6 @@ export class SessionManager {
             }
 
             return selected as string[];
-        }
-
-        const allMeta: Array<{ name: string; meta: SessionMeta | null }> = [];
-
-        for (const name of names) {
-            const meta = await this.getSessionMeta(name);
-            allMeta.push({ name, meta });
         }
 
         const now = Date.now();
