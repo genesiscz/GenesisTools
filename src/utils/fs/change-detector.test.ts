@@ -95,9 +95,9 @@ describe("detectChangesPreHashed", () => {
         ]);
 
         const current = new Map([
-            ["a.ts", "hash-111"],       // unchanged
-            ["b.ts", "hash-modified"],   // modified
-            ["d.ts", "hash-444"],        // added
+            ["a.ts", "hash-111"], // unchanged
+            ["b.ts", "hash-modified"], // modified
+            ["d.ts", "hash-444"], // added
         ]);
 
         const result = detectChangesPreHashed(current, previous);

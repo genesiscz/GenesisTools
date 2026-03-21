@@ -18,7 +18,7 @@
 | Truncation | Hardcoded `MAX_EMBED_CHARS = 500` | Model-aware: 2048 tokens for nomic, 8191 for OpenAI |
 | Task prefixes | None | `search_document:` / `search_query:` for asymmetric models |
 | Retry | Single warmup retry | Exponential backoff, rate-limit aware |
-| GPU support | DarwinKit only (NLFramework) | Ollama (Metal/CUDA), DarwinKit, HF |
+| GPU support | DarwinKit only (NLFramework) | Ollama (Metal/CUDA), DarwinKit CoreML batch, HF |
 | File I/O | Sequential reads in FileSource | Parallel reads (50 concurrent) |
 
 ### Key Files
@@ -27,7 +27,7 @@
 - `src/utils/ai/tasks/Embedder.ts` — Embedder class (add batch-aware logic)
 - `src/utils/ai/providers/AICloudProvider.ts` — OpenAI provider (native batch)
 - `src/utils/ai/providers/AILocalProvider.ts` — HuggingFace provider (array input)
-- `src/utils/ai/providers/AIDarwinKitProvider.ts` — DarwinKit (sequential fallback)
+- `src/utils/ai/providers/AIDarwinKitProvider.ts` — DarwinKit (CoreML GPU batch with NLP fallback)
 - `src/utils/ai/providers/AIOllamaProvider.ts` — **NEW** Ollama provider
 - `src/indexer/lib/indexer.ts` — `embedUnembeddedChunks()` (rewrite for batch)
 - `src/indexer/lib/model-registry.ts` — `ModelInfo` (add contextLength, taskPrefix)
@@ -295,7 +295,7 @@ git commit -m "feat(indexer): add benchmark command for performance measurement"
 
 ### Step 1.1: Add `embedBatch` to the interface
 
-Modify `src/utils/ai/types.ts` — add `embedBatch` as an optional method on `AIEmbeddingProvider`:
+Modify `src/utils/ai/types.ts` — add `embedBatch` as an **optional** method on `AIEmbeddingProvider`:
 
 ```typescript
 export interface AIEmbeddingProvider extends AIProvider {
@@ -645,30 +645,72 @@ git commit -m "feat(ai): implement embedBatch() in AILocalProvider (HF transform
 **Files:**
 - Modify: `src/utils/ai/providers/AIDarwinKitProvider.ts`
 
-### Step 4.1: Add sequential `embedBatch()` fallback
+### Context: New CoreML Batch Endpoints (Parallel DarwinKit Work)
 
-DarwinKit's NLFramework Swift bridge doesn't support batch embedding natively. Implement as a sequential loop (still satisfies the interface so `Embedder.embedBatch()` doesn't need to special-case):
+A parallel session on the darwinkit-swift repo is adding CoreML batch embedding endpoints:
+- `darwinkit.coreml.embedBatch({ model_id, texts })` — batch NLEmbedding
+- `darwinkit.coreml.embedContextualBatch({ model_id, texts })` — batch contextual (BERT) embedding
+
+These route to Metal GPU / Neural Engine, so this is **real GPU-accelerated batch embedding**, not just Promise.all over sequential calls.
+
+### Step 4.1: Add `embedBatch()` with CoreML batch -> NLP sequential fallback
+
+The implementation tries the new CoreML batch endpoints first (for GPU acceleration), and falls back to sequential `nlp.embedText()` calls for older DarwinKit versions that don't have the batch endpoints yet.
+
+Add this method after the existing `embed()` method in `AIDarwinKitProvider`:
 
 ```typescript
 async embedBatch(texts: string[], options?: EmbedOptions): Promise<EmbeddingResult[]> {
+    if (texts.length === 0) {
+        return [];
+    }
+
+    const language = options?.language ?? "en";
+
+    // Try CoreML batch endpoint first (GPU/Neural Engine accelerated)
+    try {
+        const nlp = await this.getNlp();
+
+        if ("embedContextualBatch" in nlp) {
+            // New DarwinKit with CoreML contextual batch support
+            const batchResult = await (nlp as { embedContextualBatch: (texts: string[], lang: string) => Promise<Array<{ vector: number[]; dimension: number }>> }).embedContextualBatch(texts, language);
+            return batchResult.map((r) => ({
+                vector: new Float32Array(r.vector),
+                dimensions: r.dimension,
+            }));
+        }
+
+        if ("embedBatch" in nlp) {
+            // NLEmbedding batch variant
+            const batchResult = await (nlp as { embedBatch: (texts: string[], lang: string) => Promise<Array<{ vector: number[]; dimension: number }>> }).embedBatch(texts, language);
+            return batchResult.map((r) => ({
+                vector: new Float32Array(r.vector),
+                dimensions: r.dimension,
+            }));
+        }
+    } catch {
+        // Batch endpoints not available or failed — fall through to sequential
+    }
+
+    // Sequential fallback for older DarwinKit versions
     const results: EmbeddingResult[] = [];
 
     for (const text of texts) {
-        results.push(await this.embed(text, options));
+        results.push(await this.embed(text, { ...options, language }));
     }
 
     return results;
 }
 ```
 
-Add this method after the existing `embed()` method in `AIDarwinKitProvider`.
+**Important:** The `"embedContextualBatch" in nlp` check ensures backward compatibility. When the new DarwinKit Swift bridge is deployed, this code will automatically use GPU-accelerated batch embedding. Until then, it falls back to sequential NLFramework calls.
 
 ### Step 4.2: Type-check and commit
 
 ```bash
 tsgo --noEmit 2>&1 | head -20
 git add src/utils/ai/providers/AIDarwinKitProvider.ts
-git commit -m "feat(ai): add embedBatch() to AIDarwinKitProvider (sequential fallback)"
+git commit -m "feat(ai): add embedBatch() to AIDarwinKitProvider (CoreML GPU batch with NLP sequential fallback)"
 ```
 
 ---
@@ -991,44 +1033,35 @@ if (taskPrefix) {
 
 ### Step 6.3: Apply query prefix in search()
 
-Modify the `search()` method in `src/indexer/lib/indexer.ts`. Before embedding the query, prepend the query prefix:
+Modify the `search()` method in `src/indexer/lib/indexer.ts`. Before embedding the query, prepend the query prefix.
+
+The actual query embedding happens in the search engine / store layer. The implementer should trace the call from `indexer.search()` -> `store.search()` -> wherever `embedder.embed(query)` is called, and apply the prefix there.
+
+**Important:** The prefix must only be applied to the **vector embedding** of the query, NOT to the BM25/FTS query. In hybrid mode, FTS and vector may use different query strings:
 
 ```typescript
-// In the search method, before embedding the query for vector search:
-// Look for where embedder.embed(query) is called and wrap it:
-
+// In Indexer.search(), before passing to store:
 const modelId = this.config.embedding?.model ?? "darwinkit";
 const taskPrefix = getTaskPrefix(modelId);
-const queryText = taskPrefix ? `${taskPrefix.query}${query}` : query;
-// Use queryText instead of query when calling embedder.embed()
-```
 
-Note: The actual query embedding happens in the search engine / store layer. Check `src/indexer/lib/store.ts` and `src/utils/search/` to find where the query is embedded for vector search, and apply the prefix there. The exact location will depend on how the store passes the query to the embedder. The implementer should trace the call from `indexer.search()` -> `store.search()` -> wherever `embedder.embed(query)` is called.
-
-If the embed call happens in `store.search()`, the cleanest approach is to pass the prefix info through the search options:
-
-```typescript
-// In store's search, check for queryPrefix in search options
+// For vector search: add query prefix
+// For FTS search: use original query (no prefix)
 const searchOpts: SearchOptions = {
-    query,
-    // ... other opts
-    queryPrefix: taskPrefix?.query,
+    query,                    // Used for FTS (BM25)
+    mode: opts?.mode ?? "fulltext",
+    limit: opts?.limit ?? 20,
+    // ...other opts
 };
+
+// If vector/hybrid mode and we have a prefix, modify the vector query
+if (taskPrefix && (searchOpts.mode === "vector" || searchOpts.mode === "hybrid")) {
+    searchOpts.vectorQuery = `${taskPrefix.query}${query}`;
+}
 ```
 
-Or modify the query text before passing it to search:
-
-```typescript
-// In Indexer.search(), modify the query before passing to store:
-const effectiveQuery = taskPrefix ? `${taskPrefix.query}${query}` : query;
-const results = await this.store.search({
-    ...searchOpts,
-    query: effectiveQuery,  // For vector search
-    originalQuery: query,   // For FTS (no prefix for BM25)
-});
-```
-
-The exact implementation depends on how the search layer handles hybrid mode — if FTS and vector use the same query string, we need to ensure the prefix is only applied to the vector embedding, not to the BM25 query. Check the search engine code and implement accordingly.
+If the store's search engine doesn't support separate `vectorQuery`, an alternative is:
+- Add `vectorQuery?: string` to `SearchOptions` in `src/utils/search/types.ts`
+- Have the search engine use `vectorQuery` for embedding when present, fall back to `query`
 
 ### Step 6.4: Add tests
 
@@ -1229,7 +1262,7 @@ export class AIOllamaProvider implements AIProvider, AIEmbeddingProvider {
 
         if (!resp.ok) {
             const body = await resp.text();
-            throw new Error(`Ollama /api/embed failed: ${resp.status} ${resp.statusText} — ${body}`);
+            throw new Error(`Ollama /api/embed failed: ${resp.status} ${resp.statusText} -- ${body}`);
         }
 
         const data = (await resp.json()) as OllamaEmbedResponse;
@@ -1241,7 +1274,7 @@ export class AIOllamaProvider implements AIProvider, AIEmbeddingProvider {
     }
 
     dispose(): void {
-        // No resources to clean up — stateless HTTP client
+        // No resources to clean up -- stateless HTTP client
     }
 }
 ```
@@ -1369,7 +1402,6 @@ describe("AIOllamaProvider", () => {
         });
 
         expect(provider.type).toBe("ollama");
-        // Verify it stored the options (indirectly via typeof)
         expect(typeof provider.embed).toBe("function");
         expect(typeof provider.embedBatch).toBe("function");
     });
@@ -1431,9 +1463,11 @@ git commit -m "feat(ai): add Ollama embedding provider with native batch support
 - Modify: `src/utils/ai/tasks/Embedder.ts` (wrap calls in retry)
 - Create: `src/utils/async.test.ts` (or add to existing)
 
-### Step 8.1: Enhance the existing `retry()` with rate-limit detection
+### Step 8.1: Enhance the existing `retry()` with custom delay support
 
-The existing `retry()` in `src/utils/async.ts` already supports exponential backoff. We need to add a `getDelay` option for custom delay logic. Add `getDelay` to `RetryOptions`:
+The existing `retry()` in `src/utils/async.ts` already supports exponential backoff. We need to add a `getDelay` option for custom delay logic (e.g., rate-limit-aware backoff).
+
+Add `getDelay` to `RetryOptions`:
 
 ```typescript
 interface RetryOptions {
@@ -1477,7 +1511,7 @@ if (opts.getDelay) {
 }
 ```
 
-And add a helper factory:
+And add a helper factory after the `retry` function:
 
 ```typescript
 /**
@@ -1514,7 +1548,7 @@ Modify `src/utils/ai/tasks/Embedder.ts`:
 ```typescript
 import { retry, rateLimitAwareDelay } from "@app/utils/async";
 
-// In embed():
+// Replace embed():
 async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
     return retry(
         () => this.provider.embed(text, options),
@@ -1525,7 +1559,7 @@ async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
     );
 }
 
-// In embedBatch():
+// Replace embedBatch():
 async embedBatch(texts: string[], options?: EmbedOptions): Promise<EmbeddingResult[]> {
     if (texts.length === 0) {
         return [];
@@ -1681,7 +1715,7 @@ private async embedUnembeddedChunks(callbacks?: IndexerCallbacks): Promise<numbe
         callbacks
     );
 
-    // Warm up the embedding model — first call can fail transiently
+    // Warm up the embedding model -- first call can fail transiently
     try {
         await this.embedder.embed("warmup");
     } catch {
@@ -1813,7 +1847,7 @@ Modify the `scan()` method in `src/indexer/lib/sources/file-source.ts`. Replace 
 ```typescript
 import { concurrentMap } from "@app/utils/async";
 
-// Inside scan(), replace the sequential loop (lines 67-92) with:
+// Replace the sequential loop in scan() with:
 
 async scan(scanOpts?: ScanOptions): Promise<SourceEntry[]> {
     let filePaths: string[];
@@ -1980,7 +2014,7 @@ git commit -m "bench(indexer): before/after Plan 1 benchmark results"
 | `src/utils/ai/providers/AICloudProvider.test.ts` | Create | 2 |
 | `src/utils/ai/providers/AILocalProvider.ts` | Modify (add `embedBatch`) | 3 |
 | `src/utils/ai/providers/AILocalProvider.test.ts` | Create | 3 |
-| `src/utils/ai/providers/AIDarwinKitProvider.ts` | Modify (add `embedBatch`) | 4 |
+| `src/utils/ai/providers/AIDarwinKitProvider.ts` | Modify (add CoreML GPU batch + NLP fallback) | 4 |
 | `src/utils/ai/providers/AIOllamaProvider.ts` | Create | 7 |
 | `src/utils/ai/providers/AIOllamaProvider.test.ts` | Create | 7 |
 | `src/utils/ai/providers/index.ts` | Modify (register Ollama) | 7 |

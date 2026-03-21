@@ -27,9 +27,21 @@ export interface IndexConfig {
     // Storage
     storage?: {
         driver?: "sqlite" | "orama" | "turbopuffer";
+        /** Vector search backend. Default: "sqlite-vec" with "sqlite-brute" fallback */
+        vectorDriver?: "sqlite-vec" | "sqlite-brute" | "qdrant";
         path?: string;
         turbopuffer?: { apiKey?: string; namespace?: string };
         oramaCache?: boolean;
+        /** Qdrant connection config (only used when vectorDriver = "qdrant") */
+        qdrant?: { url: string; apiKey?: string; collectionName?: string };
+    };
+
+    // Search tuning
+    search?: {
+        /** Minimum score threshold for search results. Default: 0 (no filtering) */
+        minScore?: number;
+        /** Hybrid search weights */
+        hybridWeights?: { text: number; vector: number };
     };
 
     // Watch / reindex

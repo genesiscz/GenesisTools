@@ -3,9 +3,9 @@ import { existsSync } from "node:fs";
 import { ENVELOPE_INDEX_PATH, normalizeMailboxName, parseMailboxUrl } from "@app/macos/lib/mail/constants";
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import {
+    type DetectChangesOptions,
     defaultDetectChanges,
     defaultHashEntry,
-    type DetectChangesOptions,
     type IndexerSource,
     type ScanOptions,
     type SourceChanges,

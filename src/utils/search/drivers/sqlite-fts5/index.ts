@@ -3,7 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { SqliteVectorStore } from "../../stores/sqlite-vector-store";
-import type { VectorStore } from "../../stores/vector-store";
+import type { VectorSearchHit, VectorStore } from "../../stores/vector-store";
 import type { SearchEngine as ISearchEngine, SearchOptions, SearchResult } from "../../types";
 import { createEmbeddingTable, createFTS5Table } from "./schema";
 
@@ -34,6 +34,8 @@ export interface SearchEngineConfig<TDoc extends Record<string, unknown>> {
     skipSchemaInit?: boolean;
     /** Override the default SQLite brute-force vector store */
     vectorStore?: VectorStore;
+    /** Which vector backend to use. Default: "sqlite-vec" with "sqlite-brute" fallback */
+    vectorDriver?: "sqlite-vec" | "sqlite-brute" | "qdrant";
 }
 
 export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, unknown>>
@@ -127,23 +129,33 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         const limit = opts.limit ?? 20;
 
         const vectorText = opts.vectorQuery ?? opts.query;
+        let results: SearchResult<TDoc>[];
 
         switch (mode) {
             case "fulltext":
-                return this.bm25Search(opts.query, limit, opts.boost);
+                results = this.bm25Search(opts.query, limit, opts.boost);
+                break;
             case "vector":
-                return this.cosineSearch(vectorText, limit);
+                results = await this.cosineSearch(vectorText, limit);
+                break;
             case "hybrid":
-                return this.hybridSearch({
+                results = await this.hybridSearch({
                     query: opts.query,
                     vectorQuery: vectorText,
                     limit,
                     boost: opts.boost,
                     weights: opts.hybridWeights,
                 });
+                break;
             default:
-                return this.bm25Search(opts.query, limit, opts.boost);
+                results = this.bm25Search(opts.query, limit, opts.boost);
         }
+
+        if (opts.minScore !== undefined && opts.minScore > 0) {
+            results = results.filter((r) => r.score >= opts.minScore!);
+        }
+
+        return results;
     }
 
     async persist(): Promise<void> {
@@ -179,13 +191,59 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
 
     private initStores(): void {
         if (this.config.vectorStore) {
+            // Externally provided store (e.g. QdrantVectorStore)
             this.vectorStore = this.config.vectorStore;
-        } else if (this.embedder) {
+            return;
+        }
+
+        if (!this.embedder) {
+            return;
+        }
+
+        const forceDriver = this.config.vectorDriver;
+
+        // If explicitly set to brute-force, skip sqlite-vec attempt
+        if (forceDriver === "sqlite-brute") {
             this.vectorStore = new SqliteVectorStore(this.db, {
                 tableName: this.config.tableName,
                 dimensions: this.embedder.dimensions,
             });
+            return;
         }
+
+        // Try sqlite-vec (default or explicit)
+        try {
+            const { loadSqliteVec } = require("../../stores/sqlite-vec-loader");
+            const vecLoaded = loadSqliteVec(this.db);
+
+            if (vecLoaded) {
+                const { SqliteVecVectorStore } = require("../../stores/sqlite-vec-store");
+                this.vectorStore = new SqliteVecVectorStore(this.db, {
+                    tableName: this.config.tableName,
+                    dimensions: this.embedder.dimensions,
+                });
+                return;
+            }
+
+            if (forceDriver === "sqlite-vec") {
+                throw new Error(
+                    "vectorDriver is set to 'sqlite-vec' but the sqlite-vec extension failed to load. " +
+                        "Install it with: bun add sqlite-vec",
+                );
+            }
+        } catch (err) {
+            if (forceDriver === "sqlite-vec") {
+                throw err;
+            }
+
+            // Fall through to brute-force
+        }
+
+        // Fallback to brute-force
+        this.vectorStore = new SqliteVectorStore(this.db, {
+            tableName: this.config.tableName,
+            dimensions: this.embedder.dimensions,
+        });
     }
 
     private insertSync(doc: TDoc): void {
@@ -342,10 +400,13 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         const textWeight = opts.weights?.text ?? 1.0;
         const vectorWeight = opts.weights?.vector ?? 1.0;
 
-        const bm25Results = this.bm25Search(opts.query, 100, opts.boost, opts.filters);
+        // Over-fetch: retrieve 3x candidates per sub-query for better RRF ranking
+        const candidatePool = Math.max(opts.limit * 3, 30);
+
+        const bm25Results = this.bm25Search(opts.query, candidatePool, opts.boost, opts.filters);
 
         const vectorQuery = opts.queryEmbedding ?? opts.vectorQuery ?? opts.query;
-        const vecResults = await this.cosineSearch(vectorQuery, 100, opts.filters);
+        const vecResults = await this.cosineSearch(vectorQuery, candidatePool, opts.filters);
 
         const scores = new Map<string, { score: number; doc: TDoc }>();
 
@@ -392,6 +453,46 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         boost?: Record<string, number>;
         weights?: { text: number; vector: number };
     }): Promise<SearchResult<TDoc>[]> {
+        // If using Qdrant with hybrid capability, use server-side RRF
+        if (this.vectorStore && this.embedder && "searchHybridAsync" in this.vectorStore) {
+            try {
+                const queryResult = await this.embedder.embed(opts.vectorQuery ?? opts.query);
+                const qdrantStore = this.vectorStore as {
+                    searchHybridAsync(searchOpts: {
+                        queryVector: Float32Array;
+                        queryText: string;
+                        limit: number;
+                    }): Promise<VectorSearchHit[]>;
+                };
+
+                const hits = await qdrantStore.searchHybridAsync({
+                    queryVector: queryResult.vector,
+                    queryText: opts.query,
+                    limit: opts.limit,
+                });
+
+                // Resolve doc IDs back to full documents from SQLite content table
+                const results: SearchResult<TDoc>[] = [];
+
+                for (const hit of hits) {
+                    const doc = this.db
+                        .query(
+                            `SELECT c.* FROM ${this.contentTableName} c WHERE c.${this.config.schema.idField} = ?`,
+                        )
+                        .get(hit.docId) as TDoc | null;
+
+                    if (doc) {
+                        results.push({ doc, score: hit.score, method: "rrf" });
+                    }
+                }
+
+                return results;
+            } catch {
+                // Qdrant hybrid failed -- fall back to client-side RRF
+            }
+        }
+
+        // Default: client-side RRF
         return this.rrfHybridSearch({
             query: opts.query,
             vectorQuery: opts.vectorQuery,

@@ -1,5 +1,9 @@
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
+import type { WatcherSubscription } from "@app/utils/fs/watcher";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
+import { Storage } from "@app/utils/storage/storage";
 import { chunkFile } from "./chunker";
 import type { EventName, IndexerCallbacks, IndexerEventMap, SyncStats } from "./events";
 import { IndexerEventEmitter } from "./events";
@@ -70,7 +74,9 @@ export class Indexer extends IndexerEventEmitter {
     private source: IndexerSource;
     private embedder: Embedder | null = null;
     private watchTimer: ReturnType<typeof setInterval> | null = null;
+    private watchSubscription: WatcherSubscription | null = null;
     private isSyncing = false;
+    private cancellationRequested = false;
 
     private constructor(store: IndexStore, config: IndexConfig, source: IndexerSource) {
         super();
@@ -128,6 +134,14 @@ export class Indexer extends IndexerEventEmitter {
         return this.store.getStats();
     }
 
+    getStore(): IndexStore {
+        return this.store;
+    }
+
+    getConfig(): IndexConfig {
+        return this.config;
+    }
+
     getConsistencyInfo(): {
         pathHashCount: number;
         contentCount: number;
@@ -144,6 +158,16 @@ export class Indexer extends IndexerEventEmitter {
             dbSizeBytes: this.store.getStats().dbSizeBytes,
             integrityCheck: this.store.checkIntegrity(),
         };
+    }
+
+    /** Request cancellation of the current sync operation. Non-blocking. */
+    requestCancellation(): void {
+        this.cancellationRequested = true;
+    }
+
+    /** Check if cancellation has been requested. */
+    get isCancelled(): boolean {
+        return this.cancellationRequested;
     }
 
     async reindex(callbacks?: IndexerCallbacks): Promise<SyncStats> {
@@ -237,30 +261,71 @@ export class Indexer extends IndexerEventEmitter {
         return results;
     }
 
-    startWatch(callbacks?: IndexerCallbacks): void {
-        if (this.watchTimer) {
+    async startWatch(callbacks?: IndexerCallbacks): Promise<void> {
+        if (this.watchSubscription?.active || this.watchTimer) {
             return;
         }
 
-        const interval = this.config.watch?.interval ?? 300_000;
-        const strategy = this.config.watch?.strategy ?? "merkle";
+        const debounceMs = this.config.watch?.debounceMs ?? 2000;
+        const strategy = this.config.watch?.strategy ?? "native";
 
-        this.emit("watch:start", {
-            indexName: this.config.name,
-            strategy,
-        });
+        this.emitAndDispatch("watch:start", { indexName: this.config.name, strategy }, callbacks);
 
-        if (callbacks) {
-            this.dispatchCallbacks(
-                "watch:start",
-                {
-                    ts: Date.now(),
-                    indexName: this.config.name,
-                    strategy,
-                },
-                callbacks
-            );
+        if (strategy === "polling") {
+            this.startPollingWatch(callbacks);
+            return;
         }
+
+        // Native watcher for file-based indexes
+        const { createWatcher } = await import("@app/utils/fs/watcher");
+
+        this.watchSubscription = await createWatcher(
+            this.config.baseDir,
+            async (events) => {
+                if (this.isSyncing) {
+                    return;
+                }
+
+                this.isSyncing = true;
+
+                try {
+                    for (const event of events) {
+                        this.emitAndDispatch(
+                            "watch:change",
+                            {
+                                indexName: this.config.name,
+                                filePath: event.path,
+                                event: event.type === "create" ? "add" : event.type === "update" ? "modify" : "delete",
+                            },
+                            callbacks
+                        );
+                    }
+
+                    await this.sync(callbacks);
+                } catch {
+                    // Watch sync errors are non-fatal
+                } finally {
+                    this.isSyncing = false;
+                }
+            },
+            {
+                debounceMs,
+                maxErrors: 10,
+                ignorePatterns: this.config.ignoredPaths,
+                filter: (event) => {
+                    if (this.config.includedSuffixes?.length) {
+                        const ext = event.path.split(".").pop()?.toLowerCase();
+                        return this.config.includedSuffixes.some((s) => s.replace(/^\./, "") === ext);
+                    }
+
+                    return true;
+                },
+            }
+        );
+    }
+
+    private startPollingWatch(callbacks?: IndexerCallbacks): void {
+        const interval = this.config.watch?.interval ?? 300_000;
 
         this.watchTimer = setInterval(async () => {
             if (this.isSyncing) {
@@ -279,19 +344,22 @@ export class Indexer extends IndexerEventEmitter {
         }, interval);
     }
 
-    stopWatch(): void {
-        if (!this.watchTimer) {
-            return;
+    async stopWatch(): Promise<void> {
+        if (this.watchSubscription) {
+            await this.watchSubscription.unsubscribe();
+            this.watchSubscription = null;
         }
 
-        clearInterval(this.watchTimer);
-        this.watchTimer = null;
+        if (this.watchTimer) {
+            clearInterval(this.watchTimer);
+            this.watchTimer = null;
+        }
 
         this.emit("watch:stop", { indexName: this.config.name });
     }
 
     async close(): Promise<void> {
-        this.stopWatch();
+        await this.stopWatch();
 
         if (this.embedder) {
             this.embedder.dispose();
@@ -421,7 +489,12 @@ export class Indexer extends IndexerEventEmitter {
         const embedStart = performance.now();
         const dbPageSize = 1000;
         let embedded = 0;
+        let pageCount = 0;
         const zeroDims = this.embedder.dimensions;
+
+        // Stop signal file for cross-process cancellation
+        const storage = new Storage("indexer");
+        const stopFile = join(storage.getBaseDir(), this.config.name, "stop.signal");
 
         // Stream pages: query -> batch embed -> store -> next page
         while (true) {
@@ -479,6 +552,7 @@ export class Indexer extends IndexerEventEmitter {
             // Single DB transaction for all embeddings in this page
             await this.store.insertChunks([], batchEmbeddings);
             embedded += batchEmbeddings.size;
+            pageCount++;
 
             this.emitAndDispatch(
                 "embed:progress",
@@ -490,6 +564,27 @@ export class Indexer extends IndexerEventEmitter {
                 },
                 callbacks
             );
+
+            // Check for cross-process stop signal (every 5 pages to avoid stat overhead)
+            if (pageCount % 5 === 0 && existsSync(stopFile)) {
+                this.cancellationRequested = true;
+                rmSync(stopFile);
+            }
+
+            // Cancellation checkpoint: progress is already persisted in DB
+            if (this.cancellationRequested) {
+                this.emitAndDispatch(
+                    "sync:cancelled",
+                    {
+                        indexName: this.config.name,
+                        reason: "user-requested",
+                        embedded,
+                        totalToEmbed,
+                    },
+                    callbacks
+                );
+                break;
+            }
         }
 
         const embedDuration = performance.now() - embedStart;
@@ -517,7 +612,11 @@ export class Indexer extends IndexerEventEmitter {
         const maxTokens = this.config.chunkMaxTokens ?? 500;
         const pathHashStore = this.store.getPathHashStore();
 
+        // Reset cancellation flag at start of each sync
+        this.cancellationRequested = false;
+
         this.emitAndDispatch("sync:start", { indexName: this.config.name, mode }, callbacks);
+        this.store.updateMeta({ indexingStatus: "in-progress" });
 
         try {
             // ── Phase 1: SCAN ────────────────────────────────────────
@@ -706,24 +805,28 @@ export class Indexer extends IndexerEventEmitter {
             // ── Phase 3: EMBED ───────────────────────────────────────
             let embeddingsGenerated = 0;
 
-            try {
-                embeddingsGenerated = await this.embedUnembeddedChunks(callbacks);
-            } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                this.emitAndDispatch(
-                    "sync:error",
-                    {
-                        indexName: this.config.name,
-                        error: `Embedding failed (FTS still works): ${msg}`,
-                    },
-                    callbacks
-                );
+            if (!this.cancellationRequested) {
+                try {
+                    embeddingsGenerated = await this.embedUnembeddedChunks(callbacks);
+                } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    this.emitAndDispatch(
+                        "sync:error",
+                        {
+                            indexName: this.config.name,
+                            error: `Embedding failed (FTS still works): ${msg}`,
+                        },
+                        callbacks
+                    );
+                }
             }
 
             // ── FINALIZE ─────────────────────────────────────────────
             const durationMs = performance.now() - syncStart;
             const totalFiles = pathHashStore.getFileCount();
             const totalChunksAdded = chunksAddedInBatch + chunksFromRemaining;
+
+            const wasCancelled = this.cancellationRequested;
 
             const syncStats: SyncStats = {
                 filesScanned: sinceId ? storedInBatch.size : sourceEntries.length,
@@ -733,6 +836,7 @@ export class Indexer extends IndexerEventEmitter {
                 chunksUnchanged: unchangedCount,
                 embeddingsGenerated,
                 durationMs,
+                cancelled: wasCancelled || undefined,
             };
 
             const embeddingModelId = this.config.embedding?.model ?? "darwinkit";
@@ -761,6 +865,7 @@ export class Indexer extends IndexerEventEmitter {
                     avgSearchDurationMs: finalStats.avgSearchDurationMs,
                 },
                 indexEmbedding: embeddingModelInfo,
+                indexingStatus: wasCancelled ? "cancelled" : "completed",
             });
 
             this.emitAndDispatch(
@@ -776,6 +881,8 @@ export class Indexer extends IndexerEventEmitter {
             return syncStats;
         } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
+
+            this.store.updateMeta({ indexingStatus: "cancelled" });
 
             this.emitAndDispatch(
                 "sync:error",

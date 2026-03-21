@@ -350,15 +350,16 @@ async function incrementalSync(manager: IndexerManager, dateRange: DateRange = {
             p.log.info("Index is up to date — no changes detected");
         } else {
             p.log.success(
-                `Synced: ${pc.green(`+${stats.chunksAdded}`)} added, ` +
-                    `${pc.yellow(`~${stats.chunksUpdated}`)} updated, ` +
-                    `${pc.red(`-${stats.chunksRemoved}`)} removed ` +
+                `${stats.filesScanned.toLocaleString()} emails scanned, ` +
+                    `${pc.green(`+${stats.chunksAdded.toLocaleString()}`)} chunks added, ` +
+                    `${pc.yellow(`~${stats.chunksUpdated.toLocaleString()}`)} updated, ` +
+                    `${pc.red(`-${stats.chunksRemoved.toLocaleString()}`)} removed ` +
                     `in ${formatDuration(stats.durationMs)}`
             );
         }
 
         if (stats.embeddingsGenerated > 0) {
-            p.log.info(`Generated ${stats.embeddingsGenerated} new embeddings`);
+            p.log.info(`Generated ${stats.embeddingsGenerated.toLocaleString()} new embeddings`);
         }
     } catch (err) {
         spinner.stop("Sync failed");
