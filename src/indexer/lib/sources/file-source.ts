@@ -124,6 +124,14 @@ export class FileSource implements IndexerSource {
             filePaths = filePaths.filter((f) => suffixSet.has(extname(f).toLowerCase()));
         }
 
+        if (this.opts.ignoredPaths && this.opts.ignoredPaths.length > 0) {
+            const ignored = this.opts.ignoredPaths;
+            filePaths = filePaths.filter((f) => {
+                const rel = relative(this.absBaseDir, f);
+                return !ignored.some((pattern) => rel.startsWith(pattern) || rel.includes(pattern));
+            });
+        }
+
         return filePaths.length;
     }
 

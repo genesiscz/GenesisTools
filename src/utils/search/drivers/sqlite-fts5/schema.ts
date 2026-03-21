@@ -26,13 +26,18 @@ export function createFTS5Table(opts: {
     for (const trigger of buildSyncTriggers({ contentTable, ftsTable, fields })) {
         try {
             db.run(trigger);
-        } catch {
-            // trigger already exists
+        } catch (error) {
+            if (error instanceof Error && error.message.includes("already exists")) {
+                continue;
+            }
+
+            throw error;
         }
     }
 }
 
-export function createEmbeddingTable(db: Database, tableName: string, _dimensions: number): void {
+/** Legacy brute-force embedding table. Dimensions validated at search time (vectorSearch). */
+export function createEmbeddingTable(db: Database, tableName: string, _dimensions?: number): void {
     const embTable = `${tableName}_embeddings`;
 
     db.run(`CREATE TABLE IF NOT EXISTS ${embTable} (

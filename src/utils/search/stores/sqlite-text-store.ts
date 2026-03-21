@@ -39,7 +39,8 @@ export class SqliteTextStore implements TextStore {
 
     search(query: string, limit: number, boost?: Record<string, number>): TextSearchHit[] {
         const ftsQuery = query
-            .replace(/['"]/g, "")
+            .replace(/['"()^*]/g, "")
+            .replace(/\b(OR|AND|NOT|NEAR)\b/gi, "")
             .split(/\s+/)
             .filter(Boolean)
             .map((word) => `"${word}"`)
@@ -113,8 +114,12 @@ export class SqliteTextStore implements TextStore {
         for (const trigger of triggers) {
             try {
                 this.db.run(trigger);
-            } catch {
-                // trigger already exists
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+
+                if (!msg.includes("already exists")) {
+                    throw err;
+                }
             }
         }
     }

@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import logger from "@app/logger";
 import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import { SqliteVectorStore } from "../../stores/sqlite-vector-store";
 import type { VectorSearchHit, VectorStore } from "../../stores/vector-store";
@@ -273,8 +274,8 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
                     .then((result) => {
                         this._vectorStore!.store(docId, result.vector);
                     })
-                    .catch(() => {
-                        // Embedding failure is non-fatal
+                    .catch((err) => {
+                        logger.warn({ err, docId }, "Embedding failed for document (non-fatal, FTS still indexed)");
                     });
             }
         }

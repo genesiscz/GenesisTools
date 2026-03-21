@@ -83,7 +83,7 @@ export function registerModelsCommand(program: Command): void {
             }
 
             const spin = p.spinner();
-            spin.start(`Downloading ${model.name} (~${model.ramGB}GB)...`);
+            spin.start(`Downloading ${model.name}...`);
 
             try {
                 await mm.download(modelId);

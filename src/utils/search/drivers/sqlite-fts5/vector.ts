@@ -45,8 +45,16 @@ export function vectorSearch(
         const storedVec = new Float32Array(
             row.embedding.buffer,
             row.embedding.byteOffset,
-            row.embedding.byteLength / 4
+            row.embedding.byteLength / Float32Array.BYTES_PER_ELEMENT
         );
+
+        if (storedVec.length !== queryVec.length) {
+            throw new Error(
+                `Embedding dimension mismatch for doc "${row.doc_id}": ` +
+                    `stored=${storedVec.length}, query=${queryVec.length}. Rebuild embeddings with the current model.`
+            );
+        }
+
         const distance = cosineDistance(queryVec, storedVec);
         scored.push({ docId: row.doc_id, distance });
     }

@@ -16,7 +16,16 @@ export class Embedder {
         const config = await AIConfig.load();
 
         if (options?.provider) {
-            config.set("embed", { provider: options.provider as AIProviderType, model: options.model });
+            // Clone config to avoid mutating the global singleton
+            const override = config.clone();
+            override.set("embed", { provider: options.provider as AIProviderType, model: options.model });
+            const provider = await getProviderForTask("embed", override);
+
+            if (!("embed" in provider)) {
+                throw new Error(`Provider "${provider.type}" does not support embedding`);
+            }
+
+            return new Embedder(provider as AIEmbeddingProvider);
         }
 
         const provider = await getProviderForTask("embed", config);
