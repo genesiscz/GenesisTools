@@ -49,7 +49,7 @@ describe("tools timer", () => {
         it("starts bg timer, lists it, waits for expiry", async () => {
             const start = await runTool(["timer", "3s", "e2e-bg", "--bg"]);
             expect(start.exitCode).toBe(0);
-            expect(getOutput(start).toLowerCase()).toMatch(/timer|started|background/i);
+            expect(getOutput(start)).toMatch(/timer|started|background/i);
 
             const list = await runTool(["timer", "list"]);
             expect(list.exitCode).toBe(0);

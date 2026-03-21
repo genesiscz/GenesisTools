@@ -121,7 +121,13 @@ export async function outputFormattedResults({
             stdout: "inherit",
             stderr: "inherit",
         });
-        await proc.exited;
+        const exitCode = await proc.exited;
+
+        if (exitCode !== 0) {
+            p.log.warn(`toon format failed (exit code ${exitCode}), falling back to JSON`);
+            console.log(jsonStr);
+        }
+
         return;
     }
 

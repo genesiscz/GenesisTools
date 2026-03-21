@@ -72,12 +72,13 @@ export function extractJson<T = unknown>(output: string): T {
         return JSON.parse(lines.slice(arrStart, arrEnd + 1).join("\n")) as T;
     }
 
-    // Try object: find first "{" that starts valid JSON
+    // Try object: slice from first "{" to last "}" to handle trailing CLI text
     const objStart = clean.indexOf("{");
+    const objEnd = clean.lastIndexOf("}");
 
-    if (objStart !== -1) {
+    if (objStart !== -1 && objEnd > objStart) {
         // biome-ignore lint/style/noRestrictedGlobals: SafeJSON (comment-json) chokes on Unicode in CLI output
-        return JSON.parse(clean.slice(objStart)) as T;
+        return JSON.parse(clean.slice(objStart, objEnd + 1)) as T;
     }
 
     throw new Error(`No JSON found in output:\n${output.slice(0, 500)}`);
