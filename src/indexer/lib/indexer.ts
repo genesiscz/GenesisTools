@@ -535,13 +535,31 @@ export class Indexer extends IndexerEventEmitter {
                         for (let j = 0; j < results.length; j++) {
                             batchEmbeddings.set(idsToEmbed[j], results[j].vector);
                         }
-                    } catch {
-                        // On batch failure, fall back to individual embedding
+                    } catch (batchErr) {
+                        const batchMsg = batchErr instanceof Error ? batchErr.message : String(batchErr);
+                        this.emitAndDispatch(
+                            "sync:error",
+                            {
+                                indexName: this.config.name,
+                                error: `Batch embed failed (falling back to individual): ${batchMsg}`,
+                            },
+                            callbacks
+                        );
+
                         for (let j = 0; j < textsToEmbed.length; j++) {
                             try {
                                 const result = await this.embedder.embed(textsToEmbed[j]);
                                 batchEmbeddings.set(idsToEmbed[j], result.vector);
-                            } catch {
+                            } catch (itemErr) {
+                                const itemMsg = itemErr instanceof Error ? itemErr.message : String(itemErr);
+                                this.emitAndDispatch(
+                                    "sync:error",
+                                    {
+                                        indexName: this.config.name,
+                                        error: `Failed to embed chunk ${idsToEmbed[j]}: ${itemMsg}`,
+                                    },
+                                    callbacks
+                                );
                                 batchEmbeddings.set(idsToEmbed[j], new Float32Array(zeroDims));
                             }
                         }

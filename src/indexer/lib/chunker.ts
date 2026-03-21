@@ -196,29 +196,31 @@ function applyCharCap(chunks: ChunkRecord[]): ChunkRecord[] {
         return chunks;
     }
 
-    return chunks.map((chunk) => {
+    const result: ChunkRecord[] = [];
+
+    for (const chunk of chunks) {
         if (chunk.content.length <= MAX_CHUNK_CHARS) {
-            return chunk;
+            result.push(chunk);
+            continue;
         }
 
-        let end = MAX_CHUNK_CHARS;
-        const breakChars = ["\n", " ", "\t", ";", ","];
+        // Re-split oversized chunks using character-based splitting to preserve all content
+        const subResult = chunkByCharacter({ filePath: chunk.filePath, content: chunk.content });
 
-        for (let i = end; i > end - 200 && i > 0; i--) {
-            if (breakChars.includes(chunk.content[i])) {
-                end = i;
-                break;
-            }
+        for (const sub of subResult.chunks) {
+            result.push({
+                ...sub,
+                kind: chunk.kind,
+                name: chunk.name ? `${chunk.name} (part ${result.length + 1})` : undefined,
+                language: chunk.language ?? sub.language,
+                parentChunkId: chunk.parentChunkId,
+                startLine: chunk.startLine + sub.startLine,
+                endLine: chunk.startLine + sub.endLine,
+            });
         }
+    }
 
-        const truncated = chunk.content.slice(0, end);
-        return {
-            ...chunk,
-            content: truncated,
-            id: contentHash(truncated),
-            endLine: chunk.startLine + truncated.split("\n").length - 1,
-        };
-    });
+    return result;
 }
 
 /** Average line length threshold for minified/bundled file detection */
@@ -256,7 +258,7 @@ function chunkByCharacter(opts: { filePath: string; content: string }): ChunkRes
         if (end < content.length) {
             const breakChars = ["\n", " ", "\t", ";", ","];
 
-            for (let i = end; i > offset; i--) {
+            for (let i = end - 1; i > offset; i--) {
                 if (breakChars.includes(content[i])) {
                     end = i + 1;
                     break;
@@ -356,24 +358,35 @@ function splitChunkByLines(opts: {
     return chunks;
 }
 
+// ─── Safe field access wrapper for SgNode ────────────────────────
+/**
+ * Access a named field on an SgNode. The ast-grep field() API accepts
+ * string field names but the TS signature is restrictive, so we funnel
+ * all accesses through this helper to avoid scattered casts.
+ */
+function getNodeField(node: SgNode, fieldName: string): SgNode | null {
+    type FieldAccessor = (name: string) => SgNode | null;
+    return (node.field as FieldAccessor)(fieldName);
+}
+
 // ─── Try to extract a name from an AST node ─────────────────────
 function extractNodeName(node: SgNode): string | undefined {
     // Try the "name" field first (works for function_declaration, class_declaration, etc.)
-    const nameNode = node.field("name" as never);
+    const nameNode = getNodeField(node, "name");
 
     if (nameNode) {
-        return (nameNode as SgNode).text();
+        return nameNode.text();
     }
 
     // For export_statement, try to find the name inside the declaration
     if (node.kind() === "export_statement") {
-        const decl = node.field("declaration" as never);
+        const decl = getNodeField(node, "declaration");
 
         if (decl) {
-            const innerName = (decl as SgNode).field("name" as never);
+            const innerName = getNodeField(decl, "name");
 
             if (innerName) {
-                return (innerName as SgNode).text();
+                return innerName.text();
             }
         }
     }
