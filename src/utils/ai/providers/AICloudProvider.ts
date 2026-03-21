@@ -126,6 +126,32 @@ export class AICloudProvider
         return { vector: vec, dimensions: vec.length };
     }
 
+    async embedBatch(texts: string[], options?: EmbedOptions): Promise<EmbeddingResult[]> {
+        if (texts.length === 0) {
+            return [];
+        }
+
+        const model = options?.model ?? "text-embedding-3-small";
+        const { createOpenAI } = await import("@ai-sdk/openai");
+        const openai = createOpenAI();
+
+        // OpenAI supports up to 2048 inputs per request
+        const MAX_BATCH = 2048;
+        const results: EmbeddingResult[] = [];
+
+        for (let i = 0; i < texts.length; i += MAX_BATCH) {
+            const batch = texts.slice(i, i + MAX_BATCH);
+            const result = await openai.embedding(model).doEmbed({ values: batch });
+
+            for (const embedding of result.embeddings) {
+                const vec = new Float32Array(embedding);
+                results.push({ vector: vec, dimensions: vec.length });
+            }
+        }
+
+        return results;
+    }
+
     private async getLanguageModel(
         modelSpec?: string
     ): Promise<Parameters<typeof import("ai").generateText>[0]["model"]> {
