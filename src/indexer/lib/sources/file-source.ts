@@ -1,9 +1,11 @@
 import type { Dirent } from "node:fs";
 import { readdirSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
+import { concurrentMap } from "@app/utils/async";
 import {
-    defaultHashEntry,
     type DetectChangesOptions,
+    defaultDetectChanges,
+    defaultHashEntry,
     type IndexerSource,
     type ScanOptions,
     type SourceChanges,
@@ -62,31 +64,34 @@ export class FileSource implements IndexerSource {
         const total = filePaths.length;
         const batchSize = scanOpts?.batchSize ?? 500;
         let batch: SourceEntry[] = [];
+        const ioConcurrency = 50;
 
-        for (let i = 0; i < filePaths.length; i++) {
-            const filePath = filePaths[i];
+        // Process in chunks of ioConcurrency for parallel file reads
+        for (let i = 0; i < filePaths.length; i += ioConcurrency) {
+            const chunk = filePaths.slice(i, i + ioConcurrency);
 
-            try {
-                const content = await Bun.file(filePath).text();
-                const entry: SourceEntry = {
-                    id: filePath,
-                    content,
-                    path: filePath,
-                };
+            const readResults = await concurrentMap({
+                items: chunk,
+                fn: async (filePath) => {
+                    const content = await Bun.file(filePath).text();
+                    return { id: filePath, content, path: filePath } as SourceEntry;
+                },
+                concurrency: ioConcurrency,
+            });
 
+            for (const [, entry] of readResults) {
                 entries.push(entry);
                 batch.push(entry);
-            } catch {
-                // Skip unreadable files
+
+                if (scanOpts?.onBatch && batch.length >= batchSize) {
+                    await scanOpts.onBatch(batch);
+                    batch = [];
+                }
             }
 
-            if (scanOpts?.onBatch && batch.length >= batchSize) {
-                await scanOpts.onBatch(batch);
-                batch = [];
-            }
-
+            // Report progress for the chunk
             if (scanOpts?.onProgress) {
-                scanOpts.onProgress(i + 1, total);
+                scanOpts.onProgress(Math.min(i + chunk.length, total), total);
             }
         }
 
@@ -98,46 +103,7 @@ export class FileSource implements IndexerSource {
     }
 
     detectChanges(opts: DetectChangesOptions): SourceChanges {
-        const { previousHashes, currentEntries, full } = opts;
-
-        if (full || !previousHashes) {
-            return {
-                added: currentEntries,
-                modified: [],
-                deleted: [],
-                unchanged: [],
-            };
-        }
-
-        const added: SourceEntry[] = [];
-        const modified: SourceEntry[] = [];
-        const unchanged: string[] = [];
-        const currentPaths = new Set<string>();
-
-        for (const entry of currentEntries) {
-            const rel = relative(this.absBaseDir, entry.id);
-            currentPaths.add(rel);
-            const currentHash = this.hashEntry(entry);
-            const previousHash = previousHashes.get(rel);
-
-            if (!previousHash) {
-                added.push(entry);
-            } else if (previousHash !== currentHash) {
-                modified.push(entry);
-            } else {
-                unchanged.push(rel);
-            }
-        }
-
-        const deleted: string[] = [];
-
-        for (const prevPath of previousHashes.keys()) {
-            if (!currentPaths.has(prevPath)) {
-                deleted.push(prevPath);
-            }
-        }
-
-        return { added, modified, deleted, unchanged };
+        return defaultDetectChanges(opts, this.hashEntry.bind(this));
     }
 
     hashEntry(entry: SourceEntry): string {
