@@ -122,7 +122,13 @@ export class AICloudProvider
         const { createOpenAI } = await import("@ai-sdk/openai");
         const openai = createOpenAI();
         const result = await openai.embedding(model).doEmbed({ values: [text] });
-        const vec = new Float32Array(result.embeddings[0]);
+        const embedding = result.embeddings[0];
+
+        if (!embedding) {
+            throw new Error("Embedding API returned empty result");
+        }
+
+        const vec = new Float32Array(embedding);
         return { vector: vec, dimensions: vec.length };
     }
 

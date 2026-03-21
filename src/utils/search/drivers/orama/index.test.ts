@@ -29,8 +29,10 @@ describe("OramaSearchEngine", () => {
     afterEach(async () => {
         try {
             await engine.close();
-        } catch {
-            // already closed
+        } catch (error) {
+            if (!(error instanceof Error && error.message.includes("already closed"))) {
+                throw error;
+            }
         }
 
         rmSync(tmpDir, { recursive: true, force: true });
