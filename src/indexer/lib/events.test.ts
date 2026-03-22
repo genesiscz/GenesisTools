@@ -141,7 +141,6 @@ describe("IndexerEventEmitter", () => {
 
         emitter.emit("scan:start", { indexName: "test", strategy: "merkle" });
 
-        // Dispatch needs explicit call
         const fullPayload: IndexerEventMap["scan:start"] = {
             ts: Date.now(),
             indexName: "test",
@@ -171,7 +170,6 @@ describe("IndexerEventEmitter", () => {
     });
 
     it("IndexerCallbacks has expected keys", () => {
-        // Type-level test: verify the shape of IndexerCallbacks
         const callbacks: IndexerCallbacks = {
             onScanStart: () => {},
             onScanComplete: () => {},
@@ -189,7 +187,6 @@ describe("IndexerEventEmitter", () => {
             onSearchQuery: () => {},
         };
 
-        // If this compiles, the type is correct
         expect(callbacks).toBeDefined();
     });
 });

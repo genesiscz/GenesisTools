@@ -14,6 +14,7 @@ import type { IndexerSource, SourceEntry } from "./sources/source";
 import type { IndexStore } from "./store";
 import { createIndexStore } from "./store";
 import type { ChunkRecord, IndexConfig, IndexStats } from "./types";
+import { DEFAULT_WATCH_INTERVAL_MS, EMBEDDING_BATCH_SIZE } from "./types";
 
 export interface SyncOptions extends IndexerCallbacks {
     scanOptions?: Pick<import("./sources/source").ScanOptions, "fromDate" | "toDate">;
@@ -325,7 +326,7 @@ export class Indexer extends IndexerEventEmitter {
     }
 
     private startPollingWatch(callbacks?: IndexerCallbacks): void {
-        const interval = this.config.watch?.interval ?? 300_000;
+        const interval = this.config.watch?.interval ?? DEFAULT_WATCH_INTERVAL_MS;
 
         this.watchTimer = setInterval(async () => {
             if (this.isSyncing) {
@@ -485,7 +486,7 @@ export class Indexer extends IndexerEventEmitter {
         const modelId = this.config.embedding?.model ?? "darwinkit";
         const maxEmbedChars = getMaxEmbedChars(modelId);
         const taskPrefix = getTaskPrefix(modelId);
-        const embedBatchSize = 32;
+        const embedBatchSize = EMBEDDING_BATCH_SIZE;
         const embedStart = performance.now();
         const dbPageSize = 1000;
         let embedded = 0;

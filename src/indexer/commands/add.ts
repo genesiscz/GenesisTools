@@ -13,7 +13,7 @@ import type { IndexConfig } from "../lib/types";
 interface AddOptions {
     name?: string;
     type?: "code" | "files" | "mail" | "chat";
-    chunking?: "ast" | "line" | "auto";
+    chunking?: "ast" | "line" | "heading" | "message" | "json" | "auto";
     model?: string;
     storage?: "sqlite" | "orama" | "turbopuffer";
     watch?: boolean;
@@ -189,7 +189,6 @@ export function registerAddCommand(program: Command): void {
                 p.log.info("Usage: tools indexer add <path> --model <model-id>");
                 p.log.info("Run 'tools indexer models' to see available models");
                 process.exit(1);
-                return;
             } else {
                 const absPath = resolve(path);
 
@@ -293,15 +292,15 @@ export function registerAddCommand(program: Command): void {
                     p.log.info("Watch mode enabled. Press Ctrl+C to stop.");
                     indexer.startWatch();
 
-                    process.on("SIGINT", async () => {
+                    process.on("SIGINT", () => {
                         indexer.stopWatch();
-                        await manager.close();
-                        process.exit(0);
+                        manager.close().finally(() => process.exit(0));
                     });
 
                     await new Promise(() => {});
                 } else {
                     await manager.close();
+                    p.outro("Done");
                 }
             } catch (err) {
                 spinner.stop("Indexing failed");
@@ -314,7 +313,5 @@ export function registerAddCommand(program: Command): void {
                 p.log.error(err instanceof Error ? err.message : String(err));
                 process.exit(1);
             }
-
-            p.outro("Done");
         });
 }

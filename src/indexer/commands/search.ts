@@ -1,3 +1,4 @@
+import { toToon } from "@app/json/lib/toon";
 import { SafeJSON } from "@app/utils/json";
 import type { SearchResult } from "@app/utils/search/types";
 import { formatTable } from "@app/utils/table";
@@ -73,8 +74,8 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
-                if (format === "json") {
-                    const output = allResults.map((r) => ({
+                function toOutputRow(r: { indexName: string; result: SearchResult<ChunkRecord> }) {
+                    return {
                         index: r.indexName,
                         file: r.result.doc.filePath,
                         name: r.result.doc.name ?? "",
@@ -83,31 +84,18 @@ export function registerSearchCommand(program: Command): void {
                         method: r.result.method,
                         lines: `${r.result.doc.startLine}-${r.result.doc.endLine}`,
                         preview: truncatePreview(r.result.doc.content, 200),
-                    }));
+                    };
+                }
+
+                if (format === "json") {
+                    const output = allResults.map(toOutputRow);
                     console.log(SafeJSON.stringify(output, null, 2));
                     return;
                 }
 
                 if (format === "toon") {
-                    const output = allResults.map((r) => ({
-                        index: r.indexName,
-                        file: r.result.doc.filePath,
-                        name: r.result.doc.name ?? "",
-                        kind: r.result.doc.kind,
-                        score: r.result.score,
-                        method: r.result.method,
-                        lines: `${r.result.doc.startLine}-${r.result.doc.endLine}`,
-                        preview: truncatePreview(r.result.doc.content, 200),
-                    }));
-                    const jsonStr = SafeJSON.stringify(output, null, 2);
-                    const proc = Bun.spawn(["tools", "json"], {
-                        stdin: "pipe",
-                        stdout: "inherit",
-                        stderr: "inherit",
-                    });
-                    proc.stdin.write(jsonStr);
-                    proc.stdin.end();
-                    await proc.exited;
+                    const output = allResults.map(toOutputRow);
+                    console.log(toToon(output));
                     return;
                 }
 

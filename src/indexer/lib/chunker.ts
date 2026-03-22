@@ -909,7 +909,7 @@ function chunkByJson(opts: { filePath: string; content: string; maxTokens: numbe
             const subChunks = splitChunkByLines({
                 content: elemContent,
                 filePath,
-                startLine: i,
+                startLine: 0,
                 kind: "json_element",
                 name: `[${i}]`,
                 language: "json",
@@ -928,7 +928,7 @@ function chunkByJson(opts: { filePath: string; content: string; maxTokens: numbe
             const subChunks = splitChunkByLines({
                 content: chunkContent,
                 filePath,
-                startLine: i,
+                startLine: 0,
                 kind: "json_key",
                 name: key,
                 language: "json",
