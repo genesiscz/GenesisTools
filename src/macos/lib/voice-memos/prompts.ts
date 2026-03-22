@@ -3,14 +3,14 @@
  * DRY: used by both interactive mode and the transcribe subcommand.
  */
 
-import type { OutputFormat } from "@app/utils/ai/transcription-format.ts";
-import type { AIProviderType } from "@app/utils/ai/types.ts";
 import type { LanguageDetectionResult } from "@app/utils/ai/LanguageDetector.ts";
 import { getModelsForTask, ModelManager } from "@app/utils/ai/ModelManager.ts";
+import type { OutputFormat } from "@app/utils/ai/transcription-format.ts";
+import type { AIProviderType } from "@app/utils/ai/types.ts";
 import { formatDateTime } from "@app/utils/date.ts";
 import { formatDuration } from "@app/utils/format.ts";
 import type { VoiceMemo } from "@app/utils/macos/voice-memos.ts";
-import { filePathInput, filePathCancelSymbol } from "@app/utils/prompts/clack/file-path.ts";
+import { filePathCancelSymbol, filePathInput } from "@app/utils/prompts/clack/file-path.ts";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 
@@ -19,26 +19,105 @@ import pc from "picocolors";
 // ============================================
 
 const LANG_NAMES: Record<string, string> = {
-    af: "Afrikaans", am: "Amharic", ar: "Arabic", as: "Assamese", az: "Azerbaijani",
-    ba: "Bashkir", be: "Belarusian", bg: "Bulgarian", bn: "Bengali", bo: "Tibetan",
-    br: "Breton", bs: "Bosnian", ca: "Catalan", cs: "Czech", cy: "Welsh",
-    da: "Danish", de: "German", el: "Greek", en: "English", es: "Spanish",
-    et: "Estonian", eu: "Basque", fa: "Persian", fi: "Finnish", fo: "Faroese",
-    fr: "French", gl: "Galician", gu: "Gujarati", ha: "Hausa", haw: "Hawaiian",
-    he: "Hebrew", hi: "Hindi", hr: "Croatian", ht: "Haitian", hu: "Hungarian",
-    hy: "Armenian", id: "Indonesian", is: "Icelandic", it: "Italian", ja: "Japanese",
-    jw: "Javanese", ka: "Georgian", kk: "Kazakh", km: "Khmer", kn: "Kannada",
-    ko: "Korean", la: "Latin", lb: "Luxembourgish", ln: "Lingala", lo: "Lao",
-    lt: "Lithuanian", lv: "Latvian", mg: "Malagasy", mi: "Maori", mk: "Macedonian",
-    ml: "Malayalam", mn: "Mongolian", mr: "Marathi", ms: "Malay", mt: "Maltese",
-    my: "Myanmar", ne: "Nepali", nl: "Dutch", nn: "Nynorsk", no: "Norwegian",
-    oc: "Occitan", pa: "Punjabi", pl: "Polish", ps: "Pashto", pt: "Portuguese",
-    ro: "Romanian", ru: "Russian", sa: "Sanskrit", sd: "Sindhi", si: "Sinhala",
-    sk: "Slovak", sl: "Slovenian", sn: "Shona", so: "Somali", sq: "Albanian",
-    sr: "Serbian", su: "Sundanese", sv: "Swedish", sw: "Swahili", ta: "Tamil",
-    te: "Telugu", tg: "Tajik", th: "Thai", tk: "Turkmen", tl: "Tagalog",
-    tr: "Turkish", tt: "Tatar", uk: "Ukrainian", ur: "Urdu", uz: "Uzbek",
-    vi: "Vietnamese", yi: "Yiddish", yo: "Yoruba", zh: "Chinese",
+    af: "Afrikaans",
+    am: "Amharic",
+    ar: "Arabic",
+    as: "Assamese",
+    az: "Azerbaijani",
+    ba: "Bashkir",
+    be: "Belarusian",
+    bg: "Bulgarian",
+    bn: "Bengali",
+    bo: "Tibetan",
+    br: "Breton",
+    bs: "Bosnian",
+    ca: "Catalan",
+    cs: "Czech",
+    cy: "Welsh",
+    da: "Danish",
+    de: "German",
+    el: "Greek",
+    en: "English",
+    es: "Spanish",
+    et: "Estonian",
+    eu: "Basque",
+    fa: "Persian",
+    fi: "Finnish",
+    fo: "Faroese",
+    fr: "French",
+    gl: "Galician",
+    gu: "Gujarati",
+    ha: "Hausa",
+    haw: "Hawaiian",
+    he: "Hebrew",
+    hi: "Hindi",
+    hr: "Croatian",
+    ht: "Haitian",
+    hu: "Hungarian",
+    hy: "Armenian",
+    id: "Indonesian",
+    is: "Icelandic",
+    it: "Italian",
+    ja: "Japanese",
+    jw: "Javanese",
+    ka: "Georgian",
+    kk: "Kazakh",
+    km: "Khmer",
+    kn: "Kannada",
+    ko: "Korean",
+    la: "Latin",
+    lb: "Luxembourgish",
+    ln: "Lingala",
+    lo: "Lao",
+    lt: "Lithuanian",
+    lv: "Latvian",
+    mg: "Malagasy",
+    mi: "Maori",
+    mk: "Macedonian",
+    ml: "Malayalam",
+    mn: "Mongolian",
+    mr: "Marathi",
+    ms: "Malay",
+    mt: "Maltese",
+    my: "Myanmar",
+    ne: "Nepali",
+    nl: "Dutch",
+    nn: "Nynorsk",
+    no: "Norwegian",
+    oc: "Occitan",
+    pa: "Punjabi",
+    pl: "Polish",
+    ps: "Pashto",
+    pt: "Portuguese",
+    ro: "Romanian",
+    ru: "Russian",
+    sa: "Sanskrit",
+    sd: "Sindhi",
+    si: "Sinhala",
+    sk: "Slovak",
+    sl: "Slovenian",
+    sn: "Shona",
+    so: "Somali",
+    sq: "Albanian",
+    sr: "Serbian",
+    su: "Sundanese",
+    sv: "Swedish",
+    sw: "Swahili",
+    ta: "Tamil",
+    te: "Telugu",
+    tg: "Tajik",
+    th: "Thai",
+    tk: "Turkmen",
+    tl: "Tagalog",
+    tr: "Turkish",
+    tt: "Tatar",
+    uk: "Ukrainian",
+    ur: "Urdu",
+    uz: "Uzbek",
+    vi: "Vietnamese",
+    yi: "Yiddish",
+    yo: "Yoruba",
+    zh: "Chinese",
 };
 
 function langName(code: string): string {
@@ -68,14 +147,16 @@ export async function selectMemo(memos: VoiceMemo[]): Promise<VoiceMemo | null> 
         options: [
             ...memos.map((m) => {
                 const isoTitle = isIsoDateTitle(m.title);
-                const dateStr = formatDateTime(m.date, { relative: "two-days", absolute: "datetime", first: "relative" });
+                const dateStr = formatDateTime(m.date, {
+                    relative: "two-days",
+                    absolute: "datetime",
+                    first: "relative",
+                });
                 const duration = formatDuration(m.duration, "s", "tiered");
                 const transcript = m.hasTranscript ? " · has transcript" : "";
 
                 const label = isoTitle ? dateStr : m.title;
-                const hint = isoTitle
-                    ? `${duration}${transcript}`
-                    : `${dateStr} · ${duration}${transcript}`;
+                const hint = isoTitle ? `${duration}${transcript}` : `${dateStr} · ${duration}${transcript}`;
 
                 return { value: m.id, label, hint };
             }),

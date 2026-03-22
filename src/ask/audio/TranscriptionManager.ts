@@ -114,7 +114,7 @@ export class TranscriptionManager {
     private async transcribeWithFallback(
         filePath: string,
         options: TranscriptionOptions,
-        initialTime: number,
+        initialTime: number
     ): Promise<TranscriptionResult> {
         const fallbackProviders = [
             { env: "ASSEMBLYAI_API_KEY", provider: "assemblyai" },
@@ -139,7 +139,7 @@ export class TranscriptionManager {
 
                 const transcriptionModel = await this.getSpecificTranscriptionModel(
                     provider,
-                    this.getDefaultModelForProvider(provider),
+                    this.getDefaultModelForProvider(provider)
                 );
 
                 if (!transcriptionModel) {

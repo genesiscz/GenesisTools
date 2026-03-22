@@ -110,10 +110,7 @@ export interface FormatDateTimeOptions {
  * - `{ relative: "two-days", absolute: "datetime", first: "relative" }` → "2h ago (22. 3. 2026, 20:53)"
  * - No options → defaults to `{ absolute: "datetime" }`
  */
-export function formatDateTime(
-    date: Date | string | number,
-    options: FormatDateTimeOptions = {},
-): string {
+export function formatDateTime(date: Date | string | number, options: FormatDateTimeOptions = {}): string {
     const d = date instanceof Date ? date : new Date(date);
     const locale = options.locale ?? getSystemLocale();
     const now = new Date();
@@ -148,19 +145,26 @@ export function formatDateTime(
 // ---- Absolute ----
 
 const ABSOLUTE_OPTIONS: Record<AbsoluteFormat, Intl.DateTimeFormatOptions> = {
-    "date": { year: "numeric", month: "numeric", day: "numeric" },
-    "time": { hour: "2-digit", minute: "2-digit" },
-    "datetime": {
-        year: "numeric", month: "numeric", day: "numeric",
-        hour: "2-digit", minute: "2-digit",
+    date: { year: "numeric", month: "numeric", day: "numeric" },
+    time: { hour: "2-digit", minute: "2-digit" },
+    datetime: {
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
     },
     "date-long": { weekday: "long", year: "numeric", month: "long", day: "numeric" },
     "date-short": { month: "numeric", day: "numeric" },
     "datetime-long": {
-        weekday: "long", year: "numeric", month: "long", day: "numeric",
-        hour: "2-digit", minute: "2-digit",
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
     },
-    "weekday": { weekday: "long" },
+    weekday: { weekday: "long" },
     "month-day": { month: "short", day: "numeric" },
     "time-seconds": { hour: "2-digit", minute: "2-digit", second: "2-digit" },
 };
@@ -212,13 +216,7 @@ function relativeFormat(date: Date, now: Date, mode: RelativeFormat): string | n
     return relativeFormatShort(days, hours, minutes, seconds, suffix);
 }
 
-function relativeFormatLong(
-    days: number,
-    hours: number,
-    minutes: number,
-    seconds: number,
-    suffix: string,
-): string {
+function relativeFormatLong(days: number, hours: number, minutes: number, seconds: number, suffix: string): string {
     if (seconds < 60) {
         return `${seconds} second${seconds !== 1 ? "s" : ""} ${suffix}`;
     }
@@ -255,13 +253,7 @@ function relativeFormatLong(
     return `${parts.join(" ")} ${suffix}`;
 }
 
-function relativeFormatShort(
-    days: number,
-    hours: number,
-    minutes: number,
-    seconds: number,
-    suffix: string,
-): string {
+function relativeFormatShort(days: number, hours: number, minutes: number, seconds: number, suffix: string): string {
     if (seconds < 60) {
         return `${seconds}s ${suffix}`;
     }
@@ -278,11 +270,7 @@ function relativeFormatShort(
 }
 
 function isSameCalendarDay(a: Date, b: Date): boolean {
-    return (
-        a.getFullYear() === b.getFullYear() &&
-        a.getMonth() === b.getMonth() &&
-        a.getDate() === b.getDate()
-    );
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
 // ============================================
