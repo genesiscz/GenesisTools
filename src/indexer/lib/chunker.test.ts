@@ -484,7 +484,7 @@ This is another email body.`;
     describe("Minified file detection", () => {
         it("detects minified content by average line length", () => {
             // Simulate minified JS: one very long line
-            const minified = "var a=1;" + "function b(){return a+1;}".repeat(200);
+            const minified = `var a=1;${"function b(){return a+1;}".repeat(200)}`;
 
             const result = chunkFile({
                 filePath: "app.min.js",
@@ -1023,7 +1023,7 @@ import { c } from "./c";
     method${i}(x: number): number {
         const a = x + ${i};
         return a;
-    }`,
+    }`
             ).join("\n");
             const content = `class HugeClass {\n${methods}\n}`;
 
@@ -1051,7 +1051,7 @@ import { c } from "./c";
     method${i}(x: number): number {
         const a = x + ${i};
         return a;
-    }`,
+    }`
             ).join("\n");
             const content = `class HugeClass {\n${methods}\n}`;
 

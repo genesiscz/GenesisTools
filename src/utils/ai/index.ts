@@ -3,8 +3,8 @@ import { Summarizer } from "./tasks/Summarizer";
 import { Transcriber } from "./tasks/Transcriber";
 import { Translator } from "./tasks/Translator";
 import type {
-    EmbedOptions,
     EmbeddingResult,
+    EmbedOptions,
     SummarizationResult,
     SummarizeOptions,
     TranscribeOptions,

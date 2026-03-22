@@ -260,7 +260,7 @@ describe("TelegramSource", () => {
     it("throws when database does not exist", () => {
         expect(() => {
             TelegramSource.create({ dbPath: "/nonexistent/path/history.db" });
-        }).toThrow("Telegram history database not found");
+        }).toThrow("Telegram history database not found at /nonexistent/path/history.db");
     });
 
     it("entry id is chatId:messageId format", async () => {

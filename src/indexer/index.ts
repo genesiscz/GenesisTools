@@ -43,7 +43,7 @@ program
     .description("Start the indexer MCP server (stdio transport, for AI assistant integration)")
     .action(async () => {
         // Exec the MCP server as a separate process so it owns stdin/stdout
-        const proc = Bun.spawn(["bun", "run", import.meta.dir + "/mcp-server.ts"], {
+        const proc = Bun.spawn(["bun", "run", `${import.meta.dir}/mcp-server.ts`], {
             stdin: "inherit",
             stdout: "inherit",
             stderr: "inherit",

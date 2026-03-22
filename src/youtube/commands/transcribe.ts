@@ -379,7 +379,9 @@ async function transcribeAction(urlArg: string | undefined, options: TranscribeO
             };
 
             if ((format === "srt" || format === "vtt") && result.segments.length === 0) {
-                throw new Error("Subtitle output requires timestamped segments. Use --format text or --format json instead.");
+                throw new Error(
+                    "Subtitle output requires timestamped segments. Use --format text or --format json instead."
+                );
             }
 
             const output = formatOutput(result, format);

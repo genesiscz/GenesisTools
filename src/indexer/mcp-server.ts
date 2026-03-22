@@ -48,9 +48,13 @@ async function main(): Promise<void> {
 
         shuttingDown = true;
         console.error(`Shutting down (${signal})...`);
-        await shutdownManager();
-        await server.close();
-        process.exit(0);
+
+        try {
+            await shutdownManager();
+            await server.close();
+        } finally {
+            process.exit(0);
+        }
     };
 
     process.on("SIGINT", () => shutdown("SIGINT"));

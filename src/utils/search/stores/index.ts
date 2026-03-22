@@ -1,9 +1,9 @@
 export type { LanceDBVectorStoreConfig } from "./lancedb-vector-store";
 export { LanceDBVectorStore } from "./lancedb-vector-store";
-export type { SqliteTextStoreConfig } from "./sqlite-text-store";
-export { SqliteTextStore } from "./sqlite-text-store";
 export type { QdrantVectorStoreConfig } from "./qdrant-vector-store";
 export { QdrantVectorStore } from "./qdrant-vector-store";
+export type { SqliteTextStoreConfig } from "./sqlite-text-store";
+export { SqliteTextStore } from "./sqlite-text-store";
 export type { SqliteVecVectorStoreConfig } from "./sqlite-vec-store";
 export { SqliteVecVectorStore } from "./sqlite-vec-store";
 export type { SqliteVectorStoreConfig } from "./sqlite-vector-store";

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { SafeJSON } from "@app/utils/json";
 import { AIOllamaProvider } from "./AIOllamaProvider";
 
 describe("AIOllamaProvider", () => {
@@ -43,9 +44,12 @@ describe("AIOllamaProvider", () => {
             capturedUrl = typeof input === "string" ? input : input.toString();
             capturedBody = typeof init?.body === "string" ? init.body : "";
 
-            return new Response(JSON.stringify({
-                embeddings: [[0.1, 0.2, 0.3]],
-            }), { status: 200 });
+            return new Response(
+                SafeJSON.stringify({
+                    embeddings: [[0.1, 0.2, 0.3]],
+                }),
+                { status: 200 }
+            );
         };
 
         try {

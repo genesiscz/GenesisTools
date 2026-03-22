@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { SafeJSON } from "@app/utils/json";
 
 export interface PathAliases {
     /** Map of alias prefix -> target directories (relative to project root) */
@@ -44,16 +45,15 @@ export function loadPathAliases(baseDir: string): PathAliases {
 
 /** Strip JSON comments (// and /* *\/) that tsconfig allows */
 function stripJsonComments(json: string): string {
-    return json.replace(
-        /"(?:[^"\\]|\\.)*"|\/\/.*$|\/\*[\s\S]*?\*\//gm,
-        (match) => (match.startsWith('"') ? match : ""),
+    return json.replace(/"(?:[^"\\]|\\.)*"|\/\/.*$|\/\*[\s\S]*?\*\//gm, (match) =>
+        match.startsWith('"') ? match : ""
     );
 }
 
 /** Parse tsconfig JSON with comment stripping. Returns null on failure. */
 function parseTsconfigJson(content: string): Record<string, unknown> | null {
     try {
-        return JSON.parse(stripJsonComments(content));
+        return SafeJSON.parse(stripJsonComments(content));
     } catch {
         return null;
     }
@@ -106,7 +106,7 @@ export function parsePathAliases(jsonContent: string, projectDir: string): PathA
 }
 
 /** Follow the `extends` chain looking for `compilerOptions.paths`. */
-function followExtendsChain(configPath: string, projectDir: string): PathAliases {
+function followExtendsChain(configPath: string, _projectDir: string): PathAliases {
     const visited = new Set<string>();
     let currentPath = configPath;
 

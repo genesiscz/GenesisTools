@@ -1,11 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-export function createFTS5Table(opts: {
-    db: Database;
-    tableName: string;
-    fields: string[];
-    tokenizer?: string;
-}): void {
+export function createFTS5Table(opts: { db: Database; tableName: string; fields: string[]; tokenizer?: string }): void {
     const { db, tableName, fields, tokenizer } = opts;
     const contentTable = `${tableName}_content`;
     const ftsTable = `${tableName}_fts`;
@@ -46,11 +41,7 @@ export function createEmbeddingTable(db: Database, tableName: string, _dimension
     )`);
 }
 
-function buildSyncTriggers(opts: {
-    contentTable: string;
-    ftsTable: string;
-    fields: string[];
-}): string[] {
+function buildSyncTriggers(opts: { contentTable: string; ftsTable: string; fields: string[] }): string[] {
     const { contentTable, ftsTable, fields } = opts;
     const fieldList = fields.join(", ");
     const newFields = fields.map((f) => `new.${f}`).join(", ");

@@ -66,7 +66,6 @@ export class LanceDBVectorStore implements VectorStore {
     /** In-memory mirror for synchronous search fallback while async ops are pending */
     private memoryIndex = new Map<string, Float32Array>();
     private closed = false;
-    private cachedCount = 0;
 
     constructor(config: LanceDBVectorStoreConfig) {
         this.config = config;

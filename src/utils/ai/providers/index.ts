@@ -58,7 +58,7 @@ export async function getProviderForTask(task: AITask, config: AIConfig): Promis
         return provider;
     }
 
-    const fallbackOrder: AIProviderType[] = ["cloud", "local-hf", "ollama", "google", "coreml", "darwinkit"];
+    const fallbackOrder: AIProviderType[] = ["darwinkit", "local-hf", "cloud", "ollama", "google"];
 
     for (const type of fallbackOrder) {
         if (type === preferred) {
@@ -79,7 +79,7 @@ export async function getProviderForTask(task: AITask, config: AIConfig): Promis
 }
 
 export function getAllProviders(): AIProvider[] {
-    const types: AIProviderType[] = ["cloud", "local-hf", "ollama", "google", "darwinkit", "coreml"];
+    const types: AIProviderType[] = ["darwinkit", "local-hf", "cloud", "ollama", "google", "coreml"];
     return types.map((type) => getProvider(type));
 }
 

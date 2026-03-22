@@ -12,21 +12,24 @@ export const CONFIG_FILENAME = ".genesistoolscontext.json";
 export async function loadContextConfig(projectPath: string): Promise<ContextConfig | null> {
     const configPath = path.join(path.resolve(projectPath), CONFIG_FILENAME);
 
+    let raw: string;
+
     try {
-        await fsp.access(configPath);
-    } catch {
-        return null;
+        raw = await fsp.readFile(configPath, "utf-8");
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+            return null;
+        }
+
+        throw err;
     }
 
-    const raw = await fsp.readFile(configPath, "utf-8");
     let parsed: unknown;
 
     try {
         parsed = SafeJSON.parse(raw, { strict: true });
     } catch (err) {
-        throw new Error(
-            `${CONFIG_FILENAME} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`
-        );
+        throw new Error(`${CONFIG_FILENAME} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
