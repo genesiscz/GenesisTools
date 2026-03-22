@@ -3,7 +3,8 @@ import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import logger from "@app/logger";
-import { cosineDistance } from "@app/utils/math";
+import { FTS5SearchEngine } from "@app/utils/search";
+import { vectorSearch } from "@app/utils/search/drivers/sqlite-fts5/vector";
 import type { SerializedMessage } from "./TelegramMessage";
 import type {
     AttachmentRow,
@@ -27,8 +28,12 @@ import type {
 
 const DB_PATH = join(homedir(), ".genesis-tools", "telegram", "history.db");
 
+/** MessageRow with index signature so it satisfies Record<string, unknown> for FTS5SearchEngine */
+type IndexableMessageRow = MessageRow & Record<string, unknown>;
+
 export class TelegramHistoryStore {
     private db: Database | null = null;
+    private searchEngine: FTS5SearchEngine<IndexableMessageRow> | null = null;
 
     open(dbPath: string = DB_PATH): void {
         if (this.db) {
@@ -46,11 +51,13 @@ export class TelegramHistoryStore {
         this.db.run("PRAGMA foreign_keys = ON");
 
         this.migrate();
+        this.initSearchEngine();
         logger.debug("TelegramHistoryStore opened");
     }
 
     close(): void {
         if (this.db) {
+            this.searchEngine = null;
             this.db.close();
             this.db = null;
             logger.debug("TelegramHistoryStore closed");
@@ -63,6 +70,53 @@ export class TelegramHistoryStore {
         }
 
         return this.db;
+    }
+
+    private getSearchEngine(): FTS5SearchEngine<IndexableMessageRow> {
+        if (!this.searchEngine) {
+            throw new Error("Search engine not initialized. Call open() first.");
+        }
+
+        return this.searchEngine;
+    }
+
+    private initSearchEngine(): void {
+        const db = this.getDb();
+
+        this.searchEngine = FTS5SearchEngine.fromDatabase<IndexableMessageRow>(db, {
+            tableName: "messages",
+            schema: {
+                textFields: ["text"],
+                idField: "rowid" as keyof MessageRow & string,
+            },
+            skipSchemaInit: true,
+            tableOverrides: {
+                contentTable: "messages",
+                ftsTable: "messages_fts",
+                embeddingsTable: "embeddings",
+                embeddingsDocIdColumn: "message_rowid",
+            },
+        });
+    }
+
+    private buildSearchFilters(
+        chatId: string,
+        options: SearchOptions
+    ): { sql: string; params: Array<string | number> } {
+        const conditions: string[] = ["c.chat_id = ?"];
+        const params: Array<string | number> = [chatId];
+
+        if (options.since) {
+            conditions.push("c.date_unix >= ?");
+            params.push(Math.floor(options.since.getTime() / 1000));
+        }
+
+        if (options.until) {
+            conditions.push("c.date_unix <= ?");
+            params.push(Math.floor(options.until.getTime() / 1000));
+        }
+
+        return { sql: conditions.join(" AND "), params };
     }
 
     private migrate(): void {
@@ -297,62 +351,15 @@ export class TelegramHistoryStore {
     // ── Search ────────────────────────────────────────────────────────
 
     search(chatId: string, query: string, options: SearchOptions = {}): SearchResult[] {
-        const db = this.getDb();
-
-        // FTS5 query — wrap each word in quotes for safe matching
-        const ftsQuery = query
-            .replace(/['"]/g, "")
-            .split(/\s+/)
-            .filter(Boolean)
-            .map((word) => `"${word}"`)
-            .join(" ");
-
-        if (!ftsQuery) {
-            return [];
-        }
-
+        const engine = this.getSearchEngine();
         const limit = options.limit ?? 20;
+        const filters = this.buildSearchFilters(chatId, options);
 
-        let dateFilter = "";
-        const params: (string | number)[] = [ftsQuery, chatId];
+        const results = engine.bm25Search(query, limit, undefined, filters);
 
-        if (options.since) {
-            dateFilter += " AND m.date_unix >= ?";
-            params.push(Math.floor(options.since.getTime() / 1000));
-        }
-
-        if (options.until) {
-            dateFilter += " AND m.date_unix <= ?";
-            params.push(Math.floor(options.until.getTime() / 1000));
-        }
-
-        params.push(limit);
-
-        const sql = `
-			SELECT m.*, fts.rank
-			FROM messages_fts fts
-			JOIN messages m ON m.rowid = fts.rowid
-			WHERE messages_fts MATCH ?
-				AND m.chat_id = ?
-				${dateFilter}
-			ORDER BY fts.rank
-			LIMIT ?
-		`;
-
-        const rows = db.query(sql).all(...params) as Array<MessageRow & { rank: number }>;
-
-        return rows.map((row) => ({
-            message: {
-                id: row.id,
-                chat_id: row.chat_id,
-                sender_id: row.sender_id,
-                text: row.text,
-                media_desc: row.media_desc,
-                is_outgoing: row.is_outgoing,
-                date_unix: row.date_unix,
-                date_iso: row.date_iso,
-            },
-            rank: row.rank,
+        return results.map((r) => ({
+            message: r.doc,
+            rank: -r.score,
         }));
     }
 
@@ -373,49 +380,31 @@ export class TelegramHistoryStore {
             params.push(Math.floor(options.until.getTime() / 1000));
         }
 
-        // Fetch all embedded messages for this chat (with date filter)
-        const sql = `
-			SELECT m.*, e.embedding
-			FROM embeddings e
-			JOIN messages m ON m.rowid = e.message_rowid
-			WHERE m.chat_id = ?
-				${dateFilter}
-		`;
+        const hits = vectorSearch(db, "messages", queryEmbedding, limit * 5, {
+            table: "embeddings",
+            docIdColumn: "message_rowid",
+        });
 
-        const rows = db.query(sql).all(...params) as Array<MessageRow & { embedding: Buffer }>;
+        const results: SearchResult[] = [];
 
-        // Brute-force cosine similarity in TypeScript
-        const scored: Array<{ message: MessageRow; distance: number }> = [];
+        for (const hit of hits) {
+            const row = db
+                .query(`SELECT m.* FROM messages m WHERE m.rowid = ? AND m.chat_id = ?${dateFilter}`)
+                .get(hit.docId, ...params) as MessageRow | null;
 
-        for (const row of rows) {
-            const storedVec = new Float32Array(
-                row.embedding.buffer,
-                row.embedding.byteOffset,
-                row.embedding.byteLength / 4
-            );
-            const distance = cosineDistance(queryEmbedding, storedVec);
+            if (row) {
+                results.push({
+                    message: row,
+                    distance: hit.distance,
+                });
+            }
 
-            scored.push({
-                message: {
-                    id: row.id,
-                    chat_id: row.chat_id,
-                    sender_id: row.sender_id,
-                    text: row.text,
-                    media_desc: row.media_desc,
-                    is_outgoing: row.is_outgoing,
-                    date_unix: row.date_unix,
-                    date_iso: row.date_iso,
-                },
-                distance,
-            });
+            if (results.length >= limit) {
+                break;
+            }
         }
 
-        scored.sort((a, b) => a.distance - b.distance);
-
-        return scored.slice(0, limit).map((entry) => ({
-            message: entry.message,
-            distance: entry.distance,
-        }));
+        return results;
     }
 
     hybridSearch(
@@ -427,7 +416,7 @@ export class TelegramHistoryStore {
         const ftsResults = this.search(chatId, query, { ...options, limit: 100 });
         const vecResults = this.semanticSearch(chatId, queryEmbedding, { ...options, limit: 100 });
 
-        // Reciprocal Rank Fusion (k=60)
+        // Reciprocal Rank Fusion (k=60) — same algorithm as shared FTS5 engine
         const K = 60;
         const scores = new Map<number, { score: number; row: MessageRow }>();
 

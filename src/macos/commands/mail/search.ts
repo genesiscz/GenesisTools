@@ -6,8 +6,9 @@ import { searchBodies } from "@app/macos/lib/mail/jxa";
 import { cleanup, getAttachments, getMessageCount, listReceivers, searchMessages } from "@app/macos/lib/mail/sqlite";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import type { MailMessage, SearchOptions } from "@app/macos/lib/mail/types";
+import { Embedder } from "@app/utils/ai";
 import { SafeJSON } from "@app/utils/json";
-import { closeDarwinKit, rankBySimilarity } from "@app/utils/macos";
+import { cosineDistance } from "@app/utils/math";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 
@@ -124,44 +125,60 @@ export function registerSearchCommand(program: Command): void {
                         );
                     }
 
-                    // Phase 3: Semantic re-ranking via darwinkit (default ON, opt out with --no-semantic)
+                    // Phase 3: Semantic re-ranking via Embedder (default ON, opt out with --no-semantic)
+                    // Uses the AI provider fallback chain: darwinkit → local-hf → cloud
                     let semanticActive = false;
                     if (options.semantic !== false && messages.length > 0) {
                         spinner.start(`Ranking ${messages.length} results by semantic similarity...`);
+                        let embedder: Embedder | null = null;
+
                         try {
-                            const maxDist = parseFloat(options.maxDistance ?? "1.2");
-                            const items = messages.map((m) => ({
-                                ...m,
-                                text: [m.subject, m.senderName, m.senderAddress].filter(Boolean).join(" "),
+                            embedder = await Embedder.create();
+                            const maxDist = Number.parseFloat(options.maxDistance ?? "1.2");
+
+                            const queryResult = await embedder.embed(query);
+                            const texts = messages.map((m) =>
+                                [m.subject, m.senderName, m.senderAddress].filter(Boolean).join(" ")
+                            );
+                            const embeddings = await embedder.embedMany(texts);
+
+                            const scored = messages.map((msg, i) => ({
+                                msg,
+                                distance: cosineDistance(queryResult.vector, embeddings[i].vector),
                             }));
-                            const ranked = await rankBySimilarity(query, items, {
-                                maxDistance: maxDist,
-                                language: "en",
-                            });
-                            // Re-order messages and attach scores
-                            const reordered: MailMessage[] = ranked.map((r) => {
-                                const msg = r.item as MailMessage;
-                                msg.semanticScore = r.score;
-                                return msg;
-                            });
-                            // Append messages that were filtered out (beyond maxDistance)
-                            const rankedIds = new Set(reordered.map((m) => m.rowid));
-                            for (const msg of messages) {
-                                if (!rankedIds.has(msg.rowid)) {
+
+                            scored.sort((a, b) => a.distance - b.distance);
+
+                            const reordered: MailMessage[] = [];
+
+                            for (const { msg, distance } of scored) {
+                                msg.semanticScore = distance;
+
+                                if (distance <= maxDist) {
                                     reordered.push(msg);
                                 }
                             }
+
+                            // Append messages beyond maxDistance (unranked)
+                            for (const { msg, distance } of scored) {
+                                if (distance > maxDist) {
+                                    reordered.push(msg);
+                                }
+                            }
+
                             messages.length = 0;
                             messages.push(...reordered);
                             semanticActive = true;
-                            spinner.stop(`Semantic ranking complete (${ranked.length} relevant results)`);
+
+                            const relevantCount = scored.filter((s) => s.distance <= maxDist).length;
+                            spinner.stop(`Semantic ranking complete (${relevantCount} relevant results, ${embedder.dimensions}-dim)`);
                         } catch (err) {
                             spinner.stop(
                                 `Semantic ranking skipped: ${err instanceof Error ? err.message : String(err)}`
                             );
                             logger.warn(`Semantic ranking failed, falling back to keyword order: ${err}`);
                         } finally {
-                            closeDarwinKit();
+                            embedder?.dispose();
                         }
                     }
 
