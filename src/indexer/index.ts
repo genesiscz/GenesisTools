@@ -36,6 +36,23 @@ registerBenchmarkCommand(program);
 registerBenchVectorsCommand(program);
 registerGraphCommand(program);
 
+program
+    .command("mcp-serve")
+    .description("Start the indexer MCP server (stdio transport, for AI assistant integration)")
+    .action(async () => {
+        // Exec the MCP server as a separate process so it owns stdin/stdout
+        const proc = Bun.spawn(["bun", "run", import.meta.dir + "/mcp-server.ts"], {
+            stdin: "inherit",
+            stdout: "inherit",
+            stderr: "inherit",
+        });
+
+        process.on("SIGINT", () => proc.kill());
+        process.on("SIGTERM", () => proc.kill());
+        await proc.exited;
+        process.exit(proc.exitCode ?? 0);
+    });
+
 async function main(): Promise<void> {
     if (process.argv.length <= 2) {
         program.outputHelp();

@@ -4,6 +4,7 @@ import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { buildCodeGraph, getGraphStats, toMermaidDiagram } from "../lib/code-graph";
+import type { CodeGraph } from "../lib/code-graph";
 import { IndexerManager } from "../lib/manager";
 
 export function registerGraphCommand(program: Command): void {
@@ -21,15 +22,27 @@ export function registerGraphCommand(program: Command): void {
                 const indexer = await manager.getIndex(name);
                 const store = indexer.getStore();
                 const config = indexer.getConfig();
+                const meta = store.getMeta();
 
-                p.log.step("Building code graph...");
-                const startTime = performance.now();
+                // Try loading cached graph first
+                let graph: CodeGraph;
+                const cached = store.loadCodeGraph();
+                const lastSync = meta.lastSyncAt ?? 0;
 
-                const fileContents = store.getAllFileContents();
-                const graph = buildCodeGraph(fileContents, config.baseDir);
-                const buildMs = performance.now() - startTime;
+                if (cached && cached.builtAt >= lastSync) {
+                    p.log.info("Using cached graph");
+                    graph = SafeJSON.parse(cached.graphJson) as CodeGraph;
+                } else {
+                    p.log.step("Building code graph...");
+                    const startTime = performance.now();
+                    const fileContents = store.getAllFileContents();
+                    graph = buildCodeGraph(fileContents, config.baseDir);
+                    const buildMs = performance.now() - startTime;
+                    p.log.info(`Graph built in ${Math.round(buildMs)}ms`);
 
-                p.log.info(`Graph built in ${Math.round(buildMs)}ms`);
+                    // Persist for next time
+                    store.saveCodeGraph(SafeJSON.stringify(graph), graph.builtAt);
+                }
 
                 if (opts.file) {
                     showFileDependencies(graph, opts.file);
@@ -71,6 +84,10 @@ function showGraphStats(graph: ReturnType<typeof buildCodeGraph>): void {
 
     if (stats.maxImported) {
         entries.push(["Most imported", `${stats.maxImported.path} (${stats.maxImported.count})`]);
+    }
+
+    if (stats.circularDependencies) {
+        entries.push(["Circular deps", String(stats.circularDependencies)]);
     }
 
     for (const [label, value] of entries) {
