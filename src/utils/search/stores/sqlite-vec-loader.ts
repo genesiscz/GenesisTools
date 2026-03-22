@@ -54,7 +54,12 @@ export function loadSqliteVec(db: Database): boolean {
         return false;
     }
 
-    ensureExtensionCapableSQLite();
+    // ensureExtensionCapableSQLite() should already have been called before
+    // any Database was created. Call it here as a safety net, but it may be
+    // too late if a Database instance already exists.
+    if (!customSqliteAttempted) {
+        ensureExtensionCapableSQLite();
+    }
 
     try {
         const sqliteVec = require("sqlite-vec");

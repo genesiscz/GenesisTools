@@ -338,8 +338,8 @@ describe("retry with getDelay", () => {
     test("respects shouldRetry with getDelay", async () => {
         let attempt = 0;
 
-        try {
-            await retry(
+        await expect(
+            retry(
                 async () => {
                     attempt++;
                     throw new Error("fatal");
@@ -349,10 +349,8 @@ describe("retry with getDelay", () => {
                     shouldRetry: () => false,
                     getDelay: () => 10,
                 }
-            );
-        } catch (e) {
-            expect((e as Error).message).toBe("fatal");
-        }
+            )
+        ).rejects.toThrow("fatal");
 
         expect(attempt).toBe(1);
     });

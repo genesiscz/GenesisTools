@@ -62,7 +62,7 @@ export function defaultDetectChanges(
         entryById.set(entry.id, entry);
     }
 
-    const changeSet = detectChangesPreHashed(currentHashMap, previousHashes);
+    const changeSet = detectChangesPreHashed({ currentHashes: currentHashMap, previousHashes });
 
     return {
         added: changeSet.added.map((id) => entryById.get(id)!),

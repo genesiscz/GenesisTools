@@ -28,7 +28,7 @@ describe("detectChanges", () => {
         ]);
         const previous = new Map<string, string>();
 
-        const result = detectChanges(current, previous);
+        const result = detectChanges({ current, previous });
         expect(result.added.sort()).toEqual(["a.ts", "b.ts"]);
         expect(result.modified).toEqual([]);
         expect(result.deleted).toEqual([]);
@@ -48,7 +48,7 @@ describe("detectChanges", () => {
             previous.set(path, defaultHash(c));
         }
 
-        const result = detectChanges(content, previous);
+        const result = detectChanges({ current: content, previous });
         expect(result.added).toEqual([]);
         expect(result.modified).toEqual([]);
         expect(result.deleted).toEqual([]);
@@ -68,7 +68,7 @@ describe("detectChanges", () => {
             ["added.ts", "new-file"],
         ]);
 
-        const result = detectChanges(current, previous);
+        const result = detectChanges({ current, previous });
         expect(result.added).toEqual(["added.ts"]);
         expect(result.modified).toEqual(["modified.ts"]);
         expect(result.deleted).toEqual(["deleted.ts"]);
@@ -81,7 +81,7 @@ describe("detectChanges", () => {
         const previous = new Map([["a.ts", "hash-a"]]);
         const current = new Map([["a.ts", "hash-a"]]);
 
-        const result = detectChanges(current, previous, { hashFn: customHash });
+        const result = detectChanges({ current, previous, hashFn: customHash });
         expect(result.unchanged).toEqual(["a.ts"]);
     });
 });
@@ -100,7 +100,7 @@ describe("detectChangesPreHashed", () => {
             ["d.ts", "hash-444"], // added
         ]);
 
-        const result = detectChangesPreHashed(current, previous);
+        const result = detectChangesPreHashed({ currentHashes: current, previousHashes: previous });
         expect(result.unchanged).toEqual(["a.ts"]);
         expect(result.modified).toEqual(["b.ts"]);
         expect(result.added).toEqual(["d.ts"]);
@@ -108,7 +108,7 @@ describe("detectChangesPreHashed", () => {
     });
 
     test("empty both -> empty changeset", () => {
-        const result = detectChangesPreHashed(new Map(), new Map());
+        const result = detectChangesPreHashed({ currentHashes: new Map(), previousHashes: new Map() });
         expect(result.added).toEqual([]);
         expect(result.modified).toEqual([]);
         expect(result.deleted).toEqual([]);

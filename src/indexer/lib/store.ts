@@ -145,8 +145,39 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         mkdirSync(indexDir, { recursive: true });
     }
 
+    // Cross-process lock via proper-lockfile — acquire BEFORE opening DB
+    const lockPath = join(indexDir, "index.lock");
+    let lockHandle: LockHandle;
+
+    try {
+        lockHandle = await acquireLock(lockPath, {
+            staleMs: 120_000,
+            updateMs: 30_000,
+            retries: 0,
+        });
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ELOCKED") {
+            throw new Error(
+                `Index "${config.name}" is locked by another process. ` +
+                    `If this is stale, it will auto-expire in 2 minutes.`
+            );
+        }
+
+        throw err;
+    }
+
+    // Ensure extension-capable SQLite is loaded BEFORE creating Database instances.
+    // Must happen before the first new Database() call in this process.
+    if (config.storage?.vectorDriver !== "sqlite-brute" && config.storage?.vectorDriver !== "qdrant") {
+        const { ensureExtensionCapableSQLite } = await import("@app/utils/search/stores/sqlite-vec-loader");
+        ensureExtensionCapableSQLite();
+    }
+
     const dbPath = join(indexDir, "index.db");
-    const db = new Database(dbPath);
+    let db: InstanceType<typeof Database>;
+
+    try {
+    db = new Database(dbPath);
     db.run("PRAGMA journal_mode = WAL");
 
     const tableName = sanitizeName(config.name);
@@ -183,27 +214,6 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
             createdAt,
         };
         db.run("INSERT INTO index_meta (key, value) VALUES (?, ?)", ["meta", SafeJSON.stringify(initialMeta)]);
-    }
-
-    // Cross-process lock via proper-lockfile (stale detection + auto-refresh)
-    const lockPath = join(indexDir, "index.lock");
-    let lockHandle: LockHandle;
-
-    try {
-        lockHandle = await acquireLock(lockPath, {
-            staleMs: 120_000,
-            updateMs: 30_000,
-            retries: 0,
-        });
-    } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === "ELOCKED") {
-            throw new Error(
-                `Index "${config.name}" is locked by another process. ` +
-                    `If this is stale, it will auto-expire in 2 minutes.`
-            );
-        }
-
-        throw err;
     }
 
     // Optional Qdrant vector backend
@@ -293,6 +303,25 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                             const chunk = chunks.find((c) => c.id === chunkId);
                             const text = chunk?.content ?? "";
                             qdrantStore.storeWithText(chunkId, vector, text);
+                        }
+
+                        // Record in local embeddings table so getUnembeddedChunkIds() stays correct.
+                        // Uses zero-length blob since the actual vectors live in Qdrant.
+                        if (!embTableExists) {
+                            db.run(`CREATE TABLE IF NOT EXISTS ${embTable} (
+                                doc_id TEXT PRIMARY KEY,
+                                embedding BLOB NOT NULL
+                            )`);
+                            embTableExists = true;
+                        }
+
+                        const marker = Buffer.alloc(0);
+
+                        for (const chunkId of embeddings.keys()) {
+                            db.run(`INSERT OR REPLACE INTO ${embTable} (doc_id, embedding) VALUES (?, ?)`, [
+                                chunkId,
+                                marker,
+                            ]);
                         }
                     } else if (vectorStore) {
                         // Route through the SearchEngine's vector store (sqlite-vec or brute-force)
@@ -610,16 +639,24 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         },
 
         async close(): Promise<void> {
-            if (qdrantStore) {
-                await qdrantStore.flush();
-                await qdrantStore.close();
-            }
+            try {
+                if (qdrantStore) {
+                    await qdrantStore.flush();
+                    await qdrantStore.close();
+                }
 
-            await fts.close();
-            db.close();
-            await lockHandle.release();
+                await fts.close();
+                db.close();
+            } finally {
+                await lockHandle.release();
+            }
         },
     };
 
     return store;
+    } catch (err) {
+        // Release the lock if initialization fails — otherwise it stays held until stale
+        await lockHandle.release();
+        throw err;
+    }
 }

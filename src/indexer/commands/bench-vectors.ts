@@ -37,6 +37,19 @@ export function registerBenchVectorsCommand(program: Command): void {
             const dimensions = parseInt(opts.dimensions, 10);
             const numQueries = parseInt(opts.queries, 10);
             const limit = parseInt(opts.limit, 10);
+
+            for (const [name, value] of [
+                ["vectors", numVectors],
+                ["dimensions", dimensions],
+                ["queries", numQueries],
+                ["limit", limit],
+            ] as const) {
+                if (Number.isNaN(value) || value <= 0) {
+                    console.error(pc.red(`Invalid --${name}: must be a positive integer`));
+                    process.exit(1);
+                }
+            }
+
             const backends = (opts.backends as string).split(",").map((b: string) => b.trim());
 
             console.log(pc.bold("\nVector Search Benchmark"));
@@ -58,7 +71,7 @@ export function registerBenchVectorsCommand(program: Command): void {
                 const tmpDir = mkdtempSync(join(tmpdir(), `bench-${backend}-`));
 
                 try {
-                    const store = await createStore(backend, tmpDir, dimensions, Database);
+                    const store = await createStore({ backend, tmpDir, dimensions, DatabaseClass: Database });
 
                     // Benchmark inserts
                     const insertStart = performance.now();
@@ -140,12 +153,15 @@ function generateRandomVectors(count: number, dims: number): Float32Array[] {
     return vecs;
 }
 
-async function createStore(
-    backend: string,
-    tmpDir: string,
-    dimensions: number,
-    DatabaseClass: typeof import("bun:sqlite").Database,
-): Promise<import("@app/utils/search/stores/vector-store").VectorStore> {
+interface CreateStoreOptions {
+    backend: string;
+    tmpDir: string;
+    dimensions: number;
+    DatabaseClass: typeof import("bun:sqlite").Database;
+}
+
+async function createStore(opts: CreateStoreOptions): Promise<import("@app/utils/search/stores/vector-store").VectorStore> {
+    const { backend, tmpDir, dimensions, DatabaseClass } = opts;
     const { join } = await import("node:path");
     const dbPath = join(tmpDir, "bench.db");
 

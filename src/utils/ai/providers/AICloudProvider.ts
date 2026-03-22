@@ -118,18 +118,13 @@ export class AICloudProvider
     }
 
     async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
-        const model = options?.model ?? "text-embedding-3-small";
-        const { createOpenAI } = await import("@ai-sdk/openai");
-        const openai = createOpenAI();
-        const result = await openai.embedding(model).doEmbed({ values: [text] });
-        const embedding = result.embeddings[0];
+        const results = await this.embedBatch([text], options);
 
-        if (!embedding) {
+        if (!results[0]) {
             throw new Error("Embedding API returned empty result");
         }
 
-        const vec = new Float32Array(embedding);
-        return { vector: vec, dimensions: vec.length };
+        return results[0];
     }
 
     async embedBatch(texts: string[], options?: EmbedOptions): Promise<EmbeddingResult[]> {

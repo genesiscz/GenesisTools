@@ -89,7 +89,7 @@ export interface IndexMeta {
     indexEmbedding?: EmbeddingModelInfo;
     searchEmbedding?: EmbeddingModelInfo;
     /** Current indexing status. Persisted for crash recovery. */
-    indexingStatus?: "idle" | "in-progress" | "completed" | "cancelled";
+    indexingStatus?: "idle" | "in-progress" | "completed" | "cancelled" | "error";
 }
 
 export interface IndexStats {

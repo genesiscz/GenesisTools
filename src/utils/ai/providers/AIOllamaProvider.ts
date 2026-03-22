@@ -22,7 +22,7 @@ export interface AIOllamaProviderOptions {
 
 export class AIOllamaProvider implements AIProvider, AIEmbeddingProvider {
     readonly type = "ollama" as const;
-    readonly dimensions: number;
+    private _dimensions: number;
     private baseUrl: string;
     private defaultModel: string;
     private available: boolean | null = null;
@@ -30,8 +30,12 @@ export class AIOllamaProvider implements AIProvider, AIEmbeddingProvider {
     constructor(options?: AIOllamaProviderOptions) {
         this.baseUrl = (options?.baseUrl ?? DEFAULT_OLLAMA_URL).replace(/\/$/, "");
         this.defaultModel = options?.defaultModel ?? "nomic-embed-text";
-        // Default dimensions for nomic-embed-text. Will be overridden by actual response.
-        this.dimensions = 768;
+        // Default dimensions for nomic-embed-text. Updated from first actual response.
+        this._dimensions = 768;
+    }
+
+    get dimensions(): number {
+        return this._dimensions;
     }
 
     async isAvailable(): Promise<boolean> {
@@ -138,10 +142,17 @@ export class AIOllamaProvider implements AIProvider, AIEmbeddingProvider {
 
         const data = (await resp.json()) as OllamaEmbedResponse;
 
-        return data.embeddings.map((embedding) => {
+        const results = data.embeddings.map((embedding) => {
             const vector = new Float32Array(embedding);
             return { vector, dimensions: vector.length };
         });
+
+        // Update dimensions from actual model output on first successful call
+        if (results.length > 0 && results[0].dimensions !== this._dimensions) {
+            this._dimensions = results[0].dimensions;
+        }
+
+        return results;
     }
 
     dispose(): void {

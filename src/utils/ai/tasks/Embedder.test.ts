@@ -98,42 +98,52 @@ describe("Embedder", () => {
     });
 });
 
-describe("Embedder batch logic", () => {
+describe("Embedder batch logic (through Embedder class)", () => {
+    // Helper to create Embedder from a provider (bypasses AIConfig)
+    function createEmbedderFromProvider(provider: AIEmbeddingProvider): Embedder {
+        return new (Embedder as unknown as new (p: AIEmbeddingProvider) => Embedder)(provider);
+    }
+
     test("embedBatch uses native batch when provider supports it", async () => {
         const provider = createBatchMockProvider(768);
-        const texts = ["hello", "world", "test"];
+        const emb = createEmbedderFromProvider(provider);
 
-        const results = await provider.embedBatch!(texts);
+        const results = await emb.embedBatch(["hello", "world", "test"]);
 
         expect(results).toHaveLength(3);
         expect(provider.callLog).toEqual(["batch:3"]);
+        emb.dispose();
     });
 
-    test("sequential provider falls back to individual embed calls", async () => {
+    test("embedBatch falls back to individual embed() for non-batch providers", async () => {
         const provider = createSequentialMockProvider(384);
-        const texts = ["a", "b", "c"];
+        const emb = createEmbedderFromProvider(provider);
 
-        // Simulate what Embedder.embedBatch does for non-batch providers
-        expect(provider.embedBatch).toBeUndefined();
-
-        const results = await Promise.all(texts.map((t) => provider.embed(t)));
+        const results = await emb.embedBatch(["a", "b", "c"]);
 
         expect(results).toHaveLength(3);
         expect(provider.callLog).toEqual(["embed:a", "embed:b", "embed:c"]);
+        emb.dispose();
     });
 
     test("empty input returns empty array", async () => {
         const provider = createBatchMockProvider(768);
-        const results = await provider.embedBatch!([]);
+        const emb = createEmbedderFromProvider(provider);
+
+        const results = await emb.embedBatch([]);
 
         expect(results).toHaveLength(0);
+        emb.dispose();
     });
 
     test("supportsBatch reflects provider capability", () => {
-        const batch = createBatchMockProvider(768);
-        const seq = createSequentialMockProvider(384);
+        const batch = createEmbedderFromProvider(createBatchMockProvider(768));
+        const seq = createEmbedderFromProvider(createSequentialMockProvider(384));
 
-        expect(typeof batch.embedBatch).toBe("function");
-        expect(seq.embedBatch).toBeUndefined();
+        expect(batch.supportsBatch).toBe(true);
+        expect(seq.supportsBatch).toBe(false);
+
+        batch.dispose();
+        seq.dispose();
     });
 });

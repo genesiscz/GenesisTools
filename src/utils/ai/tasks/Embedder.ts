@@ -5,6 +5,23 @@ import type { AIEmbeddingProvider, AIProviderType, EmbeddingResult, EmbedOptions
 
 const RETRY_DELAY = rateLimitAwareDelay();
 
+/** Don't retry permanent errors — only transient/rate-limit failures are worth retrying */
+function shouldRetryEmbedding(error: unknown): boolean {
+    const msg = error instanceof Error ? error.message : String(error);
+
+    // Permanent HTTP errors: bad credentials, bad model, invalid input
+    if (/\b(401|403|404|400)\b/.test(msg)) {
+        return false;
+    }
+
+    // Permanent provider errors
+    if (/\b(invalid.api.key|unauthorized|forbidden|model.not.found)\b/i.test(msg)) {
+        return false;
+    }
+
+    return true;
+}
+
 export class Embedder {
     private provider: AIEmbeddingProvider;
 
@@ -50,6 +67,7 @@ export class Embedder {
         return retry(() => this.provider.embed(text, options), {
             maxAttempts: 3,
             getDelay: RETRY_DELAY,
+            shouldRetry: shouldRetryEmbedding,
         });
     }
 
@@ -66,17 +84,23 @@ export class Embedder {
             return retry(() => this.provider.embedBatch!(texts, options), {
                 maxAttempts: 3,
                 getDelay: RETRY_DELAY,
+                shouldRetry: shouldRetryEmbedding,
             });
         }
 
-        return Promise.all(
-            texts.map((t) =>
-                retry(() => this.provider.embed(t, options), {
-                    maxAttempts: 3,
-                    getDelay: RETRY_DELAY,
-                })
-            )
-        );
+        // Sequential fallback to avoid thundering herd after batch failure
+        const results: EmbeddingResult[] = [];
+
+        for (const t of texts) {
+            const result = await retry(() => this.provider.embed(t, options), {
+                maxAttempts: 3,
+                getDelay: RETRY_DELAY,
+                shouldRetry: shouldRetryEmbedding,
+            });
+            results.push(result);
+        }
+
+        return results;
     }
 
     /** @deprecated Use embedBatch() instead */

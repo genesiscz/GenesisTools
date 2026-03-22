@@ -32,8 +32,8 @@ for (const { path: filePath, strategy } of testFiles) {
         strategy,
         parser: result.parser,
         chunks: result.chunks.length,
-        avgChars: Math.round(charSizes.reduce((a, b) => a + b, 0) / charSizes.length),
-        maxChars: Math.max(...charSizes),
+        avgChars: charSizes.length > 0 ? Math.round(charSizes.reduce((a, b) => a + b, 0) / charSizes.length) : 0,
+        maxChars: charSizes.length > 0 ? Math.max(...charSizes) : 0,
         timeMs: Math.round(elapsed * 100) / 100,
     });
 }
@@ -58,8 +58,8 @@ for (const [name, content, filePath] of [
         strategy: "auto",
         parser: result.parser,
         chunks: result.chunks.length,
-        avgChars: Math.round(charSizes.reduce((a, b) => a + b, 0) / charSizes.length),
-        maxChars: Math.max(...charSizes),
+        avgChars: charSizes.length > 0 ? Math.round(charSizes.reduce((a, b) => a + b, 0) / charSizes.length) : 0,
+        maxChars: charSizes.length > 0 ? Math.max(...charSizes) : 0,
         timeMs: Math.round(elapsed * 100) / 100,
     });
 }
