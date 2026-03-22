@@ -1,6 +1,6 @@
 {
   "timestamp": "2026-03-21T20:26:26.146Z",
-  "target": "/Users/Martin/Tresors/Projects/ReservineFront/reservine",
+  "target": "./reservine",
   "indexName": "bench_1774123477041",
   "phases": {
     "scanAndChunkMs": 2717,
