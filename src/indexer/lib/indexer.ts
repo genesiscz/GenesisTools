@@ -496,7 +496,10 @@ export class Indexer extends IndexerEventEmitter {
         const modelId = this.config.embedding?.model ?? "darwinkit";
         const maxEmbedChars = getMaxEmbedChars(modelId);
         const taskPrefix = getTaskPrefix(modelId);
-        const embedBatchSize = EMBEDDING_BATCH_SIZE;
+        // Use larger batches for providers with high per-call limits (Google=100, Ollama=unlimited)
+        // to minimize rate-limit waits between calls
+        const providerType = this.config.embedding?.provider;
+        const embedBatchSize = providerType === "google" ? 100 : providerType === "cloud" ? 2048 : EMBEDDING_BATCH_SIZE;
         const embedStart = performance.now();
         const dbPageSize = 1000;
         let embedded = 0;
