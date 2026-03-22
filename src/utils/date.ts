@@ -2,6 +2,293 @@
  * Shared date utilities for CLI tools.
  */
 
+import { execSync } from "node:child_process";
+
+// ============================================
+// Locale Detection
+// ============================================
+
+let cachedLocale: string | undefined;
+
+/**
+ * Detect system locale.
+ * macOS: `defaults read NSGlobalDomain AppleLocale` (e.g. "cs_CZ" → "cs-CZ")
+ * Fallback: $LC_TIME / $LANG / $LC_ALL → Intl default
+ */
+export function getSystemLocale(): string {
+    if (cachedLocale) {
+        return cachedLocale;
+    }
+
+    if (process.platform === "darwin") {
+        try {
+            const raw = execSync("defaults read NSGlobalDomain AppleLocale", {
+                encoding: "utf-8",
+                timeout: 1000,
+            }).trim();
+
+            if (raw) {
+                // AppleLocale format: "en_US@rg=czzzzz" where:
+                // - "en_US" is language_region
+                // - "@rg=czzzzz" means "use Czech Republic regional formats" (24h time, date order, etc.)
+                // We parse the rg= suffix to get the actual regional country code,
+                // so "en_US@rg=czzzzz" → "en-CZ" (English with Czech regional formats → 24h time)
+                const [base, suffix] = raw.split("@");
+                let locale = base.replace(/_/g, "-");
+
+                if (suffix) {
+                    const rgMatch = suffix.match(/rg=([a-z]{2})/i);
+
+                    if (rgMatch) {
+                        const regionCode = rgMatch[1].toUpperCase();
+                        const lang = locale.split("-")[0];
+                        locale = `${lang}-${regionCode}`;
+                    }
+                }
+
+                cachedLocale = locale;
+                return cachedLocale;
+            }
+        } catch {
+            // fall through
+        }
+    }
+
+    const envLocale = process.env.LC_TIME || process.env.LANG || process.env.LC_ALL;
+
+    if (envLocale) {
+        cachedLocale = envLocale.split(".")[0].replace(/_/g, "-");
+        return cachedLocale;
+    }
+
+    cachedLocale = new Intl.DateTimeFormat().resolvedOptions().locale;
+    return cachedLocale;
+}
+
+// ============================================
+// Locale-Aware Display Formatting
+// ============================================
+
+export type AbsoluteFormat =
+    | "date" // "21. 3. 2026" (locale)
+    | "time" // "20:53" (locale)
+    | "datetime" // "21. 3. 2026 20:53" (locale)
+    | "date-long" // "Saturday, 21 March 2026" (locale)
+    | "date-short" // "21. 3." or "3/21" (locale, no year)
+    | "datetime-long" // "Saturday, 21 March 2026, 20:53" (locale)
+    | "weekday" // "Saturday" (locale)
+    | "month-day" // "Mar 21" or "21. bře" (locale)
+    | "time-seconds"; // "20:53:12" (locale)
+
+export type RelativeFormat =
+    | "this-day" // relative only within today, absolute otherwise
+    | "two-days" // relative within 48h, absolute otherwise
+    | "always-relative-short" // "2h ago", "3d ago"
+    | "always-relative-long"; // "2 hours 30 minutes ago", shows seconds if < 1 min
+
+export interface FormatDateTimeOptions {
+    /** Show relative time. Controls the threshold for relative display. */
+    relative?: RelativeFormat;
+    /** Show absolute time. Controls the detail level. Default: "datetime" */
+    absolute?: AbsoluteFormat;
+    /**
+     * When both relative and absolute are requested, which comes first?
+     * Default: "absolute" → "22. 3. 2026, 20:04 (1h ago)"
+     * "relative" → "1h ago (22. 3. 2026, 20:04)"
+     */
+    first?: "absolute" | "relative";
+    /** Override locale (default: system locale via getSystemLocale()) */
+    locale?: string;
+}
+
+/**
+ * Format a date/time for CLI display using system locale.
+ *
+ * - `{ absolute: "datetime" }` → "21. 3. 2026 20:53" (locale-formatted)
+ * - `{ relative: "two-days" }` → "2 hours ago" or absolute if older
+ * - `{ relative: "two-days", absolute: "datetime" }` → "22. 3. 2026, 20:53 (2h ago)"
+ * - `{ relative: "two-days", absolute: "datetime", first: "relative" }` → "2h ago (22. 3. 2026, 20:53)"
+ * - No options → defaults to `{ absolute: "datetime" }`
+ */
+export function formatDateTime(
+    date: Date | string | number,
+    options: FormatDateTimeOptions = {},
+): string {
+    const d = date instanceof Date ? date : new Date(date);
+    const locale = options.locale ?? getSystemLocale();
+    const now = new Date();
+
+    const hasRelative = options.relative !== undefined;
+    const hasAbsolute = options.absolute !== undefined;
+
+    if (!hasRelative && !hasAbsolute) {
+        return absoluteFormat(d, "datetime", locale);
+    }
+
+    const relativeStr = hasRelative ? relativeFormat(d, now, options.relative!) : null;
+    const absoluteStr = hasAbsolute ? absoluteFormat(d, options.absolute!, locale) : null;
+
+    if (relativeStr && absoluteStr) {
+        const first = options.first ?? "absolute";
+
+        if (first === "relative") {
+            return `${relativeStr} (${absoluteStr})`;
+        }
+
+        return `${absoluteStr} (${relativeStr})`;
+    }
+
+    if (hasRelative && !hasAbsolute) {
+        return relativeStr ?? absoluteFormat(d, "datetime", locale);
+    }
+
+    return absoluteStr ?? absoluteFormat(d, "datetime", locale);
+}
+
+// ---- Absolute ----
+
+const ABSOLUTE_OPTIONS: Record<AbsoluteFormat, Intl.DateTimeFormatOptions> = {
+    "date": { year: "numeric", month: "numeric", day: "numeric" },
+    "time": { hour: "2-digit", minute: "2-digit" },
+    "datetime": {
+        year: "numeric", month: "numeric", day: "numeric",
+        hour: "2-digit", minute: "2-digit",
+    },
+    "date-long": { weekday: "long", year: "numeric", month: "long", day: "numeric" },
+    "date-short": { month: "numeric", day: "numeric" },
+    "datetime-long": {
+        weekday: "long", year: "numeric", month: "long", day: "numeric",
+        hour: "2-digit", minute: "2-digit",
+    },
+    "weekday": { weekday: "long" },
+    "month-day": { month: "short", day: "numeric" },
+    "time-seconds": { hour: "2-digit", minute: "2-digit", second: "2-digit" },
+};
+
+function absoluteFormat(date: Date, format: AbsoluteFormat, locale: string): string {
+    return new Intl.DateTimeFormat(locale, ABSOLUTE_OPTIONS[format]).format(date);
+}
+
+// ---- Relative ----
+
+function relativeFormat(date: Date, now: Date, mode: RelativeFormat): string | null {
+    const diffMs = now.getTime() - date.getTime();
+    const isFuture = diffMs < 0;
+    const absDiffMs = Math.abs(diffMs);
+
+    const seconds = Math.floor(absDiffMs / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    const suffix = isFuture ? "from now" : "ago";
+
+    switch (mode) {
+        case "this-day": {
+            if (!isSameCalendarDay(date, now)) {
+                return null;
+            }
+
+            break;
+        }
+
+        case "two-days": {
+            if (absDiffMs > 48 * 60 * 60 * 1000) {
+                return null;
+            }
+
+            break;
+        }
+
+        case "always-relative-short":
+        case "always-relative-long":
+            break;
+    }
+
+    if (mode === "always-relative-long") {
+        return relativeFormatLong(days, hours, minutes, seconds, suffix);
+    }
+
+    return relativeFormatShort(days, hours, minutes, seconds, suffix);
+}
+
+function relativeFormatLong(
+    days: number,
+    hours: number,
+    minutes: number,
+    seconds: number,
+    suffix: string,
+): string {
+    if (seconds < 60) {
+        return `${seconds} second${seconds !== 1 ? "s" : ""} ${suffix}`;
+    }
+
+    if (minutes < 60) {
+        const remSec = seconds % 60;
+        const parts = [`${minutes} minute${minutes !== 1 ? "s" : ""}`];
+
+        if (remSec > 0) {
+            parts.push(`${remSec} second${remSec !== 1 ? "s" : ""}`);
+        }
+
+        return `${parts.join(" ")} ${suffix}`;
+    }
+
+    if (hours < 24) {
+        const remMin = minutes % 60;
+        const parts = [`${hours} hour${hours !== 1 ? "s" : ""}`];
+
+        if (remMin > 0) {
+            parts.push(`${remMin} minute${remMin !== 1 ? "s" : ""}`);
+        }
+
+        return `${parts.join(" ")} ${suffix}`;
+    }
+
+    const remHours = hours % 24;
+    const parts = [`${days} day${days !== 1 ? "s" : ""}`];
+
+    if (remHours > 0) {
+        parts.push(`${remHours} hour${remHours !== 1 ? "s" : ""}`);
+    }
+
+    return `${parts.join(" ")} ${suffix}`;
+}
+
+function relativeFormatShort(
+    days: number,
+    hours: number,
+    minutes: number,
+    seconds: number,
+    suffix: string,
+): string {
+    if (seconds < 60) {
+        return `${seconds}s ${suffix}`;
+    }
+
+    if (minutes < 60) {
+        return `${minutes}m ${suffix}`;
+    }
+
+    if (hours < 24) {
+        return `${hours}h ${suffix}`;
+    }
+
+    return `${days}d ${suffix}`;
+}
+
+function isSameCalendarDay(a: Date, b: Date): boolean {
+    return (
+        a.getFullYear() === b.getFullYear() &&
+        a.getMonth() === b.getMonth() &&
+        a.getDate() === b.getDate()
+    );
+}
+
+// ============================================
+// Date Parsing & Calendar Utilities
+// ============================================
+
 /**
  * Parse a date string (e.g. "YYYY-MM-DD") and throw on invalid input.
  */
