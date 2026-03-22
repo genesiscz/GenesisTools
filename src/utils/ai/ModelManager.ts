@@ -6,7 +6,71 @@ import { formatBytes } from "@app/utils/format";
 
 const HF_CACHE_DIR = join(homedir(), ".cache", "huggingface", "hub");
 
+// ============================================
+// Model registry — known models per provider/task
+// ============================================
+
+export interface ModelInfo {
+    id: string;
+    name: string;
+    description: string;
+}
+
+const LOCAL_TRANSCRIPTION_MODELS: ModelInfo[] = [
+    { id: "onnx-community/whisper-large-v3-turbo", name: "whisper-large-v3-turbo", description: "best quality, ~1.5GB" },
+    { id: "onnx-community/whisper-large-v3", name: "whisper-large-v3", description: "highest quality, ~3GB" },
+    { id: "onnx-community/whisper-small", name: "whisper-small", description: "faster, lower quality" },
+    { id: "onnx-community/whisper-tiny", name: "whisper-tiny", description: "fastest, basic quality" },
+];
+
+function getCloudTranscriptionModels(): ModelInfo[] {
+    const models: ModelInfo[] = [];
+
+    if (process.env.GROQ_API_KEY) {
+        models.push(
+            { id: "whisper-large-v3-turbo", name: "Groq whisper-large-v3-turbo", description: "fast" },
+            { id: "whisper-large-v3", name: "Groq whisper-large-v3", description: "high quality" },
+        );
+    }
+
+    if (process.env.OPENAI_API_KEY) {
+        models.push({ id: "whisper-1", name: "OpenAI whisper-1", description: "reliable" });
+    }
+
+    return models;
+}
+
+/**
+ * Get the default (first/recommended) model for a task + provider.
+ * Returns the model ID string, or undefined if no models are known.
+ */
+export function getDefaultModel(task: string, provider: string): string | undefined {
+    return getModelsForTask(task, provider)[0]?.id;
+}
+
+/**
+ * Get known models for a task + provider combination.
+ * Cloud models are resolved lazily (checks env vars at call time).
+ */
+export function getModelsForTask(task: string, provider: string): ModelInfo[] {
+    if (task !== "transcribe") {
+        return [];
+    }
+
+    if (provider === "local-hf") {
+        return LOCAL_TRANSCRIPTION_MODELS;
+    }
+
+    if (provider === "cloud") {
+        return getCloudTranscriptionModels();
+    }
+
+    return [];
+}
+
 export class ModelManager {
+    private transformersCacheDir: string | null = null;
+
     async listDownloaded(): Promise<Array<{ modelId: string; sizeBytes: number }>> {
         if (!existsSync(HF_CACHE_DIR)) {
             return [];
@@ -46,8 +110,41 @@ export class ModelManager {
     }
 
     isDownloaded(modelId: string): boolean {
+        // Check HuggingFace hub cache (~/.cache/huggingface/hub/models--*)
         const dirName = `models--${modelId.replace(/\//g, "--")}`;
-        return existsSync(join(HF_CACHE_DIR, dirName));
+
+        if (existsSync(join(HF_CACHE_DIR, dirName))) {
+            return true;
+        }
+
+        // Check transformers.js local cache (node_modules/@huggingface/transformers/.cache/<org>/<model>)
+        if (this.transformersCacheDir) {
+            const localPath = join(this.transformersCacheDir, modelId);
+
+            if (existsSync(localPath)) {
+                const files = readdirSync(localPath);
+                return files.some((f) => f.endsWith(".json")) && files.length > 1;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Resolve the transformers.js cache dir (lazy, async).
+     * Call once before using isDownloaded if you need transformers.js cache detection.
+     */
+    async resolveTransformersCache(): Promise<void> {
+        if (this.transformersCacheDir) {
+            return;
+        }
+
+        try {
+            const { env } = await import("@huggingface/transformers");
+            this.transformersCacheDir = env.cacheDir;
+        } catch {
+            // transformers.js not available
+        }
     }
 
     getModelPath(modelId: string): string | null {
