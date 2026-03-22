@@ -321,6 +321,16 @@ export class Indexer extends IndexerEventEmitter {
 
                     return true;
                 },
+                onTransientError: (err, backoffMs) => {
+                    this.emitAndDispatch(
+                        "sync:error",
+                        {
+                            indexName: this.config.name,
+                            error: `Transient error, retrying in ${Math.round(backoffMs / 1000)}s: ${err.message}`,
+                        },
+                        callbacks
+                    );
+                },
             }
         );
     }

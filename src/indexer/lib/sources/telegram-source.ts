@@ -49,7 +49,14 @@ export class TelegramSource implements IndexerSource {
             throw new Error(`Telegram history database not found at ${dbPath}. Run 'tools telegram sync' first.`);
         }
 
-        const db = new Database(dbPath, { readonly: true });
+        let db: Database;
+
+        try {
+            db = new Database(dbPath, { readonly: true });
+        } catch {
+            throw new Error(`Telegram history database not found at ${dbPath}. Run 'tools telegram sync' first.`);
+        }
+
         return new TelegramSource(db, opts?.chatIds);
     }
 

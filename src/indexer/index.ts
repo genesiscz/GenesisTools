@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { registerAddCommand } from "./commands/add";
 import { registerBenchVectorsCommand } from "./commands/bench-vectors";
 import { registerBenchmarkCommand } from "./commands/benchmark";
+import { registerContextCommand } from "./commands/context";
 import { registerGraphCommand } from "./commands/graph";
 import { registerModelsCommand } from "./commands/models";
 import { registerRebuildCommand } from "./commands/rebuild";
@@ -35,6 +36,7 @@ registerVerifyCommand(program);
 registerBenchmarkCommand(program);
 registerBenchVectorsCommand(program);
 registerGraphCommand(program);
+registerContextCommand(program);
 
 program
     .command("mcp-serve")

@@ -15,6 +15,10 @@ export interface WatcherOptions {
     maxErrors?: number;
     /** Custom filter -- return false to ignore an event. Applied after OS-level ignores. */
     filter?: (event: WatcherEvent) => boolean;
+    /** Pause duration for transient infrastructure errors (ms). Default: 30000 */
+    transientBackoffMs?: number;
+    /** Callback when a transient error causes back-off */
+    onTransientError?: (err: Error, backoffMs: number) => void;
 }
 
 export interface WatcherSubscription {
@@ -56,6 +60,33 @@ function mapEventType(type: Event["type"]): WatcherEvent["type"] {
     }
 }
 
+const TRANSIENT_ERROR_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "ETIMEDOUT", "EPIPE", "EAI_AGAIN"]);
+
+const TRANSIENT_MESSAGE_PATTERNS = ["econnrefused", "dns", "timeout", "network", "connection reset", "socket hang up"];
+
+/** Classify whether an error is a transient infrastructure issue */
+export function isTransientError(err: unknown): boolean {
+    if (!(err instanceof Error)) {
+        return false;
+    }
+
+    const code = (err as NodeJS.ErrnoException).code;
+
+    if (code && TRANSIENT_ERROR_CODES.has(code)) {
+        return true;
+    }
+
+    const msg = err.message.toLowerCase();
+
+    for (const pattern of TRANSIENT_MESSAGE_PATTERNS) {
+        if (msg.includes(pattern)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 export async function createWatcher(
     dir: string,
     callback: WatcherCallback,
@@ -66,9 +97,11 @@ export async function createWatcher(
     const ignorePatterns = opts?.ignorePatterns ?? DEFAULT_IGNORE_PATTERNS;
     const maxErrors = opts?.maxErrors ?? 10;
     const filter = opts?.filter;
+    const transientBackoffMs = opts?.transientBackoffMs ?? 30000;
+    const onTransientError = opts?.onTransientError;
 
     // Accumulate events for debounce (latest event type per path wins)
-    let pendingEvents = new Map<string, WatcherEvent>();
+    const pendingEvents = new Map<string, WatcherEvent>();
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     let consecutiveErrors = 0;
     let isActive = true;
@@ -96,7 +129,19 @@ export async function createWatcher(
             for (const path of flushedPaths) {
                 pendingEvents.delete(path);
             }
-        } catch {
+        } catch (err) {
+            if (isTransientError(err)) {
+                const errObj = err instanceof Error ? err : new Error(String(err));
+
+                if (onTransientError) {
+                    onTransientError(errObj, transientBackoffMs);
+                }
+
+                // Schedule retry after backoff -- do NOT increment consecutiveErrors
+                setTimeout(flushEvents, transientBackoffMs);
+                return;
+            }
+
             consecutiveErrors++;
 
             if (consecutiveErrors >= maxErrors) {

@@ -119,6 +119,7 @@
         "glob": "^11.0.2",
         "gpt-3-encoder": "^1.1.4",
         "grammy": "^1.40.0",
+        "ignore": "^7.0.5",
         "ink": "^6.3.1",
         "ink-select-input": "^6.2.0",
         "ink-spinner": "^5.0.0",
