@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 
 export interface LockOptions {
@@ -28,7 +28,8 @@ export interface LockHandle {
  * @returns LockHandle with release() method
  * @throws Error with code "ELOCKED" if lock is held and retries exhausted
  */
-export async function acquireLock(lockPath: string, opts?: LockOptions): Promise<LockHandle> {
+export async function acquireLock(rawLockPath: string, opts?: LockOptions): Promise<LockHandle> {
+    const lockPath = resolve(rawLockPath);
     const staleMs = opts?.staleMs ?? 120_000;
     const updateMs = opts?.updateMs ?? 30_000;
     const retries = opts?.retries ?? 0;
@@ -46,13 +47,18 @@ export async function acquireLock(lockPath: string, opts?: LockOptions): Promise
         writeFileSync(lockPath, String(process.pid), "utf-8");
     }
 
-    const release = await lockfile.lock(lockPath, {
+    const lockOpts: Parameters<typeof lockfile.lock>[1] = {
         stale: staleMs,
         update: updateMs,
         retries: retries > 0 ? { retries, minTimeout: retryDelay, maxTimeout: retryDelay } : 0,
         realpath: false,
-        onCompromised: opts?.onCompromised ?? (() => {}),
-    });
+    };
+
+    if (opts?.onCompromised) {
+        lockOpts.onCompromised = opts.onCompromised;
+    }
+
+    const release = await lockfile.lock(lockPath, lockOpts);
 
     // Write PID for cross-process identification
     writeFileSync(lockPath, String(process.pid), "utf-8");
@@ -79,7 +85,9 @@ export async function acquireLock(lockPath: string, opts?: LockOptions): Promise
 /**
  * Check if a file is currently locked (by any process).
  */
-export async function isLocked(lockPath: string, opts?: Pick<LockOptions, "staleMs">): Promise<boolean> {
+export async function isLocked(rawLockPath: string, opts?: Pick<LockOptions, "staleMs">): Promise<boolean> {
+    const lockPath = resolve(rawLockPath);
+
     if (!existsSync(lockPath)) {
         return false;
     }
@@ -98,7 +106,9 @@ export async function isLocked(lockPath: string, opts?: Pick<LockOptions, "stale
  * Read the PID of the process holding the lock, if still alive.
  * Returns null if lock is not held or holder process is dead.
  */
-export async function getLockHolderPid(lockPath: string): Promise<number | null> {
+export async function getLockHolderPid(rawLockPath: string): Promise<number | null> {
+    const lockPath = resolve(rawLockPath);
+
     if (!existsSync(lockPath)) {
         return null;
     }
