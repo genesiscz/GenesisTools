@@ -8,7 +8,7 @@ export interface ModelInfo {
     ramGB: number;
     speed: "fast" | "medium" | "slow";
     license: string;
-    provider: "local-hf" | "cloud" | "darwinkit" | "coreml" | "ollama";
+    provider: "local-hf" | "cloud" | "darwinkit" | "coreml" | "ollama" | "google";
     bestFor: string[];
     description: string;
     installCmd?: string;
@@ -203,6 +203,20 @@ export const MODEL_REGISTRY: ModelInfo[] = [
         description: "High-quality general-purpose via Ollama. GPU-accelerated.",
         installCmd: "ollama pull mxbai-embed-large",
         contextLength: 512,
+        charsPerToken: 3,
+    },
+    {
+        id: "gemini-embedding-001",
+        name: "Gemini Embedding 001 (Google)",
+        params: "API",
+        dimensions: 3072,
+        ramGB: 0,
+        speed: "fast",
+        license: "Apache-2.0",
+        provider: "google",
+        bestFor: ["code", "general"],
+        description: "Google free-tier embedding. 3072 dims, 2048 token context. Requires GOOGLE_API_KEY.",
+        contextLength: 2048,
         charsPerToken: 3,
     },
 ];

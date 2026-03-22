@@ -21,7 +21,7 @@ describe("MODEL_REGISTRY", () => {
             expect(model.dimensions).toBeGreaterThan(0);
             expect(model.bestFor.length).toBeGreaterThan(0);
             expect(["fast", "medium", "slow"]).toContain(model.speed);
-            expect(["local-hf", "cloud", "darwinkit", "coreml", "ollama"]).toContain(model.provider);
+            expect(["local-hf", "cloud", "darwinkit", "coreml", "ollama", "google"]).toContain(model.provider);
         }
     });
 

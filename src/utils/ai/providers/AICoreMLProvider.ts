@@ -8,11 +8,19 @@ interface CoreMLEmbedResult {
     dimensions: number;
 }
 
+interface CoreMLEmbedBatchResult {
+    vectors: number[][];
+    dimensions: number;
+    count: number;
+}
+
 interface CoreMLNamespace {
     loadModel(params: { id: string; path: string; compute_units?: string; warm_up?: boolean }): Promise<void>;
     loadContextual(params: { id: string; language?: string }): Promise<void>;
     embed(params: { model_id: string; text: string }): Promise<CoreMLEmbedResult>;
+    embedBatch(params: { model_id: string; texts: string[] }): Promise<CoreMLEmbedBatchResult>;
     contextualEmbed(params: { model_id: string; text: string }): Promise<CoreMLEmbedResult>;
+    embedContextualBatch(params: { model_id: string; texts: string[] }): Promise<CoreMLEmbedBatchResult>;
     unloadModel(params: { id: string }): Promise<void>;
 }
 
@@ -86,11 +94,45 @@ export class AICoreMLProvider implements AIProvider, AIEmbeddingProvider {
         };
     }
 
-    async embedBatch(texts: string[], options?: EmbedOptions): Promise<EmbeddingResult[]> {
+    async embedBatch(texts: string[], _options?: EmbedOptions): Promise<EmbeddingResult[]> {
+        if (texts.length === 0) {
+            return [];
+        }
+
+        const dk = await this.ensureLoaded();
+
+        // Try native GPU-batched CoreML endpoints first (DarwinKit v0.3.0+)
+        try {
+            if (this.options.contextual) {
+                const result = await dk.coreml.embedContextualBatch({
+                    model_id: this.options.modelId,
+                    texts,
+                });
+
+                return result.vectors.map((v) => ({
+                    vector: new Float32Array(v),
+                    dimensions: result.dimensions,
+                }));
+            }
+
+            const result = await dk.coreml.embedBatch({
+                model_id: this.options.modelId,
+                texts,
+            });
+
+            return result.vectors.map((v) => ({
+                vector: new Float32Array(v),
+                dimensions: result.dimensions,
+            }));
+        } catch {
+            // Batch endpoints not available — fall back to sequential
+        }
+
+        // Sequential fallback for older DarwinKit versions
         const results: EmbeddingResult[] = [];
 
         for (const text of texts) {
-            results.push(await this.embed(text, options));
+            results.push(await this.embed(text));
         }
 
         return results;

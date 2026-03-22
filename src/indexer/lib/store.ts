@@ -54,6 +54,10 @@ export interface IndexStore {
     checkIntegrity(): string;
     /** Get all file contents from the content table (for graph building) */
     getAllFileContents(): Map<string, string>;
+    /** Save a serialized code graph */
+    saveCodeGraph(graphJson: string, builtAt: number): void;
+    /** Load the persisted code graph, or null if not present */
+    loadCodeGraph(): { graphJson: string; builtAt: number } | null;
     logSearch(entry: { query: string; mode: string; resultsCount: number; durationMs: number }): void;
     close(): Promise<void>;
 }
@@ -194,6 +198,12 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         results_count INTEGER,
         duration_ms REAL,
         searched_at TEXT
+    )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS code_graph (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        graph_json TEXT NOT NULL,
+        built_at INTEGER NOT NULL
     )`);
 
     // PathHashStore creates its own table
@@ -629,6 +639,25 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
             }
 
             return result;
+        },
+
+        saveCodeGraph(graphJson: string, builtAt: number): void {
+            db.run(
+                "INSERT OR REPLACE INTO code_graph (id, graph_json, built_at) VALUES (1, ?, ?)",
+                [graphJson, builtAt],
+            );
+        },
+
+        loadCodeGraph(): { graphJson: string; builtAt: number } | null {
+            const row = db
+                .query("SELECT graph_json, built_at FROM code_graph WHERE id = 1")
+                .get() as { graph_json: string; built_at: number } | null;
+
+            if (!row) {
+                return null;
+            }
+
+            return { graphJson: row.graph_json, builtAt: row.built_at };
         },
 
         logSearch(entry: { query: string; mode: string; resultsCount: number; durationMs: number }): void {

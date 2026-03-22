@@ -378,11 +378,99 @@ function extractPhpImports(source: string): ImportInfo[] {
     return imports;
 }
 
+// --- Kotlin extractor (AST) ---
+
+/** Extract Kotlin imports via ast-grep AST parsing */
+function extractKotlinImports(source: string): ImportInfo[] {
+    ensureDynamicLanguages();
+    const imports: ImportInfo[] = [];
+
+    try {
+        const root = parse("kotlin" as Lang, source).root();
+
+        for (const node of root.findAll({ rule: { kind: "import_header" } })) {
+            const text = node.text();
+            const match = text.match(/^import\s+(.+)/);
+
+            if (match) {
+                const spec = match[1].trim().split(/\s+as\s+/)[0].trim();
+
+                if (spec) {
+                    imports.push({ specifier: spec, isDynamic: false });
+                }
+            }
+        }
+    } catch {
+        return [];
+    }
+
+    return imports;
+}
+
+// --- Scala extractor (AST) ---
+
+/** Extract Scala imports via ast-grep AST parsing */
+function extractScalaImports(source: string): ImportInfo[] {
+    ensureDynamicLanguages();
+    const imports: ImportInfo[] = [];
+
+    try {
+        const root = parse("scala" as Lang, source).root();
+
+        for (const node of root.findAll({ rule: { kind: "import_declaration" } })) {
+            const text = node.text();
+            const match = text.match(/^import\s+(.+)/);
+
+            if (match) {
+                const spec = match[1].trim().split(/\s*[{,]/).filter(Boolean)[0]?.trim();
+
+                if (spec) {
+                    imports.push({ specifier: spec, isDynamic: false });
+                }
+            }
+        }
+    } catch {
+        return [];
+    }
+
+    return imports;
+}
+
+// --- C# extractor (AST) ---
+
+/** Extract C# using directives via ast-grep AST parsing */
+function extractCSharpImports(source: string): ImportInfo[] {
+    ensureDynamicLanguages();
+    const imports: ImportInfo[] = [];
+
+    try {
+        const root = parse("csharp" as Lang, source).root();
+
+        for (const node of root.findAll({ rule: { kind: "using_directive" } })) {
+            const text = node.text();
+            const match = text.match(/^using\s+(?:static\s+)?([^;=]+)/);
+
+            if (match) {
+                const spec = match[1].trim().split(/\s+/)[0].trim();
+
+                if (spec && spec !== "var") {
+                    imports.push({ specifier: spec, isDynamic: false });
+                }
+            }
+        }
+    } catch {
+        return [];
+    }
+
+    return imports;
+}
+
 // --- Central dispatcher ---
 
 /**
  * Extract import statements from source code.
- * Supports: TypeScript/JavaScript, TSX/JSX, Python, Go, Java, Rust, C, C++, Ruby, Swift, PHP.
+ * Supports: TypeScript/JavaScript, TSX/JSX, Python, Go, Java, Rust, C, C++,
+ * Ruby, Swift, PHP, Kotlin, Scala, C#.
  */
 export function extractImports(source: string, language: string): ImportInfo[] {
     switch (language) {
@@ -431,6 +519,15 @@ export function extractImports(source: string, language: string): ImportInfo[] {
 
         case "php":
             return extractPhpImports(source);
+
+        case "kotlin":
+            return extractKotlinImports(source);
+
+        case "scala":
+            return extractScalaImports(source);
+
+        case "csharp":
+            return extractCSharpImports(source);
 
         default:
             return [];
