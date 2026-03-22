@@ -173,3 +173,44 @@ describe("getTaskPrefix", () => {
         expect(TASK_PREFIXES["nomic-embed-code"]).toBeTruthy();
     });
 });
+
+describe("getMaxEmbedChars — edge cases", () => {
+    it("returns correct chars for Google model", () => {
+        // gemini-embedding-001 in MODEL_REGISTRY: 2048 * 3 = 6144
+        const chars = getMaxEmbedChars("gemini-embedding-001");
+        expect(chars).toBe(6144);
+    });
+
+    it("handles model ID with version tag", () => {
+        const chars = getMaxEmbedChars("nomic-embed-text:v1.5");
+        // Registry: nomic-embed-text has 2048 tokens * 2 chars/token = 4096
+        expect(chars).toBe(4096);
+    });
+
+    it("returns default for empty string model ID", () => {
+        const chars = getMaxEmbedChars("");
+        // DEFAULT_CONTEXT_LENGTH (512) * DEFAULT_CHARS_PER_TOKEN (3) = 1536
+        expect(chars).toBe(1536);
+    });
+});
+
+describe("getTaskPrefix — edge cases", () => {
+    it("returns null for Google model (no task prefix)", () => {
+        const prefix = getTaskPrefix("gemini-embedding-001");
+        expect(prefix).toBeNull();
+    });
+
+    it("handles tag-stripped lookup from TASK_PREFIXES fallback", () => {
+        const prefix = getTaskPrefix("nomic-embed-code:latest");
+        expect(prefix).toEqual({ document: "search_document: ", query: "search_query: " });
+    });
+});
+
+describe("getModelsForType — google provider", () => {
+    it("includes google model in registry", () => {
+        const googleModel = MODEL_REGISTRY.find((m) => m.provider === "google");
+        expect(googleModel).toBeDefined();
+        expect(googleModel!.id).toBe("gemini-embedding-001");
+        expect(googleModel!.dimensions).toBe(3072);
+    });
+});

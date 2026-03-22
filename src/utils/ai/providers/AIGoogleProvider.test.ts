@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { SafeJSON } from "@app/utils/json";
 import { AIGoogleProvider } from "./AIGoogleProvider";
+
+/** Stub globalThis.fetch without TS complaining about the `preconnect` property Bun adds. */
+function stubFetch(handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>): void {
+    // @ts-expect-error -- fetch stub for test
+    globalThis.fetch = handler;
+}
 
 describe("AIGoogleProvider", () => {
     let originalFetch: typeof globalThis.fetch;
@@ -56,13 +63,16 @@ describe("AIGoogleProvider", () => {
         let capturedUrl = "";
         let capturedBody = "";
 
-        globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        stubFetch(async (input, init) => {
             capturedUrl = typeof input === "string" ? input : input.toString();
             capturedBody = typeof init?.body === "string" ? init.body : "";
-            return new Response(JSON.stringify({
-                embeddings: [{ values: [0.1, 0.2, 0.3] }],
-            }), { status: 200, headers: { "Content-Type": "application/json" } });
-        };
+            return new Response(
+                SafeJSON.stringify({
+                    embeddings: [{ values: [0.1, 0.2, 0.3] }],
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+            );
+        });
 
         const provider = new AIGoogleProvider();
         const result = await provider.embed("test text");
@@ -79,16 +89,16 @@ describe("AIGoogleProvider", () => {
     test("embedBatch chunks requests when exceeding batch size", async () => {
         let callCount = 0;
 
-        globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+        stubFetch(async (_input, init) => {
             callCount++;
-            const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+            const body = SafeJSON.parse(typeof init?.body === "string" ? init.body : "{}");
             const count = body.requests.length;
             const embeddings = Array.from({ length: count }, () => ({ values: [0.1, 0.2] }));
-            return new Response(JSON.stringify({ embeddings }), {
+            return new Response(SafeJSON.stringify({ embeddings }), {
                 status: 200,
                 headers: { "Content-Type": "application/json" },
             });
-        };
+        });
 
         // 150 texts should require 2 batch calls (100 + 50)
         const provider = new AIGoogleProvider({ rateLimitMs: 0 });
@@ -102,15 +112,17 @@ describe("AIGoogleProvider", () => {
     test("embedBatch pre-truncates long texts", async () => {
         let capturedTexts: string[] = [];
 
-        globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
-            const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
-            capturedTexts = body.requests.map((r: { content: { parts: Array<{ text: string }> } }) => r.content.parts[0].text);
+        stubFetch(async (_input, init) => {
+            const body = SafeJSON.parse(typeof init?.body === "string" ? init.body : "{}");
+            capturedTexts = body.requests.map(
+                (r: { content: { parts: Array<{ text: string }> } }) => r.content.parts[0].text
+            );
             const embeddings = capturedTexts.map(() => ({ values: [0.1] }));
-            return new Response(JSON.stringify({ embeddings }), {
+            return new Response(SafeJSON.stringify({ embeddings }), {
                 status: 200,
                 headers: { "Content-Type": "application/json" },
             });
-        };
+        });
 
         const provider = new AIGoogleProvider();
         const longText = "x".repeat(20_000); // Exceeds 2048 tokens * 3 chars/token = 6144 chars
@@ -120,12 +132,12 @@ describe("AIGoogleProvider", () => {
     });
 
     test("embed throws on API error", async () => {
-        globalThis.fetch = async () => {
-            return new Response(JSON.stringify({ error: { message: "Invalid API key" } }), {
+        stubFetch(async () => {
+            return new Response(SafeJSON.stringify({ error: { message: "Invalid API key" } }), {
                 status: 401,
                 headers: { "Content-Type": "application/json" },
             });
-        };
+        });
 
         const provider = new AIGoogleProvider();
         await expect(provider.embed("test")).rejects.toThrow();
@@ -134,12 +146,15 @@ describe("AIGoogleProvider", () => {
     test("uses custom model from constructor options", async () => {
         let capturedUrl = "";
 
-        globalThis.fetch = async (input: RequestInfo | URL) => {
+        stubFetch(async (input) => {
             capturedUrl = typeof input === "string" ? input : input.toString();
-            return new Response(JSON.stringify({
-                embeddings: [{ values: [0.1] }],
-            }), { status: 200, headers: { "Content-Type": "application/json" } });
-        };
+            return new Response(
+                SafeJSON.stringify({
+                    embeddings: [{ values: [0.1] }],
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+            );
+        });
 
         const provider = new AIGoogleProvider({ model: "text-embedding-004" });
         await provider.embed("test");
@@ -148,13 +163,13 @@ describe("AIGoogleProvider", () => {
     });
 
     test("rate limiter does not delay first batch call", async () => {
-        globalThis.fetch = async () => {
+        stubFetch(async () => {
             const embeddings = Array.from({ length: 1 }, () => ({ values: [0.1] }));
-            return new Response(JSON.stringify({ embeddings }), {
+            return new Response(SafeJSON.stringify({ embeddings }), {
                 status: 200,
                 headers: { "Content-Type": "application/json" },
             });
-        };
+        });
 
         const provider = new AIGoogleProvider();
 
@@ -169,16 +184,16 @@ describe("AIGoogleProvider", () => {
     test("embedBatch handles exactly GOOGLE_BATCH_SIZE texts in one call", async () => {
         let callCount = 0;
 
-        globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+        stubFetch(async (_input, init) => {
             callCount++;
-            const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+            const body = SafeJSON.parse(typeof init?.body === "string" ? init.body : "{}");
             const count = body.requests.length;
             const embeddings = Array.from({ length: count }, () => ({ values: [0.1, 0.2] }));
-            return new Response(JSON.stringify({ embeddings }), {
+            return new Response(SafeJSON.stringify({ embeddings }), {
                 status: 200,
                 headers: { "Content-Type": "application/json" },
             });
-        };
+        });
 
         const provider = new AIGoogleProvider();
         const texts = Array.from({ length: 100 }, (_, i) => `text ${i}`);
@@ -191,8 +206,8 @@ describe("AIGoogleProvider", () => {
     test("embedBatch preserves text order across batches", async () => {
         const receivedBatches: string[][] = [];
 
-        globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
-            const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+        stubFetch(async (_input, init) => {
+            const body = SafeJSON.parse(typeof init?.body === "string" ? init.body : "{}");
             const texts = body.requests.map(
                 (r: { content: { parts: Array<{ text: string }> } }) => r.content.parts[0].text
             );
@@ -200,11 +215,11 @@ describe("AIGoogleProvider", () => {
             const embeddings = texts.map((_: string, i: number) => ({
                 values: [i * 0.01],
             }));
-            return new Response(JSON.stringify({ embeddings }), {
+            return new Response(SafeJSON.stringify({ embeddings }), {
                 status: 200,
                 headers: { "Content-Type": "application/json" },
             });
-        };
+        });
 
         const provider = new AIGoogleProvider({ rateLimitMs: 0 });
         const texts = Array.from({ length: 250 }, (_, i) => `ordered-${i}`);
@@ -227,12 +242,12 @@ describe("AIGoogleProvider", () => {
     });
 
     test("embed API error includes status and response body", async () => {
-        globalThis.fetch = async () => {
-            return new Response(
-                JSON.stringify({ error: { message: "Quota exceeded", code: 429 } }),
-                { status: 429, statusText: "Too Many Requests" }
-            );
-        };
+        stubFetch(async () => {
+            return new Response(SafeJSON.stringify({ error: { message: "Quota exceeded", code: 429 } }), {
+                status: 429,
+                statusText: "Too Many Requests",
+            });
+        });
 
         const provider = new AIGoogleProvider();
 

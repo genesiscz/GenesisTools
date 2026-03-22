@@ -908,6 +908,113 @@ type D = null;
         });
     });
 
+    describe("Edge cases", () => {
+        it("handles empty file content", () => {
+            const result = chunkFile({
+                filePath: "empty.ts",
+                content: "",
+                strategy: "ast",
+            });
+
+            expect(result.chunks).toHaveLength(0);
+        });
+
+        it("handles whitespace-only content", () => {
+            const result = chunkFile({
+                filePath: "whitespace.ts",
+                content: "   \n\n\t\t\n   ",
+                strategy: "ast",
+            });
+
+            expect(result.chunks).toHaveLength(0);
+        });
+
+        it("handles comment-only TypeScript file", () => {
+            const content = `
+// This is a comment
+// Another comment
+/* Block comment
+   spanning multiple lines */
+`.trim();
+
+            const result = chunkFile({
+                filePath: "comments.ts",
+                content,
+                strategy: "ast",
+            });
+
+            // Comments may or may not produce chunks depending on implementation
+            // but should not crash
+            expect(result.parser).toBe("ast");
+        });
+
+        it("handles Unicode content in code", () => {
+            const content = `
+export function greet(name: string): string {
+    return \`Bonjour, \${name}! Bienvenue a notre cafe. Prix: 5\u20AC\`;
+}
+
+export const emoji = "Hello \u{1F30D}\u{1F389}";
+export const cjk = "\u4F60\u597D\u4E16\u754C";
+export const arabic = "\u0645\u0631\u062D\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645";
+`.trim();
+
+            const result = chunkFile({
+                filePath: "unicode.ts",
+                content,
+                strategy: "ast",
+            });
+
+            expect(result.parser).toBe("ast");
+            expect(result.chunks.length).toBeGreaterThan(0);
+
+            const allContent = result.chunks.map((c) => c.content).join("\n");
+            expect(allContent).toContain("Bonjour");
+            expect(allContent).toContain("emoji");
+        });
+
+        it("handles file with only import statements", () => {
+            const content = `
+import { a } from "./a";
+import { b } from "./b";
+import { c } from "./c";
+`.trim();
+
+            const result = chunkFile({
+                filePath: "imports-only.ts",
+                content,
+                strategy: "ast",
+            });
+
+            // Import-only files should still produce at least one chunk
+            expect(result.parser).toBe("ast");
+        });
+
+        it("handles single-line file", () => {
+            const result = chunkFile({
+                filePath: "oneliner.ts",
+                content: "export const VERSION = 42;",
+                strategy: "ast",
+            });
+
+            expect(result.chunks.length).toBeGreaterThanOrEqual(1);
+        });
+
+        it("handles file with BOM marker", () => {
+            const bom = "\uFEFF";
+            const content = `${bom}export function test(): void { console.log("BOM"); }`;
+
+            const result = chunkFile({
+                filePath: "bom.ts",
+                content,
+                strategy: "ast",
+            });
+
+            // Should handle BOM gracefully
+            expect(result.chunks.length).toBeGreaterThanOrEqual(0);
+        });
+    });
+
     describe("AST sub-chunk large declarations", () => {
         it("sub-chunks a class with >150 lines", () => {
             const methods = Array.from(

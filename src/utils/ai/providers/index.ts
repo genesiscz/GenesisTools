@@ -58,7 +58,6 @@ export async function getProviderForTask(task: AITask, config: AIConfig): Promis
         return provider;
     }
 
-    // Fallback order: cloud -> local-hf -> ollama -> coreml -> darwinkit
     const fallbackOrder: AIProviderType[] = ["cloud", "local-hf", "ollama", "google", "coreml", "darwinkit"];
 
     for (const type of fallbackOrder) {
