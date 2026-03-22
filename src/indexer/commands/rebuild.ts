@@ -24,7 +24,7 @@ export function registerRebuildCommand(program: Command): void {
                         return;
                     }
 
-                    if (process.stdout.isTTY) {
+                    if (process.stdout.isTTY && process.stdin.isTTY) {
                         const selected = await p.select({
                             message: "Select index to rebuild",
                             options: names.map((n) => ({ value: n, label: n })),

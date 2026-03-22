@@ -1,5 +1,11 @@
 import type { IndexerSource } from "./sources/source";
 
+/** Default polling watch interval: 5 minutes */
+export const DEFAULT_WATCH_INTERVAL_MS = 300_000;
+
+/** Embedding batch size for the embed pipeline */
+export const EMBEDDING_BATCH_SIZE = 32;
+
 export interface IndexConfig {
     name: string;
     baseDir: string;

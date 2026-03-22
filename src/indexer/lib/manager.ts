@@ -139,7 +139,8 @@ export class IndexerManager {
                         createdAt: 0,
                     });
                 }
-            } catch {
+            } catch (err) {
+                console.debug(`Failed to read metadata for index "${name}":`, err);
                 result.push({
                     name,
                     config,

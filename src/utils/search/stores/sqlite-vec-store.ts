@@ -26,7 +26,7 @@ export class SqliteVecVectorStore implements VectorStore {
 
         this.db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS ${this.vecTable} USING vec0(
             doc_id TEXT PRIMARY KEY,
-            embedding float[${config.dimensions}]
+            embedding float[${config.dimensions}] distance_metric=cosine
         )`);
     }
 
@@ -57,12 +57,11 @@ export class SqliteVecVectorStore implements VectorStore {
             )
             .all(blob, limit) as Array<{ doc_id: string; distance: number }>;
 
-        // sqlite-vec returns L2 distance for float vectors.
-        // Convert to a similarity score: score = 1 / (1 + distance)
-        // This gives score in (0, 1] where 1 = identical.
+        // With distance_metric=cosine, distance = 1 - cosine_similarity (range 0..2).
+        // Convert to similarity: score = 1 - distance (range -1..1, typically 0..1 for normalized vectors).
         return rows.map((row) => ({
             docId: row.doc_id,
-            score: 1 / (1 + row.distance),
+            score: 1 - row.distance,
         }));
     }
 
