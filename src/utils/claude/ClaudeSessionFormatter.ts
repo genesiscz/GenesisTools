@@ -3,11 +3,13 @@ import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import pc from "picocolors";
 import type { IncludeSpec } from "./cli/dsl";
+import { agentProgressToSubagent, parseAgentCompletionStats } from "./session.utils";
 import type { TailTarget } from "./session.types";
 import type {
     AssistantMessage,
     AssistantMessageContent,
     ConversationMessage,
+    ProgressMessage,
     SubagentMessage,
     TextBlock,
     ToolResultBlock,
@@ -124,6 +126,12 @@ export class ClaudeSessionFormatter {
             return;
         }
 
+        // Auto-close agent section when parent conversation resumes.
+        // Hook progress can interleave within agent sequences — don't close on those.
+        if (this.activeAgentId && record.type !== "progress" && record.type !== "subagent") {
+            this.closeAgentSection();
+        }
+
         const timestamp = "timestamp" in record && typeof record.timestamp === "string" ? record.timestamp : "";
 
         switch (record.type) {
@@ -138,8 +146,15 @@ export class ClaudeSessionFormatter {
                 break;
             case "system":
                 break;
-            case "progress":
+            case "progress": {
+                const converted = agentProgressToSubagent(record as ProgressMessage);
+
+                if (converted) {
+                    this.formatSubagentMessage(converted, timestamp);
+                }
+
                 break;
+            }
             case "custom-title":
                 break;
             case "summary":
@@ -234,21 +249,35 @@ export class ClaudeSessionFormatter {
 
             text = textParts.join("\n");
 
-            if (this.options.includeSpec.shouldShow("tools:out")) {
-                for (const block of content) {
-                    if (block.type === "tool_result") {
-                        const result = extractToolResultText(block);
-                        const maxChars = this.options.includeSpec.truncationLength("tools:out");
-                        const isError = block.is_error;
+            for (const block of content) {
+                if (block.type !== "tool_result") {
+                    continue;
+                }
 
-                        if (result) {
-                            const truncated = truncate(result.trim(), maxChars);
-                            const prefix = isError ? "  ✗ " : "  → ";
-                            const line = `${prefix}${truncated}`;
-                            const formatted = this.options.colors ? (isError ? pc.red(line) : pc.dim(line)) : line;
-                            this.writeLine(formatted);
-                        }
-                    }
+                const result = extractToolResultText(block);
+
+                if (!result) {
+                    continue;
+                }
+
+                // Show agent completion stats from Agent tool_result
+                const agentStats = parseAgentCompletionStats(result);
+
+                if (agentStats && this.options.includeSpec.shouldShow("agents:result")) {
+                    const dur = this.formatDuration(agentStats.durationMs);
+                    const line = `  ⏱ Agent ${agentStats.agentId.slice(0, 8)}: ${dur}, ${agentStats.toolUses} tools, ${agentStats.totalTokens.toLocaleString()} tokens`;
+                    this.writeLine(this.options.colors ? pc.dim(line) : line);
+                    continue;
+                }
+
+                if (this.options.includeSpec.shouldShow("tools:out")) {
+                    const maxChars = this.options.includeSpec.truncationLength("tools:out");
+                    const isError = block.is_error;
+                    const truncated = truncate(result.trim(), maxChars);
+                    const prefix = isError ? "  ✗ " : "  → ";
+                    const line = `${prefix}${truncated}`;
+                    const formatted = this.options.colors ? (isError ? pc.red(line) : pc.dim(line)) : line;
+                    this.writeLine(formatted);
                 }
             }
         }

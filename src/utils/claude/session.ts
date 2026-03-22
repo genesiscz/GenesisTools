@@ -20,6 +20,7 @@ import { estimateTokens } from "@app/utils/tokens";
 import { glob } from "glob";
 import { encodedProjectDir, PROJECTS_DIR, parseJsonlTranscript } from "./index";
 import {
+    agentProgressToSubagent,
     extractFilePathFromInput,
     extractUserText,
     getSubagentToolUseBlocks,
@@ -119,7 +120,14 @@ export class ClaudeSession {
      * @param filePath Absolute path to the .jsonl session file.
      */
     static async fromFile(filePath: string): Promise<ClaudeSession> {
-        const messages = await parseJsonlTranscript<ConversationMessage>(filePath);
+        const raw = await parseJsonlTranscript<ConversationMessage>(filePath);
+        const messages = raw.map((msg) => {
+            if (msg.type === "progress") {
+                return agentProgressToSubagent(msg as ProgressMessage) ?? msg;
+            }
+
+            return msg;
+        });
         return new ClaudeSession(filePath, messages);
     }
 
@@ -993,7 +1001,7 @@ export class ClaudeSession {
             } else if (msg.type === "pr-link") {
                 text = (msg as PrLinkMessage).url;
             }
-            return text.toLowerCase().includes(lowerQuery);
+            return (text ?? "").toLowerCase().includes(lowerQuery);
         });
 
         return new ClaudeSession(this._filePath, filtered);
@@ -1027,6 +1035,7 @@ export class ClaudeSession {
         let toolCallCount = 0;
         const toolUsage: Record<string, number> = {};
         const tokenUsage = { input: 0, output: 0, cached: 0 };
+        const serverToolUse = { webSearchRequests: 0, webFetchRequests: 0 };
         const modelsSet = new Set<string>();
         const filesSet = new Set<string>();
         let firstTimestamp: Date | null = null;
@@ -1061,6 +1070,11 @@ export class ClaudeSession {
                     tokenUsage.input += usage.input_tokens || 0;
                     tokenUsage.output += usage.output_tokens || 0;
                     tokenUsage.cached += usage.cache_read_input_tokens || 0;
+
+                    if (usage.server_tool_use) {
+                        serverToolUse.webSearchRequests += usage.server_tool_use.web_search_requests || 0;
+                        serverToolUse.webFetchRequests += usage.server_tool_use.web_fetch_requests || 0;
+                    }
                 }
 
                 // Tool calls
@@ -1088,7 +1102,15 @@ export class ClaudeSession {
                         tokenUsage.input += assistantContent.usage.input_tokens || 0;
                         tokenUsage.output += assistantContent.usage.output_tokens || 0;
                         tokenUsage.cached += assistantContent.usage.cache_read_input_tokens || 0;
+
+                        if (assistantContent.usage.server_tool_use) {
+                            serverToolUse.webSearchRequests +=
+                                assistantContent.usage.server_tool_use.web_search_requests || 0;
+                            serverToolUse.webFetchRequests +=
+                                assistantContent.usage.server_tool_use.web_fetch_requests || 0;
+                        }
                     }
+
                     // Track subagent tool calls
                     for (const tool of getSubagentToolUseBlocks(sub)) {
                         toolCallCount++;
@@ -1119,6 +1141,7 @@ export class ClaudeSession {
             toolCallCount,
             toolUsage,
             tokenUsage,
+            serverToolUse,
             modelsUsed: [...modelsSet],
             filesModified: [...filesSet],
             duration,

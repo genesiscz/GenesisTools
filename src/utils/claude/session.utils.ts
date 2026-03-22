@@ -1,5 +1,13 @@
 import { basename, sep } from "node:path";
-import type { ContentBlock, ConversationMessage, SubagentMessage, ToolUseBlock } from "./types";
+import type {
+    AgentCompletionStats,
+    AgentProgressData,
+    ContentBlock,
+    ConversationMessage,
+    ProgressMessage,
+    SubagentMessage,
+    ToolUseBlock,
+} from "./types";
 
 function hasStringField<K extends string>(obj: object, key: K): obj is Record<K, string> {
     return key in obj && typeof (obj as Record<K, unknown>)[key] === "string";
@@ -112,4 +120,55 @@ export function extractUserText(content: string | ContentBlock[]): string {
     }
 
     return parts.join("\n");
+}
+
+/**
+ * Convert an agent_progress ProgressMessage to a SubagentMessage.
+ * Returns null if the progress message is not agent_progress or has no inner message.
+ *
+ * Modern Claude Code records agent work as progress events with data.type === "agent_progress"
+ * instead of the legacy "subagent" message type. This normalizes the new format into the
+ * SubagentMessage shape so all downstream code works unchanged.
+ */
+export function agentProgressToSubagent(msg: ProgressMessage): SubagentMessage | null {
+    if (msg.data.type !== "agent_progress") {
+        return null;
+    }
+
+    const data = msg.data as AgentProgressData;
+
+    if (!data.message?.message) {
+        return null;
+    }
+
+    return {
+        type: "subagent",
+        role: data.message.type,
+        message: data.message.message,
+        agentId: data.agentId,
+        ...(msg.timestamp ? { timestamp: msg.timestamp } : {}),
+    } as SubagentMessage;
+}
+
+const AGENT_STATS_RE = /agentId:\s*(\S+)[\s\S]*?<usage>\s*total_tokens:\s*(\d+)\s*\ntool_uses:\s*(\d+)\s*\nduration_ms:\s*(\d+)\s*<\/usage>/;
+
+/**
+ * Parse agent completion stats from a tool_result text block.
+ * Returns null if the text doesn't match the expected agent result format.
+ *
+ * Format: `agentId: <id> (...)\n<usage>total_tokens: N\ntool_uses: N\nduration_ms: N</usage>`
+ */
+export function parseAgentCompletionStats(text: string): AgentCompletionStats | null {
+    const match = AGENT_STATS_RE.exec(text);
+
+    if (!match) {
+        return null;
+    }
+
+    return {
+        agentId: match[1],
+        totalTokens: Number.parseInt(match[2], 10),
+        toolUses: Number.parseInt(match[3], 10),
+        durationMs: Number.parseInt(match[4], 10),
+    };
 }

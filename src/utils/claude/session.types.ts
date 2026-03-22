@@ -67,6 +67,8 @@ export interface SessionStats {
     toolUsage: Record<string, number>;
     /** Aggregated API token usage from assistant message metadata. */
     tokenUsage: { input: number; output: number; cached: number };
+    /** Aggregated server-side tool usage (web search/fetch requests). */
+    serverToolUse: { webSearchRequests: number; webFetchRequests: number };
     /** Distinct model IDs seen in assistant messages. */
     modelsUsed: string[];
     /** Unique file paths referenced in tool calls. */

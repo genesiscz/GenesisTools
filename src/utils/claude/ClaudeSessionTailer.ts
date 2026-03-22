@@ -2,7 +2,7 @@ import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { parseJsonl, parseJsonlChunk } from "@app/utils/jsonl";
 import { FileWatcher } from "@app/utils/storage/fs";
 import type { IncludeSpec } from "./cli/dsl";
-import type { ConversationMessage } from "./types";
+import type { ConversationMessage, ProgressMessage } from "./types";
 
 /** Shape of the shorthand "A" variant that some JSONL sessions use for assistant. */
 interface ShorthandAssistant {
@@ -117,7 +117,17 @@ export class ClaudeSessionTailer {
      */
     private isDisplayableRecord(record: ConversationMessage): boolean {
         const type = record.type as string;
-        return type === "user" || type === "assistant" || type === "A" || type === "subagent";
+
+        if (type === "user" || type === "assistant" || type === "A" || type === "subagent") {
+            return true;
+        }
+
+        if (type === "progress") {
+            const prog = record as ProgressMessage;
+            return prog.data?.type === "agent_progress";
+        }
+
+        return false;
     }
 
     private trackCompletion(record: ConversationMessage): void {
