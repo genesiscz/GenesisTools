@@ -25,15 +25,36 @@ describe("AIOllamaProvider", () => {
         expect(results).toEqual([]);
     });
 
-    test("accepts custom baseUrl and model", () => {
+    test("embed uses custom baseUrl and model from constructor", async () => {
+        const customUrl = "http://custom-host:9999";
+        const customModel = "mxbai-embed-large";
         const provider = new AIOllamaProvider({
-            baseUrl: "http://custom-host:9999",
-            defaultModel: "mxbai-embed-large",
+            baseUrl: customUrl,
+            defaultModel: customModel,
         });
 
-        expect(provider.type).toBe("ollama");
-        expect(typeof provider.embed).toBe("function");
-        expect(typeof provider.embedBatch).toBe("function");
+        // Stub global fetch to capture the request
+        const originalFetch = globalThis.fetch;
+        let capturedUrl = "";
+        let capturedBody = "";
+
+        // @ts-expect-error -- fetch stub for test
+        globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+            capturedUrl = typeof input === "string" ? input : input.toString();
+            capturedBody = typeof init?.body === "string" ? init.body : "";
+
+            return new Response(JSON.stringify({
+                embeddings: [[0.1, 0.2, 0.3]],
+            }), { status: 200 });
+        };
+
+        try {
+            await provider.embed("test text");
+            expect(capturedUrl).toBe(`${customUrl}/api/embed`);
+            expect(capturedBody).toContain(customModel);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
     });
 
     test("isAvailable returns false when Ollama not running", async () => {

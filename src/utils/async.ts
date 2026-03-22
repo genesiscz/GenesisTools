@@ -87,7 +87,10 @@ export function rateLimitAwareDelay(opts?: {
     return (attempt: number, error: unknown): number => {
         const msg = error instanceof Error ? error.message : String(error);
         const isRateLimit =
-            msg.includes("429") || msg.includes("rate") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("quota");
+            msg.includes("429") ||
+            /\brate[_\s-]?limit/i.test(msg) ||
+            msg.includes("RESOURCE_EXHAUSTED") ||
+            /\bquota\b/i.test(msg);
 
         const exponentialDelay = baseDelay * 2 ** (attempt - 1);
 

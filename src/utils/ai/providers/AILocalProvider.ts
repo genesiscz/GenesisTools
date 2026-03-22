@@ -207,6 +207,11 @@ export class AILocalProvider
         const pipe = await this.getPipeline("feature-extraction", model);
         const result = await pipe(text, { pooling: "mean", normalize: true });
         const data = (result as { data: Float32Array }).data;
+
+        if (data.length === 0) {
+            throw new Error("embed: model returned empty embedding");
+        }
+
         return { vector: new Float32Array(data), dimensions: data.length };
     }
 
@@ -224,6 +229,15 @@ export class AILocalProvider
         // Result shape: { data: Float32Array, dims: [batchSize, hiddenSize] } (with pooling)
         const data = (result as { data: Float32Array; dims: number[] }).data;
         const dims = (result as { data: Float32Array; dims: number[] }).dims;
+        const expectedBatch = texts.length;
+        const actualBatch = dims.length >= 2 ? dims[0] : 0;
+
+        if (actualBatch !== expectedBatch) {
+            throw new Error(
+                `embedBatch: expected ${expectedBatch} vectors, got batch dimension ${actualBatch} (dims: [${dims.join(",")}])`
+            );
+        }
+
         const hiddenSize = dims[dims.length - 1];
         const results: EmbeddingResult[] = [];
 

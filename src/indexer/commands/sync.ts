@@ -39,8 +39,11 @@ export function registerSyncCommand(program: Command): void {
                     const resolved = resolveIndexName(nameOrPath, manager.getIndexNames());
 
                     if (!resolved) {
-                        p.log.error(`No index found for "${nameOrPath}". Known indexes: ${manager.getIndexNames().join(", ")}`);
-                        process.exit(1);
+                        p.log.error(
+                            `No index found for "${nameOrPath}". Known indexes: ${manager.getIndexNames().join(", ")}`
+                        );
+                        process.exitCode = 1;
+                        return;
                     }
 
                     names = [resolved];

@@ -8,6 +8,25 @@ import type { VectorSearchHit, VectorStore } from "../../stores/vector-store";
 import type { SearchEngine as ISearchEngine, SearchOptions, SearchResult } from "../../types";
 import { createEmbeddingTable, createFTS5Table } from "./schema";
 
+/**
+ * BM25 and cosine scores live on different scales:
+ *   - BM25:   ~0.5 to 30+  (higher = more relevant)
+ *   - Cosine: 0.0 to 1.0   (higher = more similar)
+ *   - RRF:    0.0 to ~0.03 (reciprocal rank fusion scores)
+ *
+ * When a single minScore is configured, normalize it per mode.
+ */
+function normalizeMinScore(minScore: number, mode: string): number {
+    switch (mode) {
+        case "hybrid":
+            // RRF scores are tiny (1/(K+rank)), scale down
+            return minScore * (1 / 60);
+        default:
+            // BM25 and cosine: use as-is
+            return minScore;
+    }
+}
+
 export interface FTS5TableOverrides {
     /** Override the content table name (default: `${tableName}_content`) */
     contentTable?: string;
@@ -158,7 +177,8 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         }
 
         if (opts.minScore !== undefined && opts.minScore > 0) {
-            results = results.filter((r) => r.score >= opts.minScore!);
+            const threshold = normalizeMinScore(opts.minScore, mode);
+            results = results.filter((r) => r.score >= threshold);
         }
 
         return results;
