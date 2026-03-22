@@ -1,7 +1,10 @@
+import { Embedder } from "./tasks/Embedder";
 import { Summarizer } from "./tasks/Summarizer";
 import { Transcriber } from "./tasks/Transcriber";
 import { Translator } from "./tasks/Translator";
 import type {
+    EmbedOptions,
+    EmbeddingResult,
     SummarizationResult,
     SummarizeOptions,
     TranscribeOptions,
@@ -19,15 +22,27 @@ export type {
 } from "./LanguageDetector";
 export { createLanguageDetector, LanguageDetector } from "./LanguageDetector";
 export { ModelManager } from "./ModelManager";
+export { Embedder } from "./tasks/Embedder";
 export { Summarizer } from "./tasks/Summarizer";
 export { Transcriber } from "./tasks/Transcriber";
 export { Translator } from "./tasks/Translator";
 export * from "./types";
 
 export const AI = {
+    Embedder,
     Transcriber,
     Translator,
     Summarizer,
+
+    async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
+        const e = await Embedder.create();
+
+        try {
+            return await e.embed(text, options);
+        } finally {
+            e.dispose();
+        }
+    },
 
     async transcribe(audio: Buffer | string, options?: TranscribeOptions): Promise<TranscriptionResult> {
         const t = await Transcriber.create();

@@ -3,10 +3,13 @@ import { join } from "node:path";
 import logger from "@app/logger";
 import { TranscriptionManager } from "@ask/audio/TranscriptionManager";
 import type {
+    AIEmbeddingProvider,
     AISummarizationProvider,
     AITask,
     AITranscriptionProvider,
     AITranslationProvider,
+    EmbedOptions,
+    EmbeddingResult,
     SummarizationResult,
     SummarizeOptions,
     TranscribeOptions,
@@ -24,10 +27,13 @@ const API_KEY_ENV_VARS = [
     "GLADIA_API_KEY",
 ];
 
-const SUPPORTED_TASKS: AITask[] = ["transcribe", "translate", "summarize"];
+const SUPPORTED_TASKS: AITask[] = ["transcribe", "translate", "summarize", "embed"];
 
-export class AICloudProvider implements AITranscriptionProvider, AITranslationProvider, AISummarizationProvider {
+export class AICloudProvider
+    implements AITranscriptionProvider, AITranslationProvider, AISummarizationProvider, AIEmbeddingProvider
+{
     readonly type = "cloud" as const;
+    readonly dimensions = 1536;
     private transcriptionManager: TranscriptionManager;
 
     constructor() {
@@ -109,6 +115,15 @@ export class AICloudProvider implements AITranscriptionProvider, AITranslationPr
             summary: result.text,
             originalLength: text.length,
         };
+    }
+
+    async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
+        const model = options?.model ?? "text-embedding-3-small";
+        const { createOpenAI } = await import("@ai-sdk/openai");
+        const openai = createOpenAI();
+        const result = await openai.embedding(model).doEmbed({ values: [text] });
+        const vec = new Float32Array(result.embeddings[0]);
+        return { vector: vec, dimensions: vec.length };
     }
 
     private async getLanguageModel(

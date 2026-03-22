@@ -3,10 +3,13 @@ import { formatBytes } from "@app/utils/format";
 import type { PipelineType } from "@huggingface/transformers";
 import { createLanguageDetector, type LanguageDetector } from "../LanguageDetector";
 import type {
+    AIEmbeddingProvider,
     AISummarizationProvider,
     AITask,
     AITranscriptionProvider,
     AITranslationProvider,
+    EmbedOptions,
+    EmbeddingResult,
     HfDownloadProgress,
     OnProgress,
     SummarizationResult,
@@ -23,10 +26,13 @@ type PipelineInstance = {
     dispose(): Promise<void>;
 };
 
-const SUPPORTED_TASKS: AITask[] = ["transcribe", "translate", "summarize"];
+const SUPPORTED_TASKS: AITask[] = ["transcribe", "translate", "summarize", "embed"];
 
-export class AILocalProvider implements AITranscriptionProvider, AITranslationProvider, AISummarizationProvider {
+export class AILocalProvider
+    implements AITranscriptionProvider, AITranslationProvider, AISummarizationProvider, AIEmbeddingProvider
+{
     readonly type = "local-hf" as const;
+    readonly dimensions = 384;
     private pipelines = new Map<string, PipelineInstance>();
     private pendingPipelines = new Map<string, Promise<PipelineInstance>>();
     private langDetector: LanguageDetector | null = null;
@@ -194,6 +200,14 @@ export class AILocalProvider implements AITranscriptionProvider, AITranslationPr
             summary: result[0]?.summary_text ?? "",
             originalLength: text.length,
         };
+    }
+
+    async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
+        const model = options?.model ?? "Xenova/all-MiniLM-L6-v2";
+        const pipe = await this.getPipeline("feature-extraction", model);
+        const result = await pipe(text, { pooling: "mean", normalize: true });
+        const data = (result as { data: Float32Array }).data;
+        return { vector: new Float32Array(data), dimensions: data.length };
     }
 
     private async getPipeline(task: PipelineType, model: string, onProgress?: OnProgress): Promise<PipelineInstance> {
