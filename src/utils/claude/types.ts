@@ -225,9 +225,18 @@ export interface BashProgressData {
     totalLines: number;
 }
 
+export interface AgentProgressInnerMessage {
+    type: "user" | "assistant";
+    message: UserMessageContent | AssistantMessageContent;
+    uuid?: string;
+    timestamp?: string;
+}
+
 export interface AgentProgressData {
     type: "agent_progress";
-    [key: string]: unknown;
+    agentId?: string;
+    prompt?: string;
+    message?: AgentProgressInnerMessage;
 }
 
 export interface McpProgressData {

@@ -20,6 +20,7 @@ import { estimateTokens } from "@app/utils/tokens";
 import { glob } from "glob";
 import { encodedProjectDir, PROJECTS_DIR, parseJsonlTranscript } from "./index";
 import {
+    agentProgressToSubagent,
     extractFilePathFromInput,
     extractUserText,
     getSubagentToolUseBlocks,
@@ -119,7 +120,14 @@ export class ClaudeSession {
      * @param filePath Absolute path to the .jsonl session file.
      */
     static async fromFile(filePath: string): Promise<ClaudeSession> {
-        const messages = await parseJsonlTranscript<ConversationMessage>(filePath);
+        const raw = await parseJsonlTranscript<ConversationMessage>(filePath);
+        const messages = raw.map((msg) => {
+            if (msg.type === "progress") {
+                return agentProgressToSubagent(msg as ProgressMessage) ?? msg;
+            }
+
+            return msg;
+        });
         return new ClaudeSession(filePath, messages);
     }
 

@@ -3,11 +3,13 @@ import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import pc from "picocolors";
 import type { IncludeSpec } from "./cli/dsl";
+import { agentProgressToSubagent } from "./session.utils";
 import type { TailTarget } from "./session.types";
 import type {
     AssistantMessage,
     AssistantMessageContent,
     ConversationMessage,
+    ProgressMessage,
     SubagentMessage,
     TextBlock,
     ToolResultBlock,
@@ -124,6 +126,12 @@ export class ClaudeSessionFormatter {
             return;
         }
 
+        // Auto-close agent section when parent conversation resumes.
+        // Hook progress can interleave within agent sequences — don't close on those.
+        if (this.activeAgentId && record.type !== "progress" && record.type !== "subagent") {
+            this.closeAgentSection();
+        }
+
         const timestamp = "timestamp" in record && typeof record.timestamp === "string" ? record.timestamp : "";
 
         switch (record.type) {
@@ -138,8 +146,15 @@ export class ClaudeSessionFormatter {
                 break;
             case "system":
                 break;
-            case "progress":
+            case "progress": {
+                const converted = agentProgressToSubagent(record as ProgressMessage);
+
+                if (converted) {
+                    this.formatSubagentMessage(converted, timestamp);
+                }
+
                 break;
+            }
             case "custom-title":
                 break;
             case "summary":
