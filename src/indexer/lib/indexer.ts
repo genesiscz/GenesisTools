@@ -496,11 +496,6 @@ export class Indexer extends IndexerEventEmitter {
         const modelId = this.config.embedding?.model ?? "darwinkit";
         const maxEmbedChars = getMaxEmbedChars(modelId);
         const taskPrefix = getTaskPrefix(modelId);
-        // Provider-aware batch sizes to minimize HTTP round-trips:
-        // Ollama: no API limit, GPU processes entire batch — use 500 for single HTTP call per DB page
-        // Google: 100 texts per API call
-        // Cloud (OpenAI/Voyage): 2048 per call
-        // Local (HF/CoreML/DarwinKit): 32 (CPU-bound, smaller batches reduce memory)
         const providerType = this.config.embedding?.provider;
         const embedBatchSize =
             providerType === "ollama"
