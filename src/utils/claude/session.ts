@@ -1001,7 +1001,7 @@ export class ClaudeSession {
             } else if (msg.type === "pr-link") {
                 text = (msg as PrLinkMessage).url;
             }
-            return text.toLowerCase().includes(lowerQuery);
+            return (text ?? "").toLowerCase().includes(lowerQuery);
         });
 
         return new ClaudeSession(this._filePath, filtered);
