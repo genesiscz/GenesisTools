@@ -1,7 +1,8 @@
 import type { Dirent } from "node:fs";
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 import { concurrentMap } from "@app/utils/async";
+import ignore, { type Ignore } from "ignore";
 import {
     type DetectChangesOptions,
     defaultDetectChanges,
@@ -22,10 +23,12 @@ export interface FileSourceOptions {
 export class FileSource implements IndexerSource {
     private opts: FileSourceOptions;
     private absBaseDir: string;
+    private ignoreFilter: Ignore | null = null;
 
     constructor(opts: FileSourceOptions) {
         this.opts = opts;
         this.absBaseDir = resolve(opts.baseDir);
+        this.ignoreFilter = this.loadIgnoreFile();
     }
 
     async scan(scanOpts?: ScanOptions): Promise<SourceEntry[]> {
@@ -54,6 +57,10 @@ export class FileSource implements IndexerSource {
                 const rel = relative(this.absBaseDir, f);
                 return !ignored.some((pattern) => rel.startsWith(pattern) || rel.includes(pattern));
             });
+        }
+
+        if (this.ignoreFilter) {
+            filePaths = filePaths.filter((f) => !this.isIgnoredByFilter(f));
         }
 
         if (scanOpts?.limit) {
@@ -132,6 +139,10 @@ export class FileSource implements IndexerSource {
             });
         }
 
+        if (this.ignoreFilter) {
+            filePaths = filePaths.filter((f) => !this.isIgnoredByFilter(f));
+        }
+
         return filePaths.length;
     }
 
@@ -160,6 +171,26 @@ export class FileSource implements IndexerSource {
             .map((line) => line.trim())
             .filter((line) => line.length > 0)
             .map((rel) => join(this.absBaseDir, rel));
+    }
+
+    private loadIgnoreFile(): Ignore | null {
+        const ignorePath = join(this.absBaseDir, ".genesistoolsignore");
+
+        try {
+            const content = readFileSync(ignorePath, "utf-8");
+            return ignore().add(content);
+        } catch {
+            return null;
+        }
+    }
+
+    private isIgnoredByFilter(absolutePath: string): boolean {
+        if (!this.ignoreFilter) {
+            return false;
+        }
+
+        const rel = relative(this.absBaseDir, absolutePath);
+        return this.ignoreFilter.ignores(rel);
     }
 
     private walkDirectory(): string[] {

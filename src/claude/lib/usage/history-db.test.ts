@@ -11,6 +11,11 @@ function getTestDbPath(): string {
     return join(tmpdir(), `claude-usage-test-${Date.now()}-${++testCounter}.sqlite`);
 }
 
+/** Generate a recent ISO timestamp (minutesAgo from now) */
+function recentTimestamp(minutesAgo: number): string {
+    return new Date(Date.now() - minutesAgo * 60_000).toISOString();
+}
+
 function cleanupDb(dbPath: string): void {
     for (const suffix of ["", "-wal", "-shm"]) {
         const file = dbPath + suffix;
@@ -40,38 +45,38 @@ describe("UsageHistoryDb", () => {
     });
 
     test("records a snapshot", () => {
-        db.recordSnapshot("livinka", "five_hour", 42.5, "2026-02-27T14:00:00Z");
+        db.recordSnapshot("livinka", "five_hour", 42.5, recentTimestamp(5));
         const snapshots = db.getSnapshots("livinka", "five_hour", 60);
         expect(snapshots).toHaveLength(1);
         expect(snapshots[0].utilization).toBe(42.5);
     });
 
     test("recordIfChanged skips duplicate values", () => {
-        db.recordSnapshot("livinka", "five_hour", 42.5, "2026-02-27T14:00:00Z");
+        db.recordSnapshot("livinka", "five_hour", 42.5, recentTimestamp(5));
         const inserted = db.recordIfChanged("livinka", "five_hour", 42.5, null);
         expect(inserted).toBe(false);
         expect(db.getSnapshots("livinka", "five_hour", 60)).toHaveLength(1);
     });
 
     test("recordIfChanged inserts when value changes", () => {
-        db.recordSnapshot("livinka", "five_hour", 42.5, "2026-02-27T14:00:00Z");
+        db.recordSnapshot("livinka", "five_hour", 42.5, recentTimestamp(5));
         const inserted = db.recordIfChanged("livinka", "five_hour", 43.0, null);
         expect(inserted).toBe(true);
         expect(db.getSnapshots("livinka", "five_hour", 60)).toHaveLength(2);
     });
 
     test("getSnapshots returns data in time order for graphing", () => {
-        db.recordSnapshot("livinka", "five_hour", 10, "2026-02-27T14:00:00Z");
-        db.recordSnapshot("livinka", "five_hour", 20, "2026-02-27T14:01:00Z");
-        db.recordSnapshot("livinka", "five_hour", 30, "2026-02-27T14:02:00Z");
+        db.recordSnapshot("livinka", "five_hour", 10, recentTimestamp(3));
+        db.recordSnapshot("livinka", "five_hour", 20, recentTimestamp(2));
+        db.recordSnapshot("livinka", "five_hour", 30, recentTimestamp(1));
         const snapshots = db.getSnapshots("livinka", "five_hour", 60);
         expect(snapshots[0].utilization).toBe(10);
         expect(snapshots[2].utilization).toBe(30);
     });
 
     test("getLatest returns most recent snapshot per bucket", () => {
-        db.recordSnapshot("livinka", "five_hour", 10, "2026-02-27T14:00:00Z");
-        db.recordSnapshot("livinka", "five_hour", 20, "2026-02-27T14:01:00Z");
+        db.recordSnapshot("livinka", "five_hour", 10, recentTimestamp(2));
+        db.recordSnapshot("livinka", "five_hour", 20, recentTimestamp(1));
         const latest = db.getLatest("livinka", "five_hour");
         expect(latest?.utilization).toBe(20);
     });
@@ -88,9 +93,9 @@ describe("UsageHistoryDb", () => {
     });
 
     test("getAllAccountBuckets lists distinct account+bucket pairs", () => {
-        db.recordSnapshot("livinka", "five_hour", 10, "2026-02-27T14:00:00Z");
-        db.recordSnapshot("livinka", "seven_day", 15, "2026-02-27T14:00:00Z");
-        db.recordSnapshot("personal", "five_hour", 5, "2026-02-27T14:00:00Z");
+        db.recordSnapshot("livinka", "five_hour", 10, recentTimestamp(5));
+        db.recordSnapshot("livinka", "seven_day", 15, recentTimestamp(5));
+        db.recordSnapshot("personal", "five_hour", 5, recentTimestamp(5));
 
         const pairs = db.getAllAccountBuckets();
         expect(pairs).toHaveLength(3);
