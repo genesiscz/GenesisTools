@@ -132,6 +132,39 @@ async function runInteractiveFlow(): Promise<IndexConfig | null> {
 
     const provider = selectedModel ? resolveProvider(selectedModel) : undefined;
 
+    // For Ollama models: check if pulled, offer to download
+    if (provider === "ollama" && selectedModel) {
+        try {
+            const { AIOllamaProvider } = await import("@app/utils/ai/providers/AIOllamaProvider");
+            const ollama = new AIOllamaProvider({ defaultModel: selectedModel });
+
+            if (await ollama.isAvailable()) {
+                if (!(await ollama.hasModel(selectedModel))) {
+                    const pull = await p.confirm({
+                        message: `Model "${selectedModel}" not found in Ollama. Download it now?`,
+                        initialValue: true,
+                    });
+
+                    if (p.isCancel(pull) || !pull) {
+                        p.cancel("Cannot index without the embedding model");
+                        return null;
+                    }
+
+                    const spinner = p.spinner();
+                    spinner.start(`Pulling ${selectedModel}...`);
+                    await ollama.ensureModel(selectedModel);
+                    spinner.stop(`Model ${selectedModel} ready`);
+                }
+            } else {
+                p.log.error("Ollama is not running. Start it with: ollama serve");
+                return null;
+            }
+        } catch (err) {
+            p.log.error(`Ollama check failed: ${err instanceof Error ? err.message : String(err)}`);
+            return null;
+        }
+    }
+
     p.log.step(`${pc.bold("Path")}: ${absPath}`);
     p.log.step(`${pc.bold("Name")}: ${indexName}`);
     p.log.step(`${pc.bold("Type")}: ${indexType}`);
