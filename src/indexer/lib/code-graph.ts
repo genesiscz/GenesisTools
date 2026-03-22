@@ -1,4 +1,5 @@
 import { dirname, extname, join } from "node:path";
+import { loadPathAliases, type PathAliases } from "./graph-aliases";
 import { extractImports } from "./graph-imports";
 
 export interface CodeGraphNode {
@@ -35,6 +36,14 @@ interface GraphStats {
     maxImporter: { path: string; count: number } | null;
     maxImported: { path: string; count: number } | null;
     orphanCount: number;
+    circularDependencies?: number;
+}
+
+export interface CircularDependency {
+    /** File paths forming the cycle: [A, B, C] means A->B->C->A */
+    cycle: string[];
+    /** Number of files in the cycle */
+    length: number;
 }
 
 /** Determine language from file extension */
@@ -151,6 +160,61 @@ function resolveRelativeImport(
 
         if (fileSet.has(initFile)) {
             return initFile;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Try to resolve a non-relative import via tsconfig path aliases.
+ * Returns resolved relative path, or null if no alias matches.
+ */
+function resolveAliasImport(
+    specifier: string,
+    fileSet: Set<string>,
+    aliases: PathAliases,
+    language?: string,
+): string | null {
+    for (const [prefix, targets] of aliases.entries) {
+        const isWildcard = prefix.endsWith("/");
+        const matches = isWildcard
+            ? specifier.startsWith(prefix)
+            : specifier === prefix;
+
+        if (!matches) {
+            continue;
+        }
+
+        const rest = specifier.slice(prefix.length);
+
+        for (const target of targets) {
+            const basePath = join(target, rest);
+
+            // Direct match
+            if (fileSet.has(basePath)) {
+                return basePath;
+            }
+
+            // Try with extensions
+            const extensions = language
+                ? (LANGUAGE_EXTENSIONS[language] ?? TS_EXTENSIONS)
+                : TS_EXTENSIONS;
+
+            for (const ext of extensions) {
+                if (fileSet.has(basePath + ext)) {
+                    return basePath + ext;
+                }
+            }
+
+            // Try index files
+            for (const indexFile of INDEX_FILES) {
+                const withIndex = join(basePath, indexFile);
+
+                if (fileSet.has(withIndex)) {
+                    return withIndex;
+                }
+            }
         }
     }
 
@@ -330,8 +394,7 @@ function resolvePythonImport(specifier: string, fileSet: Set<string>): string | 
  * @returns CodeGraph with nodes and edges
  */
 export function buildCodeGraph(files: Map<string, string>, baseDir: string): CodeGraph {
-    // baseDir reserved for future alias/tsconfig path resolution
-    void baseDir;
+    const aliases = loadPathAliases(baseDir);
     const fileSet = new Set(files.keys());
     const edges: CodeGraphEdge[] = [];
     const importCounts = new Map<string, number>();
@@ -365,6 +428,13 @@ export function buildCodeGraph(files: Map<string, string>, baseDir: string): Cod
                 resolved = resolvePhpImport(imp.specifier, filePath, fileSet);
             } else if (language === "ruby") {
                 resolved = resolveRubyImport(imp.specifier, filePath, fileSet);
+            }
+
+            // Fallback: try tsconfig/jsconfig path aliases for TS/TSX non-relative imports
+            if (!resolved && (language === "typescript" || language === "tsx")) {
+                if (!imp.specifier.startsWith(".") && !imp.specifier.startsWith("/")) {
+                    resolved = resolveAliasImport(imp.specifier, fileSet, aliases, language);
+                }
             }
 
             if (!resolved) {
@@ -404,30 +474,172 @@ export function buildCodeGraph(files: Map<string, string>, baseDir: string): Cod
 }
 
 /**
+ * Detect circular dependencies in a code graph using DFS cycle detection.
+ * Returns deduplicated cycles sorted by length (shortest first).
+ */
+export function findCircularDependencies(graph: CodeGraph): CircularDependency[] {
+    const adj = new Map<string, string[]>();
+
+    for (const edge of graph.edges) {
+        if (!adj.has(edge.from)) {
+            adj.set(edge.from, []);
+        }
+
+        adj.get(edge.from)!.push(edge.to);
+    }
+
+    const cycles: CircularDependency[] = [];
+    const visited = new Set<string>();
+    const inStack = new Set<string>();
+    const stack: string[] = [];
+
+    function dfs(node: string): void {
+        if (inStack.has(node)) {
+            const cycleStart = stack.indexOf(node);
+
+            if (cycleStart >= 0) {
+                const cycle = stack.slice(cycleStart);
+                cycles.push({ cycle, length: cycle.length });
+            }
+
+            return;
+        }
+
+        if (visited.has(node)) {
+            return;
+        }
+
+        visited.add(node);
+        inStack.add(node);
+        stack.push(node);
+
+        for (const neighbor of adj.get(node) ?? []) {
+            dfs(neighbor);
+        }
+
+        stack.pop();
+        inStack.delete(node);
+    }
+
+    for (const node of adj.keys()) {
+        dfs(node);
+    }
+
+    // Deduplicate: same cycle can be found starting from different nodes
+    const seen = new Set<string>();
+
+    return cycles
+        .filter((c) => {
+            const key = [...c.cycle].sort().join("\u2192");
+
+            if (seen.has(key)) {
+                return false;
+            }
+
+            seen.add(key);
+            return true;
+        })
+        .sort((a, b) => a.length - b.length);
+}
+
+/**
  * Generate a Mermaid diagram from a code graph.
  * For large graphs, only shows the top N most-connected nodes.
  */
+const LANG_CLASS_DEFS: Record<string, string> = {
+    typescript: "fill:#3178c6,color:#fff",
+    tsx: "fill:#3178c6,color:#fff",
+    python: "fill:#3776ab,color:#fff",
+    go: "fill:#00add8,color:#fff",
+    rust: "fill:#dea584,color:#000",
+    java: "fill:#b07219,color:#fff",
+    kotlin: "fill:#7f52ff,color:#fff",
+    scala: "fill:#dc322f,color:#fff",
+    csharp: "fill:#178600,color:#fff",
+    c: "fill:#555555,color:#fff",
+    cpp: "fill:#f34b7d,color:#fff",
+    ruby: "fill:#cc342d,color:#fff",
+    php: "fill:#4f5d95,color:#fff",
+    swift: "fill:#f05138,color:#fff",
+};
+
+const LANG_MERMAID_CLASS: Record<string, string> = {
+    typescript: "ts",
+    tsx: "ts",
+    python: "py",
+    go: "go",
+    rust: "rs",
+    java: "java",
+    kotlin: "kt",
+    scala: "scala",
+    csharp: "cs",
+    c: "clang",
+    cpp: "cpp",
+    ruby: "rb",
+    php: "php",
+    swift: "swift",
+};
+
 export function toMermaidDiagram(graph: CodeGraph, opts?: { maxNodes?: number; showDynamic?: boolean }): string {
     const maxNodes = opts?.maxNodes ?? 30;
     const showDynamic = opts?.showDynamic ?? true;
 
     // Rank nodes by total connections (imports + imported-by)
     const ranked = [...graph.nodes].sort(
-        (a, b) => b.importCount + b.importedByCount - (a.importCount + a.importedByCount)
+        (a, b) => b.importCount + b.importedByCount - (a.importCount + a.importedByCount),
     );
 
     const topNodes = new Set(ranked.slice(0, maxNodes).map((n) => n.path));
 
+    // Detect cycles and collect cycle edges for highlighting
+    const cycles = findCircularDependencies(graph);
+    const cycleEdgeKeys = new Set<string>();
+
+    for (const dep of cycles) {
+        for (let i = 0; i < dep.cycle.length; i++) {
+            const from = dep.cycle[i];
+            const to = dep.cycle[(i + 1) % dep.cycle.length];
+            cycleEdgeKeys.add(`${from}\0${to}`);
+        }
+    }
+
     const lines: string[] = ["graph LR"];
 
-    // Node declarations
+    // Language classDef declarations
+    const usedLangs = new Set<string>();
+
+    for (const node of ranked.slice(0, maxNodes)) {
+        usedLangs.add(node.language);
+    }
+
+    for (const lang of usedLangs) {
+        const cls = LANG_MERMAID_CLASS[lang];
+        const style = LANG_CLASS_DEFS[lang];
+
+        if (cls && style) {
+            lines.push(`    classDef ${cls} ${style}`);
+        }
+    }
+
+    lines.push(`    classDef default fill:#6c757d,color:#fff`);
+
+    // Node declarations with language class
     for (const node of ranked.slice(0, maxNodes)) {
         const nodeId = sanitizeMermaidId(node.path);
         const label = node.path;
-        lines.push(`    ${nodeId}["${label}"]`);
+        const cls = LANG_MERMAID_CLASS[node.language];
+
+        if (cls) {
+            lines.push(`    ${nodeId}["${label}"]:::${cls}`);
+        } else {
+            lines.push(`    ${nodeId}["${label}"]`);
+        }
     }
 
-    // Edges
+    // Edges — track indices for linkStyle on cycle edges
+    const edgeIndices: number[] = [];
+    let edgeIndex = 0;
+
     for (const edge of graph.edges) {
         if (!topNodes.has(edge.from) || !topNodes.has(edge.to)) {
             continue;
@@ -435,12 +647,39 @@ export function toMermaidDiagram(graph: CodeGraph, opts?: { maxNodes?: number; s
 
         const fromId = sanitizeMermaidId(edge.from);
         const toId = sanitizeMermaidId(edge.to);
+        const isCycleEdge = cycleEdgeKeys.has(`${edge.from}\0${edge.to}`);
 
-        if (edge.isDynamic && showDynamic) {
+        if (isCycleEdge) {
+            lines.push(`    ${fromId} -.->|cycle| ${toId}`);
+            edgeIndices.push(edgeIndex);
+        } else if (edge.isDynamic && showDynamic) {
             lines.push(`    ${fromId} -.->|dynamic| ${toId}`);
         } else {
             lines.push(`    ${fromId} --> ${toId}`);
         }
+
+        edgeIndex++;
+    }
+
+    // Red dashed style for cycle edges
+    for (const idx of edgeIndices) {
+        lines.push(`    linkStyle ${idx} stroke:#ff0000,stroke-dasharray:5`);
+    }
+
+    // Legend subgraph
+    const legendLangs = [...usedLangs]
+        .filter((l) => LANG_MERMAID_CLASS[l])
+        .sort();
+
+    if (legendLangs.length > 1) {
+        lines.push(`    subgraph Legend`);
+
+        for (const lang of legendLangs) {
+            const cls = LANG_MERMAID_CLASS[lang]!;
+            lines.push(`        legend_${cls}["${lang}"]:::${cls}`);
+        }
+
+        lines.push(`    end`);
     }
 
     return lines.join("\n");
@@ -476,6 +715,8 @@ export function getGraphStats(graph: CodeGraph): GraphStats {
         }
     }
 
+    const circularDeps = findCircularDependencies(graph);
+
     return {
         totalNodes,
         totalEdges,
@@ -483,5 +724,6 @@ export function getGraphStats(graph: CodeGraph): GraphStats {
         maxImporter: maxImporter?.count ? maxImporter : null,
         maxImported: maxImported?.count ? maxImported : null,
         orphanCount,
+        circularDependencies: circularDeps.length,
     };
 }

@@ -1,4 +1,4 @@
-export type AIProviderType = "cloud" | "local-hf" | "darwinkit" | "coreml" | "ollama";
+export type AIProviderType = "cloud" | "local-hf" | "darwinkit" | "coreml" | "ollama" | "google";
 export type AITask = "transcribe" | "translate" | "summarize" | "classify" | "embed" | "sentiment";
 
 export interface AIProvider {

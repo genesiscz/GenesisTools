@@ -86,7 +86,39 @@ export function registerSyncCommand(program: Command): void {
                     }
                 }
 
-                p.outro("Done");
+                // Auto-start watchers for indexes that opt in
+                const watchStarted: string[] = [];
+
+                for (const indexName of names) {
+                    try {
+                        const indexer = await manager.getIndex(indexName);
+                        const watchConfig = indexer.getConfig().watch;
+
+                        if (watchConfig?.autoStart) {
+                            await indexer.startWatch();
+                            watchStarted.push(indexName);
+                        }
+                    } catch {
+                        // Watcher start failure should not block sync completion
+                    }
+                }
+
+                if (watchStarted.length > 0) {
+                    p.log.info(
+                        `Auto-started watcher for: ${watchStarted.map((n) => pc.bold(n)).join(", ")}`
+                    );
+                    p.log.info(pc.dim("Press Ctrl+C to stop watching"));
+
+                    process.on("SIGINT", async () => {
+                        await manager.close();
+                        process.exit(0);
+                    });
+
+                    // Keep process alive while watchers run
+                    await new Promise(() => {});
+                } else {
+                    p.outro("Done");
+                }
             } finally {
                 await manager.close();
             }

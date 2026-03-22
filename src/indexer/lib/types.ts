@@ -57,6 +57,8 @@ export interface IndexConfig {
         interval?: number;
         /** Debounce for native watcher in ms. Default: 2000 */
         debounceMs?: number;
+        /** Auto-start watcher after sync completes. Default: false */
+        autoStart?: boolean;
     };
 }
 

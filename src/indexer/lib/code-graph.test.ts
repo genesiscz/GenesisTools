@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { buildCodeGraph, getGraphStats, toMermaidDiagram } from "./code-graph";
+import { buildCodeGraph, findCircularDependencies, getGraphStats, toMermaidDiagram } from "./code-graph";
+import type { CodeGraph } from "./code-graph";
+import { loadPathAliases, parsePathAliases } from "./graph-aliases";
 import { extractImports } from "./graph-imports";
 
 describe("extractImports", () => {
@@ -339,6 +341,70 @@ import "github.com/real/pkg"
             expect(imports[0].specifier).toBe("App\\Models\\User");
         });
     });
+
+    describe("Kotlin", () => {
+        test("extracts import declarations", () => {
+            const source = `import com.example.models.User\nimport com.example.utils.Helper`;
+            const imports = extractImports(source, "kotlin");
+            expect(imports).toHaveLength(2);
+            expect(imports[0].specifier).toBe("com.example.models.User");
+            expect(imports[1].specifier).toBe("com.example.utils.Helper");
+        });
+
+        test("extracts aliased imports", () => {
+            const source = `import com.example.models.User as AppUser`;
+            const imports = extractImports(source, "kotlin");
+            expect(imports).toHaveLength(1);
+            expect(imports[0].specifier).toBe("com.example.models.User");
+        });
+
+        test("extracts wildcard imports", () => {
+            const source = `import com.example.utils.*`;
+            const imports = extractImports(source, "kotlin");
+            expect(imports).toHaveLength(1);
+            expect(imports[0].specifier).toBe("com.example.utils.*");
+        });
+    });
+
+    describe("Scala", () => {
+        test("extracts import declarations", () => {
+            const source = `import scala.collection.mutable\nimport com.example.Service`;
+            const imports = extractImports(source, "scala");
+            expect(imports).toHaveLength(2);
+            expect(imports[0].specifier).toBe("scala.collection.mutable");
+            expect(imports[1].specifier).toBe("com.example.Service");
+        });
+
+        test("extracts grouped imports (takes base path)", () => {
+            const source = `import scala.collection.{mutable, immutable}`;
+            const imports = extractImports(source, "scala");
+            expect(imports).toHaveLength(1);
+            expect(imports[0].specifier).toBe("scala.collection.");
+        });
+    });
+
+    describe("C#", () => {
+        test("extracts using directives", () => {
+            const source = `using System;\nusing System.Collections.Generic;`;
+            const imports = extractImports(source, "csharp");
+            expect(imports).toHaveLength(2);
+            expect(imports[0].specifier).toBe("System");
+            expect(imports[1].specifier).toBe("System.Collections.Generic");
+        });
+
+        test("extracts static using directives", () => {
+            const source = `using static System.Math;`;
+            const imports = extractImports(source, "csharp");
+            expect(imports).toHaveLength(1);
+            expect(imports[0].specifier).toBe("System.Math");
+        });
+
+        test("ignores using var statements", () => {
+            const source = `using var stream = new FileStream("test", FileMode.Open);`;
+            const imports = extractImports(source, "csharp");
+            expect(imports).toHaveLength(0);
+        });
+    });
 });
 
 describe("buildCodeGraph", () => {
@@ -465,6 +531,98 @@ describe("toMermaidDiagram", () => {
         const mermaid = toMermaidDiagram(graph, { showDynamic: true });
         expect(mermaid).toContain("-.->|dynamic|");
     });
+
+    test("Mermaid diagram includes classDef for languages", () => {
+        const files = new Map<string, string>([
+            ["src/a.ts", `import { b } from "./b";`],
+            ["src/b.ts", `export const b = 1;`],
+        ]);
+
+        const graph = buildCodeGraph(files, "/project");
+        const mermaid = toMermaidDiagram(graph);
+        expect(mermaid).toContain("classDef ts fill:#3178c6,color:#fff");
+        expect(mermaid).toContain(":::ts");
+    });
+
+    test("Mermaid diagram highlights circular dependency edges", () => {
+        const files = new Map<string, string>([
+            ["src/a.ts", `import { b } from "./b";`],
+            ["src/b.ts", `import { a } from "./a";`],
+        ]);
+
+        const graph = buildCodeGraph(files, "/project");
+        const mermaid = toMermaidDiagram(graph);
+        expect(mermaid).toContain("-.->|cycle|");
+        expect(mermaid).toContain("stroke:#ff0000");
+    });
+});
+
+describe("findCircularDependencies", () => {
+    function makeGraph(edges: Array<[string, string]>): CodeGraph {
+        const nodeSet = new Set<string>();
+
+        for (const [from, to] of edges) {
+            nodeSet.add(from);
+            nodeSet.add(to);
+        }
+
+        return {
+            nodes: [...nodeSet].map((p) => ({
+                path: p,
+                language: "typescript",
+                importCount: 0,
+                importedByCount: 0,
+            })),
+            edges: edges.map(([from, to]) => ({ from, to, isDynamic: false })),
+            builtAt: Date.now(),
+        };
+    }
+
+    test("detects simple A->B->A cycle", () => {
+        const graph = makeGraph([
+            ["a.ts", "b.ts"],
+            ["b.ts", "a.ts"],
+        ]);
+
+        const cycles = findCircularDependencies(graph);
+        expect(cycles).toHaveLength(1);
+        expect(cycles[0].length).toBe(2);
+        expect(cycles[0].cycle).toContain("a.ts");
+        expect(cycles[0].cycle).toContain("b.ts");
+    });
+
+    test("detects A->B->C->A cycle", () => {
+        const graph = makeGraph([
+            ["a.ts", "b.ts"],
+            ["b.ts", "c.ts"],
+            ["c.ts", "a.ts"],
+        ]);
+
+        const cycles = findCircularDependencies(graph);
+        expect(cycles).toHaveLength(1);
+        expect(cycles[0].length).toBe(3);
+    });
+
+    test("returns empty for acyclic graph", () => {
+        const graph = makeGraph([
+            ["a.ts", "b.ts"],
+            ["b.ts", "c.ts"],
+        ]);
+
+        const cycles = findCircularDependencies(graph);
+        expect(cycles).toHaveLength(0);
+    });
+
+    test("deduplicates same cycle found from different start nodes", () => {
+        const graph = makeGraph([
+            ["a.ts", "b.ts"],
+            ["b.ts", "a.ts"],
+        ]);
+
+        const cycles = findCircularDependencies(graph);
+        // Should only appear once despite starting DFS from both a.ts and b.ts
+        expect(cycles).toHaveLength(1);
+    });
 });
 
 describe("getGraphStats", () => {
@@ -484,5 +642,100 @@ describe("getGraphStats", () => {
         expect(stats.orphanCount).toBe(1); // orphan.ts
         expect(stats.maxImported!.path).toBe("src/c.ts");
         expect(stats.maxImported!.count).toBe(2);
+        expect(stats.circularDependencies).toBe(0);
+    });
+
+    test("counts circular dependencies", () => {
+        const files = new Map<string, string>([
+            ["src/a.ts", `import { b } from "./b";`],
+            ["src/b.ts", `import { a } from "./a";`],
+        ]);
+
+        const graph = buildCodeGraph(files, "/project");
+        const stats = getGraphStats(graph);
+        expect(stats.circularDependencies).toBe(1);
+    });
+});
+
+describe("parsePathAliases", () => {
+    test("parses wildcard aliases", () => {
+        const tsconfig = JSON.stringify({
+            compilerOptions: {
+                baseUrl: ".",
+                paths: {
+                    "@app/*": ["src/*"],
+                    "@utils/*": ["src/utils/*"],
+                },
+            },
+        });
+
+        const aliases = parsePathAliases(tsconfig, "/project");
+        expect(aliases.entries.size).toBe(2);
+        expect(aliases.entries.get("@app/")).toEqual(["src"]);
+        expect(aliases.entries.get("@utils/")).toEqual(["src/utils"]);
+    });
+
+    test("parses exact aliases", () => {
+        const tsconfig = JSON.stringify({
+            compilerOptions: {
+                baseUrl: ".",
+                paths: { "~": ["./src"] },
+            },
+        });
+
+        const aliases = parsePathAliases(tsconfig, "/project");
+        expect(aliases.entries.size).toBe(1);
+        expect(aliases.entries.get("~")).toEqual(["src"]);
+    });
+
+    test("strips JSON comments", () => {
+        const tsconfig = `{
+            // This is a comment
+            "compilerOptions": {
+                "baseUrl": ".",
+                /* block comment */
+                "paths": { "@app/*": ["src/*"] }
+            }
+        }`;
+
+        const aliases = parsePathAliases(tsconfig, "/project");
+        expect(aliases.entries.size).toBe(1);
+    });
+
+    test("returns empty for missing compilerOptions", () => {
+        const tsconfig = JSON.stringify({});
+        const aliases = parsePathAliases(tsconfig, "/project");
+        expect(aliases.entries.size).toBe(0);
+    });
+
+    test("returns empty for invalid JSON", () => {
+        const aliases = parsePathAliases("not json", "/project");
+        expect(aliases.entries.size).toBe(0);
+    });
+});
+
+describe("loadPathAliases", () => {
+    test("returns empty aliases for directory without tsconfig", () => {
+        const aliases = loadPathAliases("/nonexistent/path");
+        expect(aliases.entries.size).toBe(0);
+    });
+});
+
+describe("graph persistence round-trip", () => {
+    test("serialized graph preserves structure", () => {
+        const files = new Map<string, string>([
+            ["src/a.ts", `import { b } from "./b";`],
+            ["src/b.ts", `export const b = 1;`],
+        ]);
+
+        const graph = buildCodeGraph(files, "/project");
+        const json = JSON.stringify(graph);
+        const restored = JSON.parse(json) as typeof graph;
+
+        expect(restored.nodes.length).toBe(graph.nodes.length);
+        expect(restored.edges.length).toBe(graph.edges.length);
+        expect(restored.builtAt).toBe(graph.builtAt);
+        expect(restored.edges[0].from).toBe(graph.edges[0].from);
+        expect(restored.edges[0].to).toBe(graph.edges[0].to);
     });
 });

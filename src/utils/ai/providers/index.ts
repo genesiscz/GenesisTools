@@ -3,6 +3,7 @@ import type { AIProvider, AIProviderType, AITask } from "../types";
 import { AICloudProvider } from "./AICloudProvider";
 import { AICoreMLProvider } from "./AICoreMLProvider";
 import { AIDarwinKitProvider } from "./AIDarwinKitProvider";
+import { AIGoogleProvider } from "./AIGoogleProvider";
 import { AILocalProvider } from "./AILocalProvider";
 import { AIOllamaProvider } from "./AIOllamaProvider";
 
@@ -38,6 +39,9 @@ export function getProvider(type: AIProviderType): AIProvider {
         case "ollama":
             provider = new AIOllamaProvider();
             break;
+        case "google":
+            provider = new AIGoogleProvider();
+            break;
         default:
             throw new Error(`Unknown provider type: ${type}`);
     }
@@ -55,7 +59,7 @@ export async function getProviderForTask(task: AITask, config: AIConfig): Promis
     }
 
     // Fallback order: cloud -> local-hf -> ollama -> coreml -> darwinkit
-    const fallbackOrder: AIProviderType[] = ["cloud", "local-hf", "ollama", "coreml", "darwinkit"];
+    const fallbackOrder: AIProviderType[] = ["cloud", "local-hf", "ollama", "google", "coreml", "darwinkit"];
 
     for (const type of fallbackOrder) {
         if (type === preferred) {
@@ -76,7 +80,7 @@ export async function getProviderForTask(task: AITask, config: AIConfig): Promis
 }
 
 export function getAllProviders(): AIProvider[] {
-    const types: AIProviderType[] = ["cloud", "local-hf", "ollama", "darwinkit", "coreml"];
+    const types: AIProviderType[] = ["cloud", "local-hf", "ollama", "google", "darwinkit", "coreml"];
     return types.map((type) => getProvider(type));
 }
 
@@ -91,5 +95,6 @@ export function disposeAll(): void {
 export { AICloudProvider } from "./AICloudProvider";
 export { AICoreMLProvider } from "./AICoreMLProvider";
 export { AIDarwinKitProvider } from "./AIDarwinKitProvider";
+export { AIGoogleProvider } from "./AIGoogleProvider";
 export { AILocalProvider } from "./AILocalProvider";
 export { AIOllamaProvider } from "./AIOllamaProvider";
