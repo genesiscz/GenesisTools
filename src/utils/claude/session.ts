@@ -1035,6 +1035,7 @@ export class ClaudeSession {
         let toolCallCount = 0;
         const toolUsage: Record<string, number> = {};
         const tokenUsage = { input: 0, output: 0, cached: 0 };
+        const serverToolUse = { webSearchRequests: 0, webFetchRequests: 0 };
         const modelsSet = new Set<string>();
         const filesSet = new Set<string>();
         let firstTimestamp: Date | null = null;
@@ -1069,6 +1070,11 @@ export class ClaudeSession {
                     tokenUsage.input += usage.input_tokens || 0;
                     tokenUsage.output += usage.output_tokens || 0;
                     tokenUsage.cached += usage.cache_read_input_tokens || 0;
+
+                    if (usage.server_tool_use) {
+                        serverToolUse.webSearchRequests += usage.server_tool_use.web_search_requests || 0;
+                        serverToolUse.webFetchRequests += usage.server_tool_use.web_fetch_requests || 0;
+                    }
                 }
 
                 // Tool calls
@@ -1096,7 +1102,15 @@ export class ClaudeSession {
                         tokenUsage.input += assistantContent.usage.input_tokens || 0;
                         tokenUsage.output += assistantContent.usage.output_tokens || 0;
                         tokenUsage.cached += assistantContent.usage.cache_read_input_tokens || 0;
+
+                        if (assistantContent.usage.server_tool_use) {
+                            serverToolUse.webSearchRequests +=
+                                assistantContent.usage.server_tool_use.web_search_requests || 0;
+                            serverToolUse.webFetchRequests +=
+                                assistantContent.usage.server_tool_use.web_fetch_requests || 0;
+                        }
                     }
+
                     // Track subagent tool calls
                     for (const tool of getSubagentToolUseBlocks(sub)) {
                         toolCallCount++;
@@ -1127,6 +1141,7 @@ export class ClaudeSession {
             toolCallCount,
             toolUsage,
             tokenUsage,
+            serverToolUse,
             modelsUsed: [...modelsSet],
             filesModified: [...filesSet],
             duration,

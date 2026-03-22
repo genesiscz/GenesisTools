@@ -181,13 +181,9 @@ Key SDK type files: `sdk.d.ts` (session/message/streaming types), `sdk-tools.d.t
 
 **Known gaps vs SDK** (as of v0.2.81):
 
-| SDK Feature | Status | Priority |
-|-------------|--------|----------|
-| `AgentOutput` (totalToolUseCount, totalDurationMs, totalTokens, service_tier) | Missing | Medium |
-| `FileReadOutput` (image base64+dimensions, PDF, notebook) | Missing | Low |
-| `Usage.cache_creation` (ephemeral_5m/1h tokens) | Partial | Low |
-| `Usage.service_tier` (standard/priority/batch) | Missing | Low |
-| `Usage.server_tool_use` (web_search_requests, web_fetch_requests) | Missing | Low |
+| SDK Feature | Status |
+|-------------|--------|
+| `FileReadOutput` (image base64+dimensions, PDF, notebook) | Not tracked (tool output type, not message type) |
 
 ## Important Notes
 

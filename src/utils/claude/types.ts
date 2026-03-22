@@ -84,14 +84,30 @@ export interface CacheCreation {
     ephemeral_1h_input_tokens: number;
 }
 
+export interface ServerToolUse {
+    web_search_requests: number;
+    web_fetch_requests: number;
+}
+
+export type ServiceTier = "standard" | "priority" | "batch";
+
 export interface Usage {
     input_tokens: number;
     output_tokens: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
     cache_creation?: CacheCreation;
-    service_tier?: string;
+    server_tool_use?: ServerToolUse | null;
+    service_tier?: ServiceTier | null;
     inference_geo?: string;
+}
+
+/** Parsed from agent tool_result text: `<usage>total_tokens: N\ntool_uses: N\nduration_ms: N</usage>` */
+export interface AgentCompletionStats {
+    agentId: string;
+    totalTokens: number;
+    toolUses: number;
+    durationMs: number;
 }
 
 // =============================================================================

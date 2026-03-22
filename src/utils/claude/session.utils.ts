@@ -1,5 +1,6 @@
 import { basename, sep } from "node:path";
 import type {
+    AgentCompletionStats,
     AgentProgressData,
     ContentBlock,
     ConversationMessage,
@@ -147,4 +148,27 @@ export function agentProgressToSubagent(msg: ProgressMessage): SubagentMessage |
         agentId: data.agentId,
         ...(msg.timestamp ? { timestamp: msg.timestamp } : {}),
     } as SubagentMessage;
+}
+
+const AGENT_STATS_RE = /agentId:\s*(\S+)[\s\S]*?<usage>\s*total_tokens:\s*(\d+)\s*\ntool_uses:\s*(\d+)\s*\nduration_ms:\s*(\d+)\s*<\/usage>/;
+
+/**
+ * Parse agent completion stats from a tool_result text block.
+ * Returns null if the text doesn't match the expected agent result format.
+ *
+ * Format: `agentId: <id> (...)\n<usage>total_tokens: N\ntool_uses: N\nduration_ms: N</usage>`
+ */
+export function parseAgentCompletionStats(text: string): AgentCompletionStats | null {
+    const match = AGENT_STATS_RE.exec(text);
+
+    if (!match) {
+        return null;
+    }
+
+    return {
+        agentId: match[1],
+        totalTokens: Number.parseInt(match[2], 10),
+        toolUses: Number.parseInt(match[3], 10),
+        durationMs: Number.parseInt(match[4], 10),
+    };
 }
