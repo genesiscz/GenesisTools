@@ -13,7 +13,7 @@ describe("RRF over-fetch", () => {
         }
     });
 
-    it("bm25Search fetches 3x limit candidates for RRF fusion", () => {
+    it("bm25Search returns at most limit results", () => {
         tmpDir = mkdtempSync(join(tmpdir(), "rrf-"));
         const dbPath = join(tmpDir, "test.db");
 

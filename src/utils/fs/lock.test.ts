@@ -42,8 +42,7 @@ describe("acquireLock", () => {
         try {
             const handle2 = await acquireLock(lockPath);
             handles.push(handle2);
-            // Should not reach here
-            expect(true).toBe(false);
+            throw new Error("Expected acquireLock to throw ELOCKED");
         } catch (err) {
             expect((err as NodeJS.ErrnoException).code).toBe("ELOCKED");
         }

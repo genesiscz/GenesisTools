@@ -20,20 +20,23 @@ interface DarwinKitWithCoreML {
     coreml: CoreMLNamespace;
 }
 
-interface AICoreMLProviderOptions {
-    /** User-assigned model ID for DarwinKit CoreML model cache */
+interface AICoreMLBaseOptions {
     modelId: string;
-    /** Path to .mlpackage / .mlmodelc or HuggingFace model directory */
-    modelPath: string;
-    /** Embedding dimensions (e.g. 384, 512, 768) */
     dimensions: number;
-    /** Whether to use NLContextualEmbedding instead of custom model */
-    contextual?: boolean;
-    /** Language for NLContextualEmbedding (default: "en") */
-    language?: string;
-    /** CoreML compute units */
+}
+
+interface AICoreMLCustomModelOptions extends AICoreMLBaseOptions {
+    contextual?: false;
+    modelPath: string;
     computeUnits?: "all" | "cpuAndGPU" | "cpuOnly" | "cpuAndNeuralEngine";
 }
+
+interface AICoreMLContextualOptions extends AICoreMLBaseOptions {
+    contextual: true;
+    language?: string;
+}
+
+type AICoreMLProviderOptions = AICoreMLCustomModelOptions | AICoreMLContextualOptions;
 
 export class AICoreMLProvider implements AIProvider, AIEmbeddingProvider {
     readonly type = "coreml" as const;

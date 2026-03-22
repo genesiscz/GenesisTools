@@ -48,13 +48,40 @@ function getLanguage(filePath: string): string | null {
         case ".cjs":
             return "typescript";
         case ".tsx":
-            return "tsx";
         case ".jsx":
             return "tsx";
         case ".py":
+        case ".pyw":
+        case ".pyi":
             return "python";
         case ".go":
             return "go";
+        case ".java":
+            return "java";
+        case ".rs":
+            return "rust";
+        case ".c":
+        case ".h":
+            return "c";
+        case ".cpp":
+        case ".hpp":
+        case ".cc":
+        case ".hh":
+        case ".cxx":
+            return "cpp";
+        case ".rb":
+            return "ruby";
+        case ".php":
+            return "php";
+        case ".swift":
+            return "swift";
+        case ".kt":
+        case ".kts":
+            return "kotlin";
+        case ".scala":
+            return "scala";
+        case ".cs":
+            return "csharp";
         default:
             return null;
     }
@@ -63,21 +90,43 @@ function getLanguage(filePath: string): string | null {
 const TS_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 const INDEX_FILES = ["index.ts", "index.tsx", "index.js", "index.jsx"];
 
+const LANGUAGE_EXTENSIONS: Record<string, string[]> = {
+    typescript: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
+    tsx: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
+    python: [".py"],
+    go: [".go"],
+    java: [".java"],
+    rust: [".rs"],
+    c: [".c", ".h"],
+    cpp: [".cpp", ".hpp", ".cc", ".hh", ".cxx", ".h"],
+    ruby: [".rb"],
+    php: [".php"],
+    swift: [".swift"],
+    kotlin: [".kt", ".kts"],
+    scala: [".scala"],
+    csharp: [".cs"],
+};
+
 /**
  * Try to resolve a relative import specifier to an actual file in the file map.
  * Returns the resolved relative path, or null if not found.
  */
-function resolveRelativeImport(specifier: string, importerPath: string, fileSet: Set<string>): string | null {
+function resolveRelativeImport(
+    specifier: string,
+    importerPath: string,
+    fileSet: Set<string>,
+    language?: string,
+): string | null {
     const importerDir = dirname(importerPath);
     const basePath = join(importerDir, specifier);
 
-    // Direct match (e.g., "./foo.ts")
     if (fileSet.has(basePath)) {
         return basePath;
     }
 
-    // Try adding extensions
-    for (const ext of TS_EXTENSIONS) {
+    const extensions = language ? (LANGUAGE_EXTENSIONS[language] ?? TS_EXTENSIONS) : TS_EXTENSIONS;
+
+    for (const ext of extensions) {
         const withExt = basePath + ext;
 
         if (fileSet.has(withExt)) {
@@ -85,13 +134,164 @@ function resolveRelativeImport(specifier: string, importerPath: string, fileSet:
         }
     }
 
-    // Try as directory with index file
-    for (const indexFile of INDEX_FILES) {
-        const withIndex = join(basePath, indexFile);
+    // Directory index files (TS/JS only)
+    if (!language || language === "typescript" || language === "tsx") {
+        for (const indexFile of INDEX_FILES) {
+            const withIndex = join(basePath, indexFile);
 
-        if (fileSet.has(withIndex)) {
-            return withIndex;
+            if (fileSet.has(withIndex)) {
+                return withIndex;
+            }
         }
+    }
+
+    // Python __init__.py
+    if (language === "python") {
+        const initFile = join(basePath, "__init__.py");
+
+        if (fileSet.has(initFile)) {
+            return initFile;
+        }
+    }
+
+    return null;
+}
+
+/** Resolve a C/C++ local include to a file path */
+function resolveCInclude(specifier: string, importerPath: string, fileSet: Set<string>): string | null {
+    const importerDir = dirname(importerPath);
+    const candidate = join(importerDir, specifier);
+
+    if (fileSet.has(candidate)) {
+        return candidate;
+    }
+
+    return null;
+}
+
+/** Resolve a Rust mod declaration to a file path */
+function resolveRustMod(specifier: string, importerPath: string, fileSet: Set<string>): string | null {
+    if (specifier.includes("::")) {
+        return null;
+    }
+
+    const importerDir = dirname(importerPath);
+    const asFile = join(importerDir, `${specifier}.rs`);
+
+    if (fileSet.has(asFile)) {
+        return asFile;
+    }
+
+    const asDir = join(importerDir, specifier, "mod.rs");
+
+    if (fileSet.has(asDir)) {
+        return asDir;
+    }
+
+    return null;
+}
+
+/** Resolve a JVM (Java/Kotlin/Scala) import to a file path */
+function resolveJvmImport(specifier: string, fileSet: Set<string>, language: string): string | null {
+    const filePath = specifier.replace(/\./g, "/");
+    const exts = language === "java" ? [".java"] : language === "kotlin" ? [".kt", ".kts"] : [".scala"];
+
+    for (const ext of exts) {
+        const candidate = `${filePath}${ext}`;
+
+        if (fileSet.has(candidate)) {
+            return candidate;
+        }
+    }
+
+    const srcDirs = [`src/main/${language}`, "src/main", "src"];
+
+    for (const dir of srcDirs) {
+        for (const ext of exts) {
+            const candidate = join(dir, `${filePath}${ext}`);
+
+            if (fileSet.has(candidate)) {
+                return candidate;
+            }
+        }
+    }
+
+    return null;
+}
+
+/** Resolve a PHP namespace import to a file path */
+function resolvePhpImport(specifier: string, importerPath: string, fileSet: Set<string>): string | null {
+    if (specifier.startsWith("./") || specifier.startsWith("../")) {
+        const importerDir = dirname(importerPath);
+        const candidate = join(importerDir, specifier);
+
+        if (fileSet.has(candidate)) {
+            return candidate;
+        }
+
+        return null;
+    }
+
+    if (specifier.includes("\\")) {
+        const fpPath = specifier.replace(/\\/g, "/");
+        const exact = `${fpPath}.php`;
+
+        if (fileSet.has(exact)) {
+            return exact;
+        }
+
+        const segments = fpPath.split("/");
+
+        if (segments.length > 1) {
+            segments[0] = segments[0].toLowerCase();
+            const lowered = `${segments.join("/")}.php`;
+
+            if (fileSet.has(lowered)) {
+                return lowered;
+            }
+        }
+
+        const withoutRoot = segments.slice(1).join("/");
+
+        if (withoutRoot) {
+            const inSrc = `src/${withoutRoot}.php`;
+
+            if (fileSet.has(inSrc)) {
+                return inSrc;
+            }
+        }
+    }
+
+    return null;
+}
+
+/** Resolve a Ruby require to a file path */
+function resolveRubyImport(specifier: string, importerPath: string, fileSet: Set<string>): string | null {
+    if (specifier.startsWith("./") || specifier.startsWith("../")) {
+        const importerDir = dirname(importerPath);
+        const base = join(importerDir, specifier);
+
+        if (fileSet.has(base)) {
+            return base;
+        }
+
+        const withExt = `${base}.rb`;
+
+        if (fileSet.has(withExt)) {
+            return withExt;
+        }
+    }
+
+    const fromRoot = `${specifier}.rb`;
+
+    if (fileSet.has(fromRoot)) {
+        return fromRoot;
+    }
+
+    const underLib = `lib/${specifier}.rb`;
+
+    if (fileSet.has(underLib)) {
+        return underLib;
     }
 
     return null;
@@ -152,13 +352,21 @@ export function buildCodeGraph(files: Map<string, string>, baseDir: string): Cod
             let resolved: string | null = null;
 
             if (imp.specifier.startsWith(".") || imp.specifier.startsWith("/")) {
-                // Relative import
-                resolved = resolveRelativeImport(imp.specifier, filePath, fileSet);
+                resolved = resolveRelativeImport(imp.specifier, filePath, fileSet, language);
             } else if (language === "python") {
                 resolved = resolvePythonImport(imp.specifier, fileSet);
+            } else if (language === "c" || language === "cpp") {
+                resolved = resolveCInclude(imp.specifier, filePath, fileSet);
+            } else if (language === "rust") {
+                resolved = resolveRustMod(imp.specifier, filePath, fileSet);
+            } else if (language === "java" || language === "kotlin" || language === "scala") {
+                resolved = resolveJvmImport(imp.specifier, fileSet, language);
+            } else if (language === "php") {
+                resolved = resolvePhpImport(imp.specifier, filePath, fileSet);
+            } else if (language === "ruby") {
+                resolved = resolveRubyImport(imp.specifier, filePath, fileSet);
             }
 
-            // Skip unresolvable (external packages)
             if (!resolved) {
                 continue;
             }

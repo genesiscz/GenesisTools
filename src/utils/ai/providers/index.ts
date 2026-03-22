@@ -30,7 +30,6 @@ export function getProvider(type: AIProviderType): AIProvider {
         case "coreml":
             provider = new AICoreMLProvider({
                 modelId: "coreml-contextual",
-                modelPath: "",
                 dimensions: 768,
                 contextual: true,
                 language: "en",

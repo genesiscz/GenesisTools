@@ -60,17 +60,9 @@ export class AIDarwinKitProvider implements AIProvider, AIEmbeddingProvider {
 
         const language = options?.language ?? "en";
 
-        // Try CoreML batch endpoint first (GPU/Neural Engine accelerated)
+        // Try NL batch endpoint (same sentence-level model as embed/embedText)
         try {
             const nlp = await this.getNlp();
-
-            if ("embedContextualBatch" in nlp) {
-                const batchFn = nlp.embedContextualBatch as (
-                    texts: string[],
-                    lang: string
-                ) => Promise<Array<{ vector: number[]; dimension: number }>>;
-                return toEmbeddingResults(await batchFn(texts, language));
-            }
 
             if ("embedBatch" in nlp) {
                 const batchFn = nlp.embedBatch as (
@@ -80,7 +72,7 @@ export class AIDarwinKitProvider implements AIProvider, AIEmbeddingProvider {
                 return toEmbeddingResults(await batchFn(texts, language));
             }
         } catch {
-            // Batch endpoints not available or failed -- fall through to sequential
+            // Batch endpoint not available or failed -- fall through to sequential
         }
 
         // Sequential fallback for older DarwinKit versions

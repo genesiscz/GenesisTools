@@ -83,12 +83,19 @@ export async function createWatcher(
             return;
         }
 
+        // Snapshot events for this flush; keep pendingEvents intact until success
         const events = Array.from(pendingEvents.values());
-        pendingEvents = new Map();
+        const flushedPaths = new Set(pendingEvents.keys());
 
         try {
             await callback(events);
             consecutiveErrors = 0;
+
+            // Only remove events that were successfully processed.
+            // New events that arrived during the callback stay in pendingEvents.
+            for (const path of flushedPaths) {
+                pendingEvents.delete(path);
+            }
         } catch {
             consecutiveErrors++;
 

@@ -901,7 +901,7 @@ export class Indexer extends IndexerEventEmitter {
         } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
 
-            this.store.updateMeta({ indexingStatus: "cancelled" });
+            this.store.updateMeta({ indexingStatus: "error" });
 
             this.emitAndDispatch(
                 "sync:error",

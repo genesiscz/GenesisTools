@@ -1,12 +1,12 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
+import { Storage } from "@app/utils/storage/storage";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { Indexer } from "../lib/indexer";
-import { IndexerManager } from "../lib/manager";
 import { createProgressCallbacks } from "../lib/progress";
 import type { IndexConfig } from "../lib/types";
 
@@ -52,7 +52,7 @@ export function registerBenchmarkCommand(program: Command): void {
         .description("Benchmark indexing and search performance")
         .argument("<dir>", "Directory to index for benchmarking")
         .option("-o, --output <path>", "Save results JSON to file")
-        .option("-p, --provider <provider>", "Embedding provider", "darwinkit")
+        .option("-p, --provider <provider>", "Embedding provider")
         .option("-m, --model <model>", "Embedding model")
         .option("--no-embed", "Skip embedding (fulltext-only benchmark)")
         .action(
@@ -88,8 +88,6 @@ export function registerBenchmarkCommand(program: Command): void {
                     },
                 };
 
-                const manager = await IndexerManager.load();
-
                 try {
                     const spinner = p.spinner();
                     spinner.start("Indexing...");
@@ -109,7 +107,6 @@ export function registerBenchmarkCommand(program: Command): void {
 
                     spinner.stop("Index complete");
 
-                    // Search benchmark
                     spinner.start("Running search queries...");
                     const latencies: number[] = [];
 
@@ -156,7 +153,6 @@ export function registerBenchmarkCommand(program: Command): void {
                         model: config.embedding?.model ?? "default",
                     };
 
-                    // Print summary
                     p.log.info(pc.bold("Results:"));
                     p.log.info(`  Files scanned:    ${result.counts.filesScanned.toLocaleString()}`);
                     p.log.info(`  Chunks created:   ${result.counts.chunksCreated.toLocaleString()}`);
@@ -168,7 +164,6 @@ export function registerBenchmarkCommand(program: Command): void {
                     p.log.info(`  Avg search:       ${result.search.avgLatencyMs}ms`);
                     p.log.info(`  DB size:          ${formatBytes(result.dbSizeBytes)}`);
 
-                    // Output JSON
                     const json = SafeJSON.stringify(result, null, 2);
                     console.log(json);
 
@@ -184,12 +179,20 @@ export function registerBenchmarkCommand(program: Command): void {
                         p.log.success(`Saved to ${outPath}`);
                     }
 
-                    // Cleanup benchmark index
                     await indexer.close();
-                    await manager.removeIndex(benchName);
+
+                    // Clean up benchmark index files directly (not registered with manager)
+                    const storage = new Storage("indexer");
+                    const indexDir = join(storage.getBaseDir(), benchName);
+
+                    if (existsSync(indexDir)) {
+                        rmSync(indexDir, { recursive: true, force: true });
+                    }
+
                     p.outro("Done");
-                } finally {
-                    await manager.close();
+                } catch (err) {
+                    p.log.error(err instanceof Error ? err.message : String(err));
+                    process.exitCode = 1;
                 }
             }
         );

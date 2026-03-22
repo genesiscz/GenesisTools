@@ -22,17 +22,19 @@ export function defaultHash(content: string): string {
 /**
  * Compute the changeset between two snapshots.
  *
- * @param current  - Map of path -> content
- * @param previous - Map of path -> hash from last run (empty map = first run, everything is "added")
- * @param opts     - Optional hash function override
+ * @param input.current  - Map of path -> content
+ * @param input.previous - Map of path -> hash from last run (empty map = first run, everything is "added")
+ * @param input.hashFn   - Optional hash function override (default: xxHash64)
  * @returns ChangeSet with added/modified/deleted/unchanged paths
  */
-export function detectChanges(
-    current: Map<string, string>,
-    previous: Map<string, string>,
-    opts?: ChangeDetectorOptions
-): ChangeSet {
-    const hashFn = opts?.hashFn ?? defaultHash;
+interface DetectChangesInput {
+    current: Map<string, string>;
+    previous: Map<string, string>;
+    hashFn?: (content: string) => string;
+}
+
+export function detectChanges(input: DetectChangesInput): ChangeSet {
+    const { current, previous, hashFn = defaultHash } = input;
     const added: string[] = [];
     const modified: string[] = [];
     const unchanged: string[] = [];
@@ -67,10 +69,13 @@ export function detectChanges(
  * Same as detectChanges but accepts pre-hashed current entries.
  * Use when you already have hashes and don't need to re-hash content.
  */
-export function detectChangesPreHashed(
-    currentHashes: Map<string, string>,
-    previousHashes: Map<string, string>
-): ChangeSet {
+interface DetectChangesPreHashedInput {
+    currentHashes: Map<string, string>;
+    previousHashes: Map<string, string>;
+}
+
+export function detectChangesPreHashed(input: DetectChangesPreHashedInput): ChangeSet {
+    const { currentHashes, previousHashes } = input;
     const added: string[] = [];
     const modified: string[] = [];
     const unchanged: string[] = [];

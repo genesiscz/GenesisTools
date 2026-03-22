@@ -172,6 +172,9 @@ describe("createWatcher", () => {
 
         const tmpEvents = events.filter((e) => e.path.endsWith(".tmp"));
         expect(tmpEvents.length).toBe(0);
+
+        const txtEvents = events.filter((e) => e.path.endsWith(".txt"));
+        expect(txtEvents.length).toBeGreaterThanOrEqual(1);
     });
 
     test("unsubscribe stops receiving events", async () => {
