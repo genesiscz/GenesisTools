@@ -32,6 +32,21 @@ export function registerSyncCommand(program: Command): void {
         .action(async (nameOrPath?: string) => {
             const manager = await IndexerManager.load();
 
+            // Auto-resume interrupted indexes
+            const interrupted = manager.interruptedOnLoad;
+
+            if (interrupted.length > 0) {
+                const interruptedNames = interrupted.map((i) => i.name).join(", ");
+                p.log.warn(`Detected ${interrupted.length} interrupted index(es): ${interruptedNames}. Resuming...`);
+
+                for (const { name } of interrupted) {
+                    const spinner = p.spinner();
+                    spinner.start(`Resuming ${name}...`);
+                    await manager.resumeIndex(name, createProgressCallbacks(spinner));
+                    spinner.stop(`Resumed ${name}`);
+                }
+            }
+
             try {
                 let names: string[];
 

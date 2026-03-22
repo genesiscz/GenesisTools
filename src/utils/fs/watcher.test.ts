@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createWatcher, type WatcherEvent, type WatcherSubscription } from "./watcher";
+import { createWatcher, isTransientError, type WatcherEvent, type WatcherSubscription } from "./watcher";
 
 let tempDir: string;
 let sub: WatcherSubscription | null = null;
@@ -201,5 +201,95 @@ describe("createWatcher", () => {
 
         await sub!.unsubscribe();
         expect(sub!.active).toBe(false);
+    });
+});
+
+describe("isTransientError", () => {
+    test("returns true for ECONNREFUSED error code", () => {
+        const err = new Error("Connection refused");
+        (err as NodeJS.ErrnoException).code = "ECONNREFUSED";
+        expect(isTransientError(err)).toBe(true);
+    });
+
+    test("returns true for ECONNRESET error code", () => {
+        const err = new Error("Connection reset");
+        (err as NodeJS.ErrnoException).code = "ECONNRESET";
+        expect(isTransientError(err)).toBe(true);
+    });
+
+    test("returns true for ENOTFOUND error code", () => {
+        const err = new Error("DNS lookup failed");
+        (err as NodeJS.ErrnoException).code = "ENOTFOUND";
+        expect(isTransientError(err)).toBe(true);
+    });
+
+    test("returns true for ETIMEDOUT error code", () => {
+        const err = new Error("Connection timed out");
+        (err as NodeJS.ErrnoException).code = "ETIMEDOUT";
+        expect(isTransientError(err)).toBe(true);
+    });
+
+    test("returns true for EPIPE error code", () => {
+        const err = new Error("Broken pipe");
+        (err as NodeJS.ErrnoException).code = "EPIPE";
+        expect(isTransientError(err)).toBe(true);
+    });
+
+    test("returns true for EAI_AGAIN error code", () => {
+        const err = new Error("Temporary DNS failure");
+        (err as NodeJS.ErrnoException).code = "EAI_AGAIN";
+        expect(isTransientError(err)).toBe(true);
+    });
+
+    test("returns true for 'connection reset' in message", () => {
+        expect(isTransientError(new Error("The connection reset unexpectedly"))).toBe(true);
+    });
+
+    test("returns true for 'timeout' in message", () => {
+        expect(isTransientError(new Error("Request timeout after 30s"))).toBe(true);
+    });
+
+    test("returns true for 'socket hang up' in message", () => {
+        expect(isTransientError(new Error("socket hang up"))).toBe(true);
+    });
+
+    test("returns true for 'dns' in message", () => {
+        expect(isTransientError(new Error("DNS resolution failed"))).toBe(true);
+    });
+
+    test("returns true for 'network' in message", () => {
+        expect(isTransientError(new Error("Network error occurred"))).toBe(true);
+    });
+
+    test("returns true for 'econnrefused' in message (lowercase match)", () => {
+        expect(isTransientError(new Error("connect ECONNREFUSED 127.0.0.1:6333"))).toBe(true);
+    });
+
+    test("returns false for TypeError", () => {
+        expect(isTransientError(new TypeError("Cannot read property 'x'"))).toBe(false);
+    });
+
+    test("returns false for generic Error without network keywords", () => {
+        expect(isTransientError(new Error("Invalid argument"))).toBe(false);
+    });
+
+    test("returns false for SyntaxError", () => {
+        expect(isTransientError(new SyntaxError("Unexpected token"))).toBe(false);
+    });
+
+    test("returns false for non-Error values (string)", () => {
+        expect(isTransientError("some error string")).toBe(false);
+    });
+
+    test("returns false for non-Error values (number)", () => {
+        expect(isTransientError(42)).toBe(false);
+    });
+
+    test("returns false for null", () => {
+        expect(isTransientError(null)).toBe(false);
+    });
+
+    test("returns false for undefined", () => {
+        expect(isTransientError(undefined)).toBe(false);
     });
 });

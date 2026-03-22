@@ -21,6 +21,15 @@ export async function restoreFromFile<T extends AnyOrama>(path: string): Promise
     }
 
     const { restore } = await import("@orama/plugin-data-persistence");
-    const data = readFileSync(path, "utf-8");
+
+    let data: string;
+
+    try {
+        data = readFileSync(path, "utf-8");
+    } catch {
+        // File may have been deleted between existsSync and readFileSync (TOCTOU race)
+        return null;
+    }
+
     return restore("json", data) as Promise<T>;
 }

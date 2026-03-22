@@ -3,6 +3,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage/storage";
+import { CONFIG_FILENAME, ContextArtifactSource, loadContextConfig } from "./context-artifacts";
 import type { IndexerCallbacks, SyncStats } from "./events";
 import { Indexer } from "./indexer";
 import { emptyStats, type IndexConfig, type IndexMeta } from "./types";
@@ -13,9 +14,12 @@ interface ManagerConfig {
 
 const DEFAULT_CONFIG: ManagerConfig = { indexes: {} };
 
+const CONTEXT_INDEX_SUFFIX = "__context";
+
 export class IndexerManager {
     private storage: Storage;
     private indexers: Map<string, Indexer>;
+    private _interruptedOnLoad: Array<{ name: string; meta: IndexMeta }> = [];
 
     private constructor(storage: Storage) {
         this.storage = storage;
@@ -26,7 +30,15 @@ export class IndexerManager {
         const storage = new Storage("indexer");
         await storage.ensureDirs();
         const manager = new IndexerManager(storage);
+        manager._interruptedOnLoad = manager.getInterruptedIndexes();
         return manager;
+    }
+
+    /** Indexes that were interrupted when the manager loaded. Empty after first access. */
+    get interruptedOnLoad(): Array<{ name: string; meta: IndexMeta }> {
+        const result = this._interruptedOnLoad;
+        this._interruptedOnLoad = [];
+        return result;
     }
 
     async addIndex(config: IndexConfig, callbacks?: IndexerCallbacks): Promise<Indexer> {
@@ -43,6 +55,9 @@ export class IndexerManager {
         this.indexers.set(config.name, indexer);
 
         await indexer.sync(callbacks);
+
+        // Auto-detect .genesistoolscontext.json and create companion context index
+        await this.maybeCreateContextCompanion(config, managerConfig, callbacks);
 
         return indexer;
     }
@@ -68,6 +83,27 @@ export class IndexerManager {
 
         if (existsSync(indexDir)) {
             rmSync(indexDir, { recursive: true, force: true });
+        }
+
+        // Also remove companion context index if it exists
+        const contextName = `${name}${CONTEXT_INDEX_SUFFIX}`;
+
+        if (managerConfig.indexes[contextName]) {
+            const contextCached = this.indexers.get(contextName);
+
+            if (contextCached) {
+                await contextCached.close();
+                this.indexers.delete(contextName);
+            }
+
+            delete managerConfig.indexes[contextName];
+            await this.saveConfig(managerConfig);
+
+            const contextDir = join(this.storage.getBaseDir(), contextName);
+
+            if (existsSync(contextDir)) {
+                rmSync(contextDir, { recursive: true, force: true });
+            }
         }
     }
 
@@ -221,6 +257,47 @@ export class IndexerManager {
         }
 
         this.indexers.clear();
+    }
+
+    /** Check for context config and auto-create companion __context index */
+    private async maybeCreateContextCompanion(
+        parentConfig: IndexConfig,
+        managerConfig: ManagerConfig,
+        callbacks?: IndexerCallbacks
+    ): Promise<void> {
+        const contextName = `${parentConfig.name}${CONTEXT_INDEX_SUFFIX}`;
+
+        if (managerConfig.indexes[contextName]) {
+            return;
+        }
+
+        const configPath = join(parentConfig.baseDir, CONFIG_FILENAME);
+
+        if (!existsSync(configPath)) {
+            return;
+        }
+
+        const contextConfig = await loadContextConfig(parentConfig.baseDir);
+
+        if (!contextConfig?.artifacts?.length) {
+            return;
+        }
+
+        const companionConfig: IndexConfig = {
+            name: contextName,
+            baseDir: parentConfig.baseDir,
+            type: "files",
+            source: new ContextArtifactSource(parentConfig.baseDir),
+            chunking: "auto",
+            embedding: parentConfig.embedding,
+        };
+
+        managerConfig.indexes[contextName] = companionConfig;
+        await this.saveConfig(managerConfig);
+
+        const indexer = await Indexer.create(companionConfig);
+        this.indexers.set(contextName, indexer);
+        await indexer.sync(callbacks);
     }
 
     private async loadConfig(): Promise<ManagerConfig> {

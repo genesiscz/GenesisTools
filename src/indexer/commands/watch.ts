@@ -12,6 +12,24 @@ export function registerWatchCommand(program: Command): void {
         .argument("[name]", "Index name (omit to watch all)")
         .action(async (name?: string) => {
             const manager = await IndexerManager.load();
+
+            // Auto-resume interrupted indexes before watching
+            const interrupted = manager.interruptedOnLoad;
+
+            if (interrupted.length > 0) {
+                const interruptedNames = interrupted.map((i) => i.name).join(", ");
+                p.log.warn(`Detected ${interrupted.length} interrupted index(es): ${interruptedNames}. Resuming...`);
+
+                for (const { name: iName } of interrupted) {
+                    try {
+                        await manager.resumeIndex(iName);
+                        p.log.info(`Resumed ${iName}`);
+                    } catch (err) {
+                        p.log.error(`Failed to resume "${iName}": ${err instanceof Error ? err.message : String(err)}`);
+                    }
+                }
+            }
+
             const names = name ? [name] : manager.getIndexNames();
 
             if (names.length === 0) {
