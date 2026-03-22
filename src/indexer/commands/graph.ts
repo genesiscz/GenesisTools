@@ -3,8 +3,8 @@ import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { buildCodeGraph, getGraphStats, toMermaidDiagram } from "../lib/code-graph";
 import type { CodeGraph } from "../lib/code-graph";
+import { buildCodeGraph, findCircularDependencies, getGraphStats, toMermaidDiagram } from "../lib/code-graph";
 import { IndexerManager } from "../lib/manager";
 
 export function registerGraphCommand(program: Command): void {
@@ -12,7 +12,7 @@ export function registerGraphCommand(program: Command): void {
         .command("graph")
         .description("Show code dependency graph for an index")
         .argument("<name>", "Index name")
-        .option("--format <format>", "Output format: mermaid | stats | json", "stats")
+        .option("--format <format>", "Output format: mermaid | stats | circular | json", "stats")
         .option("--max-nodes <n>", "Max nodes in Mermaid diagram", "30")
         .option("--file <path>", "Show dependencies for a specific file")
         .action(async (name: string, opts: { format: string; maxNodes: string; file?: string }) => {
@@ -52,6 +52,10 @@ export function registerGraphCommand(program: Command): void {
                 switch (opts.format) {
                     case "mermaid":
                         console.log(toMermaidDiagram(graph, { maxNodes: parseInt(opts.maxNodes, 10) }));
+                        break;
+
+                    case "circular":
+                        showCircularDependencies(graph);
                         break;
 
                     case "json":
@@ -106,6 +110,32 @@ function showGraphStats(graph: ReturnType<typeof buildCodeGraph>): void {
         const rows = ranked.map((n) => [n.path, String(n.importCount), String(n.importedByCount), n.language]);
 
         console.log(formatTable(rows, ["File", "Imports", "Imported By", "Language"], { alignRight: [1, 2] }));
+    }
+}
+
+function showCircularDependencies(graph: CodeGraph): void {
+    const cycles = findCircularDependencies(graph);
+
+    if (cycles.length === 0) {
+        p.log.success("No circular dependencies found");
+        return;
+    }
+
+    p.log.warn(`Found ${cycles.length} circular ${cycles.length === 1 ? "dependency" : "dependencies"}`);
+    console.log("");
+
+    for (let i = 0; i < cycles.length; i++) {
+        const { cycle, length } = cycles[i];
+        p.log.step(`${pc.bold(`Cycle ${i + 1}`)} (${length} files):`);
+
+        for (let j = 0; j < cycle.length; j++) {
+            const isLast = j === cycle.length - 1;
+            const prefix = isLast ? pc.red("  \u21ba ") : "  \u2192 ";
+            const label = isLast ? pc.red(`${cycle[j]} (back to start)`) : cycle[j];
+            p.log.step(`${prefix}${label}`);
+        }
+
+        console.log("");
     }
 }
 

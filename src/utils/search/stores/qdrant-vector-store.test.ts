@@ -177,3 +177,67 @@ describe("QdrantVectorStore", () => {
         expect(results[0].docId).toBe("a");
     });
 });
+
+describe("QdrantVectorStore — hybrid search scenarios", () => {
+    it("finds semantically similar vectors with cosine similarity", async () => {
+        const mockClient = createMockQdrantClient();
+        const store = new QdrantVectorStore({
+            collectionName: "hybrid",
+            dimensions: 4,
+            client: mockClient,
+        });
+
+        await store.init();
+
+        // Cluster 1: "code" vectors
+        store.store("code1", new Float32Array([0.9, 0.1, 0.0, 0.0]));
+        store.store("code2", new Float32Array([0.8, 0.2, 0.0, 0.0]));
+
+        // Cluster 2: "docs" vectors
+        store.store("doc1", new Float32Array([0.0, 0.0, 0.9, 0.1]));
+        store.store("doc2", new Float32Array([0.0, 0.0, 0.8, 0.2]));
+
+        // Query close to "code" cluster
+        const codeResults = store.search(new Float32Array([1.0, 0.0, 0.0, 0.0]), 4);
+        expect(codeResults[0].docId).toBe("code1");
+        expect(codeResults[1].docId).toBe("code2");
+
+        // Query close to "docs" cluster
+        const docResults = store.search(new Float32Array([0.0, 0.0, 1.0, 0.0]), 4);
+        expect(docResults[0].docId).toBe("doc1");
+        expect(docResults[1].docId).toBe("doc2");
+    });
+
+    it("handles batch upsert and removal correctly", async () => {
+        const mockClient = createMockQdrantClient();
+        const store = new QdrantVectorStore({
+            collectionName: "batch",
+            dimensions: 2,
+            client: mockClient,
+        });
+
+        await store.init();
+
+        // Add many vectors
+        for (let i = 0; i < 50; i++) {
+            store.store(`vec${i}`, new Float32Array([Math.cos(i), Math.sin(i)]));
+        }
+
+        expect(store.count()).toBe(50);
+
+        // Remove half
+        for (let i = 0; i < 25; i++) {
+            store.remove(`vec${i}`);
+        }
+
+        expect(store.count()).toBe(25);
+
+        // Search should only find remaining vectors
+        const results = store.search(new Float32Array([1, 0]), 10);
+
+        for (const r of results) {
+            const idx = Number.parseInt(r.docId.replace("vec", ""), 10);
+            expect(idx).toBeGreaterThanOrEqual(25);
+        }
+    });
+});
