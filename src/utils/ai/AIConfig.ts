@@ -12,7 +12,7 @@ interface AIConfigData {
 }
 
 const DEFAULT_CONFIG: AIConfigData = {
-    transcribe: { provider: "local-hf", model: "whisper-small" },
+    transcribe: { provider: "local-hf" },
     translate: { provider: "local-hf" },
     summarize: { provider: "cloud" },
     classify: { provider: "darwinkit" },
