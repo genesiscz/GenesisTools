@@ -3,6 +3,7 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import logger from "@app/logger";
+import { formatDateTime } from "@app/utils/date.ts";
 import { formatDuration } from "@app/utils/format.ts";
 import {
     extractTranscript,
@@ -77,13 +78,7 @@ program.action(async () => {
 // ---------------------------------------------------------------------------
 
 function formatMemoDate(date: Date): string {
-    return date.toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-    });
+    return formatDateTime(date, { absolute: "datetime" });
 }
 
 function formatMemoRow(memo: VoiceMemo): string[] {

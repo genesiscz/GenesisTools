@@ -21,6 +21,7 @@ import type { Comment, IdentityRef, WorkItemUpdate } from "@app/azure-devops/typ
 import { requireConfig } from "@app/azure-devops/utils";
 import { escapeWiqlValue } from "@app/azure-devops/wiql-builder";
 import { suggestCommand } from "@app/utils/cli";
+import { formatDateTime } from "@app/utils/date";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 
@@ -328,7 +329,7 @@ function formatTime(isoDate: string): string {
 }
 
 function getDayName(dateStr: string): string {
-    return new Date(dateStr).toLocaleDateString("en-US", { weekday: "long" });
+    return formatDateTime(dateStr, { absolute: "weekday" });
 }
 
 function groupByDay(events: ActivityEvent[]): ActivityDay[] {

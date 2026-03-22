@@ -1,3 +1,4 @@
+import { formatDateTime } from "@app/utils/date";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import type { SearchResult } from "./types";
@@ -5,13 +6,7 @@ import type { SearchResult } from "./types";
 export function formatSearchResult(result: SearchResult, contactName: string): string {
     const msg = result.message;
     const date = new Date(msg.date_unix * 1000);
-    const dateStr = date.toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-    });
+    const dateStr = formatDateTime(date, { absolute: "datetime" });
     const direction = msg.is_outgoing ? pc.blue("You") : pc.cyan(contactName);
     const text = msg.text || msg.media_desc || "(no text)";
     const preview = text.length > 120 ? `${text.slice(0, 120)}...` : text;

@@ -1,6 +1,7 @@
 import { computeTimerPairs, filterByLevel, indexEntries } from "@app/debugging-master/core/log-parser";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import type { IndexedLogEntry, LogLevel } from "@app/debugging-master/types";
+import { formatDateTime } from "@app/utils/date";
 import { formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
 import type { Command } from "commander";
@@ -23,7 +24,7 @@ function groupByLabel(entries: IndexedLogEntry[]): Map<string, IndexedLogEntry[]
 }
 
 function formatTime(ts: number): string {
-    return new Date(ts).toLocaleTimeString("en-GB", { hour12: false });
+    return formatDateTime(new Date(ts), { absolute: "time-seconds" });
 }
 
 function percentChange(a: number, b: number): string {

@@ -1,3 +1,4 @@
+import { formatDateTime } from "@app/utils/date";
 import pc from "picocolors";
 import type { AccountUsage } from "./api";
 
@@ -72,20 +73,12 @@ function formatResetTime(resetsAt: string | null): string {
     const now = Date.now();
     const remainingMs = d.getTime() - now;
 
-    const timeFmt = new Intl.DateTimeFormat("en-US", {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-        timeZoneName: "short",
-    });
+    const formatted = formatDateTime(d, { absolute: "datetime-long" });
 
     if (remainingMs <= 0) {
-        return `Resets ${timeFmt.format(d)}`;
+        return `Resets ${formatted}`;
     }
-    return `Resets ${timeFmt.format(d)} (${formatDuration(remainingMs)})`;
+    return `Resets ${formatted} (${formatDuration(remainingMs)})`;
 }
 
 function calcProjection(utilization: number, resetsAt: string | null, bucketKey: string): number | null {
