@@ -1,7 +1,10 @@
+import logger from "@app/logger";
 import { toFloat32Audio } from "@app/utils/audio/converter";
 import { formatBytes } from "@app/utils/format";
 import type { PipelineType } from "@huggingface/transformers";
 import { createLanguageDetector, type LanguageDetector } from "../LanguageDetector";
+import { getDefaultModel } from "../ModelManager";
+import { suppressConsoleWarnings } from "../suppress-warnings";
 import type {
     AIEmbeddingProvider,
     AISummarizationProvider,
@@ -15,7 +18,6 @@ import type {
     SummarizationResult,
     SummarizeOptions,
     TranscribeOptions,
-    TranscriptionChunk,
     TranscriptionResult,
     TranslateOptions,
     TranslationResult,
@@ -24,6 +26,7 @@ import type {
 type PipelineInstance = {
     (input: unknown, options?: Record<string, unknown>): Promise<unknown>;
     dispose(): Promise<void>;
+    tokenizer: unknown;
 };
 
 const SUPPORTED_TASKS: AITask[] = ["transcribe", "translate", "summarize", "embed"];
@@ -84,19 +87,30 @@ export class AILocalProvider
                 phase: "transcribe",
                 message: `Detected: ${language} (${Math.round(detected.confidence * 100)}% via ${detected.driver})`,
             });
+
+            // Allow caller to confirm/override the detected language (interactive prompt)
+            if (options?.confirmLanguage) {
+                const confirmed = await options.confirmLanguage(detected);
+
+                if (confirmed) {
+                    language = confirmed;
+                }
+            }
         }
 
         // whisper-large-v3-turbo: full large-v3 encoder (128 mel bins, 5M+ hours training data)
         // with only 4 decoder layers — near-large-v3 quality at ~2x speed. ~1.5GB (fp16 enc + q4 dec).
         // whisper-small was producing garbage for non-English (Czech especially).
-        const model = options?.model ?? "onnx-community/whisper-large-v3-turbo";
+        const model =
+            options?.model ?? getDefaultModel("transcribe", "local-hf") ?? "onnx-community/whisper-large-v3-turbo";
         const pipe = await this.getPipeline("automatic-speech-recognition", model, onProgress);
 
         const durationSec = audioData.length / 16000;
         // 29s instead of 30s: transformers.js bug #1358 causes timestamp collapse at exactly 30s
         const chunkLengthS = 29;
-        const totalChunks = Math.ceil(durationSec / chunkLengthS);
-        let processedChunks = 0;
+
+        logger.info(`[transcribe] start: ${Math.round(durationSec)}s audio, lang=${language}, model=${model}`);
+        const transcribeStart = Date.now();
 
         onProgress?.({
             phase: "transcribe",
@@ -104,12 +118,73 @@ export class AILocalProvider
             message: `Transcribing ${Math.round(durationSec)}s [${language}]...`,
         });
 
+        // WhisperTextStreamer (v3) fires on_chunk_start/on_chunk_end per timestamp
+        // token pair (every few seconds of audio), NOT per audio chunk.
+        // Use the timestamp time to calculate real progress against total duration.
+        const { WhisperTextStreamer } = await import("@huggingface/transformers");
+        let currentChunkText = "";
+        let lastProgressUpdate = 0;
+        let lastTimestamp = 0;
+        const PROGRESS_THROTTLE_MS = 300;
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tokenizer type from pipeline internals
+        const streamer = new WhisperTextStreamer(pipe.tokenizer as any, {
+            skip_prompt: true,
+            skip_special_tokens: true,
+            callback_function: (text: string) => {
+                currentChunkText += text;
+                logger.debug(`[transcribe] token: "${text}" (accumulated ${currentChunkText.length} chars)`);
+
+                const now = Date.now();
+
+                if (now - lastProgressUpdate < PROGRESS_THROTTLE_MS) {
+                    return;
+                }
+
+                const elapsed = now - lastProgressUpdate;
+                lastProgressUpdate = now;
+                const pct = Math.min(99, Math.round((lastTimestamp / durationSec) * 100));
+                const truncated = currentChunkText.length > 60 ? `...${currentChunkText.slice(-57)}` : currentChunkText;
+
+                logger.info(`[transcribe] progress: ${pct}% ts=${lastTimestamp.toFixed(1)}s elapsed_since_last=${elapsed}ms`);
+
+                onProgress?.({
+                    phase: "transcribe",
+                    percent: pct,
+                    message: `[${language}] ${pct}% — ${truncated.trim()}`,
+                });
+            },
+            on_chunk_start: (time: number) => {
+                const elapsed = Date.now() - transcribeStart;
+                logger.info(`[transcribe] chunk_start: time=${time.toFixed(2)}s total_elapsed=${elapsed}ms`);
+                lastTimestamp = time;
+                currentChunkText = "";
+            },
+            on_chunk_end: (time: number) => {
+                const elapsed = Date.now() - transcribeStart;
+                logger.info(`[transcribe] chunk_end: time=${time.toFixed(2)}s text="${currentChunkText.slice(0, 80)}" total_elapsed=${elapsed}ms`);
+                lastTimestamp = time;
+
+                if (currentChunkText.trim()) {
+                    options?.onSegment?.({
+                        text: currentChunkText.trim(),
+                        start: time - chunkLengthS,
+                        end: time,
+                    });
+                }
+            },
+        });
+
+        logger.info(`[transcribe] calling pipeline with ${audioData.length} samples, chunk_length=${chunkLengthS}s, stride=5s`);
+        const pipeStart = Date.now();
+
         const result = (await pipe(audioData, {
             return_timestamps: true,
             chunk_length_s: chunkLengthS,
             stride_length_s: 5,
             language,
             task: "transcribe",
+            streamer,
             // Anti-hallucination params (from openai/whisper-large-v3 model card).
             // Without these, Whisper produces repetitive garbage for non-English languages
             // (e.g. "*vyskává výstře*" repeated 20+ times for Czech input).
@@ -119,41 +194,24 @@ export class AILocalProvider
             logprob_threshold: options?.thresholds?.logprobThreshold ?? -1.0,
             no_speech_threshold: options?.thresholds?.noSpeechThreshold ?? 0.45,
             no_repeat_ngram_size: options?.thresholds?.noRepeatNgramSize ?? 3,
-            // chunk_callback fires when each audio chunk is fully decoded — gives us
-            // the text + timestamps live, so the user sees progress as segments stream in.
-            chunk_callback: (chunk: TranscriptionChunk) => {
-                processedChunks++;
-                const pct = Math.min(100, Math.round((processedChunks / totalChunks) * 100));
-                const segText = chunk.text.trim();
-                const start = chunk.timestamp[0];
-                const end = chunk.timestamp[1] ?? start;
-
-                // Fire onSegment live so callers (spinner, UI) see text as it's transcribed
-                options?.onSegment?.({ text: segText, start, end });
-
-                onProgress?.({
-                    phase: "transcribe",
-                    percent: pct,
-                    message: `Transcribing [${language}]... ${pct}%`,
-                });
-            },
         })) as {
             text: string;
             chunks?: Array<{ text: string; timestamp: [number, number] }>;
         };
 
+        const pipeDuration = Date.now() - pipeStart;
+        const totalDuration = Date.now() - transcribeStart;
+        logger.info(`[transcribe] pipeline done: ${pipeDuration}ms, total=${totalDuration}ms, chunks=${result.chunks?.length ?? 0}, text=${result.text.length} chars`);
+
         onProgress?.({ phase: "transcribe", percent: 100, message: "Transcription complete" });
 
-        return {
-            text: result.text,
-            language,
-            duration: durationSec,
-            segments: result.chunks?.map((c) => ({
-                text: c.text,
-                start: c.timestamp[0],
-                end: c.timestamp[1],
-            })),
-        };
+        const segments = result.chunks?.map((c) => ({
+            text: c.text,
+            start: c.timestamp[0],
+            end: c.timestamp[1],
+        }));
+
+        return { text: result.text, language, duration: durationSec, segments };
     }
 
     async translate(text: string, options: TranslateOptions): Promise<TranslationResult> {
@@ -267,6 +325,10 @@ export class AILocalProvider
         const load = (async () => {
             const { pipeline, env } = await import("@huggingface/transformers");
 
+            const restoreWarnings = suppressConsoleWarnings({
+                patterns: ["Unable to determine content-length"],
+            });
+
             try {
                 const pipe = (await pipeline(task, model, {
                     // Whisper (encoder-decoder) is extremely sensitive to encoder quantization.
@@ -300,9 +362,11 @@ export class AILocalProvider
                         : undefined,
                 })) as unknown as PipelineInstance;
 
+                restoreWarnings();
                 this.pipelines.set(key, pipe);
                 return pipe;
             } catch (err) {
+                restoreWarnings();
                 const msg = err instanceof Error ? err.message : String(err);
 
                 if (msg.includes("Protobuf parsing failed") || msg.includes("Load model")) {
@@ -310,12 +374,18 @@ export class AILocalProvider
 
                     if (cacheDir) {
                         const { rmSync } = await import("node:fs");
-                        const modelCacheDir = `${cacheDir}/models--${model.replace(/\//g, "--")}`;
 
-                        try {
-                            rmSync(modelCacheDir, { recursive: true, force: true });
-                        } catch {
-                            // ignore cleanup errors
+                        // transformers.js uses <cacheDir>/<org>/<model>/ (direct path)
+                        const directCacheDir = `${cacheDir}/${model}`;
+                        // HF hub uses <cacheDir>/models--<org>--<model>/ (flattened)
+                        const hubCacheDir = `${cacheDir}/models--${model.replace(/\//g, "--")}`;
+
+                        for (const dir of [directCacheDir, hubCacheDir]) {
+                            try {
+                                rmSync(dir, { recursive: true, force: true });
+                            } catch {
+                                // ignore cleanup errors
+                            }
                         }
                     }
 
