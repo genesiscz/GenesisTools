@@ -163,6 +163,10 @@ async function handleGraphStats(args: { name: string }): Promise<string> {
             lines.push(`Most imported: ${stats.maxImported.path} (${stats.maxImported.count})`);
         }
 
+        if (stats.circularDependencies) {
+            lines.push(`Circular dependencies: ${stats.circularDependencies}`);
+        }
+
         return lines.join("\n");
     } catch (err) {
         return formatError("indexer_graph_stats", err);

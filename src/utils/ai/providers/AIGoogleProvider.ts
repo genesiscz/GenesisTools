@@ -1,5 +1,5 @@
 import { SafeJSON } from "@app/utils/json";
-import type { AIEmbeddingProvider, AIProvider, AITask, EmbedOptions, EmbeddingResult } from "../types";
+import type { AIEmbeddingProvider, AIProvider, AITask, EmbeddingResult, EmbedOptions } from "../types";
 
 const SUPPORTED_TASKS: AITask[] = ["embed"];
 
@@ -78,7 +78,7 @@ export class AIGoogleProvider implements AIProvider, AIEmbeddingProvider {
         if (!apiKey) {
             throw new Error(
                 "GOOGLE_API_KEY environment variable is required. " +
-                "Get a free key at https://aistudio.google.com/apikey"
+                    "Get a free key at https://aistudio.google.com/apikey"
             );
         }
 
@@ -87,11 +87,7 @@ export class AIGoogleProvider implements AIProvider, AIEmbeddingProvider {
 
         for (let i = 0; i < truncated.length; i += GOOGLE_BATCH_SIZE) {
             const batch = truncated.slice(i, i + GOOGLE_BATCH_SIZE);
-
-            if (i > 0) {
-                await this.rateLimitWait();
-            }
-
+            await this.rateLimitWait();
             const embeddings = await this.fetchBatch(batch, apiKey);
             results.push(...embeddings);
         }
@@ -113,9 +109,7 @@ export class AIGoogleProvider implements AIProvider, AIEmbeddingProvider {
     }
 
     private pretruncate(texts: string[]): string[] {
-        return texts.map((t) =>
-            t.length > this.maxChars ? t.substring(0, this.maxChars) : t
-        );
+        return texts.map((t) => (t.length > this.maxChars ? t.substring(0, this.maxChars) : t));
     }
 
     private async fetchBatch(texts: string[], apiKey: string): Promise<EmbeddingResult[]> {
@@ -137,9 +131,7 @@ export class AIGoogleProvider implements AIProvider, AIEmbeddingProvider {
 
         if (!resp.ok) {
             const errorText = await resp.text();
-            throw new Error(
-                `Google batchEmbedContents failed: ${resp.status} ${resp.statusText} — ${errorText}`
-            );
+            throw new Error(`Google batchEmbedContents failed: ${resp.status} ${resp.statusText} — ${errorText}`);
         }
 
         const data = (await resp.json()) as GoogleBatchEmbedResponse;

@@ -113,15 +113,15 @@ export function registerSyncCommand(program: Command): void {
                             await indexer.startWatch();
                             watchStarted.push(indexName);
                         }
-                    } catch {
-                        // Watcher start failure should not block sync completion
+                    } catch (err) {
+                        p.log.warn(
+                            `Failed to auto-start watcher for ${indexName}: ${err instanceof Error ? err.message : String(err)}`
+                        );
                     }
                 }
 
                 if (watchStarted.length > 0) {
-                    p.log.info(
-                        `Auto-started watcher for: ${watchStarted.map((n) => pc.bold(n)).join(", ")}`
-                    );
+                    p.log.info(`Auto-started watcher for: ${watchStarted.map((n) => pc.bold(n)).join(", ")}`);
                     p.log.info(pc.dim("Press Ctrl+C to stop watching"));
 
                     process.on("SIGINT", async () => {

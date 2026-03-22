@@ -19,21 +19,21 @@ import pc from "picocolors";
 interface BenchmarkCommand {
     label: string;
     cmd: string;
-    prepare?: string;   // per-command: runs before each timing run
-    conclude?: string;  // per-command: runs after each timing run
-    cleanup?: string;   // per-command: runs after all runs for this command
+    prepare?: string; // per-command: runs before each timing run
+    conclude?: string; // per-command: runs after each timing run
+    cleanup?: string; // per-command: runs after all runs for this command
 }
 
 interface BenchmarkSuite {
     name: string;
     commands: BenchmarkCommand[];
     builtIn?: boolean;
-    runs?: number;       // --runs (exact count); omit = hyperfine auto-detect
-    warmup?: number;     // --warmup (default: 3 if unset)
-    setup?: string;      // --setup (once before all timing runs)
-    prepare?: string;    // --prepare (before each timing run, all commands)
-    conclude?: string;   // --conclude (after each timing run, all commands)
-    cleanup?: string;    // --cleanup (after all runs per command)
+    runs?: number; // --runs (exact count); omit = hyperfine auto-detect
+    warmup?: number; // --warmup (default: 3 if unset)
+    setup?: string; // --setup (once before all timing runs)
+    prepare?: string; // --prepare (before each timing run, all commands)
+    conclude?: string; // --conclude (after each timing run, all commands)
+    cleanup?: string; // --cleanup (after all runs per command)
 }
 
 interface HyperfineResult {
@@ -61,7 +61,7 @@ interface SavedResult {
 interface RunOptions {
     compare?: boolean;
     runs?: number;
-    warmup?: number | false;  // false when Commander's --no-warmup is used
+    warmup?: number | false; // false when Commander's --no-warmup is used
     noWarmup?: boolean;
     only?: string;
     setup?: string;
@@ -204,9 +204,7 @@ async function runBenchmark(suite: BenchmarkSuite, opts: RunOptions = {}): Promi
 
     // Warmup: CLI > suite default > 3
     // Commander's --no-warmup sets opts.warmup to false (boolean negation)
-    const warmup = opts.warmup === false || opts.noWarmup
-        ? 0
-        : (opts.warmup ?? suite.warmup ?? 3);
+    const warmup = opts.warmup === false || opts.noWarmup ? 0 : (opts.warmup ?? suite.warmup ?? 3);
     args.push("--warmup", String(warmup));
 
     // Runs: CLI > suite default > omit (let hyperfine auto-detect)

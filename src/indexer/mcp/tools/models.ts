@@ -28,8 +28,17 @@ function handleModels(args: { type?: "code" | "files" | "mail" | "chat" }): stri
     ];
 
     for (const m of models) {
-        const ram = m.ramGB > 0 ? `${m.ramGB}GB RAM` : m.provider === "cloud" ? "cloud" : "built-in";
-        lines.push(`  ${m.id} — ${m.name} (${m.params}, ${m.dimensions}-dim, ${m.speed}, ${ram})`);
+        let runtime: string;
+
+        if (m.provider === "cloud" || m.provider === "google") {
+            runtime = "cloud";
+        } else if (m.provider === "darwinkit" || m.provider === "coreml") {
+            runtime = "built-in";
+        } else {
+            runtime = m.ramGB > 0 ? `${m.ramGB}GB RAM` : "local";
+        }
+
+        lines.push(`  ${m.id} — ${m.name} (${m.params}, ${m.dimensions}-dim, ${m.speed}, ${runtime})`);
         lines.push(`    ${m.description}`);
         lines.push(`    Best for: ${m.bestFor.join(", ")}`);
         lines.push("");

@@ -150,7 +150,7 @@ export class ClaudeSessionFormatter {
                 if (raw.type === "A" && raw.message) {
                     this.formatAssistantMessage(
                         { type: "assistant", message: raw.message } as AssistantMessage,
-                        raw.timestamp ?? timestamp,
+                        raw.timestamp ?? timestamp
                     );
                 }
 

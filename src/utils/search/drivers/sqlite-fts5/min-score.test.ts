@@ -26,7 +26,9 @@ describe("Min score threshold", () => {
             },
         });
 
+        // biome-ignore lint/complexity/useLiteralKeys: accessing private method in test
         engine["insertSync"]({ id: "1", content: "TypeScript programming language" });
+        // biome-ignore lint/complexity/useLiteralKeys: accessing private method in test
         engine["insertSync"]({ id: "2", content: "completely unrelated gardening tips for spring" });
 
         const resultsNoThreshold = await engine.search({
@@ -61,6 +63,7 @@ describe("Min score threshold", () => {
             },
         });
 
+        // biome-ignore lint/complexity/useLiteralKeys: accessing private method in test
         engine["insertSync"]({ id: "1", content: "hello world" });
 
         const results = await engine.search({
@@ -86,6 +89,7 @@ describe("Min score threshold", () => {
             },
         });
 
+        // biome-ignore lint/complexity/useLiteralKeys: accessing private method in test
         engine["insertSync"]({ id: "1", content: "test content" });
 
         const results = await engine.search({

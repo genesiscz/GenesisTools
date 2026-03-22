@@ -283,12 +283,9 @@ export class LspWorker {
             this.client = new LspClient(this.endpoint);
 
             // Handle diagnostics notifications
-            this.endpoint.on(
-                "textDocument/publishDiagnostics",
-                (params: LspDiagnosticsNotification) => {
-                    this.handleDiagnosticsNotification(params);
-                }
-            );
+            this.endpoint.on("textDocument/publishDiagnostics", (params: LspDiagnosticsNotification) => {
+                this.handleDiagnosticsNotification(params);
+            });
 
             // Handle stderr for debugging
             this.lspProcess.stderr?.on("data", (data) => {

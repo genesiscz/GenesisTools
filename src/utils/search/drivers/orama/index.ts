@@ -1,14 +1,14 @@
+import type { Embedder } from "@app/utils/ai/tasks/Embedder";
+import type { AnyOrama, AnySchema, SearchParams } from "@orama/orama";
 import {
     count,
     create,
-    insert as oramaInsert,
     insertMultiple,
+    insert as oramaInsert,
     remove as oramaRemove,
     search as oramaSearch,
     searchVector,
 } from "@orama/orama";
-import type { AnyOrama, AnySchema, SearchParams } from "@orama/orama";
-import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import type { SearchEngine, SearchOptions, SearchResult } from "../../types";
 import { persistToFile, restoreFromFile } from "./persistence";
 

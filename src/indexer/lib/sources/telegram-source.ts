@@ -53,8 +53,10 @@ export class TelegramSource implements IndexerSource {
 
         try {
             db = new Database(dbPath, { readonly: true });
-        } catch {
-            throw new Error(`Telegram history database not found at ${dbPath}. Run 'tools telegram sync' first.`);
+        } catch (err) {
+            throw new Error(
+                `Failed to open Telegram database at ${dbPath}: ${err instanceof Error ? err.message : String(err)}`
+            );
         }
 
         return new TelegramSource(db, opts?.chatIds);
