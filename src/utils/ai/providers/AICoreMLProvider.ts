@@ -83,6 +83,16 @@ export class AICoreMLProvider implements AIProvider, AIEmbeddingProvider {
         };
     }
 
+    async embedBatch(texts: string[], options?: EmbedOptions): Promise<EmbeddingResult[]> {
+        const results: EmbeddingResult[] = [];
+
+        for (const text of texts) {
+            results.push(await this.embed(text, options));
+        }
+
+        return results;
+    }
+
     private ensureLoaded(): Promise<DarwinKitWithCoreML> {
         if (this.darwinkit && this.loaded) {
             return Promise.resolve(this.darwinkit);

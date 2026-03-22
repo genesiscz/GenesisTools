@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
-import { decode, encode } from "@toon-format/toon";
+import { fromToon as decode, toToon as encode } from "./lib/toon";
 import { Command } from "commander";
 
 // Handle --readme flag early (before Commander parses)

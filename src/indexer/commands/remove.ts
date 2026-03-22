@@ -25,7 +25,7 @@ export function registerRemoveCommand(program: Command): void {
                 }
 
                 if (!opts.force) {
-                    if (!process.stdout.isTTY) {
+                    if (!process.stdout.isTTY || !process.stdin.isTTY) {
                         p.log.error("Use --force in non-interactive mode");
                         process.exit(1);
                     }

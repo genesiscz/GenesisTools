@@ -56,6 +56,8 @@ export function registerWatchCommand(program: Command): void {
                 },
             };
 
+            let started = 0;
+
             for (const indexName of names) {
                 try {
                     const indexer = await manager.getIndex(indexName);
@@ -68,12 +70,19 @@ export function registerWatchCommand(program: Command): void {
                     );
 
                     await indexer.startWatch(callbacks);
+                    started++;
                     p.log.info(`Watching ${pc.bold(indexName)}`);
                 } catch (err) {
                     p.log.error(
                         `Failed to start watch for "${indexName}": ${err instanceof Error ? err.message : String(err)}`
                     );
                 }
+            }
+
+            if (started === 0) {
+                p.log.error("No watches could be started.");
+                await manager.close();
+                process.exit(1);
             }
 
             p.log.info(pc.dim("Press Ctrl+C to stop watching"));

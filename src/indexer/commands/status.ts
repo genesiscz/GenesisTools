@@ -4,6 +4,7 @@ import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { IndexerManager } from "../lib/manager";
+import { DEFAULT_WATCH_INTERVAL_MS } from "../lib/types";
 
 export function registerStatusCommand(program: Command): void {
     program
@@ -99,7 +100,7 @@ async function showDetailedStatus(manager: IndexerManager, name: string): Promis
     if (meta.config.watch?.enabled) {
         entries.push([
             "Watch",
-            `${meta.config.watch.strategy ?? "merkle"} (${meta.config.watch.interval ?? 300000}ms)`,
+            `${meta.config.watch.strategy ?? "merkle"} (${meta.config.watch.interval ?? DEFAULT_WATCH_INTERVAL_MS}ms)`,
         ]);
     }
 
