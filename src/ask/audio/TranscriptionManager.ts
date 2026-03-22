@@ -114,7 +114,7 @@ export class TranscriptionManager {
     private async transcribeWithFallback(
         filePath: string,
         options: TranscriptionOptions,
-        initialTime: number
+        initialTime: number,
     ): Promise<TranscriptionResult> {
         const fallbackProviders = [
             { env: "ASSEMBLYAI_API_KEY", provider: "assemblyai" },
@@ -125,23 +125,43 @@ export class TranscriptionManager {
             { env: "OPENAI_API_KEY", provider: "openai" },
         ];
 
-        for (const { env, provider } of fallbackProviders) {
-            if (process.env[env] && provider !== options.provider) {
-                try {
-                    logger.info(`Trying fallback provider: ${pc.cyan(provider)}`);
-                    const result = await this.transcribeAudio(filePath, {
-                        ...options,
-                        provider,
-                    });
+        const triedProviders = new Set<string>([options.provider ?? ""]);
 
-                    // Add fallback information
-                    return {
-                        ...result,
-                        processingTime: Date.now() - initialTime,
-                    };
-                } catch (error) {
-                    logger.warn(`Fallback provider ${provider} failed: ${error}`);
+        for (const { env, provider } of fallbackProviders) {
+            if (!process.env[env] || triedProviders.has(provider)) {
+                continue;
+            }
+
+            triedProviders.add(provider);
+
+            try {
+                logger.info(`Trying fallback provider: ${pc.cyan(provider)}`);
+
+                const transcriptionModel = await this.getSpecificTranscriptionModel(
+                    provider,
+                    this.getDefaultModelForProvider(provider),
+                );
+
+                if (!transcriptionModel) {
+                    continue;
                 }
+
+                const audioBuffer = await Bun.file(filePath).arrayBuffer();
+                const model = getTranscriptionModel(transcriptionModel.providerInstance, transcriptionModel.model);
+                const result = await transcribe({
+                    model,
+                    audio: audioBuffer,
+                    ...(options.language && { language: options.language }),
+                });
+
+                return {
+                    text: result.text,
+                    provider,
+                    model: transcriptionModel.model,
+                    processingTime: Date.now() - initialTime,
+                };
+            } catch (error) {
+                logger.warn(`Fallback provider ${provider} failed: ${error}`);
             }
         }
 
@@ -294,6 +314,25 @@ export class TranscriptionManager {
         } catch (error) {
             logger.warn(`Failed to create transcription provider ${providerName}: ${error}`);
             return null;
+        }
+    }
+
+    private getDefaultModelForProvider(provider: string): string {
+        switch (provider) {
+            case "groq":
+                return "whisper-large-v3";
+            case "openrouter":
+                return "openai/whisper-1";
+            case "openai":
+                return "whisper-1";
+            case "assemblyai":
+                return "best";
+            case "deepgram":
+                return "nova-3";
+            case "gladia":
+                return "default";
+            default:
+                return "whisper-1";
         }
     }
 
