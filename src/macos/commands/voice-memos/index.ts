@@ -1,9 +1,19 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import {
+    confirmLanguage as promptLanguage,
+    selectAction,
+    selectFormat,
+    selectMemo,
+    selectModel,
+    selectOutput,
+    selectProvider,
+} from "@app/macos/lib/voice-memos/prompts.ts";
 import { AI } from "@app/utils/ai/index.ts";
 import { formatOutput, type OutputFormat } from "@app/utils/ai/transcription-format.ts";
 import type { AIProviderType } from "@app/utils/ai/types.ts";
 import { copyToClipboard } from "@app/utils/clipboard.ts";
+import { formatDateTime } from "@app/utils/date.ts";
 import { formatDuration } from "@app/utils/format.ts";
 import {
     extractTranscript,
@@ -13,10 +23,14 @@ import {
     type VoiceMemo,
     VoiceMemosError,
 } from "@app/utils/macos/voice-memos.ts";
+import { printSettingsSummary } from "@app/utils/prompts/clack/settings-summary.ts";
 import { formatTable } from "@app/utils/table.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
+
+const VALID_PROVIDERS: AIProviderType[] = ["cloud", "local-hf", "darwinkit"];
+const TRANSCRIBE_PROVIDERS: AIProviderType[] = ["local-hf", "cloud"];
 
 export function registerVoiceMemosCommand(program: Command): void {
     const vm = new Command("voice-memos");
@@ -46,14 +60,14 @@ export function registerVoiceMemosCommand(program: Command): void {
 
     vm.command("transcribe")
         .description("Transcribe a voice memo (tsrp first, then AI fallback)")
-        .argument("[id]", "Memo ID (omit for --all)", (v) => parseInt(v, 10))
+        .argument("[id]", "Memo ID (omit for interactive selection)", (v) => parseInt(v, 10))
         .option("--all", "Transcribe all memos")
         .option("--force", "Re-transcribe even if tsrp transcript exists")
         .option("--lang <language>", "Language hint (e.g. cs, en, de) — auto-detected if omitted")
-        .option("--provider <provider>", "AI provider (local-hf, cloud, darwinkit)")
+        .option("--provider <provider>", "AI provider (local-hf, cloud)")
         .option("--local", "Shorthand for --provider local-hf")
         .option("--model <model>", "Model name/id to use")
-        .option("--format <format>", "Output format (text, json, srt, vtt)", "text")
+        .option("--format <format>", "Output format (text, json, srt, vtt)")
         .option("-o, --output <path>", "Write output to file")
         .option("-c, --clipboard", "Copy output to clipboard")
         .option("--sensitive", "Lower thresholds to capture quiet/background speakers")
@@ -100,13 +114,7 @@ async function handleErrors(fn: () => Promise<void> | void): Promise<void> {
 // ---------------------------------------------------------------------------
 
 function formatMemoDate(date: Date): string {
-    return date.toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-    });
+    return formatDateTime(date, { absolute: "datetime" });
 }
 
 function formatMemoRow(memo: VoiceMemo): string[] {
@@ -187,6 +195,10 @@ function exportAction(id: number, dest: string): void {
     p.log.success(`Exported to ${pc.bold(destFile)}`);
 }
 
+// ---------------------------------------------------------------------------
+// Transcribe
+// ---------------------------------------------------------------------------
+
 interface TranscribeOpts {
     all?: boolean;
     force?: boolean;
@@ -201,27 +213,163 @@ interface TranscribeOpts {
 }
 
 async function transcribeAction(id: number | undefined, opts: TranscribeOpts): Promise<void> {
+    // Validate --provider and --model early
+    validateProviderOption(opts.provider);
+    validateModelOption(opts.model, opts.local ? "local-hf" : opts.provider);
+
     if (opts.all) {
         transcribeAll(opts.force ?? false);
         return;
     }
 
-    if (id === undefined) {
-        p.log.error("Provide a memo ID or use --all");
+    // If no ID provided, prompt for memo selection (TTY) or error (non-TTY)
+    let resolvedId = id;
+
+    if (resolvedId === undefined) {
+        if (!process.stdout.isTTY) {
+            p.log.error("Provide a memo ID or use --all (non-interactive mode)");
+            process.exit(1);
+        }
+
+        const memos = listMemos();
+        const selected = await selectMemo(memos);
+
+        if (!selected) {
+            return;
+        }
+
+        resolvedId = selected.id;
+    }
+
+    // Resolve all options — prompt for missing ones when TTY
+    const resolved = await resolveTranscribeOptions(opts);
+
+    await transcribeOne({
+        id: resolvedId!,
+        force: resolved.force,
+        lang: resolved.lang,
+        provider: resolved.provider,
+        model: resolved.model,
+        format: resolved.format,
+        output: resolved.output,
+        clipboard: resolved.clipboard,
+        sensitive: resolved.sensitive,
+    });
+}
+
+function validateProviderOption(provider: string | undefined): void {
+    if (provider === undefined) {
+        return;
+    }
+
+    if (!provider) {
+        p.log.error(
+            `Invalid --provider (empty). Choose from: ${TRANSCRIBE_PROVIDERS.join(", ")}\n` +
+                `  All providers: ${VALID_PROVIDERS.join(", ")}`
+        );
         process.exit(1);
     }
 
-    await transcribeOne({
-        id,
+    if (!VALID_PROVIDERS.includes(provider as AIProviderType)) {
+        p.log.error(
+            `Unknown provider "${provider}". Choose from: ${TRANSCRIBE_PROVIDERS.join(", ")}\n` +
+                `  All providers: ${VALID_PROVIDERS.join(", ")}`
+        );
+        process.exit(1);
+    }
+}
+
+function validateModelOption(model: string | undefined, provider: string | undefined): void {
+    if (model === undefined) {
+        return;
+    }
+
+    if (!model) {
+        const providerType = provider ?? "local-hf";
+        const suggestions =
+            providerType === "cloud"
+                ? "whisper-large-v3-turbo, whisper-large-v3, whisper-1"
+                : "onnx-community/whisper-large-v3-turbo, onnx-community/whisper-small, onnx-community/whisper-tiny";
+
+        p.log.error(`Invalid --model (empty). Available for ${providerType}: ${suggestions}`);
+        process.exit(1);
+    }
+}
+
+interface ResolvedTranscribeOpts {
+    force?: boolean;
+    lang?: string;
+    provider?: string;
+    model?: string;
+    format?: OutputFormat;
+    output?: string;
+    clipboard?: boolean;
+    sensitive?: boolean;
+}
+
+async function resolveTranscribeOptions(opts: TranscribeOpts): Promise<ResolvedTranscribeOpts> {
+    const resolved: ResolvedTranscribeOpts = {
         force: opts.force,
         lang: opts.lang,
-        provider: opts.local ? "local-hf" : opts.provider,
-        model: opts.model,
-        format: opts.format,
-        output: opts.output,
-        clipboard: opts.clipboard,
         sensitive: opts.sensitive,
-    });
+    };
+
+    const isTTY = !!process.stdout.isTTY;
+
+    // Provider
+    if (opts.local) {
+        resolved.provider = "local-hf";
+    } else if (opts.provider) {
+        resolved.provider = opts.provider;
+    } else if (isTTY) {
+        resolved.provider = await selectProvider();
+    }
+
+    // Model
+    if (opts.model) {
+        resolved.model = opts.model;
+    } else if (isTTY) {
+        resolved.model = await selectModel((resolved.provider ?? "local-hf") as AIProviderType);
+    }
+
+    // Format — opts.format is only set when --format is explicitly passed (no Commander default)
+    if (opts.format) {
+        resolved.format = opts.format;
+    } else if (isTTY) {
+        resolved.format = await selectFormat();
+    } else {
+        resolved.format = "text";
+    }
+
+    // Output destination
+    if (opts.output || opts.clipboard) {
+        resolved.output = opts.output;
+        resolved.clipboard = opts.clipboard;
+    } else if (isTTY) {
+        const outputChoice = await selectOutput();
+        resolved.output = outputChoice.output;
+        resolved.clipboard = outputChoice.clipboard;
+    }
+
+    // Show settings summary
+    if (isTTY) {
+        printSettingsSummary([
+            {
+                label: "Provider",
+                value: resolved.provider ?? "auto",
+                hint: opts.provider ? "from --provider" : undefined,
+            },
+            { label: "Model", value: resolved.model ?? "default", hint: opts.model ? "from --model" : undefined },
+            { label: "Format", value: resolved.format ?? "text" },
+            {
+                label: "Output",
+                value: resolved.clipboard ? "clipboard" : (resolved.output ?? "terminal"),
+            },
+            ...(resolved.lang ? [{ label: "Language", value: resolved.lang, hint: "from --lang" }] : []),
+        ]);
+    }
+
+    return resolved;
 }
 
 async function transcribeOne(opts: {
@@ -257,45 +405,89 @@ async function transcribeOne(opts: {
         }
     }
 
-    // AI transcription with full provider/model support (matching tools transcribe)
+    // AI transcription (retry once on corrupt cache)
     p.log.info(`Transcribing "${memo.title}" with AI...`);
     const s = p.spinner();
     s.start("Loading model...");
 
-    const transcriber = await AI.Transcriber.create({
+    const isTTY = !!process.stdout.isTTY;
+    let confirmedLang: string | undefined = opts.lang;
+
+    const transcribeOpts = {
+        language: opts.lang,
+        onProgress: (info: { message: string }) => {
+            s.message(info.message);
+        },
+        onSegment: (seg: { start: number; text: string }) => {
+            const ts = formatDuration(seg.start * 1000, "ms", "tiered");
+            s.message(`[${ts}] ${seg.text.trim()}`);
+        },
+        ...(isTTY && !opts.lang
+            ? {
+                  confirmLanguage: async (
+                      detected: import("@app/utils/ai/LanguageDetector.ts").LanguageDetectionResult,
+                  ) => {
+                      s.stop(`Detected: ${detected.language} (${Math.round(detected.confidence * 100)}%)`);
+                      const confirmed = await promptLanguage(detected);
+                      confirmedLang = confirmed;
+                      s.start("Transcribing...");
+                      return confirmed;
+                  },
+              }
+            : {}),
+        ...(opts.sensitive
+            ? {
+                  thresholds: {
+                      noSpeechThreshold: 0.3,
+                      logprobThreshold: -0.5,
+                      compressionRatioThreshold: 2.4,
+                  },
+              }
+            : {}),
+    };
+
+    let transcriber = await AI.Transcriber.create({
         provider: opts.provider as AIProviderType | undefined,
         model: opts.model,
     });
 
+    let result: import("@app/utils/ai/types.ts").TranscriptionResult;
+
     try {
-        const result = await transcriber.transcribe(memo.path, {
-            language: opts.lang,
-            onProgress: (info) => {
-                s.message(info.message);
-            },
-            onSegment: (seg) => {
-                const ts = formatDuration(seg.start * 1000, "ms", "tiered");
-                s.message(`[${ts}] ${seg.text.trim()}`);
-            },
-            // --sensitive lowers thresholds to capture quiet/background speakers
-            ...(opts.sensitive
-                ? {
-                      thresholds: {
-                          noSpeechThreshold: 0.3,
-                          logprobThreshold: -0.5,
-                          compressionRatioThreshold: 2.4,
-                      },
-                  }
-                : {}),
-        });
+        result = await transcriber.transcribe(memo.path, transcribeOpts);
+    } catch (err) {
+        transcriber.dispose();
+        const msg = err instanceof Error ? err.message : String(err);
 
-        s.stop("Transcription complete");
+        if (msg.includes("cache is corrupted")) {
+            s.stop("Model cache corrupted");
+            p.log.warning("Re-downloading model...");
+            s.start("Downloading model...");
 
-        // Format output using shared helpers
+            transcriber = await AI.Transcriber.create({
+                provider: opts.provider as AIProviderType | undefined,
+                model: opts.model,
+            });
+
+            // On retry: use the language already confirmed, skip re-detection/re-prompting
+            const retryOpts = {
+                ...transcribeOpts,
+                language: confirmedLang,
+                confirmLanguage: undefined,
+            };
+
+            result = await transcriber.transcribe(memo.path, retryOpts);
+        } else {
+            throw err;
+        }
+    }
+
+    s.stop("Transcription complete");
+
+    try {
         const format = opts.format ?? "text";
         const formatted = formatOutput(result, format);
 
-        // Output handling (matching tools transcribe pattern)
         if (opts.clipboard) {
             await copyToClipboard(formatted, { label: "transcription" });
         }
@@ -307,7 +499,6 @@ async function transcribeOne(opts: {
         }
 
         if (!opts.output) {
-            // Default: print to stdout (with timestamps for text format)
             if (format === "text" && result.segments?.length) {
                 console.log();
 
@@ -369,7 +560,7 @@ function searchAction(query: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Interactive mode
+// Interactive mode (uses shared prompts — DRY)
 // ---------------------------------------------------------------------------
 
 async function interactiveMode(): Promise<void> {
@@ -384,40 +575,16 @@ async function interactiveMode(): Promise<void> {
             return;
         }
 
-        const memoChoice = await p.select({
-            message: "Select a memo",
-            options: [
-                ...memos.map((m) => ({
-                    value: m.id,
-                    label: m.title,
-                    hint: `${formatMemoDate(m.date)} · ${formatDuration(m.duration, "s", "tiered")}${m.hasTranscript ? " · has transcript" : ""}`,
-                })),
-                { value: -1, label: pc.dim("Exit") },
-            ],
-        });
+        const memo = await selectMemo(memos);
 
-        if (p.isCancel(memoChoice) || memoChoice === -1) {
+        if (!memo) {
             p.outro("Done");
             return;
         }
 
-        const memo = memos.find((m) => m.id === memoChoice);
+        const action = await selectAction(memo);
 
-        if (!memo) {
-            continue;
-        }
-
-        const action = await p.select({
-            message: `${pc.bold(memo.title)} — choose action`,
-            options: [
-                { value: "play", label: "Play" },
-                { value: "export", label: "Export" },
-                { value: "transcribe", label: "Transcribe" },
-                { value: "back", label: pc.dim("Back") },
-            ],
-        });
-
-        if (p.isCancel(action) || action === "back") {
+        if (!action) {
             continue;
         }
 

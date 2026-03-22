@@ -11,6 +11,8 @@ export interface LanguageDetectionResult {
     confidence: number;
     /** Which driver produced this result */
     driver: string;
+    /** Top-k alternative languages with probabilities (if available from the driver) */
+    alternatives?: Array<{ language: string; confidence: number }>;
 }
 
 export interface LanguageDetectionDriver {
@@ -98,7 +100,7 @@ export class WhisperLanguageDriver implements LanguageDetectionDriver {
     readonly name = "whisper";
     private model: string;
     private whisperModel: {
-        generate: (opts: Record<string, unknown>) => Promise<{ data: ArrayLike<number | bigint> }>;
+        generate: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
         generation_config: Record<string, unknown>;
     } | null = null;
     private processor: ((audio: Float32Array) => Promise<Record<string, unknown>>) | null = null;
@@ -120,17 +122,32 @@ export class WhisperLanguageDriver implements LanguageDetectionDriver {
 
         const genConfig = this.whisperModel!.generation_config;
         const sotId = genConfig.decoder_start_token_id as number;
+        const langToId = genConfig.lang_to_id as Record<string, number> | undefined;
 
         const output = await this.whisperModel!.generate({
             ...inputs,
             decoder_input_ids: [[sotId]],
             max_new_tokens: 1,
+            output_scores: true,
+            return_dict_in_generate: true,
         });
 
-        const rawData = output.data;
-        const langTokenId = Number(rawData[rawData.length - 1]);
+        // Extract top-k language probabilities from scores (logits)
+        const alternatives = this.extractTopKLanguages(output, langToId);
 
-        const langToId = genConfig.lang_to_id as Record<string, number> | undefined;
+        if (alternatives && alternatives.length > 0) {
+            return {
+                language: alternatives[0].language,
+                confidence: alternatives[0].confidence,
+                driver: this.name,
+                alternatives,
+            };
+        }
+
+        // Fallback: use the generated token ID directly
+        const sequences = output.sequences ?? output;
+        const rawData = (sequences as { data: ArrayLike<number | bigint> }).data;
+        const langTokenId = Number(rawData[rawData.length - 1]);
 
         if (langToId) {
             for (const [token, id] of Object.entries(langToId)) {
@@ -142,6 +159,56 @@ export class WhisperLanguageDriver implements LanguageDetectionDriver {
         }
 
         return { language: "en", confidence: 0.5, driver: this.name };
+    }
+
+    private extractTopKLanguages(
+        output: Record<string, unknown>,
+        langToId: Record<string, number> | undefined,
+        topK = 5,
+    ): Array<{ language: string; confidence: number }> | null {
+        if (!langToId) {
+            return null;
+        }
+
+        // output.scores is an array of logit tensors, one per generated token
+        const scores = output.scores as Array<{ data: Float32Array }> | undefined;
+
+        if (!scores || scores.length === 0) {
+            return null;
+        }
+
+        const logits = scores[0].data;
+
+        if (!logits) {
+            return null;
+        }
+
+        // Build language entries with their logit values
+        const entries: Array<{ language: string; logit: number }> = [];
+
+        for (const [token, id] of Object.entries(langToId)) {
+            const code = token.replace(/<\||\|>/g, "");
+
+            if (id < logits.length) {
+                entries.push({ language: code, logit: logits[id] });
+            }
+        }
+
+        if (entries.length === 0) {
+            return null;
+        }
+
+        // Softmax over language logits only
+        const maxLogit = Math.max(...entries.map((e) => e.logit));
+        const exps = entries.map((e) => ({ language: e.language, exp: Math.exp(e.logit - maxLogit) }));
+        const sumExp = exps.reduce((sum, e) => sum + e.exp, 0);
+
+        const probabilities = exps
+            .map((e) => ({ language: e.language, confidence: e.exp / sumExp }))
+            .sort((a, b) => b.confidence - a.confidence)
+            .slice(0, topK);
+
+        return probabilities;
     }
 
     private async ensureLoaded(): Promise<void> {

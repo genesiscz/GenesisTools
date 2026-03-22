@@ -121,7 +121,9 @@ function openDb(dbPath: string): Database {
 }
 
 function rowToMemo(row: DbRow, recordingsDir: string): VoiceMemo {
-    const title = row.ZCUSTOMLABEL || row.ZENCRYPTEDTITLE || "Untitled";
+    // ZENCRYPTEDTITLE has the human-readable name ("New Recording 64"),
+    // ZCUSTOMLABEL has the ISO timestamp used as a fallback identifier
+    const title = row.ZENCRYPTEDTITLE || row.ZCUSTOMLABEL || "Untitled";
     const date = new Date((row.ZDATE + APPLE_EPOCH_OFFSET) * 1000);
     const duration = row.ZDURATION;
 
