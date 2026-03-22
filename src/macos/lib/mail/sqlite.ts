@@ -2,8 +2,6 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import logger from "@app/logger";
 import { ENVELOPE_INDEX_PATH } from "@app/macos/lib/mail/constants";
-import { detectTerminalApp } from "@app/utils/terminal";
-import { MacOS } from "@app/utils/macos/MacOS";
 import type {
     MailAttachment,
     MailMessageRow,
@@ -11,6 +9,8 @@ import type {
     ReceiverInfo,
     SearchOptions,
 } from "@app/macos/lib/mail/types";
+import { MacOS } from "@app/utils/macos/MacOS";
+import { detectTerminalApp } from "@app/utils/terminal";
 
 let _db: Database | null = null;
 
@@ -42,7 +42,11 @@ export function getDatabase(): Database {
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
 
-        if (message.includes("authorization denied") || message.includes("not authorized") || message.includes("EPERM")) {
+        if (
+            message.includes("authorization denied") ||
+            message.includes("not authorized") ||
+            message.includes("EPERM")
+        ) {
             const termApp = detectTerminalApp();
 
             MacOS.settings.openFullDiskAccess();

@@ -164,31 +164,29 @@ const generateTableData = (processes: ProcessInfo[], selectedIndex: number) => {
 };
 
 // Memoized header component
-const MemoizedHeader = React.memo(
-    ({ children, sortBy }: MemoizedHeaderProps) => {
-        const headerText = String(children);
-        let sortIndicator = "";
-        let color = "blue";
+const MemoizedHeader = React.memo(({ children, sortBy }: MemoizedHeaderProps) => {
+    const headerText = String(children);
+    let sortIndicator = "";
+    let color = "blue";
 
-        if (headerText === "pid" && sortBy === "pid") {
-            sortIndicator = " ↓";
-            color = "green";
-        } else if (headerText === "cpu" && sortBy === "cpu") {
-            sortIndicator = " ↓";
-            color = "yellow";
-        } else if (headerText === "files" && sortBy === "files") {
-            sortIndicator = " ↓";
-            color = "cyan";
-        }
-
-        return (
-            <Text bold color={color}>
-                {headerText}
-                {sortIndicator}
-            </Text>
-        );
+    if (headerText === "pid" && sortBy === "pid") {
+        sortIndicator = " ↓";
+        color = "green";
+    } else if (headerText === "cpu" && sortBy === "cpu") {
+        sortIndicator = " ↓";
+        color = "yellow";
+    } else if (headerText === "files" && sortBy === "files") {
+        sortIndicator = " ↓";
+        color = "cyan";
     }
-);
+
+    return (
+        <Text bold color={color}>
+            {headerText}
+            {sortIndicator}
+        </Text>
+    );
+});
 
 // Memoized cell component
 const MemoizedCell = React.memo(({ children, column }: MemoizedCellProps) => {

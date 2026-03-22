@@ -3,7 +3,7 @@
 import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import { resolveExpression, resolveParams } from "./expressions.ts";
-import type { ExecutionContext, PresetStep, StepHandlerResult, StepResult } from "./types.ts";
+import type { ExecutionContext, PresetStep, StepHandlerResult } from "./types.ts";
 
 /** The set of built-in action names that are handled directly (not via Bun.spawn) */
 export const BUILTIN_ACTIONS = new Set(["if", "log", "prompt", "shell", "set"]);
@@ -17,10 +17,7 @@ export function isBuiltinAction(action: string): boolean {
  * Execute a built-in action.
  * Returns the step result and optionally a "jumpTo" step ID (for `if` branching).
  */
-export async function executeBuiltin(
-    step: PresetStep,
-    ctx: ExecutionContext
-): Promise<StepHandlerResult> {
+export async function executeBuiltin(step: PresetStep, ctx: ExecutionContext): Promise<StepHandlerResult> {
     const start = Date.now();
 
     switch (step.action) {

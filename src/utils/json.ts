@@ -29,7 +29,10 @@ export const SafeJSON = {
         if (
             reviverOrOptions &&
             typeof reviverOrOptions === "object" &&
-            ("jsonl" in reviverOrOptions || "strict" in reviverOrOptions || "unbox" in reviverOrOptions || "reviver" in reviverOrOptions)
+            ("jsonl" in reviverOrOptions ||
+                "strict" in reviverOrOptions ||
+                "unbox" in reviverOrOptions ||
+                "reviver" in reviverOrOptions)
         ) {
             const options = reviverOrOptions as ParseOptions;
 

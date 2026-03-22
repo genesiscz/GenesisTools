@@ -26,9 +26,7 @@ export function registerBenchVectorsCommand(program: Command): void {
             const { join } = await import("node:path");
 
             // Must be called before any Database instance is created
-            const { ensureExtensionCapableSQLite } = await import(
-                "@app/utils/search/stores/sqlite-vec-loader"
-            );
+            const { ensureExtensionCapableSQLite } = await import("@app/utils/search/stores/sqlite-vec-loader");
             ensureExtensionCapableSQLite();
 
             const { Database } = await import("bun:sqlite");
@@ -109,7 +107,7 @@ export function registerBenchVectorsCommand(program: Command): void {
                     console.log(
                         `  Insert: ${result.insertTimeMs.toFixed(0)}ms | ` +
                             `Search avg: ${result.searchTimeMs.toFixed(2)}ms | ` +
-                            `${result.searchesPerSecond.toFixed(0)} q/s`,
+                            `${result.searchesPerSecond.toFixed(0)} q/s`
                     );
                 } catch (err) {
                     console.log(pc.red(`  FAILED: ${err}`));
@@ -160,7 +158,9 @@ interface CreateStoreOptions {
     DatabaseClass: typeof import("bun:sqlite").Database;
 }
 
-async function createStore(opts: CreateStoreOptions): Promise<import("@app/utils/search/stores/vector-store").VectorStore> {
+async function createStore(
+    opts: CreateStoreOptions
+): Promise<import("@app/utils/search/stores/vector-store").VectorStore> {
     const { backend, tmpDir, dimensions, DatabaseClass } = opts;
     const { join } = await import("node:path");
     const dbPath = join(tmpDir, "bench.db");
@@ -180,8 +180,7 @@ async function createStore(opts: CreateStoreOptions): Promise<import("@app/utils
 
             if (!loaded) {
                 throw new Error(
-                    "sqlite-vec extension failed to load. " +
-                        "On macOS, install Homebrew sqlite3: brew install sqlite3",
+                    "sqlite-vec extension failed to load. " + "On macOS, install Homebrew sqlite3: brew install sqlite3"
                 );
             }
 
@@ -207,7 +206,7 @@ function printResultsTable(results: BenchmarkResult[]): void {
             "Insert (ms)".padStart(14) +
             "Search avg (ms)".padStart(18) +
             "Queries/sec".padStart(14) +
-            "Memory (MB)".padStart(14),
+            "Memory (MB)".padStart(14)
     );
     console.log("-".repeat(80));
 
@@ -217,7 +216,7 @@ function printResultsTable(results: BenchmarkResult[]): void {
                 r.insertTimeMs.toFixed(0).padStart(14) +
                 r.searchTimeMs.toFixed(2).padStart(18) +
                 r.searchesPerSecond.toFixed(0).padStart(14) +
-                r.memoryMB.toFixed(1).padStart(14),
+                r.memoryMB.toFixed(1).padStart(14)
         );
     }
 

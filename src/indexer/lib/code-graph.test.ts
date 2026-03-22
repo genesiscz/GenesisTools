@@ -376,11 +376,20 @@ import "github.com/real/pkg"
             expect(imports[1].specifier).toBe("com.example.Service");
         });
 
-        test("extracts grouped imports (takes base path)", () => {
+        test("extracts grouped imports with all members", () => {
             const source = `import scala.collection.{mutable, immutable}`;
             const imports = extractImports(source, "scala");
-            expect(imports).toHaveLength(1);
-            expect(imports[0].specifier).toBe("scala.collection.");
+            expect(imports).toHaveLength(2);
+            expect(imports[0].specifier).toBe("scala.collection.mutable");
+            expect(imports[1].specifier).toBe("scala.collection.immutable");
+        });
+
+        test("extracts grouped import with rename", () => {
+            const source = `import java.util.{List => JList, Map}`;
+            const imports = extractImports(source, "scala");
+            expect(imports).toHaveLength(2);
+            expect(imports[0].specifier).toBe("java.util.List");
+            expect(imports[1].specifier).toBe("java.util.Map");
         });
     });
 
@@ -398,6 +407,13 @@ import "github.com/real/pkg"
             const imports = extractImports(source, "csharp");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("System.Math");
+        });
+
+        test("extracts aliased using directives", () => {
+            const source = `using MyAlias = System.Text;`;
+            const imports = extractImports(source, "csharp");
+            expect(imports).toHaveLength(1);
+            expect(imports[0].specifier).toBe("System.Text");
         });
 
         test("ignores using var statements", () => {

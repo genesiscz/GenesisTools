@@ -131,10 +131,8 @@ export async function createWatcher(
             }
         } catch (err) {
             if (isTransientError(err)) {
-                const errObj = err instanceof Error ? err : new Error(String(err));
-
                 if (onTransientError) {
-                    onTransientError(errObj, transientBackoffMs);
+                    onTransientError(err as Error, transientBackoffMs);
                 }
 
                 // Schedule retry after backoff -- do NOT increment consecutiveErrors

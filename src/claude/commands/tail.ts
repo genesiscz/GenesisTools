@@ -102,7 +102,7 @@ export function registerTailCommand(program: Command): void {
             }
 
             const lastCalls = validatePositiveInt(opts.lastCalls, "last-calls");
-            const lastTurns = lastCalls ? undefined : validatePositiveInt(opts.lastTurns, "last-turns") ?? 5;
+            const lastTurns = lastCalls ? undefined : (validatePositiveInt(opts.lastTurns, "last-turns") ?? 5);
             const maxTurns = validatePositiveInt(opts.maxTurns, "max-turns");
             const maxCalls = validatePositiveInt(opts.maxCalls, "max-calls");
 

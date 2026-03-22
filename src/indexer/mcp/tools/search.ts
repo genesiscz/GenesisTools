@@ -81,19 +81,19 @@ async function handleSearch(args: SearchArgs): Promise<string> {
             }
 
             allResults.sort((a, b) => b.score - a.score);
-            allResults = allResults.slice(0, limit);
         }
 
-        // Apply minScore filter
+        // Apply filters before truncation so valid matches aren't dropped
         if (minScore > 0) {
             allResults = allResults.filter((r) => r.score >= minScore);
         }
 
-        // Apply fileFilter
         if (args.fileFilter) {
             const filter = args.fileFilter;
             allResults = allResults.filter((r) => r.doc.filePath.includes(filter));
         }
+
+        allResults = allResults.slice(0, limit);
 
         if (allResults.length === 0) {
             return `No results found for "${args.query}". Ensure indexes exist (indexer_status) and have been synced.`;

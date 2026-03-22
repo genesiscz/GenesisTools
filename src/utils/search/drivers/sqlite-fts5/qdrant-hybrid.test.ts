@@ -52,7 +52,9 @@ describe("SearchEngine with QdrantVectorStore hybrid path", () => {
         });
 
         // Insert test docs directly into content table
+        // biome-ignore lint/complexity/useLiteralKeys: accessing private method in test
         engine["insertSync"]({ id: "1", content: "TypeScript programming" });
+        // biome-ignore lint/complexity/useLiteralKeys: accessing private method in test
         engine["insertSync"]({ id: "2", content: "JavaScript frameworks" });
 
         const results = await engine.search({
@@ -103,7 +105,9 @@ describe("SearchEngine with QdrantVectorStore hybrid path", () => {
             embedder: mockEmbedder,
         });
 
+        // biome-ignore lint/complexity/useLiteralKeys: accessing private method in test
         engine["insertSync"]({ id: "1", content: "TypeScript programming" });
+        // biome-ignore lint/complexity/useLiteralKeys: accessing private method in test
         engine["insertSync"]({ id: "2", content: "JavaScript frameworks" });
 
         const results = await engine.search({

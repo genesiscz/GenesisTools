@@ -28,6 +28,7 @@ describe("RRF over-fetch", () => {
 
         // Insert enough docs that over-fetch matters
         for (let i = 0; i < 50; i++) {
+            // biome-ignore lint/complexity/useLiteralKeys: accessing private method in test
             engine["insertSync"]({
                 id: String(i),
                 content: `document about topic ${i % 10 === 0 ? "search engine optimization" : "random content"} number ${i}`,
@@ -56,6 +57,7 @@ describe("RRF over-fetch", () => {
 
         // Insert enough docs that requesting a small limit still works correctly
         for (let i = 0; i < 40; i++) {
+            // biome-ignore lint/complexity/useLiteralKeys: accessing private method in test
             engine["insertSync"]({
                 id: String(i),
                 content: `document about ${i % 5 === 0 ? "typescript programming" : "gardening tips"} number ${i}`,

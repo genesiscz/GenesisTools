@@ -124,7 +124,7 @@ function resolveRelativeImport(
     specifier: string,
     importerPath: string,
     fileSet: Set<string>,
-    language?: string,
+    language?: string
 ): string | null {
     const importerDir = dirname(importerPath);
     const basePath = join(importerDir, specifier);
@@ -174,13 +174,11 @@ function resolveAliasImport(
     specifier: string,
     fileSet: Set<string>,
     aliases: PathAliases,
-    language?: string,
+    language?: string
 ): string | null {
     for (const [prefix, targets] of aliases.entries) {
         const isWildcard = prefix.endsWith("/");
-        const matches = isWildcard
-            ? specifier.startsWith(prefix)
-            : specifier === prefix;
+        const matches = isWildcard ? specifier.startsWith(prefix) : specifier === prefix;
 
         if (!matches) {
             continue;
@@ -197,9 +195,7 @@ function resolveAliasImport(
             }
 
             // Try with extensions
-            const extensions = language
-                ? (LANGUAGE_EXTENSIONS[language] ?? TS_EXTENSIONS)
-                : TS_EXTENSIONS;
+            const extensions = language ? (LANGUAGE_EXTENSIONS[language] ?? TS_EXTENSIONS) : TS_EXTENSIONS;
 
             for (const ext of extensions) {
                 if (fileSet.has(basePath + ext)) {
@@ -586,7 +582,7 @@ export function toMermaidDiagram(graph: CodeGraph, opts?: { maxNodes?: number; s
 
     // Rank nodes by total connections (imports + imported-by)
     const ranked = [...graph.nodes].sort(
-        (a, b) => b.importCount + b.importedByCount - (a.importCount + a.importedByCount),
+        (a, b) => b.importCount + b.importedByCount - (a.importCount + a.importedByCount)
     );
 
     const topNodes = new Set(ranked.slice(0, maxNodes).map((n) => n.path));
@@ -667,9 +663,7 @@ export function toMermaidDiagram(graph: CodeGraph, opts?: { maxNodes?: number; s
     }
 
     // Legend subgraph
-    const legendLangs = [...usedLangs]
-        .filter((l) => LANG_MERMAID_CLASS[l])
-        .sort();
+    const legendLangs = [...usedLangs].filter((l) => LANG_MERMAID_CLASS[l]).sort();
 
     if (legendLangs.length > 1) {
         lines.push(`    subgraph Legend`);

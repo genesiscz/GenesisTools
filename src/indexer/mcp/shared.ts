@@ -1,14 +1,23 @@
 import { IndexerManager } from "../lib/manager";
 
 let manager: IndexerManager | null = null;
+let managerPromise: Promise<IndexerManager> | null = null;
 
 /** Lazy-init singleton IndexerManager. Reused across all tool handlers. */
 export async function getManager(): Promise<IndexerManager> {
-    if (!manager) {
-        manager = await IndexerManager.load();
+    if (manager) {
+        return manager;
     }
 
-    return manager;
+    if (!managerPromise) {
+        managerPromise = IndexerManager.load().then((m) => {
+            manager = m;
+            managerPromise = null;
+            return m;
+        });
+    }
+
+    return managerPromise;
 }
 
 /** Graceful shutdown: close all open indexers. */

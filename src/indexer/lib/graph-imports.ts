@@ -125,7 +125,10 @@ function extractPythonImports(source: string): ImportInfo[] {
 
             if (match) {
                 for (const mod of match[1].split(",")) {
-                    const cleaned = mod.trim().split(/\s+as\s+/)[0].trim();
+                    const cleaned = mod
+                        .trim()
+                        .split(/\s+as\s+/)[0]
+                        .trim();
 
                     if (cleaned) {
                         imports.push({ specifier: cleaned, isDynamic: false });
@@ -344,7 +347,10 @@ function extractPhpImports(source: string): ImportInfo[] {
                 const members = groupMatch[2].split(",");
 
                 for (const member of members) {
-                    const name = member.trim().split(/\s+as\s+/)[0].trim();
+                    const name = member
+                        .trim()
+                        .split(/\s+as\s+/)[0]
+                        .trim();
 
                     if (name) {
                         imports.push({ specifier: `${prefix}\\${name}`, isDynamic: false });
@@ -393,7 +399,10 @@ function extractKotlinImports(source: string): ImportInfo[] {
             const match = text.match(/^import\s+(.+)/);
 
             if (match) {
-                const spec = match[1].trim().split(/\s+as\s+/)[0].trim();
+                const spec = match[1]
+                    .trim()
+                    .split(/\s+as\s+/)[0]
+                    .trim();
 
                 if (spec) {
                     imports.push({ specifier: spec, isDynamic: false });
@@ -422,10 +431,28 @@ function extractScalaImports(source: string): ImportInfo[] {
             const match = text.match(/^import\s+(.+)/);
 
             if (match) {
-                const spec = match[1].trim().split(/\s*[{,]/).filter(Boolean)[0]?.trim();
+                const importBody = match[1].trim();
+                const groupMatch = importBody.match(/^([^{]+)\{([^}]+)\}/);
 
-                if (spec) {
-                    imports.push({ specifier: spec, isDynamic: false });
+                if (groupMatch) {
+                    const prefix = groupMatch[1];
+
+                    for (const member of groupMatch[2].split(",")) {
+                        const name = member.trim().split(/\s+/)[0].trim();
+
+                        if (name) {
+                            imports.push({ specifier: prefix + name, isDynamic: false });
+                        }
+                    }
+                } else {
+                    const spec = importBody
+                        .split(/\s*[{,]/)
+                        .filter(Boolean)[0]
+                        ?.trim();
+
+                    if (spec) {
+                        imports.push({ specifier: spec, isDynamic: false });
+                    }
                 }
             }
         }
@@ -448,10 +475,12 @@ function extractCSharpImports(source: string): ImportInfo[] {
 
         for (const node of root.findAll({ rule: { kind: "using_directive" } })) {
             const text = node.text();
-            const match = text.match(/^using\s+(?:static\s+)?([^;=]+)/);
+            const match = text.match(/^using\s+(?:static\s+)?([^;]+)/);
 
             if (match) {
-                const spec = match[1].trim().split(/\s+/)[0].trim();
+                const body = match[1].trim();
+                // Handle aliased using: "MyAlias = System.Text" → extract "System.Text"
+                const spec = body.includes("=") ? body.split("=").pop()!.trim() : body.split(/\s+/)[0].trim();
 
                 if (spec && spec !== "var") {
                     imports.push({ specifier: spec, isDynamic: false });

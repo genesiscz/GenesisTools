@@ -2,8 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import { handleReadmeFlag } from "@app/utils/readme";
-import { fromToon as decode, toToon as encode } from "./lib/toon";
 import { Command } from "commander";
+import { fromToon as decode, toToon as encode } from "./lib/toon";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);

@@ -1,5 +1,5 @@
 import type { Dirent } from "node:fs";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 import { concurrentMap } from "@app/utils/async";
 import ignore, { type Ignore } from "ignore";
@@ -176,12 +176,12 @@ export class FileSource implements IndexerSource {
     private loadIgnoreFile(): Ignore | null {
         const ignorePath = join(this.absBaseDir, ".genesistoolsignore");
 
-        try {
-            const content = readFileSync(ignorePath, "utf-8");
-            return ignore().add(content);
-        } catch {
+        if (!existsSync(ignorePath)) {
             return null;
         }
+
+        const content = readFileSync(ignorePath, "utf-8");
+        return ignore().add(content);
     }
 
     private isIgnoredByFilter(absolutePath: string): boolean {
