@@ -38,6 +38,11 @@ export interface TranscribeOptions {
     /** Language detection config. Only used when `language` is not set. */
     languageDetection?: import("./LanguageDetector").LanguageDetectorOptions;
     /**
+     * Called after language auto-detection. Return a language code to override,
+     * or undefined to accept the detected language. Used for interactive confirmation.
+     */
+    confirmLanguage?: (detected: import("./LanguageDetector").LanguageDetectionResult) => Promise<string | undefined>;
+    /**
      * Whisper generation thresholds. Tune these for different audio types:
      * - Multi-speaker / background speech: lower noSpeechThreshold (e.g. 0.3), raise logprobThreshold (e.g. -0.5)
      * - Noisy recordings: raise compressionRatioThreshold (e.g. 2.0)
