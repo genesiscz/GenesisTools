@@ -109,15 +109,17 @@ async function runInteractiveFlow(): Promise<IndexConfig | null> {
 
     if (enableEmbed) {
         const models = getModelsForType(indexType);
-        const top = models.slice(0, 5);
 
         const modelChoice = await p.select({
             message: "Embedding model",
-            options: top.map((m) => ({
-                value: m.id,
-                label: m.name,
-                hint: `${m.dimensions}-dim, ${m.provider === "cloud" ? "cloud" : m.provider === "darwinkit" ? "built-in" : `${m.ramGB}GB RAM`} — ${m.description}`,
-            })),
+            options: [
+                ...models.map((m) => ({
+                    value: m.id,
+                    label: m.name,
+                    hint: `${m.dimensions}-dim, ${m.provider}${m.provider === "ollama" ? " (GPU)" : m.provider === "coreml" ? " (GPU/ANE)" : ""} — ${m.description}`,
+                })),
+                { value: "__none__", label: "No embeddings (fulltext-only)" },
+            ],
         });
 
         if (p.isCancel(modelChoice)) {
