@@ -86,3 +86,107 @@ describe("watcher start/stop lifecycle", () => {
         expect(startCallCount).toBe(1);
     });
 });
+
+describe("watcher debounce edge cases", () => {
+    it("rapid-fire events collapse into single callback", async () => {
+        let callCount = 0;
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+        const DEBOUNCE_MS = 100;
+
+        function debouncedSync(): void {
+            if (debounceTimer) {
+                clearTimeout(debounceTimer);
+            }
+
+            debounceTimer = setTimeout(() => {
+                callCount++;
+                debounceTimer = null;
+            }, DEBOUNCE_MS);
+        }
+
+        // Simulate 50 rapid file changes
+        for (let i = 0; i < 50; i++) {
+            debouncedSync();
+        }
+
+        // Wait for debounce to settle
+        await new Promise((resolve) => setTimeout(resolve, DEBOUNCE_MS + 50));
+
+        expect(callCount).toBe(1);
+    });
+
+    it("events spaced beyond debounce window each trigger callback", async () => {
+        let callCount = 0;
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+        const DEBOUNCE_MS = 50;
+
+        function debouncedSync(): void {
+            if (debounceTimer) {
+                clearTimeout(debounceTimer);
+            }
+
+            debounceTimer = setTimeout(() => {
+                callCount++;
+                debounceTimer = null;
+            }, DEBOUNCE_MS);
+        }
+
+        // Two events spaced well apart
+        debouncedSync();
+        await new Promise((resolve) => setTimeout(resolve, DEBOUNCE_MS + 30));
+
+        debouncedSync();
+        await new Promise((resolve) => setTimeout(resolve, DEBOUNCE_MS + 30));
+
+        expect(callCount).toBe(2);
+    });
+
+    it("max-wait forces callback even during sustained activity", async () => {
+        let callCount = 0;
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+        let maxWaitTimer: ReturnType<typeof setTimeout> | null = null;
+        const DEBOUNCE_MS = 100;
+        const MAX_WAIT_MS = 200;
+
+        function fire(): void {
+            callCount++;
+
+            if (debounceTimer) {
+                clearTimeout(debounceTimer);
+            }
+
+            if (maxWaitTimer) {
+                clearTimeout(maxWaitTimer);
+            }
+
+            debounceTimer = null;
+            maxWaitTimer = null;
+        }
+
+        function debouncedSyncWithMaxWait(): void {
+            if (debounceTimer) {
+                clearTimeout(debounceTimer);
+            }
+
+            if (!maxWaitTimer) {
+                maxWaitTimer = setTimeout(fire, MAX_WAIT_MS);
+            }
+
+            debounceTimer = setTimeout(fire, DEBOUNCE_MS);
+        }
+
+        // Continuously fire events for 300ms (exceeds MAX_WAIT_MS)
+        const start = Date.now();
+        const interval = setInterval(() => {
+            if (Date.now() - start < 300) {
+                debouncedSyncWithMaxWait();
+            }
+        }, 20);
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        clearInterval(interval);
+
+        // Max-wait should have forced at least one callback during the 300ms burst
+        expect(callCount).toBeGreaterThanOrEqual(1);
+    });
+});

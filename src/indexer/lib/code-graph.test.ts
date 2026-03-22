@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { buildCodeGraph, findCircularDependencies, getGraphStats, toMermaidDiagram } from "./code-graph";
+import { SafeJSON } from "@app/utils/json";
 import type { CodeGraph } from "./code-graph";
+import { buildCodeGraph, findCircularDependencies, getGraphStats, toMermaidDiagram } from "./code-graph";
 import { loadPathAliases, parsePathAliases } from "./graph-aliases";
 import { extractImports } from "./graph-imports";
 
@@ -623,6 +624,26 @@ describe("findCircularDependencies", () => {
         // Should only appear once despite starting DFS from both a.ts and b.ts
         expect(cycles).toHaveLength(1);
     });
+
+    test("handles self-import", () => {
+        const graph = makeGraph([["self.ts", "self.ts"]]);
+
+        const cycles = findCircularDependencies(graph);
+        expect(cycles.length).toBeGreaterThanOrEqual(1);
+    });
+
+    test("handles diamond dependency (no false positive)", () => {
+        const graph = makeGraph([
+            ["a.ts", "b.ts"],
+            ["a.ts", "c.ts"],
+            ["b.ts", "d.ts"],
+            ["c.ts", "d.ts"],
+        ]);
+
+        const cycles = findCircularDependencies(graph);
+        // Diamond is NOT a cycle
+        expect(cycles).toHaveLength(0);
+    });
 });
 
 describe("getGraphStats", () => {
@@ -659,7 +680,7 @@ describe("getGraphStats", () => {
 
 describe("parsePathAliases", () => {
     test("parses wildcard aliases", () => {
-        const tsconfig = JSON.stringify({
+        const tsconfig = SafeJSON.stringify({
             compilerOptions: {
                 baseUrl: ".",
                 paths: {
@@ -676,7 +697,7 @@ describe("parsePathAliases", () => {
     });
 
     test("parses exact aliases", () => {
-        const tsconfig = JSON.stringify({
+        const tsconfig = SafeJSON.stringify({
             compilerOptions: {
                 baseUrl: ".",
                 paths: { "~": ["./src"] },
@@ -703,7 +724,7 @@ describe("parsePathAliases", () => {
     });
 
     test("returns empty for missing compilerOptions", () => {
-        const tsconfig = JSON.stringify({});
+        const tsconfig = SafeJSON.stringify({});
         const aliases = parsePathAliases(tsconfig, "/project");
         expect(aliases.entries.size).toBe(0);
     });
@@ -729,8 +750,8 @@ describe("graph persistence round-trip", () => {
         ]);
 
         const graph = buildCodeGraph(files, "/project");
-        const json = JSON.stringify(graph);
-        const restored = JSON.parse(json) as typeof graph;
+        const json = SafeJSON.stringify(graph);
+        const restored = SafeJSON.parse(json) as typeof graph;
 
         expect(restored.nodes.length).toBe(graph.nodes.length);
         expect(restored.edges.length).toBe(graph.edges.length);
