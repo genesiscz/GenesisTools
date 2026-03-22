@@ -33,6 +33,42 @@ function autoDetectType(absPath: string): "code" | "files" {
     return "files";
 }
 
+/** Check if an Ollama model is pulled, prompt to download if not. Returns false if user cancels or Ollama unavailable. */
+async function ensureOllamaModel(model: string): Promise<boolean> {
+    try {
+        const { AIOllamaProvider } = await import("@app/utils/ai/providers/AIOllamaProvider");
+        const ollama = new AIOllamaProvider({ defaultModel: model });
+
+        if (!(await ollama.isAvailable())) {
+            p.log.error("Ollama is not running. Start it with: ollama serve");
+            return false;
+        }
+
+        if (await ollama.hasModel(model)) {
+            return true;
+        }
+
+        const pull = await p.confirm({
+            message: `Model "${model}" not found in Ollama. Download it now?`,
+            initialValue: true,
+        });
+
+        if (p.isCancel(pull) || !pull) {
+            p.cancel("Cannot index without the embedding model");
+            return false;
+        }
+
+        const spinner = p.spinner();
+        spinner.start(`Pulling ${model}...`);
+        await ollama.ensureModel(model);
+        spinner.stop(`Model ${model} ready`);
+        return true;
+    } catch (err) {
+        p.log.error(`Ollama check failed: ${err instanceof Error ? err.message : String(err)}`);
+        return false;
+    }
+}
+
 function resolveProvider(modelId: string): string | undefined {
     const model = MODEL_REGISTRY.find((m) => m.id === modelId);
 
@@ -132,35 +168,10 @@ async function runInteractiveFlow(): Promise<IndexConfig | null> {
 
     const provider = selectedModel ? resolveProvider(selectedModel) : undefined;
 
-    // For Ollama models: check if pulled, offer to download
     if (provider === "ollama" && selectedModel) {
-        try {
-            const { AIOllamaProvider } = await import("@app/utils/ai/providers/AIOllamaProvider");
-            const ollama = new AIOllamaProvider({ defaultModel: selectedModel });
+        const ok = await ensureOllamaModel(selectedModel);
 
-            if (await ollama.isAvailable()) {
-                if (!(await ollama.hasModel(selectedModel))) {
-                    const pull = await p.confirm({
-                        message: `Model "${selectedModel}" not found in Ollama. Download it now?`,
-                        initialValue: true,
-                    });
-
-                    if (p.isCancel(pull) || !pull) {
-                        p.cancel("Cannot index without the embedding model");
-                        return null;
-                    }
-
-                    const spinner = p.spinner();
-                    spinner.start(`Pulling ${selectedModel}...`);
-                    await ollama.ensureModel(selectedModel);
-                    spinner.stop(`Model ${selectedModel} ready`);
-                }
-            } else {
-                p.log.error("Ollama is not running. Start it with: ollama serve");
-                return null;
-            }
-        } catch (err) {
-            p.log.error(`Ollama check failed: ${err instanceof Error ? err.message : String(err)}`);
+        if (!ok) {
             return null;
         }
     }
@@ -273,36 +284,10 @@ export function registerAddCommand(program: Command): void {
                     }
                 }
 
-                // Ollama: check model pulled, offer to download
                 if (provider === "ollama" && model) {
-                    try {
-                        const { AIOllamaProvider } = await import("@app/utils/ai/providers/AIOllamaProvider");
-                        const ollama = new AIOllamaProvider({ defaultModel: model });
+                    const ok = await ensureOllamaModel(model);
 
-                        if (!(await ollama.isAvailable())) {
-                            p.log.error("Ollama is not running. Start it with: ollama serve");
-                            process.exitCode = 1;
-                            return;
-                        }
-
-                        if (!(await ollama.hasModel(model))) {
-                            const pull = await p.confirm({
-                                message: `Model "${model}" not found in Ollama. Download it now?`,
-                                initialValue: true,
-                            });
-
-                            if (p.isCancel(pull) || !pull) {
-                                p.cancel("Cannot index without the embedding model");
-                                return;
-                            }
-
-                            const pullSpinner = p.spinner();
-                            pullSpinner.start(`Pulling ${model}...`);
-                            await ollama.ensureModel(model);
-                            pullSpinner.stop(`Model ${model} ready`);
-                        }
-                    } catch (err) {
-                        p.log.error(`Ollama check failed: ${err instanceof Error ? err.message : String(err)}`);
+                    if (!ok) {
                         process.exitCode = 1;
                         return;
                     }
