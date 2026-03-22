@@ -52,6 +52,18 @@ export class Embedder {
                 );
             }
 
+            // For Ollama: verify the model is available (caller should pull first via CLI prompt)
+            if (options.provider === "ollama" && options.model) {
+                const ollamaProvider = explicit as import("../providers/AIOllamaProvider").AIOllamaProvider;
+
+                if (!(await ollamaProvider.hasModel(options.model))) {
+                    throw new Error(
+                        `Ollama model "${options.model}" is not pulled.\n` +
+                            `Run: ollama pull ${options.model}`
+                    );
+                }
+            }
+
             return new Embedder(explicit as AIEmbeddingProvider);
         }
 
