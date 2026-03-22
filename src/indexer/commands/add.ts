@@ -250,9 +250,9 @@ export function registerAddCommand(program: Command): void {
                         const selected = await p.select({
                             message: "Embedding model",
                             options: [
-                                ...recommended.slice(0, 5).map((m) => ({
+                                ...recommended.map((m) => ({
                                     value: m.id,
-                                    label: `${m.name} (${m.dimensions}-dim, ${m.provider})`,
+                                    label: `${m.name} (${m.dimensions}-dim, ${m.provider}${m.provider === "ollama" ? " GPU" : m.provider === "coreml" ? " GPU/ANE" : ""})`,
                                     hint: m.description,
                                 })),
                                 { value: "__none__", label: "No embeddings (fulltext-only)" },
@@ -270,6 +270,41 @@ export function registerAddCommand(program: Command): void {
                             model = selected as string;
                             provider = resolveProvider(model);
                         }
+                    }
+                }
+
+                // Ollama: check model pulled, offer to download
+                if (provider === "ollama" && model) {
+                    try {
+                        const { AIOllamaProvider } = await import("@app/utils/ai/providers/AIOllamaProvider");
+                        const ollama = new AIOllamaProvider({ defaultModel: model });
+
+                        if (!(await ollama.isAvailable())) {
+                            p.log.error("Ollama is not running. Start it with: ollama serve");
+                            process.exitCode = 1;
+                            return;
+                        }
+
+                        if (!(await ollama.hasModel(model))) {
+                            const pull = await p.confirm({
+                                message: `Model "${model}" not found in Ollama. Download it now?`,
+                                initialValue: true,
+                            });
+
+                            if (p.isCancel(pull) || !pull) {
+                                p.cancel("Cannot index without the embedding model");
+                                return;
+                            }
+
+                            const pullSpinner = p.spinner();
+                            pullSpinner.start(`Pulling ${model}...`);
+                            await ollama.ensureModel(model);
+                            pullSpinner.stop(`Model ${model} ready`);
+                        }
+                    } catch (err) {
+                        p.log.error(`Ollama check failed: ${err instanceof Error ? err.message : String(err)}`);
+                        process.exitCode = 1;
+                        return;
                     }
                 }
 
