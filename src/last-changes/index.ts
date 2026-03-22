@@ -1,6 +1,7 @@
 import { lstatSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Executor } from "@app/utils/cli";
+import { formatDateTime } from "@app/utils/date";
 import { formatRelativeTime as _formatRelativeTime } from "@app/utils/format";
 import { handleReadmeFlag } from "@app/utils/readme";
 import chalk from "chalk";
@@ -31,25 +32,12 @@ interface TimeGroup {
 function formatRelativeTime(date: Date): string {
     return _formatRelativeTime(date, {
         maxDays: 7,
-        fallbackFormat: (d) =>
-            d.toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-            }),
+        fallbackFormat: (d) => formatDateTime(d, { absolute: "datetime" }),
     });
 }
 
 function formatAbsoluteTime(date: Date): string {
-    return date.toLocaleString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-    });
+    return formatDateTime(date, { absolute: "datetime" });
 }
 
 function getStatusColor(status: string): (text: string) => string {

@@ -10,6 +10,7 @@
 
 import { extractFromMessage, loadWorkitemPatternsAsync } from "@app/git/workitem-patterns";
 import { Executor } from "@app/utils/cli";
+import { formatDateTime } from "@app/utils/date";
 import type { DetailedCommitInfo } from "@app/utils/git";
 import { SafeJSON } from "@app/utils/json";
 import { Storage } from "@app/utils/storage";
@@ -39,10 +40,7 @@ function addOneDay(dateStr: string): string {
 }
 
 function formatDateForDisplay(dateStr: string): string {
-    const d = new Date(dateStr);
-    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const day = dayNames[d.getDay()];
-    return `${day} ${dateStr}`;
+    return formatDateTime(dateStr, { absolute: "date-long" });
 }
 
 async function getCommitsByDate(

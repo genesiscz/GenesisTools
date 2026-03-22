@@ -1,3 +1,4 @@
+import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import type { MessageRow } from "./types";
 
@@ -24,13 +25,7 @@ export function formatMessages(messages: MessageRow[], format: ExportFormat, con
         case "txt": {
             const lines = messages.map((m) => {
                 const date = new Date(m.date_unix * 1000);
-                const dateStr = date.toLocaleString("en-US", {
-                    year: "numeric",
-                    month: "short",
-                    day: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                });
+                const dateStr = formatDateTime(date, { absolute: "datetime" });
                 const direction = m.is_outgoing ? "You" : contactName;
                 const text = m.text || m.media_desc || "(no content)";
                 return `[${dateStr}] ${direction}: ${text}`;

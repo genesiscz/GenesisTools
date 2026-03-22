@@ -8,7 +8,7 @@ import {
     searchConversations,
 } from "@app/claude/lib/history/search";
 import { detectCurrentProject, findClaudeCommand } from "@app/utils/claude";
-import { formatRelativeTime } from "@app/utils/format";
+import { formatDateTime } from "@app/utils/date";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -71,7 +71,7 @@ function formatDate(iso: string): string {
     if (!iso) {
         return "";
     }
-    return formatRelativeTime(new Date(iso), { compact: true });
+    return formatDateTime(iso, { relative: "always-relative-short" });
 }
 
 function dedup(sessions: DisplaySession[]): DisplaySession[] {

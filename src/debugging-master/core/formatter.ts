@@ -1,4 +1,5 @@
 import type { IndexedLogEntry, OutputFormat, SessionStats } from "@app/debugging-master/types";
+import { formatDateTime } from "@app/utils/date";
 import { suggestCommand } from "@app/utils/cli/executor";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
@@ -12,13 +13,7 @@ const TOOL = "tools debugging-master";
  */
 export function formatEntryLine(entry: IndexedLogEntry, pretty: boolean): string {
     const idx = `#${entry.index}`.padStart(4);
-    const time = new Date(entry.ts).toLocaleTimeString("en-GB", {
-        hour12: false,
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        fractionalSecondDigits: 3,
-    });
+    const time = formatDateTime(new Date(entry.ts), { absolute: "time-seconds" });
     const level = entry.level.padEnd(11);
     const label = entry.label ?? entry.msg ?? "";
 

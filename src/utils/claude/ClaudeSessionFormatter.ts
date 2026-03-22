@@ -1,4 +1,5 @@
 import { createWriteStream, type WriteStream } from "node:fs";
+import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import pc from "picocolors";
 import type { IncludeSpec } from "./cli/dsl";
@@ -40,8 +41,7 @@ function stripAnsi(text: string): string {
 
 function formatTime(timestamp: string): string {
     try {
-        const d = new Date(timestamp);
-        return d.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        return formatDateTime(timestamp, { absolute: "time-seconds" });
     } catch {
         return "??:??:??";
     }

@@ -2,6 +2,7 @@
 import { UsageDatabase } from "@app/ask/output/UsageDatabase";
 import { dynamicPricingManager } from "@app/ask/providers/DynamicPricing";
 import logger from "@app/logger";
+import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
 import Table from "cli-table3";
@@ -50,8 +51,7 @@ function formatTokens(tokens: number): string {
 }
 
 function formatDate(dateStr: string): string {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    return formatDateTime(dateStr, { absolute: "date" });
 }
 
 async function showSummary(db: UsageDatabase, days: number) {
