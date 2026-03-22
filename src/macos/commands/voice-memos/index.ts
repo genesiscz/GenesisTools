@@ -425,7 +425,7 @@ async function transcribeOne(opts: {
         ...(isTTY && !opts.lang
             ? {
                   confirmLanguage: async (
-                      detected: import("@app/utils/ai/LanguageDetector.ts").LanguageDetectionResult,
+                      detected: import("@app/utils/ai/LanguageDetector.ts").LanguageDetectionResult
                   ) => {
                       s.stop(`Detected: ${detected.language} (${Math.round(detected.confidence * 100)}%)`);
                       const confirmed = await promptLanguage(detected);

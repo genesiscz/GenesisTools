@@ -5,7 +5,7 @@
 
 import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, basename } from "node:path";
+import { basename, dirname, join } from "node:path";
 import * as readline from "node:readline";
 import { Writable } from "node:stream";
 import pc from "picocolors";
@@ -57,7 +57,7 @@ interface DirEntry {
 export async function filePathInput(options: FilePathInputOptions): Promise<string | symbol> {
     const {
         message,
-        initialValue = process.cwd() + "/",
+        initialValue = `${process.cwd()}/`,
         listPossibilities = true,
         filter = "all",
         extensions,
@@ -214,7 +214,9 @@ export async function filePathInput(options: FilePathInputOptions): Promise<stri
                         // Compute column widths
                         const maxNameLen = Math.min(
                             50,
-                            Math.max(...entries.slice(0, maxVisible).map((e) => (e.name + (e.isDirectory ? "/" : "")).length)),
+                            Math.max(
+                                ...entries.slice(0, maxVisible).map((e) => (e.name + (e.isDirectory ? "/" : "")).length)
+                            )
                         );
 
                         const visibleEntries = entries.slice(0, maxVisible);
@@ -227,7 +229,9 @@ export async function filePathInput(options: FilePathInputOptions): Promise<stri
                             const isCur = i === cursor;
 
                             if (isCur) {
-                                lines.push(`${S_BAR}  ${pc.cyan("\u276F")} ${pc.underline(padded)}${pc.dim(typeLabel)}`);
+                                lines.push(
+                                    `${S_BAR}  ${pc.cyan("\u276F")} ${pc.underline(padded)}${pc.dim(typeLabel)}`
+                                );
                             } else {
                                 lines.push(`${S_BAR}    ${padded}${pc.dim(typeLabel)}`);
                             }

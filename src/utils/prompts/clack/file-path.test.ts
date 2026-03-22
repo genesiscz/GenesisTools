@@ -75,7 +75,7 @@ function sortEntries(entries: DirEntry[]): DirEntry[] {
 
 function filterEntries(
     entries: DirEntry[],
-    opts: { filter?: "all" | "directories" | "files"; extensions?: string[]; prefix?: string },
+    opts: { filter?: "all" | "directories" | "files"; extensions?: string[]; prefix?: string }
 ): DirEntry[] {
     return entries.filter((entry) => {
         if (entry.name.startsWith(".")) {
@@ -254,12 +254,7 @@ describe("file-path: filterEntries", () => {
 
     it("filters by extension", () => {
         const result = filterEntries(testEntries, { extensions: [".srt", ".vtt"] });
-        expect(result.map((e) => e.name)).toEqual([
-            "Documents",
-            "Downloads",
-            "transcript.srt",
-            "transcript.vtt",
-        ]);
+        expect(result.map((e) => e.name)).toEqual(["Documents", "Downloads", "transcript.srt", "transcript.vtt"]);
     });
 
     it("filters by prefix", () => {

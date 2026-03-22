@@ -146,7 +146,9 @@ export class AILocalProvider
                 const pct = Math.min(99, Math.round((lastTimestamp / durationSec) * 100));
                 const truncated = currentChunkText.length > 60 ? `...${currentChunkText.slice(-57)}` : currentChunkText;
 
-                logger.info(`[transcribe] progress: ${pct}% ts=${lastTimestamp.toFixed(1)}s elapsed_since_last=${elapsed}ms`);
+                logger.info(
+                    `[transcribe] progress: ${pct}% ts=${lastTimestamp.toFixed(1)}s elapsed_since_last=${elapsed}ms`
+                );
 
                 onProgress?.({
                     phase: "transcribe",
@@ -162,7 +164,9 @@ export class AILocalProvider
             },
             on_chunk_end: (time: number) => {
                 const elapsed = Date.now() - transcribeStart;
-                logger.info(`[transcribe] chunk_end: time=${time.toFixed(2)}s text="${currentChunkText.slice(0, 80)}" total_elapsed=${elapsed}ms`);
+                logger.info(
+                    `[transcribe] chunk_end: time=${time.toFixed(2)}s text="${currentChunkText.slice(0, 80)}" total_elapsed=${elapsed}ms`
+                );
                 lastTimestamp = time;
 
                 if (currentChunkText.trim()) {
@@ -175,7 +179,9 @@ export class AILocalProvider
             },
         });
 
-        logger.info(`[transcribe] calling pipeline with ${audioData.length} samples, chunk_length=${chunkLengthS}s, stride=5s`);
+        logger.info(
+            `[transcribe] calling pipeline with ${audioData.length} samples, chunk_length=${chunkLengthS}s, stride=5s`
+        );
         const pipeStart = Date.now();
 
         const result = (await pipe(audioData, {
@@ -201,7 +207,9 @@ export class AILocalProvider
 
         const pipeDuration = Date.now() - pipeStart;
         const totalDuration = Date.now() - transcribeStart;
-        logger.info(`[transcribe] pipeline done: ${pipeDuration}ms, total=${totalDuration}ms, chunks=${result.chunks?.length ?? 0}, text=${result.text.length} chars`);
+        logger.info(
+            `[transcribe] pipeline done: ${pipeDuration}ms, total=${totalDuration}ms, chunks=${result.chunks?.length ?? 0}, text=${result.text.length} chars`
+        );
 
         onProgress?.({ phase: "transcribe", percent: 100, message: "Transcription complete" });
 

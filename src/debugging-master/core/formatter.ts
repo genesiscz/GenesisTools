@@ -1,6 +1,6 @@
 import type { IndexedLogEntry, OutputFormat, SessionStats } from "@app/debugging-master/types";
-import { formatDateTime } from "@app/utils/date";
 import { suggestCommand } from "@app/utils/cli/executor";
+import { formatDateTime } from "@app/utils/date";
 import { formatBytes, formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
 import { stripAnsi } from "@app/utils/string";

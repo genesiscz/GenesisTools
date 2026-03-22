@@ -164,7 +164,7 @@ export class WhisperLanguageDriver implements LanguageDetectionDriver {
     private extractTopKLanguages(
         output: Record<string, unknown>,
         langToId: Record<string, number> | undefined,
-        topK = 5,
+        topK = 5
     ): Array<{ language: string; confidence: number }> | null {
         if (!langToId) {
             return null;

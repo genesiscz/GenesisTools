@@ -17,7 +17,11 @@ export interface ModelInfo {
 }
 
 const LOCAL_TRANSCRIPTION_MODELS: ModelInfo[] = [
-    { id: "onnx-community/whisper-large-v3-turbo", name: "whisper-large-v3-turbo", description: "best quality, ~1.5GB" },
+    {
+        id: "onnx-community/whisper-large-v3-turbo",
+        name: "whisper-large-v3-turbo",
+        description: "best quality, ~1.5GB",
+    },
     { id: "onnx-community/whisper-large-v3", name: "whisper-large-v3", description: "highest quality, ~3GB" },
     { id: "onnx-community/whisper-small", name: "whisper-small", description: "faster, lower quality" },
     { id: "onnx-community/whisper-tiny", name: "whisper-tiny", description: "fastest, basic quality" },
@@ -29,7 +33,7 @@ function getCloudTranscriptionModels(): ModelInfo[] {
     if (process.env.GROQ_API_KEY) {
         models.push(
             { id: "whisper-large-v3-turbo", name: "Groq whisper-large-v3-turbo", description: "fast" },
-            { id: "whisper-large-v3", name: "Groq whisper-large-v3", description: "high quality" },
+            { id: "whisper-large-v3", name: "Groq whisper-large-v3", description: "high quality" }
         );
     }
 
