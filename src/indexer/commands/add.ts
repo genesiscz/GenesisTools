@@ -263,7 +263,7 @@ export function registerAddCommand(program: Command): void {
                             options: [
                                 ...recommended.map((m) => ({
                                     value: m.id,
-                                    label: `${m.name} (${m.dimensions}-dim, ${m.provider}${m.provider === "ollama" ? " GPU" : m.provider === "coreml" ? " GPU/ANE" : ""})`,
+                                    label: `${m.name} (${m.dimensions}-dim, ${m.provider}${m.provider === "ollama" ? " (GPU)" : m.provider === "coreml" ? " (GPU/ANE)" : ""})`,
                                     hint: m.description,
                                 })),
                                 { value: "__none__", label: "No embeddings (fulltext-only)" },

@@ -14,6 +14,9 @@ export interface SqliteVecVectorStoreConfig {
  *   import { loadSqliteVec } from "./sqlite-vec-loader";
  *   loadSqliteVec(db);
  */
+/** Max bind parameters per SQL IN(...) clause */
+const SQL_BATCH_SIZE = 500;
+
 export class SqliteVecVectorStore implements VectorStore {
     private db: Database;
     private vecTable: string;
@@ -49,8 +52,8 @@ export class SqliteVecVectorStore implements VectorStore {
             return;
         }
 
-        for (let i = 0; i < ids.length; i += 500) {
-            const batch = ids.slice(i, i + 500);
+        for (let i = 0; i < ids.length; i += SQL_BATCH_SIZE) {
+            const batch = ids.slice(i, i + SQL_BATCH_SIZE);
             const placeholders = batch.map(() => "?").join(",");
             this.db.run(`DELETE FROM ${this.vecTable} WHERE doc_id IN (${placeholders})`, batch);
         }
