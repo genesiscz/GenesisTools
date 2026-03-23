@@ -1,5 +1,5 @@
-import { createRequire } from "node:module";
-import { Lang, parse, registerDynamicLanguage } from "@ast-grep/napi";
+import { Lang, parse } from "@ast-grep/napi";
+import { ensureDynamicLanguages } from "./ast-languages";
 
 export interface ImportInfo {
     /** Raw module specifier from the source code */
@@ -9,49 +9,6 @@ export interface ImportInfo {
 }
 
 type AstRoot = ReturnType<ReturnType<typeof parse>["root"]>;
-
-// --- Dynamic language registration ---
-
-const esmRequire = createRequire(import.meta.url);
-
-let dynamicLangsRegistered = false;
-
-function ensureDynamicLanguages(): void {
-    if (dynamicLangsRegistered) {
-        return;
-    }
-
-    dynamicLangsRegistered = true;
-
-    const langPackages: Array<[string, string]> = [
-        ["python", "@ast-grep/lang-python"],
-        ["go", "@ast-grep/lang-go"],
-        ["rust", "@ast-grep/lang-rust"],
-        ["java", "@ast-grep/lang-java"],
-        ["c", "@ast-grep/lang-c"],
-        ["cpp", "@ast-grep/lang-cpp"],
-        ["ruby", "@ast-grep/lang-ruby"],
-        ["php", "@ast-grep/lang-php"],
-        ["swift", "@ast-grep/lang-swift"],
-        ["kotlin", "@ast-grep/lang-kotlin"],
-        ["scala", "@ast-grep/lang-scala"],
-        ["csharp", "@ast-grep/lang-csharp"],
-    ];
-
-    const modules: Record<string, { libraryPath: string; extensions: string[]; languageSymbol?: string }> = {};
-
-    for (const [name, pkg] of langPackages) {
-        try {
-            modules[name] = esmRequire(pkg);
-        } catch {
-            // Grammar not installed — skip
-        }
-    }
-
-    if (Object.keys(modules).length > 0) {
-        registerDynamicLanguage(modules);
-    }
-}
 
 // --- JS/TS extractor ---
 

@@ -1,13 +1,11 @@
-import { createRequire } from "node:module";
 import { extname } from "node:path";
 import { xxhash } from "@app/utils/hash";
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import type { SgNode } from "@ast-grep/napi";
-import { Lang, parse, registerDynamicLanguage } from "@ast-grep/napi";
+import { Lang, parse } from "@ast-grep/napi";
+import { ensureDynamicLanguages } from "./ast-languages";
 import type { ChunkRecord } from "./types";
-
-const esmRequire = createRequire(import.meta.url);
 
 export interface ChunkResult {
     chunks: ChunkRecord[];
@@ -133,50 +131,8 @@ const AST_KINDS: Record<string, string[]> = {
     csharp: ["class_declaration", "interface_declaration", "method_declaration", "namespace_declaration"],
 };
 
-// ─── Dynamic language registration ──────────────────────────────
-let dynamicLangsRegistered = false;
-
-/** Register dynamic language grammars. Safe to call multiple times. */
-function ensureDynamicLanguages(): void {
-    if (dynamicLangsRegistered) {
-        return;
-    }
-
-    dynamicLangsRegistered = true;
-
-    const langPackages: Array<[string, string]> = [
-        ["python", "@ast-grep/lang-python"],
-        ["go", "@ast-grep/lang-go"],
-        ["rust", "@ast-grep/lang-rust"],
-        ["java", "@ast-grep/lang-java"],
-        ["c", "@ast-grep/lang-c"],
-        ["cpp", "@ast-grep/lang-cpp"],
-        ["ruby", "@ast-grep/lang-ruby"],
-        ["php", "@ast-grep/lang-php"],
-        ["swift", "@ast-grep/lang-swift"],
-        ["kotlin", "@ast-grep/lang-kotlin"],
-        ["scala", "@ast-grep/lang-scala"],
-        ["csharp", "@ast-grep/lang-csharp"],
-    ];
-
-    const modules: Record<string, { libraryPath: string; extensions: string[]; languageSymbol?: string }> = {};
-
-    for (const [name, pkg] of langPackages) {
-        try {
-            modules[name] = esmRequire(pkg);
-        } catch {
-            // Grammar not installed — skip
-        }
-    }
-
-    if (Object.keys(modules).length > 0) {
-        registerDynamicLanguage(modules);
-    }
-}
-
 /** Hard character cap per chunk — universal safety net applied to ALL strategies */
 const MAX_CHUNK_CHARS = 2000;
-
 
 // ─── Universal safety net: cap all chunks at MAX_CHUNK_CHARS ────
 /**
