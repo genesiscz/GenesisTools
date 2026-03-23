@@ -13,7 +13,7 @@ export function registerSearchTools(server: McpServer): void {
             limit: z.number().min(1).max(100).describe("Max results. Default: 20.").optional(),
             mode: z
                 .enum(["fulltext", "vector", "hybrid"])
-                .describe("Search mode. Default: fulltext. Use 'hybrid' for best results if embeddings exist.")
+                .describe("Search mode. Default: auto (hybrid when embeddings exist, fulltext otherwise).")
                 .optional(),
             minScore: z
                 .number()
@@ -42,8 +42,20 @@ async function handleSearch(args: SearchArgs): Promise<string> {
     try {
         const manager = await getManager();
         const limit = args.limit ?? 20;
-        const mode = args.mode ?? "fulltext";
         const minScore = args.minScore ?? 0;
+
+        // Auto-detect mode: hybrid when embeddings exist, fulltext otherwise
+        let mode = args.mode ?? "fulltext";
+
+        if (!args.mode) {
+            const names = args.indexName ? [args.indexName] : manager.getIndexNames();
+
+            if (names.length > 0) {
+                const first = await manager.getIndex(names[0]);
+                const info = first.getConsistencyInfo();
+                mode = info.embeddingCount > 0 ? "hybrid" : "fulltext";
+            }
+        }
 
         let allResults: Array<{ indexName: string; doc: ChunkRecord; score: number; method: string }> = [];
 
