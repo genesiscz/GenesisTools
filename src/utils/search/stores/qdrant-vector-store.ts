@@ -1,5 +1,5 @@
-import { cosineDistance } from "@app/utils/math";
-import type { VectorSearchHit, VectorStore } from "./vector-store";
+import { AsyncOpQueue } from "@app/utils/async";
+import { bruteForceVectorSearch, type VectorSearchHit, type VectorStore } from "./vector-store";
 
 export interface QdrantClientLike {
     getCollections(): Promise<{ collections: Array<{ name: string }> }>;
@@ -72,8 +72,7 @@ export class QdrantVectorStore implements VectorStore {
     private client: QdrantClientLike | null = null;
     private vectorName: string;
     private memoryIndex = new Map<string, Float32Array>();
-    private pendingOps: Array<() => Promise<void>> = [];
-    private flushPromise: Promise<void> | null = null;
+    private queue = new AsyncOpQueue("QdrantVectorStore");
     private closed = false;
 
     constructor(config: QdrantVectorStoreConfig) {
@@ -108,7 +107,7 @@ export class QdrantVectorStore implements VectorStore {
 
         this.memoryIndex.set(id, new Float32Array(vector));
 
-        this.enqueue(async () => {
+        this.queue.enqueue(async () => {
             await this.client!.upsert(this.config.collectionName, {
                 points: [
                     {
@@ -131,7 +130,7 @@ export class QdrantVectorStore implements VectorStore {
 
         this.memoryIndex.set(id, new Float32Array(vector));
 
-        this.enqueue(async () => {
+        this.queue.enqueue(async () => {
             await this.client!.upsert(this.config.collectionName, {
                 points: [
                     {
@@ -154,7 +153,7 @@ export class QdrantVectorStore implements VectorStore {
 
         this.memoryIndex.delete(id);
 
-        this.enqueue(async () => {
+        this.queue.enqueue(async () => {
             await this.client!.delete(this.config.collectionName, {
                 points: [id],
             });
@@ -162,16 +161,7 @@ export class QdrantVectorStore implements VectorStore {
     }
 
     search(queryVector: Float32Array, limit: number): VectorSearchHit[] {
-        // Synchronous search using in-memory mirror
-        const hits: VectorSearchHit[] = [];
-
-        for (const [docId, storedVec] of this.memoryIndex) {
-            const score = 1 - cosineDistance(queryVector, storedVec);
-            hits.push({ docId, score });
-        }
-
-        hits.sort((a, b) => b.score - a.score);
-        return hits.slice(0, limit);
+        return bruteForceVectorSearch(this.memoryIndex, queryVector, limit);
     }
 
     count(): number {
@@ -249,13 +239,7 @@ export class QdrantVectorStore implements VectorStore {
 
     /** Wait for all pending async operations to complete. */
     async flush(): Promise<void> {
-        if (this.flushPromise) {
-            await this.flushPromise;
-        }
-
-        while (this.pendingOps.length > 0) {
-            await this.drainQueue();
-        }
+        await this.queue.flush();
     }
 
     async close(): Promise<void> {
@@ -290,34 +274,4 @@ export class QdrantVectorStore implements VectorStore {
         }
     }
 
-    private enqueue(op: () => Promise<void>): void {
-        this.pendingOps.push(op);
-        this.scheduleFlush();
-    }
-
-    private scheduleFlush(): void {
-        if (this.flushPromise) {
-            return;
-        }
-
-        this.flushPromise = this.drainQueue().finally(() => {
-            this.flushPromise = null;
-
-            if (this.pendingOps.length > 0) {
-                this.scheduleFlush();
-            }
-        });
-    }
-
-    private async drainQueue(): Promise<void> {
-        while (this.pendingOps.length > 0) {
-            const op = this.pendingOps.shift()!;
-
-            try {
-                await op();
-            } catch (err) {
-                console.error("[QdrantVectorStore] async operation failed:", err);
-            }
-        }
-    }
 }

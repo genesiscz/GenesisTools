@@ -1,7 +1,108 @@
 import { createRequire } from "node:module";
-import { registerDynamicLanguage } from "@ast-grep/napi";
+import { Lang, registerDynamicLanguage } from "@ast-grep/napi";
 
 const esmRequire = createRequire(import.meta.url);
+
+// ─── Extension → language mapping tables ────────────────────────
+
+/** Extension -> ast-grep built-in Lang (for parse()) */
+export const EXT_TO_LANG: Record<string, Lang> = {
+    ".ts": Lang.TypeScript,
+    ".tsx": Lang.Tsx,
+    ".js": Lang.JavaScript,
+    ".jsx": Lang.Tsx,
+    ".mjs": Lang.JavaScript,
+    ".cjs": Lang.JavaScript,
+    ".mts": Lang.TypeScript,
+    ".cts": Lang.TypeScript,
+    ".html": Lang.Html,
+    ".htm": Lang.Html,
+    ".css": Lang.Css,
+};
+
+/** Extension -> human-readable language name (used for chunk metadata and graph) */
+export const EXT_TO_LANGUAGE_NAME: Record<string, string> = {
+    ".ts": "typescript",
+    ".tsx": "tsx",
+    ".js": "javascript",
+    ".jsx": "jsx",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".mts": "typescript",
+    ".cts": "typescript",
+    ".html": "html",
+    ".htm": "html",
+    ".css": "css",
+    ".md": "markdown",
+    ".json": "json",
+    ".py": "python",
+    ".pyw": "python",
+    ".pyi": "python",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".hpp": "cpp",
+    ".cc": "cpp",
+    ".hh": "cpp",
+    ".cxx": "cpp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".swift": "swift",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
+    ".scala": "scala",
+    ".cs": "csharp",
+};
+
+/** Extension -> dynamic language string identifier (for registerDynamicLanguage langs) */
+export const EXT_TO_DYNAMIC_LANG: Record<string, string> = {
+    ".py": "python",
+    ".pyw": "python",
+    ".pyi": "python",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".hpp": "cpp",
+    ".cc": "cpp",
+    ".hh": "cpp",
+    ".cxx": "cpp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".swift": "swift",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
+    ".scala": "scala",
+    ".cs": "csharp",
+};
+
+/** Language name -> known extensions (inverse of EXT_TO_LANGUAGE_NAME) */
+export const LANGUAGE_EXTENSIONS: Record<string, string[]> = {
+    typescript: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
+    tsx: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
+    python: [".py"],
+    go: [".go"],
+    java: [".java"],
+    rust: [".rs"],
+    c: [".c", ".h"],
+    cpp: [".cpp", ".hpp", ".cc", ".hh", ".cxx", ".h"],
+    ruby: [".rb"],
+    php: [".php"],
+    swift: [".swift"],
+    kotlin: [".kt", ".kts"],
+    scala: [".scala"],
+    csharp: [".cs"],
+};
+
+/** Get language name from file extension (returns null for unknown) */
+export function getLanguageForExt(ext: string): string | null {
+    return EXT_TO_LANGUAGE_NAME[ext.toLowerCase()] ?? null;
+}
 
 let dynamicLangsRegistered = false;
 

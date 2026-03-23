@@ -4,7 +4,12 @@ import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import type { SgNode } from "@ast-grep/napi";
 import { Lang, parse } from "@ast-grep/napi";
-import { ensureDynamicLanguages } from "./ast-languages";
+import {
+    EXT_TO_DYNAMIC_LANG,
+    EXT_TO_LANG,
+    EXT_TO_LANGUAGE_NAME,
+    ensureDynamicLanguages,
+} from "./ast-languages";
 import type { ChunkRecord } from "./types";
 
 export interface ChunkResult {
@@ -12,81 +17,6 @@ export interface ChunkResult {
     language: string | null;
     parser: "ast" | "line" | "heading" | "message" | "json" | "character";
 }
-
-// ─── Extension → Lang mapping ───────────────────────────────────
-const EXT_TO_LANG: Record<string, Lang> = {
-    ".ts": Lang.TypeScript,
-    ".tsx": Lang.Tsx,
-    ".js": Lang.JavaScript,
-    ".jsx": Lang.Tsx,
-    ".mjs": Lang.JavaScript,
-    ".cjs": Lang.JavaScript,
-    ".mts": Lang.TypeScript,
-    ".cts": Lang.TypeScript,
-    ".html": Lang.Html,
-    ".htm": Lang.Html,
-    ".css": Lang.Css,
-};
-
-const EXT_TO_LANGUAGE_NAME: Record<string, string> = {
-    ".ts": "typescript",
-    ".tsx": "tsx",
-    ".js": "javascript",
-    ".jsx": "jsx",
-    ".mjs": "javascript",
-    ".cjs": "javascript",
-    ".mts": "typescript",
-    ".cts": "typescript",
-    ".html": "html",
-    ".htm": "html",
-    ".css": "css",
-    ".md": "markdown",
-    ".json": "json",
-    ".py": "python",
-    ".pyw": "python",
-    ".pyi": "python",
-    ".go": "go",
-    ".rs": "rust",
-    ".java": "java",
-    ".c": "c",
-    ".h": "c",
-    ".cpp": "cpp",
-    ".hpp": "cpp",
-    ".cc": "cpp",
-    ".hh": "cpp",
-    ".cxx": "cpp",
-    ".rb": "ruby",
-    ".php": "php",
-    ".swift": "swift",
-    ".kt": "kotlin",
-    ".kts": "kotlin",
-    ".scala": "scala",
-    ".cs": "csharp",
-};
-
-/** Extension -> dynamic language string identifier (for registerDynamicLanguage langs) */
-const EXT_TO_DYNAMIC_LANG: Record<string, string> = {
-    ".py": "python",
-    ".pyw": "python",
-    ".pyi": "python",
-    ".go": "go",
-    ".rs": "rust",
-    ".java": "java",
-    ".c": "c",
-    ".h": "c",
-    ".cpp": "cpp",
-    ".hpp": "cpp",
-    ".cc": "cpp",
-    ".hh": "cpp",
-    ".cxx": "cpp",
-    ".rb": "ruby",
-    ".php": "php",
-    ".swift": "swift",
-    ".kt": "kotlin",
-    ".kts": "kotlin",
-    ".scala": "scala",
-    ".cs": "csharp",
-};
 
 // ─── AST node kinds to extract per language ─────────────────────
 const AST_KINDS: Record<string, string[]> = {

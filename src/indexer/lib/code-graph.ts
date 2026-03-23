@@ -1,4 +1,5 @@
 import { dirname, extname, join } from "node:path";
+import { getLanguageForExt, LANGUAGE_EXTENSIONS } from "./ast-languages";
 import { loadPathAliases, type PathAliases } from "./graph-aliases";
 import { extractImports } from "./graph-imports";
 
@@ -48,73 +49,12 @@ export interface CircularDependency {
 
 /** Determine language from file extension */
 function getLanguage(filePath: string): string | null {
-    const ext = extname(filePath).toLowerCase();
-
-    switch (ext) {
-        case ".ts":
-        case ".js":
-        case ".mjs":
-        case ".cjs":
-            return "typescript";
-        case ".tsx":
-        case ".jsx":
-            return "tsx";
-        case ".py":
-        case ".pyw":
-        case ".pyi":
-            return "python";
-        case ".go":
-            return "go";
-        case ".java":
-            return "java";
-        case ".rs":
-            return "rust";
-        case ".c":
-        case ".h":
-            return "c";
-        case ".cpp":
-        case ".hpp":
-        case ".cc":
-        case ".hh":
-        case ".cxx":
-            return "cpp";
-        case ".rb":
-            return "ruby";
-        case ".php":
-            return "php";
-        case ".swift":
-            return "swift";
-        case ".kt":
-        case ".kts":
-            return "kotlin";
-        case ".scala":
-            return "scala";
-        case ".cs":
-            return "csharp";
-        default:
-            return null;
-    }
+    return getLanguageForExt(extname(filePath));
 }
 
 const TS_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 const INDEX_FILES = ["index.ts", "index.tsx", "index.js", "index.jsx"];
 
-const LANGUAGE_EXTENSIONS: Record<string, string[]> = {
-    typescript: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
-    tsx: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
-    python: [".py"],
-    go: [".go"],
-    java: [".java"],
-    rust: [".rs"],
-    c: [".c", ".h"],
-    cpp: [".cpp", ".hpp", ".cc", ".hh", ".cxx", ".h"],
-    ruby: [".rb"],
-    php: [".php"],
-    swift: [".swift"],
-    kotlin: [".kt", ".kts"],
-    scala: [".scala"],
-    csharp: [".cs"],
-};
 
 /**
  * Try to resolve a relative import specifier to an actual file in the file map.

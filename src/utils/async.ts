@@ -161,6 +161,67 @@ export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutEr
     });
 }
 
+// ============= AsyncOpQueue =============
+
+/**
+ * A queue that buffers async operations and drains them sequentially.
+ * Used by vector stores that wrap async backends behind a sync interface.
+ */
+export class AsyncOpQueue {
+    private pendingOps: Array<() => Promise<void>> = [];
+    private flushPromise: Promise<void> | null = null;
+    private label: string;
+
+    constructor(label: string = "AsyncOpQueue") {
+        this.label = label;
+    }
+
+    enqueue(op: () => Promise<void>): void {
+        this.pendingOps.push(op);
+        this.scheduleFlush();
+    }
+
+    async flush(): Promise<void> {
+        if (this.flushPromise) {
+            await this.flushPromise;
+        }
+
+        while (this.pendingOps.length > 0) {
+            await this.drainQueue();
+        }
+    }
+
+    get pending(): number {
+        return this.pendingOps.length;
+    }
+
+    private scheduleFlush(): void {
+        if (this.flushPromise) {
+            return;
+        }
+
+        this.flushPromise = this.drainQueue().finally(() => {
+            this.flushPromise = null;
+
+            if (this.pendingOps.length > 0) {
+                this.scheduleFlush();
+            }
+        });
+    }
+
+    private async drainQueue(): Promise<void> {
+        while (this.pendingOps.length > 0) {
+            const op = this.pendingOps.shift()!;
+
+            try {
+                await op();
+            } catch (err) {
+                console.error(`[${this.label}] async operation failed:`, err);
+            }
+        }
+    }
+}
+
 // ============= Concurrent Map =============
 
 interface ConcurrentMapOptions<T, R> {

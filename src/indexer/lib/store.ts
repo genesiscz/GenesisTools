@@ -73,6 +73,29 @@ function sanitizeName(name: string): string {
     return name.replace(/[^a-zA-Z0-9_]/g, "_");
 }
 
+/** Max bind parameters per SQL IN(...) clause */
+const SQL_BATCH_SIZE = 500;
+
+/**
+ * Run a batched SQL query for large ID lists that exceed SQLite bind limits.
+ * Slices `ids` into batches, builds IN(?,?,...) placeholders, calls `queryFn`.
+ */
+function runBatchedQuery<TResult>(opts: {
+    ids: string[];
+    queryFn: (placeholders: string, batch: string[]) => TResult[];
+}): TResult[] {
+    const { ids, queryFn } = opts;
+    const results: TResult[] = [];
+
+    for (let i = 0; i < ids.length; i += SQL_BATCH_SIZE) {
+        const batch = ids.slice(i, i + SQL_BATCH_SIZE);
+        const placeholders = batch.map(() => "?").join(",");
+        results.push(...queryFn(placeholders, batch));
+    }
+
+    return results;
+}
+
 function readMeta(db: Database, config: IndexConfig, createdAt: number): IndexMeta {
     const row = db.query("SELECT value FROM index_meta WHERE key = 'meta'").get() as { value: string } | null;
 
@@ -369,13 +392,14 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     return;
                 }
 
-                const batchSize = 500;
                 const tx = db.transaction(() => {
-                    for (let i = 0; i < chunkIds.length; i += batchSize) {
-                        const batch = chunkIds.slice(i, i + batchSize);
-                        const placeholders = batch.map(() => "?").join(",");
-                        db.run(`DELETE FROM ${contentTable} WHERE id IN (${placeholders})`, batch);
-                    }
+                    runBatchedQuery({
+                        ids: chunkIds,
+                        queryFn: (placeholders, batch) => {
+                            db.run(`DELETE FROM ${contentTable} WHERE id IN (${placeholders})`, batch);
+                            return [];
+                        },
+                    });
                 });
                 tx();
 
@@ -436,19 +460,13 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     return [];
                 }
 
-                const results: Array<{ id: string; content: string }> = [];
-                const batchSize = 500;
-
-                for (let i = 0; i < ids.length; i += batchSize) {
-                    const batch = ids.slice(i, i + batchSize);
-                    const placeholders = batch.map(() => "?").join(",");
-                    const rows = db
-                        .query(`SELECT id, content FROM ${contentTable} WHERE id IN (${placeholders})`)
-                        .all(...batch) as Array<{ id: string; content: string }>;
-                    results.push(...rows);
-                }
-
-                return results;
+                return runBatchedQuery({
+                    ids,
+                    queryFn: (placeholders, batch) =>
+                        db
+                            .query(`SELECT id, content FROM ${contentTable} WHERE id IN (${placeholders})`)
+                            .all(...batch) as Array<{ id: string; content: string }>,
+                });
             },
 
             getChunkIdsBySourcePaths(paths: string[]): string[] {
@@ -456,19 +474,15 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     return [];
                 }
 
-                const results: string[] = [];
-                const batchSize = 500;
-
-                for (let i = 0; i < paths.length; i += batchSize) {
-                    const batch = paths.slice(i, i + batchSize);
-                    const placeholders = batch.map(() => "?").join(",");
-                    const rows = db
-                        .query(`SELECT id FROM ${contentTable} WHERE filePath IN (${placeholders})`)
-                        .all(...batch) as Array<{ id: string }>;
-                    results.push(...rows.map((r) => r.id));
-                }
-
-                return results;
+                return runBatchedQuery({
+                    ids: paths,
+                    queryFn: (placeholders, batch) => {
+                        const rows = db
+                            .query(`SELECT id FROM ${contentTable} WHERE filePath IN (${placeholders})`)
+                            .all(...batch) as Array<{ id: string }>;
+                        return rows.map((r) => r.id);
+                    },
+                });
             },
 
             getChunkIdsBySourceIds(ids: string[]): string[] {
@@ -476,19 +490,15 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     return [];
                 }
 
-                const results: string[] = [];
-                const batchSize = 500;
-
-                for (let i = 0; i < ids.length; i += batchSize) {
-                    const batch = ids.slice(i, i + batchSize);
-                    const placeholders = batch.map(() => "?").join(",");
-                    const rows = db
-                        .query(`SELECT id FROM ${contentTable} WHERE source_id IN (${placeholders})`)
-                        .all(...batch) as Array<{ id: string }>;
-                    results.push(...rows.map((r) => r.id));
-                }
-
-                return results;
+                return runBatchedQuery({
+                    ids,
+                    queryFn: (placeholders, batch) => {
+                        const rows = db
+                            .query(`SELECT id FROM ${contentTable} WHERE source_id IN (${placeholders})`)
+                            .all(...batch) as Array<{ id: string }>;
+                        return rows.map((r) => r.id);
+                    },
+                });
             },
 
             clearEmbeddings(): void {
@@ -502,16 +512,17 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     return;
                 }
 
-                const batchSize = 500;
                 const tx = db.transaction(() => {
-                    for (let i = 0; i < sourceIds.length; i += batchSize) {
-                        const batch = sourceIds.slice(i, i + batchSize);
-                        const placeholders = batch.map(() => "?").join(",");
-                        db.run(
-                            `DELETE FROM ${activeEmbTable} WHERE doc_id IN (SELECT id FROM ${contentTable} WHERE source_id IN (${placeholders}))`,
-                            batch
-                        );
-                    }
+                    runBatchedQuery({
+                        ids: sourceIds,
+                        queryFn: (placeholders, batch) => {
+                            db.run(
+                                `DELETE FROM ${activeEmbTable} WHERE doc_id IN (SELECT id FROM ${contentTable} WHERE source_id IN (${placeholders}))`,
+                                batch
+                            );
+                            return [];
+                        },
+                    });
                 });
                 tx();
             },

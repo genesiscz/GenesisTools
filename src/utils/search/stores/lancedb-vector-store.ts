@@ -1,5 +1,5 @@
-import { cosineDistance } from "@app/utils/math";
-import type { VectorSearchHit, VectorStore } from "./vector-store";
+import { AsyncOpQueue } from "@app/utils/async";
+import { bruteForceVectorSearch, type VectorSearchHit, type VectorStore } from "./vector-store";
 
 interface ArrowVector {
     toArray(): Float32Array;
@@ -61,8 +61,7 @@ export class LanceDBVectorStore implements VectorStore {
     private db: LanceDBConnection | null = null;
     private table: LanceDBTable | null = null;
     private initPromise: Promise<void> | null = null;
-    private pendingOps: Array<() => Promise<void>> = [];
-    private flushPromise: Promise<void> | null = null;
+    private queue = new AsyncOpQueue("LanceDBVectorStore");
     /** In-memory mirror for synchronous search fallback while async ops are pending */
     private memoryIndex = new Map<string, Float32Array>();
     private closed = false;
@@ -79,7 +78,7 @@ export class LanceDBVectorStore implements VectorStore {
 
         this.memoryIndex.set(id, new Float32Array(vector));
 
-        this.enqueue(async () => {
+        this.queue.enqueue(async () => {
             await this.ensureReady();
 
             await this.table!.mergeInsert("id")
@@ -96,7 +95,7 @@ export class LanceDBVectorStore implements VectorStore {
 
         this.memoryIndex.delete(id);
 
-        this.enqueue(async () => {
+        this.queue.enqueue(async () => {
             await this.ensureReady();
 
             try {
@@ -108,8 +107,7 @@ export class LanceDBVectorStore implements VectorStore {
     }
 
     search(queryVector: Float32Array, limit: number): VectorSearchHit[] {
-        // Synchronous search using in-memory mirror
-        return this.searchMemory(queryVector, limit);
+        return bruteForceVectorSearch(this.memoryIndex, queryVector, limit);
     }
 
     count(): number {
@@ -126,13 +124,7 @@ export class LanceDBVectorStore implements VectorStore {
             this.initPromise = null;
         }
 
-        if (this.flushPromise) {
-            await this.flushPromise;
-        }
-
-        while (this.pendingOps.length > 0) {
-            await this.drainQueue();
-        }
+        await this.queue.flush();
     }
 
     async close(): Promise<void> {
@@ -199,47 +191,4 @@ export class LanceDBVectorStore implements VectorStore {
         }
     }
 
-    private searchMemory(queryVector: Float32Array, limit: number): VectorSearchHit[] {
-        const hits: VectorSearchHit[] = [];
-
-        for (const [docId, storedVec] of this.memoryIndex) {
-            const score = 1 - cosineDistance(queryVector, storedVec);
-            hits.push({ docId, score });
-        }
-
-        hits.sort((a, b) => b.score - a.score);
-        return hits.slice(0, limit);
-    }
-
-    private enqueue(op: () => Promise<void>): void {
-        this.pendingOps.push(op);
-        this.scheduleFlush();
-    }
-
-    private scheduleFlush(): void {
-        if (this.flushPromise) {
-            return;
-        }
-
-        this.flushPromise = this.drainQueue().finally(() => {
-            this.flushPromise = null;
-
-            if (this.pendingOps.length > 0) {
-                this.scheduleFlush();
-            }
-        });
-    }
-
-    private async drainQueue(): Promise<void> {
-        while (this.pendingOps.length > 0) {
-            const op = this.pendingOps.shift()!;
-
-            try {
-                await op();
-            } catch (err) {
-                // Log but don't crash — the in-memory index is still consistent
-                console.error("[LanceDBVectorStore] async operation failed:", err);
-            }
-        }
-    }
 }
