@@ -32,36 +32,7 @@ export class FileSource implements IndexerSource {
     }
 
     async scan(scanOpts?: ScanOptions): Promise<SourceEntry[]> {
-        let filePaths: string[];
-
-        if (this.opts.respectGitIgnore) {
-            const isGit = await this.checkIsGitRepo();
-
-            if (isGit) {
-                filePaths = await this.getGitTrackedFiles();
-            } else {
-                filePaths = this.walkDirectory();
-            }
-        } else {
-            filePaths = this.walkDirectory();
-        }
-
-        if (this.opts.includedSuffixes && this.opts.includedSuffixes.length > 0) {
-            const suffixSet = new Set(this.opts.includedSuffixes.map((s) => (s.startsWith(".") ? s : `.${s}`)));
-            filePaths = filePaths.filter((f) => suffixSet.has(extname(f).toLowerCase()));
-        }
-
-        if (this.opts.ignoredPaths && this.opts.ignoredPaths.length > 0) {
-            const ignored = this.opts.ignoredPaths;
-            filePaths = filePaths.filter((f) => {
-                const rel = relative(this.absBaseDir, f);
-                return !ignored.some((pattern) => rel.startsWith(pattern) || rel.includes(pattern));
-            });
-        }
-
-        if (this.ignoreFilter) {
-            filePaths = filePaths.filter((f) => !this.isIgnoredByFilter(f));
-        }
+        let filePaths = await this.getFilteredFilePaths();
 
         if (scanOpts?.limit) {
             filePaths = filePaths.slice(0, scanOpts.limit);
@@ -112,16 +83,16 @@ export class FileSource implements IndexerSource {
     }
 
     async estimateTotal(): Promise<number> {
+        const filePaths = await this.getFilteredFilePaths();
+        return filePaths.length;
+    }
+
+    private async getFilteredFilePaths(): Promise<string[]> {
         let filePaths: string[];
 
         if (this.opts.respectGitIgnore) {
             const isGit = await this.checkIsGitRepo();
-
-            if (isGit) {
-                filePaths = await this.getGitTrackedFiles();
-            } else {
-                filePaths = this.walkDirectory();
-            }
+            filePaths = isGit ? await this.getGitTrackedFiles() : this.walkDirectory();
         } else {
             filePaths = this.walkDirectory();
         }
@@ -143,7 +114,7 @@ export class FileSource implements IndexerSource {
             filePaths = filePaths.filter((f) => !this.isIgnoredByFilter(f));
         }
 
-        return filePaths.length;
+        return filePaths;
     }
 
     private async checkIsGitRepo(): Promise<boolean> {

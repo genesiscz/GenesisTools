@@ -135,7 +135,7 @@ export const MODEL_REGISTRY: ModelInfo[] = [
         id: "coreml-contextual",
         name: "Apple NLContextual",
         params: "built-in",
-        dimensions: 512,
+        dimensions: 768,
         ramGB: 0,
         speed: "fast",
         license: "macOS",

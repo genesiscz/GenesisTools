@@ -1,6 +1,7 @@
 import { toToon } from "@app/json/lib/toon";
 import { SafeJSON } from "@app/utils/json";
 import type { SearchResult } from "@app/utils/search/types";
+import { truncateText } from "@app/utils/string";
 import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -25,13 +26,8 @@ const VECTOR_MIN_SCORE = 0.55;
 const HYBRID_MIN_SCORE = VECTOR_MIN_SCORE * (1 / 60);
 
 function truncatePreview(text: string, maxLen: number): string {
-    const oneLine = text.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
-
-    if (oneLine.length <= maxLen) {
-        return oneLine;
-    }
-
-    return `${oneLine.slice(0, maxLen - 3)}...`;
+    const collapsed = text.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
+    return truncateText(collapsed, maxLen);
 }
 
 /**
@@ -129,7 +125,13 @@ export function registerSearchCommand(program: Command): void {
 
                 // Over-fetch when file filter is set so we don't lose results after filtering
                 const fetchLimit = opts.file ? limit * 3 : limit;
-                let { results: allResults, effectiveMode } = await searchIndexes(manager, names, query, mode, fetchLimit);
+                let { results: allResults, effectiveMode } = await searchIndexes(
+                    manager,
+                    names,
+                    query,
+                    mode,
+                    fetchLimit
+                );
 
                 if (opts.file) {
                     const filter = opts.file;
