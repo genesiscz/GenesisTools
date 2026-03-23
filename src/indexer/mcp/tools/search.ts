@@ -53,8 +53,7 @@ async function handleSearch(args: SearchArgs): Promise<string> {
 
             if (names.length > 0) {
                 const first = await manager.getIndex(names[0]);
-                const info = first.getConsistencyInfo();
-                mode = info.embeddingCount > 0 ? "hybrid" : "fulltext";
+                mode = detectMode(first);
             }
         }
 
