@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { extname } from "node:path";
 import { SafeJSON } from "@app/utils/json";
+import { estimateTokens } from "@app/utils/tokens";
 import type { SgNode } from "@ast-grep/napi";
 import { Lang, parse, registerDynamicLanguage } from "@ast-grep/napi";
 import type { ChunkRecord } from "./types";
@@ -175,10 +176,6 @@ function ensureDynamicLanguages(): void {
 /** Hard character cap per chunk — universal safety net applied to ALL strategies */
 const MAX_CHUNK_CHARS = 2000;
 
-// ─── Rough token estimator (1 token ~ 4 chars) ─────────────────
-function estimateTokens(text: string): number {
-    return Math.ceil(text.length / 4);
-}
 
 // ─── Content hash using xxHash64 (fast, non-cryptographic) ──────
 function contentHash(content: string): string {
