@@ -50,7 +50,7 @@ async function searchIndexes(
     query: string,
     mode: SearchMode,
     limit: number
-): Promise<{ results: Array<{ indexName: string; result: SearchResult<ChunkRecord> }>; effectiveMode: SearchMode }> {
+): Promise<Array<{ indexName: string; result: SearchResult<ChunkRecord> }>> {
     let allResults: Array<{ indexName: string; result: SearchResult<ChunkRecord> }> = [];
 
     for (const name of indexNames) {
@@ -66,7 +66,7 @@ async function searchIndexes(
     allResults = filterByMinScore(allResults, mode);
     allResults = allResults.slice(0, limit);
 
-    return { results: allResults, effectiveMode: mode };
+    return allResults;
 }
 
 export function registerSearchCommand(program: Command): void {
@@ -101,25 +101,23 @@ export function registerSearchCommand(program: Command): void {
                     names.push(...all);
                 }
 
+                // Hoist first indexer — reused for mode detection and fallback
+                const firstIndexer = await manager.getIndex(names[0]);
+
                 // Auto-detect mode: use hybrid when embeddings exist, fulltext otherwise
                 let mode: SearchMode;
 
                 if (opts.mode) {
                     mode = opts.mode;
                 } else {
-                    const firstIndexer = await manager.getIndex(names[0]);
                     mode = detectMode(firstIndexer);
                 }
 
+                let effectiveMode = mode;
+
                 // Over-fetch when file filter is set so we don't lose results after filtering
                 const fetchLimit = opts.file ? limit * 3 : limit;
-                let { results: allResults, effectiveMode } = await searchIndexes(
-                    manager,
-                    names,
-                    query,
-                    mode,
-                    fetchLimit
-                );
+                let allResults = await searchIndexes(manager, names, query, mode, fetchLimit);
 
                 if (opts.file) {
                     const filter = opts.file;
@@ -127,14 +125,12 @@ export function registerSearchCommand(program: Command): void {
                     allResults = allResults.slice(0, limit);
                 }
 
-                // Auto-fallback: if explicit fulltext returned 0 results, try hybrid
+                // Auto-fallback: if fulltext returned 0 results and we auto-detected, try hybrid
                 if (allResults.length === 0 && mode === "fulltext" && !opts.mode) {
-                    const firstIndexer = await manager.getIndex(names[0]);
                     const info = firstIndexer.getConsistencyInfo();
 
                     if (info.embeddingCount > 0) {
-                        const fallback = await searchIndexes(manager, names, query, "hybrid", limit);
-                        allResults = fallback.results;
+                        allResults = await searchIndexes(manager, names, query, "hybrid", limit);
                         effectiveMode = "hybrid";
 
                         if (allResults.length > 0) {

@@ -324,6 +324,8 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     return;
                 }
 
+                cachedMeta = null;
+
                 const tx = db.transaction(() => {
                     for (const chunk of chunks) {
                         db.run(
@@ -396,6 +398,8 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 if (chunkIds.length === 0) {
                     return;
                 }
+
+                cachedMeta = null;
 
                 const tx = db.transaction(() => {
                     runBatchedQuery({
@@ -511,6 +515,8 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
             },
 
             clearEmbeddings(): void {
+                cachedMeta = null;
+
                 if (embTableExists) {
                     db.run(`DELETE FROM ${activeEmbTable}`);
                 }
@@ -520,6 +526,8 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 if (sourceIds.length === 0 || !embTableExists) {
                     return;
                 }
+
+                cachedMeta = null;
 
                 const tx = db.transaction(() => {
                     runBatchedQuery({
