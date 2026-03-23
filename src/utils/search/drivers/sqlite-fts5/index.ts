@@ -386,23 +386,38 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
 
         const hits = this._vectorStore.search(queryVec, filters ? limit * 5 : limit);
 
+        if (hits.length === 0) {
+            return [];
+        }
+
+        // Batch lookup: single query for all doc IDs instead of N+1
+        const allDocIds = hits.map((h) => h.docId);
         const filterClause = filters?.sql ? ` AND ${filters.sql}` : "";
         const filterParams = filters?.params ?? [];
+        const placeholders = allDocIds.map(() => "?").join(",");
+        const idField = this.config.schema.idField;
+
+        const rows = this.db
+            .query(
+                `SELECT c.* FROM ${this.contentTableName} c WHERE c.${idField} IN (${placeholders})${filterClause}`
+            )
+            .all(...allDocIds, ...filterParams) as TDoc[];
+
+        const docMap = new Map<string, TDoc>();
+
+        for (const row of rows) {
+            const id = String((row as Record<string, unknown>)[idField]);
+            docMap.set(id, row);
+        }
+
+        // Preserve original score ordering from vector search
         const results: SearchResult<TDoc>[] = [];
 
         for (const hit of hits) {
-            const doc = this.db
-                .query(
-                    `SELECT c.* FROM ${this.contentTableName} c WHERE c.${this.config.schema.idField} = ?${filterClause}`
-                )
-                .get(hit.docId, ...filterParams) as TDoc | null;
+            const doc = docMap.get(hit.docId);
 
             if (doc) {
-                results.push({
-                    doc,
-                    score: hit.score,
-                    method: "cosine",
-                });
+                results.push({ doc, score: hit.score, method: "cosine" });
             }
 
             if (results.length >= limit) {
