@@ -6,11 +6,9 @@ import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
-import type { Indexer } from "../lib/indexer";
 import { IndexerManager } from "../lib/manager";
+import { detectMode, type SearchMode } from "../lib/search-mode";
 import type { ChunkRecord } from "../lib/types";
-
-type SearchMode = "fulltext" | "vector" | "hybrid";
 
 interface SearchCommandOptions {
     index?: string;
@@ -28,16 +26,6 @@ const HYBRID_MIN_SCORE = VECTOR_MIN_SCORE * (1 / 60);
 function truncatePreview(text: string, maxLen: number): string {
     const collapsed = text.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
     return truncateText(collapsed, maxLen);
-}
-
-/**
- * Detect the best search mode for an index.
- * If the index has embeddings → hybrid (combines BM25 + semantic).
- * Otherwise → fulltext (BM25 only).
- */
-function detectMode(indexer: Indexer): SearchMode {
-    const info = indexer.getConsistencyInfo();
-    return info.embeddingCount > 0 ? "hybrid" : "fulltext";
 }
 
 /**

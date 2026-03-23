@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { detectMode } from "../../lib/search-mode";
 import type { ChunkRecord } from "../../lib/types";
 import { formatError, getManager } from "../shared";
 
@@ -52,8 +53,7 @@ async function handleSearch(args: SearchArgs): Promise<string> {
 
             if (names.length > 0) {
                 const first = await manager.getIndex(names[0]);
-                const info = first.getConsistencyInfo();
-                mode = info.embeddingCount > 0 ? "hybrid" : "fulltext";
+                mode = detectMode(first);
             }
         }
 
