@@ -101,10 +101,8 @@ export function registerSearchCommand(program: Command): void {
                     names.push(...all);
                 }
 
-                // Hoist first indexer — reused for mode detection and fallback
                 const firstIndexer = await manager.getIndex(names[0]);
 
-                // Auto-detect mode: use hybrid when embeddings exist, fulltext otherwise
                 let mode: SearchMode;
 
                 if (opts.mode) {
@@ -115,7 +113,6 @@ export function registerSearchCommand(program: Command): void {
 
                 let effectiveMode = mode;
 
-                // Over-fetch when file filter is set so we don't lose results after filtering
                 const fetchLimit = opts.file ? limit * 3 : limit;
                 let allResults = await searchIndexes(manager, names, query, mode, fetchLimit);
 
@@ -125,7 +122,6 @@ export function registerSearchCommand(program: Command): void {
                     allResults = allResults.slice(0, limit);
                 }
 
-                // Auto-fallback: if fulltext returned 0 results and we auto-detected, try hybrid
                 if (allResults.length === 0 && mode === "fulltext" && !opts.mode) {
                     const info = firstIndexer.getConsistencyInfo();
 

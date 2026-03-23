@@ -45,6 +45,19 @@ async function handleSearch(args: SearchArgs): Promise<string> {
         const limit = args.limit ?? 20;
         const minScore = args.minScore ?? 0;
 
+        // Auto-detect mode: hybrid when embeddings exist, fulltext otherwise
+        let mode = args.mode ?? "fulltext";
+
+        if (!args.mode) {
+            const names = args.indexName ? [args.indexName] : manager.getIndexNames();
+
+            if (names.length > 0) {
+                const first = await manager.getIndex(names[0]);
+                const info = first.getConsistencyInfo();
+                mode = info.embeddingCount > 0 ? "hybrid" : "fulltext";
+            }
+        }
+
         let allResults: Array<{ indexName: string; doc: ChunkRecord; score: number; method: string }> = [];
 
         if (args.indexName) {
