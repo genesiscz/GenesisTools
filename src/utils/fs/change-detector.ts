@@ -9,6 +9,8 @@ export interface ChangeSet {
     unchanged: string[];
 }
 
+import { xxhash } from "@app/utils/hash";
+
 export interface ChangeDetectorOptions {
     /** Hash function: (content) => hash string. Default: Bun.hash xxHash64 */
     hashFn?: (content: string) => string;
@@ -16,7 +18,7 @@ export interface ChangeDetectorOptions {
 
 /** Default hash function using Bun's xxHash64 */
 export function defaultHash(content: string): string {
-    return Bun.hash(content).toString(16);
+    return xxhash(content);
 }
 
 /**

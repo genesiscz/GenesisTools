@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { extname } from "node:path";
+import { xxhash } from "@app/utils/hash";
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import type { SgNode } from "@ast-grep/napi";
@@ -177,11 +178,6 @@ function ensureDynamicLanguages(): void {
 const MAX_CHUNK_CHARS = 2000;
 
 
-// ─── Content hash using xxHash64 (fast, non-cryptographic) ──────
-function contentHash(content: string): string {
-    return Bun.hash(content).toString(16);
-}
-
 // ─── Universal safety net: cap all chunks at MAX_CHUNK_CHARS ────
 /**
  * Truncate any chunk exceeding MAX_CHUNK_CHARS.
@@ -270,7 +266,7 @@ function chunkByCharacter(opts: { filePath: string; content: string }): ChunkRes
 
         if (chunkContent.trim().length > 0) {
             chunks.push({
-                id: contentHash(chunkContent),
+                id: xxhash(chunkContent),
                 filePath,
                 startLine,
                 endLine,
@@ -306,7 +302,7 @@ function splitChunkByLines(opts: {
         const lines = content.split("\n");
         return [
             {
-                id: contentHash(content),
+                id: xxhash(content),
                 filePath,
                 startLine,
                 endLine: startLine + lines.length - 1,
@@ -333,7 +329,7 @@ function splitChunkByLines(opts: {
 
             if (chunkContent.trim().length > 0) {
                 chunks.push({
-                    id: contentHash(chunkContent),
+                    id: xxhash(chunkContent),
                     filePath,
                     startLine: currentStartLine,
                     endLine: currentStartLine + currentLines.length - 1,
@@ -421,7 +417,7 @@ function subChunkLargeNode(opts: {
     if (lines.length <= MAX_AST_CHUNK_LINES) {
         return [
             {
-                id: contentHash(content),
+                id: xxhash(content),
                 filePath,
                 startLine,
                 endLine: startLine + lines.length - 1,
@@ -451,7 +447,7 @@ function subChunkLargeNode(opts: {
         const chunkStartLine = isFirst ? startLine : startLine + headerLineCount + i;
 
         chunks.push({
-            id: contentHash(chunkContent),
+            id: xxhash(chunkContent),
             filePath,
             startLine: chunkStartLine,
             endLine: startLine + headerLineCount + end - 1,
@@ -505,7 +501,7 @@ function mergeSmallChunks(opts: { chunks: ChunkRecord[]; maxTokens: number }): C
             .join(", ");
 
         result.push({
-            id: contentHash(mergedContent),
+            id: xxhash(mergedContent),
             filePath: pending[0].filePath,
             startLine: pending[0].startLine,
             endLine: pending[pending.length - 1].endLine,
@@ -712,7 +708,7 @@ function chunkByLine(opts: { filePath: string; content: string; maxTokens: numbe
 
             if (chunkContent.trim().length > 0) {
                 chunks.push({
-                    id: contentHash(chunkContent),
+                    id: xxhash(chunkContent),
                     filePath,
                     startLine: currentStartLine,
                     endLine: currentStartLine + currentLines.length - 1,
@@ -937,7 +933,7 @@ function chunkByJson(opts: { filePath: string; content: string; maxTokens: numbe
         // Primitive value, single chunk
         const stringified = SafeJSON.stringify(parsed, null, 2);
         chunks.push({
-            id: contentHash(stringified),
+            id: xxhash(stringified),
             filePath,
             startLine: 0,
             endLine: 0,
