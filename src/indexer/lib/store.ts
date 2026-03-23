@@ -296,6 +296,9 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
         const vecTableExists = !!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(vecTable);
         const activeEmbTable = vecTableExists ? vecTable : embTable;
 
+        // Cached parsed meta — avoids repeated SELECT + JSON.parse
+        let cachedMeta: IndexMeta | null = null;
+
         // Cache embeddings table existence (B11)
         let embTableExists =
             vecTableExists || !!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(embTable);
@@ -334,8 +337,10 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
 
                         if (qdrantStore) {
                             // Qdrant: store with text for hybrid search
+                            const chunkMap = new Map(chunks.map((c) => [c.id, c]));
+
                             for (const [chunkId, vector] of embeddings) {
-                                const chunk = chunks.find((c) => c.id === chunkId);
+                                const chunk = chunkMap.get(chunkId);
                                 const text = chunk?.content ?? "";
                                 qdrantStore.storeWithText(chunkId, vector, text);
                             }
@@ -406,8 +411,12 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                 const vectorStoreForRemoval = fts.getVectorStore();
 
                 if (vectorStoreForRemoval) {
-                    for (const id of chunkIds) {
-                        vectorStoreForRemoval.remove(id);
+                    if (vectorStoreForRemoval.removeMany) {
+                        vectorStoreForRemoval.removeMany(chunkIds);
+                    } else {
+                        for (const id of chunkIds) {
+                            vectorStoreForRemoval.remove(id);
+                        }
                     }
                 }
             },
@@ -556,7 +565,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     avg_ms: number | null;
                 };
 
-                const meta = readMeta(db, config, createdAt);
+                const meta = cachedMeta ?? readMeta(db, config, createdAt);
 
                 return {
                     totalFiles: meta.stats.totalFiles,
@@ -585,7 +594,12 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
             },
 
             getMeta(): IndexMeta {
-                return readMeta(db, config, createdAt);
+                if (cachedMeta) {
+                    return cachedMeta;
+                }
+
+                cachedMeta = readMeta(db, config, createdAt);
+                return cachedMeta;
             },
 
             updateMeta(
@@ -593,7 +607,7 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     Pick<IndexMeta, "lastSyncAt" | "stats" | "indexEmbedding" | "searchEmbedding" | "indexingStatus">
                 >
             ): void {
-                const current = readMeta(db, config, createdAt);
+                const current = cachedMeta ?? readMeta(db, config, createdAt);
 
                 if (updates.lastSyncAt !== undefined) {
                     current.lastSyncAt = updates.lastSyncAt;
@@ -619,6 +633,8 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                     "meta",
                     SafeJSON.stringify(current),
                 ]);
+
+                cachedMeta = current;
             },
 
             getPathHashStore(): PathHashStore {

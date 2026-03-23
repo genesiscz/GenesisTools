@@ -10,6 +10,7 @@ export interface SqliteVectorStoreConfig {
 export class SqliteVectorStore implements VectorStore {
     private db: Database;
     private embTable: string;
+    private warnedLargeScan = false;
 
     constructor(db: Database, config: SqliteVectorStoreConfig) {
         this.db = db;
@@ -35,6 +36,14 @@ export class SqliteVectorStore implements VectorStore {
             doc_id: string;
             embedding: Buffer;
         }>;
+
+        if (!this.warnedLargeScan && rows.length > 10_000) {
+            console.warn(
+                `[SqliteVectorStore] Brute-force scanning ${rows.length} vectors. ` +
+                    `Consider using sqlite-vec or LanceDB for better performance.`
+            );
+            this.warnedLargeScan = true;
+        }
 
         const scored: VectorSearchHit[] = [];
 

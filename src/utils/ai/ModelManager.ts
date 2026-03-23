@@ -10,13 +10,13 @@ const HF_CACHE_DIR = join(homedir(), ".cache", "huggingface", "hub");
 // Model registry — known models per provider/task
 // ============================================
 
-export interface ModelInfo {
+export interface TranscriptionModelInfo {
     id: string;
     name: string;
     description: string;
 }
 
-const LOCAL_TRANSCRIPTION_MODELS: ModelInfo[] = [
+const LOCAL_TRANSCRIPTION_MODELS: TranscriptionModelInfo[] = [
     {
         id: "onnx-community/whisper-large-v3-turbo",
         name: "whisper-large-v3-turbo",
@@ -27,8 +27,8 @@ const LOCAL_TRANSCRIPTION_MODELS: ModelInfo[] = [
     { id: "onnx-community/whisper-tiny", name: "whisper-tiny", description: "fastest, basic quality" },
 ];
 
-function getCloudTranscriptionModels(): ModelInfo[] {
-    const models: ModelInfo[] = [];
+function getCloudTranscriptionModels(): TranscriptionModelInfo[] {
+    const models: TranscriptionModelInfo[] = [];
 
     if (process.env.GROQ_API_KEY) {
         models.push(
@@ -56,7 +56,7 @@ export function getDefaultModel(task: string, provider: string): string | undefi
  * Get known models for a task + provider combination.
  * Cloud models are resolved lazily (checks env vars at call time).
  */
-export function getModelsForTask(task: string, provider: string): ModelInfo[] {
+export function getModelsForTask(task: string, provider: string): TranscriptionModelInfo[] {
     if (task !== "transcribe") {
         return [];
     }

@@ -3,13 +3,8 @@ import { xxhash } from "@app/utils/hash";
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import type { SgNode } from "@ast-grep/napi";
-import { Lang, parse } from "@ast-grep/napi";
-import {
-    EXT_TO_DYNAMIC_LANG,
-    EXT_TO_LANG,
-    EXT_TO_LANGUAGE_NAME,
-    ensureDynamicLanguages,
-} from "./ast-languages";
+import { type Lang, parse } from "@ast-grep/napi";
+import { EXT_TO_DYNAMIC_LANG, EXT_TO_LANG, EXT_TO_LANGUAGE_NAME, ensureDynamicLanguages } from "./ast-languages";
 import type { ChunkRecord } from "./types";
 
 export interface ChunkResult {
@@ -557,14 +552,13 @@ function deduplicateChunks(chunks: ChunkRecord[]): ChunkRecord[] {
     const result: ChunkRecord[] = [];
 
     for (const chunk of chunks) {
-        // Check if this chunk is fully contained within any other chunk
+        // Check if this chunk's line range is fully contained within any other chunk
         const isContained = chunks.some(
             (other) =>
                 other.id !== chunk.id &&
                 other.startLine <= chunk.startLine &&
                 other.endLine >= chunk.endLine &&
-                other.content.includes(chunk.content) &&
-                other.content !== chunk.content
+                other.content.length > chunk.content.length
         );
 
         if (!isContained) {

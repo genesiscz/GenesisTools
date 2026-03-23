@@ -31,7 +31,8 @@ export class SqliteVecVectorStore implements VectorStore {
     }
 
     store(id: string, vector: Float32Array): void {
-        // vec0 doesn't support INSERT OR REPLACE directly -- delete first, then insert
+        // vec0 doesn't support INSERT OR REPLACE -- DELETE then INSERT is the documented pattern.
+        // The extra DELETE is fast (single-row PK lookup) and keeps the API safe for upserts.
         this.db.run(`DELETE FROM ${this.vecTable} WHERE doc_id = ?`, [id]);
 
         // Pass vector as raw blob (Float32Array buffer) for performance
@@ -41,6 +42,18 @@ export class SqliteVecVectorStore implements VectorStore {
 
     remove(id: string): void {
         this.db.run(`DELETE FROM ${this.vecTable} WHERE doc_id = ?`, [id]);
+    }
+
+    removeMany(ids: string[]): void {
+        if (ids.length === 0) {
+            return;
+        }
+
+        for (let i = 0; i < ids.length; i += 500) {
+            const batch = ids.slice(i, i + 500);
+            const placeholders = batch.map(() => "?").join(",");
+            this.db.run(`DELETE FROM ${this.vecTable} WHERE doc_id IN (${placeholders})`, batch);
+        }
     }
 
     search(queryVector: Float32Array, limit: number): VectorSearchHit[] {
