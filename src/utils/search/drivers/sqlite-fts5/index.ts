@@ -146,7 +146,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
             this._vectorStore.remove(docId);
         }
 
-        this.docCount = this.queryCount();
+        this.docCount--;
     }
 
     async search(opts: SearchOptions): Promise<SearchResult<TDoc>[]> {
@@ -300,7 +300,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
             }
         }
 
-        this.docCount = this.queryCount();
+        this.docCount++;
     }
 
     bm25Search(
@@ -398,9 +398,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         const idField = this.config.schema.idField;
 
         const rows = this.db
-            .query(
-                `SELECT c.* FROM ${this.contentTableName} c WHERE c.${idField} IN (${placeholders})${filterClause}`
-            )
+            .query(`SELECT c.* FROM ${this.contentTableName} c WHERE c.${idField} IN (${placeholders})${filterClause}`)
             .all(...allDocIds, ...filterParams) as TDoc[];
 
         const docMap = new Map<string, TDoc>();

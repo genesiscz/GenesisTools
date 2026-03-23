@@ -55,7 +55,6 @@ function getLanguage(filePath: string): string | null {
 const TS_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 const INDEX_FILES = ["index.ts", "index.tsx", "index.js", "index.jsx"];
 
-
 /**
  * Try to resolve a relative import specifier to an actual file in the file map.
  * Returns the resolved relative path, or null if not found.

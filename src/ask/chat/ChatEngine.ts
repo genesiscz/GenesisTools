@@ -321,7 +321,6 @@ export class ChatEngine {
         return this.conversationHistory.reduce((total, msg) => total + (msg.tokens || 0), 0);
     }
 
-
     async switchModel(newModel: LanguageModel, provider: string, modelName: string): Promise<void> {
         this.config.model = newModel;
         this.config.provider = provider;

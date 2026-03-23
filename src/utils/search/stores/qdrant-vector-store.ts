@@ -273,5 +273,4 @@ export class QdrantVectorStore implements VectorStore {
             });
         }
     }
-
 }

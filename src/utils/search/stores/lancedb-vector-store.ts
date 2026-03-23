@@ -190,5 +190,4 @@ export class LanceDBVectorStore implements VectorStore {
             await this.table.delete("id = '__seed__'");
         }
     }
-
 }

@@ -58,8 +58,7 @@ export class Embedder {
 
                 if (!(await ollamaProvider.hasModel(options.model))) {
                     throw new Error(
-                        `Ollama model "${options.model}" is not pulled.\n` +
-                            `Run: ollama pull ${options.model}`
+                        `Ollama model "${options.model}" is not pulled.\n` + `Run: ollama pull ${options.model}`
                     );
                 }
             }

@@ -4,8 +4,8 @@ import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import type { WatcherSubscription } from "@app/utils/fs/watcher";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { Storage } from "@app/utils/storage/storage";
-import { chunkFile } from "./chunker";
 import type { ChunkResult } from "./chunker";
+import { chunkFile } from "./chunker";
 import type { EventName, IndexerCallbacks, IndexerEventMap, SyncStats } from "./events";
 import { IndexerEventEmitter } from "./events";
 import type { ModelInfo } from "./model-registry";
@@ -806,7 +806,11 @@ export class Indexer extends IndexerEventEmitter {
                 const remainingHashMap = new Map<string, string>();
 
                 if (remaining.length > 0) {
-                    const { chunks, pathEntries: remainingPathEntries, perEntry } = this.chunkEntries(remaining, strategy, maxTokens);
+                    const {
+                        chunks,
+                        pathEntries: remainingPathEntries,
+                        perEntry,
+                    } = this.chunkEntries(remaining, strategy, maxTokens);
 
                     if (chunks.length > 0) {
                         await this.store.insertChunks(chunks);

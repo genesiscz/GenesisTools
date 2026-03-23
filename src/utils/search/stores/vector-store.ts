@@ -19,7 +19,7 @@ export interface VectorStore {
 export function bruteForceVectorSearch(
     memoryIndex: Map<string, Float32Array>,
     queryVector: Float32Array,
-    limit: number,
+    limit: number
 ): VectorSearchHit[] {
     const hits: VectorSearchHit[] = [];
 
