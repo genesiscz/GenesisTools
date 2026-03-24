@@ -12,8 +12,6 @@ function resolveLocale(override?: string): string {
 
     if (!_resolveLocale) {
         // Lazy require so Vite won't bundle node:child_process into client code.
-        // Only formatDateTime (server/CLI-only) calls this path.
-        // biome-ignore lint/style/noCommonJs: intentional lazy require to avoid static bundling
         _resolveLocale = (require("./date-locale") as { getSystemLocale: () => string }).getSystemLocale;
     }
 
