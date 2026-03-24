@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { Executor } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { isPromptCancelled } from "@app/utils/prompt-helpers.js";
@@ -472,7 +473,7 @@ async function performRebase(repoDir: string, commits: CommitInfo[]): Promise<vo
 
     // Create message queue file - store each message in a separate numbered file
     // This is simpler and more reliable than trying to parse delimiters
-    const messagesDir = `/tmp/genesis-tools-msgs-${Date.now()}`;
+    const messagesDir = join(tmpdir(), `genesis-tools-msgs-${Date.now()}`);
     await Bun.spawn({ cmd: ["mkdir", "-p", messagesDir] }).exited;
 
     for (let i = 0; i < commits.length; i++) {
@@ -481,11 +482,11 @@ async function performRebase(repoDir: string, commits: CommitInfo[]): Promise<vo
     }
 
     // Create index file to track which commit we're currently editing
-    const indexFilePath = `/tmp/genesis-tools-index-${Date.now()}.txt`;
+    const indexFilePath = join(tmpdir(), `genesis-tools-index-${Date.now()}.txt`);
     await Bun.write(indexFilePath, "0");
 
     // Create a simple editor script that reads messages from numbered files
-    const editorScriptPath = `/tmp/genesis-tools-editor-${Date.now()}.sh`;
+    const editorScriptPath = join(tmpdir(), `genesis-tools-editor-${Date.now()}.sh`);
     // Use string concatenation to avoid template literal evaluation of ${idx}
     // Make the script more robust with error handling and atomic operations
     const editorScript =

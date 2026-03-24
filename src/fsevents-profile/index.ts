@@ -9,6 +9,11 @@ import * as fsevents from "fsevents";
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
+if (process.platform !== "darwin") {
+    console.error("fsevents-profile requires macOS (uses fs_usage and /dev/fsevents).");
+    process.exit(1);
+}
+
 // Define options interface
 interface Options {
     duration?: number;

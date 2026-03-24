@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, parse } from "node:path";
 import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { spawn } from "bun";
@@ -100,7 +100,7 @@ export class AudioProcessor {
                 throw new Error("Cannot determine audio duration");
             }
 
-            const baseName = inputPath.split("/").pop()?.split(".")[0] || "audio";
+            const baseName = parse(inputPath).name || "audio";
             const outputFiles: string[] = [];
 
             logger.info(`Splitting audio into ${Math.ceil(audioInfo.duration / chunkDurationSeconds)} chunks...`);
@@ -173,7 +173,7 @@ export class AudioProcessor {
                 return [inputPath]; // File is small enough, no splitting needed
             }
 
-            const _baseName = inputPath.split("/").pop()?.split(".")[0] || "audio";
+            const _baseName = parse(inputPath).name || "audio";
             const _outputFiles: string[] = [];
 
             // Estimate duration per chunk based on file size
