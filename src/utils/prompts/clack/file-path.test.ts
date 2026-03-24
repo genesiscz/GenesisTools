@@ -2,11 +2,12 @@ import { describe, expect, it } from "bun:test";
 import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { expandPath } from "@app/utils/paths";
 
 /**
  * The filePathInput function is interactive (readline + raw mode), so we can't
  * easily test the full prompt loop. Instead, we test the internal logic:
- * - Path expansion (~/  ./  relative)
+ * - Path expansion (~/  ./  relative) — via shared @app/utils/paths
  * - Directory reading + filtering
  * - Tab completion (common prefix, single match)
  * - Entry sorting (directories first)
@@ -15,27 +16,6 @@ import { join } from "node:path";
  * We extract the pure functions and test them directly, then verify the
  * module exports correctly.
  */
-
-// ---------------------------------------------------------------------------
-// Test helpers that mirror the internal logic of file-path.ts
-// These are the same algorithms used inside the prompt — tested in isolation.
-// ---------------------------------------------------------------------------
-
-function expandPath(p: string): string {
-    if (p.startsWith("~/")) {
-        return join(homedir(), p.slice(2));
-    }
-
-    if (p.startsWith("./")) {
-        return join(process.cwd(), p.slice(2));
-    }
-
-    if (!p.startsWith("/")) {
-        return join(process.cwd(), p);
-    }
-
-    return p;
-}
 
 interface DirEntry {
     name: string;

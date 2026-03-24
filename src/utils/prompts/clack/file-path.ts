@@ -4,10 +4,10 @@
  */
 
 import { readdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, sep } from "node:path";
+import { basename, dirname } from "node:path";
 import * as readline from "node:readline";
 import { Writable } from "node:stream";
+import { endsWithSep, expandPath, lastSepIndex, sep } from "@app/utils/paths";
 import pc from "picocolors";
 
 // Silent writable stream to prevent readline from echoing input
@@ -81,24 +81,6 @@ export async function filePathInput(options: FilePathInputOptions): Promise<stri
         let cursor = -1; // -1 = input focused (no listing highlight)
         let lastRenderHeight = 0;
 
-        const endsWithSep = (p: string): boolean => p.endsWith("/") || p.endsWith("\\");
-        const lastSepIndex = (p: string): number => Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-
-        const expandPath = (p: string): string => {
-            if (p.startsWith("~/")) {
-                return join(homedir(), p.slice(2));
-            }
-
-            if (p.startsWith("./")) {
-                return join(process.cwd(), p.slice(2));
-            }
-
-            if (!isAbsolute(p)) {
-                return join(process.cwd(), p);
-            }
-
-            return p;
-        };
 
         const readDir = (): DirEntry[] => {
             const expanded = expandPath(value);
