@@ -134,6 +134,7 @@ export class ClaudeSession {
     /**
      * Load a session by its session ID (full UUID or 8-char prefix).
      * Scans the project directory for a matching filename.
+     * When no explicit projectDir is given, falls back to scanning all projects.
      *
      * @param sessionId Full UUID or prefix (minimum 8 characters).
      * @param projectDir Encoded project directory name. Defaults to the current cwd encoding.
@@ -142,17 +143,49 @@ export class ClaudeSession {
     static async fromSessionId(sessionId: string, projectDir?: string): Promise<ClaudeSession> {
         const dir = projectDir ? resolve(PROJECTS_DIR, projectDir) : resolve(PROJECTS_DIR, encodedProjectDir());
 
-        if (!existsSync(dir)) {
-            throw new Error(`Project directory does not exist: ${dir}`);
+        if (existsSync(dir)) {
+            const found = ClaudeSession.findSessionFileInDir(dir, sessionId);
+            if (found) {
+                return ClaudeSession.fromFile(found);
+            }
         }
 
-        // Try exact match first
+        // Fallback: scan all project directories (only when no explicit projectDir was given)
+        if (!projectDir) {
+            let projectDirs: string[];
+            try {
+                projectDirs = readdirSync(PROJECTS_DIR);
+            } catch {
+                projectDirs = [];
+            }
+
+            const currentEncoded = existsSync(dir) ? basename(dir) : null;
+            for (const entry of projectDirs) {
+                if (entry === currentEncoded) {
+                    continue;
+                }
+
+                const candidateDir = resolve(PROJECTS_DIR, entry);
+                const found = ClaudeSession.findSessionFileInDir(candidateDir, sessionId);
+                if (found) {
+                    return ClaudeSession.fromFile(found);
+                }
+            }
+        }
+
+        throw new Error(`No session file found for ID prefix "${sessionId}" in ${dir} (also searched all projects)`);
+    }
+
+    /**
+     * Search a single project directory (and its subagents/) for a session file
+     * matching the given ID (exact or prefix).
+     */
+    private static findSessionFileInDir(dir: string, sessionId: string): string | null {
         const exactPath = resolve(dir, `${sessionId}.jsonl`);
         if (existsSync(exactPath)) {
-            return ClaudeSession.fromFile(exactPath);
+            return exactPath;
         }
 
-        // Prefix search across main dir and subagents
         const dirsToSearch = [dir];
         const subagentsDir = resolve(dir, "subagents");
         if (existsSync(subagentsDir)) {
@@ -167,14 +200,15 @@ export class ClaudeSession {
             } catch {
                 continue;
             }
+
             for (const entry of entries) {
                 if (entry.endsWith(".jsonl") && entry.toLowerCase().startsWith(lowerPrefix)) {
-                    return ClaudeSession.fromFile(resolve(searchDir, entry));
+                    return resolve(searchDir, entry);
                 }
             }
         }
 
-        throw new Error(`No session file found for ID prefix "${sessionId}" in ${dir}`);
+        return null;
     }
 
     /**

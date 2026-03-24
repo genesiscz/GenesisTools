@@ -6,9 +6,11 @@
  * and multiple output targets (stdout, file, clipboard, memory dir).
  */
 
+import { resolve } from "node:path";
 import { parseDate } from "@app/claude/lib/history/search";
 import type { SummarizeOptions, SummarizeResult } from "@app/claude/lib/history/summarize/engine.ts";
 import { listTemplates, SummarizeEngine } from "@app/claude/lib/history/summarize/engine.ts";
+import { encodedProjectDir } from "@app/utils/claude";
 import { ClaudeSession } from "@app/utils/claude/session";
 import { listAppleNotesFolders } from "@app/utils/macos/apple-notes";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
@@ -55,6 +57,7 @@ interface SummarizeCommandOptions {
     customPrompt?: string;
     memoryDir?: string;
     appleNotes?: boolean;
+    project?: string;
 }
 
 // =============================================================================
@@ -65,9 +68,13 @@ async function resolveSessionIds(
     positionalId: string | undefined,
     opts: SummarizeCommandOptions
 ): Promise<ClaudeSession[]> {
+    // Resolve --project to encoded dir name (for fromSessionId) and absolute path (for findSessions)
+    const encodedProject = opts.project ? encodedProjectDir(resolve(opts.project)) : undefined;
+    const projectPath = opts.project ? resolve(opts.project) : undefined;
+
     // 1. Positional argument
     if (positionalId) {
-        const session = await ClaudeSession.fromSessionId(positionalId);
+        const session = await ClaudeSession.fromSessionId(positionalId, encodedProject);
         return [session];
     }
 
@@ -75,7 +82,7 @@ async function resolveSessionIds(
     if (opts.session && opts.session.length > 0) {
         const sessions: ClaudeSession[] = [];
         for (const id of opts.session) {
-            sessions.push(await ClaudeSession.fromSessionId(id));
+            sessions.push(await ClaudeSession.fromSessionId(id, encodedProject));
         }
         return sessions;
     }
@@ -89,7 +96,7 @@ async function resolveSessionIds(
                     "Use --current only when running inside a Claude Code session."
             );
         }
-        const session = await ClaudeSession.fromSessionId(envId);
+        const session = await ClaudeSession.fromSessionId(envId, encodedProject);
         return [session];
     }
 
@@ -97,7 +104,7 @@ async function resolveSessionIds(
     if (opts.since || opts.until) {
         const since = opts.since ? parseDate(opts.since) : undefined;
         const until = opts.until ? parseDate(opts.until) : undefined;
-        const infos = await ClaudeSession.findSessions({ since, until });
+        const infos = await ClaudeSession.findSessions({ since, until, project: projectPath });
         if (infos.length === 0) {
             throw new Error("No sessions found matching the specified date range.");
         }
@@ -110,7 +117,7 @@ async function resolveSessionIds(
 
     // 5. Interactive mode (TTY only)
     if (process.stdout.isTTY) {
-        return [await pickSessionInteractively()];
+        return [await pickSessionInteractively(projectPath)];
     }
 
     // 6. Non-interactive without session = error
@@ -120,8 +127,8 @@ async function resolveSessionIds(
     );
 }
 
-async function pickSessionInteractively(): Promise<ClaudeSession> {
-    const sessions = await ClaudeSession.findSessions({ limit: 30 });
+async function pickSessionInteractively(project?: string): Promise<ClaudeSession> {
+    const sessions = await ClaudeSession.findSessions({ limit: 30, project });
 
     if (sessions.length === 0) {
         throw new Error("No sessions found. Check that Claude Code sessions exist in ~/.claude/projects/");
@@ -426,6 +433,7 @@ export function registerSummarizeCommand(program: Command): void {
         .option("--custom-prompt <text>", "Custom prompt text (for custom mode)")
         .option("--memory-dir <path>", "Output dir for memorization topic files")
         .option("--apple-notes", "Save to Apple Notes (interactive folder picker)")
+        .option("--project <path>", "Project path (e.g. ../CEZ/col-fe/)")
         .action(async (sessionId: string | undefined, cmdOpts: SummarizeCommandOptions) => {
             try {
                 const sessions = await resolveSessionIds(sessionId, cmdOpts);

@@ -19,7 +19,7 @@ import { input, search, select } from "@inquirer/prompts";
 import { spawn } from "bun";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { registerSummarizeCommand } from "./summarize";
+
 
 // =============================================================================
 // Output Formatting
@@ -308,7 +308,6 @@ export function registerHistoryCommand(program: Command): void {
                                     "bun",
                                     "run",
                                     resolve(import.meta.dir, "../index.ts"),
-                                    "history",
                                     "summarize",
                                     chosen as string,
                                     "-i",
@@ -362,6 +361,4 @@ export function registerHistoryCommand(program: Command): void {
             await proc.exited;
         });
 
-    // Summarize subcommand
-    registerSummarizeCommand(historyCmd);
 }
