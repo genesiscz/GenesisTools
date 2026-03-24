@@ -2,8 +2,6 @@
  * Shared date utilities for CLI tools.
  */
 
-import { execSync } from "node:child_process";
-
 // ============================================
 // Locale Detection
 // ============================================
@@ -22,6 +20,9 @@ export function getSystemLocale(): string {
 
     if (process.platform === "darwin") {
         try {
+            // Dynamic require to avoid pulling node:child_process into browser bundles
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const { execSync } = require("node:child_process") as typeof import("node:child_process");
             const raw = execSync("defaults read NSGlobalDomain AppleLocale", {
                 encoding: "utf-8",
                 timeout: 1000,
