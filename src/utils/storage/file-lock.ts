@@ -20,7 +20,12 @@ function isProcessAlive(pid: number): boolean {
     try {
         process.kill(pid, 0);
         return true;
-    } catch {
+    } catch (err) {
+        // On Windows, EPERM means the process exists but we can't signal it
+        if (process.platform === "win32" && err instanceof Error && "code" in err) {
+            return (err as NodeJS.ErrnoException).code === "EPERM";
+        }
+
         return false;
     }
 }

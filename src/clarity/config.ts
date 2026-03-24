@@ -45,7 +45,9 @@ export async function saveConfig(config: ClarityConfig): Promise<void> {
     ClarityConfigSchema.parse(config);
     await storage.ensureDirs();
     await storage.setConfig(config);
-    await chmod(storage.getConfigPath(), 0o600);
+    if (process.platform !== "win32") {
+        await chmod(storage.getConfigPath(), 0o600);
+    }
 }
 
 export async function requireConfig(): Promise<ClarityConfig> {

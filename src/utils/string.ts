@@ -26,9 +26,14 @@ export function stripAnsi(input: string): string {
 }
 
 /**
- * Escape a string for safe use as a shell argument (single-quoted).
+ * Escape a string for safe use as a shell argument.
+ * Uses single-quoting on Unix, double-quoting on Windows cmd.exe.
  */
 export function escapeShellArg(arg: string): string {
+    if (process.platform === "win32") {
+        return `"${arg.replace(/"/g, '\\"')}"`;
+    }
+
     return `'${arg.replace(/'/g, "'\"'\"'")}'`;
 }
 
