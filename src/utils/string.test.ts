@@ -91,7 +91,7 @@ describe("escapeShellArg (Unix)", () => {
     });
 });
 
-describe("escapeShellArg (Windows)", () => {
+describe("escapeShellArg (Windows — cross-spawn compatible)", () => {
     const originalPlatform = process.platform;
 
     beforeEach(() => {
@@ -102,43 +102,49 @@ describe("escapeShellArg (Windows)", () => {
         Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
     });
 
-    it("wraps in double quotes", () => {
-        expect(escapeShellArg("hello")).toBe('"hello"');
+    // Phase 1: CommandLineToArgvW quoting
+    it("wraps in ^-escaped double quotes", () => {
+        expect(escapeShellArg("hello")).toBe('^"hello^"');
     });
 
     it("handles empty string", () => {
-        expect(escapeShellArg("")).toBe('""');
+        expect(escapeShellArg("")).toBe('^"^"');
     });
 
     it("escapes double quotes for CommandLineToArgvW", () => {
-        expect(escapeShellArg('say "hi"')).toBe('"say \\"hi\\""');
+        expect(escapeShellArg('say "hi"')).toBe('^"say^ \\^"hi\\^"^"');
     });
 
     it("doubles trailing backslashes to prevent escaping the closing quote", () => {
-        expect(escapeShellArg("C:\\path\\")).toBe('"C:\\path\\\\"');
+        expect(escapeShellArg("C:\\path\\")).toBe('^"C:\\path\\\\^"');
     });
 
     it("doubles backslashes that immediately precede a double quote", () => {
-        // Input: a\"b → "a\\\"b" (\ doubled before ", " escaped)
-        expect(escapeShellArg('a\\"b')).toBe('"a\\\\\\"b"');
+        expect(escapeShellArg('a\\"b')).toBe('^"a\\\\\\^"b^"');
     });
 
     it("leaves mid-string backslashes alone when not before a quote", () => {
-        expect(escapeShellArg("C:\\Users\\Martin")).toBe('"C:\\Users\\Martin"');
+        expect(escapeShellArg("C:\\Users\\Martin")).toBe('^"C:\\Users\\Martin^"');
     });
 
-    it("neutralizes % to prevent cmd.exe variable expansion", () => {
-        expect(escapeShellArg("100%")).toBe('"100%%"');
-        expect(escapeShellArg("%PATH%")).toBe('"%%PATH%%"');
+    // Phase 2: cmd.exe metacharacter escaping
+    it("escapes % with ^ to prevent cmd.exe variable expansion", () => {
+        expect(escapeShellArg("100%")).toBe('^"100^%^"');
+        expect(escapeShellArg("%PATH%")).toBe('^"^%PATH^%^"');
     });
 
-    it("handles paths with spaces", () => {
-        expect(escapeShellArg("C:\\Program Files\\app")).toBe('"C:\\Program Files\\app"');
+    it("escapes & and | to prevent command chaining", () => {
+        expect(escapeShellArg("foo & bar")).toBe('^"foo^ ^&^ bar^"');
+        expect(escapeShellArg("foo | bar")).toBe('^"foo^ ^|^ bar^"');
     });
 
-    it("handles glob patterns", () => {
-        expect(escapeShellArg("*.ts")).toBe('"*.ts"');
-        expect(escapeShellArg("src\\**\\*.tsx")).toBe('"src\\**\\*.tsx"');
+    it("handles paths with spaces (space is ^-escaped)", () => {
+        expect(escapeShellArg("C:\\Program Files\\app")).toBe('^"C:\\Program^ Files\\app^"');
+    });
+
+    it("escapes glob metacharacters * and ?", () => {
+        expect(escapeShellArg("*.ts")).toBe('^"^*.ts^"');
+        expect(escapeShellArg("src\\**\\*.tsx")).toBe('^"src\\^*^*\\^*.tsx^"');
     });
 });
 

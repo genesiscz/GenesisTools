@@ -199,59 +199,52 @@ describe("paths: Windows-specific behavior", () => {
 // escapeShellArg Windows branch (from string.ts)
 // ---------------------------------------------------------------------------
 
-describe("escapeShellArg: Windows branch (CommandLineToArgvW + cmd.exe)", () => {
+describe("escapeShellArg: Windows (cross-spawn compatible, two-phase)", () => {
     afterEach(() => {
         restorePlatform();
     });
 
-    it("uses double quotes on Windows", async () => {
+    it("wraps in ^-escaped double quotes on Windows", async () => {
         mockWindows();
         const { escapeShellArg } = await import("../utils/string");
-        expect(escapeShellArg("hello")).toBe('"hello"');
+        expect(escapeShellArg("hello")).toBe('^"hello^"');
     });
 
-    it("escapes double quotes inside on Windows", async () => {
+    it("escapes inner double quotes (Phase 1) then ^-escapes them (Phase 2)", async () => {
         mockWindows();
         const { escapeShellArg } = await import("../utils/string");
-        expect(escapeShellArg('say "hi"')).toBe('"say \\"hi\\""');
+        expect(escapeShellArg('say "hi"')).toBe('^"say^ \\^"hi\\^"^"');
     });
 
-    it("doubles trailing backslashes to prevent escaping the closing quote", async () => {
+    it("doubles trailing backslashes (Phase 1)", async () => {
         mockWindows();
         const { escapeShellArg } = await import("../utils/string");
-        // C:\path\ → "C:\path\\" (trailing \ doubled so it doesn't escape the ")
-        expect(escapeShellArg("C:\\path\\")).toBe('"C:\\path\\\\"');
+        expect(escapeShellArg("C:\\path\\")).toBe('^"C:\\path\\\\^"');
     });
 
-    it("doubles backslashes that precede a double quote", async () => {
+    it("doubles backslashes before a quote (Phase 1)", async () => {
         mockWindows();
         const { escapeShellArg } = await import("../utils/string");
-        // Input: a\"b → CommandLineToArgvW needs: "a\\\"b" (double the \, escape the ")
-        expect(escapeShellArg('a\\"b')).toBe('"a\\\\\\"b"');
+        expect(escapeShellArg('a\\"b')).toBe('^"a\\\\\\^"b^"');
     });
 
-    it("leaves mid-string backslashes that don't precede quotes alone", async () => {
+    it("leaves mid-string backslashes alone", async () => {
         mockWindows();
         const { escapeShellArg } = await import("../utils/string");
-        // C:\Users\Martin → "C:\Users\Martin" (no trailing \, no \ before ")
-        expect(escapeShellArg("C:\\Users\\Martin")).toBe('"C:\\Users\\Martin"');
+        expect(escapeShellArg("C:\\Users\\Martin")).toBe('^"C:\\Users\\Martin^"');
     });
 
-    it("neutralizes % for cmd.exe variable expansion", async () => {
+    it("^-escapes % for cmd.exe variable expansion (Phase 2)", async () => {
         mockWindows();
         const { escapeShellArg } = await import("../utils/string");
-        expect(escapeShellArg("100%")).toBe('"100%%"');
-        expect(escapeShellArg("%PATH%")).toBe('"%%PATH%%"');
+        expect(escapeShellArg("100%")).toBe('^"100^%^"');
+        expect(escapeShellArg("%PATH%")).toBe('^"^%PATH^%^"');
     });
 
-    it("handles combined edge case: backslash + quote + percent", async () => {
+    it("^-escapes & and | to prevent command injection (Phase 2)", async () => {
         mockWindows();
         const { escapeShellArg } = await import("../utils/string");
-        // a"b%c\ → backslash-quote escaping + % doubling + trailing \ doubling
-        const result = escapeShellArg('a"b%c\\');
-        expect(result).toContain('\\"'); // quote escaped
-        expect(result).toContain("%%"); // percent doubled
-        expect(result).toEndWith('\\\\"'); // trailing backslash doubled before closing quote
+        expect(escapeShellArg("foo & bar")).toBe('^"foo^ ^&^ bar^"');
     });
 
     it("uses single quotes on Unix (default)", async () => {

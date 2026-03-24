@@ -28,24 +28,27 @@ export function stripAnsi(input: string): string {
 /**
  * Escape a string for safe use as a shell argument.
  * Unix: single-quoting with escaped inner quotes.
- * Windows: double-quoting with CommandLineToArgvW-compatible escaping
- * and cmd.exe %-variable neutralization.
+ * Windows: two-phase escaping modeled after cross-spawn (the npm standard):
+ *   Phase 1 — CommandLineToArgvW: double backslashes before quotes + trailing
+ *   Phase 2 — cmd.exe metacharacters: prefix with ^ to neutralize
  *
  * For untrusted input on Windows, prefer spawn() with an argument array
  * and shell: false — cmd.exe escaping cannot be made 100% safe.
  */
+// cmd.exe metacharacters that must be ^-escaped (from cross-spawn)
+const CMD_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
+
 export function escapeShellArg(arg: string): string {
     if (process.platform === "win32") {
-        // 1. CommandLineToArgvW escaping:
-        //    - Double backslashes that precede a double-quote
-        //    - Escape double-quotes
-        //    - Double trailing backslashes (they'd escape the closing quote)
-        // 2. Neutralize cmd.exe %VAR% expansion by doubling %
-        const escaped = arg
-            .replace(/(\\*)"/g, "$1$1\\\"")
-            .replace(/(\\+)$/g, "$1$1")
-            .replace(/%/g, "%%");
-        return `"${escaped}"`;
+        // Phase 1: CommandLineToArgvW escaping (ReDoS-safe regexes from cross-spawn v7.0.5+)
+        let escaped = arg
+            .replace(/(?=(\\+?)?)\1"/g, '$1$1\\"') // double backslashes before ", escape "
+            .replace(/(?=(\\+?)?)\1$/, "$1$1"); // double trailing backslashes
+
+        escaped = `"${escaped}"`;
+
+        // Phase 2: escape cmd.exe metacharacters with ^ (including % ! & | < > etc.)
+        return escaped.replace(CMD_META_CHARS, "^$1");
     }
 
     return `'${arg.replace(/'/g, "'\"'\"'")}'`;
