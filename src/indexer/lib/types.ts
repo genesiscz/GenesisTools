@@ -89,6 +89,7 @@ export interface IndexMeta {
     lastSyncAt: number | null;
     createdAt: number;
     indexEmbedding?: EmbeddingModelInfo;
+    /** @todo Not yet populated -- reserved for separate search-time embedding model */
     searchEmbedding?: EmbeddingModelInfo;
     /** Current indexing status. Persisted for crash recovery. */
     indexingStatus?: "idle" | "in-progress" | "completed" | "cancelled" | "error";

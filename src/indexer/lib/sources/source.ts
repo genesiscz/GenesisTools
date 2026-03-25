@@ -1,4 +1,5 @@
 import { detectChangesPreHashed } from "@app/utils/fs/change-detector";
+import { xxhash } from "@app/utils/hash";
 
 export interface SourceEntry {
     /** Unique identifier -- file path for files, rowid for mail, message_id for chat */
@@ -74,7 +75,7 @@ export function defaultDetectChanges(
 
 /** Default content hash using xxHash64 (consistent with chunker) */
 export function defaultHashEntry(entry: SourceEntry): string {
-    return Bun.hash(entry.content).toString(16);
+    return xxhash(entry.content);
 }
 
 export interface IndexerSource {

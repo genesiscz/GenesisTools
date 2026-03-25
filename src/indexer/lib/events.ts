@@ -31,7 +31,7 @@ export interface IndexerEventMap {
         indexName: string;
         filePath: string;
         chunks: number;
-        parser: "ast" | "line" | "heading" | "message" | "json";
+        parser: "ast" | "line" | "heading" | "message" | "json" | "character";
     };
     "chunk:skip": Ts & {
         indexName: string;

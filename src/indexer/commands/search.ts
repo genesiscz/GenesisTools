@@ -1,28 +1,72 @@
 import { toToon } from "@app/json/lib/toon";
 import { SafeJSON } from "@app/utils/json";
 import type { SearchResult } from "@app/utils/search/types";
+import { truncateText } from "@app/utils/string";
 import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { IndexerManager } from "../lib/manager";
+import { detectMode, type SearchMode } from "../lib/search-mode";
 import type { ChunkRecord } from "../lib/types";
 
 interface SearchCommandOptions {
     index?: string;
-    mode?: "fulltext" | "vector" | "hybrid";
+    mode?: SearchMode;
     limit?: number;
     format?: "table" | "json" | "toon";
+    file?: string;
 }
 
-function truncatePreview(text: string, maxLen: number): string {
-    const oneLine = text.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
+/** Minimum cosine score below which vector/hybrid results are likely noise */
+const VECTOR_MIN_SCORE = 0.55;
+/** RRF scores are tiny — equivalent threshold for hybrid mode */
+const HYBRID_MIN_SCORE = VECTOR_MIN_SCORE * (1 / 60);
 
-    if (oneLine.length <= maxLen) {
-        return oneLine;
+function truncatePreview(text: string, maxLen: number): string {
+    const collapsed = text.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
+    return truncateText(collapsed, maxLen);
+}
+
+/**
+ * Apply a minimum score filter so irrelevant results don't pollute output.
+ * Only applied to vector/hybrid modes where low-score noise is common.
+ */
+function filterByMinScore(
+    results: Array<{ indexName: string; result: SearchResult<ChunkRecord> }>,
+    mode: SearchMode
+): Array<{ indexName: string; result: SearchResult<ChunkRecord> }> {
+    if (mode === "fulltext") {
+        return results;
     }
 
-    return `${oneLine.slice(0, maxLen - 3)}...`;
+    const threshold = mode === "hybrid" ? HYBRID_MIN_SCORE : VECTOR_MIN_SCORE;
+    return results.filter((r) => r.result.score >= threshold);
+}
+
+async function searchIndexes(
+    manager: IndexerManager,
+    indexNames: string[],
+    query: string,
+    mode: SearchMode,
+    limit: number
+): Promise<Array<{ indexName: string; result: SearchResult<ChunkRecord> }>> {
+    let allResults: Array<{ indexName: string; result: SearchResult<ChunkRecord> }> = [];
+
+    for (const name of indexNames) {
+        const indexer = await manager.getIndex(name);
+        const results = await indexer.search(query, { mode, limit });
+
+        for (const result of results) {
+            allResults.push({ indexName: name, result });
+        }
+    }
+
+    allResults.sort((a, b) => b.result.score - a.result.score);
+    allResults = filterByMinScore(allResults, mode);
+    allResults = allResults.slice(0, limit);
+
+    return allResults;
 }
 
 export function registerSearchCommand(program: Command): void {
@@ -31,42 +75,68 @@ export function registerSearchCommand(program: Command): void {
         .description("Search across indexes")
         .argument("<query>", "Search query")
         .option("-i, --index <name>", "Search specific index (default: all)")
-        .option("-m, --mode <mode>", "Search mode: fulltext, vector, hybrid (default: fulltext)")
+        .option("-m, --mode <mode>", "Search mode: fulltext, vector, hybrid (default: auto-detect)")
         .option("-l, --limit <n>", "Max results", parseInt, 20)
+        .option("-f, --file <filter>", "Filter results to files matching this substring (e.g. '.ts', 'src/utils')")
         .option("--format <type>", "Output format: table, json, toon (default: table)")
         .action(async (query: string, opts: SearchCommandOptions) => {
             const manager = await IndexerManager.load();
 
             try {
-                const mode = opts.mode ?? "fulltext";
                 const limit = opts.limit ?? 20;
                 const format = opts.format ?? "table";
 
-                let allResults: Array<{ indexName: string; result: SearchResult<ChunkRecord> }> = [];
+                const names: string[] = [];
 
                 if (opts.index) {
-                    const indexer = await manager.getIndex(opts.index);
-                    const results = await indexer.search(query, { mode, limit });
-                    allResults = results.map((r) => ({ indexName: opts.index!, result: r }));
+                    names.push(opts.index);
                 } else {
-                    const names = manager.getIndexNames();
+                    const all = manager.getIndexNames();
 
-                    if (names.length === 0) {
+                    if (all.length === 0) {
                         p.log.info("No indexes configured. Run: tools indexer add <path>");
                         return;
                     }
 
-                    for (const name of names) {
-                        const indexer = await manager.getIndex(name);
-                        const results = await indexer.search(query, { mode, limit });
+                    names.push(...all);
+                }
 
-                        for (const result of results) {
-                            allResults.push({ indexName: name, result });
+                // Hoist first indexer — reused for mode detection and fallback
+                const firstIndexer = await manager.getIndex(names[0]);
+
+                // Auto-detect mode: use hybrid when embeddings exist, fulltext otherwise
+                let mode: SearchMode;
+
+                if (opts.mode) {
+                    mode = opts.mode;
+                } else {
+                    mode = detectMode(firstIndexer);
+                }
+
+                let effectiveMode = mode;
+
+                // Over-fetch when file filter is set so we don't lose results after filtering
+                const fetchLimit = opts.file ? limit * 3 : limit;
+                let allResults = await searchIndexes(manager, names, query, mode, fetchLimit);
+
+                if (opts.file) {
+                    const filter = opts.file;
+                    allResults = allResults.filter((r) => r.result.doc.filePath.includes(filter));
+                    allResults = allResults.slice(0, limit);
+                }
+
+                // Auto-fallback: if fulltext returned 0 results and we auto-detected, try hybrid
+                if (allResults.length === 0 && mode === "fulltext" && !opts.mode) {
+                    const info = firstIndexer.getConsistencyInfo();
+
+                    if (info.embeddingCount > 0) {
+                        allResults = await searchIndexes(manager, names, query, "hybrid", limit);
+                        effectiveMode = "hybrid";
+
+                        if (allResults.length > 0) {
+                            p.log.info(pc.dim("No keyword matches — showing semantic results instead"));
                         }
                     }
-
-                    allResults.sort((a, b) => b.result.score - a.result.score);
-                    allResults = allResults.slice(0, limit);
                 }
 
                 if (allResults.length === 0) {
@@ -114,7 +184,7 @@ export function registerSearchCommand(program: Command): void {
                 });
 
                 console.log("");
-                console.log(pc.dim(`${allResults.length} results for "${query}" (${mode})`));
+                console.log(pc.dim(`${allResults.length} results for "${query}" (${effectiveMode})`));
                 console.log("");
                 console.log(formatTable(rows, headers, { alignRight: [2] }));
                 console.log("");

@@ -1,0 +1,482 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+.tabs{display:flex;border-bottom:0.5px solid var(--color-border-tertiary);margin-bottom:1rem}
+.tab-btn{padding:10px 20px;font-size:13px;font-weight:400;background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;color:var(--color-text-secondary);margin-bottom:-0.5px;transition:all .15s;font-family:var(--font-mono)}
+.tab-btn.active{color:var(--color-text-primary);border-bottom-color:var(--color-text-primary);font-weight:500}
+.tab-btn:hover:not(.active){color:var(--color-text-primary)}
+.panel{display:none}.panel.active{display:block}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+.search-row{display:flex;gap:8px;margin-bottom:10px}
+.search-row input{flex:1;font-family:var(--font-mono);font-size:13px}
+.qbtns{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;align-items:center}
+.qbtn{font-size:11px;padding:3px 9px;background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:100px;cursor:pointer;color:var(--color-text-secondary);font-family:var(--font-mono);transition:all .1s}
+.qbtn:hover{background:var(--color-background-tertiary);border-color:var(--color-border-secondary);color:var(--color-text-primary)}
+.res-header{font-size:12px;color:var(--color-text-secondary);margin-bottom:8px;min-height:16px}
+.res-header b{color:var(--color-text-primary)}
+.rlist{display:flex;flex-direction:column;gap:8px}
+.rcard{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:11px 13px;animation:fu .2s ease-out both}
+@keyframes fu{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
+.rcard-hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px;gap:8px}
+.rtitle{font-size:13px;font-weight:500;color:var(--color-text-primary);line-height:1.3}
+.rbadge{font-size:10px;padding:2px 7px;border-radius:100px;white-space:nowrap;flex-shrink:0}
+.cat-database{background:#e6f1fb;color:#0c447c}.cat-search{background:#eeedfe;color:#3c3489}
+.cat-ml{background:#faeeda;color:#633806}.cat-infrastructure{background:#eaf3de;color:#27500a}
+.cat-programming{background:#fbeaf0;color:#4b1528}
+@media(prefers-color-scheme:dark){
+.cat-database{background:#042c53;color:#85b7eb}.cat-search{background:#26215c;color:#afa9ec}
+.cat-ml{background:#412402;color:#fac775}.cat-infrastructure{background:#173404;color:#c0dd97}
+.cat-programming{background:#4b1528;color:#f4c0d1}}
+.srow{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+.sbar{width:60px;height:4px;background:var(--color-border-tertiary);border-radius:2px;overflow:hidden;flex-shrink:0}
+.sfill{height:100%;border-radius:2px;background:var(--color-text-success);transition:width .4s}
+.slabel{font-size:11px;color:var(--color-text-secondary);font-family:var(--font-mono)}
+.snip{font-size:12px;color:var(--color-text-secondary);line-height:1.6}
+.snip mark{background:none;color:var(--color-text-info);font-weight:500}
+.sec-lbl{font-size:11px;font-weight:500;color:var(--color-text-secondary);margin-bottom:7px;text-transform:uppercase;letter-spacing:0.05em}
+.codeblk{background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:12px 14px;font-size:11.5px;font-family:var(--font-mono);line-height:1.75;overflow-x:auto;white-space:pre;margin-bottom:12px}
+.kw{color:#569cd6}.fn{color:#dcdcaa}.str{color:#ce9178}.cm{color:#6a9955}.tbl{color:#4ec9b0}.num{color:#b5cea8}.op{color:#c586c0}
+.chip{font-size:11px;padding:2px 8px;background:var(--color-background-info);color:var(--color-text-info);border-radius:100px;font-family:var(--font-mono);display:inline-block}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:11px;min-height:22px}
+.statbox{background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:11px 13px;margin-bottom:12px}
+.srow2{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-bottom:0.5px solid var(--color-border-tertiary)}
+.srow2:last-child{border-bottom:none}
+.sl{color:var(--color-text-secondary)}.sv{font-family:var(--font-mono);font-weight:500;color:var(--color-text-primary)}
+.modebtns{display:flex;gap:0;border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);overflow:hidden;margin-bottom:12px}
+.mbtn{flex:1;padding:8px 4px;font-size:11.5px;border:none;background:none;cursor:pointer;color:var(--color-text-secondary);font-family:var(--font-mono);transition:all .1s;border-right:0.5px solid var(--color-border-tertiary)}
+.mbtn:last-child{border-right:none}
+.mbtn.active{background:var(--color-background-secondary);color:var(--color-text-primary);font-weight:500}
+.vecdim{display:flex;align-items:center;gap:7px;margin-bottom:3px;font-size:11px}
+.veclbl{color:var(--color-text-secondary);min-width:90px;font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vecbg{flex:1;height:5px;background:var(--color-border-tertiary);border-radius:3px;overflow:hidden}
+.vecfill{height:100%;border-radius:3px;background:var(--color-background-info);transition:width .5s}
+.vecval{min-width:44px;text-align:right;color:var(--color-text-secondary);font-family:var(--font-mono)}
+.empty{padding:32px 0;text-align:center;color:var(--color-text-secondary);font-size:12px}
+.idxrow{display:flex;justify-content:space-between;font-size:11px;padding:2.5px 0;border-bottom:0.5px solid var(--color-border-tertiary);font-family:var(--font-mono)}
+.idxrow:last-child{border-bottom:none}
+.idxterm{color:var(--color-text-info)}.idxmeta{color:var(--color-text-secondary)}
+.info-tip{font-size:12px;color:var(--color-text-secondary);background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:9px 12px;margin-bottom:12px;line-height:1.6}
+.info-tip b{color:var(--color-text-primary);font-weight:500}
+</style>
+
+<div style="padding:1rem 0">
+<div class="tabs">
+  <button class="tab-btn active" id="btn-fts5" onclick="showTab('fts5')">⚡ SQLite FTS5</button>
+  <button class="tab-btn" id="btn-orama" onclick="showTab('orama')">◈ Orama search</button>
+</div>
+
+<!-- FTS5 Panel -->
+<div class="panel active" id="panel-fts5">
+  <div class="grid2">
+    <div>
+      <div class="search-row">
+        <input type="text" id="fts-q" value="database" placeholder='e.g. database*, "full text", search OR cache'>
+        <button onclick="runFTS()">Search</button>
+      </div>
+      <div class="qbtns">
+        <span style="font-size:11px;color:var(--color-text-secondary)">Try:</span>
+        <button class="qbtn" onclick="sq('fts','data*')">data*</button>
+        <button class="qbtn" onclick="sq('fts','&quot;full text search&quot;')">phrase</button>
+        <button class="qbtn" onclick="sq('fts','search OR cache')">OR</button>
+        <button class="qbtn" onclick="sq('fts','database NOT redis')">NOT</button>
+        <button class="qbtn" onclick="sq('fts','title:BM25')">field:term</button>
+        <button class="qbtn" onclick="sq('fts','embed*')">prefix</button>
+        <button class="qbtn" onclick="sq('fts','neural network')">multi-term</button>
+      </div>
+      <div class="res-header" id="fts-cnt"></div>
+      <div class="rlist" id="fts-res"></div>
+    </div>
+    <div>
+      <div class="sec-lbl">Generated SQL</div>
+      <div class="codeblk" id="fts-sql">-- type a query above</div>
+      <div class="sec-lbl">Query tokens</div>
+      <div class="chips" id="fts-tok"></div>
+      <div class="sec-lbl">BM25 index stats</div>
+      <div class="statbox">
+        <div class="srow2"><span class="sl">k1 (TF saturation)</span><span class="sv">1.2</span></div>
+        <div class="srow2"><span class="sl">b (length normalization)</span><span class="sv">0.75</span></div>
+        <div class="srow2"><span class="sl">Documents indexed</span><span class="sv" id="fts-N">—</span></div>
+        <div class="srow2"><span class="sl">Avg doc length</span><span class="sv" id="fts-avg">—</span></div>
+        <div class="srow2"><span class="sl">Vocabulary size</span><span class="sv" id="fts-voc">—</span></div>
+      </div>
+      <div class="sec-lbl">Inverted index (top terms by df)</div>
+      <div id="fts-idx"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Orama Panel -->
+<div class="panel" id="panel-orama">
+  <div class="grid2">
+    <div>
+      <div class="sec-lbl">Search mode</div>
+      <div class="modebtns">
+        <button class="mbtn active" id="mode-fulltext" onclick="setMode('fulltext')">fulltext (BM25)</button>
+        <button class="mbtn" id="mode-vector" onclick="setMode('vector')">vector (cosine)</button>
+        <button class="mbtn" id="mode-hybrid" onclick="setMode('hybrid')">hybrid (RRF)</button>
+      </div>
+      <div class="info-tip" id="ora-tip"></div>
+      <div class="search-row">
+        <input type="text" id="ora-q" value="semantic understanding" placeholder="Try natural language queries">
+        <button onclick="runOrama()">Search</button>
+      </div>
+      <div class="qbtns">
+        <span style="font-size:11px;color:var(--color-text-secondary)">Try:</span>
+        <button class="qbtn" onclick="sq('ora','understand language')">understand language</button>
+        <button class="qbtn" onclick="sq('ora','store data efficiently')">store data</button>
+        <button class="qbtn" onclick="sq('ora','find similar content')">find similar</button>
+        <button class="qbtn" onclick="sq('ora','train neural model')">train model</button>
+        <button class="qbtn" onclick="sq('ora','distributed systems')">distributed</button>
+      </div>
+      <div class="res-header" id="ora-cnt"></div>
+      <div class="rlist" id="ora-res"></div>
+    </div>
+    <div>
+      <div class="sec-lbl">Orama API call</div>
+      <div class="codeblk" id="ora-code"></div>
+      <div class="sec-lbl" id="vec-lbl">Query embedding (TF-IDF dimensions)</div>
+      <div id="ora-vec" style="margin-bottom:12px"></div>
+      <div class="sec-lbl">Schema definition</div>
+      <div class="codeblk" style="font-size:11px"><span class="kw">import</span> { create, insertMultiple, search } <span class="kw">from</span> <span class="str">'@orama/orama'</span>;
+
+<span class="kw">const</span> db = <span class="op">await</span> <span class="fn">create</span>({
+  schema: {
+    title:    <span class="str">'string'</span>,  <span class="cm">// BM25 searchable</span>
+    category: <span class="str">'string'</span>,  <span class="cm">// filterable</span>
+    content:  <span class="str">'string'</span>,  <span class="cm">// BM25 + embedding</span>
+    embedding: <span class="str">'vector[384]'</span>, <span class="cm">// for vector search</span>
+  },
+  plugins: [pluginEmbeddings({ model: <span class="str">'xenova/all-MiniLM-L6-v2'</span> })]
+});</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+const DOCS=[
+{id:'1',title:'SQLite embedded database',category:'database',content:'SQLite is a C library that implements a small, fast, self-contained SQL database engine. The database is serverless and requires zero configuration. It is the most widely deployed database engine in the world, found in smartphones, browsers, IoT devices, and desktop applications. FTS5 provides full-text search with BM25 ranking inside SQLite.'},
+{id:'2',title:'PostgreSQL advanced queries',category:'database',content:'PostgreSQL is a powerful object-relational database system with over 35 years of active development. It supports window functions, CTEs, JSON operations, full-text search with tsvector and tsquery, and complex indexing strategies including GIN, GIST, and BRIN index types. MVCC ensures transactional consistency.'},
+{id:'3',title:'Full-text search BM25 ranking',category:'search',content:'BM25 is a bag-of-words retrieval function that ranks documents by relevance to a query. SQLite FTS5 uses BM25 as its default ranking algorithm. The formula considers term frequency, inverse document frequency, and document length normalization. Lower BM25 scores in FTS5 indicate higher relevance.'},
+{id:'4',title:'Vector embeddings for NLP',category:'ml',content:'Vector embeddings transform text into dense numerical arrays that capture semantic meaning. Transformer models like BERT and Sentence-BERT create contextual embeddings where semantically similar texts cluster closely in high-dimensional vector space. Cosine similarity measures the angle between embedding vectors to compute semantic similarity scores.'},
+{id:'5',title:'Orama full-stack search engine',category:'search',content:'Orama is an open-source, fully typed, schema-based search engine written in TypeScript. It runs entirely in-memory and supports full-text search with BM25, vector search for semantic queries, and hybrid search combining both approaches using Reciprocal Rank Fusion. The plugin system enables transformer-based embedding generation.'},
+{id:'6',title:'Redis cache and pub/sub messaging',category:'database',content:'Redis is an in-memory data structure store used as a database, cache, and message broker. It supports strings, hashes, lists, sets, sorted sets, bitmaps, and geospatial indexes. Redis Pub/Sub and Streams enable real-time event-driven architectures. Redis Cluster provides horizontal scaling and automatic partitioning.'},
+{id:'7',title:'Neural networks and backpropagation',category:'ml',content:'Neural networks are computing systems inspired by biological brains. Training uses backpropagation to compute gradients of the loss function with respect to network weights. Stochastic gradient descent with the Adam optimizer iteratively adjusts weights to minimize prediction error and improve model accuracy.'},
+{id:'8',title:'Elasticsearch distributed search',category:'search',content:'Elasticsearch is a distributed search and analytics engine built on Apache Lucene. It provides real-time indexing, full-text search with relevance scoring, aggregations, and geospatial queries. The ELK stack combines Elasticsearch with Kibana for dashboards and Logstash for data ingestion pipelines.'},
+{id:'9',title:'Natural language processing pipeline',category:'ml',content:'Natural language processing enables machines to understand human language text. Key tasks include tokenization, part-of-speech tagging, named entity recognition, dependency parsing, sentiment analysis, and machine translation. Large language models use encoder-decoder transformer architectures with self-attention mechanisms for sequence understanding.'},
+{id:'10',title:'Inverted index data structure',category:'search',content:'An inverted index maps terms to the documents containing them, enabling fast full-text search. Each term stores a postings list of document IDs with positions and term frequencies. Delta encoding and variable-length integer compression reduce index storage size. FTS5 maintains the inverted index in persistent SQLite tables for durability.'},
+{id:'11',title:'B-tree and LSM indexing',category:'database',content:'B-trees are self-balancing search trees used in most relational databases for efficient indexing. LSM trees used in RocksDB and Apache Cassandra optimize write throughput by buffering writes in memory and merging sorted runs on disk through background compaction. Both support range queries and point lookups efficiently.'},
+{id:'12',title:'Cosine similarity and vector spaces',category:'ml',content:'Cosine similarity measures the cosine of the angle between two vectors, returning values from minus one to one. It is the standard metric for comparing document embeddings in semantic search and information retrieval. Unlike Euclidean distance, cosine similarity is magnitude-invariant making it ideal for normalized TF-IDF and neural embedding vectors.'},
+{id:'13',title:'Apache Kafka event streaming',category:'infrastructure',content:'Apache Kafka is a distributed event streaming platform for high-throughput real-time data pipelines. Topics are partitioned for parallel processing with consumer groups enabling load balancing across multiple instances. Kafka Streams provides stateful stream processing with exactly-once delivery semantics and built-in fault tolerance.'},
+{id:'14',title:'TypeScript type system',category:'programming',content:'TypeScript extends JavaScript with static type checking at compile time to catch errors early before runtime. Generic types enable reusable type-safe code components. Discriminated unions model finite state machines cleanly. Template literal types enable powerful string manipulation at the type level for library authors.'},
+{id:'15',title:'Docker container isolation',category:'infrastructure',content:'Docker uses Linux namespaces and cgroups to isolate containers with their own filesystem, network stack, and process space. Images are built in reproducible layers using a Dockerfile. Container registries like Docker Hub distribute images. Docker Compose orchestrates multi-container applications with networking and volume management.'},
+];
+
+// ===== FTS5 ENGINE =====
+class FTS5Engine{
+  constructor(){this.k1=1.2;this.b=0.75;this.docs=[];this.idx={};this.lens={};this.total=0;}
+  get N(){return this.docs.length;}
+  get avgLen(){return this.total/Math.max(1,this.N);}
+  get vocabSize(){return Object.keys(this.idx).length;}
+  tok(text){return(text||'').toLowerCase().match(/\b[a-z]{2,}\b/g)||[];}
+  insertMany(docs){docs.forEach(d=>this.insert(d));}
+  insert(doc){
+    this.docs.push(doc);
+    const all=[];
+    ['title','content','category'].forEach(f=>{
+      this.tok(doc[f]||'').forEach((t,i)=>all.push({t,f,i}));
+    });
+    this.lens[doc.id]=all.length;this.total+=all.length;
+    all.forEach(({t,f})=>{
+      if(!this.idx[t])this.idx[t]={df:0,p:{}};
+      if(!this.idx[t].p[doc.id]){this.idx[t].df++;this.idx[t].p[doc.id]={tf:0,flds:{}};}
+      this.idx[t].p[doc.id].tf++;
+      this.idx[t].p[doc.id].flds[f]=(this.idx[t].p[doc.id].flds[f]||0)+1;
+    });
+  }
+  idf(t){const n=this.idx[t]?.df||0;return Math.log((this.N-n+0.5)/(n+0.5)+1);}
+  bm25(t,id){
+    const e=this.idx[t];if(!e?.p[id])return 0;
+    const tf=e.p[id].tf,dl=this.lens[id],idf=this.idf(t);
+    return idf*(tf*(this.k1+1))/(tf+this.k1*(1-this.b+this.b*dl/this.avgLen));
+  }
+  parse(q){
+    const terms=[];let s=q;
+    s=s.replace(/"([^"]+)"/g,(_,ph)=>{terms.push({type:'phrase',value:ph,toks:this.tok(ph)});return' ';});
+    let neg=false;
+    s.trim().split(/\s+/).forEach(tok=>{
+      if(!tok)return;
+      const up=tok.toUpperCase();
+      if(up==='OR'){terms.push({type:'op',op:'OR'});return;}
+      if(up==='NOT'){neg=true;return;}
+      let val=tok,fld=null,pfx=false;
+      if(val.includes(':'))([fld,val]=val.split(':',2));
+      if(val.endsWith('*')){pfx=true;val=val.slice(0,-1);}
+      terms.push({type:pfx?'prefix':'term',value:val.toLowerCase(),fld,negate:neg});
+      neg=false;
+    });
+    return terms;
+  }
+  search(q,lim=8){
+    if(!q.trim())return{results:[],parsedTerms:[],total:0};
+    const pt=this.parse(q),scores={};
+    pt.filter(t=>t.type!=='op').forEach(term=>{
+      let md={};
+      if(term.type==='phrase'){
+        let cands=null;
+        term.toks.forEach(t=>{const ds=new Set(Object.keys(this.idx[t]?.p||{}));cands=cands?new Set([...cands].filter(d=>ds.has(d))):ds;});
+        (cands||new Set()).forEach(id=>{md[id]=term.toks.reduce((s,t)=>s+this.bm25(t,id)*1.4,0);});
+      }else if(term.type==='prefix'){
+        Object.keys(this.idx).filter(t=>t.startsWith(term.value)).forEach(t=>{
+          Object.keys(this.idx[t].p).forEach(id=>{md[id]=(md[id]||0)+this.bm25(t,id);});
+        });
+      }else{
+        const e=this.idx[term.value];
+        if(e)Object.keys(e.p).forEach(id=>{
+          if(term.fld&&!e.p[id].flds[term.fld])return;
+          md[id]=this.bm25(term.value,id);
+        });
+      }
+      if(term.negate){Object.keys(md).forEach(d=>delete scores[d]);}
+      else Object.keys(md).forEach(id=>{scores[id]=(scores[id]||0)+md[id];});
+    });
+    const allT=[];
+    pt.forEach(t=>{if(t.type==='term'||t.type==='prefix')allT.push(t.value);else if(t.type==='phrase')allT.push(...t.toks);});
+    const ranked=Object.entries(scores).sort(([,a],[,b])=>b-a).slice(0,lim);
+    const mx=ranked[0]?.[1]||1;
+    return{
+      results:ranked.map(([id,score])=>{
+        const doc=this.docs.find(d=>d.id===id);
+        return{doc,score,relScore:score/mx,snippet:this.snip(doc.content,allT),terms:allT};
+      }),parsedTerms:pt,total:Object.keys(scores).length
+    };
+  }
+  snip(text,terms){
+    if(!terms.length||!text)return text.slice(0,150)+(text.length>150?'...':'');
+    const lo=text.toLowerCase();let best=0;
+    terms.forEach(t=>{const p=lo.indexOf(t);if(p!==-1)best=Math.max(0,p-35);});
+    const s=best,e=Math.min(text.length,s+180);
+    return(s>0?'...':'')+text.slice(s,e)+(e<text.length?'...':'');
+  }
+  hl(text,terms){
+    return terms.reduce((t,term)=>t.replace(new RegExp('\\b('+term+'\\w*)','gi'),'<mark>$1</mark>'),text);
+  }
+}
+
+// ===== ORAMA ENGINE =====
+class OramaEngine{
+  constructor(fts){this.docs=[];this.fts=fts;this.vocab=[];this.vecs={};}
+  insertMany(docs){this.docs=docs;this.buildVocab();this.buildVecs();}
+  buildVocab(){
+    const freq={};
+    this.docs.forEach(d=>{
+      new Set(this.fts.tok(d.title+' '+d.content)).forEach(t=>{freq[t]=(freq[t]||0)+1;});
+    });
+    this.vocab=Object.entries(freq).filter(([,f])=>f>=2&&f<=this.docs.length*0.85).sort(([,a],[,b])=>b-a).slice(0,200).map(([t])=>t);
+  }
+  buildVecs(){
+    const N=this.docs.length;
+    this.vocab.forEach((term,vi)=>{
+      this.docs.forEach(doc=>{
+        const e=this.fts.idx[term];
+        if(!e?.p[doc.id])return;
+        const tf=e.p[doc.id].tf/(this.fts.lens[doc.id]||1);
+        const idf=Math.log(N/(e.df+1));
+        if(!this.vecs[doc.id])this.vecs[doc.id]=new Float32Array(this.vocab.length);
+        this.vecs[doc.id][vi]=tf*idf;
+      });
+    });
+    Object.keys(this.vecs).forEach(id=>{
+      const v=this.vecs[id],norm=Math.sqrt(v.reduce((s,x)=>s+x*x,0));
+      if(norm>0)for(let i=0;i<v.length;i++)v[i]/=norm;
+    });
+  }
+  qvec(text){
+    const toks=this.fts.tok(text),freq={};
+    toks.forEach(t=>{freq[t]=(freq[t]||0)+1;});
+    const tot=toks.length||1,v=new Float32Array(this.vocab.length);
+    this.vocab.forEach((term,vi)=>{
+      if(!freq[term])return;
+      const e=this.fts.idx[term];
+      const idf=e?Math.log(this.docs.length/(e.df+1)):0;
+      v[vi]=(freq[term]/tot)*idf;
+    });
+    const norm=Math.sqrt(v.reduce((s,x)=>s+x*x,0));
+    if(norm>0)for(let i=0;i<v.length;i++)v[i]/=norm;
+    return v;
+  }
+  cos(a,b){let d=0;for(let i=0;i<a.length;i++)d+=a[i]*b[i];return d;}
+  topQueryTerms(text,n=12){
+    const qv=this.qvec(text);
+    return this.vocab.map((t,i)=>({t,w:qv[i]})).filter(x=>x.w>0).sort((a,b)=>b.w-a.w).slice(0,n);
+  }
+  search({term,mode='fulltext',limit=8}){
+    if(!term.trim())return{results:[],mode};
+    let results=[];
+    if(mode==='fulltext'){
+      const {results:fr}=this.fts.search(term,limit);
+      results=fr.map(r=>({...r,method:'BM25'}));
+    }else if(mode==='vector'){
+      const qv=this.qvec(term);
+      const scored=this.docs.map(doc=>{
+        const dv=this.vecs[doc.id];const score=dv?this.cos(qv,dv):0;
+        return{doc,score,snippet:this.fts.snip(doc.content,this.fts.tok(term)),terms:this.fts.tok(term),method:'cosine'};
+      }).filter(r=>r.score>0.005).sort((a,b)=>b.score-a.score).slice(0,limit);
+      const mx=scored[0]?.score||1;
+      results=scored.map(r=>({...r,relScore:r.score/mx}));
+    }else{
+      const {results:fr}=this.fts.search(term,20);
+      const qv=this.qvec(term);
+      const vr=this.docs.map(doc=>{const dv=this.vecs[doc.id];return{doc,score:dv?this.cos(qv,dv):0};}).sort((a,b)=>b.score-a.score).slice(0,20);
+      const k=60,rrf={};
+      fr.forEach((r,i)=>{rrf[r.doc.id]=(rrf[r.doc.id]||0)+1/(k+i+1);});
+      vr.forEach((r,i)=>{if(r.score>0.005)rrf[r.doc.id]=(rrf[r.doc.id]||0)+1/(k+i+1);});
+      const ranked=Object.entries(rrf).sort(([,a],[,b])=>b-a).slice(0,limit);
+      const mx=ranked[0]?.[1]||1;
+      results=ranked.map(([id,score])=>{
+        const doc=this.docs.find(d=>d.id===id);
+        return{doc,score,relScore:score/mx,snippet:this.fts.snip(doc.content,this.fts.tok(term)),terms:this.fts.tok(term),method:'RRF'};
+      });
+    }
+    return{results,mode};
+  }
+}
+
+// ===== INIT =====
+const fts=new FTS5Engine();
+fts.insertMany(DOCS);
+const ora=new OramaEngine(fts);
+ora.insertMany(DOCS);
+let oMode='fulltext';
+
+document.getElementById('fts-N').textContent=fts.N;
+document.getElementById('fts-avg').textContent=Math.round(fts.avgLen)+' tokens';
+document.getElementById('fts-voc').textContent=fts.vocabSize;
+
+const topIdx=Object.entries(fts.idx).sort(([,a],[,b])=>b.df-a.df).slice(0,9);
+document.getElementById('fts-idx').innerHTML=topIdx.map(([t,e])=>`<div class="idxrow"><span class="idxterm">${t}</span><span class="idxmeta">df:${e.df} | ${Object.keys(e.p).length} docs</span></div>`).join('');
+
+// ===== UI HELPERS =====
+function catCls(c){return'rbadge cat-'+(c||'database').replace(/\s+/g,'-');}
+function esc(s){return String(s||'').replace(/</g,'&lt;');}
+
+function renderCard(r,i){
+  const snip=r.terms?.length?fts.hl(esc(r.snippet),r.terms):esc(r.snippet);
+  return`<div class="rcard" style="animation-delay:${i*0.04}s">
+<div class="rcard-hdr"><span class="rtitle">${esc(r.doc?.title)}</span><span class="${catCls(r.doc?.category)}">${r.doc?.category}</span></div>
+<div class="srow"><div class="sbar"><div class="sfill" style="width:${Math.round((r.relScore||0)*100)}%"></div></div><span class="slabel">${r.method||''} ${typeof r.score==='number'?r.score.toFixed(3):''}</span></div>
+<div class="snip">${snip}</div>
+</div>`;
+}
+
+function sq(engine,q){
+  const el=document.getElementById(engine==='fts'?'fts-q':'ora-q');
+  el.value=q.replace(/&quot;/g,'"');
+  engine==='fts'?runFTS():runOrama();
+}
+
+// ===== FTS5 RUN =====
+function runFTS(){
+  const q=document.getElementById('fts-q').value;
+  const {results,parsedTerms,total}=fts.search(q);
+  document.getElementById('fts-cnt').innerHTML=total>0?`<b>${total}</b> document${total!==1?'s':''} matched — sorted by BM25 rank`:'No results';
+  document.getElementById('fts-res').innerHTML=results.length?results.map(renderCard).join(''):'<div class="empty">No matching documents</div>';
+  
+  const allT=[];parsedTerms.forEach(t=>{if(t.type==='term'||t.type==='prefix')allT.push(t.value+(t.type==='prefix'?'*':''));else if(t.type==='phrase')allT.push('"'+t.value+'"');});
+  document.getElementById('fts-tok').innerHTML=allT.map(t=>`<span class="chip">${esc(t)}</span>`).join('');
+  
+  const safe=esc(q).replace(/'/g,"''");
+  document.getElementById('fts-sql').innerHTML=`<span class="kw">CREATE VIRTUAL TABLE</span> <span class="tbl">docs_fts</span> <span class="kw">USING</span> <span class="fn">fts5</span>(
+  title, category, content,
+  tokenize = <span class="str">'unicode61 remove_diacritics 1'</span>
+);
+
+<span class="kw">SELECT</span>
+  <span class="tbl">docs_fts</span>.rowid,
+  <span class="tbl">docs_fts</span>.title,
+  <span class="fn">snippet</span>(<span class="tbl">docs_fts</span>, <span class="num">2</span>, <span class="str">'&lt;b&gt;'</span>, <span class="str">'&lt;/b&gt;'</span>, <span class="str">'...'</span>, <span class="num">20</span>),
+  <span class="fn">bm25</span>(<span class="tbl">docs_fts</span>) <span class="kw">AS</span> rank
+<span class="kw">FROM</span> <span class="tbl">docs_fts</span>
+<span class="kw">WHERE</span> <span class="tbl">docs_fts</span> <span class="kw">MATCH</span> <span class="str">'${safe}'</span>
+<span class="kw">ORDER BY</span> rank  <span class="cm">-- ascending (BM25 is negative)</span>
+<span class="kw">LIMIT</span> <span class="num">10</span>;`;
+}
+
+// ===== ORAMA RUN =====
+const TIPS={
+  fulltext:'<b>Full-text (BM25)</b> — keyword matching with TF-IDF weighting. Exact and stemmed term matches only. Fast and precise for known terms.',
+  vector:'<b>Vector (cosine similarity)</b> — TF-IDF embedding vectors compared by angle. Finds semantically related documents even without shared keywords.',
+  hybrid:'<b>Hybrid (Reciprocal Rank Fusion)</b> — combines BM25 and vector rankings. Each document scored as 1/(k+rank_bm25) + 1/(k+rank_vec), k=60.'
+};
+const CODES={
+  fulltext:q=>`<span class="kw">const</span> results = <span class="op">await</span> <span class="fn">search</span>(db, {
+  term:  <span class="str">'${esc(q)}'</span>,
+  mode:  <span class="str">'fulltext'</span>,
+  limit: <span class="num">10</span>,
+  boost: { title: <span class="num">1.5</span>, content: <span class="num">1.0</span> },
+  <span class="cm">// facets for category aggregation:</span>
+  facets: { category: { limit: <span class="num">5</span> } },
+});`,
+  vector:q=>`<span class="kw">const</span> results = <span class="op">await</span> <span class="fn">search</span>(db, {
+  term:       <span class="str">'${esc(q)}'</span>,
+  mode:       <span class="str">'vector'</span>,
+  similarity: <span class="num">0.7</span>, <span class="cm">// min cosine threshold</span>
+  limit:      <span class="num">10</span>,
+  <span class="cm">// embeddings auto-generated by plugin</span>
+});`,
+  hybrid:q=>`<span class="kw">const</span> results = <span class="op">await</span> <span class="fn">search</span>(db, {
+  term:  <span class="str">'${esc(q)}'</span>,
+  mode:  <span class="str">'hybrid'</span>,   <span class="cm">// BM25 + vector via RRF</span>
+  limit: <span class="num">10</span>,
+  hybridWeights: { text: <span class="num">0.5</span>, vector: <span class="num">0.5</span> },
+});`
+};
+
+function setMode(m){
+  oMode=m;
+  ['fulltext','vector','hybrid'].forEach(x=>{
+    document.getElementById('mode-'+x).classList.toggle('active',x===m);
+  });
+  runOrama();
+}
+
+function runOrama(){
+  const q=document.getElementById('ora-q').value;
+  document.getElementById('ora-tip').innerHTML=TIPS[oMode];
+  document.getElementById('ora-code').innerHTML=CODES[oMode](q);
+  
+  const{results,mode}=ora.search({term:q,mode:oMode});
+  const mLabel={fulltext:'BM25',vector:'cosine sim',hybrid:'RRF score'}[mode];
+  document.getElementById('ora-cnt').innerHTML=results.length?`<b>${results.length}</b> result${results.length!==1?'s':''} via <b>${mLabel}</b>`:'No results';
+  document.getElementById('ora-res').innerHTML=results.length?results.map(renderCard).join(''):'<div class="empty">No matching documents — try a different query or mode</div>';
+  
+  if(oMode!=='fulltext'&&q.trim()){
+    const top=ora.topQueryTerms(q,12);
+    const mx=top[0]?.w||1;
+    document.getElementById('vec-lbl').textContent='Query embedding ('+ora.vocab.length+'-dim TF-IDF, top active dims)';
+    document.getElementById('ora-vec').innerHTML=top.length?top.map(({t,w})=>`<div class="vecdim"><span class="veclbl">${esc(t)}</span><div class="vecbg"><div class="vecfill" style="width:${Math.round(w/mx*100)}%"></div></div><span class="vecval">${w.toFixed(4)}</span></div>`).join(''):'<span style="font-size:12px;color:var(--color-text-secondary)">No active dimensions — term not in vocabulary</span>';
+  }else{
+    document.getElementById('vec-lbl').textContent='Switch to vector or hybrid mode to see query embedding';
+    document.getElementById('ora-vec').innerHTML='<div class="empty" style="padding:16px 0">Embedding visualization available in vector and hybrid modes</div>';
+  }
+}
+
+// ===== TAB SWITCH =====
+function showTab(t){
+  ['fts5','orama'].forEach(x=>{
+    document.getElementById('panel-'+x).classList.toggle('active',x===t);
+    document.getElementById('btn-'+x).classList.toggle('active',x===t);
+  });
+}
+
+// ===== LIVE SEARCH =====
+let ftsTmr,oraTmr;
+document.getElementById('fts-q').addEventListener('input',()=>{clearTimeout(ftsTmr);ftsTmr=setTimeout(runFTS,280);});
+document.getElementById('fts-q').addEventListener('keydown',e=>{if(e.key==='Enter')runFTS();});
+document.getElementById('ora-q').addEventListener('input',()=>{clearTimeout(oraTmr);oraTmr=setTimeout(runOrama,280);});
+document.getElementById('ora-q').addEventListener('keydown',e=>{if(e.key==='Enter')runOrama();});
+
+// Initial render
+runFTS();
+runOrama();
+</script>

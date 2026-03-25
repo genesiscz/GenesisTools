@@ -33,6 +33,49 @@ function autoDetectType(absPath: string): "code" | "files" {
     return "files";
 }
 
+/** Check if an Ollama model is pulled, prompt to download if not. Returns false if user cancels or Ollama unavailable. */
+async function ensureOllamaModel(model: string): Promise<boolean> {
+    try {
+        const { AIOllamaProvider } = await import("@app/utils/ai/providers/AIOllamaProvider");
+        const ollama = new AIOllamaProvider({ defaultModel: model });
+
+        if (!(await ollama.isAvailable())) {
+            p.log.error("Ollama is not running. Start it with: ollama serve");
+            return false;
+        }
+
+        if (await ollama.hasModel(model)) {
+            return true;
+        }
+
+        const pull = await p.confirm({
+            message: `Model "${model}" not found in Ollama. Download it now?`,
+            initialValue: true,
+        });
+
+        if (p.isCancel(pull) || !pull) {
+            p.cancel("Cannot index without the embedding model");
+            return false;
+        }
+
+        const spinner = p.spinner();
+        spinner.start(`Pulling ${model}...`);
+
+        try {
+            await ollama.ensureModel(model);
+            spinner.stop(`Model ${model} ready`);
+        } catch (pullErr) {
+            spinner.stop(`Failed to pull ${model}`);
+            throw pullErr;
+        }
+
+        return true;
+    } catch (err) {
+        p.log.error(`Ollama check failed: ${err instanceof Error ? err.message : String(err)}`);
+        return false;
+    }
+}
+
 function resolveProvider(modelId: string): string | undefined {
     const model = MODEL_REGISTRY.find((m) => m.id === modelId);
 
@@ -109,15 +152,17 @@ async function runInteractiveFlow(): Promise<IndexConfig | null> {
 
     if (enableEmbed) {
         const models = getModelsForType(indexType);
-        const top = models.slice(0, 5);
 
         const modelChoice = await p.select({
             message: "Embedding model",
-            options: top.map((m) => ({
-                value: m.id,
-                label: m.name,
-                hint: `${m.dimensions}-dim, ${m.provider === "cloud" ? "cloud" : m.provider === "darwinkit" ? "built-in" : `${m.ramGB}GB RAM`} — ${m.description}`,
-            })),
+            options: [
+                ...models.map((m) => ({
+                    value: m.id,
+                    label: m.name,
+                    hint: `${m.dimensions}-dim, ${m.provider}${m.provider === "ollama" ? " (GPU)" : m.provider === "coreml" ? " (GPU/ANE)" : ""} — ${m.description}`,
+                })),
+                { value: "__none__", label: "No embeddings (fulltext-only)" },
+            ],
         });
 
         if (p.isCancel(modelChoice)) {
@@ -129,6 +174,14 @@ async function runInteractiveFlow(): Promise<IndexConfig | null> {
     }
 
     const provider = selectedModel ? resolveProvider(selectedModel) : undefined;
+
+    if (provider === "ollama" && selectedModel) {
+        const ok = await ensureOllamaModel(selectedModel);
+
+        if (!ok) {
+            return null;
+        }
+    }
 
     p.log.step(`${pc.bold("Path")}: ${absPath}`);
     p.log.step(`${pc.bold("Name")}: ${indexName}`);
@@ -215,9 +268,9 @@ export function registerAddCommand(program: Command): void {
                         const selected = await p.select({
                             message: "Embedding model",
                             options: [
-                                ...recommended.slice(0, 5).map((m) => ({
+                                ...recommended.map((m) => ({
                                     value: m.id,
-                                    label: `${m.name} (${m.dimensions}-dim, ${m.provider})`,
+                                    label: `${m.name} (${m.dimensions}-dim, ${m.provider}${m.provider === "ollama" ? " (GPU)" : m.provider === "coreml" ? " (GPU/ANE)" : ""})`,
                                     hint: m.description,
                                 })),
                                 { value: "__none__", label: "No embeddings (fulltext-only)" },
@@ -235,6 +288,14 @@ export function registerAddCommand(program: Command): void {
                             model = selected as string;
                             provider = resolveProvider(model);
                         }
+                    }
+                }
+
+                if (provider === "ollama" && model) {
+                    const ok = await ensureOllamaModel(model);
+
+                    if (!ok) {
+                        process.exit(1);
                     }
                 }
 

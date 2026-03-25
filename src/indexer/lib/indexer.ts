@@ -4,6 +4,7 @@ import type { Embedder } from "@app/utils/ai/tasks/Embedder";
 import type { WatcherSubscription } from "@app/utils/fs/watcher";
 import type { SearchOptions, SearchResult } from "@app/utils/search/types";
 import { Storage } from "@app/utils/storage/storage";
+import type { ChunkResult } from "./chunker";
 import { chunkFile } from "./chunker";
 import type { EventName, IndexerCallbacks, IndexerEventMap, SyncStats } from "./events";
 import { IndexerEventEmitter } from "./events";
@@ -230,11 +231,10 @@ export class Indexer extends IndexerEventEmitter {
 
         const results = await this.store.search(searchOpts);
         const durationMs = performance.now() - start;
-        const mode = searchOpts.mode ?? "fulltext";
 
         this.store.logSearch({
             query,
-            mode,
+            mode: searchMode,
             resultsCount: results.length,
             durationMs,
         });
@@ -242,7 +242,7 @@ export class Indexer extends IndexerEventEmitter {
         const payload = {
             indexName: this.config.name,
             query,
-            mode,
+            mode: searchMode,
             results: results.map((r) => ({
                 doc: r.doc as unknown as Record<string, unknown>,
                 score: r.score,
@@ -496,9 +496,23 @@ export class Indexer extends IndexerEventEmitter {
         const modelId = this.config.embedding?.model ?? "darwinkit";
         const maxEmbedChars = getMaxEmbedChars(modelId);
         const taskPrefix = getTaskPrefix(modelId);
-        const embedBatchSize = EMBEDDING_BATCH_SIZE;
+        // Provider-aware batch sizes to minimize HTTP round-trips:
+        // Ollama: no API limit, GPU processes entire batch — use 500 for single HTTP call per DB page
+        // Google: 100 texts per API call
+        // Cloud (OpenAI/Voyage): 2048 per call
+        // Local (HF/CoreML/DarwinKit): 32 (CPU-bound, smaller batches reduce memory)
+        const providerType = this.config.embedding?.provider;
+        const embedBatchSize =
+            providerType === "ollama"
+                ? 500
+                : providerType === "google"
+                  ? 100
+                  : providerType === "cloud"
+                    ? 2048
+                    : EMBEDDING_BATCH_SIZE;
         const embedStart = performance.now();
-        const dbPageSize = 1000;
+        // Match DB page to batch size so each page = ~1 HTTP call
+        const dbPageSize = Math.max(1000, embedBatchSize);
         let embedded = 0;
         let pageCount = 0;
         const zeroDims = this.embedder.dimensions;
@@ -722,7 +736,7 @@ export class Indexer extends IndexerEventEmitter {
                                 indexName: this.config.name,
                                 filePath: entryId,
                                 chunks: info.chunkCount,
-                                parser: info.parser as "ast" | "line" | "heading" | "message" | "json",
+                                parser: info.parser as ChunkResult["parser"],
                             },
                             callbacks
                         );
@@ -788,12 +802,23 @@ export class Indexer extends IndexerEventEmitter {
                     (entry) => !storedInBatch.has(entry.id)
                 );
 
+                // Collect hashes from remaining entries to avoid double hashing
+                const remainingHashMap = new Map<string, string>();
+
                 if (remaining.length > 0) {
-                    const { chunks, perEntry } = this.chunkEntries(remaining, strategy, maxTokens);
+                    const {
+                        chunks,
+                        pathEntries: remainingPathEntries,
+                        perEntry,
+                    } = this.chunkEntries(remaining, strategy, maxTokens);
 
                     if (chunks.length > 0) {
                         await this.store.insertChunks(chunks);
                         chunksFromRemaining = chunks.length;
+                    }
+
+                    for (const pe of remainingPathEntries) {
+                        remainingHashMap.set(pe.path, pe.hash);
                     }
 
                     for (const [entryId, info] of perEntry) {
@@ -803,7 +828,7 @@ export class Indexer extends IndexerEventEmitter {
                                 indexName: this.config.name,
                                 filePath: entryId,
                                 chunks: info.chunkCount,
-                                parser: info.parser as "ast" | "line" | "heading" | "message" | "json",
+                                parser: info.parser as ChunkResult["parser"],
                             },
                             callbacks
                         );
@@ -811,8 +836,9 @@ export class Indexer extends IndexerEventEmitter {
                 }
 
                 // Update path_hashes for all processed entries (added + modified)
+                // Reuse hashes computed during chunkEntries to avoid double hashing
                 for (const entry of [...changes.added, ...changes.modified]) {
-                    const hash = this.source.hashEntry(entry);
+                    const hash = remainingHashMap.get(entry.id) ?? this.source.hashEntry(entry);
                     pathHashStore.upsert(entry.id, hash, true);
                 }
 

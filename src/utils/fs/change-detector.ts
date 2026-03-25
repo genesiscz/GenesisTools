@@ -9,6 +9,8 @@ export interface ChangeSet {
     unchanged: string[];
 }
 
+import { xxhash } from "@app/utils/hash";
+
 export interface ChangeDetectorOptions {
     /** Hash function: (content) => hash string. Default: Bun.hash xxHash64 */
     hashFn?: (content: string) => string;
@@ -16,7 +18,7 @@ export interface ChangeDetectorOptions {
 
 /** Default hash function using Bun's xxHash64 */
 export function defaultHash(content: string): string {
-    return Bun.hash(content).toString(16);
+    return xxhash(content);
 }
 
 /**
@@ -35,34 +37,17 @@ interface DetectChangesInput {
 
 export function detectChanges(input: DetectChangesInput): ChangeSet {
     const { current, previous, hashFn = defaultHash } = input;
-    const added: string[] = [];
-    const modified: string[] = [];
-    const unchanged: string[] = [];
-    const currentKeys = new Set<string>();
+
+    const currentHashes = new Map<string, string>();
 
     for (const [path, content] of current) {
-        currentKeys.add(path);
-        const prevHash = previous.get(path);
-        const currentHash = hashFn(content);
-
-        if (prevHash === undefined) {
-            added.push(path);
-        } else if (prevHash !== currentHash) {
-            modified.push(path);
-        } else {
-            unchanged.push(path);
-        }
+        currentHashes.set(path, hashFn(content));
     }
 
-    const deleted: string[] = [];
-
-    for (const path of previous.keys()) {
-        if (!currentKeys.has(path)) {
-            deleted.push(path);
-        }
-    }
-
-    return { added, modified, deleted, unchanged };
+    return detectChangesPreHashed({
+        currentHashes,
+        previousHashes: previous,
+    });
 }
 
 /**

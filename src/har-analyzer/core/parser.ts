@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import type { HarEntry, HarFile, HarSession, IndexedEntry, SessionStats } from "@app/har-analyzer/types.ts";
+import { xxhash } from "@app/utils/hash";
 
 function extractDomainAndPath(url: string): { domain: string; path: string } {
     try {
@@ -125,7 +126,7 @@ export async function parseHarFile(filePath: string): Promise<{ session: HarSess
 
     const [har, rawText] = await Promise.all([file.json() as Promise<HarFile>, file.text()]);
 
-    const sourceHash = Bun.hash(rawText).toString(16);
+    const sourceHash = xxhash(rawText);
 
     const entries = har.log.entries.map((entry, index) => buildIndexedEntry(entry, index));
     const stats = computeStats(entries);

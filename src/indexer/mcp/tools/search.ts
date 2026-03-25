@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { detectMode } from "../../lib/search-mode";
 import type { ChunkRecord } from "../../lib/types";
 import { formatError, getManager } from "../shared";
 
@@ -13,7 +14,7 @@ export function registerSearchTools(server: McpServer): void {
             limit: z.number().min(1).max(100).describe("Max results. Default: 20.").optional(),
             mode: z
                 .enum(["fulltext", "vector", "hybrid"])
-                .describe("Search mode. Default: fulltext. Use 'hybrid' for best results if embeddings exist.")
+                .describe("Search mode. Default: auto (hybrid when embeddings exist, fulltext otherwise).")
                 .optional(),
             minScore: z
                 .number()
@@ -42,13 +43,13 @@ async function handleSearch(args: SearchArgs): Promise<string> {
     try {
         const manager = await getManager();
         const limit = args.limit ?? 20;
-        const mode = args.mode ?? "fulltext";
         const minScore = args.minScore ?? 0;
 
         let allResults: Array<{ indexName: string; doc: ChunkRecord; score: number; method: string }> = [];
 
         if (args.indexName) {
             const indexer = await manager.getIndex(args.indexName);
+            const mode = args.mode ?? detectMode(indexer);
             const results = await indexer.search(args.query, { mode, limit });
 
             for (const r of results) {
@@ -68,6 +69,7 @@ async function handleSearch(args: SearchArgs): Promise<string> {
 
             for (const name of names) {
                 const indexer = await manager.getIndex(name);
+                const mode = args.mode ?? detectMode(indexer);
                 const results = await indexer.search(args.query, { mode, limit });
 
                 for (const r of results) {
@@ -99,7 +101,8 @@ async function handleSearch(args: SearchArgs): Promise<string> {
             return `No results found for "${args.query}". Ensure indexes exist (indexer_status) and have been synced.`;
         }
 
-        const lines = [`Search results for "${args.query}" (${allResults.length} matches, mode: ${mode}):\n`];
+        const displayMode = args.mode ?? "auto";
+        const lines = [`Search results for "${args.query}" (${allResults.length} matches, mode: ${displayMode}):\n`];
 
         for (const r of allResults) {
             lines.push(

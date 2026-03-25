@@ -33,16 +33,37 @@ export class Embedder {
         const config = await AIConfig.load();
 
         if (options?.provider) {
-            // Clone config to avoid mutating the global singleton
-            const override = config.clone();
-            override.set("embed", { provider: options.provider as AIProviderType, model: options.model });
-            const provider = await getProviderForTask("embed", override);
+            // User explicitly chose a provider — fail if unavailable, don't silently fall back
+            const { getProvider } = await import("../providers/index");
+            const explicit = getProvider(options.provider as AIProviderType);
 
-            if (!("embed" in provider)) {
-                throw new Error(`Provider "${provider.type}" does not support embedding`);
+            if (!explicit.supports("embed")) {
+                throw new Error(`Provider "${options.provider}" does not support embedding`);
             }
 
-            return new Embedder(provider as AIEmbeddingProvider);
+            if (!(await explicit.isAvailable())) {
+                throw new Error(
+                    `Provider "${options.provider}" is not available. ` +
+                        (options.provider === "ollama"
+                            ? "Is Ollama running? Start it with: ollama serve"
+                            : options.provider === "coreml"
+                              ? "CoreML requires macOS 14+"
+                              : `Check that ${options.provider} is properly configured.`)
+                );
+            }
+
+            // For Ollama: verify the model is available (caller should pull first via CLI prompt)
+            if (options.provider === "ollama" && options.model) {
+                const ollamaProvider = explicit as import("../providers/AIOllamaProvider").AIOllamaProvider;
+
+                if (!(await ollamaProvider.hasModel(options.model))) {
+                    throw new Error(
+                        `Ollama model "${options.model}" is not pulled.\n` + `Run: ollama pull ${options.model}`
+                    );
+                }
+            }
+
+            return new Embedder(explicit as AIEmbeddingProvider);
         }
 
         const provider = await getProviderForTask("embed", config);

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseHarFile } from "@app/har-analyzer/core/parser";
 import type { HarSession } from "@app/har-analyzer/types";
+import { xxhash } from "@app/utils/hash";
 import { Storage } from "@app/utils/storage/storage";
 
 const SESSION_TTL = "1 day";
@@ -37,7 +38,7 @@ export class SessionManager {
                 return null;
             }
             const fileContent = await file.text();
-            hash = Bun.hash(fileContent).toString(16);
+            hash = xxhash(fileContent);
         }
 
         if (!hash) {

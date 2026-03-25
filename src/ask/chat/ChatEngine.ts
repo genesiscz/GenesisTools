@@ -1,5 +1,6 @@
 import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { estimateTokens } from "@app/utils/tokens";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import type { ChatConfig, ChatMessage } from "@ask/types";
 import type { LanguageModel, LanguageModelUsage } from "ai";
@@ -37,7 +38,7 @@ export class ChatEngine {
             role: "user",
             content: message,
             timestamp: new Date(),
-            tokens: this.estimateTokens(message),
+            tokens: estimateTokens(message),
         };
 
         this.conversationHistory.push(userMessage);
@@ -56,7 +57,7 @@ export class ChatEngine {
                 role: "assistant",
                 content: response.content,
                 timestamp: new Date(),
-                tokens: this.estimateTokens(response.content),
+                tokens: estimateTokens(response.content),
                 usage: response.usage,
             };
 
@@ -318,12 +319,6 @@ export class ChatEngine {
 
     getTotalTokens(): number {
         return this.conversationHistory.reduce((total, msg) => total + (msg.tokens || 0), 0);
-    }
-
-    // Simple token estimation (rough approximation)
-    private estimateTokens(text: string): number {
-        // Rough estimation: ~4 characters per token for English
-        return Math.ceil(text.length / 4);
     }
 
     async switchModel(newModel: LanguageModel, provider: string, modelName: string): Promise<void> {

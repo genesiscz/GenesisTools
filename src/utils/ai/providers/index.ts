@@ -58,7 +58,8 @@ export async function getProviderForTask(task: AITask, config: AIConfig): Promis
         return provider;
     }
 
-    const fallbackOrder: AIProviderType[] = ["darwinkit", "local-hf", "cloud", "ollama", "google"];
+    // GPU-capable providers first: Ollama (Metal/CUDA), CoreML (Neural Engine), then CPU fallbacks
+    const fallbackOrder: AIProviderType[] = ["ollama", "coreml", "darwinkit", "local-hf", "cloud", "google"];
 
     for (const type of fallbackOrder) {
         if (type === preferred) {

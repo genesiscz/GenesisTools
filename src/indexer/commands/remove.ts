@@ -1,7 +1,6 @@
-import * as p from "@clack/prompts";
 import type { Command } from "commander";
-import pc from "picocolors";
 import { IndexerManager } from "../lib/manager";
+import { removeWorkflow } from "../lib/remove";
 
 interface RemoveOptions {
     force?: boolean;
@@ -10,38 +9,14 @@ interface RemoveOptions {
 export function registerRemoveCommand(program: Command): void {
     program
         .command("remove")
-        .description("Remove an index and its data")
-        .argument("<name>", "Index name to remove")
+        .description("Remove one or more indexes and their data")
+        .argument("[name]", "Index name to remove (interactive multiselect if omitted)")
         .option("--force", "Skip confirmation (required in non-TTY)")
-        .action(async (name: string, opts: RemoveOptions) => {
+        .action(async (name: string | undefined, opts: RemoveOptions) => {
             const manager = await IndexerManager.load();
 
             try {
-                const names = manager.getIndexNames();
-
-                if (!names.includes(name)) {
-                    p.log.error(`Index "${name}" not found`);
-                    process.exit(1);
-                }
-
-                if (!opts.force) {
-                    if (!process.stdout.isTTY || !process.stdin.isTTY) {
-                        p.log.error("Use --force in non-interactive mode");
-                        process.exit(1);
-                    }
-
-                    const confirmed = await p.confirm({
-                        message: `Remove index "${name}" and all its data?`,
-                    });
-
-                    if (p.isCancel(confirmed) || !confirmed) {
-                        p.log.info("Cancelled");
-                        return;
-                    }
-                }
-
-                await manager.removeIndex(name);
-                p.log.success(`Index "${pc.bold(name)}" removed`);
+                await removeWorkflow({ manager, name, force: opts.force });
             } finally {
                 await manager.close();
             }

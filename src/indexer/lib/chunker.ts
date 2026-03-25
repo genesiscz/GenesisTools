@@ -1,92 +1,17 @@
-import { createRequire } from "node:module";
 import { extname } from "node:path";
+import { xxhash } from "@app/utils/hash";
 import { SafeJSON } from "@app/utils/json";
+import { estimateTokens } from "@app/utils/tokens";
 import type { SgNode } from "@ast-grep/napi";
-import { Lang, parse, registerDynamicLanguage } from "@ast-grep/napi";
+import { type Lang, parse } from "@ast-grep/napi";
+import { EXT_TO_DYNAMIC_LANG, EXT_TO_LANG, EXT_TO_LANGUAGE_NAME, ensureDynamicLanguages } from "./ast-languages";
 import type { ChunkRecord } from "./types";
-
-const esmRequire = createRequire(import.meta.url);
 
 export interface ChunkResult {
     chunks: ChunkRecord[];
     language: string | null;
     parser: "ast" | "line" | "heading" | "message" | "json" | "character";
 }
-
-// ─── Extension → Lang mapping ───────────────────────────────────
-const EXT_TO_LANG: Record<string, Lang> = {
-    ".ts": Lang.TypeScript,
-    ".tsx": Lang.Tsx,
-    ".js": Lang.JavaScript,
-    ".jsx": Lang.Tsx,
-    ".mjs": Lang.JavaScript,
-    ".cjs": Lang.JavaScript,
-    ".mts": Lang.TypeScript,
-    ".cts": Lang.TypeScript,
-    ".html": Lang.Html,
-    ".htm": Lang.Html,
-    ".css": Lang.Css,
-};
-
-const EXT_TO_LANGUAGE_NAME: Record<string, string> = {
-    ".ts": "typescript",
-    ".tsx": "tsx",
-    ".js": "javascript",
-    ".jsx": "jsx",
-    ".mjs": "javascript",
-    ".cjs": "javascript",
-    ".mts": "typescript",
-    ".cts": "typescript",
-    ".html": "html",
-    ".htm": "html",
-    ".css": "css",
-    ".md": "markdown",
-    ".json": "json",
-    ".py": "python",
-    ".pyw": "python",
-    ".pyi": "python",
-    ".go": "go",
-    ".rs": "rust",
-    ".java": "java",
-    ".c": "c",
-    ".h": "c",
-    ".cpp": "cpp",
-    ".hpp": "cpp",
-    ".cc": "cpp",
-    ".hh": "cpp",
-    ".cxx": "cpp",
-    ".rb": "ruby",
-    ".php": "php",
-    ".swift": "swift",
-    ".kt": "kotlin",
-    ".kts": "kotlin",
-    ".scala": "scala",
-    ".cs": "csharp",
-};
-
-/** Extension -> dynamic language string identifier (for registerDynamicLanguage langs) */
-const EXT_TO_DYNAMIC_LANG: Record<string, string> = {
-    ".py": "python",
-    ".pyw": "python",
-    ".pyi": "python",
-    ".go": "go",
-    ".rs": "rust",
-    ".java": "java",
-    ".c": "c",
-    ".h": "c",
-    ".cpp": "cpp",
-    ".hpp": "cpp",
-    ".cc": "cpp",
-    ".hh": "cpp",
-    ".cxx": "cpp",
-    ".rb": "ruby",
-    ".php": "php",
-    ".swift": "swift",
-    ".kt": "kotlin",
-    ".kts": "kotlin",
-    ".scala": "scala",
-    ".cs": "csharp",
-};
 
 // ─── AST node kinds to extract per language ─────────────────────
 const AST_KINDS: Record<string, string[]> = {
@@ -131,59 +56,8 @@ const AST_KINDS: Record<string, string[]> = {
     csharp: ["class_declaration", "interface_declaration", "method_declaration", "namespace_declaration"],
 };
 
-// ─── Dynamic language registration ──────────────────────────────
-let dynamicLangsRegistered = false;
-
-/** Register dynamic language grammars. Safe to call multiple times. */
-function ensureDynamicLanguages(): void {
-    if (dynamicLangsRegistered) {
-        return;
-    }
-
-    dynamicLangsRegistered = true;
-
-    const langPackages: Array<[string, string]> = [
-        ["python", "@ast-grep/lang-python"],
-        ["go", "@ast-grep/lang-go"],
-        ["rust", "@ast-grep/lang-rust"],
-        ["java", "@ast-grep/lang-java"],
-        ["c", "@ast-grep/lang-c"],
-        ["cpp", "@ast-grep/lang-cpp"],
-        ["ruby", "@ast-grep/lang-ruby"],
-        ["php", "@ast-grep/lang-php"],
-        ["swift", "@ast-grep/lang-swift"],
-        ["kotlin", "@ast-grep/lang-kotlin"],
-        ["scala", "@ast-grep/lang-scala"],
-        ["csharp", "@ast-grep/lang-csharp"],
-    ];
-
-    const modules: Record<string, { libraryPath: string; extensions: string[]; languageSymbol?: string }> = {};
-
-    for (const [name, pkg] of langPackages) {
-        try {
-            modules[name] = esmRequire(pkg);
-        } catch {
-            // Grammar not installed — skip
-        }
-    }
-
-    if (Object.keys(modules).length > 0) {
-        registerDynamicLanguage(modules);
-    }
-}
-
 /** Hard character cap per chunk — universal safety net applied to ALL strategies */
 const MAX_CHUNK_CHARS = 2000;
-
-// ─── Rough token estimator (1 token ~ 4 chars) ─────────────────
-function estimateTokens(text: string): number {
-    return Math.ceil(text.length / 4);
-}
-
-// ─── Content hash using xxHash64 (fast, non-cryptographic) ──────
-function contentHash(content: string): string {
-    return Bun.hash(content).toString(16);
-}
 
 // ─── Universal safety net: cap all chunks at MAX_CHUNK_CHARS ────
 /**
@@ -273,7 +147,7 @@ function chunkByCharacter(opts: { filePath: string; content: string }): ChunkRes
 
         if (chunkContent.trim().length > 0) {
             chunks.push({
-                id: contentHash(chunkContent),
+                id: xxhash(chunkContent),
                 filePath,
                 startLine,
                 endLine,
@@ -309,7 +183,7 @@ function splitChunkByLines(opts: {
         const lines = content.split("\n");
         return [
             {
-                id: contentHash(content),
+                id: xxhash(content),
                 filePath,
                 startLine,
                 endLine: startLine + lines.length - 1,
@@ -336,7 +210,7 @@ function splitChunkByLines(opts: {
 
             if (chunkContent.trim().length > 0) {
                 chunks.push({
-                    id: contentHash(chunkContent),
+                    id: xxhash(chunkContent),
                     filePath,
                     startLine: currentStartLine,
                     endLine: currentStartLine + currentLines.length - 1,
@@ -424,7 +298,7 @@ function subChunkLargeNode(opts: {
     if (lines.length <= MAX_AST_CHUNK_LINES) {
         return [
             {
-                id: contentHash(content),
+                id: xxhash(content),
                 filePath,
                 startLine,
                 endLine: startLine + lines.length - 1,
@@ -454,7 +328,7 @@ function subChunkLargeNode(opts: {
         const chunkStartLine = isFirst ? startLine : startLine + headerLineCount + i;
 
         chunks.push({
-            id: contentHash(chunkContent),
+            id: xxhash(chunkContent),
             filePath,
             startLine: chunkStartLine,
             endLine: startLine + headerLineCount + end - 1,
@@ -508,7 +382,7 @@ function mergeSmallChunks(opts: { chunks: ChunkRecord[]; maxTokens: number }): C
             .join(", ");
 
         result.push({
-            id: contentHash(mergedContent),
+            id: xxhash(mergedContent),
             filePath: pending[0].filePath,
             startLine: pending[0].startLine,
             endLine: pending[pending.length - 1].endLine,
@@ -678,14 +552,13 @@ function deduplicateChunks(chunks: ChunkRecord[]): ChunkRecord[] {
     const result: ChunkRecord[] = [];
 
     for (const chunk of chunks) {
-        // Check if this chunk is fully contained within any other chunk
+        // Check if this chunk's line range is fully contained within any other chunk
         const isContained = chunks.some(
             (other) =>
                 other.id !== chunk.id &&
                 other.startLine <= chunk.startLine &&
                 other.endLine >= chunk.endLine &&
-                other.content.includes(chunk.content) &&
-                other.content !== chunk.content
+                other.content.length > chunk.content.length
         );
 
         if (!isContained) {
@@ -715,7 +588,7 @@ function chunkByLine(opts: { filePath: string; content: string; maxTokens: numbe
 
             if (chunkContent.trim().length > 0) {
                 chunks.push({
-                    id: contentHash(chunkContent),
+                    id: xxhash(chunkContent),
                     filePath,
                     startLine: currentStartLine,
                     endLine: currentStartLine + currentLines.length - 1,
@@ -940,7 +813,7 @@ function chunkByJson(opts: { filePath: string; content: string; maxTokens: numbe
         // Primitive value, single chunk
         const stringified = SafeJSON.stringify(parsed, null, 2);
         chunks.push({
-            id: contentHash(stringified),
+            id: xxhash(stringified),
             filePath,
             startLine: 0,
             endLine: 0,
