@@ -1,10 +1,12 @@
 import { createWriteStream, type WriteStream } from "node:fs";
 import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
+import { stripAnsi, truncateText } from "@app/utils/string";
 import pc from "picocolors";
 import type { IncludeSpec } from "./cli/dsl";
 import type { TailTarget } from "./session.types";
 import { agentProgressToSubagent, parseAgentCompletionStats } from "./session.utils";
+import { extractToolInputSummary, extractToolResultText } from "./session-helpers";
 import type {
     AssistantMessage,
     AssistantMessageContent,
@@ -12,8 +14,6 @@ import type {
     ProgressMessage,
     SubagentMessage,
     TextBlock,
-    ToolResultBlock,
-    ToolUseBlock,
     UserMessage,
 } from "./types";
 
@@ -34,73 +34,12 @@ interface FormatterOptions {
 
 const AGENT_COLORS = [pc.cyan, pc.magenta, pc.yellow, pc.green, pc.blue] as const;
 
-// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape codes are the target
-const ANSI_REGEX = /\x1B\[\d+m/g;
-
-function stripAnsi(text: string): string {
-    return text.replace(ANSI_REGEX, "");
-}
-
 function formatTime(timestamp: string): string {
     try {
         return formatDateTime(timestamp, { absolute: "time-seconds" });
     } catch {
         return "??:??:??";
     }
-}
-
-function truncate(text: string, maxChars: number): string {
-    if (maxChars <= 0) {
-        return "";
-    }
-
-    if (text.length <= maxChars) {
-        return text;
-    }
-
-    return `${text.slice(0, maxChars)}...`;
-}
-
-function extractToolInputSummary(tool: ToolUseBlock): string {
-    const input = tool.input;
-
-    if ("command" in input && typeof input.command === "string") {
-        return input.command;
-    }
-
-    if ("file_path" in input && typeof input.file_path === "string") {
-        return input.file_path;
-    }
-
-    if ("pattern" in input && typeof input.pattern === "string") {
-        return input.pattern;
-    }
-
-    if ("query" in input && typeof input.query === "string") {
-        return input.query;
-    }
-
-    if ("skill" in input && typeof input.skill === "string") {
-        return input.skill;
-    }
-
-    const safeInput = SafeJSON.stringify(input);
-    return safeInput;
-}
-
-function extractToolResultText(block: ToolResultBlock): string {
-    if (typeof block.content === "string") {
-        return block.content;
-    }
-
-    if (Array.isArray(block.content)) {
-        return block.content
-            .filter((b): b is TextBlock => b.type === "text")
-            .map((b) => b.text)
-            .join("\n");
-    }
-
-    return "";
 }
 
 /**
@@ -273,7 +212,7 @@ export class ClaudeSessionFormatter {
                 if (this.options.includeSpec.shouldShow("tools:out")) {
                     const maxChars = this.options.includeSpec.truncationLength("tools:out");
                     const isError = block.is_error;
-                    const truncated = truncate(result.trim(), maxChars);
+                    const truncated = truncateText(result.trim(), maxChars);
                     const prefix = isError ? "  ✗ " : "  → ";
                     const line = `${prefix}${truncated}`;
                     const formatted = this.options.colors ? (isError ? pc.red(line) : pc.dim(line)) : line;
@@ -348,7 +287,7 @@ export class ClaudeSessionFormatter {
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("tools:in")) {
                 const inputSummary = extractToolInputSummary(block);
                 const maxChars = this.options.includeSpec.truncationLength("tools:in");
-                const truncated = truncate(inputSummary, maxChars);
+                const truncated = truncateText(inputSummary, maxChars);
 
                 if (this.options.colors) {
                     this.writeLine(
@@ -377,7 +316,7 @@ export class ClaudeSessionFormatter {
                         const isError = block.is_error;
 
                         if (result) {
-                            const truncated = truncate(result.trim(), maxChars);
+                            const truncated = truncateText(result.trim(), maxChars);
                             const colorFn = this.getAgentColor(agentId);
                             const prefix = this.activeAgentId === agentId ? colorFn("  │ ") : "    ";
                             const marker = isError ? "  ✗ " : "  → ";
@@ -454,7 +393,7 @@ export class ClaudeSessionFormatter {
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("agents:tools:in")) {
                 const inputSummary = extractToolInputSummary(block);
                 const maxChars = this.options.includeSpec.truncationLength("agents:tools:in");
-                const truncated = truncate(inputSummary, maxChars);
+                const truncated = truncateText(inputSummary, maxChars);
 
                 if (this.options.colors) {
                     this.writeLine(`${prefix}${pc.dim(`  [${block.name}]`)} ${pc.dim(truncated)}`);
