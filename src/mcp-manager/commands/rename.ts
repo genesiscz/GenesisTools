@@ -211,6 +211,8 @@ export async function renameServer(
     }
 
     // Sync rename to each selected provider
+    let skippedCount = 0;
+
     for (const providerName of selectedProviderNames) {
         const provider = providers.find((p) => p.getName() === providerName);
         if (!provider) {
@@ -221,12 +223,19 @@ export async function renameServer(
             const applied = await renameServerInProvider(provider, finalOldName, finalNewName, serverConfig);
             if (applied) {
                 logger.info(`✓ Renamed '${finalOldName}' to '${finalNewName}' in ${providerName}`);
+            } else {
+                skippedCount++;
             }
         } catch (error: unknown) {
             if (error instanceof Error) {
                 logger.error(`✗ Failed to rename in ${providerName}: ${error.message}`);
             }
+            skippedCount++;
         }
+    }
+
+    if (skippedCount > 0 && !isInteractive()) {
+        process.exitCode = 1;
     }
 }
 
