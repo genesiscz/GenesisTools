@@ -3,8 +3,8 @@ import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import pc from "picocolors";
 import type { IncludeSpec } from "./cli/dsl";
-import { agentProgressToSubagent, parseAgentCompletionStats } from "./session.utils";
 import type { TailTarget } from "./session.types";
+import { agentProgressToSubagent, parseAgentCompletionStats } from "./session.utils";
 import type {
     AssistantMessage,
     AssistantMessageContent,

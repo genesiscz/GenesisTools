@@ -150,7 +150,8 @@ export function agentProgressToSubagent(msg: ProgressMessage): SubagentMessage |
     } as SubagentMessage;
 }
 
-const AGENT_STATS_RE = /agentId:\s*(\S+)[\s\S]*?<usage>\s*total_tokens:\s*(\d+)\s*\ntool_uses:\s*(\d+)\s*\nduration_ms:\s*(\d+)\s*<\/usage>/;
+const AGENT_STATS_RE =
+    /agentId:\s*(\S+)[\s\S]*?<usage>\s*total_tokens:\s*(\d+)\s*\ntool_uses:\s*(\d+)\s*\nduration_ms:\s*(\d+)\s*<\/usage>/;
 
 /**
  * Parse agent completion stats from a tool_result text block.
