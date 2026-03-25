@@ -44,8 +44,8 @@ function git(cwd?: string): Executor {
  */
 export function slugifyBranch(branch: string): string {
     return branch
-        .replace(/\//g, "-")
-        .replace(/[#~^:?*[\]\\{}<>|!@$%&=+;'",` \t]/g, "")
+        .replace(/[/\s]+/g, "-")
+        .replace(/[#~^:?*[\]\\{}<>|!@$%&=+;'",`]/g, "")
         .replace(/-{2,}/g, "-")
         .replace(/^-+|-+$/g, "");
 }
@@ -369,7 +369,7 @@ export async function handleWorktreeOption(options: HandleWorktreeOptions): Prom
         }
 
         if (result.path !== process.cwd()) {
-            console.error(chalk.yellow(`⚠️  Switching cwd from ${process.cwd()} to ${result.path}`));
+            console.error(chalk.yellow(`⚠️  IMPORTANT: \`cd ${result.path}\` to work in the worktree.`));
         }
 
         console.log(`WORKTREE_PATH: ${result.path}`);
