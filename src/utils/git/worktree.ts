@@ -1,7 +1,7 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Executor } from "@app/utils/cli";
-import chalk from "chalk";
+import pc from "picocolors";
 
 // =============================================================================
 // Types
@@ -278,8 +278,6 @@ export async function ensureWorktreeForBranch(options: WorktreeCreateOptions): P
     const basePath = resolve(effectiveCwd, rawBasePath);
     const g = git(mainRoot);
 
-    // Ensure base directory exists
-    const { mkdirSync } = await import("node:fs");
     mkdirSync(basePath, { recursive: true });
 
     // Build worktree directory name
@@ -361,20 +359,20 @@ export async function handleWorktreeOption(options: HandleWorktreeOptions): Prom
         });
 
         if (result.created) {
-            console.error(chalk.yellow(`⚠️  Created worktree: ${result.path}`));
+            console.error(pc.yellow(`⚠️  Created worktree: ${result.path}`));
         }
 
         if (result.dirty) {
-            console.error(chalk.yellow(`⚠️  Worktree has uncommitted changes`));
+            console.error(pc.yellow(`⚠️  Worktree has uncommitted changes`));
         }
 
         if (result.path !== process.cwd()) {
-            console.error(chalk.yellow(`⚠️  IMPORTANT: \`cd ${result.path}\` to work in the worktree.`));
+            console.error(pc.yellow(`⚠️  IMPORTANT: \`cd ${result.path}\` to work in the worktree.`));
         }
 
         console.log(`WORKTREE_PATH: ${result.path}`);
     } catch (err) {
-        console.error(chalk.red(`Worktree error: ${err instanceof Error ? err.message : String(err)}`));
+        console.error(pc.red(`Worktree error: ${err instanceof Error ? err.message : String(err)}`));
         throw err;
     }
 }
