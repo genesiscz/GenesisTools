@@ -4,10 +4,10 @@
  */
 
 import { readdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname } from "node:path";
 import * as readline from "node:readline";
 import { Writable } from "node:stream";
+import { endsWithSep, expandPath, lastSepIndex, sep } from "@app/utils/paths";
 import pc from "picocolors";
 
 // Silent writable stream to prevent readline from echoing input
@@ -57,7 +57,7 @@ interface DirEntry {
 export async function filePathInput(options: FilePathInputOptions): Promise<string | symbol> {
     const {
         message,
-        initialValue = `${process.cwd()}/`,
+        initialValue = `${process.cwd()}${sep}`,
         listPossibilities = true,
         filter = "all",
         extensions,
@@ -81,28 +81,13 @@ export async function filePathInput(options: FilePathInputOptions): Promise<stri
         let cursor = -1; // -1 = input focused (no listing highlight)
         let lastRenderHeight = 0;
 
-        const expandPath = (p: string): string => {
-            if (p.startsWith("~/")) {
-                return join(homedir(), p.slice(2));
-            }
-
-            if (p.startsWith("./")) {
-                return join(process.cwd(), p.slice(2));
-            }
-
-            if (!p.startsWith("/")) {
-                return join(process.cwd(), p);
-            }
-
-            return p;
-        };
 
         const readDir = (): DirEntry[] => {
             const expanded = expandPath(value);
             let dir: string;
             let prefix: string;
 
-            if (value.endsWith("/")) {
+            if (endsWithSep(value)) {
                 dir = expanded;
                 prefix = "";
             } else {
@@ -290,8 +275,8 @@ export async function filePathInput(options: FilePathInputOptions): Promise<stri
             if (entries.length === 1) {
                 // Single match — complete it
                 const entry = entries[0];
-                const dir = value.endsWith("/") ? value : value.slice(0, value.lastIndexOf("/") + 1);
-                value = dir + entry.name + (entry.isDirectory ? "/" : "");
+                const dir = endsWithSep(value) ? value : value.slice(0, lastSepIndex(value) + 1);
+                value = dir + entry.name + (entry.isDirectory ? sep : "");
                 cursor = -1;
                 render();
                 return;
@@ -301,8 +286,8 @@ export async function filePathInput(options: FilePathInputOptions): Promise<stri
             const common = getCommonPrefix(entries);
 
             if (common) {
-                const dir = value.endsWith("/") ? value : value.slice(0, value.lastIndexOf("/") + 1);
-                const currentBasename = value.endsWith("/") ? "" : basename(value);
+                const dir = endsWithSep(value) ? value : value.slice(0, lastSepIndex(value) + 1);
+                const currentBasename = endsWithSep(value) ? "" : basename(value);
 
                 if (common.length > currentBasename.length) {
                     value = dir + common;
@@ -320,8 +305,8 @@ export async function filePathInput(options: FilePathInputOptions): Promise<stri
             }
 
             const entry = entries[cursor];
-            const dir = value.endsWith("/") ? value : value.slice(0, value.lastIndexOf("/") + 1);
-            value = dir + entry.name + (entry.isDirectory ? "/" : "");
+            const dir = endsWithSep(value) ? value : value.slice(0, lastSepIndex(value) + 1);
+            value = dir + entry.name + (entry.isDirectory ? sep : "");
             cursor = -1;
             render();
         };

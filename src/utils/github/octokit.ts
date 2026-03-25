@@ -53,7 +53,9 @@ function getGitHubToken(): string | undefined {
     }
 
     // 3. Fallback: Try to read from gh CLI config (older versions)
-    const ghConfigPath = join(homedir(), ".config", "gh", "hosts.yml");
+    const ghConfigPath = process.platform === "win32"
+        ? join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "gh", "hosts.yml")
+        : join(homedir(), ".config", "gh", "hosts.yml");
     if (existsSync(ghConfigPath)) {
         try {
             const configContent = readFileSync(ghConfigPath, "utf-8");

@@ -92,12 +92,17 @@ export class Storage {
             return SafeJSON.parse(content) as T;
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
+            const isWin = process.platform === "win32";
+            const editorCmd = isWin ? `notepad "${this.configPath}"` : `$EDITOR "${this.configPath}"`;
+            const backupCmd = isWin
+                ? `copy "${this.configPath}" "${this.configPath}.bak"`
+                : `cp "${this.configPath}" "${this.configPath}.bak"`;
             throw new Error(
                 `Failed to parse config at ${this.configPath}: ${msg}\n` +
                     `  The config file exists but contains invalid JSON.\n` +
                     `  Suggested actions:\n` +
-                    `    1. Open and fix manually: $EDITOR "${this.configPath}"\n` +
-                    `    2. Backup first: cp "${this.configPath}" "${this.configPath}.bak"`
+                    `    1. Open and fix manually: ${editorCmd}\n` +
+                    `    2. Backup first: ${backupCmd}`
             );
         }
     }

@@ -1,5 +1,4 @@
 import os from "node:os";
-import pathUtils from "node:path";
 
 import { SafeJSON } from "@app/utils/json";
 
@@ -16,13 +15,7 @@ export function tildeifyPath(path: string): string {
     return path;
 }
 
-export function resolvePathWithTilde(path: string): string {
-    if (path.startsWith("~")) {
-        return path.replace("~", os.homedir());
-    }
-
-    return pathUtils.resolve(path, "~");
-}
+export { expandTilde as resolvePathWithTilde } from "@app/utils/paths";
 
 /**
  * Normalizes file path(s) from various formats that MCP tools might receive.

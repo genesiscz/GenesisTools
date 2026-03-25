@@ -1,69 +1,24 @@
 /**
- * Shared date utilities for CLI tools.
+ * Shared date utilities -- browser-safe (no Node.js imports at top level).
+ * For locale detection (requires Node.js), see ./date-locale.ts.
  */
 
-import { execSync } from "node:child_process";
+let _resolveLocale: (() => string) | undefined;
 
-// ============================================
-// Locale Detection
-// ============================================
-
-let cachedLocale: string | undefined;
-
-/**
- * Detect system locale.
- * macOS: `defaults read NSGlobalDomain AppleLocale` (e.g. "cs_CZ" → "cs-CZ")
- * Fallback: $LC_TIME / $LANG / $LC_ALL → Intl default
- */
-export function getSystemLocale(): string {
-    if (cachedLocale) {
-        return cachedLocale;
+function resolveLocale(override?: string): string {
+    if (override) {
+        return override;
     }
 
-    if (process.platform === "darwin") {
-        try {
-            const raw = execSync("defaults read NSGlobalDomain AppleLocale", {
-                encoding: "utf-8",
-                timeout: 1000,
-            }).trim();
-
-            if (raw) {
-                // AppleLocale format: "en_US@rg=czzzzz" where:
-                // - "en_US" is language_region
-                // - "@rg=czzzzz" means "use Czech Republic regional formats" (24h time, date order, etc.)
-                // We parse the rg= suffix to get the actual regional country code,
-                // so "en_US@rg=czzzzz" → "en-CZ" (English with Czech regional formats → 24h time)
-                const [base, suffix] = raw.split("@");
-                let locale = base.replace(/_/g, "-");
-
-                if (suffix) {
-                    const rgMatch = suffix.match(/rg=([a-z]{2})/i);
-
-                    if (rgMatch) {
-                        const regionCode = rgMatch[1].toUpperCase();
-                        const lang = locale.split("-")[0];
-                        locale = `${lang}-${regionCode}`;
-                    }
-                }
-
-                cachedLocale = locale;
-                return cachedLocale;
-            }
-        } catch {
-            // fall through
-        }
+    if (!_resolveLocale) {
+        // Lazy require so Vite won't bundle node:child_process into client code.
+        _resolveLocale = (require("./date-locale") as { getSystemLocale: () => string }).getSystemLocale;
     }
 
-    const envLocale = process.env.LC_TIME || process.env.LANG || process.env.LC_ALL;
-
-    if (envLocale) {
-        cachedLocale = envLocale.split(".")[0].replace(/_/g, "-");
-        return cachedLocale;
-    }
-
-    cachedLocale = new Intl.DateTimeFormat().resolvedOptions().locale;
-    return cachedLocale;
+    return _resolveLocale();
 }
+
+export { getSystemLocale } from "./date-locale";
 
 // ============================================
 // Locale-Aware Display Formatting
@@ -112,7 +67,7 @@ export interface FormatDateTimeOptions {
  */
 export function formatDateTime(date: Date | string | number, options: FormatDateTimeOptions = {}): string {
     const d = date instanceof Date ? date : new Date(date);
-    const locale = options.locale ?? getSystemLocale();
+    const locale = resolveLocale(options.locale);
     const now = new Date();
 
     const hasRelative = options.relative !== undefined;

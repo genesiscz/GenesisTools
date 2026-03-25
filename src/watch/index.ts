@@ -1,9 +1,9 @@
 import type { WatchEventType, WatchOptions } from "node:fs";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { consoleLog as logger } from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
+import { expandTilde } from "@app/utils/paths";
 import { handleReadmeFlag } from "@app/utils/readme";
 import chalk from "chalk";
 import chokidar from "chokidar";
@@ -55,12 +55,7 @@ if (possibleShellExpansion) {
 }
 
 // Expand tilde to home directory in all patterns
-globPatterns = globPatterns.map((pattern) => {
-    if (pattern.startsWith("~/")) {
-        return pattern.replace(/^~\//, `${os.homedir()}/`);
-    }
-    return pattern;
-});
+globPatterns = globPatterns.map((pattern) => expandTilde(pattern));
 
 // Store current working directory
 const cwd = process.cwd();

@@ -9,6 +9,11 @@ import * as fsevents from "fsevents";
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
 
+if (process.platform !== "darwin") {
+    logger.error("fsevents-profile requires macOS (uses fs_usage and /dev/fsevents).");
+    process.exit(1);
+}
+
 // Define options interface
 interface Options {
     duration?: number;
@@ -205,7 +210,6 @@ async function showFseventsWatchers() {
         // Politely ask the process to terminate
         fsUsageProc.kill("SIGKILL");
 
-        console.log("fsUsageProc");
         const stdout = await new Response(fsUsageProc.stdout).text();
         await fsUsageProc.exited;
 
@@ -215,7 +219,6 @@ async function showFseventsWatchers() {
         // e.g., "10:30:01.123 open /dev/fsevents  0.000002   node.12345"
         const lineRegex = /\s+([\w.-]+)\.(\d+)$/;
 
-        console.log("lines", lines.length);
         for (const line of lines) {
             const match = line.match(lineRegex);
             if (match) {
