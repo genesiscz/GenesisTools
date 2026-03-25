@@ -288,8 +288,7 @@ export function registerAddCommand(program: Command): void {
                     const ok = await ensureOllamaModel(model);
 
                     if (!ok) {
-                        process.exitCode = 1;
-                        return;
+                        process.exit(1);
                     }
                 }
 

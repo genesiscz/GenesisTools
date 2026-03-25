@@ -48,10 +48,7 @@ export class AIGoogleProvider implements AIProvider, AIEmbeddingProvider {
         this.model = options?.model ?? "gemini-embedding-001";
         this.maxChars = Math.floor((options?.maxTokens ?? GOOGLE_MAX_TOKENS) * CHARS_PER_TOKEN_ESTIMATE);
         this.rateLimitDelayMs =
-            options?.rateLimitMs ??
-            (process.env.GOOGLE_RATE_LIMIT_MS
-                ? parseInt(process.env.GOOGLE_RATE_LIMIT_MS, 10)
-                : GOOGLE_RATE_LIMIT_DELAY_MS);
+            options?.rateLimitMs ?? (parseInt(process.env.GOOGLE_RATE_LIMIT_MS!, 10) || GOOGLE_RATE_LIMIT_DELAY_MS);
     }
 
     async isAvailable(): Promise<boolean> {

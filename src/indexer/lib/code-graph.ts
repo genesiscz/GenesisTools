@@ -55,6 +55,9 @@ function getLanguage(filePath: string): string | null {
 const TS_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 const INDEX_FILES = ["index.ts", "index.tsx", "index.js", "index.jsx"];
 
+/** Normalize tsx/jsx to their base language so they share resolver extension buckets */
+const RESOLVER_LANG: Record<string, string> = { tsx: "typescript", jsx: "javascript" };
+
 /**
  * Try to resolve a relative import specifier to an actual file in the file map.
  * Returns the resolved relative path, or null if not found.
@@ -72,7 +75,8 @@ function resolveRelativeImport(
         return basePath;
     }
 
-    const extensions = language ? (LANGUAGE_EXTENSIONS[language] ?? TS_EXTENSIONS) : TS_EXTENSIONS;
+    const resolverLang = language ? (RESOLVER_LANG[language] ?? language) : undefined;
+    const extensions = resolverLang ? (LANGUAGE_EXTENSIONS[resolverLang] ?? TS_EXTENSIONS) : TS_EXTENSIONS;
 
     for (const ext of extensions) {
         const withExt = basePath + ext;
@@ -83,7 +87,13 @@ function resolveRelativeImport(
     }
 
     // Directory index files (TS/JS only)
-    if (!language || language === "typescript" || language === "tsx") {
+    if (
+        !language ||
+        language === "typescript" ||
+        language === "tsx" ||
+        language === "javascript" ||
+        language === "jsx"
+    ) {
         for (const indexFile of INDEX_FILES) {
             const withIndex = join(basePath, indexFile);
 
@@ -134,7 +144,8 @@ function resolveAliasImport(
             }
 
             // Try with extensions
-            const extensions = language ? (LANGUAGE_EXTENSIONS[language] ?? TS_EXTENSIONS) : TS_EXTENSIONS;
+            const resolverLang = language ? (RESOLVER_LANG[language] ?? language) : undefined;
+            const extensions = resolverLang ? (LANGUAGE_EXTENSIONS[resolverLang] ?? TS_EXTENSIONS) : TS_EXTENSIONS;
 
             for (const ext of extensions) {
                 if (fileSet.has(basePath + ext)) {
@@ -365,8 +376,11 @@ export function buildCodeGraph(files: Map<string, string>, baseDir: string): Cod
                 resolved = resolveRubyImport(imp.specifier, filePath, fileSet);
             }
 
-            // Fallback: try tsconfig/jsconfig path aliases for TS/TSX non-relative imports
-            if (!resolved && (language === "typescript" || language === "tsx")) {
+            // Fallback: try tsconfig/jsconfig path aliases for TS/JS/TSX/JSX non-relative imports
+            if (
+                !resolved &&
+                (language === "typescript" || language === "tsx" || language === "javascript" || language === "jsx")
+            ) {
                 if (!imp.specifier.startsWith(".") && !imp.specifier.startsWith("/")) {
                     resolved = resolveAliasImport(imp.specifier, fileSet, aliases, language);
                 }

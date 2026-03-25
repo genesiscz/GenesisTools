@@ -3,6 +3,8 @@
  * Consolidates retry, debounce, throttle, and withTimeout.
  */
 
+import logger from "@app/logger";
+
 // ============= Retry =============
 
 interface RetryOptions {
@@ -182,12 +184,15 @@ export class AsyncOpQueue {
     }
 
     async flush(): Promise<void> {
-        if (this.flushPromise) {
-            await this.flushPromise;
-        }
+        while (this.flushPromise || this.pendingOps.length > 0) {
+            if (this.flushPromise) {
+                await this.flushPromise;
+            }
 
-        while (this.pendingOps.length > 0) {
-            await this.drainQueue();
+            if (this.pendingOps.length > 0) {
+                this.scheduleFlush();
+                await this.flushPromise;
+            }
         }
     }
 
@@ -216,7 +221,7 @@ export class AsyncOpQueue {
             try {
                 await op();
             } catch (err) {
-                console.error(`[${this.label}] async operation failed:`, err);
+                logger.error({ err, label: this.label }, "background queue error");
             }
         }
     }

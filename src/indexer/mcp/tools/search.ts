@@ -45,22 +45,11 @@ async function handleSearch(args: SearchArgs): Promise<string> {
         const limit = args.limit ?? 20;
         const minScore = args.minScore ?? 0;
 
-        // Auto-detect mode: hybrid when embeddings exist, fulltext otherwise
-        let mode = args.mode ?? "fulltext";
-
-        if (!args.mode) {
-            const names = args.indexName ? [args.indexName] : manager.getIndexNames();
-
-            if (names.length > 0) {
-                const first = await manager.getIndex(names[0]);
-                mode = detectMode(first);
-            }
-        }
-
         let allResults: Array<{ indexName: string; doc: ChunkRecord; score: number; method: string }> = [];
 
         if (args.indexName) {
             const indexer = await manager.getIndex(args.indexName);
+            const mode = args.mode ?? detectMode(indexer);
             const results = await indexer.search(args.query, { mode, limit });
 
             for (const r of results) {
@@ -80,6 +69,7 @@ async function handleSearch(args: SearchArgs): Promise<string> {
 
             for (const name of names) {
                 const indexer = await manager.getIndex(name);
+                const mode = args.mode ?? detectMode(indexer);
                 const results = await indexer.search(args.query, { mode, limit });
 
                 for (const r of results) {
@@ -111,7 +101,8 @@ async function handleSearch(args: SearchArgs): Promise<string> {
             return `No results found for "${args.query}". Ensure indexes exist (indexer_status) and have been synced.`;
         }
 
-        const lines = [`Search results for "${args.query}" (${allResults.length} matches, mode: ${mode}):\n`];
+        const displayMode = args.mode ?? "auto";
+        const lines = [`Search results for "${args.query}" (${allResults.length} matches, mode: ${displayMode}):\n`];
 
         for (const r of allResults) {
             lines.push(
