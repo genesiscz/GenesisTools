@@ -3,5 +3,5 @@
  * Returns a hex string.
  */
 export function xxhash(content: string): string {
-    return Bun.hash(content).toString(16);
+    return Bun.hash.xxHash64(content).toString(16);
 }

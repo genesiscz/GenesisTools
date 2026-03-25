@@ -8,6 +8,5 @@ export type SearchMode = "fulltext" | "vector" | "hybrid";
  * Otherwise -> fulltext (BM25 only).
  */
 export function detectMode(indexer: Indexer): SearchMode {
-    const info = indexer.getConsistencyInfo();
-    return info.embeddingCount > 0 ? "hybrid" : "fulltext";
+    return indexer.getStore().getEmbeddingCount() > 0 ? "hybrid" : "fulltext";
 }

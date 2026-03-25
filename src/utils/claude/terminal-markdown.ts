@@ -46,9 +46,10 @@ function createTerminalRenderer(): Renderer {
 
     renderer.list = (token) => {
         let result = "";
+        const start = token.start ?? 1;
 
-        for (const item of token.items) {
-            const bullet = token.ordered ? `${token.start}. ` : "- ";
+        for (const [index, item] of token.items.entries()) {
+            const bullet = token.ordered ? `${start + index}. ` : "- ";
             const content = renderer.parser.parseInline(item.tokens);
             result += `${bullet}${content}\n`;
         }

@@ -406,6 +406,11 @@ export async function createIndexStore(config: IndexConfig, embedder?: Embedder)
                         ids: chunkIds,
                         queryFn: (placeholders, batch) => {
                             db.run(`DELETE FROM ${contentTable} WHERE id IN (${placeholders})`, batch);
+
+                            if (embTableExists) {
+                                db.run(`DELETE FROM ${activeEmbTable} WHERE doc_id IN (${placeholders})`, batch);
+                            }
+
                             return [];
                         },
                     });

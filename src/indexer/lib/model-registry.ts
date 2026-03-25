@@ -286,7 +286,7 @@ export function getTaskPrefix(modelId: string): { document: string; query: strin
 export function getModelsForType(type: "code" | "files" | "mail" | "chat"): ModelInfo[] {
     const category = type === "code" || type === "files" ? "code" : type === "mail" ? "mail" : "general";
 
-    const gpuOrder: Record<string, number> = { ollama: 0, coreml: 1, "local-hf": 2, darwinkit: 3, cloud: 4, google: 5 };
+    const gpuOrder: Record<ModelInfo["provider"], number> = { ollama: 0, coreml: 1, "local-hf": 2, darwinkit: 3, cloud: 4, google: 5 };
 
     return [...MODEL_REGISTRY].sort((a, b) => {
         const aMatch = a.bestFor.includes(category) ? 0 : 1;
@@ -296,7 +296,7 @@ export function getModelsForType(type: "code" | "files" | "mail" | "chat"): Mode
             return aMatch - bMatch;
         }
 
-        return (gpuOrder[a.provider] ?? 9) - (gpuOrder[b.provider] ?? 9);
+        return gpuOrder[a.provider] - gpuOrder[b.provider];
     });
 }
 

@@ -11,6 +11,7 @@ export interface CommandResult {
     newModel?: LanguageModel;
     newProvider?: string;
     newModelName?: string;
+    newSystemPromptPrefix?: string;
     outputFormat?: OutputConfig;
     clearHistory?: boolean;
     saveConversation?: boolean;
@@ -66,6 +67,7 @@ export class CommandHandler {
             newModel: model,
             newProvider: newChoice.provider.name,
             newModelName: newChoice.model.id,
+            newSystemPromptPrefix: newChoice.provider.systemPromptPrefix,
         };
     }
 

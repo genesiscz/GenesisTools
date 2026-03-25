@@ -482,6 +482,16 @@ export class SummarizeEngine {
         if (this.options.promptOnly) {
             let fullPrompt: string;
 
+            // Apply provider prefix so debug output matches what would actually be sent
+            let effectiveSystemPrompt = systemPrompt;
+
+            try {
+                const choice = await this.resolveModel();
+                effectiveSystemPrompt = applySystemPromptPrefix(choice.provider.systemPromptPrefix, systemPrompt);
+            } catch {
+                // Model not resolvable in prompt-only, use raw prompt
+            }
+
             if (this.options.thorough) {
                 // Try to resolve model for chunk sizing info (best-effort, fallback to defaults)
                 let modelForSizing: ProviderChoice | undefined;
@@ -497,7 +507,7 @@ export class SummarizeEngine {
                 const chunks = this.splitIntoChunks(prepared.content, chunkSize);
 
                 const parts: string[] = [];
-                parts.push(`=== SYSTEM PROMPT ===\n\n${systemPrompt}`);
+                parts.push(`=== SYSTEM PROMPT ===\n\n${effectiveSystemPrompt}`);
 
                 const modelInfo = modelForSizing
                     ? ` (model: ${modelForSizing.model.id}, context: ${Math.round((modelForSizing.model.contextWindow ?? 0) / 1000)}K, chunk: ~${Math.round(chunkSize / 1000)}K)`
@@ -514,7 +524,7 @@ export class SummarizeEngine {
                 parts.push(`\n=== SYNTHESIS PROMPT ===\n\n${userPrompt}`);
                 fullPrompt = parts.join("\n\n");
             } else {
-                fullPrompt = `=== SYSTEM PROMPT ===\n\n${systemPrompt}\n\n=== USER PROMPT ===\n\n${userPrompt}`;
+                fullPrompt = `=== SYSTEM PROMPT ===\n\n${effectiveSystemPrompt}\n\n=== USER PROMPT ===\n\n${userPrompt}`;
             }
 
             const outputPaths = await this.formatOutput(fullPrompt);

@@ -259,7 +259,10 @@ class FTS5Engine{
     return(s>0?'...':'')+text.slice(s,e)+(e<text.length?'...':'');
   }
   hl(text,terms){
-    return terms.reduce((t,term)=>t.replace(new RegExp('\\b('+term+'\\w*)','gi'),'<mark>$1</mark>'),text);
+    return terms.reduce((t,term)=>{
+      const escaped=term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      return t.replace(new RegExp('\\b('+escaped+'\\w*)','gi'),'<mark>$1</mark>');
+    },text);
   }
 }
 
@@ -358,7 +361,7 @@ document.getElementById('fts-idx').innerHTML=topIdx.map(([t,e])=>`<div class="id
 
 // ===== UI HELPERS =====
 function catCls(c){return'rbadge cat-'+(c||'database').replace(/\s+/g,'-');}
-function esc(s){return String(s||'').replace(/</g,'&lt;');}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 
 function renderCard(r,i){
   const snip=r.terms?.length?fts.hl(esc(r.snippet),r.terms):esc(r.snippet);

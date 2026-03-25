@@ -286,9 +286,7 @@ export class ClaudeSessionFormatter {
                     }
 
                     for (const line of lines.slice(1)) {
-                        if (line.trim()) {
-                            this.writeLine(`         ${line}`);
-                        }
+                        this.writeLine(line ? `         ${line}` : "");
                     }
                 }
             }
@@ -478,7 +476,7 @@ export class ClaudeSessionFormatter {
     }
 
     private looksLikePath(text: string): boolean {
-        return /^[\/~.][\w.\/\-@]+$/.test(text);
+        return text.includes("/") || text.includes("\\");
     }
 
     private formatDuration(ms: number): string {
