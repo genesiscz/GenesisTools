@@ -456,15 +456,14 @@ export async function saveReviewMarkdown(
 
     if (typeof options.save === "string") {
         // --save <path>: resolve relative to original cwd
-        const { resolve: pathResolve } = await import("node:path");
+        const { resolve: pathResolve, extname, dirname } = await import("node:path");
         const target = pathResolve(baseCwd, options.save);
 
-        // If target looks like a directory (ends with / or no extension), put file inside
-        if (target.endsWith("/") || !target.includes(".")) {
+        // If target looks like a directory (ends with / or has no file extension), put file inside
+        if (target.endsWith("/") || !extname(target)) {
             mkdirSync(target, { recursive: true });
             filePath = join(target, filename);
         } else {
-            const { dirname } = await import("node:path");
             mkdirSync(dirname(target), { recursive: true });
             filePath = target;
         }

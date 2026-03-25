@@ -286,35 +286,8 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
 
     // Handle worktree switching
     if (options.worktree && pr.head.ref) {
-        const { ensureWorktreeForBranch } = await import("@app/utils/git/worktree");
-
-        try {
-            const worktreeResult = await ensureWorktreeForBranch({
-                branch: pr.head.ref,
-                basePath: typeof options.worktree === "string" ? options.worktree : undefined,
-                prNumber: number,
-            });
-
-            if (worktreeResult.created) {
-                console.error(chalk.yellow(`⚠️  Created worktree: ${worktreeResult.path}`));
-            }
-
-            if (worktreeResult.dirty) {
-                console.error(chalk.yellow(`⚠️  Worktree has uncommitted changes`));
-            }
-
-            if (worktreeResult.path !== process.cwd()) {
-                console.error(
-                    chalk.yellow(`⚠️  Switching cwd from ${process.cwd()} to ${worktreeResult.path}`)
-                );
-            }
-
-            console.log(`WORKTREE_PATH: ${worktreeResult.path}`);
-        } catch (err) {
-            console.error(
-                chalk.red(`Worktree error: ${err instanceof Error ? err.message : String(err)}`)
-            );
-        }
+        const { handleWorktreeOption } = await import("@app/utils/git/worktree");
+        await handleWorktreeOption({ worktree: options.worktree, branch: pr.head.ref, prNumber: number });
     }
 
     // Fetch additional PR-specific data

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Executor } from "@app/utils/cli";
+import chalk from "chalk";
 
 // =============================================================================
 // Types
@@ -74,10 +75,17 @@ export async function listWorktrees(cwd?: string): Promise<WorktreeInfo[]> {
     const worktrees: WorktreeInfo[] = [];
     let current: Partial<WorktreeInfo> = {};
 
+    const pushIfComplete = () => {
+        if (current.path && current.head !== undefined) {
+            worktrees.push(current as WorktreeInfo);
+        }
+        current = {};
+    };
+
     for (const line of result.stdout.split("\n")) {
         if (line.startsWith("worktree ")) {
             if (current.path) {
-                worktrees.push(current as WorktreeInfo);
+                pushIfComplete();
             }
             current = { path: line.slice(9), isBare: false, isMain: worktrees.length === 0 };
         } else if (line.startsWith("HEAD ")) {
@@ -89,15 +97,12 @@ export async function listWorktrees(cwd?: string): Promise<WorktreeInfo[]> {
             current.isBare = true;
         } else if (line === "detached") {
             current.branch = null;
-        } else if (line.trim() === "" && current.path) {
-            worktrees.push(current as WorktreeInfo);
-            current = {};
+        } else if (line.trim() === "") {
+            pushIfComplete();
         }
     }
 
-    if (current.path) {
-        worktrees.push(current as WorktreeInfo);
-    }
+    pushIfComplete();
 
     return worktrees;
 }
@@ -107,19 +112,21 @@ export async function listWorktrees(cwd?: string): Promise<WorktreeInfo[]> {
  */
 export async function isInWorktree(cwd?: string): Promise<boolean> {
     const g = git(cwd);
-    const toplevel = await g.exec(["rev-parse", "--show-toplevel"]);
-    const commonDir = await g.exec(["rev-parse", "--git-common-dir"]);
+    const gitDirResult = await g.exec(["rev-parse", "--git-dir"]);
+    const commonDirResult = await g.exec(["rev-parse", "--git-common-dir"]);
 
-    if (!toplevel.success || !commonDir.success) {
+    if (!gitDirResult.success || !commonDirResult.success) {
         return false;
     }
 
-    // In main repo: commonDir is ".git" (relative).
-    // In worktree: commonDir is an absolute path to main repo's .git/worktrees/<name>.
-    const resolved = resolve(cwd ?? process.cwd(), commonDir.stdout);
-    const mainGitDir = resolve(toplevel.stdout, ".git");
+    // In main repo: both resolve to the same path.
+    // In worktree: --git-dir points to the worktree's .git file,
+    // --git-common-dir points to the main repo's .git/worktrees/<name>.
+    const effectiveCwd = cwd ?? process.cwd();
+    const gitDir = resolve(effectiveCwd, gitDirResult.stdout);
+    const commonDir = resolve(effectiveCwd, commonDirResult.stdout);
 
-    return resolved !== mainGitDir;
+    return gitDir !== commonDir;
 }
 
 /**
@@ -142,7 +149,7 @@ export async function getMainRepoRoot(cwd?: string): Promise<string> {
     }
 
     // .git/worktrees/<name> → .git → parent
-    const gitDir = absCommon.replace(/\/worktrees\/[^/]+$/, "");
+    const gitDir = absCommon.replace(/[/\\]worktrees[/\\][^/\\]+$/, "");
     return resolve(gitDir, "..");
 }
 
@@ -328,4 +335,44 @@ export async function ensureWorktreeForBranch(options: WorktreeCreateOptions): P
         branch,
         dirty: false,
     };
+}
+
+// =============================================================================
+// CLI integration
+// =============================================================================
+
+export interface HandleWorktreeOptions {
+    worktree: boolean | string;
+    branch: string;
+    prNumber: number;
+}
+
+/**
+ * Shared worktree handler for CLI commands (review, pr).
+ * Ensures a worktree exists, logs status, and outputs WORKTREE_PATH.
+ */
+export async function handleWorktreeOption(options: HandleWorktreeOptions): Promise<void> {
+    try {
+        const result = await ensureWorktreeForBranch({
+            branch: options.branch,
+            basePath: typeof options.worktree === "string" ? options.worktree : undefined,
+            prNumber: options.prNumber,
+        });
+
+        if (result.created) {
+            console.error(chalk.yellow(`⚠️  Created worktree: ${result.path}`));
+        }
+
+        if (result.dirty) {
+            console.error(chalk.yellow(`⚠️  Worktree has uncommitted changes`));
+        }
+
+        if (result.path !== process.cwd()) {
+            console.error(chalk.yellow(`⚠️  Switching cwd from ${process.cwd()} to ${result.path}`));
+        }
+
+        console.log(`WORKTREE_PATH: ${result.path}`);
+    } catch (err) {
+        console.error(chalk.red(`Worktree error: ${err instanceof Error ? err.message : String(err)}`));
+    }
 }

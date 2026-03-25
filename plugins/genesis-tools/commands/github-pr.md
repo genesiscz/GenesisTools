@@ -419,6 +419,7 @@ date -u +"%Y-%m-%dT%H-%M-%S"   # e.g. 2026-02-18T23-18-22
 - With `--save <path>`: plan files go to `<path>/PR-<id>-<datetime>.md` (relative to original cwd)
 
 Create the target directory:
+
 ```bash
 mkdir -p <chosen-plan-dir>
 ```
