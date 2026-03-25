@@ -8,7 +8,7 @@ import { formatChunkDisplayName } from "../lib/display-name";
 import { parseQueryWords } from "../lib/highlight";
 import { IndexerManager } from "../lib/manager";
 import { detectMode, resolveSearchMode, type SearchMode } from "../lib/search-mode";
-import { formatSearchResults, type FormattedSearchResult, type OutputFormat } from "../lib/search-output";
+import { type FormattedSearchResult, formatSearchResults, type OutputFormat } from "../lib/search-output";
 import type { ChunkRecord } from "../lib/types";
 
 interface SearchCommandOptions {
@@ -139,9 +139,10 @@ export function registerSearchCommand(program: Command): void {
                     endLine: r.result.doc.endLine,
                 }));
 
-                const filtered = opts.confidence !== undefined
-                    ? formatted.filter((r) => r.confidence >= opts.confidence!)
-                    : formatted;
+                const filtered =
+                    opts.confidence !== undefined
+                        ? formatted.filter((r) => r.confidence >= opts.confidence!)
+                        : formatted;
 
                 if (format === "json" || format === "toon") {
                     const output = filtered.map((r) => ({
