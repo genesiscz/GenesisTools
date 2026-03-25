@@ -314,7 +314,7 @@ function buildNonInteractiveOptions(session: ClaudeSession, opts: SummarizeComma
         customPrompt: opts.customPrompt,
         provider: opts.provider,
         model: opts.model,
-        streaming: process.stdout.isTTY,
+        streaming: undefined, // Engine decides: stream when stdout is target
         promptOnly: opts.promptOnly,
         tokenBudget: explicitTokenBudget,
         includeToolResults: opts.includeToolResults,
