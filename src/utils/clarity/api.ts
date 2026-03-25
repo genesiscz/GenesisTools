@@ -28,6 +28,7 @@ export class ClarityApi {
         const response = await fetch(url, {
             ...options,
             signal,
+            tls: { rejectUnauthorized: false },
             headers: {
                 Accept: "application/json, text/plain, */*",
                 "Content-Type": "application/json",
@@ -103,6 +104,7 @@ export class ClarityApi {
 
         const response = await fetch(url, {
             method: "PUT",
+            tls: { rejectUnauthorized: false },
             headers: {
                 Accept: "application/json, text/plain, */*",
                 "Content-Type": "application/json",

@@ -5,7 +5,7 @@
  */
 
 import { homedir } from "node:os";
-import { isAbsolute, join, sep } from "node:path";
+import { isAbsolute, join, resolve, sep } from "node:path";
 
 /**
  * Whether a path string ends with a directory separator (/ or \).
@@ -49,11 +49,11 @@ export function expandPath(p: string): string {
     }
 
     if (p.startsWith("./") || p.startsWith(".\\")) {
-        return join(process.cwd(), p.slice(2));
+        return resolve(process.cwd(), p.slice(2));
     }
 
     if (!isAbsolute(p)) {
-        return join(process.cwd(), p);
+        return resolve(process.cwd(), p);
     }
 
     return p;
