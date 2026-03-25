@@ -274,7 +274,8 @@ export async function ensureWorktreeForBranch(options: WorktreeCreateOptions): P
 
     // 3. Create new worktree
     const mainRoot = await getMainRepoRoot(effectiveCwd);
-    const basePath = options.basePath ?? (await resolveWorktreeBasePath(mainRoot));
+    const rawBasePath = options.basePath ?? (await resolveWorktreeBasePath(mainRoot));
+    const basePath = resolve(effectiveCwd, rawBasePath);
     const g = git(mainRoot);
 
     // Ensure base directory exists
@@ -374,5 +375,6 @@ export async function handleWorktreeOption(options: HandleWorktreeOptions): Prom
         console.log(`WORKTREE_PATH: ${result.path}`);
     } catch (err) {
         console.error(chalk.red(`Worktree error: ${err instanceof Error ? err.message : String(err)}`));
+        throw err;
     }
 }

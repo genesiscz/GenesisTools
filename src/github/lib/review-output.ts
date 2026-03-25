@@ -430,7 +430,9 @@ export function formatReviewJSON(data: ReviewData): string {
 // File Output
 // =============================================================================
 
-export interface SaveReviewOptions {
+export interface SaveReviewParams {
+    content: string;
+    prNumber: number;
     save?: boolean | string;
     repo?: string;
     originalCwd?: string;
@@ -443,38 +445,32 @@ export interface SaveReviewOptions {
  * - `save: true`: saves to `.claude/reviews/pr-<n>-<ts>.md`
  * - `save: "<path>"`: resolves relative to `originalCwd` (or cwd)
  */
-export async function saveReviewMarkdown(
-    content: string,
-    prNumber: number,
-    options: SaveReviewOptions = {}
-): Promise<string> {
+export async function saveReviewMarkdown(params: SaveReviewParams): Promise<string> {
+    const { content, prNumber, save, repo, originalCwd } = params;
     const now = new Date();
     const datetime = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const filename = `pr-${prNumber}-${datetime}.md`;
-    const baseCwd = options.originalCwd ?? process.cwd();
+    const baseCwd = originalCwd ?? process.cwd();
 
     let filePath: string;
 
-    if (typeof options.save === "string") {
-        // --save <path>: resolve relative to original cwd
-        const target = pathResolve(baseCwd, options.save);
+    if (typeof save === "string") {
+        const treatAsDirectory = /[\\/]$/.test(save);
+        const target = pathResolve(baseCwd, save);
 
-        // If target looks like a directory (ends with / or has no file extension), put file inside
-        if (target.endsWith("/") || !extname(target)) {
+        if (treatAsDirectory || !extname(target)) {
             mkdirSync(target, { recursive: true });
             filePath = join(target, filename);
         } else {
             mkdirSync(dirname(target), { recursive: true });
             filePath = target;
         }
-    } else if (options.save) {
-        // --save (boolean): save to .claude/reviews/
+    } else if (save) {
         const reviewsDir = join(baseCwd, ".claude", "reviews");
         mkdirSync(reviewsDir, { recursive: true });
         filePath = join(reviewsDir, filename);
     } else {
-        // Default: save to /tmp/github/reviews/<repo>/
-        const repoSlug = options.repo ?? "unknown";
+        const repoSlug = repo ?? "unknown";
         const tmpDir = join(tmpdir(), "github", "reviews", repoSlug);
         mkdirSync(tmpDir, { recursive: true });
         filePath = join(tmpDir, filename);

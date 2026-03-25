@@ -225,7 +225,9 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
     // Markdown output (save to file)
     if (options.md) {
         const mdContent = formatReviewMarkdown(reviewData, options.groupByFile ?? false);
-        const filePath = await saveReviewMarkdown(mdContent, prNumber, {
+        const filePath = await saveReviewMarkdown({
+            content: mdContent,
+            prNumber,
             save: options.save,
             repo: `${owner}-${repo}`,
             originalCwd: process.cwd(),
