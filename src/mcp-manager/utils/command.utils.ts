@@ -1,4 +1,5 @@
 import logger from "@app/logger";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { ExitPromptError } from "@inquirer/core";
 import { checkbox } from "@inquirer/prompts";
@@ -357,7 +358,16 @@ export async function getServerNames(
         return parsedNames;
     }
 
-    // Otherwise, prompt for selection
+    // Otherwise, prompt for selection (TTY only)
+    if (!isInteractive()) {
+        const serverNames = Object.keys(config.mcpServers).sort();
+        logger.error(
+            `Server name(s) required in non-interactive mode. Available: ${serverNames.join(", ")}`
+        );
+        logger.info(suggestCommand("tools mcp-manager", { add: ["<server1,server2>"] }));
+        return null;
+    }
+
     return await promptForServers(config, promptMessage);
 }
 
@@ -367,6 +377,13 @@ export async function getServerNames(
 export async function promptForProviders(availableProviders: MCPProvider[], message: string): Promise<string[] | null> {
     if (availableProviders.length === 0) {
         logger.warn("No provider configuration files found.");
+        return null;
+    }
+
+    if (!isInteractive()) {
+        const names = availableProviders.map((p) => p.getName()).join(", ");
+        logger.error(`--provider required in non-interactive mode. Available: ${names}`);
+        logger.info(suggestCommand("tools mcp-manager", { add: ["--provider", "claude"] }));
         return null;
     }
 
@@ -401,6 +418,11 @@ export interface ProjectChoice {
  * Prompt user to select projects for a provider that supports project-level configuration
  */
 export async function promptForProjects(projects: string[], message: string): Promise<ProjectChoice[] | null> {
+    if (!isInteractive()) {
+        // Non-interactive: default to global (all projects)
+        return [{ projectPath: null, displayName: "Global (all projects)" }];
+    }
+
     const choices = [
         {
             value: "global",

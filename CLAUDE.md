@@ -72,6 +72,7 @@ When creating a new tool and writing helper functions, check if the utility is *
 - `src/utils/format.ts` - Formatting: bytes, duration, tokens, numbers, lists
 - `src/utils/table.ts` - Text table formatting
 - `src/utils/string.ts` - String utilities (glob matching, ANSI stripping)
+- `src/utils/cli/executor.ts` - CLI helpers: `suggestCommand()`, `isInteractive()`, `buildCommand()`, `Executor`, `enhanceHelp()`
 - `src/utils/storage/storage.ts` - Config & cache management
 - `src/utils/async.ts` - Async helpers (concurrency, etc.)
 - `src/utils/json-schema.ts` - JSON schema inference: `inferSchema()`, `formatSchema(value, "skeleton"|"typescript"|"schema")`
@@ -96,6 +97,17 @@ Most tools follow these common patterns:
 -   Common prompt types: `select`, `input`, `confirm`, `checkbox`/`multiselect`
 -   Handle user cancellation gracefully
 -   Provide sensible defaults and suggestions in prompts
+-   **Non-TTY guard**: Always check `isInteractive()` (from `@app/utils/cli`) before showing prompts. When non-interactive, either error with `suggestCommand()` showing required CLI flags, or use a sensible default:
+    ```typescript
+    import { isInteractive, suggestCommand } from "@app/utils/cli";
+
+    if (!isInteractive()) {
+        logger.error("--provider required in non-interactive mode.");
+        logger.info(suggestCommand("tools my-tool", { add: ["--provider", "claude"] }));
+        return;
+    }
+    // ... interactive prompt here
+    ```
 
 **Output Handling**:
 

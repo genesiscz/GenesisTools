@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import logger from "@app/logger";
+import { isInteractive } from "@app/utils/cli";
 import { getUnifiedConfigPath } from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { Storage } from "@app/utils/storage";
@@ -32,8 +33,8 @@ export async function openConfig(options: ConfigOptions = {}): Promise<void> {
     // Always show the path first
     logger.info(`Config file: ${configPath}`);
 
-    // If --path flag, just show the path and exit
-    if (options.path) {
+    // If --path flag or non-interactive, just show the path and exit
+    if (options.path || !isInteractive()) {
         return;
     }
 

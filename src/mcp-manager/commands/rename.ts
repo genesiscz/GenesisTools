@@ -1,4 +1,5 @@
 import logger from "@app/logger";
+import { isInteractive } from "@app/utils/cli";
 import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
@@ -25,6 +26,12 @@ export async function renameServer(
 
     // Get old name - from args or prompt
     let finalOldName = oldName;
+    if (!finalOldName && !isInteractive()) {
+        logger.error("Old name and new name required in non-interactive mode.");
+        logger.info("Usage: tools mcp-manager rename <oldName> <newName>");
+        return;
+    }
+
     if (!finalOldName) {
         const serverNames = Object.keys(config.mcpServers).sort();
         try {
@@ -60,6 +67,12 @@ export async function renameServer(
 
     // Get new name - from args or prompt
     let finalNewName = newName;
+    if (!finalNewName && !isInteractive()) {
+        logger.error("New name required in non-interactive mode.");
+        logger.info(`Usage: tools mcp-manager rename ${finalOldName} <newName>`);
+        return;
+    }
+
     if (!finalNewName) {
         try {
             const inputNewName = await input({
@@ -107,6 +120,11 @@ export async function renameServer(
             `existing '${finalNewName}'`,
             `'${finalOldName}' (will replace)`
         );
+
+        if (!isInteractive()) {
+            logger.error(`Server '${finalNewName}' already exists. Cannot auto-replace in non-interactive mode.`);
+            return;
+        }
 
         try {
             const confirmed = await confirm({
@@ -161,20 +179,25 @@ export async function renameServer(
 
     // Select providers to sync to
     let selectedProviderNames: string[];
-    try {
-        selectedProviderNames = await checkbox({
-            message: "Select providers to sync rename to:",
-            choices: availableProviders.map((p) => ({
-                value: p.getName(),
-                name: `${p.getName()} (${p.getConfigPath()})`,
-            })),
-        });
-    } catch (error) {
-        if (error instanceof ExitPromptError) {
-            logger.info("\nOperation cancelled by user.");
-            return;
+    if (!isInteractive()) {
+        // Non-interactive: sync to all available providers
+        selectedProviderNames = availableProviders.map((p) => p.getName());
+    } else {
+        try {
+            selectedProviderNames = await checkbox({
+                message: "Select providers to sync rename to:",
+                choices: availableProviders.map((p) => ({
+                    value: p.getName(),
+                    name: `${p.getName()} (${p.getConfigPath()})`,
+                })),
+            });
+        } catch (error) {
+            if (error instanceof ExitPromptError) {
+                logger.info("\nOperation cancelled by user.");
+                return;
+            }
+            throw error;
         }
-        throw error;
     }
 
     if (selectedProviderNames.length === 0) {
@@ -230,6 +253,11 @@ async function renameServerInProvider(
         const replacingConfig = SafeJSON.stringify(serverConfig, null, 2);
 
         logger.warn(`\n⚠ Conflict in ${provider.getName()}: Server '${newName}' already exists.`);
+
+        if (!isInteractive()) {
+            logger.error(`Cannot auto-replace in non-interactive mode. Skipping ${provider.getName()}.`);
+            return;
+        }
 
         await DiffUtil.showDiff(
             existingConfig,

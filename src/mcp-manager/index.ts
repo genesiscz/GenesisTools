@@ -1,5 +1,5 @@
 import logger, { configureLogger } from "@app/logger";
-import { enhanceHelp } from "@app/utils/cli";
+import { enhanceHelp, isInteractive } from "@app/utils/cli";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { ExitPromptError } from "@inquirer/core";
 import { input, select } from "@inquirer/prompts";
@@ -245,6 +245,11 @@ program.action(async () => {
     const opts = program.opts();
     const allProviders = getProviders();
     const providers = parseProviderArg(opts.provider, allProviders);
+
+    if (!isInteractive()) {
+        showHelp();
+        process.exit(1);
+    }
 
     try {
         const action = await select({

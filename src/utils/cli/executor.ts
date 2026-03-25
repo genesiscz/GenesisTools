@@ -2,6 +2,14 @@ import type { Command } from "commander";
 import pc from "picocolors";
 
 /**
+ * Check if we're in an interactive TTY context.
+ * When false, prompts would hang — callers should suggest CLI flags instead.
+ */
+export function isInteractive(): boolean {
+    return !!process.stdin.isTTY;
+}
+
+/**
  * Enhance a Commander program with better help UX:
  * - Shows help after errors (e.g. too many arguments)
  * - Expands subcommand options in the parent's help output
