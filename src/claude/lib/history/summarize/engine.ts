@@ -7,6 +7,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
 import type { ClaudeSession, PreparedContent } from "@app/utils/claude/session";
 import { copyToClipboard } from "@app/utils/clipboard";
 import { estimateTokens } from "@app/utils/tokens";
@@ -188,10 +189,13 @@ export class SummarizeEngine {
     }): Promise<LLMCallResult> {
         const model = getLanguageModel(providerChoice.provider.provider, providerChoice.model.id);
 
+        // Subscription OAuth requires the system prompt to start with the Claude Code identity line
+        const effectiveSystem = applySystemPromptPrefix(providerChoice.provider.systemPromptPrefix, systemPrompt);
+
         if (streaming) {
             const result = await streamText({
                 model,
-                system: systemPrompt,
+                system: effectiveSystem,
                 prompt: userPrompt,
                 ...(maxTokens ? { maxTokens } : {}),
             });
@@ -210,7 +214,7 @@ export class SummarizeEngine {
 
         const result = await generateText({
             model,
-            system: systemPrompt,
+            system: effectiveSystem,
             prompt: userPrompt,
             ...(maxTokens ? { maxTokens } : {}),
         });

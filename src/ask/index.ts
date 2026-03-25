@@ -3,6 +3,7 @@
 import logger, { configureLogger } from "@app/logger";
 import { input } from "@app/utils/prompts/clack";
 import { handleReadmeFlag } from "@app/utils/readme";
+import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
 import { AIChat } from "@ask/AIChat";
 import { transcriptionManager } from "@ask/audio/TranscriptionManager";
 import { ChatEngine } from "@ask/chat/ChatEngine";
@@ -622,13 +623,17 @@ class ASKTool {
 
     private async createChatConfig(modelChoice: ProviderChoice, argv: CLIOptions): Promise<ChatConfig> {
         const model = getLanguageModel(modelChoice.provider.provider, modelChoice.model.id);
+        const systemPrompt = applySystemPromptPrefix(
+            modelChoice.provider.systemPromptPrefix,
+            createSystemPrompt(argv.systemPrompt) ?? ""
+        );
 
         return {
             model,
             provider: modelChoice.provider.name,
             modelName: modelChoice.model.id,
             streaming: argv.streaming !== false, // Default to true
-            systemPrompt: createSystemPrompt(argv.systemPrompt),
+            systemPrompt,
             temperature: parseTemperature(argv.temperature),
             maxTokens: parseMaxTokens(argv.maxTokens),
         };
