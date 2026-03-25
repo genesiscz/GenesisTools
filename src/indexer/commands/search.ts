@@ -1,72 +1,24 @@
 import { toToon } from "@app/json/lib/toon";
 import { SafeJSON } from "@app/utils/json";
 import type { SearchResult } from "@app/utils/search/types";
-import { truncateText } from "@app/utils/string";
-import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
-import pc from "picocolors";
+import { normalizeConfidence } from "../lib/confidence";
+import { formatChunkDisplayName } from "../lib/display-name";
+import { parseQueryWords } from "../lib/highlight";
 import { IndexerManager } from "../lib/manager";
-import { detectMode, type SearchMode } from "../lib/search-mode";
+import { detectMode, resolveSearchMode, type SearchMode } from "../lib/search-mode";
+import { formatSearchResults, type FormattedSearchResult, type OutputFormat } from "../lib/search-output";
 import type { ChunkRecord } from "../lib/types";
 
 interface SearchCommandOptions {
     index?: string;
-    mode?: SearchMode;
+    mode?: string;
     limit?: number;
-    format?: "table" | "json" | "toon";
+    format?: "pretty" | "simple" | "table" | "json" | "toon";
     file?: string;
-}
-
-/** Minimum cosine score below which vector/hybrid results are likely noise */
-const VECTOR_MIN_SCORE = 0.55;
-/** RRF scores are tiny — equivalent threshold for hybrid mode */
-const HYBRID_MIN_SCORE = VECTOR_MIN_SCORE * (1 / 60);
-
-function truncatePreview(text: string, maxLen: number): string {
-    const collapsed = text.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
-    return truncateText(collapsed, maxLen);
-}
-
-/**
- * Apply a minimum score filter so irrelevant results don't pollute output.
- * Only applied to vector/hybrid modes where low-score noise is common.
- */
-function filterByMinScore(
-    results: Array<{ indexName: string; result: SearchResult<ChunkRecord> }>,
-    mode: SearchMode
-): Array<{ indexName: string; result: SearchResult<ChunkRecord> }> {
-    if (mode === "fulltext") {
-        return results;
-    }
-
-    const threshold = mode === "hybrid" ? HYBRID_MIN_SCORE : VECTOR_MIN_SCORE;
-    return results.filter((r) => r.result.score >= threshold);
-}
-
-async function searchIndexes(
-    manager: IndexerManager,
-    indexNames: string[],
-    query: string,
-    mode: SearchMode,
-    limit: number
-): Promise<Array<{ indexName: string; result: SearchResult<ChunkRecord> }>> {
-    let allResults: Array<{ indexName: string; result: SearchResult<ChunkRecord> }> = [];
-
-    for (const name of indexNames) {
-        const indexer = await manager.getIndex(name);
-        const results = await indexer.search(query, { mode, limit });
-
-        for (const result of results) {
-            allResults.push({ indexName: name, result });
-        }
-    }
-
-    allResults.sort((a, b) => b.result.score - a.result.score);
-    allResults = filterByMinScore(allResults, mode);
-    allResults = allResults.slice(0, limit);
-
-    return allResults;
+    confidence?: number;
+    contextChunks?: number;
 }
 
 export function registerSearchCommand(program: Command): void {
@@ -77,28 +29,22 @@ export function registerSearchCommand(program: Command): void {
         .option("-i, --index <name>", "Search specific index (default: all)")
         .option("-m, --mode <mode>", "Search mode: fulltext, vector, hybrid (default: auto-detect)")
         .option("-l, --limit <n>", "Max results", parseInt, 20)
-        .option("-f, --file <filter>", "Filter results to files matching this substring (e.g. '.ts', 'src/utils')")
-        .option("--format <type>", "Output format: table, json, toon (default: table)")
+        .option("-f, --file <filter>", "Filter results to files matching this substring")
+        .option("--format <type>", "Output format: pretty, simple, table, json, toon (default: pretty)")
+        .option("-c, --confidence <min>", "Minimum confidence % (0-100)", parseInt)
+        .option("--context-chunks <n>", "Show N surrounding chunks for context", parseInt)
         .action(async (query: string, opts: SearchCommandOptions) => {
             const manager = await IndexerManager.load();
 
             try {
                 const limit = opts.limit ?? 20;
-                const format = opts.format ?? "table";
+                const format = opts.format ?? (process.stdout.isTTY ? "pretty" : "simple");
 
-                const names: string[] = [];
+                const names = opts.index ? [opts.index] : manager.getIndexNames();
 
-                if (opts.index) {
-                    names.push(opts.index);
-                } else {
-                    const all = manager.getIndexNames();
-
-                    if (all.length === 0) {
-                        p.log.info("No indexes configured. Run: tools indexer add <path>");
-                        return;
-                    }
-
-                    names.push(...all);
+                if (names.length === 0) {
+                    p.log.info("No indexes configured. Run: tools indexer add <path>");
+                    return;
                 }
 
                 const firstIndexer = await manager.getIndex(names[0]);
@@ -106,32 +52,63 @@ export function registerSearchCommand(program: Command): void {
                 let mode: SearchMode;
 
                 if (opts.mode) {
-                    mode = opts.mode;
+                    const resolved = resolveSearchMode(opts.mode);
+
+                    if (!resolved) {
+                        p.log.error(`Unknown search mode: "${opts.mode}". Valid: fulltext, vector, hybrid, semantic`);
+                        return;
+                    }
+
+                    mode = resolved;
                 } else {
                     mode = detectMode(firstIndexer);
                 }
 
                 let effectiveMode = mode;
-
                 const fetchLimit = opts.file ? limit * 3 : limit;
-                let allResults = await searchIndexes(manager, names, query, mode, fetchLimit);
 
-                if (opts.file) {
-                    const filter = opts.file;
-                    allResults = allResults.filter((r) => r.result.doc.filePath.includes(filter));
-                    allResults = allResults.slice(0, limit);
+                let allResults: Array<{ indexName: string; result: SearchResult<ChunkRecord> }> = [];
+
+                for (const name of names) {
+                    const indexer = name === names[0] ? firstIndexer : await manager.getIndex(name);
+                    const results = await indexer.search(query, { mode, limit: fetchLimit });
+
+                    for (const result of results) {
+                        allResults.push({ indexName: name, result });
+                    }
                 }
 
-                if (allResults.length === 0 && mode === "fulltext" && !opts.mode) {
-                    const info = firstIndexer.getConsistencyInfo();
+                allResults.sort((a, b) => b.result.score - a.result.score);
 
-                    if (info.embeddingCount > 0) {
-                        allResults = await searchIndexes(manager, names, query, "hybrid", limit);
+                if (opts.file) {
+                    allResults = allResults.filter((r) => r.result.doc.filePath.includes(opts.file!));
+                }
+
+                allResults = allResults.slice(0, limit);
+
+                if (allResults.length === 0 && mode === "fulltext") {
+                    const hasEmbeddings = firstIndexer.getConsistencyInfo().embeddingCount > 0;
+
+                    if (hasEmbeddings) {
                         effectiveMode = "hybrid";
+                        allResults = [];
 
-                        if (allResults.length > 0) {
-                            p.log.info(pc.dim("No keyword matches — showing semantic results instead"));
+                        for (const name of names) {
+                            const indexer = await manager.getIndex(name);
+                            const results = await indexer.search(query, { mode: "hybrid", limit: fetchLimit });
+
+                            for (const result of results) {
+                                allResults.push({ indexName: name, result });
+                            }
                         }
+
+                        allResults.sort((a, b) => b.result.score - a.result.score);
+
+                        if (opts.file) {
+                            allResults = allResults.filter((r) => r.result.doc.filePath.includes(opts.file!));
+                        }
+
+                        allResults = allResults.slice(0, limit);
                     }
                 }
 
@@ -140,50 +117,62 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
-                function toOutputRow(r: { indexName: string; result: SearchResult<ChunkRecord> }) {
-                    return {
+                const maxBm25Score = allResults.reduce(
+                    (max, r) => (r.result.method === "bm25" ? Math.max(max, r.result.score) : max),
+                    0
+                );
+
+                const formatted: FormattedSearchResult[] = allResults.map((r) => ({
+                    filePath: r.result.doc.filePath,
+                    displayName: formatChunkDisplayName(
+                        r.result.doc.name,
+                        r.result.doc.startLine,
+                        r.result.doc.endLine,
+                        r.result.doc.kind
+                    ),
+                    language: r.result.doc.language ?? null,
+                    content: r.result.doc.content,
+                    confidence: normalizeConfidence(r.result.score, r.result.method, maxBm25Score),
+                    method: r.result.method,
+                    indexName: r.indexName,
+                    startLine: r.result.doc.startLine,
+                    endLine: r.result.doc.endLine,
+                }));
+
+                const filtered = opts.confidence !== undefined
+                    ? formatted.filter((r) => r.confidence >= opts.confidence!)
+                    : formatted;
+
+                if (format === "json" || format === "toon") {
+                    const output = filtered.map((r) => ({
                         index: r.indexName,
-                        file: r.result.doc.filePath,
-                        name: r.result.doc.name ?? "",
-                        kind: r.result.doc.kind,
-                        score: r.result.score,
-                        method: r.result.method,
-                        lines: `${r.result.doc.startLine}-${r.result.doc.endLine}`,
-                        preview: truncatePreview(r.result.doc.content, 200),
-                    };
-                }
+                        file: r.filePath,
+                        name: r.displayName,
+                        language: r.language,
+                        confidence: r.confidence,
+                        method: r.method,
+                        lines: `${r.startLine}-${r.endLine}`,
+                        preview: r.content.replace(/\n/g, " ").replace(/\s+/g, " ").trim().slice(0, 200),
+                    }));
 
-                if (format === "json") {
-                    const output = allResults.map(toOutputRow);
-                    console.log(SafeJSON.stringify(output, null, 2));
+                    if (format === "json") {
+                        console.log(SafeJSON.stringify(output, null, 2));
+                    } else {
+                        console.log(toToon(output));
+                    }
+
                     return;
                 }
 
-                if (format === "toon") {
-                    const output = allResults.map(toOutputRow);
-                    console.log(toToon(output));
-                    return;
-                }
-
-                const headers = ["File", "Name/Kind", "Score", "Method", "Preview"];
-                const rows = allResults.map((r) => {
-                    const filePath = r.result.doc.filePath;
-                    const shortPath = filePath.length > 40 ? `...${filePath.slice(-37)}` : filePath;
-
-                    return [
-                        shortPath,
-                        r.result.doc.name ?? r.result.doc.kind,
-                        r.result.score.toFixed(3),
-                        r.result.method,
-                        truncatePreview(r.result.doc.content, 80),
-                    ];
+                const words = parseQueryWords(query);
+                const output = formatSearchResults({
+                    results: filtered,
+                    format: format as OutputFormat,
+                    query,
+                    mode: effectiveMode,
+                    highlightWords: words,
                 });
-
-                console.log("");
-                console.log(pc.dim(`${allResults.length} results for "${query}" (${effectiveMode})`));
-                console.log("");
-                console.log(formatTable(rows, headers, { alignRight: [2] }));
-                console.log("");
+                console.log(output);
             } finally {
                 await manager.close();
             }
