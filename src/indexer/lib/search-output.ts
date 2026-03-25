@@ -1,5 +1,5 @@
-import { createColors } from "picocolors";
 import { formatTable } from "@app/utils/table";
+import { createColors } from "picocolors";
 import { highlightQueryWords } from "./highlight";
 
 const pc = createColors(true);
@@ -87,11 +87,7 @@ function formatPretty(opts: FormatOptions): string {
         lines.push("");
 
         for (const r of results) {
-            const header = [
-                pc.bold(r.displayName),
-                colorConfidence(r.confidence),
-                pc.dim(r.method),
-            ].join("  ");
+            const header = [pc.bold(r.displayName), colorConfidence(r.confidence), pc.dim(r.method)].join("  ");
             lines.push(header);
 
             const langMarker = r.language ?? "";
@@ -120,10 +116,15 @@ function formatSimple(opts: FormatOptions): string {
 
         const highlighted = highlightContent(r.content, opts.highlightWords);
         const contentLines = highlighted.split("\n");
+        const hasLineNums = r.startLine != null && !Number.isNaN(r.startLine);
 
         for (let i = 0; i < contentLines.length; i++) {
-            const lineNum = r.startLine + i;
-            parts.push(`${pc.dim(`${lineNum}|`)}${contentLines[i]}`);
+            if (hasLineNums) {
+                const lineNum = r.startLine + i;
+                parts.push(`${pc.dim(`${lineNum}|`)}${contentLines[i]}`);
+            } else {
+                parts.push(`${pc.dim("|")}${contentLines[i]}`);
+            }
         }
 
         parts.push("");
@@ -135,12 +136,7 @@ function formatSimple(opts: FormatOptions): string {
 function formatTableOutput(opts: FormatOptions): string {
     const header = formatHeader(opts.results.length, opts.query, opts.mode);
 
-    const rows = opts.results.map((r) => [
-        shortenPath(r.filePath, 40),
-        r.displayName,
-        `${r.confidence}%`,
-        r.method,
-    ]);
+    const rows = opts.results.map((r) => [shortenPath(r.filePath, 40), r.displayName, `${r.confidence}%`, r.method]);
 
     const table = formatTable(rows, ["File", "Symbol", "Confidence", "Method"], {
         alignRight: [2],

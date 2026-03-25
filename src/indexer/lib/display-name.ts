@@ -4,12 +4,18 @@ export function stripPartSuffixes(name: string): string {
 
 export function formatChunkDisplayName(
     name: string | undefined,
-    startLine: number,
-    endLine: number,
-    kind?: string,
+    startLine: number | undefined,
+    endLine: number | undefined,
+    kind?: string
 ): string {
-    const lineRange = startLine === endLine ? `${startLine}` : `${startLine}-${endLine}`;
     const cleanName = name ? stripPartSuffixes(name) : "";
+    const hasLines = startLine != null && endLine != null && !Number.isNaN(startLine) && !Number.isNaN(endLine);
+
+    if (!hasLines) {
+        return cleanName || kind || "chunk";
+    }
+
+    const lineRange = startLine === endLine ? `${startLine}` : `${startLine}-${endLine}`;
 
     if (cleanName) {
         return `${cleanName}:${lineRange}`;
