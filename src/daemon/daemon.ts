@@ -46,7 +46,6 @@ export function getDaemonPid(): number | null {
             process.kill(pid, 0);
             return pid;
         } catch (err) {
-            // On Windows, EPERM means the process exists but we can't signal it
             if (process.platform === "win32" && err instanceof Error && "code" in err) {
                 return (err as NodeJS.ErrnoException).code === "EPERM" ? pid : null;
             }
