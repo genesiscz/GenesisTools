@@ -60,8 +60,15 @@ async function ensureOllamaModel(model: string): Promise<boolean> {
 
         const spinner = p.spinner();
         spinner.start(`Pulling ${model}...`);
-        await ollama.ensureModel(model);
-        spinner.stop(`Model ${model} ready`);
+
+        try {
+            await ollama.ensureModel(model);
+            spinner.stop(`Model ${model} ready`);
+        } catch (pullErr) {
+            spinner.stop(`Failed to pull ${model}`);
+            throw pullErr;
+        }
+
         return true;
     } catch (err) {
         p.log.error(`Ollama check failed: ${err instanceof Error ? err.message : String(err)}`);

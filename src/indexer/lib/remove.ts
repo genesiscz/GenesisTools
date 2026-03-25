@@ -83,13 +83,6 @@ export async function removeWorkflow({ manager, name, force }: RemoveWorkflowOpt
             }
         }
 
-        // Also remove companion context index if it exists
-        const contextName = `${indexName}__context`;
-
-        if (allNames.includes(contextName)) {
-            await manager.removeIndex(contextName);
-        }
-
         await manager.removeIndex(indexName);
         p.log.success(`Removed "${pc.bold(indexName)}"`);
         removed.push(indexName);
