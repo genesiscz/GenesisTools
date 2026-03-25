@@ -1,9 +1,9 @@
 import logger from "@app/logger";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { parseCommandString, parseEnvString, parseHeaderString } from "@app/mcp-manager/utils/command.utils.js";
 import { readUnifiedConfig, stripMeta, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { ExitPromptError } from "@inquirer/core";
 import { input, search, select } from "@inquirer/prompts";
@@ -41,7 +41,7 @@ export async function installServer(
 
     // Scenario 1: No server name provided - prompt for it with autocomplete
     if (!finalServerName) {
-        if (isNonInteractive || options.provider || !isInteractive()) {
+        if (!isInteractive()) {
             logger.error("Server name is required in non-interactive mode.");
             logger.info('Usage: tools mcp-manager install <name> "<command>" --type stdio --provider claude');
             process.exit(1);
@@ -107,7 +107,7 @@ export async function installServer(
         }
 
         // If type not provided and non-interactive mode, error out
-        if (!transportType && (isNonInteractive || !isInteractive())) {
+        if (!transportType && !isInteractive()) {
             logger.error("Transport type (--type) is required in non-interactive mode.");
             logger.info(suggestCommand("tools mcp-manager", { add: ["--type", "stdio"] }));
             process.exit(1);

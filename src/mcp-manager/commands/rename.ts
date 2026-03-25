@@ -1,8 +1,8 @@
 import logger from "@app/logger";
-import { isInteractive } from "@app/utils/cli";
 import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import { isInteractive } from "@app/utils/cli";
 import { DiffUtil } from "@app/utils/diff";
 import { SafeJSON } from "@app/utils/json";
 import { ExitPromptError } from "@inquirer/core";
@@ -29,7 +29,7 @@ export async function renameServer(
     if (!finalOldName && !isInteractive()) {
         logger.error("Old name and new name required in non-interactive mode.");
         logger.info("Usage: tools mcp-manager rename <oldName> <newName>");
-        return;
+        process.exit(1);
     }
 
     if (!finalOldName) {
@@ -62,7 +62,7 @@ export async function renameServer(
     // Validate old name exists
     if (!config.mcpServers[finalOldName]) {
         logger.error(`Server '${finalOldName}' not found in unified config.`);
-        return;
+        process.exit(1);
     }
 
     // Get new name - from args or prompt
@@ -70,7 +70,7 @@ export async function renameServer(
     if (!finalNewName && !isInteractive()) {
         logger.error("New name required in non-interactive mode.");
         logger.info(`Usage: tools mcp-manager rename ${finalOldName} <newName>`);
-        return;
+        process.exit(1);
     }
 
     if (!finalNewName) {
@@ -123,7 +123,7 @@ export async function renameServer(
 
         if (!isInteractive()) {
             logger.error(`Server '${finalNewName}' already exists. Cannot auto-replace in non-interactive mode.`);
-            return;
+            process.exit(1);
         }
 
         try {
@@ -213,8 +213,10 @@ export async function renameServer(
         }
 
         try {
-            await renameServerInProvider(provider, finalOldName, finalNewName, serverConfig);
-            logger.info(`✓ Renamed '${finalOldName}' to '${finalNewName}' in ${providerName}`);
+            const applied = await renameServerInProvider(provider, finalOldName, finalNewName, serverConfig);
+            if (applied) {
+                logger.info(`✓ Renamed '${finalOldName}' to '${finalNewName}' in ${providerName}`);
+            }
         } catch (error: unknown) {
             if (error instanceof Error) {
                 logger.error(`✗ Failed to rename in ${providerName}: ${error.message}`);
@@ -225,13 +227,14 @@ export async function renameServer(
 
 /**
  * Rename a server in a specific provider
+ * @returns true if rename was applied, false if skipped
  */
 async function renameServerInProvider(
     provider: MCPProvider,
     oldName: string,
     newName: string,
     serverConfig: unknown
-): Promise<void> {
+): Promise<boolean> {
     // Check if provider has the old or new server
     const providerServers = await provider.listServers();
     const hasOldServer = providerServers.some((s) => s.name === oldName);
@@ -239,7 +242,7 @@ async function renameServerInProvider(
 
     if (!hasOldServer && !hasNewServer) {
         // Server doesn't exist in this provider, skip
-        return;
+        return false;
     }
 
     // Convert provider config to unified format to check for conflicts
@@ -256,7 +259,7 @@ async function renameServerInProvider(
 
         if (!isInteractive()) {
             logger.error(`Cannot auto-replace in non-interactive mode. Skipping ${provider.getName()}.`);
-            return;
+            return false;
         }
 
         await DiffUtil.showDiff(
@@ -274,12 +277,12 @@ async function renameServerInProvider(
 
             if (!confirmed) {
                 logger.info(`Skipping rename in ${provider.getName()}.`);
-                return;
+                return false;
             }
         } catch (error) {
             if (error instanceof ExitPromptError) {
                 logger.info(`\nSkipping rename in ${provider.getName()}.`);
-                return;
+                return false;
             }
             throw error;
         }
@@ -306,7 +309,7 @@ async function renameServerInProvider(
 
     if (syncResult === WriteResult.Rejected) {
         logger.info(`Skipped ${provider.getName()} - user rejected confirmation`);
-        return;
+        return false;
     }
 
     // IMPORTANT: syncServers only adds/updates servers, it doesn't remove servers not in the map
@@ -314,6 +317,8 @@ async function renameServerInProvider(
     if (hasOldServer && oldName !== newName) {
         await removeServerFromProvider(provider, oldName);
     }
+
+    return true;
 }
 
 /**

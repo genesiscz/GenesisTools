@@ -98,6 +98,7 @@ Most tools follow these common patterns:
 -   Handle user cancellation gracefully
 -   Provide sensible defaults and suggestions in prompts
 -   **Non-TTY guard**: Always check `isInteractive()` (from `@app/utils/cli`) before showing prompts. When non-interactive, either error with `suggestCommand()` showing required CLI flags, or use a sensible default:
+
     ```typescript
     import { isInteractive, suggestCommand } from "@app/utils/cli";
 

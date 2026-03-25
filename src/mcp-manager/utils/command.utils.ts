@@ -361,9 +361,7 @@ export async function getServerNames(
     // Otherwise, prompt for selection (TTY only)
     if (!isInteractive()) {
         const serverNames = Object.keys(config.mcpServers).sort();
-        logger.error(
-            `Server name(s) required in non-interactive mode. Available: ${serverNames.join(", ")}`
-        );
+        logger.error(`Server name(s) required in non-interactive mode. Available: ${serverNames.join(", ")}`);
         logger.info(suggestCommand("tools mcp-manager", { add: ["<server1,server2>"] }));
         return null;
     }

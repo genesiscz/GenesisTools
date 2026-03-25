@@ -1,8 +1,8 @@
 import logger from "@app/logger";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { readUnifiedConfig, stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { ExitPromptError } from "@inquirer/core";
 import { checkbox } from "@inquirer/prompts";
 

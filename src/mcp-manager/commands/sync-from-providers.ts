@@ -1,8 +1,8 @@
 import logger from "@app/logger";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName, PerProjectEnabledState, ProviderEnabledState } from "@app/mcp-manager/utils/types.js";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { DiffUtil } from "@app/utils/diff";
 import { SafeJSON } from "@app/utils/json";
 import { ExitPromptError } from "@inquirer/core";
