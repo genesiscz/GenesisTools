@@ -3,6 +3,7 @@ import { parseCommandString, parseEnvString, parseHeaderString } from "@app/mcp-
 import { readUnifiedConfig, stripMeta, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { ExitPromptError } from "@inquirer/core";
 import { input, search, select } from "@inquirer/prompts";
@@ -40,10 +41,12 @@ export async function installServer(
 
     // Scenario 1: No server name provided - prompt for it with autocomplete
     if (!finalServerName) {
-        if (isNonInteractive || options.provider) {
-            logger.error("Server name is required for non-interactive mode.");
+        if (!isInteractive()) {
+            logger.error("Server name is required in non-interactive mode.");
+            logger.info('Usage: tools mcp-manager install <name> "<command>" --type stdio --provider claude');
             process.exit(1);
         }
+
         try {
             const existingServers = Object.keys(config.mcpServers).sort();
             const choices = [
@@ -104,8 +107,9 @@ export async function installServer(
         }
 
         // If type not provided and non-interactive mode, error out
-        if (!transportType && isNonInteractive) {
-            logger.error("Transport type (--type) is required for non-interactive mode.");
+        if (!transportType && !isInteractive()) {
+            logger.error("Transport type (--type) is required in non-interactive mode.");
+            logger.info(suggestCommand("tools mcp-manager", { add: ["--type", "stdio"] }));
             process.exit(1);
         }
 
@@ -134,6 +138,17 @@ export async function installServer(
         let finalCommandOrUrl = commandOrUrl;
 
         // Prompt for command or URL based on type
+        if (!finalCommandOrUrl && !isInteractive()) {
+            const isRemote = transportType === "sse" || transportType === "http";
+            logger.error(`${isRemote ? "URL" : "Command"} is required in non-interactive mode.`);
+            logger.info(
+                suggestCommand("tools mcp-manager", {
+                    add: [isRemote ? '"https://server.example.com/sse"' : '"npx -y @org/server"'],
+                })
+            );
+            process.exit(1);
+        }
+
         if (!finalCommandOrUrl) {
             try {
                 const isRemote = transportType === "sse" || transportType === "http";
@@ -263,7 +278,12 @@ export async function installServer(
     }
 
     // Install to provider
-    const availableProviders = providers.filter((p) => p.configExists());
+    const availableProviders: typeof providers = [];
+    for (const provider of providers) {
+        if (await provider.configExists()) {
+            availableProviders.push(provider);
+        }
+    }
 
     if (availableProviders.length === 0) {
         logger.warn("No provider configuration files found.");
@@ -283,9 +303,11 @@ export async function installServer(
             process.exit(1);
         }
         selectedProviderNames = [requestedProvider.getName()];
-    } else if (isNonInteractive) {
-        logger.error(
-            `Provider (--provider) is required for non-interactive mode. Available: ${availableProviders.map((p) => p.getName()).join(", ")}`
+    } else if (isNonInteractive || !isInteractive()) {
+        const names = availableProviders.map((p) => p.getName()).join(", ");
+        logger.error(`--provider required in non-interactive mode. Available: ${names}`);
+        logger.info(
+            suggestCommand("tools mcp-manager", { add: ["--provider", availableProviders[0]?.getName() ?? "claude"] })
         );
         process.exit(1);
     } else {

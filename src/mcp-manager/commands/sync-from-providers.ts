@@ -2,6 +2,7 @@ import logger from "@app/logger";
 import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName, PerProjectEnabledState, ProviderEnabledState } from "@app/mcp-manager/utils/types.js";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { DiffUtil } from "@app/utils/diff";
 import { SafeJSON } from "@app/utils/json";
 import { ExitPromptError } from "@inquirer/core";
@@ -42,6 +43,11 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
             logger.warn(`No matching providers found for: ${options.provider}`);
             return;
         }
+    } else if (!isInteractive()) {
+        const names = availableProviders.map((p) => p.getName()).join(", ");
+        logger.error(`--provider required in non-interactive mode. Available: ${names}`);
+        logger.info(suggestCommand("tools mcp-manager", { add: ["--provider", "all"] }));
+        process.exit(1);
     } else {
         try {
             selectedProviders = await checkbox({
@@ -266,53 +272,59 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
                 `Incoming (${conflict.provider})`
             );
 
-            // Ask user to choose
-            try {
-                const choice = await select({
-                    message: `Which version should be kept for '${serverName}'?`,
-                    choices: [
-                        {
-                            value: "current",
-                            name: `Keep current (unified config)`,
-                        },
-                        {
-                            value: "incoming",
-                            name: `Use incoming (${conflict.provider})`,
-                        },
-                    ],
-                });
-
-                if (choice === "incoming") {
-                    // Merge _meta.enabled from both versions when using incoming version
-                    const existingMeta = mergedServers[serverName]?._meta;
-                    const incomingMeta = conflict.incoming._meta;
-                    const mergedMeta = {
-                        enabled: {
-                            ...existingMeta?.enabled,
-                            ...incomingMeta?.enabled,
-                        },
-                    };
-                    mergedServers[serverName] = { ...conflict.incoming, _meta: mergedMeta };
-                    logger.info(chalk.green(`✓ Using incoming version from ${conflict.provider}`));
-                } else {
-                    // Merge enabled state from incoming into existing
-                    const existingMeta = mergedServers[serverName]?._meta || { enabled: {} };
-                    const incomingMeta = conflict.incoming._meta;
-                    if (incomingMeta?.enabled) {
-                        existingMeta.enabled = {
-                            ...existingMeta.enabled,
-                            ...incomingMeta.enabled,
-                        };
+            // Ask user to choose (or auto-keep current in non-TTY)
+            let choice: string;
+            if (!isInteractive()) {
+                logger.info(`Non-interactive: keeping current version for '${serverName}'`);
+                choice = "current";
+            } else {
+                try {
+                    choice = await select({
+                        message: `Which version should be kept for '${serverName}'?`,
+                        choices: [
+                            {
+                                value: "current",
+                                name: `Keep current (unified config)`,
+                            },
+                            {
+                                value: "incoming",
+                                name: `Use incoming (${conflict.provider})`,
+                            },
+                        ],
+                    });
+                } catch (error) {
+                    if (error instanceof ExitPromptError) {
+                        logger.info("\nOperation cancelled by user.");
+                        return;
                     }
-                    mergedServers[serverName] = { ...mergedServers[serverName], _meta: existingMeta };
-                    logger.info(chalk.green(`✓ Keeping current version (merged enabled state)`));
+                    throw error;
                 }
-            } catch (error) {
-                if (error instanceof ExitPromptError) {
-                    logger.info("\nOperation cancelled by user.");
-                    return;
+            }
+
+            if (choice === "incoming") {
+                // Merge _meta.enabled from both versions when using incoming version
+                const existingMeta = mergedServers[serverName]?._meta;
+                const incomingMeta = conflict.incoming._meta;
+                const mergedMeta = {
+                    enabled: {
+                        ...existingMeta?.enabled,
+                        ...incomingMeta?.enabled,
+                    },
+                };
+                mergedServers[serverName] = { ...conflict.incoming, _meta: mergedMeta };
+                logger.info(chalk.green(`✓ Using incoming version from ${conflict.provider}`));
+            } else {
+                // Merge enabled state from incoming into existing
+                const existingMeta = mergedServers[serverName]?._meta || { enabled: {} };
+                const incomingMeta = conflict.incoming._meta;
+                if (incomingMeta?.enabled) {
+                    existingMeta.enabled = {
+                        ...existingMeta.enabled,
+                        ...incomingMeta.enabled,
+                    };
                 }
-                throw error;
+                mergedServers[serverName] = { ...mergedServers[serverName], _meta: existingMeta };
+                logger.info(chalk.green(`✓ Keeping current version (merged enabled state)`));
             }
         }
     }

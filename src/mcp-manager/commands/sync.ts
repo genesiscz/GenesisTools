@@ -2,6 +2,7 @@ import logger from "@app/logger";
 import { readUnifiedConfig, stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { ExitPromptError } from "@inquirer/core";
 import { checkbox } from "@inquirer/prompts";
 
@@ -41,6 +42,11 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
         // before being passed to this function, so we select all providers here since they
         // are already the subset that was requested via --provider flag.
         selectedProviders = availableProviders.map((p) => p.getName());
+    } else if (!isInteractive()) {
+        const names = availableProviders.map((p) => p.getName()).join(", ");
+        logger.error(`--provider required in non-interactive mode. Available: ${names}`);
+        logger.info(suggestCommand("tools mcp-manager", { add: ["--provider", "all"] }));
+        process.exit(1);
     } else {
         try {
             selectedProviders = await checkbox({
