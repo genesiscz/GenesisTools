@@ -12,7 +12,7 @@ import type { SummarizeOptions, SummarizeResult } from "@app/claude/lib/history/
 import { listTemplates, SummarizeEngine } from "@app/claude/lib/history/summarize/engine.ts";
 import { encodedProjectDir } from "@app/utils/claude";
 import { ClaudeSession } from "@app/utils/claude/session";
-import { listAppleNotesFolders } from "@app/utils/macos/apple-notes";
+import { pickAppleNotesFolder } from "@app/utils/prompts/clack/apple-notes";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import * as p from "@clack/prompts";
@@ -157,47 +157,6 @@ async function pickSessionInteractively(project?: string): Promise<ClaudeSession
     }
 
     return ClaudeSession.fromFile(selected as string);
-}
-
-// =============================================================================
-// Apple Notes Folder Picker
-// =============================================================================
-
-async function pickAppleNotesFolder(): Promise<string> {
-    const folders = listAppleNotesFolders();
-    if (folders.length === 0) {
-        throw new Error("No Apple Notes folders found.");
-    }
-
-    // Deduplicate by showing account name when there are name collisions
-    const nameCount = new Map<string, number>();
-    for (const f of folders) {
-        nameCount.set(f.name, (nameCount.get(f.name) ?? 0) + 1);
-    }
-
-    const choices = folders
-        .filter((f) => f.noteCount > 0 || !f.name.startsWith("Notes"))
-        .map((f) => {
-            const showAccount = (nameCount.get(f.name) ?? 0) > 1;
-            const label = showAccount ? `${f.name} (${f.account})` : f.name;
-            return {
-                value: f.id,
-                label,
-                hint: `${f.noteCount} notes`,
-            };
-        });
-
-    const selected = await p.select({
-        message: "Select Apple Notes folder:",
-        options: choices,
-    });
-
-    if (p.isCancel(selected)) {
-        p.cancel("Cancelled.");
-        process.exit(0);
-    }
-
-    return selected as string;
 }
 
 // =============================================================================
