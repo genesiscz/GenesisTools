@@ -143,6 +143,8 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
         prNumber,
         title: prInfo.title,
         state: prInfo.state,
+        headRefName: prInfo.headRefName,
+        baseRefName: prInfo.baseRefName,
         threads: displayThreads,
         stats,
         prComments:
@@ -152,6 +154,39 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                     : prInfo.prComments
                 : undefined,
     };
+
+    // Handle worktree switching
+    if (options.worktree && prInfo.headRefName) {
+        const { ensureWorktreeForBranch } = await import("@app/utils/git/worktree");
+
+        try {
+            const worktreeResult = await ensureWorktreeForBranch({
+                branch: prInfo.headRefName,
+                basePath: typeof options.worktree === "string" ? options.worktree : undefined,
+                prNumber,
+            });
+
+            if (worktreeResult.created) {
+                console.error(chalk.yellow(`⚠️  Created worktree: ${worktreeResult.path}`));
+            }
+
+            if (worktreeResult.dirty) {
+                console.error(chalk.yellow(`⚠️  Worktree has uncommitted changes`));
+            }
+
+            if (worktreeResult.path !== process.cwd()) {
+                console.error(
+                    chalk.yellow(`⚠️  Switching cwd from ${process.cwd()} to ${worktreeResult.path}`)
+                );
+            }
+
+            console.log(`WORKTREE_PATH: ${worktreeResult.path}`);
+        } catch (err) {
+            console.error(
+                chalk.red(`Worktree error: ${err instanceof Error ? err.message : String(err)}`)
+            );
+        }
+    }
 
     // LLM-optimized output (session-based with refs)
     if (options.llm) {
@@ -175,6 +210,8 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                 prNumber,
                 title: prInfo.title,
                 state: prInfo.state,
+                headRefName: prInfo.headRefName,
+                baseRefName: prInfo.baseRefName,
                 createdAt: Date.now(),
                 stats: sessionStats,
                 threadCount: sessionThreads.length,
@@ -215,7 +252,11 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
     // Markdown output (save to file)
     if (options.md) {
         const mdContent = formatReviewMarkdown(reviewData, options.groupByFile ?? false);
-        const filePath = await saveReviewMarkdown(mdContent, prNumber);
+        const filePath = await saveReviewMarkdown(mdContent, prNumber, {
+            save: options.save,
+            repo: `${owner}-${repo}`,
+            originalCwd: process.cwd(),
+        });
         console.log(filePath);
         console.error(`  View: tools markdown-cli ${filePath}`);
         return;
@@ -439,6 +480,8 @@ Examples:
         .option("-v, --verbose", "Enable verbose logging")
         .option("--no-pr-comments", "Hide PR-level review summaries and conversation comments")
         .option("-a, --author <login>", "Filter threads by reviewer login (case-insensitive)")
+        .option("-w, --worktree [path]", "Switch to/create worktree for PR branch")
+        .option("--save [path]", "Save review output persistently (default: .claude/reviews/)")
         .action(async (input, opts) => {
             try {
                 await reviewCommand(input, opts);

@@ -227,6 +227,7 @@ export interface PRCommandOptions extends IssueCommandOptions {
     commits?: boolean;
     checks?: boolean;
     verbose?: boolean;
+    worktree?: boolean | string;
 }
 
 export interface SearchCommandOptions {
@@ -382,6 +383,8 @@ export interface ReviewData {
     prNumber: number;
     title: string;
     state: string;
+    headRefName?: string;
+    baseRefName?: string;
     threads: ParsedReviewThread[];
     stats: ReviewThreadStats;
     prComments?: PRLevelComment[];
@@ -411,6 +414,8 @@ export interface ReviewCommandOptions {
     author?: string;
     llm?: boolean;
     session?: string;
+    worktree?: boolean | string;
+    save?: boolean | string;
 }
 
 export interface ReviewSessionMeta {
@@ -420,6 +425,8 @@ export interface ReviewSessionMeta {
     prNumber: number;
     title: string;
     state: string;
+    headRefName?: string;
+    baseRefName?: string;
     createdAt: number;
     stats: ReviewThreadStats;
     threadCount: number;

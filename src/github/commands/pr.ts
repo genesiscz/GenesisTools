@@ -284,6 +284,39 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
         last_comment_cursor: null,
     });
 
+    // Handle worktree switching
+    if (options.worktree && pr.head.ref) {
+        const { ensureWorktreeForBranch } = await import("@app/utils/git/worktree");
+
+        try {
+            const worktreeResult = await ensureWorktreeForBranch({
+                branch: pr.head.ref,
+                basePath: typeof options.worktree === "string" ? options.worktree : undefined,
+                prNumber: number,
+            });
+
+            if (worktreeResult.created) {
+                console.error(chalk.yellow(`⚠️  Created worktree: ${worktreeResult.path}`));
+            }
+
+            if (worktreeResult.dirty) {
+                console.error(chalk.yellow(`⚠️  Worktree has uncommitted changes`));
+            }
+
+            if (worktreeResult.path !== process.cwd()) {
+                console.error(
+                    chalk.yellow(`⚠️  Switching cwd from ${process.cwd()} to ${worktreeResult.path}`)
+                );
+            }
+
+            console.log(`WORKTREE_PATH: ${worktreeResult.path}`);
+        } catch (err) {
+            console.error(
+                chalk.red(`Worktree error: ${err instanceof Error ? err.message : String(err)}`)
+            );
+        }
+    }
+
     // Fetch additional PR-specific data
     let reviewComments: ReviewCommentData[] = [];
     if (options.reviewComments) {
@@ -423,6 +456,7 @@ export function createPRCommand(): Command {
         .option("--commits", "Include commit list")
         .option("--checks", "Include CI check status")
         .option("-v, --verbose", "Enable verbose logging")
+        .option("-w, --worktree [path]", "Switch to/create worktree for PR branch")
         .action(async (input, opts) => {
             try {
                 await prCommand(input, opts);
