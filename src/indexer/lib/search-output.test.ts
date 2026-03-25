@@ -7,7 +7,8 @@ function makeResult(overrides?: Partial<FormattedSearchResult>): FormattedSearch
         filePath: "/Users/dev/project/src/services/telegram/notification-handler.ts",
         displayName: "sendNotification:45-72",
         language: "typescript",
-        content: "export async function sendNotification(userId: string) {\n    const client = getClient();\n    await client.send(userId, 'hello');\n}",
+        content:
+            "export async function sendNotification(userId: string) {\n    const client = getClient();\n    await client.send(userId, 'hello');\n}",
         confidence: 87,
         method: "cosine",
         indexName: "my-index",

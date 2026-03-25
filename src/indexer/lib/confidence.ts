@@ -1,4 +1,4 @@
-type ScoreMethod = "cosine" | "rrf" | "bm25";
+export type ScoreMethod = "cosine" | "rrf" | "bm25";
 
 const RRF_THEORETICAL_MAX = 2 / 61;
 
