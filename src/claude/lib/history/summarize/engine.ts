@@ -485,11 +485,9 @@ export class SummarizeEngine {
             // Apply provider prefix so debug output matches what would actually be sent
             let effectiveSystemPrompt = systemPrompt;
 
-            try {
+            if (this.options.provider || this.options.model) {
                 const choice = await this.resolveModel();
                 effectiveSystemPrompt = applySystemPromptPrefix(choice.provider.systemPromptPrefix, systemPrompt);
-            } catch {
-                // Model not resolvable in prompt-only, use raw prompt
             }
 
             if (this.options.thorough) {

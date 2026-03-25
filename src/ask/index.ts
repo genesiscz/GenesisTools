@@ -360,10 +360,17 @@ class ASKTool {
                 }
             }
 
+            // Resolve provider info so we can apply systemPromptPrefix (same as createChatConfig)
+            const oneShotModelChoice = await modelSelector.selectModelByName(argv.provider, argv.model);
+            const oneShotSystemPrompt = applySystemPromptPrefix(
+                oneShotModelChoice?.provider.systemPromptPrefix,
+                createSystemPrompt(argv.systemPrompt) ?? ""
+            );
+
             const chat = new AIChat({
                 provider: argv.provider,
                 model: argv.model,
-                systemPrompt: createSystemPrompt(argv.systemPrompt),
+                systemPrompt: oneShotSystemPrompt,
                 temperature: parseTemperature(argv.temperature),
                 maxTokens: parseMaxTokens(argv.maxTokens),
                 logLevel: argv.raw ? "silent" : "info",

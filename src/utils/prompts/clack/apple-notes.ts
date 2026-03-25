@@ -1,7 +1,12 @@
+import { isInteractive } from "@app/utils/cli";
 import { listAppleNotesFolders } from "@app/utils/macos/apple-notes";
 import * as p from "@clack/prompts";
 
 export async function pickAppleNotesFolder(): Promise<string> {
+    if (!isInteractive()) {
+        throw new Error("Apple Notes folder selection requires interactive mode. Use --apple-notes-folder flag instead.");
+    }
+
     const folders = listAppleNotesFolders();
     if (folders.length === 0) {
         throw new Error("No Apple Notes folders found.");

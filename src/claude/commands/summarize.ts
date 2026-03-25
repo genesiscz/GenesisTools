@@ -6,6 +6,7 @@
  * and multiple output targets (stdout, file, clipboard, memory dir).
  */
 
+import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseDate } from "@app/claude/lib/history/search";
 import type { SummarizeOptions, SummarizeResult } from "@app/claude/lib/history/summarize/engine.ts";
@@ -71,6 +72,10 @@ async function resolveSessionIds(
     // Resolve --project to encoded dir name (for fromSessionId) and absolute path (for findSessions)
     const encodedProject = opts.project ? encodedProjectDir(resolve(opts.project)) : undefined;
     const projectPath = opts.project ? resolve(opts.project) : undefined;
+
+    if (projectPath && (!existsSync(projectPath) || !statSync(projectPath).isDirectory())) {
+        throw new Error(`Project path not found or not a directory: ${opts.project}`);
+    }
 
     // 1. Positional argument
     if (positionalId) {

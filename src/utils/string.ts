@@ -102,13 +102,21 @@ export function matchGlob(value: string, pattern: string): boolean {
  * Breaks at the first `/` after the truncation point for clean output.
  */
 export function truncatePath(path: string, maxLength: number): string {
+    if (maxLength <= 0) {
+        return "";
+    }
+
+    if (maxLength <= 3) {
+        return path.slice(0, maxLength);
+    }
+
     if (path.length <= maxLength) {
         return path;
     }
 
     const truncated = path.slice(-(maxLength - 3));
-    const firstSlash = truncated.indexOf("/");
-    return `...${firstSlash > 0 ? truncated.slice(firstSlash) : truncated}`;
+    const firstSep = truncated.search(/[/\\]/);
+    return `...${firstSep > 0 ? truncated.slice(firstSep) : truncated}`;
 }
 
 /**
