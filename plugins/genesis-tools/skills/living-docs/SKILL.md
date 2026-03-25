@@ -2,6 +2,7 @@
 name: gt:living-docs
 description: "Self-maintaining documentation system. Bootstraps, validates, refines, and optimizes codebase documentation. Creates minimal, token-efficient doc chunks. Use when creating, updating, or auditing project documentation."
 context: fork
+model: opus
 ---
 
 You are a living documentation system. Your job is to keep codebase documentation minimal, accurate, and useful.
@@ -103,7 +104,37 @@ When docs exist but need optimization:
 4. **Optimize content** - Too verbose? Missing quick reference?
 5. **Measure coverage** - Undocumented areas?
 
-Output a refinement report covering: trigger issues, coverage gaps, keyword conflicts, optimization suggestions, activation tests.
+Output a refinement report:
+
+```text
+REFINEMENT ANALYSIS for .claude/CLAUDE.md:
+
+TRIGGER ISSUES:
+- "API Routes" rule: keywords too generic ("api", "route")
+  → Suggest: Add specific keywords ("endpoint", "REST", "handler", "middleware")
+- "Auth" rule: good keywords but missing hook name
+  → Suggest: Add "useAuth", "signIn", "signOut"
+
+COVERAGE GAPS:
+- No rule for: testing, deployment, error handling
+  → Suggest creating: testing.md, deployment.md, error-handling.md
+
+KEYWORD CONFLICTS:
+- "component" appears in both "UI Components" and "Design System"
+  → Suggest: Split by specificity (button, card → UI; color, theme → Design)
+
+OPTIMIZATION:
+- Auth docs: 450 lines (target: 150)
+  → Suggest: Split into auth-api.md and auth-ui.md
+- Database docs: Missing quick reference
+  → Suggest: Add "Drizzle ORM. Run: pnpm db:migrate"
+
+ACTIVATION TEST:
+- Query: "How do I add a new button?"
+  → Would activate: "UI Components" ✓
+- Query: "Update the user table schema"
+  → Would activate: None ✗ (missing "table" keyword in Database)
+```
 
 ### Mode 5: Migrate
 
@@ -114,6 +145,27 @@ When converting old trigger formats to context rules:
 3. Convert "Load:" to "You MUST: Read"
 4. Convert "Quick:" to "Quick reference:"
 5. Add descriptive section header and `---` separator
+
+**Before (minified):**
+```markdown
+<t k="auth,login,session">Load: auth.md | Quick summary</t>
+```
+
+**Before (verbose):**
+```markdown
+<context_trigger keywords="auth,login,session">
+**Load:** .claude/docs/auth.md
+**Quick:** Summary here
+</context_trigger>
+```
+
+**After:**
+```markdown
+### Authentication
+**When the user asks about:** auth, login, session, useAuth, signIn, signOut
+**You MUST:** Read `.claude/docs/auth.md`
+**Quick reference:** Summary here
+```
 
 ## Documentation Structure
 
@@ -157,7 +209,7 @@ User action -> Screen.tsx -> useFeature() -> rpc_name() -> DB
 
 | Action | Function | Location |
 |--------|----------|----------|
-| Create X | `createX()` | `lib/feature.ts:L24` |
+| Create X | `createX()` | `lib/feature.ts` |
 
 ## Gotchas
 
@@ -184,7 +236,25 @@ User action -> Screen.tsx -> useFeature() -> rpc_name() -> DB
 
 ## Usage
 
-[Minimal working example]
+```tsx
+// Basic
+<ComponentName onPress={handlePress} />
+
+// With variants
+<ComponentName variant="secondary" disabled={loading} />
+```
+
+## Compound Components (if applicable)
+
+```tsx
+<Card>
+  <Card.Header title="Title" />
+  <Card.Content>Content here</Card.Content>
+  <Card.Footer>
+    <Button>Action</Button>
+  </Card.Footer>
+</Card>
+```
 
 ## Source
 
@@ -215,14 +285,16 @@ User action -> Screen.tsx -> useFeature() -> rpc_name() -> DB
 `packages/shared/hooks/useHookName.ts`
 ```
 
-### Line Guidance
+### Line Guidance (be smart, not rigid)
 
 | Type | Target | Max | When to go higher |
 |------|--------|-----|-------------------|
-| Feature docs | 50-150 | 500 | Complex multi-file flows |
+| Feature docs | 50-150 | 500 | Complex multi-file flows, many entry points |
 | System docs | 30-100 | 300 | Architecture with many components |
-| Component docs | 20-80 | 200 | Many props/variants |
+| Component docs | 20-80 | 200 | Many props/variants, complex API |
 | Pattern docs | 15-50 | 100 | Multiple patterns in one area |
+
+**Heuristics:** Can you answer "where is X?" in under 50 lines? Do that. Does it have 10+ entry points? Allow more. Is this a reusable component API? Be thorough enough to avoid reading source. The goal is FAST navigation -- too long defeats the purpose, too short means people can't find things.
 
 ## Context Rules Format
 
@@ -277,6 +349,54 @@ Every CLAUDE.md with context rules MUST start with:
 **Quick reference:** Always backup first. Run: `pnpm db:backup`
 ```
 
+### Complete Example (10+ Rules)
+
+```markdown
+## Context Rules
+
+**IMPORTANT:** Before responding to any user request, scan the sections below. If ANY keywords match the user's request, you MUST follow that section's instructions BEFORE answering.
+
+---
+
+### Authentication
+**When the user asks about:** auth, login, signup, logout, session, password, useAuth, signIn
+**You MUST:** Read `.claude/docs/features/auth.md`
+**Quick reference:** Supabase Auth with email/password. Use `useAuth()` hook.
+
+---
+
+### UI Components
+**When the user asks about:** component, button, card, form, input, modal, dialog, shadcn
+**You MUST:**
+1. Read `.claude/docs/design-system.md`
+2. Check `components/ui/` for existing implementations
+**Quick reference:** shadcn/ui components. Install: `pnpm dlx shadcn@latest add <name>`
+
+---
+
+### [CRITICAL] Database
+**When the user asks about:** database, schema, migration, postgres, drizzle, query, table
+**You MUST:**
+1. Read `.claude/docs/database.md`
+2. Check `drizzle/schema.ts` for current schema
+3. For migrations: Run `pnpm db:backup` first
+**Quick reference:** Drizzle ORM. Migrations: `pnpm db:migrate`
+
+---
+
+### State Management
+**When the user asks about:** state, zustand, store, context, global state, signal
+**You MUST:** Read `.claude/docs/state.md`
+**Quick reference:** Zustand stores in `stores/`. Use `useStore()` hooks.
+
+---
+
+### Testing
+**When the user asks about:** test, testing, jest, vitest, playwright, e2e, unit test
+**You MUST:** Read `.claude/docs/testing.md`
+**Quick reference:** Vitest for unit, Playwright for e2e. Run: `pnpm test`
+```
+
 ## Keyword Selection Guide
 
 **Good keywords (specific, actionable):**
@@ -313,10 +433,23 @@ Every CLAUDE.md with context rules MUST start with:
 
 | Instead of... | Write... |
 |---------------|----------|
-| "The function loops through items and filters..." | `filterItems()` in `utils.ts:L45` |
+| "The function loops through items and filters..." | `filterItems()` in `utils.ts` |
 | "This component renders a card with a header..." | `<Card.Header>` -- see props table |
+| "The flow starts when the user clicks..." | `User click -> handleSubmit() -> createInquiry()` |
 
 Add explanatory text ONLY when: the connection between files isn't obvious, there's a gotcha, naming is misleading, or similar things need distinguishing.
+
+**Good context (distinguishes similar things):**
+```markdown
+## Dispatch RPCs
+
+Note: `dispatch_` prefix = server-initiated, `accept_` prefix = provider-initiated
+
+| RPC | Purpose |
+|-----|---------|
+| `dispatch_to_provider()` | System sends offer |
+| `accept_dispatch()` | Provider accepts |
+```
 
 ## Split vs Merge Rules
 
