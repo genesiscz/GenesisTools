@@ -311,8 +311,8 @@ export async function ensureWorktreeForBranch(options: WorktreeCreateOptions): P
     // Check if branch exists locally
     const localExists = await g.exec(["rev-parse", "--verify", `refs/heads/${branch}`]);
 
-    if (!localExists.success) {
-        // Try to fetch from origin
+    if (!localExists.success && !options.startPoint) {
+        // Try to fetch from origin (only when no explicit startPoint was given)
         const fetchResult = await g.exec(["fetch", "origin", branch]);
 
         if (fetchResult.success) {

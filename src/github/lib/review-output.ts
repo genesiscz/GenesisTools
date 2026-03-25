@@ -2,7 +2,8 @@
 // Extracted from src/github-pr/index.ts, adapted to use chalk
 
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, extname, join, resolve as pathResolve } from "node:path";
 import type { ParsedReviewThread, PRLevelComment, ReviewData } from "@app/github/types";
 import { formatRelativeTime } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
@@ -456,7 +457,6 @@ export async function saveReviewMarkdown(
 
     if (typeof options.save === "string") {
         // --save <path>: resolve relative to original cwd
-        const { resolve: pathResolve, extname, dirname } = await import("node:path");
         const target = pathResolve(baseCwd, options.save);
 
         // If target looks like a directory (ends with / or has no file extension), put file inside
@@ -474,7 +474,6 @@ export async function saveReviewMarkdown(
         filePath = join(reviewsDir, filename);
     } else {
         // Default: save to /tmp/github/reviews/<repo>/
-        const { tmpdir } = await import("node:os");
         const repoSlug = options.repo ?? "unknown";
         const tmpDir = join(tmpdir(), "github", "reviews", repoSlug);
         mkdirSync(tmpDir, { recursive: true });
