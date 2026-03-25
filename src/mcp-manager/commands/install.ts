@@ -301,7 +301,7 @@ export async function installServer(
     } else if (isNonInteractive || !isInteractive()) {
         const names = availableProviders.map((p) => p.getName()).join(", ");
         logger.error(`--provider required in non-interactive mode. Available: ${names}`);
-        logger.info(suggestCommand("tools mcp-manager", { add: ["--provider", "claude"] }));
+        logger.info(suggestCommand("tools mcp-manager", { add: ["--provider", availableProviders[0]?.getName() ?? "claude"] }));
         process.exit(1);
     } else {
         try {

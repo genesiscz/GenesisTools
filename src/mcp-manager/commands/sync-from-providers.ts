@@ -47,7 +47,7 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
         const names = availableProviders.map((p) => p.getName()).join(", ");
         logger.error(`--provider required in non-interactive mode. Available: ${names}`);
         logger.info(suggestCommand("tools mcp-manager", { add: ["--provider", "all"] }));
-        return;
+        process.exit(1);
     } else {
         try {
             selectedProviders = await checkbox({
