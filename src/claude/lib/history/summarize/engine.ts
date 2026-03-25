@@ -7,6 +7,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { callLLM as sharedCallLLM, type CallLLMResult } from "@app/utils/ai/call-llm";
 import type { ClaudeSession, PreparedContent } from "@app/utils/claude/session";
 import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
 import { copyToClipboard } from "@app/utils/clipboard";
@@ -15,9 +16,7 @@ import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { ProviderChoice } from "@ask/types";
-import { getLanguageModel } from "@ask/types/provider";
 import type { LanguageModelUsage } from "ai";
-import { generateText, streamText } from "ai";
 import type { PromptTemplate, TemplateContext } from "./templates/index.ts";
 import { getTemplate, listTemplates } from "./templates/index.ts";
 
@@ -62,11 +61,6 @@ export interface SummarizeResult {
     truncated: boolean;
     truncationInfo?: string;
     outputPaths: string[];
-}
-
-interface LLMCallResult {
-    content: string;
-    usage?: LanguageModelUsage;
 }
 
 // =============================================================================
@@ -186,40 +180,14 @@ export class SummarizeEngine {
         providerChoice: ProviderChoice;
         streaming: boolean;
         maxTokens?: number;
-    }): Promise<LLMCallResult> {
-        const model = getLanguageModel(providerChoice.provider.provider, providerChoice.model.id);
-
-        // Subscription OAuth requires the system prompt to start with the Claude Code identity line
-        const effectiveSystem = applySystemPromptPrefix(providerChoice.provider.systemPromptPrefix, systemPrompt);
-
-        if (streaming) {
-            const result = await streamText({
-                model,
-                system: effectiveSystem,
-                prompt: userPrompt,
-                ...(maxTokens ? { maxTokens } : {}),
-            });
-
-            let fullResponse = "";
-            for await (const chunk of result.textStream) {
-                process.stdout.write(chunk);
-                fullResponse += chunk;
-            }
-            // Final newline after streaming
-            process.stdout.write("\n");
-
-            const usage = await result.usage;
-            return { content: fullResponse, usage };
-        }
-
-        const result = await generateText({
-            model,
-            system: effectiveSystem,
-            prompt: userPrompt,
-            ...(maxTokens ? { maxTokens } : {}),
+    }): Promise<CallLLMResult> {
+        return sharedCallLLM({
+            systemPrompt,
+            userPrompt,
+            providerChoice,
+            streaming,
+            maxTokens,
         });
-
-        return { content: result.text, usage: result.usage };
     }
 
     // =========================================================================
@@ -368,7 +336,7 @@ export class SummarizeEngine {
         prepared: PreparedContent,
         providerChoice: ProviderChoice,
         streaming: boolean
-    ): Promise<LLMCallResult> {
+    ): Promise<CallLLMResult> {
         const { chunkSize, outputReserve } = this.calculateChunkSize(providerChoice.model.contextWindow);
         const chunks = this.splitIntoChunks(prepared.content, chunkSize);
 
@@ -550,7 +518,7 @@ export class SummarizeEngine {
         const streaming = this.options.streaming ?? !!process.stdout.isTTY;
 
         // Step 3b: Call LLM (normal or chunked)
-        let llmResult: LLMCallResult;
+        let llmResult: CallLLMResult;
         if (this.options.thorough) {
             llmResult = await this.runChunkedSummarization(prepared, providerChoice, streaming);
         } else {
