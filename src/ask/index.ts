@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 
 import logger, { configureLogger } from "@app/logger";
-import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
 import { input } from "@app/utils/prompts/clack";
 import { handleReadmeFlag } from "@app/utils/readme";
 import { AIChat } from "@ask/AIChat";
@@ -360,17 +359,10 @@ class ASKTool {
                 }
             }
 
-            // Resolve provider info so we can apply systemPromptPrefix (same as createChatConfig)
-            const oneShotModelChoice = await modelSelector.selectModelByName(argv.provider, argv.model);
-            const oneShotSystemPrompt = applySystemPromptPrefix(
-                oneShotModelChoice?.provider.systemPromptPrefix,
-                createSystemPrompt(argv.systemPrompt) ?? ""
-            );
-
             const chat = new AIChat({
                 provider: argv.provider,
                 model: argv.model,
-                systemPrompt: oneShotSystemPrompt,
+                systemPrompt: createSystemPrompt(argv.systemPrompt),
                 temperature: parseTemperature(argv.temperature),
                 maxTokens: parseMaxTokens(argv.maxTokens),
                 logLevel: argv.raw ? "silent" : "info",
@@ -633,16 +625,16 @@ class ASKTool {
     private async createChatConfig(modelChoice: ProviderChoice, argv: CLIOptions): Promise<ChatConfig> {
         const model = getLanguageModel(modelChoice.provider.provider, modelChoice.model.id);
         this.rawSystemPrompt = createSystemPrompt(argv.systemPrompt) ?? "";
-        const systemPrompt = applySystemPromptPrefix(modelChoice.provider.systemPromptPrefix, this.rawSystemPrompt);
 
         return {
             model,
             provider: modelChoice.provider.name,
             modelName: modelChoice.model.id,
             streaming: argv.streaming !== false, // Default to true
-            systemPrompt,
+            systemPrompt: this.rawSystemPrompt,
             temperature: parseTemperature(argv.temperature),
             maxTokens: parseMaxTokens(argv.maxTokens),
+            providerChoice: modelChoice,
         };
     }
 
@@ -711,17 +703,17 @@ class ASKTool {
     ): Promise<void> {
         if (result.newModel && result.newProvider) {
             await chatEngine.switchModel(result.newModel, result.newProvider, result.newModelName || "unknown");
+
             if (result.newProvider) {
                 modelChoice.provider.name = result.newProvider;
-                modelChoice.provider.systemPromptPrefix = result.newSystemPromptPrefix;
+                modelChoice.provider.systemPromptPrefix = result.newProviderChoice?.provider.systemPromptPrefix;
             }
 
             if (result.newModelName) {
                 modelChoice.model.id = result.newModelName;
             }
 
-            const newSystemPrompt = applySystemPromptPrefix(result.newSystemPromptPrefix, this.rawSystemPrompt);
-            chatEngine.setSystemPrompt(newSystemPrompt);
+            chatEngine.setSystemPrompt(this.rawSystemPrompt, result.newProviderChoice);
         }
 
         if (result.outputFormat) {

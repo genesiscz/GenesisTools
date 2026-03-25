@@ -24,6 +24,7 @@ export interface ChatConfig {
     systemPrompt?: string;
     temperature?: number;
     maxTokens?: number;
+    providerChoice?: ProviderChoice;
 }
 
 export interface ChatResponse {

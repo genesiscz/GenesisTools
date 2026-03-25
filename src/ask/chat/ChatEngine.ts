@@ -1,8 +1,9 @@
 import logger from "@app/logger";
+import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
-import type { ChatConfig, ChatMessage } from "@ask/types";
+import type { ChatConfig, ChatMessage, ProviderChoice } from "@ask/types";
 import type { LanguageModel, LanguageModelUsage } from "ai";
 import { generateText, streamText } from "ai";
 
@@ -22,7 +23,17 @@ export class ChatEngine {
     private conversationHistory: ChatMessage[] = [];
 
     constructor(config: ChatConfig) {
-        this.config = config;
+        this.config = { ...config };
+    }
+
+    private getEffectiveSystemPrompt(): string | undefined {
+        const raw = this.config.systemPrompt;
+
+        if (!raw) {
+            return raw;
+        }
+
+        return applySystemPromptPrefix(this.config.providerChoice?.provider.systemPromptPrefix, raw);
     }
 
     async sendMessage(
@@ -85,8 +96,8 @@ export class ChatEngine {
 
         const result = await streamText({
             model: this.config.model,
-            prompt: message, // Use prompt instead of messages array
-            system: this.config.systemPrompt,
+            prompt: message,
+            system: this.getEffectiveSystemPrompt(),
             temperature: this.config.temperature,
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
             onFinish: async ({ usage }) => {
@@ -230,8 +241,8 @@ export class ChatEngine {
     private async sendNonStreamingMessage(message: string, _tools?: Record<string, unknown>): Promise<ChatResponse> {
         const result = await generateText({
             model: this.config.model,
-            prompt: message, // Use prompt instead of messages array
-            system: this.config.systemPrompt,
+            prompt: message,
+            system: this.getEffectiveSystemPrompt(),
             temperature: this.config.temperature,
             ...(this.config.maxTokens && { maxOutputTokens: this.config.maxTokens }),
         });
@@ -329,8 +340,12 @@ export class ChatEngine {
         logger.info(`Switched to ${provider}/${modelName}`);
     }
 
-    setSystemPrompt(systemPrompt: string): void {
+    setSystemPrompt(systemPrompt: string, providerChoice?: ProviderChoice): void {
         this.config.systemPrompt = systemPrompt;
+
+        if (providerChoice) {
+            this.config.providerChoice = providerChoice;
+        }
     }
 
     setTemperature(temperature: number): void {

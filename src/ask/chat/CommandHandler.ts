@@ -1,6 +1,6 @@
 import logger from "@app/logger";
 import { modelSelector } from "@ask/providers/ModelSelector";
-import type { OutputConfig, OutputFormat } from "@ask/types";
+import type { OutputConfig, OutputFormat, ProviderChoice } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
 import * as p from "@clack/prompts";
 import type { LanguageModel } from "ai";
@@ -11,7 +11,7 @@ export interface CommandResult {
     newModel?: LanguageModel;
     newProvider?: string;
     newModelName?: string;
-    newSystemPromptPrefix?: string;
+    newProviderChoice?: ProviderChoice;
     outputFormat?: OutputConfig;
     clearHistory?: boolean;
     saveConversation?: boolean;
@@ -67,7 +67,7 @@ export class CommandHandler {
             newModel: model,
             newProvider: newChoice.provider.name,
             newModelName: newChoice.model.id,
-            newSystemPromptPrefix: newChoice.provider.systemPromptPrefix,
+            newProviderChoice: newChoice,
         };
     }
 

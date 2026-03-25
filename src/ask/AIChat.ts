@@ -93,7 +93,7 @@ export class AIChat {
             );
         }
 
-        // Create ChatEngine
+        // Create ChatEngine — providerChoice enables automatic system prompt prefix
         const languageModel = getLanguageModel(choice.provider.provider, choice.model.id);
         const config: ChatConfig = {
             model: languageModel,
@@ -103,6 +103,7 @@ export class AIChat {
             systemPrompt: this._options.systemPrompt,
             temperature: this._options.temperature,
             maxTokens: this._options.maxTokens,
+            providerChoice: choice,
         };
 
         this._engine = new ChatEngine(config);
