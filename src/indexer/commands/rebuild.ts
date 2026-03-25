@@ -46,16 +46,43 @@ export function registerRebuildCommand(program: Command): void {
 
                 const metas = manager.listIndexes();
                 const meta = metas.find((m) => m.name === targetName);
-                const chunkCount = meta?.stats.totalChunks ?? 0;
 
-                if (process.stdout.isTTY && chunkCount > 0) {
-                    const confirmed = await p.confirm({
-                        message: `Rebuild "${targetName}" (${chunkCount.toLocaleString()} chunks)? This will re-scan all source files.`,
+                if (process.stdout.isTTY && process.stdin.isTTY) {
+                    const currentDriver = meta?.config.storage?.vectorDriver ?? "sqlite-brute";
+
+                    const options: Array<{ value: string; label: string }> = [
+                        { value: "reindex", label: "Full reindex (re-scan all files, re-chunk)" },
+                        { value: "reembed", label: "Re-embed all chunks (regenerate vectors, keep content)" },
+                        { value: "reindex-reembed", label: "Full reindex + re-embed" },
+                    ];
+
+                    if (currentDriver !== "sqlite-vec") {
+                        options.splice(1, 0, {
+                            value: "migrate-driver",
+                            label: `Migrate vector storage: ${currentDriver} → sqlite-vec`,
+                        });
+                    }
+
+                    const action = await p.select({
+                        message: `What would you like to do with "${targetName}"?`,
+                        options,
                     });
 
-                    if (p.isCancel(confirmed) || !confirmed) {
+                    if (p.isCancel(action)) {
                         p.log.info("Cancelled");
                         return;
+                    }
+
+                    if (action === "migrate-driver") {
+                        p.log.warn("Driver migration not yet implemented — running full reindex instead");
+                    }
+
+                    if (action === "reembed") {
+                        p.log.warn("Re-embedding not yet implemented — running full reindex instead");
+                    }
+
+                    if (action === "reindex-reembed") {
+                        p.log.info("Full reindex with re-embedding");
                     }
                 }
 
