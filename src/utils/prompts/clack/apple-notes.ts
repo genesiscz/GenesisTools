@@ -4,7 +4,9 @@ import * as p from "@clack/prompts";
 
 export async function pickAppleNotesFolder(): Promise<string> {
     if (!isInteractive()) {
-        throw new Error("Apple Notes folder selection requires interactive mode. Use --apple-notes-folder flag instead.");
+        throw new Error(
+            "Apple Notes folder selection requires interactive mode. Use --apple-notes-folder flag instead."
+        );
     }
 
     const folders = listAppleNotesFolders();

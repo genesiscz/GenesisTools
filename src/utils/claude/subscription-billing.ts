@@ -109,7 +109,10 @@ export function createSubscriptionFetch(): typeof fetch {
             try {
                 body = injectBillingHeader(body);
             } catch (err) {
-                console.warn("[subscription-billing] Failed to inject billing header — Sonnet/Opus may return 400:", err);
+                console.warn(
+                    "[subscription-billing] Failed to inject billing header — Sonnet/Opus may return 400:",
+                    err
+                );
             }
         }
 

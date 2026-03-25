@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
 import logger, { configureLogger } from "@app/logger";
+import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
 import { input } from "@app/utils/prompts/clack";
 import { handleReadmeFlag } from "@app/utils/readme";
-import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
 import { AIChat } from "@ask/AIChat";
 import { transcriptionManager } from "@ask/audio/TranscriptionManager";
 import { ChatEngine } from "@ask/chat/ChatEngine";
@@ -633,10 +633,7 @@ class ASKTool {
     private async createChatConfig(modelChoice: ProviderChoice, argv: CLIOptions): Promise<ChatConfig> {
         const model = getLanguageModel(modelChoice.provider.provider, modelChoice.model.id);
         this.rawSystemPrompt = createSystemPrompt(argv.systemPrompt) ?? "";
-        const systemPrompt = applySystemPromptPrefix(
-            modelChoice.provider.systemPromptPrefix,
-            this.rawSystemPrompt
-        );
+        const systemPrompt = applySystemPromptPrefix(modelChoice.provider.systemPromptPrefix, this.rawSystemPrompt);
 
         return {
             model,
@@ -723,10 +720,7 @@ class ASKTool {
                 modelChoice.model.id = result.newModelName;
             }
 
-            const newSystemPrompt = applySystemPromptPrefix(
-                result.newSystemPromptPrefix,
-                this.rawSystemPrompt
-            );
+            const newSystemPrompt = applySystemPromptPrefix(result.newSystemPromptPrefix, this.rawSystemPrompt);
             chatEngine.setSystemPrompt(newSystemPrompt);
         }
 
