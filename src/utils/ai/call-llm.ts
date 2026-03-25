@@ -24,10 +24,7 @@ export async function callLLM(options: CallLLMOptions): Promise<CallLLMResult> {
     const { systemPrompt, userPrompt, providerChoice, streaming, maxTokens, temperature } = options;
     const model = getLanguageModel(providerChoice.provider.provider, providerChoice.model.id);
 
-    const effectiveSystem = applySystemPromptPrefix(
-        providerChoice.provider.systemPromptPrefix,
-        systemPrompt
-    );
+    const effectiveSystem = applySystemPromptPrefix(providerChoice.provider.systemPromptPrefix, systemPrompt);
 
     if (streaming) {
         const result = await streamText({
@@ -40,13 +37,30 @@ export async function callLLM(options: CallLLMOptions): Promise<CallLLMResult> {
 
         const target = options.streamTarget ?? process.stdout;
         let fullResponse = "";
+        let pipeBroken = false;
 
         for await (const chunk of result.textStream) {
-            target.write(chunk);
+            if (pipeBroken) {
+                continue;
+            }
+
+            try {
+                target.write(chunk);
+            } catch {
+                pipeBroken = true;
+            }
+
             fullResponse += chunk;
         }
 
-        target.write("\n");
+        if (!pipeBroken) {
+            try {
+                target.write("\n");
+            } catch {
+                // Pipe closed (e.g. `| head -15`)
+            }
+        }
+
         const usage = await result.usage;
         return { content: fullResponse, usage };
     }

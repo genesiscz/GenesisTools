@@ -7,7 +7,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { callLLM as sharedCallLLM, type CallLLMResult } from "@app/utils/ai/call-llm";
+import { type CallLLMResult, callLLM as sharedCallLLM } from "@app/utils/ai/call-llm";
 import type { ClaudeSession, PreparedContent } from "@app/utils/claude/session";
 import { applySystemPromptPrefix } from "@app/utils/claude/subscription-billing";
 import { copyToClipboard } from "@app/utils/clipboard";
@@ -514,8 +514,10 @@ export class SummarizeEngine {
             providerChoice = await this.resolveModel();
         }
 
-        // Determine streaming preference
-        const streaming = this.options.streaming ?? !!process.stdout.isTTY;
+        // Stream when writing to stdout (even non-TTY pipes like `| head -15`)
+        // so output appears incrementally. Only disable for file/clipboard-only output.
+        const hasStdoutOutput = !this.options.outputPath && !this.options.clipboard;
+        const streaming = this.options.streaming ?? hasStdoutOutput;
 
         // Step 3b: Call LLM (normal or chunked)
         let llmResult: CallLLMResult;
