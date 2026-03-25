@@ -32,7 +32,7 @@ export class ProviderManager {
     private detectedProviders: Map<string, DetectedProvider> = new Map();
     private initialized = false;
 
-    async detectProviders(): Promise<DetectedProvider[]> {
+    async detectProviders(targetProvider?: string): Promise<DetectedProvider[]> {
         if (this.initialized) {
             return Array.from(this.detectedProviders.values());
         }
@@ -87,7 +87,7 @@ export class ProviderManager {
         }
 
         // Check for anthropic subscription token if not already detected via env key
-        if (!this.detectedProviders.has("anthropic")) {
+        if (!this.detectedProviders.has("anthropic") && (!targetProvider || targetProvider === "anthropic")) {
             await this.detectAnthropicSubscription(askConfig, detected);
         }
 
