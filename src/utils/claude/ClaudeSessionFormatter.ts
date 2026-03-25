@@ -231,12 +231,17 @@ export class ClaudeSessionFormatter {
         }
 
         const time = formatTime(timestamp);
-        const firstLine = text.trim().split("\n")[0];
+        const lines = text.trim().split("\n");
+        const firstLine = lines[0];
 
         if (this.options.colors) {
             this.writeLine(`${pc.dim(time)} ${pc.bold(pc.green("You:"))} ${firstLine}`);
         } else {
             this.writeLine(`${time} You: ${firstLine}`);
+        }
+
+        for (const line of lines.slice(1)) {
+            this.writeLine(`         ${line}`);
         }
     }
 
