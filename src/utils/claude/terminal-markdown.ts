@@ -63,7 +63,7 @@ function createTerminalRenderer(): Renderer {
     renderer.blockquote = ({ tokens }) => {
         const inner = renderer.parser.parse(tokens);
         const lines = inner.split("\n");
-        return lines.map((l) => `  ${chalk.dim("│")} ${l}`).join("\n") + "\n";
+        return `${lines.map((l) => `  ${chalk.dim("│")} ${l}`).join("\n")}\n`;
     };
 
     renderer.hr = () => `${"─".repeat(40)}\n`;
@@ -74,11 +74,11 @@ function createTerminalRenderer(): Renderer {
 
     renderer.table = (token) => {
         const headerCells = token.header.map((cell) => chalk.bold(renderer.parser.parseInline(cell.tokens)));
-        let result = headerCells.join("  ") + "\n";
+        let result = `${headerCells.join("  ")}\n`;
 
         for (const row of token.rows) {
             const cells = row.map((cell) => renderer.parser.parseInline(cell.tokens));
-            result += cells.join("  ") + "\n";
+            result += `${cells.join("  ")}\n`;
         }
 
         return result;
