@@ -1,7 +1,14 @@
 #!/usr/bin/env bun
 
 import type { SayConfig } from "@app/utils/macos/tts.ts";
-import { getConfigForRead, listVoicesStructured, setConfig, setMute, speak } from "@app/utils/macos/tts.ts";
+import {
+    getConfigForRead,
+    listVoicesStructured,
+    normalizeVolume,
+    setConfig,
+    setMute,
+    speak,
+} from "@app/utils/macos/tts.ts";
 import { formatTable } from "@app/utils/table.ts";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
@@ -11,7 +18,7 @@ const program = new Command()
     .name("say")
     .description("Text-to-speech with volume control, auto language detection, and mute support")
     .argument("[message...]", "Text to speak")
-    .option("--volume <n>", "Volume 0.0-1.0", parseFloat)
+    .option("--volume <n>", "Volume (0.0-1.0 or 0-100%); saved per-app with --app", parseFloat)
     .option("--voice <name>", "Override voice name")
     .option("--rate <wpm>", "Words per minute", parseInt)
     .option("--wait", "Block until speech finishes")
@@ -188,8 +195,12 @@ async function handleAppMute(config: SayConfig): Promise<void> {
         return;
     }
 
-    const rows = apps.map(([name, muted]) => [name, muted ? pc.red("muted") : pc.green("active")]);
-    console.log(formatTable(rows, ["App", "Status"]));
+    const rows = apps.map(([name, muted]) => {
+        const vol = config.appVolume[name];
+        const volStr = vol != null ? `${Math.round(vol * 100)}%` : "default";
+        return [name, muted ? pc.red("muted") : pc.green("active"), pc.cyan(volStr)];
+    });
+    console.log(formatTable(rows, ["App", "Status", "Volume"]));
 
     const appToToggle = await p.select({
         message: "Toggle mute for app:",
@@ -242,14 +253,14 @@ async function handleSetVoice(config: SayConfig): Promise<void> {
 
 async function handleSetVolume(config: SayConfig): Promise<void> {
     const input = await p.text({
-        message: "Default volume (0.0 - 1.0):",
+        message: "Default volume (0.0-1.0 or 0-100%):",
         placeholder: String(config.defaultVolume),
         defaultValue: String(config.defaultVolume),
         validate(value: string | undefined) {
             const n = parseFloat(value ?? "");
 
-            if (Number.isNaN(n) || n < 0 || n > 1) {
-                return "Must be a number between 0.0 and 1.0";
+            if (Number.isNaN(n) || n < 0) {
+                return "Must be a non-negative number (0.0-1.0 or 0-100)";
             }
         },
     });
@@ -258,7 +269,7 @@ async function handleSetVolume(config: SayConfig): Promise<void> {
         return;
     }
 
-    config.defaultVolume = parseFloat(input);
+    config.defaultVolume = normalizeVolume(parseFloat(input));
     await setConfig(config);
     p.log.success(`Default volume: ${config.defaultVolume}`);
 }

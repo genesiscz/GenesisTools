@@ -35,6 +35,7 @@ export interface SayConfig {
     defaultVolume: number;
     globalMute: boolean;
     appMute: Record<string, boolean>;
+    appVolume: Record<string, number>;
 }
 
 const DEFAULT_CONFIG: SayConfig = {
@@ -42,7 +43,18 @@ const DEFAULT_CONFIG: SayConfig = {
     defaultVolume: 1,
     globalMute: false,
     appMute: {},
+    appVolume: {},
 };
+
+/**
+ * Normalize volume: if <= 1, treat as 0.0–1.0 range.
+ * If > 1, treat as percentage (e.g. 50 → 0.5).
+ * Clamps result to [0, 1].
+ */
+export function normalizeVolume(v: number): number {
+    const normalized = v > 1 ? v / 100 : v;
+    return Math.max(0, Math.min(1, normalized));
+}
 
 // ============================================
 // Voice Map (dynamic, cached)
@@ -155,23 +167,29 @@ export async function speak(text: string, options?: SpeakOptions): Promise<void>
     // Check mute status
     if (isMuted(config, options?.app)) {
         process.stderr.write("[say] muted\n");
-
-        // Auto-create app entry if it doesn't exist
-        if (options?.app && !(options.app in config.appMute)) {
-            config.appMute[options.app] = false;
-            await setConfig(config);
-        }
-
         return;
     }
 
-    // Auto-create app entry on first use
-    if (options?.app && !(options.app in config.appMute)) {
-        config.appMute[options.app] = false;
+    // Auto-create app entry on first use + save per-app volume
+    const app = options?.app;
+    let configDirty = false;
+
+    if (app && !(app in config.appMute)) {
+        config.appMute[app] = false;
+        configDirty = true;
+    }
+
+    if (app && options?.volume != null) {
+        config.appVolume[app] = normalizeVolume(options.volume);
+        configDirty = true;
+    }
+
+    if (configDirty) {
         await setConfig(config);
     }
 
-    const volume = options?.volume ?? config.defaultVolume ?? 1;
+    const rawVolume = options?.volume ?? (app ? config.appVolume[app] : undefined) ?? config.defaultVolume ?? 1;
+    const volume = normalizeVolume(rawVolume);
     const useAfplay = volume < 1;
 
     // Build say args
