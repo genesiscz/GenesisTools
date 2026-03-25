@@ -170,7 +170,12 @@ export async function renameServer(
     logger.info(`✓ Renamed '${finalOldName}' to '${finalNewName}' in unified config`);
 
     // Sync to providers
-    const availableProviders = providers.filter((p) => p.configExists());
+    const availableProviders: typeof providers = [];
+    for (const provider of providers) {
+        if (await provider.configExists()) {
+            availableProviders.push(provider);
+        }
+    }
 
     if (availableProviders.length === 0) {
         logger.warn("No provider configuration files found.");

@@ -278,7 +278,12 @@ export async function installServer(
     }
 
     // Install to provider
-    const availableProviders = providers.filter((p) => p.configExists());
+    const availableProviders: typeof providers = [];
+    for (const provider of providers) {
+        if (await provider.configExists()) {
+            availableProviders.push(provider);
+        }
+    }
 
     if (availableProviders.length === 0) {
         logger.warn("No provider configuration files found.");
@@ -301,7 +306,9 @@ export async function installServer(
     } else if (isNonInteractive || !isInteractive()) {
         const names = availableProviders.map((p) => p.getName()).join(", ");
         logger.error(`--provider required in non-interactive mode. Available: ${names}`);
-        logger.info(suggestCommand("tools mcp-manager", { add: ["--provider", availableProviders[0]?.getName() ?? "claude"] }));
+        logger.info(
+            suggestCommand("tools mcp-manager", { add: ["--provider", availableProviders[0]?.getName() ?? "claude"] })
+        );
         process.exit(1);
     } else {
         try {
