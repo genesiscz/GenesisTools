@@ -98,6 +98,20 @@ export function matchGlob(value: string, pattern: string): boolean {
 }
 
 /**
+ * Left-truncate a path, keeping the meaningful end.
+ * Breaks at the first `/` after the truncation point for clean output.
+ */
+export function truncatePath(path: string, maxLength: number): string {
+    if (path.length <= maxLength) {
+        return path;
+    }
+
+    const truncated = path.slice(-(maxLength - 3));
+    const firstSlash = truncated.indexOf("/");
+    return `...${firstSlash > 0 ? truncated.slice(firstSlash) : truncated}`;
+}
+
+/**
  * Simple fuzzy match: checks if all characters of `query` appear
  * in `target` in order (case-insensitive). Returns match score
  * (lower = better, -1 = no match).
