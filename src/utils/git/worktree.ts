@@ -263,7 +263,7 @@ export async function ensureWorktreeForBranch(options: WorktreeCreateOptions): P
     // 2. Search existing worktrees
     const existing = await findWorktreeForBranch(branch, effectiveCwd);
 
-    if (existing) {
+    if (existing && existsSync(existing.path)) {
         return {
             path: existing.path,
             created: false,
