@@ -6,8 +6,12 @@ describe("stripPartSuffixes", () => {
         expect(stripPartSuffixes("MyClass (part 2)")).toBe("MyClass");
     });
 
-    it("strips stacked part suffixes", () => {
-        expect(stripPartSuffixes("MyClass (part 3) (part 8)")).toBe("MyClass");
+    it("only strips the trailing part suffix", () => {
+        expect(stripPartSuffixes("MyClass (part 3) (part 8)")).toBe("MyClass (part 3)");
+    });
+
+    it("preserves internal (part N) in real symbol names", () => {
+        expect(stripPartSuffixes("RFC (part 2) parser")).toBe("RFC (part 2) parser");
     });
 
     it("leaves names without suffixes unchanged", () => {
@@ -20,8 +24,8 @@ describe("formatChunkDisplayName", () => {
         expect(formatChunkDisplayName("MyClass", 10, 45)).toBe("MyClass:10-45");
     });
 
-    it("strips stacked part suffixes", () => {
-        expect(formatChunkDisplayName("MyClass (part 3) (part 8)", 100, 150)).toBe("MyClass:100-150");
+    it("strips only trailing part suffix", () => {
+        expect(formatChunkDisplayName("MyClass (part 3) (part 8)", 100, 150)).toBe("MyClass (part 3):100-150");
     });
 
     it("strips single part suffix", () => {

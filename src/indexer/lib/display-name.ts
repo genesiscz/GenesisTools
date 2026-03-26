@@ -1,5 +1,5 @@
 export function stripPartSuffixes(name: string): string {
-    return name.replace(/\s*\(part\s+\d+\)/g, "").trim();
+    return name.replace(/\s*\(part\s+\d+\)\s*$/i, "").trim();
 }
 
 export function formatChunkDisplayName(

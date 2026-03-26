@@ -19,7 +19,6 @@ interface SearchCommandOptions {
     format?: "pretty" | "simple" | "table" | "json" | "toon";
     file?: string;
     confidence?: number;
-    contextChunks?: number;
 }
 
 type IndexResult = { indexName: string; result: SearchResult<ChunkRecord> };
@@ -63,13 +62,18 @@ export function registerSearchCommand(program: Command): void {
         .option("-f, --file <filter>", "Filter results to files matching this substring")
         .option("--format <type>", "Output format: pretty, simple, table, json, toon (default: pretty)")
         .option("-c, --confidence <min>", "Minimum confidence % (0-100)", parseInt)
-        .option("--context-chunks <n>", "Show N surrounding chunks for context", parseInt)
         .action(async (query: string, opts: SearchCommandOptions) => {
             const manager = await IndexerManager.load();
 
             try {
+                const validFormats = ["pretty", "simple", "table", "json", "toon"] as const;
                 const limit = opts.limit ?? 20;
                 const format = opts.format ?? (process.stdout.isTTY ? "pretty" : "simple");
+
+                if (!validFormats.includes(format as (typeof validFormats)[number])) {
+                    p.log.error(`Unknown format: "${format}". Valid: ${validFormats.join(", ")}`);
+                    return;
+                }
 
                 const names = opts.index ? [opts.index] : manager.getIndexNames();
 
@@ -100,8 +104,8 @@ export function registerSearchCommand(program: Command): void {
 
                 let allResults = await searchAndCollect(manager, names, query, mode, fetchLimit, opts.file);
 
-                // Auto-fallback: if fulltext returned 0 results and embeddings exist, try hybrid
-                if (allResults.length === 0 && mode === "fulltext") {
+                // Auto-fallback: only when mode was auto-detected (not explicitly requested)
+                if (allResults.length === 0 && mode === "fulltext" && !opts.mode) {
                     const hasEmbeddings = firstIndexer.getConsistencyInfo().embeddingCount > 0;
 
                     if (hasEmbeddings) {

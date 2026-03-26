@@ -45,6 +45,22 @@ describe("normalizeConfidence", () => {
             expect(normalizeConfidence(15, "bm25", 30)).toBe(50);
         });
 
+        test("with maxScore 0: falls back to heuristic", () => {
+            const low = normalizeConfidence(1, "bm25", 0);
+            const mid = normalizeConfidence(10, "bm25", 0);
+            const high = normalizeConfidence(25, "bm25", 0);
+
+            expect(low).toBeGreaterThanOrEqual(0);
+            expect(low).toBeLessThanOrEqual(100);
+            expect(mid).toBeGreaterThanOrEqual(0);
+            expect(mid).toBeLessThanOrEqual(100);
+            expect(high).toBeGreaterThanOrEqual(0);
+            expect(high).toBeLessThanOrEqual(100);
+
+            expect(low).toBeLessThan(mid);
+            expect(mid).toBeLessThan(high);
+        });
+
         test("without maxScore: returns 0-100 range", () => {
             const low = normalizeConfidence(1, "bm25");
             const mid = normalizeConfidence(10, "bm25");
