@@ -35,11 +35,17 @@ function buildSearchColumns({
     columns,
     withBody,
     semanticActive,
+    columnsExplicit,
 }: {
     columns: MailColumnKey[];
     withBody: boolean;
     semanticActive: boolean;
+    columnsExplicit: boolean;
 }): MailColumnKey[] {
+    if (columnsExplicit) {
+        return columns;
+    }
+
     const result = [...columns];
 
     if (withBody && !result.includes("body")) {
@@ -214,6 +220,7 @@ export function registerSearchCommand(program: Command): void {
                     columns: baseColumns,
                     withBody: !searchOpts.withoutBody,
                     semanticActive,
+                    columnsExplicit: options.columns !== undefined,
                 });
 
                 // Enrich with recipients if any recipient column is selected

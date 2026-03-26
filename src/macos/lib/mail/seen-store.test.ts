@@ -13,8 +13,10 @@ describe("SeenStore", () => {
 
     afterEach(() => {
         for (const p of paths) {
-            if (existsSync(p)) {
-                unlinkSync(p);
+            for (const file of [p, `${p}-wal`, `${p}-shm`]) {
+                if (existsSync(file)) {
+                    unlinkSync(file);
+                }
             }
         }
 

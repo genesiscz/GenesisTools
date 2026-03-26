@@ -7,6 +7,7 @@ import {
 } from "@app/macos/lib/mail/columns";
 import { formatResultsTable } from "@app/macos/lib/mail/format";
 import type { MailMessage } from "@app/macos/lib/mail/types";
+import { isInteractive } from "@app/utils/cli";
 import { parseVariadic } from "@app/utils/cli/variadic";
 import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
@@ -71,7 +72,7 @@ export async function resolveColumnsFromFlag(rawColumns: string | true | undefin
         return resolved;
     }
 
-    if (!process.stdout.isTTY) {
+    if (!isInteractive()) {
         return DEFAULT_LIST_COLUMNS;
     }
 

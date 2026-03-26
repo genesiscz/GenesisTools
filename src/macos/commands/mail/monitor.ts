@@ -55,6 +55,12 @@ const DEFAULT_RULES: MonitorRule[] = [
 
 function matchesRule(msg: MailMessage, rule: MonitorRule): boolean {
     const m = rule.match;
+    const subject = msg.subject.toLowerCase();
+    const sender = `${msg.senderName} ${msg.senderAddress}`.toLowerCase();
+
+    if (m.subjectNotContains?.some((s) => subject.includes(s.toLowerCase()))) {
+        return false;
+    }
 
     if (m.isFlagged && msg.flagged) {
         return true;
@@ -68,39 +74,12 @@ function matchesRule(msg: MailMessage, rule: MonitorRule): boolean {
         }
     }
 
-    if (m.senderContains && m.senderContains.length > 0) {
-        const sender = `${msg.senderName} ${msg.senderAddress}`.toLowerCase();
-        const senderHit = m.senderContains.some((s) => sender.includes(s.toLowerCase()));
-
-        if (senderHit) {
-            if (m.subjectNotContains && m.subjectNotContains.length > 0) {
-                const subj = msg.subject.toLowerCase();
-                const excluded = m.subjectNotContains.some((s) => subj.includes(s.toLowerCase()));
-
-                if (excluded) {
-                    return false;
-                }
-            }
-
-            return true;
-        }
+    if (m.senderContains?.length && m.senderContains.some((s) => sender.includes(s.toLowerCase()))) {
+        return true;
     }
 
-    if (m.subjectContains && m.subjectContains.length > 0) {
-        const subj = msg.subject.toLowerCase();
-        const hit = m.subjectContains.some((s) => subj.includes(s.toLowerCase()));
-
-        if (hit) {
-            if (m.subjectNotContains && m.subjectNotContains.length > 0) {
-                const excluded = m.subjectNotContains.some((s) => subj.includes(s.toLowerCase()));
-
-                if (excluded) {
-                    return false;
-                }
-            }
-
-            return true;
-        }
+    if (m.subjectContains?.some((s) => subject.includes(s.toLowerCase()))) {
+        return true;
     }
 
     return false;
