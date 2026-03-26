@@ -17,10 +17,7 @@ declare module "marked" {
         hr: () => string;
         br: () => string;
         html: (token: { text: string }) => string;
-        table: (token: {
-            header: Array<{ tokens: unknown[] }>;
-            rows: Array<Array<{ tokens: unknown[] }>>;
-        }) => string;
+        table: (token: { header: Array<{ tokens: unknown[] }>; rows: Array<Array<{ tokens: unknown[] }>> }) => string;
         checkbox: (token: { checked: boolean }) => string;
         del: (token: { tokens: unknown[] }) => string;
         image: (token: { href: string }) => string;
@@ -29,5 +26,6 @@ declare module "marked" {
         def: () => string;
     }
 
-    export function marked(src: string, options?: { renderer?: Renderer; async?: boolean }): string;
+    export function marked(src: string, options: { renderer?: Renderer; async: true }): Promise<string>;
+    export function marked(src: string, options?: { renderer?: Renderer; async?: false }): string;
 }

@@ -32,6 +32,10 @@ export async function pickAppleNotesFolder(): Promise<string> {
             };
         });
 
+    if (choices.length === 0) {
+        throw new Error("No suitable Apple Notes folders found (all folders are empty default folders).");
+    }
+
     const selected = await p.select({
         message: "Select Apple Notes folder:",
         options: choices,
