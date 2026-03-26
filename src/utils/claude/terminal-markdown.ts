@@ -94,11 +94,11 @@ function createTerminalRenderer(): Renderer {
     renderer.image = ({ href }) => chalk.underline(href);
 
     renderer.text = (token) => {
-        if ("tokens" in token && token.tokens) {
+        if (token && typeof token === "object" && "tokens" in token && token.tokens) {
             return renderer.parser.parseInline(token.tokens);
         }
 
-        return token.text;
+        return typeof token === "object" && token !== null ? token.text : String(token ?? "");
     };
 
     renderer.space = () => "\n";
@@ -111,6 +111,6 @@ function createTerminalRenderer(): Renderer {
 const terminalRenderer = createTerminalRenderer();
 
 export function renderMarkdown(text: string): string {
-    const result = marked(text, { renderer: terminalRenderer, async: false }) as string;
+    const result = marked(text, { renderer: terminalRenderer }) as string;
     return result.replace(/\n{3,}/g, "\n\n").trimEnd();
 }
