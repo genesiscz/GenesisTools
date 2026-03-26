@@ -179,6 +179,8 @@ ccusage
 
 vercel-skills
 .claude/settings.local.json
+.claude/worktrees/
+.claude/reviews/
 .worktrees/
 
 # Audio/video files (never commit — voice memos, test artifacts, yt-dlp downloads)
