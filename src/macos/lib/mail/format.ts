@@ -1,39 +1,16 @@
+import { DEFAULT_LIST_COLUMNS, MAIL_COLUMNS, type MailColumnKey } from "@app/macos/lib/mail/columns";
 import type { MailMessage } from "@app/macos/lib/mail/types";
-import { formatBytes, formatRelativeTime } from "@app/utils/format";
+import { formatBytes } from "@app/utils/format";
 import { formatTable } from "@app/utils/table";
-import chalk from "chalk";
 
 /**
  * Format search/list results as a table for terminal output.
+ * Accepts an array of column keys to render; defaults to the standard list columns.
  */
-export function formatResultsTable(
-    messages: MailMessage[],
-    options?: { showBodyMatch?: boolean; showSemanticScore?: boolean }
-): string {
-    const headers = ["Date", "From", "Subject", "Attachments"];
-    if (options?.showBodyMatch) {
-        headers.push("Body");
-    }
-    if (options?.showSemanticScore) {
-        headers.push("Relevance");
-    }
-
-    const rows = messages.map((msg) => {
-        const row = [
-            formatRelativeTime(msg.dateSent, { compact: true }),
-            formatSender(msg),
-            msg.subject.slice(0, 60) + (msg.subject.length > 60 ? "..." : ""),
-            msg.attachments.length > 0 ? `${msg.attachments.length}` : "",
-        ];
-        if (options?.showBodyMatch) {
-            row.push(msg.bodyMatchesQuery ? chalk.green("yes") : "");
-        }
-        if (options?.showSemanticScore) {
-            row.push(msg.semanticScore !== undefined ? chalk.cyan((1 - msg.semanticScore / 2).toFixed(2)) : "");
-        }
-        return row;
-    });
-
+export function formatResultsTable(messages: MailMessage[], columns?: MailColumnKey[]): string {
+    const cols = columns ?? DEFAULT_LIST_COLUMNS;
+    const headers = cols.map((k) => MAIL_COLUMNS[k].label);
+    const rows = messages.map((msg) => cols.map((k) => MAIL_COLUMNS[k].get(msg)));
     return formatTable(rows, headers, { maxColWidth: 60 });
 }
 

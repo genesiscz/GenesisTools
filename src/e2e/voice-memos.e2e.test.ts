@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { runTool } from "./helpers";
+import { getOutput, runTool } from "@app/utils/e2e/helpers";
 
 const EXPORT_DIR = "/tmp/vm-e2e-export";
 
@@ -83,8 +83,7 @@ describe("tools macos voice-memos", () => {
         it("transcribe invalid ID exits 1", async () => {
             const r = await runTool(["macos", "voice-memos", "transcribe", "999999"]);
             expect(r.exitCode).toBe(1);
-            const output = r.stdout + r.stderr;
-            expect(output.toLowerCase()).toMatch(/no memo|not found/i);
+            expect(getOutput(r).toLowerCase()).toMatch(/no memo|not found/i);
         });
 
         it("transcribe --all exits 0", async () => {
