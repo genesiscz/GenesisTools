@@ -72,7 +72,7 @@ export function registerSearchCommand(program: Command): void {
         .option("--limit <n>", "Max results", "100")
         .option("--no-semantic", "Disable semantic re-ranking (faster, uses keyword order only)")
         .option("--max-distance <n>", "Max semantic distance to include (0–2, default: 1.2)", "1.2")
-        .option("--columns [cols]", "Columns to show (" + ALL_COLUMN_KEYS.join(",") + ")")
+        .option("--columns [cols]", `Columns to show (${ALL_COLUMN_KEYS.join(",")})`)
         .option("-f, --format <type>", "Output format: table, json, toon", "table")
         .action(async (query: string, options: SearchCommandOptions) => {
             try {

@@ -198,6 +198,8 @@ export function registerMonitorCommand(program: Command): void {
                 }
 
                 // Notify via sayy if requested
+                let notificationOk = true;
+
                 if (options.notifyTelegram && important.length > 0) {
                     const summary =
                         important.length === 1
@@ -208,11 +210,16 @@ export function registerMonitorCommand(program: Command): void {
                         stdout: "inherit",
                         stderr: "inherit",
                     });
-                    await proc.exited;
+                    const exitCode = await proc.exited;
+
+                    if (exitCode !== 0) {
+                        notificationOk = false;
+                        p.log.error(`Notification failed (exit ${exitCode}) — seen DB not updated`);
+                    }
                 }
 
-                // Update seen DB (unless dry-run)
-                if (!dryRun) {
+                // Update seen DB (unless dry-run and notification succeeded)
+                if (!dryRun && notificationOk) {
                     const allFetchedRowids = messages.map((m) => m.rowid);
                     store.markSeen(allFetchedRowids);
                     p.log.step("Seen database updated.");

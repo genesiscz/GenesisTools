@@ -9,7 +9,7 @@ import { registerSearchCommand } from "./search";
 
 /**
  * Register the `mail` subcommand on the parent program.
- * Usage: tools macos mail <search|list|download> [options]
+ * Usage: tools macos mail <search|list|download|index|monitor> [options]
  */
 export function registerMailCommand(program: Command): void {
     const mail = new Command("mail");

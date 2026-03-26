@@ -19,7 +19,7 @@ export function registerListCommand(program: Command): void {
         .command("list [mailbox]")
         .description("List recent emails from a mailbox (default: INBOX)")
         .option("--limit <n>", "Number of emails to show", "20")
-        .option("--columns [cols]", "Columns to show (" + ALL_COLUMN_KEYS.join(",") + ")")
+        .option("--columns [cols]", `Columns to show (${ALL_COLUMN_KEYS.join(",")})`)
         .option("-f, --format <type>", "Output format: table, json, toon", "table")
         .option("--since-last-check", "Show only emails since last monitor check")
         .action(async (mailbox: string | undefined, options: ListOptions) => {

@@ -62,17 +62,24 @@ export function getOutput(result: RunResult): string {
 export function extractJson<T = unknown>(output: string): T {
     const clean = stripClack(output);
 
-    // Try array: find lines that are purely "[" and "]"
-    const lines = clean.split("\n");
-    const arrStart = lines.findIndex((l) => l.trim() === "[");
-    const arrEnd = lines.findLastIndex((l) => l.trim() === "]");
+    // Try parsing the whole cleaned output first (handles compact JSON)
+    try {
+        // biome-ignore lint/style/noRestrictedGlobals: SafeJSON (comment-json) chokes on Unicode in CLI output
+        return JSON.parse(clean) as T;
+    } catch {
+        // Fall through to boundary extraction
+    }
+
+    // Try array: find first "[" and last "]"
+    const arrStart = clean.indexOf("[");
+    const arrEnd = clean.lastIndexOf("]");
 
     if (arrStart !== -1 && arrEnd > arrStart) {
         // biome-ignore lint/style/noRestrictedGlobals: SafeJSON (comment-json) chokes on Unicode in CLI output
-        return JSON.parse(lines.slice(arrStart, arrEnd + 1).join("\n")) as T;
+        return JSON.parse(clean.slice(arrStart, arrEnd + 1)) as T;
     }
 
-    // Try object: slice from first "{" to last "}" to handle trailing CLI text
+    // Try object: slice from first "{" to last "}"
     const objStart = clean.indexOf("{");
     const objEnd = clean.lastIndexOf("}");
 
