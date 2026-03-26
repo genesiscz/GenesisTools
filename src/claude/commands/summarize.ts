@@ -6,11 +6,14 @@
  * and multiple output targets (stdout, file, clipboard, memory dir).
  */
 
+import { existsSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import { parseDate } from "@app/claude/lib/history/search";
 import type { SummarizeOptions, SummarizeResult } from "@app/claude/lib/history/summarize/engine.ts";
 import { listTemplates, SummarizeEngine } from "@app/claude/lib/history/summarize/engine.ts";
+import { encodedProjectDir } from "@app/utils/claude";
 import { ClaudeSession } from "@app/utils/claude/session";
-import { listAppleNotesFolders } from "@app/utils/macos/apple-notes";
+import { pickAppleNotesFolder } from "@app/utils/prompts/clack/apple-notes";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import * as p from "@clack/prompts";
@@ -55,6 +58,7 @@ interface SummarizeCommandOptions {
     customPrompt?: string;
     memoryDir?: string;
     appleNotes?: boolean;
+    project?: string;
 }
 
 // =============================================================================
@@ -65,9 +69,17 @@ async function resolveSessionIds(
     positionalId: string | undefined,
     opts: SummarizeCommandOptions
 ): Promise<ClaudeSession[]> {
+    // Resolve --project to encoded dir name (for fromSessionId) and absolute path (for findSessions)
+    const encodedProject = opts.project ? encodedProjectDir(resolve(opts.project)) : undefined;
+    const projectPath = opts.project ? resolve(opts.project) : undefined;
+
+    if (projectPath && (!existsSync(projectPath) || !statSync(projectPath).isDirectory())) {
+        throw new Error(`Project path not found or not a directory: ${opts.project}`);
+    }
+
     // 1. Positional argument
     if (positionalId) {
-        const session = await ClaudeSession.fromSessionId(positionalId);
+        const session = await ClaudeSession.fromSessionId(positionalId, encodedProject);
         return [session];
     }
 
@@ -75,7 +87,7 @@ async function resolveSessionIds(
     if (opts.session && opts.session.length > 0) {
         const sessions: ClaudeSession[] = [];
         for (const id of opts.session) {
-            sessions.push(await ClaudeSession.fromSessionId(id));
+            sessions.push(await ClaudeSession.fromSessionId(id, encodedProject));
         }
         return sessions;
     }
@@ -89,7 +101,7 @@ async function resolveSessionIds(
                     "Use --current only when running inside a Claude Code session."
             );
         }
-        const session = await ClaudeSession.fromSessionId(envId);
+        const session = await ClaudeSession.fromSessionId(envId, encodedProject);
         return [session];
     }
 
@@ -97,7 +109,7 @@ async function resolveSessionIds(
     if (opts.since || opts.until) {
         const since = opts.since ? parseDate(opts.since) : undefined;
         const until = opts.until ? parseDate(opts.until) : undefined;
-        const infos = await ClaudeSession.findSessions({ since, until });
+        const infos = await ClaudeSession.findSessions({ since, until, project: projectPath });
         if (infos.length === 0) {
             throw new Error("No sessions found matching the specified date range.");
         }
@@ -110,7 +122,7 @@ async function resolveSessionIds(
 
     // 5. Interactive mode (TTY only)
     if (process.stdout.isTTY) {
-        return [await pickSessionInteractively()];
+        return [await pickSessionInteractively(projectPath)];
     }
 
     // 6. Non-interactive without session = error
@@ -120,8 +132,8 @@ async function resolveSessionIds(
     );
 }
 
-async function pickSessionInteractively(): Promise<ClaudeSession> {
-    const sessions = await ClaudeSession.findSessions({ limit: 30 });
+async function pickSessionInteractively(project?: string): Promise<ClaudeSession> {
+    const sessions = await ClaudeSession.findSessions({ limit: 30, project });
 
     if (sessions.length === 0) {
         throw new Error("No sessions found. Check that Claude Code sessions exist in ~/.claude/projects/");
@@ -150,47 +162,6 @@ async function pickSessionInteractively(): Promise<ClaudeSession> {
     }
 
     return ClaudeSession.fromFile(selected as string);
-}
-
-// =============================================================================
-// Apple Notes Folder Picker
-// =============================================================================
-
-async function pickAppleNotesFolder(): Promise<string> {
-    const folders = listAppleNotesFolders();
-    if (folders.length === 0) {
-        throw new Error("No Apple Notes folders found.");
-    }
-
-    // Deduplicate by showing account name when there are name collisions
-    const nameCount = new Map<string, number>();
-    for (const f of folders) {
-        nameCount.set(f.name, (nameCount.get(f.name) ?? 0) + 1);
-    }
-
-    const choices = folders
-        .filter((f) => f.noteCount > 0 || !f.name.startsWith("Notes"))
-        .map((f) => {
-            const showAccount = (nameCount.get(f.name) ?? 0) > 1;
-            const label = showAccount ? `${f.name} (${f.account})` : f.name;
-            return {
-                value: f.id,
-                label,
-                hint: `${f.noteCount} notes`,
-            };
-        });
-
-    const selected = await p.select({
-        message: "Select Apple Notes folder:",
-        options: choices,
-    });
-
-    if (p.isCancel(selected)) {
-        p.cancel("Cancelled.");
-        process.exit(0);
-    }
-
-    return selected as string;
 }
 
 // =============================================================================
@@ -343,7 +314,7 @@ function buildNonInteractiveOptions(session: ClaudeSession, opts: SummarizeComma
         customPrompt: opts.customPrompt,
         provider: opts.provider,
         model: opts.model,
-        streaming: process.stdout.isTTY,
+        streaming: undefined, // Engine decides: stream when stdout is target
         promptOnly: opts.promptOnly,
         tokenBudget: explicitTokenBudget,
         includeToolResults: opts.includeToolResults,
@@ -426,6 +397,7 @@ export function registerSummarizeCommand(program: Command): void {
         .option("--custom-prompt <text>", "Custom prompt text (for custom mode)")
         .option("--memory-dir <path>", "Output dir for memorization topic files")
         .option("--apple-notes", "Save to Apple Notes (interactive folder picker)")
+        .option("--project <path>", "Project path (e.g. ../CEZ/col-fe/)")
         .action(async (sessionId: string | undefined, cmdOpts: SummarizeCommandOptions) => {
             try {
                 const sessions = await resolveSessionIds(sessionId, cmdOpts);

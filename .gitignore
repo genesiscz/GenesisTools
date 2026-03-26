@@ -199,3 +199,5 @@ vercel-skills
 
 # HAR network captures
 *.har
+
+.claude/worktrees/

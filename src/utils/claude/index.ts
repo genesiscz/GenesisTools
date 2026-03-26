@@ -4,7 +4,7 @@
  */
 
 export * from "./auth";
-// Re-export shared types
+export { extractToolInputSummary, extractToolResultText, isAssistantEndTurn } from "./session-helpers";
 export * from "./types";
 
 import { createReadStream, existsSync } from "node:fs";

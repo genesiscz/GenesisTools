@@ -2,29 +2,8 @@ import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { parseJsonl, parseJsonlChunk } from "@app/utils/jsonl";
 import { FileWatcher } from "@app/utils/storage/fs";
 import type { IncludeSpec } from "./cli/dsl";
+import { isAssistantEndTurn } from "./session-helpers";
 import type { ConversationMessage, ProgressMessage } from "./types";
-
-/** Shape of the shorthand "A" variant that some JSONL sessions use for assistant. */
-interface ShorthandAssistant {
-    type: "A";
-    message?: { stop_reason?: string | null };
-}
-
-function isAssistantEndTurn(record: ConversationMessage): boolean {
-    if (record.type === "assistant") {
-        return record.message?.stop_reason === "end_turn";
-    }
-
-    // parseJsonlChunk casts to ConversationMessage, but some sessions use
-    // shorthand type "A" for assistant — falls outside the discriminated union.
-    const raw = record as unknown as ShorthandAssistant;
-
-    if (raw.type !== "A") {
-        return false;
-    }
-
-    return raw.message?.stop_reason === "end_turn";
-}
 
 interface TailerOptions {
     filePath: string;

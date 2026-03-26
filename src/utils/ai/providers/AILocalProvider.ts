@@ -127,7 +127,7 @@ export class AILocalProvider
         let lastTimestamp = 0;
         const PROGRESS_THROTTLE_MS = 300;
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tokenizer type from pipeline internals
+        // biome-ignore lint/suspicious/noExplicitAny: pipeline tokenizer type not exposed by @huggingface/transformers
         const streamer = new WhisperTextStreamer(pipe.tokenizer as any, {
             skip_prompt: true,
             skip_special_tokens: true,

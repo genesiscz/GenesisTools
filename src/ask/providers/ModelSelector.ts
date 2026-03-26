@@ -161,7 +161,7 @@ export class ModelSelector {
 
     async selectModelByName(providerName?: string, modelName?: string): Promise<ProviderChoice | null> {
         try {
-            const providers = await providerManager.detectProviders();
+            const providers = await providerManager.detectProviders(providerName);
 
             let targetProvider: DetectedProvider | undefined;
             let targetModel: ModelInfo | undefined;

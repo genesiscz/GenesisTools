@@ -1,5 +1,10 @@
 import type { ProviderV2 } from "@ai-sdk/provider";
 import logger from "@app/logger";
+import {
+    createSubscriptionFetch,
+    SUBSCRIPTION_BETAS,
+    SUBSCRIPTION_SYSTEM_PREFIX,
+} from "@app/utils/claude/subscription-billing";
 import { askUI } from "@ask/output/AskUILogger";
 import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
 import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
@@ -27,7 +32,7 @@ export class ProviderManager {
     private detectedProviders: Map<string, DetectedProvider> = new Map();
     private initialized = false;
 
-    async detectProviders(): Promise<DetectedProvider[]> {
+    async detectProviders(targetProvider?: string): Promise<DetectedProvider[]> {
         if (this.initialized) {
             return Array.from(this.detectedProviders.values());
         }
@@ -82,7 +87,7 @@ export class ProviderManager {
         }
 
         // Check for anthropic subscription token if not already detected via env key
-        if (!this.detectedProviders.has("anthropic")) {
+        if (!this.detectedProviders.has("anthropic") && (!targetProvider || targetProvider === "anthropic")) {
             await this.detectAnthropicSubscription(askConfig, detected);
         }
 
@@ -113,15 +118,13 @@ export class ProviderManager {
             }
 
             const { createAnthropic } = await import("@ai-sdk/anthropic");
-            // OAuth tokens need Bearer auth + beta header. Pass apiKey to satisfy
-            // SDK validation, then override with correct auth headers.
             const provider = createAnthropic({
-                apiKey: token,
+                apiKey: "oauth-placeholder",
                 headers: {
                     Authorization: `Bearer ${token}`,
-                    "x-api-key": "",
-                    "anthropic-beta": "oauth-2025-04-20",
+                    "anthropic-beta": SUBSCRIPTION_BETAS,
                 },
+                fetch: createSubscriptionFetch(),
             });
 
             const allConfigs = getProviderConfigs();
@@ -141,6 +144,7 @@ export class ProviderManager {
                 provider,
                 models,
                 config: anthropicConfig,
+                systemPromptPrefix: SUBSCRIPTION_SYSTEM_PREFIX,
             };
 
             detected.push(detectedProvider);

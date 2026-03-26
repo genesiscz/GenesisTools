@@ -192,7 +192,7 @@ export function registerMonitorCommand(program: Command): void {
                     console.log("");
                     for (const { msg, ruleName } of important) {
                         const from = msg.senderName || msg.senderAddress;
-                        const subj = msg.subject.length > 50 ? msg.subject.slice(0, 50) + "..." : msg.subject;
+                        const subj = msg.subject.length > 50 ? `${msg.subject.slice(0, 50)}...` : msg.subject;
                         p.log.info(`[${ruleName}] ${from}: ${subj}`);
                     }
                 }

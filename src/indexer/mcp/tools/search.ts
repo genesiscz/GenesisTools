@@ -46,42 +46,28 @@ async function handleSearch(args: SearchArgs): Promise<string> {
         const minScore = args.minScore ?? 0;
 
         let allResults: Array<{ indexName: string; doc: ChunkRecord; score: number; method: string }> = [];
+        const names = args.indexName ? [args.indexName] : manager.getIndexNames();
 
-        if (args.indexName) {
-            const indexer = await manager.getIndex(args.indexName);
+        if (names.length === 0) {
+            return "No indexes configured. Use indexer_index to create one.";
+        }
+
+        for (const name of names) {
+            const indexer = await manager.getIndex(name);
             const mode = args.mode ?? detectMode(indexer);
             const results = await indexer.search(args.query, { mode, limit });
 
             for (const r of results) {
                 allResults.push({
-                    indexName: args.indexName,
+                    indexName: name,
                     doc: r.doc,
                     score: r.score,
                     method: r.method,
                 });
             }
-        } else {
-            const names = manager.getIndexNames();
+        }
 
-            if (names.length === 0) {
-                return "No indexes configured. Use indexer_index to create one.";
-            }
-
-            for (const name of names) {
-                const indexer = await manager.getIndex(name);
-                const mode = args.mode ?? detectMode(indexer);
-                const results = await indexer.search(args.query, { mode, limit });
-
-                for (const r of results) {
-                    allResults.push({
-                        indexName: name,
-                        doc: r.doc,
-                        score: r.score,
-                        method: r.method,
-                    });
-                }
-            }
-
+        if (!args.indexName) {
             allResults.sort((a, b) => b.score - a.score);
         }
 
@@ -101,8 +87,10 @@ async function handleSearch(args: SearchArgs): Promise<string> {
             return `No results found for "${args.query}". Ensure indexes exist (indexer_status) and have been synced.`;
         }
 
-        const displayMode = args.mode ?? "auto";
-        const lines = [`Search results for "${args.query}" (${allResults.length} matches, mode: ${displayMode}):\n`];
+        const modes = [...new Set(allResults.map((r) => r.method))];
+        const lines = [
+            `Search results for "${args.query}" (${allResults.length} matches, mode: ${modes.join("+")}):\n`,
+        ];
 
         for (const r of allResults) {
             lines.push(

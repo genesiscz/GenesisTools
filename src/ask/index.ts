@@ -620,17 +620,21 @@ class ASKTool {
         askUI().outro();
     }
 
+    private rawSystemPrompt = "";
+
     private async createChatConfig(modelChoice: ProviderChoice, argv: CLIOptions): Promise<ChatConfig> {
         const model = getLanguageModel(modelChoice.provider.provider, modelChoice.model.id);
+        this.rawSystemPrompt = createSystemPrompt(argv.systemPrompt) ?? "";
 
         return {
             model,
             provider: modelChoice.provider.name,
             modelName: modelChoice.model.id,
             streaming: argv.streaming !== false, // Default to true
-            systemPrompt: createSystemPrompt(argv.systemPrompt),
+            systemPrompt: this.rawSystemPrompt,
             temperature: parseTemperature(argv.temperature),
             maxTokens: parseMaxTokens(argv.maxTokens),
+            providerChoice: modelChoice,
         };
     }
 
@@ -699,12 +703,17 @@ class ASKTool {
     ): Promise<void> {
         if (result.newModel && result.newProvider) {
             await chatEngine.switchModel(result.newModel, result.newProvider, result.newModelName || "unknown");
+
             if (result.newProvider) {
                 modelChoice.provider.name = result.newProvider;
+                modelChoice.provider.systemPromptPrefix = result.newProviderChoice?.provider.systemPromptPrefix;
             }
+
             if (result.newModelName) {
                 modelChoice.model.id = result.newModelName;
             }
+
+            chatEngine.setSystemPrompt(this.rawSystemPrompt, result.newProviderChoice);
         }
 
         if (result.outputFormat) {

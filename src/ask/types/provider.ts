@@ -63,6 +63,7 @@ export interface DetectedProvider {
     provider: ProviderV2;
     models: ModelInfo[];
     config: ProviderConfig;
+    systemPromptPrefix?: string;
 }
 
 export interface PricingInfo {

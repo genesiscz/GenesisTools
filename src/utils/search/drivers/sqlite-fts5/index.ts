@@ -395,16 +395,15 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         const filterClause = filters?.sql ? ` AND ${filters.sql}` : "";
         const filterParams = filters?.params ?? [];
         const placeholders = allDocIds.map(() => "?").join(",");
-        const idField = this.config.schema.idField;
 
         const rows = this.db
-            .query(`SELECT c.* FROM ${this.contentTableName} c WHERE c.${idField} IN (${placeholders})${filterClause}`)
+            .query(`SELECT c.* FROM ${this.contentTableName} c WHERE c.id IN (${placeholders})${filterClause}`)
             .all(...allDocIds, ...filterParams) as TDoc[];
 
         const docMap = new Map<string, TDoc>();
 
         for (const row of rows) {
-            const id = String((row as Record<string, unknown>)[idField]);
+            const id = String((row as Record<string, unknown>).id);
             docMap.set(id, row);
         }
 

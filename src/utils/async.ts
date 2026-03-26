@@ -173,6 +173,7 @@ export class AsyncOpQueue {
     private pendingOps: Array<() => Promise<void>> = [];
     private flushPromise: Promise<void> | null = null;
     private label: string;
+    private firstError: unknown = null;
 
     constructor(label: string = "AsyncOpQueue") {
         this.label = label;
@@ -193,6 +194,12 @@ export class AsyncOpQueue {
                 this.scheduleFlush();
                 await this.flushPromise;
             }
+        }
+
+        if (this.firstError) {
+            const err = this.firstError;
+            this.firstError = null;
+            throw err;
         }
     }
 
@@ -222,6 +229,10 @@ export class AsyncOpQueue {
                 await op();
             } catch (err) {
                 logger.error({ err, label: this.label }, "background queue error");
+
+                if (!this.firstError) {
+                    this.firstError = err;
+                }
             }
         }
     }

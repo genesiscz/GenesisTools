@@ -2,6 +2,7 @@
  * @clack/prompts utilities
  */
 
+export { pickAppleNotesFolder } from "./apple-notes";
 export * from "./file-path";
 export * from "./helpers";
 export * from "./input";
