@@ -2,7 +2,8 @@
 // Extracted from src/github-pr/index.ts, adapted to use chalk
 
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, extname, join, resolve as pathResolve } from "node:path";
 import type { ParsedReviewThread, PRLevelComment, ReviewData } from "@app/github/types";
 import { formatRelativeTime } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
@@ -168,6 +169,11 @@ function formatSummary(data: ReviewData, shownCount: number): string {
         chalk.cyan("|") +
         "\n";
     output += `${chalk.cyan("|") + `  Repository: ${data.owner}/${data.repo}`.padEnd(87) + chalk.cyan("|")}\n`;
+
+    if (data.headRefName && data.baseRefName) {
+        output += `${chalk.cyan("|") + `  Branch: ${data.headRefName} → ${data.baseRefName}`.padEnd(87) + chalk.cyan("|")}\n`;
+    }
+
     output += `${chalk.cyan("|") + `  Status: ${data.state}`.padEnd(87) + chalk.cyan("|")}\n`;
     output += `${chalk.cyan(`+${"=".repeat(88)}+`)}\n`;
 
@@ -344,6 +350,11 @@ export function formatReviewMarkdown(data: ReviewData, groupByFile: boolean): st
     output += `| | |\n`;
     output += `|---|---|\n`;
     output += `| **Repository** | [${data.owner}/${data.repo}](https://github.com/${data.owner}/${data.repo}/pull/${data.prNumber}) |\n`;
+
+    if (data.headRefName && data.baseRefName) {
+        output += `| **Branch** | \`${data.headRefName}\` → \`${data.baseRefName}\` |\n`;
+    }
+
     output += `| **State** | ${data.state} |\n`;
     output += `| **Generated** | ${new Date().toISOString()} |\n\n`;
 
@@ -419,19 +430,53 @@ export function formatReviewJSON(data: ReviewData): string {
 // File Output
 // =============================================================================
 
+export interface SaveReviewParams {
+    content: string;
+    prNumber: number;
+    save?: boolean | string;
+    repo?: string;
+    originalCwd?: string;
+}
+
 /**
- * Save review markdown to .claude/github/reviews/
+ * Save review markdown to a file.
+ *
+ * - Without `save`: saves to `/tmp/github/reviews/<repo>/pr-<n>-<ts>.md`
+ * - `save: true`: saves to `.claude/reviews/pr-<n>-<ts>.md`
+ * - `save: "<path>"`: resolves relative to `originalCwd` (or cwd)
  */
-export async function saveReviewMarkdown(content: string, prNumber: number): Promise<string> {
+export async function saveReviewMarkdown(params: SaveReviewParams): Promise<string> {
+    const { content, prNumber, save, repo, originalCwd } = params;
     const now = new Date();
     const datetime = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const filename = `pr-${prNumber}-${datetime}.md`;
-    const reviewsDir = join(process.cwd(), ".claude", "github", "reviews");
-    const filePath = join(reviewsDir, filename);
+    const baseCwd = originalCwd ?? process.cwd();
 
-    mkdirSync(reviewsDir, { recursive: true });
+    let filePath: string;
+
+    if (typeof save === "string") {
+        const treatAsDirectory = /[\\/]$/.test(save);
+        const target = pathResolve(baseCwd, save);
+
+        if (treatAsDirectory || !extname(target)) {
+            mkdirSync(target, { recursive: true });
+            filePath = join(target, filename);
+        } else {
+            mkdirSync(dirname(target), { recursive: true });
+            filePath = target;
+        }
+    } else if (save) {
+        const reviewsDir = join(baseCwd, ".claude", "reviews");
+        mkdirSync(reviewsDir, { recursive: true });
+        filePath = join(reviewsDir, filename);
+    } else {
+        const repoSlug = repo ?? "unknown";
+        const tmpDir = join(tmpdir(), "github", "reviews", repoSlug);
+        mkdirSync(tmpDir, { recursive: true });
+        filePath = join(tmpDir, filename);
+    }
+
     await Bun.write(filePath, content);
-
     return filePath;
 }
 
@@ -448,6 +493,11 @@ export function formatReviewLLM(data: ReviewData, sessionId: string): string {
 
     let output = `=== PR Review Session: ${sessionId} ===\n`;
     output += `PR #${data.prNumber}: ${data.title} | ${data.state} | ${data.owner}/${data.repo}\n`;
+
+    if (data.headRefName && data.baseRefName) {
+        output += `Branch: ${data.headRefName} → ${data.baseRefName}\n`;
+    }
+
     output += `Stats: ${stats.total} threads (${stats.unresolved} unresolved) | HIGH: ${stats.high} | MED: ${stats.medium} | LOW: ${stats.low}\n`;
     output += "\n";
 

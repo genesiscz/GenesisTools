@@ -1,7 +1,7 @@
 ---
 name: gt:github-pr
 description: Fetch PR review comments, select which to fix, implement fixes, and commit
-argument-hint: "<pr-number-or-url> [-u] [--open] [--open-only]"
+argument-hint: "<pr-number-or-url> [-u] [-w] [--save] [--open] [--open-only]"
 ---
 
 # GitHub PR Review Fixer
@@ -13,6 +13,10 @@ Fetch PR review comments, let user select which to fix, implement fixes, and com
 ```
 /github-pr <pr-number-or-url>              # All threads
 /github-pr <pr-number-or-url> -u           # Only unresolved threads
+/github-pr <pr-number-or-url> -w           # Switch to PR's worktree
+/github-pr <pr-number-or-url> -w <path>    # Use specific worktree path
+/github-pr <pr-number-or-url> --save       # Save review to .claude/reviews/
+/github-pr <pr-number-or-url> --save <path> # Save to custom path (relative to original cwd)
 /github-pr <pr-number-or-url> --open       # Read + open in Cursor
 /github-pr <pr-number-or-url> --open-only  # Open in Cursor only, wait for input
 ```
@@ -24,6 +28,8 @@ Fetch PR review comments, let user select which to fix, implement fixes, and com
 Parse arguments:
 - First arg: PR number or full GitHub URL (required)
 - `-u` flag: Only show unresolved threads
+- `-w` / `--worktree` [optional path]: After fetching PR, switch to/create worktree for the PR branch
+- `--save` [optional path]: Save review output persistently (default: `.claude/reviews/`). Without this, review files go to `/tmp/`.
 - `--open` flag: After reading, also open the review file in Cursor
 - `--open-only` flag: Skip cat, open in Cursor, then stop and wait for user input
 
@@ -34,29 +40,48 @@ Parse arguments:
 Run the github review command with `--llm` mode to create a session:
 
 ```bash
-tools github review <pr-number-or-url> --llm [-u if flag present]
+tools github review <pr-number-or-url> --llm [-u if flag present] [-w [path] if --worktree flag present] [--save [path] if --save flag present]
 ```
 
 This outputs a compact L1 summary with:
 - Session ID (e.g. `pr137-20260308-143025`)
+- Branch info: `Branch: <head> → <base>`
 - Thread list with ref IDs (t1, t2, t3, ...)
 - Stats summary (total, unresolved, severity breakdown)
+- If `--worktree`: a `WORKTREE_PATH: <path>` line with the worktree directory
 
 **Capture the session ID** from the output — use it with `-s` on ALL subsequent commands.
+
+### Step 1.5: Worktree Switch (if `-w` / `--worktree`)
+
+If the `-w` flag was passed, parse the `WORKTREE_PATH: <path>` line from Step 1 output.
+
+1. Record the original cwd before switching: `ORIGINAL_CWD=$(pwd)`
+2. If the worktree path differs from current cwd:
+   - Display to the user: `⚠️ Switching cwd from <original> to <worktree-path>`
+   - Run: `cd <worktree-path>`
+3. All subsequent file reads and fixes happen in the worktree.
+4. If `--save` has a relative path, resolve it against `ORIGINAL_CWD` (not the worktree).
+
+**Important:** The `tools github review` CLI handles all worktree detection, creation, and `.gitignore` management. You only need to `cd` to the output path.
 
 ### Step 2: Read the L1 Summary
 
 The L1 output is printed directly to stdout. Parse it to get:
 - Session ID
+- Branch info (`Branch: <head> → <base>`)
 - Thread refs and their metadata (status, severity, file, title, author)
 - Stats
+- Worktree path (if `--worktree` was used)
 
 Present a high-level summary to the user:
 
 - PR title and state
+- Branch: `<head>` → `<base>`
 - Total threads count
 - Breakdown by severity (HIGH/MEDIUM/LOW)
 - Breakdown by status (resolved/unresolved)
+- Worktree path (if switched)
 
 **If `--open-only` flag is present:**
 1. Save the L1 output to a temp file and open in Cursor
@@ -383,16 +408,21 @@ When the user provides **multiple PR URLs/numbers**, switch to analysis-first mo
 
 ### Step 1: Setup
 
-```bash
-mkdir -p .claude/plans/reviews
-```
-
 Get the current datetime for filenames:
 ```bash
 date -u +"%Y-%m-%dT%H-%M-%S"   # e.g. 2026-02-18T23-18-22
 ```
 
-Plan files go to: `.claude/plans/reviews/PR-<id>-<datetime>.md`
+**Save location depends on `--save` flag:**
+- Without `--save`: plan files go to `/tmp/github/reviews/<repo>/PR-<id>-<datetime>.md`
+- With `--save`: plan files go to `.claude/plans/reviews/PR-<id>-<datetime>.md`
+- With `--save <path>`: plan files go to `<path>/PR-<id>-<datetime>.md` (relative to original cwd)
+
+Create the target directory:
+
+```bash
+mkdir -p <chosen-plan-dir>
+```
 
 ### Step 2: Fetch All PR Reviews in Parallel
 
@@ -403,7 +433,9 @@ tools github review <pr-url> --llm        # all threads (default)
 tools github review <pr-url> --llm -u     # unresolved only (if requested)
 ```
 
-Each command creates its own session. Capture the session IDs.
+Each command creates its own session. Capture the session IDs and branch info (`Branch: <head> → <base>`).
+
+**Do NOT pass `--worktree` during multi-PR analysis.** Worktree switching happens later during implementation (Step 5).
 
 **Special case — if user says "resolve threads where `<author>` replied first":**
 1. Fetch all threads (without `-u`) to find threads where that author has a reply
@@ -540,7 +572,10 @@ What would you like to do?
 4. Skip to replying on a specific PR
 ```
 
-If implementing: use `superpowers:using-git-worktrees` skill when PRs are on different branches.
+If implementing with `--worktree`: Each PR gets its own worktree via `tools github review <pr> --llm -w`. The worktree is named `pr<number>-<branch-slugged>` (e.g. `pr29-feat-auth`, `pr33-fix-cache`). Each parallel agent works in its own worktree directory.
+
+If implementing without `--worktree`: use `superpowers:using-git-worktrees` skill when PRs are on different branches.
+
 If replying: use the `tools github review respond` commands prepared in each plan.
 
 ---

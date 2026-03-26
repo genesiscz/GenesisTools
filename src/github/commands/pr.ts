@@ -284,6 +284,12 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
         last_comment_cursor: null,
     });
 
+    // Handle worktree switching
+    if (options.worktree && pr.head.ref) {
+        const { handleWorktreeOption } = await import("@app/utils/git/worktree");
+        await handleWorktreeOption({ worktree: options.worktree, branch: pr.head.ref, prNumber: number });
+    }
+
     // Fetch additional PR-specific data
     let reviewComments: ReviewCommentData[] = [];
     if (options.reviewComments) {
@@ -423,6 +429,7 @@ export function createPRCommand(): Command {
         .option("--commits", "Include commit list")
         .option("--checks", "Include CI check status")
         .option("-v, --verbose", "Enable verbose logging")
+        .option("-w, --worktree [path]", "Switch to/create worktree for PR branch")
         .action(async (input, opts) => {
             try {
                 await prCommand(input, opts);

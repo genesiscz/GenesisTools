@@ -22,6 +22,8 @@ const REVIEW_THREADS_QUERY_FULL = `
       pullRequest(number: $pr) {
         title
         state
+        headRefName
+        baseRefName
         reviewThreads(first: 100) {
           pageInfo {
             hasNextPage
@@ -268,6 +270,8 @@ interface GraphQLResponseFull {
         pullRequest: {
             title: string;
             state: string;
+            headRefName: string;
+            baseRefName: string;
             reviewThreads: PagedConnection<ThreadNode>;
             reviews: PagedConnection<ReviewNode>;
             comments: PagedConnection<PrCommentNode>;
@@ -300,6 +304,8 @@ interface ThreadCommentsResponse {
 interface PRReviewInfo {
     title: string;
     state: string;
+    headRefName: string;
+    baseRefName: string;
     threads: ReviewThread[];
     prComments: PRLevelComment[];
 }
@@ -450,6 +456,8 @@ export async function fetchPRReviewThreads(owner: string, repo: string, prNumber
 
     const title = firstPr.title;
     const state = firstPr.state;
+    const headRefName = firstPr.headRefName;
+    const baseRefName = firstPr.baseRefName;
 
     // Collect PR-level reviews (including empty-body reviews — shown as "(no review body)")
     const allReviewNodes: ReviewNode[] = [...firstPr.reviews.edges.map((e) => e.node)];
@@ -538,7 +546,7 @@ export async function fetchPRReviewThreads(owner: string, repo: string, prNumber
     // Return PR-level comments in chronological order
     prComments.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
-    return { title, state, threads: allThreads, prComments };
+    return { title, state, headRefName, baseRefName, threads: allThreads, prComments };
 }
 
 // =============================================================================

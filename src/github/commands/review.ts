@@ -143,6 +143,8 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
         prNumber,
         title: prInfo.title,
         state: prInfo.state,
+        headRefName: prInfo.headRefName,
+        baseRefName: prInfo.baseRefName,
         threads: displayThreads,
         stats,
         prComments:
@@ -152,6 +154,12 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                     : prInfo.prComments
                 : undefined,
     };
+
+    // Handle worktree switching
+    if (options.worktree && prInfo.headRefName) {
+        const { handleWorktreeOption } = await import("@app/utils/git/worktree");
+        await handleWorktreeOption({ worktree: options.worktree, branch: prInfo.headRefName, prNumber });
+    }
 
     // LLM-optimized output (session-based with refs)
     if (options.llm) {
@@ -175,6 +183,8 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
                 prNumber,
                 title: prInfo.title,
                 state: prInfo.state,
+                headRefName: prInfo.headRefName,
+                baseRefName: prInfo.baseRefName,
                 createdAt: Date.now(),
                 stats: sessionStats,
                 threadCount: sessionThreads.length,
@@ -215,7 +225,13 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
     // Markdown output (save to file)
     if (options.md) {
         const mdContent = formatReviewMarkdown(reviewData, options.groupByFile ?? false);
-        const filePath = await saveReviewMarkdown(mdContent, prNumber);
+        const filePath = await saveReviewMarkdown({
+            content: mdContent,
+            prNumber,
+            save: options.save,
+            repo: `${owner}-${repo}`,
+            originalCwd: process.cwd(),
+        });
         console.log(filePath);
         console.error(`  View: tools markdown-cli ${filePath}`);
         return;
@@ -439,6 +455,8 @@ Examples:
         .option("-v, --verbose", "Enable verbose logging")
         .option("--no-pr-comments", "Hide PR-level review summaries and conversation comments")
         .option("-a, --author <login>", "Filter threads by reviewer login (case-insensitive)")
+        .option("-w, --worktree [path]", "Switch to/create worktree for PR branch")
+        .option("--save [path]", "Save review output persistently (default: .claude/reviews/)")
         .action(async (input, opts) => {
             try {
                 await reviewCommand(input, opts);
