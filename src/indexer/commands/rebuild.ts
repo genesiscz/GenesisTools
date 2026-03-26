@@ -57,7 +57,7 @@ export function registerRebuildCommand(program: Command): void {
                         { value: "reindex-reembed", label: "Full reindex + re-embed" },
                     ];
 
-                    if (currentDriver && currentDriver !== "sqlite-vec") {
+                    if (currentDriver === "sqlite-brute") {
                         options.splice(1, 0, {
                             value: "migrate-driver",
                             label: `Migrate vector storage: ${currentDriver} → sqlite-vec`,

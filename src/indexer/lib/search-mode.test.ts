@@ -4,7 +4,7 @@ import { detectMode, resolveSearchMode } from "./search-mode";
 
 function fakeIndexer(embeddingCount: number): Indexer {
     return {
-        getConsistencyInfo: () => ({ embeddingCount }),
+        getStore: () => ({ getEmbeddingCount: () => embeddingCount }),
     } as unknown as Indexer;
 }
 

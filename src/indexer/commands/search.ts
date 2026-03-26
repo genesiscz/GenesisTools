@@ -75,6 +75,13 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
+                const confidence = opts.confidence;
+
+                if (confidence !== undefined && (!Number.isFinite(confidence) || confidence < 0 || confidence > 100)) {
+                    p.log.error(`Invalid confidence: "${opts.confidence}". Expected 0-100.`);
+                    return;
+                }
+
                 const names = opts.index ? [opts.index] : manager.getIndexNames();
 
                 if (names.length === 0) {
@@ -142,8 +149,8 @@ export function registerSearchCommand(program: Command): void {
                 }));
 
                 const filtered =
-                    opts.confidence !== undefined
-                        ? formatted.filter((r) => r.confidence >= opts.confidence!)
+                    confidence !== undefined
+                        ? formatted.filter((r) => r.confidence >= confidence)
                         : formatted;
 
                 if (format === "json" || format === "toon") {
@@ -154,7 +161,10 @@ export function registerSearchCommand(program: Command): void {
                         language: r.language,
                         confidence: r.confidence,
                         method: r.method,
-                        lines: `${r.startLine}-${r.endLine}`,
+                        lines:
+                            r.startLine != null && r.endLine != null
+                                ? `${r.startLine}-${r.endLine}`
+                                : null,
                         preview: truncateText(r.content.replace(/\n/g, " ").replace(/\s+/g, " ").trim(), 200),
                     }));
 
