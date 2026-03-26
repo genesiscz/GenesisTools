@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { runTool } from "./helpers";
+import { getOutput, runTool } from "@app/utils/e2e/helpers";
 
 describe("tools say", () => {
     afterAll(async () => {
@@ -32,8 +32,7 @@ describe("tools say", () => {
             await runTool(["say", "--mute"]);
             const r = await runTool(["say", "should be muted"]);
             expect(r.exitCode).toBe(0);
-            const output = r.stdout + r.stderr;
-            expect(output.toLowerCase()).toContain("muted");
+            expect(getOutput(r).toLowerCase()).toContain("muted");
         });
 
         it("--unmute exits 0", async () => {
@@ -52,8 +51,7 @@ describe("tools say", () => {
             await runTool(["say", "--mute", "--app", "e2e-test"]);
             const r = await runTool(["say", "test", "--app", "e2e-test"]);
             expect(r.exitCode).toBe(0);
-            const output = r.stdout + r.stderr;
-            expect(output.toLowerCase()).toContain("muted");
+            expect(getOutput(r).toLowerCase()).toContain("muted");
         });
 
         it("--unmute --app e2e-test exits 0", async () => {

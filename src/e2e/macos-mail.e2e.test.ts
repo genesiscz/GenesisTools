@@ -1,0 +1,77 @@
+import { describe, expect, it } from "bun:test";
+import { ALL_COLUMN_KEYS } from "@app/macos/lib/mail/columns";
+import { extractJson, getOutput, runTool, stripAnsi } from "@app/utils/e2e/helpers";
+
+describe("tools macos mail", () => {
+    describe("help", () => {
+        it("--help exits 0", async () => {
+            const r = await runTool(["macos", "mail", "--help"]);
+            expect(r.exitCode).toBe(0);
+        });
+
+        it("list --help exits 0 and mentions --columns, --format, --limit", async () => {
+            const r = await runTool(["macos", "mail", "list", "--help"]);
+            expect(r.exitCode).toBe(0);
+            const out = stripAnsi(r.stdout);
+
+            expect(out).toContain("--columns");
+            expect(out).toContain("--format");
+            expect(out).toContain("--limit");
+        });
+
+        it("search --help exits 0 and mentions --columns, --format", async () => {
+            const r = await runTool(["macos", "mail", "search", "--help"]);
+            expect(r.exitCode).toBe(0);
+            const out = stripAnsi(r.stdout);
+
+            expect(out).toContain("--columns");
+            expect(out).toContain("--format");
+        });
+    });
+
+    describe("list --help column names", () => {
+        it("list --help output contains all column names", async () => {
+            const r = await runTool(["macos", "mail", "list", "--help"]);
+            const out = stripAnsi(r.stdout);
+
+            for (const col of ALL_COLUMN_KEYS) {
+                expect(out).toContain(col);
+            }
+        });
+    });
+
+    describe("invalid column", () => {
+        it("list --columns invalid_col should warn about unknown column", async () => {
+            const r = await runTool(["macos", "mail", "list", "--columns", "invalid_col"]);
+            expect(getOutput(r)).toContain("Unknown column");
+        });
+    });
+
+    describe("monitor", () => {
+        it("monitor --help exits 0 and mentions --limit, --notify-telegram, --dry-run", async () => {
+            const r = await runTool(["macos", "mail", "monitor", "--help"]);
+            expect(r.exitCode).toBe(0);
+            const out = stripAnsi(r.stdout);
+
+            expect(out).toContain("--limit");
+            expect(out).toContain("--notify-telegram");
+            expect(out).toContain("--dry-run");
+        });
+    });
+
+    describe("format flag", () => {
+        it("list --format json --limit 1 accepts the format flag", async () => {
+            const r = await runTool(["macos", "mail", "list", "--format", "json", "--limit", "1"], 30_000);
+
+            // If mail DB is accessible, we get valid JSON output.
+            // If not (e.g. no Full Disk Access), we still verify the flags are accepted
+            // by checking it doesn't fail with "unknown option".
+            expect(getOutput(r)).not.toContain("unknown option");
+
+            if (r.exitCode === 0 && r.stdout.trim().length > 0) {
+                const parsed = extractJson<unknown[]>(r.stdout);
+                expect(Array.isArray(parsed)).toBe(true);
+            }
+        }, 30_000);
+    });
+});

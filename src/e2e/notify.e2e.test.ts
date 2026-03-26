@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { runTool } from "./helpers";
+import { runTool } from "@app/utils/e2e/helpers";
 
 describe("tools notify", () => {
     describe("help & no-args", () => {
