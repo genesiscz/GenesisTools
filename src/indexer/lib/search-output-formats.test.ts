@@ -1,9 +1,14 @@
-import { describe, expect, test } from "bun:test";
-import { stripAnsi } from "@app/utils/string";
-import pc from "picocolors";
-import { type FormattedSearchResult, formatSearchResults } from "./search-output";
+import { describe, expect, mock, test } from "bun:test";
+import { createColors } from "picocolors";
 
-const hasColors = pc.isColorSupported;
+// Force colors on for all imports in this test file
+mock.module("picocolors", () => {
+    const forced = createColors(true);
+    return { default: forced, createColors };
+});
+
+import { stripAnsi } from "@app/utils/string";
+import { type FormattedSearchResult, formatSearchResults } from "./search-output";
 
 function makeResult(overrides: Partial<FormattedSearchResult> = {}): FormattedSearchResult {
     return {
@@ -44,7 +49,6 @@ describe("formatSearchResults", () => {
             const plain = stripAnsi(output);
 
             expect(plain).toContain("```php");
-            // Closing fence exists (may be at end of output after trimEnd)
             expect(plain).toMatch(/```\s*$/);
         });
 
@@ -97,7 +101,6 @@ describe("formatSearchResults", () => {
             });
             const plain = stripAnsi(output);
 
-            // Should have ``` without a language suffix (just the fence)
             expect(plain).toContain("```\n");
             expect(plain).not.toContain("```php");
         });
@@ -163,11 +166,7 @@ describe("formatSearchResults", () => {
             });
             const plain = stripAnsi(output);
 
-            if (hasColors) {
-                expect(output.length).toBeGreaterThan(plain.length);
-            }
-
-            // Content is preserved regardless of color support
+            expect(output.length).toBeGreaterThan(plain.length);
             expect(plain).toContain("reservation");
         });
     });
@@ -207,7 +206,6 @@ describe("formatSearchResults", () => {
             });
             const plain = stripAnsi(output);
 
-            // Table format uses maxLen=40 for shortenPath
             expect(plain).toContain("...");
             expect(plain).not.toContain(longPath);
         });
@@ -332,12 +330,10 @@ describe("formatSearchResults", () => {
                 ...defaultOpts,
             });
 
-            // All three should be distinct
             expect(pretty).not.toBe(simple);
             expect(pretty).not.toBe(table);
             expect(simple).not.toBe(table);
 
-            // Pretty has code fences, simple has line numbers, table has column headers
             const prettyPlain = stripAnsi(pretty);
             const simplePlain = stripAnsi(simple);
             const tablePlain = stripAnsi(table);
@@ -348,7 +344,7 @@ describe("formatSearchResults", () => {
         });
     });
 
-    describe.skipIf(!hasColors)("coloring verification", () => {
+    describe("coloring verification", () => {
         test("simple format with highlightWords produces ANSI codes", () => {
             const output = formatSearchResults({
                 results: [makeResult()],

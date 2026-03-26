@@ -1,9 +1,14 @@
-import { describe, expect, it } from "bun:test";
-import { stripAnsi } from "@app/utils/string";
-import pc from "picocolors";
-import { type FormattedSearchResult, formatSearchResults } from "./search-output";
+import { describe, expect, it, mock } from "bun:test";
+import { createColors } from "picocolors";
 
-const hasColors = pc.isColorSupported;
+// Force colors on for all imports in this test file (including search-output.ts and highlight.ts)
+mock.module("picocolors", () => {
+    const forced = createColors(true);
+    return { default: forced, createColors };
+});
+
+import { stripAnsi } from "@app/utils/string";
+import { type FormattedSearchResult, formatSearchResults } from "./search-output";
 
 function makeResult(overrides?: Partial<FormattedSearchResult>): FormattedSearchResult {
     return {
@@ -118,10 +123,7 @@ describe("formatSearchResults", () => {
                 highlightWords: ["sendNotification"],
             });
             const plain = stripAnsi(result);
-
-            if (hasColors) {
-                expect(result.length).toBeGreaterThan(plain.length);
-            }
+            expect(result.length).toBeGreaterThan(plain.length);
         });
     });
 
@@ -168,10 +170,7 @@ describe("formatSearchResults", () => {
                 highlightWords: ["sendNotification"],
             });
             const plain = stripAnsi(result);
-
-            if (hasColors) {
-                expect(result.length).toBeGreaterThan(plain.length);
-            }
+            expect(result.length).toBeGreaterThan(plain.length);
         });
     });
 

@@ -26,10 +26,17 @@ export function parseQueryWords(query: string): string[] {
     return result;
 }
 
-export function highlightQueryWords(text: string, words: string[]): string {
+interface HighlightColors {
+    bold: (s: string) => string;
+    yellow: (s: string) => string;
+}
+
+export function highlightQueryWords(text: string, words: string[], colors?: HighlightColors): string {
     if (!text || words.length === 0) {
         return text;
     }
+
+    const { bold, yellow } = colors ?? pc;
 
     const pattern = [...words]
         .sort((a, b) => b.length - a.length)
@@ -37,5 +44,5 @@ export function highlightQueryWords(text: string, words: string[]): string {
         .join("|");
     const regex = new RegExp(`(${pattern})`, "gi");
 
-    return text.replace(regex, (match) => pc.bold(pc.yellow(match)));
+    return text.replace(regex, (match) => bold(yellow(match)));
 }
