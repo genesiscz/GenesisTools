@@ -45,47 +45,14 @@ export function registerRebuildCommand(program: Command): void {
 
                 p.intro(pc.bgCyan(pc.white(` rebuild ${targetName} `)));
 
-                const metas = manager.listIndexes();
-                const meta = metas.find((m) => m.name === targetName);
-
                 if (isInteractive()) {
-                    const currentDriver = meta?.config.storage?.vectorDriver;
-
-                    const options: Array<{ value: string; label: string }> = [
-                        { value: "reindex", label: "Full reindex (re-scan all files, re-chunk)" },
-                        { value: "reembed", label: "Re-embed all chunks (regenerate vectors, keep content)" },
-                        { value: "reindex-reembed", label: "Full reindex + re-embed" },
-                    ];
-
-                    if (currentDriver === "sqlite-brute") {
-                        options.splice(1, 0, {
-                            value: "migrate-driver",
-                            label: `Migrate vector storage: ${currentDriver} → sqlite-vec`,
-                        });
-                    }
-
-                    const action = await p.select({
-                        message: `What would you like to do with "${targetName}"?`,
-                        options,
+                    const confirmed = await p.confirm({
+                        message: `Rebuild "${targetName}"? This will re-scan all source files and re-chunk.`,
                     });
 
-                    if (p.isCancel(action)) {
+                    if (p.isCancel(confirmed) || !confirmed) {
                         p.log.info("Cancelled");
                         return;
-                    }
-
-                    if (action === "migrate-driver") {
-                        p.log.warn("Driver migration is not implemented yet.");
-                        return;
-                    }
-
-                    if (action === "reembed") {
-                        p.log.warn("Re-embedding is not implemented yet.");
-                        return;
-                    }
-
-                    if (action === "reindex-reembed") {
-                        p.log.info("Full reindex with re-embedding");
                     }
                 }
 

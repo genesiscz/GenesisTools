@@ -21,7 +21,7 @@ describe("parseQueryWords", () => {
         expect(result).toContain("the");
         expect(result).toContain("working");
         expect(result).not.toContain("is");
-        expect(result).not.toContain("AI");
+        expect(result).not.toContain("ai");
     });
 });
 

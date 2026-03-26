@@ -158,16 +158,21 @@ describe("formatSearchResults", () => {
         });
 
         test("highlights query words with ANSI codes", () => {
-            const output = formatSearchResults({
+            const withHighlight = formatSearchResults({
                 results: [makeResult()],
                 format: "simple",
                 ...defaultOpts,
                 highlightWords: ["reservation"],
             });
-            const plain = stripAnsi(output);
+            const withoutHighlight = formatSearchResults({
+                results: [makeResult()],
+                format: "simple",
+                ...defaultOpts,
+            });
 
-            expect(output.length).toBeGreaterThan(plain.length);
-            expect(plain).toContain("reservation");
+            // Highlighting adds extra ANSI bytes around matched words
+            expect(withHighlight.length).toBeGreaterThan(withoutHighlight.length);
+            expect(stripAnsi(withHighlight)).toContain("reservation");
         });
     });
 
@@ -346,15 +351,19 @@ describe("formatSearchResults", () => {
 
     describe("coloring verification", () => {
         test("simple format with highlightWords produces ANSI codes", () => {
-            const output = formatSearchResults({
+            const withHighlight = formatSearchResults({
                 results: [makeResult()],
                 format: "simple",
                 ...defaultOpts,
                 highlightWords: ["reservation"],
             });
-            const plain = stripAnsi(output);
+            const withoutHighlight = formatSearchResults({
+                results: [makeResult()],
+                format: "simple",
+                ...defaultOpts,
+            });
 
-            expect(output.length).toBeGreaterThan(plain.length);
+            expect(withHighlight.length).toBeGreaterThan(withoutHighlight.length);
         });
 
         test("high confidence (>=70) produces different ANSI than low confidence (<40)", () => {

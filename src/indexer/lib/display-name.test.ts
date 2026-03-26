@@ -43,4 +43,13 @@ describe("formatChunkDisplayName", () => {
     it("handles single-line chunk", () => {
         expect(formatChunkDisplayName("handler", 42, 42)).toBe("handler:42");
     });
+
+    it("falls back to cleaned name when lines are undefined", () => {
+        expect(formatChunkDisplayName("MyClass (part 2)", undefined, undefined, "function")).toBe("MyClass");
+    });
+
+    it("falls back when lines are NaN", () => {
+        expect(formatChunkDisplayName(undefined, Number.NaN, 10, "function")).toBe("function");
+        expect(formatChunkDisplayName(undefined, Number.NaN, Number.NaN)).toBe("chunk");
+    });
 });
