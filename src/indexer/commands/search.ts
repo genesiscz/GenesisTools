@@ -8,7 +8,7 @@ import { normalizeConfidence } from "../lib/confidence";
 import { formatChunkDisplayName } from "../lib/display-name";
 import { parseQueryWords } from "../lib/highlight";
 import { IndexerManager } from "../lib/manager";
-import { detectMode, resolveSearchMode, type SearchMode } from "../lib/search-mode";
+import { anyHaveEmbeddings, detectModeMulti, resolveSearchMode, type SearchMode } from "../lib/search-mode";
 import { type FormattedSearchResult, formatSearchResults, type OutputFormat } from "../lib/search-output";
 import type { ChunkRecord } from "../lib/types";
 
@@ -89,7 +89,8 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
-                const firstIndexer = await manager.getIndex(names[0]);
+                // Load all indexers upfront for mode detection across all indexes
+                const indexers = await Promise.all(names.map((n) => manager.getIndex(n)));
 
                 let mode: SearchMode;
 
@@ -103,7 +104,7 @@ export function registerSearchCommand(program: Command): void {
 
                     mode = resolved;
                 } else {
-                    mode = detectMode(firstIndexer);
+                    mode = detectModeMulti(indexers);
                 }
 
                 let effectiveMode = mode;
@@ -113,9 +114,7 @@ export function registerSearchCommand(program: Command): void {
 
                 // Auto-fallback: only when mode was auto-detected (not explicitly requested)
                 if (allResults.length === 0 && mode === "fulltext" && !opts.mode) {
-                    const hasEmbeddings = firstIndexer.getConsistencyInfo().embeddingCount > 0;
-
-                    if (hasEmbeddings) {
+                    if (anyHaveEmbeddings(indexers)) {
                         effectiveMode = "hybrid";
                         allResults = await searchAndCollect(manager, names, query, "hybrid", fetchLimit, opts.file);
                     }
@@ -149,9 +148,7 @@ export function registerSearchCommand(program: Command): void {
                 }));
 
                 const filtered =
-                    confidence !== undefined
-                        ? formatted.filter((r) => r.confidence >= confidence)
-                        : formatted;
+                    confidence !== undefined ? formatted.filter((r) => r.confidence >= confidence) : formatted;
 
                 if (format === "json" || format === "toon") {
                     const output = filtered.map((r) => ({
@@ -161,10 +158,7 @@ export function registerSearchCommand(program: Command): void {
                         language: r.language,
                         confidence: r.confidence,
                         method: r.method,
-                        lines:
-                            r.startLine != null && r.endLine != null
-                                ? `${r.startLine}-${r.endLine}`
-                                : null,
+                        lines: r.startLine != null && r.endLine != null ? `${r.startLine}-${r.endLine}` : null,
                         preview: truncateText(r.content.replace(/\n/g, " ").replace(/\s+/g, " ").trim(), 200),
                     }));
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { Indexer } from "./indexer";
-import { detectMode, resolveSearchMode } from "./search-mode";
+import { anyHaveEmbeddings, detectMode, detectModeMulti, resolveSearchMode } from "./search-mode";
 
 function fakeIndexer(embeddingCount: number): Indexer {
     return {
@@ -31,5 +31,25 @@ describe("detectMode", () => {
 
     it("returns 'fulltext' when no embeddings", () => {
         expect(detectMode(fakeIndexer(0))).toBe("fulltext");
+    });
+});
+
+describe("detectModeMulti", () => {
+    it("returns 'hybrid' when any index has embeddings", () => {
+        expect(detectModeMulti([fakeIndexer(0), fakeIndexer(50)])).toBe("hybrid");
+    });
+
+    it("returns 'fulltext' when no indexes have embeddings", () => {
+        expect(detectModeMulti([fakeIndexer(0), fakeIndexer(0)])).toBe("fulltext");
+    });
+});
+
+describe("anyHaveEmbeddings", () => {
+    it("returns true when at least one index has embeddings", () => {
+        expect(anyHaveEmbeddings([fakeIndexer(0), fakeIndexer(10)])).toBe(true);
+    });
+
+    it("returns false when none have embeddings", () => {
+        expect(anyHaveEmbeddings([fakeIndexer(0)])).toBe(false);
     });
 });
