@@ -88,7 +88,9 @@ async function handleSearch(args: SearchArgs): Promise<string> {
         }
 
         const modes = [...new Set(allResults.map((r) => r.method))];
-        const lines = [`Search results for "${args.query}" (${allResults.length} matches, mode: ${modes.join("+")}):\n`];
+        const lines = [
+            `Search results for "${args.query}" (${allResults.length} matches, mode: ${modes.join("+")}):\n`,
+        ];
 
         for (const r of allResults) {
             lines.push(

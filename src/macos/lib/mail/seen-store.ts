@@ -45,9 +45,7 @@ export class SeenStore {
             return;
         }
 
-        const stmt = this.db.prepare(
-            "INSERT OR IGNORE INTO seen_messages (rowid, first_seen_at) VALUES (?, ?)"
-        );
+        const stmt = this.db.prepare("INSERT OR IGNORE INTO seen_messages (rowid, first_seen_at) VALUES (?, ?)");
         const now = Math.floor(Date.now() / 1000);
         const tx = this.db.transaction(() => {
             for (const id of rowids) {

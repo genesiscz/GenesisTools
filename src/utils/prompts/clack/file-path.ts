@@ -81,7 +81,6 @@ export async function filePathInput(options: FilePathInputOptions): Promise<stri
         let cursor = -1; // -1 = input focused (no listing highlight)
         let lastRenderHeight = 0;
 
-
         const readDir = (): DirEntry[] => {
             const expanded = expandPath(value);
             let dir: string;

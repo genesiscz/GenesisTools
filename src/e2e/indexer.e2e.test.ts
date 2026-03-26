@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import { runTool, stripAnsi } from "./helpers";
+import { runTool, stripAnsi } from "@app/utils/e2e/helpers";
 
 const TEST_PREFIX = `test_e2e_${Date.now()}`;
 let tempDir: string;

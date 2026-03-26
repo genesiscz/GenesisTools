@@ -50,7 +50,7 @@ export const MAIL_COLUMNS = {
     },
     subject: {
         label: "Subject",
-        get: (m: MailMessage) => (m.subject.length > 60 ? m.subject.slice(0, 60) + "..." : m.subject),
+        get: (m: MailMessage) => (m.subject.length > 60 ? `${m.subject.slice(0, 60)}...` : m.subject),
     },
     mailbox: {
         label: "Mailbox",

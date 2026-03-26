@@ -3,11 +3,11 @@ import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
 import { stripAnsi, truncatePath, truncateText } from "@app/utils/string";
 import pc from "picocolors";
-import { renderMarkdown } from "./terminal-markdown";
 import type { IncludeSpec } from "./cli/dsl";
 import type { TailTarget } from "./session.types";
 import { agentProgressToSubagent, parseAgentCompletionStats } from "./session.utils";
 import { extractToolInputSummary, extractToolResultText } from "./session-helpers";
+import { renderMarkdown } from "./terminal-markdown";
 import type {
     AssistantMessage,
     AssistantMessageContent,

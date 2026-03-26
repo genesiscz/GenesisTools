@@ -20,7 +20,6 @@ import { spawn } from "bun";
 import chalk from "chalk";
 import type { Command } from "commander";
 
-
 // =============================================================================
 // Output Formatting
 // =============================================================================
@@ -360,5 +359,4 @@ export function registerHistoryCommand(program: Command): void {
 
             await proc.exited;
         });
-
 }

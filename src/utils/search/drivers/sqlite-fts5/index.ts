@@ -403,7 +403,7 @@ export class SearchEngine<TDoc extends Record<string, unknown> = Record<string, 
         const docMap = new Map<string, TDoc>();
 
         for (const row of rows) {
-            const id = String((row as Record<string, unknown>)["id"]);
+            const id = String((row as Record<string, unknown>).id);
             docMap.set(id, row);
         }
 
