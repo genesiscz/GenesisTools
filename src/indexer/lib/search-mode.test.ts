@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { resolveSearchMode } from "./search-mode";
+import type { Indexer } from "./indexer";
+import { detectMode, resolveSearchMode } from "./search-mode";
+
+function fakeIndexer(embeddingCount: number): Indexer {
+    return {
+        getConsistencyInfo: () => ({ embeddingCount }),
+    } as unknown as Indexer;
+}
 
 describe("resolveSearchMode", () => {
     it("passes through valid modes unchanged", () => {
@@ -14,5 +21,15 @@ describe("resolveSearchMode", () => {
 
     it("returns undefined for unknown modes", () => {
         expect(resolveSearchMode("banana")).toBeUndefined();
+    });
+});
+
+describe("detectMode", () => {
+    it("returns 'hybrid' when embeddings exist", () => {
+        expect(detectMode(fakeIndexer(100))).toBe("hybrid");
+    });
+
+    it("returns 'fulltext' when no embeddings", () => {
+        expect(detectMode(fakeIndexer(0))).toBe("fulltext");
     });
 });

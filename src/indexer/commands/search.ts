@@ -1,6 +1,7 @@
 import { toToon } from "@app/json/lib/toon";
 import { SafeJSON } from "@app/utils/json";
 import type { SearchResult } from "@app/utils/search/types";
+import { truncateText } from "@app/utils/string";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { normalizeConfidence } from "../lib/confidence";
@@ -19,6 +20,36 @@ interface SearchCommandOptions {
     file?: string;
     confidence?: number;
     contextChunks?: number;
+}
+
+type IndexResult = { indexName: string; result: SearchResult<ChunkRecord> };
+
+async function searchAndCollect(
+    manager: IndexerManager,
+    names: string[],
+    query: string,
+    mode: SearchMode,
+    limit: number,
+    fileFilter?: string
+): Promise<IndexResult[]> {
+    let allResults: IndexResult[] = [];
+
+    for (const name of names) {
+        const indexer = await manager.getIndex(name);
+        const results = await indexer.search(query, { mode, limit });
+
+        for (const result of results) {
+            allResults.push({ indexName: name, result });
+        }
+    }
+
+    allResults.sort((a, b) => b.result.score - a.result.score);
+
+    if (fileFilter) {
+        allResults = allResults.filter((r) => r.result.doc.filePath.includes(fileFilter));
+    }
+
+    return allResults.slice(0, limit);
 }
 
 export function registerSearchCommand(program: Command): void {
@@ -67,48 +98,15 @@ export function registerSearchCommand(program: Command): void {
                 let effectiveMode = mode;
                 const fetchLimit = opts.file ? limit * 3 : limit;
 
-                let allResults: Array<{ indexName: string; result: SearchResult<ChunkRecord> }> = [];
+                let allResults = await searchAndCollect(manager, names, query, mode, fetchLimit, opts.file);
 
-                for (const name of names) {
-                    const indexer = name === names[0] ? firstIndexer : await manager.getIndex(name);
-                    const results = await indexer.search(query, { mode, limit: fetchLimit });
-
-                    for (const result of results) {
-                        allResults.push({ indexName: name, result });
-                    }
-                }
-
-                allResults.sort((a, b) => b.result.score - a.result.score);
-
-                if (opts.file) {
-                    allResults = allResults.filter((r) => r.result.doc.filePath.includes(opts.file!));
-                }
-
-                allResults = allResults.slice(0, limit);
-
+                // Auto-fallback: if fulltext returned 0 results and embeddings exist, try hybrid
                 if (allResults.length === 0 && mode === "fulltext") {
                     const hasEmbeddings = firstIndexer.getConsistencyInfo().embeddingCount > 0;
 
                     if (hasEmbeddings) {
                         effectiveMode = "hybrid";
-                        allResults = [];
-
-                        for (const name of names) {
-                            const indexer = await manager.getIndex(name);
-                            const results = await indexer.search(query, { mode: "hybrid", limit: fetchLimit });
-
-                            for (const result of results) {
-                                allResults.push({ indexName: name, result });
-                            }
-                        }
-
-                        allResults.sort((a, b) => b.result.score - a.result.score);
-
-                        if (opts.file) {
-                            allResults = allResults.filter((r) => r.result.doc.filePath.includes(opts.file!));
-                        }
-
-                        allResults = allResults.slice(0, limit);
+                        allResults = await searchAndCollect(manager, names, query, "hybrid", fetchLimit, opts.file);
                     }
                 }
 
@@ -153,7 +151,7 @@ export function registerSearchCommand(program: Command): void {
                         confidence: r.confidence,
                         method: r.method,
                         lines: `${r.startLine}-${r.endLine}`,
-                        preview: r.content.replace(/\n/g, " ").replace(/\s+/g, " ").trim().slice(0, 200),
+                        preview: truncateText(r.content.replace(/\n/g, " ").replace(/\s+/g, " ").trim(), 200),
                     }));
 
                     if (format === "json") {

@@ -1,3 +1,4 @@
+import { isInteractive } from "@app/utils/cli";
 import { formatDuration } from "@app/utils/format";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -24,7 +25,7 @@ export function registerRebuildCommand(program: Command): void {
                         return;
                     }
 
-                    if (process.stdout.isTTY && process.stdin.isTTY) {
+                    if (isInteractive()) {
                         const selected = await p.select({
                             message: "Select index to rebuild",
                             options: names.map((n) => ({ value: n, label: n })),
@@ -47,8 +48,8 @@ export function registerRebuildCommand(program: Command): void {
                 const metas = manager.listIndexes();
                 const meta = metas.find((m) => m.name === targetName);
 
-                if (process.stdout.isTTY && process.stdin.isTTY) {
-                    const currentDriver = meta?.config.storage?.vectorDriver ?? "sqlite-brute";
+                if (isInteractive()) {
+                    const currentDriver = meta?.config.storage?.vectorDriver;
 
                     const options: Array<{ value: string; label: string }> = [
                         { value: "reindex", label: "Full reindex (re-scan all files, re-chunk)" },
@@ -56,7 +57,7 @@ export function registerRebuildCommand(program: Command): void {
                         { value: "reindex-reembed", label: "Full reindex + re-embed" },
                     ];
 
-                    if (currentDriver !== "sqlite-vec") {
+                    if (currentDriver && currentDriver !== "sqlite-vec") {
                         options.splice(1, 0, {
                             value: "migrate-driver",
                             label: `Migrate vector storage: ${currentDriver} → sqlite-vec`,
@@ -74,11 +75,13 @@ export function registerRebuildCommand(program: Command): void {
                     }
 
                     if (action === "migrate-driver") {
-                        p.log.warn("Driver migration not yet implemented — running full reindex instead");
+                        p.log.warn("Driver migration is not implemented yet.");
+                        return;
                     }
 
                     if (action === "reembed") {
-                        p.log.warn("Re-embedding not yet implemented — running full reindex instead");
+                        p.log.warn("Re-embedding is not implemented yet.");
+                        return;
                     }
 
                     if (action === "reindex-reembed") {

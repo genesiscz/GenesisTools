@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { stripAnsi } from "@app/utils/string";
+import pc from "picocolors";
 import { type FormattedSearchResult, formatSearchResults } from "./search-output";
+
+const hasColors = pc.isColorSupported;
 
 function makeResult(overrides: Partial<FormattedSearchResult> = {}): FormattedSearchResult {
     return {
@@ -160,9 +163,12 @@ describe("formatSearchResults", () => {
             });
             const plain = stripAnsi(output);
 
-            // The raw output should be longer than the stripped version
-            // because ANSI escape codes are present around highlighted words
-            expect(output.length).toBeGreaterThan(plain.length);
+            if (hasColors) {
+                expect(output.length).toBeGreaterThan(plain.length);
+            }
+
+            // Content is preserved regardless of color support
+            expect(plain).toContain("reservation");
         });
     });
 
@@ -342,7 +348,7 @@ describe("formatSearchResults", () => {
         });
     });
 
-    describe("coloring verification", () => {
+    describe.skipIf(!hasColors)("coloring verification", () => {
         test("simple format with highlightWords produces ANSI codes", () => {
             const output = formatSearchResults({
                 results: [makeResult()],
@@ -352,7 +358,6 @@ describe("formatSearchResults", () => {
             });
             const plain = stripAnsi(output);
 
-            // ANSI escape codes add bytes, so raw output must be longer
             expect(output.length).toBeGreaterThan(plain.length);
         });
 
@@ -371,14 +376,9 @@ describe("formatSearchResults", () => {
             const highPlain = stripAnsi(highConf);
             const lowPlain = stripAnsi(lowConf);
 
-            // Both should contain ANSI (raw longer than stripped)
             expect(highConf.length).toBeGreaterThan(highPlain.length);
             expect(lowConf.length).toBeGreaterThan(lowPlain.length);
 
-            // Extract the ANSI sequences around the confidence values.
-            // High confidence uses green (\x1b[32m), low uses red (\x1b[31m).
-            // We verify they use different escape codes by checking that the
-            // raw outputs differ even when their plain texts only differ in the number.
             const highAnsiOnly = highConf.replace(highPlain.replace("90%", "XX%"), "");
             const lowAnsiOnly = lowConf.replace(lowPlain.replace("20%", "XX%"), "");
 
@@ -397,14 +397,10 @@ describe("formatSearchResults", () => {
             const medium = makeOutput(55);
             const low = makeOutput(30);
 
-            // All should contain ANSI codes
             expect(high.length).toBeGreaterThan(stripAnsi(high).length);
             expect(medium.length).toBeGreaterThan(stripAnsi(medium).length);
             expect(low.length).toBeGreaterThan(stripAnsi(low).length);
 
-            // The ANSI codes should differ between confidence tiers
-            // We check by looking for the specific color escape sequences
-            // Green: \x1b[32m, Yellow: \x1b[33m, Red: \x1b[31m
             expect(high).toContain("\x1b[32m"); // green for >=70
             expect(medium).toContain("\x1b[33m"); // yellow for 40-69
             expect(low).toContain("\x1b[31m"); // red for <40

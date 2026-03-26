@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { stripAnsi } from "@app/utils/string";
+import pc from "picocolors";
 import { type FormattedSearchResult, formatSearchResults } from "./search-output";
+
+const hasColors = pc.isColorSupported;
 
 function makeResult(overrides?: Partial<FormattedSearchResult>): FormattedSearchResult {
     return {
@@ -115,7 +118,10 @@ describe("formatSearchResults", () => {
                 highlightWords: ["sendNotification"],
             });
             const plain = stripAnsi(result);
-            expect(result.length).toBeGreaterThan(plain.length);
+
+            if (hasColors) {
+                expect(result.length).toBeGreaterThan(plain.length);
+            }
         });
     });
 
@@ -162,7 +168,10 @@ describe("formatSearchResults", () => {
                 highlightWords: ["sendNotification"],
             });
             const plain = stripAnsi(result);
-            expect(result.length).toBeGreaterThan(plain.length);
+
+            if (hasColors) {
+                expect(result.length).toBeGreaterThan(plain.length);
+            }
         });
     });
 

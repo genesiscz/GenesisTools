@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { stripAnsi } from "@app/utils/string";
+import pc from "picocolors";
 import { highlightQueryWords, parseQueryWords } from "./highlight";
+
+const hasColors = pc.isColorSupported;
 
 describe("parseQueryWords", () => {
     it("splits query into lowercase words", () => {
@@ -26,16 +29,22 @@ describe("highlightQueryWords", () => {
         const result = highlightQueryWords("Send telegram notification", ["telegram", "notification"]);
         const plain = stripAnsi(result);
         expect(plain).toBe("Send telegram notification");
-        expect(result.length).toBeGreaterThan(plain.length);
+
+        if (hasColors) {
+            expect(result.length).toBeGreaterThan(plain.length);
+        }
     });
 
     it("is case-insensitive", () => {
         const result = highlightQueryWords("Telegram TELEGRAM telegram", ["telegram"]);
         const plain = stripAnsi(result);
         expect(plain).toBe("Telegram TELEGRAM telegram");
-        // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code matching
-        const matches = result.match(/\x1b\[/g);
-        expect(matches!.length).toBeGreaterThanOrEqual(3);
+
+        if (hasColors) {
+            // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code matching
+            const matches = result.match(/\x1b\[/g);
+            expect(matches!.length).toBeGreaterThanOrEqual(3);
+        }
     });
 
     it("handles no matches gracefully", () => {

@@ -1,8 +1,6 @@
 import { formatTable } from "@app/utils/table";
-import { createColors } from "picocolors";
+import pc from "picocolors";
 import { highlightQueryWords } from "./highlight";
-
-const pc = createColors(true);
 
 export interface FormattedSearchResult {
     filePath: string;

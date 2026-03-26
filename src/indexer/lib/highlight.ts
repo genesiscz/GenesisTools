@@ -1,6 +1,4 @@
-import { createColors } from "picocolors";
-
-const pc = createColors(true);
+import pc from "picocolors";
 
 function escapeRegex(str: string): string {
     return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -33,7 +31,10 @@ export function highlightQueryWords(text: string, words: string[]): string {
         return text;
     }
 
-    const pattern = words.map(escapeRegex).join("|");
+    const pattern = [...words]
+        .sort((a, b) => b.length - a.length)
+        .map(escapeRegex)
+        .join("|");
     const regex = new RegExp(`(${pattern})`, "gi");
 
     return text.replace(regex, (match) => pc.bold(pc.yellow(match)));
