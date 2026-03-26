@@ -1,3 +1,4 @@
+import { isInteractive } from "@app/utils/cli";
 import { formatDuration } from "@app/utils/format";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -24,7 +25,7 @@ export function registerRebuildCommand(program: Command): void {
                         return;
                     }
 
-                    if (process.stdout.isTTY && process.stdin.isTTY) {
+                    if (isInteractive()) {
                         const selected = await p.select({
                             message: "Select index to rebuild",
                             options: names.map((n) => ({ value: n, label: n })),
@@ -44,13 +45,9 @@ export function registerRebuildCommand(program: Command): void {
 
                 p.intro(pc.bgCyan(pc.white(` rebuild ${targetName} `)));
 
-                const metas = manager.listIndexes();
-                const meta = metas.find((m) => m.name === targetName);
-                const chunkCount = meta?.stats.totalChunks ?? 0;
-
-                if (process.stdout.isTTY && chunkCount > 0) {
+                if (isInteractive()) {
                     const confirmed = await p.confirm({
-                        message: `Rebuild "${targetName}" (${chunkCount.toLocaleString()} chunks)? This will re-scan all source files.`,
+                        message: `Rebuild "${targetName}"? This will re-scan all source files and re-chunk.`,
                     });
 
                     if (p.isCancel(confirmed) || !confirmed) {

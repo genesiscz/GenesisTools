@@ -2,58 +2,38 @@ import { toToon } from "@app/json/lib/toon";
 import { SafeJSON } from "@app/utils/json";
 import type { SearchResult } from "@app/utils/search/types";
 import { truncateText } from "@app/utils/string";
-import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
-import pc from "picocolors";
+import { normalizeConfidence } from "../lib/confidence";
+import { formatChunkDisplayName } from "../lib/display-name";
+import { parseQueryWords } from "../lib/highlight";
 import { IndexerManager } from "../lib/manager";
-import { detectMode, type SearchMode } from "../lib/search-mode";
+import { anyHaveEmbeddings, detectModeMulti, resolveSearchMode, type SearchMode } from "../lib/search-mode";
+import { type FormattedSearchResult, formatSearchResults, type OutputFormat } from "../lib/search-output";
 import type { ChunkRecord } from "../lib/types";
 
 interface SearchCommandOptions {
     index?: string;
-    mode?: SearchMode;
+    mode?: string;
     limit?: number;
-    format?: "table" | "json" | "toon";
+    format?: "pretty" | "simple" | "table" | "json" | "toon";
     file?: string;
+    confidence?: number;
 }
 
-/** Minimum cosine score below which vector/hybrid results are likely noise */
-const VECTOR_MIN_SCORE = 0.55;
-/** RRF scores are tiny — equivalent threshold for hybrid mode */
-const HYBRID_MIN_SCORE = VECTOR_MIN_SCORE * (1 / 60);
+type IndexResult = { indexName: string; result: SearchResult<ChunkRecord> };
 
-function truncatePreview(text: string, maxLen: number): string {
-    const collapsed = text.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
-    return truncateText(collapsed, maxLen);
-}
-
-/**
- * Apply a minimum score filter so irrelevant results don't pollute output.
- * Only applied to vector/hybrid modes where low-score noise is common.
- */
-function filterByMinScore(
-    results: Array<{ indexName: string; result: SearchResult<ChunkRecord> }>,
-    mode: SearchMode
-): Array<{ indexName: string; result: SearchResult<ChunkRecord> }> {
-    if (mode === "fulltext") {
-        return results;
-    }
-
-    const threshold = mode === "hybrid" ? HYBRID_MIN_SCORE : VECTOR_MIN_SCORE;
-    return results.filter((r) => r.result.score >= threshold);
-}
-
-async function searchIndexes(
+async function searchAndCollect(
     manager: IndexerManager,
-    indexNames: string[],
+    names: string[],
     query: string,
     mode: SearchMode,
-    limit: number
-): Promise<Array<{ indexName: string; result: SearchResult<ChunkRecord> }>> {
-    let allResults: Array<{ indexName: string; result: SearchResult<ChunkRecord> }> = [];
+    limit: number,
+    fileFilter?: string
+): Promise<IndexResult[]> {
+    let allResults: IndexResult[] = [];
 
-    for (const name of indexNames) {
+    for (const name of names) {
         const indexer = await manager.getIndex(name);
         const results = await indexer.search(query, { mode, limit });
 
@@ -63,10 +43,12 @@ async function searchIndexes(
     }
 
     allResults.sort((a, b) => b.result.score - a.result.score);
-    allResults = filterByMinScore(allResults, mode);
-    allResults = allResults.slice(0, limit);
 
-    return allResults;
+    if (fileFilter) {
+        allResults = allResults.filter((r) => r.result.doc.filePath.includes(fileFilter));
+    }
+
+    return allResults.slice(0, limit);
 }
 
 export function registerSearchCommand(program: Command): void {
@@ -77,61 +59,64 @@ export function registerSearchCommand(program: Command): void {
         .option("-i, --index <name>", "Search specific index (default: all)")
         .option("-m, --mode <mode>", "Search mode: fulltext, vector, hybrid (default: auto-detect)")
         .option("-l, --limit <n>", "Max results", parseInt, 20)
-        .option("-f, --file <filter>", "Filter results to files matching this substring (e.g. '.ts', 'src/utils')")
-        .option("--format <type>", "Output format: table, json, toon (default: table)")
+        .option("-f, --file <filter>", "Filter results to files matching this substring")
+        .option("--format <type>", "Output format: pretty, simple, table, json, toon (default: pretty)")
+        .option("-c, --confidence <min>", "Minimum confidence % (0-100)", parseInt)
         .action(async (query: string, opts: SearchCommandOptions) => {
             const manager = await IndexerManager.load();
 
             try {
+                const validFormats = ["pretty", "simple", "table", "json", "toon"] as const;
                 const limit = opts.limit ?? 20;
-                const format = opts.format ?? "table";
+                const format = opts.format ?? (process.stdout.isTTY ? "pretty" : "simple");
 
-                const names: string[] = [];
-
-                if (opts.index) {
-                    names.push(opts.index);
-                } else {
-                    const all = manager.getIndexNames();
-
-                    if (all.length === 0) {
-                        p.log.info("No indexes configured. Run: tools indexer add <path>");
-                        return;
-                    }
-
-                    names.push(...all);
+                if (!validFormats.includes(format as (typeof validFormats)[number])) {
+                    p.log.error(`Unknown format: "${format}". Valid: ${validFormats.join(", ")}`);
+                    return;
                 }
 
-                const firstIndexer = await manager.getIndex(names[0]);
+                const confidence = opts.confidence;
+
+                if (confidence !== undefined && (!Number.isFinite(confidence) || confidence < 0 || confidence > 100)) {
+                    p.log.error(`Invalid confidence: "${opts.confidence}". Expected 0-100.`);
+                    return;
+                }
+
+                const names = opts.index ? [opts.index] : manager.getIndexNames();
+
+                if (names.length === 0) {
+                    p.log.info("No indexes configured. Run: tools indexer add <path>");
+                    return;
+                }
+
+                // Load all indexers upfront for mode detection across all indexes
+                const indexers = await Promise.all(names.map((n) => manager.getIndex(n)));
 
                 let mode: SearchMode;
 
                 if (opts.mode) {
-                    mode = opts.mode;
+                    const resolved = resolveSearchMode(opts.mode);
+
+                    if (!resolved) {
+                        p.log.error(`Unknown search mode: "${opts.mode}". Valid: fulltext, vector, hybrid, semantic`);
+                        return;
+                    }
+
+                    mode = resolved;
                 } else {
-                    mode = detectMode(firstIndexer);
+                    mode = detectModeMulti(indexers);
                 }
 
                 let effectiveMode = mode;
-
                 const fetchLimit = opts.file ? limit * 3 : limit;
-                let allResults = await searchIndexes(manager, names, query, mode, fetchLimit);
 
-                if (opts.file) {
-                    const filter = opts.file;
-                    allResults = allResults.filter((r) => r.result.doc.filePath.includes(filter));
-                    allResults = allResults.slice(0, limit);
-                }
+                let allResults = await searchAndCollect(manager, names, query, mode, fetchLimit, opts.file);
 
+                // Auto-fallback: only when mode was auto-detected (not explicitly requested)
                 if (allResults.length === 0 && mode === "fulltext" && !opts.mode) {
-                    const info = firstIndexer.getConsistencyInfo();
-
-                    if (info.embeddingCount > 0) {
-                        allResults = await searchIndexes(manager, names, query, "hybrid", limit);
+                    if (anyHaveEmbeddings(indexers)) {
                         effectiveMode = "hybrid";
-
-                        if (allResults.length > 0) {
-                            p.log.info(pc.dim("No keyword matches — showing semantic results instead"));
-                        }
+                        allResults = await searchAndCollect(manager, names, query, "hybrid", fetchLimit, opts.file);
                     }
                 }
 
@@ -140,50 +125,61 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
-                function toOutputRow(r: { indexName: string; result: SearchResult<ChunkRecord> }) {
-                    return {
+                const maxBm25Score = allResults.reduce(
+                    (max, r) => (r.result.method === "bm25" ? Math.max(max, r.result.score) : max),
+                    0
+                );
+
+                const formatted: FormattedSearchResult[] = allResults.map((r) => ({
+                    filePath: r.result.doc.filePath,
+                    displayName: formatChunkDisplayName(
+                        r.result.doc.name,
+                        r.result.doc.startLine,
+                        r.result.doc.endLine,
+                        r.result.doc.kind
+                    ),
+                    language: r.result.doc.language ?? null,
+                    content: r.result.doc.content,
+                    confidence: normalizeConfidence(r.result.score, r.result.method, maxBm25Score),
+                    method: r.result.method,
+                    indexName: r.indexName,
+                    startLine: r.result.doc.startLine,
+                    endLine: r.result.doc.endLine,
+                }));
+
+                const filtered =
+                    confidence !== undefined ? formatted.filter((r) => r.confidence >= confidence) : formatted;
+
+                if (format === "json" || format === "toon") {
+                    const output = filtered.map((r) => ({
                         index: r.indexName,
-                        file: r.result.doc.filePath,
-                        name: r.result.doc.name ?? "",
-                        kind: r.result.doc.kind,
-                        score: r.result.score,
-                        method: r.result.method,
-                        lines: `${r.result.doc.startLine}-${r.result.doc.endLine}`,
-                        preview: truncatePreview(r.result.doc.content, 200),
-                    };
-                }
+                        file: r.filePath,
+                        name: r.displayName,
+                        language: r.language,
+                        confidence: r.confidence,
+                        method: r.method,
+                        lines: r.startLine != null && r.endLine != null ? `${r.startLine}-${r.endLine}` : null,
+                        preview: truncateText(r.content.replace(/\n/g, " ").replace(/\s+/g, " ").trim(), 200),
+                    }));
 
-                if (format === "json") {
-                    const output = allResults.map(toOutputRow);
-                    console.log(SafeJSON.stringify(output, null, 2));
+                    if (format === "json") {
+                        console.log(SafeJSON.stringify(output, null, 2));
+                    } else {
+                        console.log(toToon(output));
+                    }
+
                     return;
                 }
 
-                if (format === "toon") {
-                    const output = allResults.map(toOutputRow);
-                    console.log(toToon(output));
-                    return;
-                }
-
-                const headers = ["File", "Name/Kind", "Score", "Method", "Preview"];
-                const rows = allResults.map((r) => {
-                    const filePath = r.result.doc.filePath;
-                    const shortPath = filePath.length > 40 ? `...${filePath.slice(-37)}` : filePath;
-
-                    return [
-                        shortPath,
-                        r.result.doc.name ?? r.result.doc.kind,
-                        r.result.score.toFixed(3),
-                        r.result.method,
-                        truncatePreview(r.result.doc.content, 80),
-                    ];
+                const words = parseQueryWords(query);
+                const output = formatSearchResults({
+                    results: filtered,
+                    format: format as OutputFormat,
+                    query,
+                    mode: effectiveMode,
+                    highlightWords: words,
                 });
-
-                console.log("");
-                console.log(pc.dim(`${allResults.length} results for "${query}" (${effectiveMode})`));
-                console.log("");
-                console.log(formatTable(rows, headers, { alignRight: [2] }));
-                console.log("");
+                console.log(output);
             } finally {
                 await manager.close();
             }
