@@ -167,9 +167,7 @@ async function renderVerboseSession(
     const c = options.colors;
 
     const records = await extractTailRecords(session.filePath, 100);
-    const displayable = records.filter(
-        (r) => r.type === "user" || r.type === "assistant" || r.type === "subagent" || r.type === "progress"
-    );
+    const displayable = records.filter((r) => r.type === "user" || r.type === "assistant" || r.type === "subagent");
     const lastRecords = displayable.slice(-8);
 
     const lines: string[] = [];
@@ -207,7 +205,7 @@ interface SessionPreview {
 }
 
 async function extractSessionPreview(filePath: string): Promise<SessionPreview> {
-    const lines = await readHeadTailLines(filePath, 0, 50);
+    const lines = await readHeadTailLines(filePath, 50, 50);
     let lastUserMessage: string | null = null;
     const assistantExcerpts: string[] = [];
 
@@ -261,7 +259,7 @@ async function extractSessionPreview(filePath: string): Promise<SessionPreview> 
 }
 
 async function extractTailRecords(filePath: string, count: number): Promise<ConversationMessage[]> {
-    const lines = await readHeadTailLines(filePath, 0, count);
+    const lines = await readHeadTailLines(filePath, count, count);
     const records: ConversationMessage[] = [];
 
     for (const line of lines) {
