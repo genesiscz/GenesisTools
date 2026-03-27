@@ -282,19 +282,20 @@ export class ClaudeSessionFormatter {
             return;
         }
 
-        const time = formatTime(timestamp);
+        const time = this.showTimestamps ? formatTime(timestamp) : "";
         const rendered = this.options.colors ? renderMarkdown(text.trim()) : text.trim();
         const lines = rendered.split("\n");
         const firstLine = lines[0];
+        const pad = this.showTimestamps ? "         " : "  ";
 
         if (this.options.colors) {
-            this.writeLine(`${pc.dim(time)} ${pc.bold(pc.green("❯"))} ${firstLine}`);
+            this.writeLine(time ? `${pc.dim(time)} ${pc.bold(pc.green("❯"))} ${firstLine}` : `${pc.bold(pc.green("❯"))} ${firstLine}`);
         } else {
-            this.writeLine(`${time} ❯ ${firstLine}`);
+            this.writeLine(time ? `${time} ❯ ${firstLine}` : `❯ ${firstLine}`);
         }
 
         for (const line of lines.slice(1)) {
-            this.writeLine(`         ${line}`);
+            this.writeLine(`${pad}${line}`);
         }
     }
 
@@ -310,7 +311,8 @@ export class ClaudeSessionFormatter {
             return;
         }
 
-        const time = formatTime(timestamp);
+        const time = this.showTimestamps ? formatTime(timestamp) : "";
+        const pad = this.showTimestamps ? "         " : "  ";
         let hasTextOutput = false;
 
         for (const block of blocks) {
@@ -320,8 +322,8 @@ export class ClaudeSessionFormatter {
                 if (thinking) {
                     const firstLine = thinking.split("\n")[0];
                     const formatted = this.options.colors
-                        ? pc.dim(`${time} ∴ ${firstLine}`)
-                        : `${time} ∴ ${firstLine}`;
+                        ? pc.dim(time ? `${time} ∴ ${firstLine}` : `∴ ${firstLine}`)
+                        : `${time ? `${time} ` : ""}∴ ${firstLine}`;
                     this.writeLine(formatted);
                 }
             }
@@ -336,13 +338,13 @@ export class ClaudeSessionFormatter {
                     const firstLine = lines[0];
 
                     if (this.options.colors) {
-                        this.writeLine(`${pc.dim(time)} ${pc.blue("⏺")} ${firstLine}`);
+                        this.writeLine(time ? `${pc.dim(time)} ${pc.blue("⏺")} ${firstLine}` : `${pc.blue("⏺")} ${firstLine}`);
                     } else {
-                        this.writeLine(`${time} ⏺ ${firstLine}`);
+                        this.writeLine(time ? `${time} ⏺ ${firstLine}` : `⏺ ${firstLine}`);
                     }
 
                     for (const line of lines.slice(1)) {
-                        this.writeLine(line ? `         ${line}` : "");
+                        this.writeLine(line ? `${pad}${line}` : "");
                     }
                 }
             }
@@ -350,7 +352,7 @@ export class ClaudeSessionFormatter {
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("tools:in")) {
                 const maxChars = this.options.includeSpec.truncationLength("tools:in");
                 const signature = formatToolCallSignature(block, maxChars);
-                const timePrefix = hasTextOutput ? "        " : time;
+                const timePrefix = hasTextOutput ? pad.slice(0, -1) : time;
 
                 if (this.options.colors) {
                     this.writeLine(`${pc.dim(timePrefix)} ${this.colorizeSignature(block.name, signature)}`);
