@@ -31,6 +31,20 @@ interface FormatterOptions {
     outputFile?: string;
     cliOutput?: boolean;
     raw?: boolean;
+    /** "full" = current behavior, "mini" = condensed for list views. Default: "full" */
+    mode?: "full" | "mini";
+    /** Show box borders around agent sections. Default: true in full, false in mini */
+    border?: boolean;
+    /** Use actor icons instead of "You:"/"Claude:". Default: false in full, true in mini */
+    actorIcons?: boolean;
+    /** Max chars per message text in mini mode. Default: 200 */
+    maxCharsPerMessage?: number;
+    /** Prefix string for each output line. Default: "" */
+    indent?: string;
+    /** Custom output callback — when set, writeLine calls this instead of console.log */
+    output?: (line: string) => void;
+    /** Show timestamps. Default: true in full, false in mini */
+    timestamps?: boolean;
 }
 
 const AGENT_COLORS = [pc.cyan, pc.magenta, pc.yellow, pc.green, pc.blue] as const;
@@ -58,6 +72,30 @@ export class ClaudeSessionFormatter {
         if (options.outputFile) {
             this.fileStream = createWriteStream(options.outputFile, { flags: "a" });
         }
+    }
+
+    private get isMini(): boolean {
+        return this.options.mode === "mini";
+    }
+
+    private get showBorder(): boolean {
+        return this.options.border ?? !this.isMini;
+    }
+
+    private get showActorIcons(): boolean {
+        return this.options.actorIcons ?? this.isMini;
+    }
+
+    private get showTimestamps(): boolean {
+        return this.options.timestamps ?? !this.isMini;
+    }
+
+    private get maxChars(): number {
+        return this.options.maxCharsPerMessage ?? (this.isMini ? 200 : Infinity);
+    }
+
+    private get lineIndent(): string {
+        return this.options.indent ?? "";
     }
 
     format(record: ConversationMessage): void {
@@ -435,6 +473,15 @@ export class ClaudeSessionFormatter {
         this.writeLine(colorFn(`  ┌─ Agent: ${description} ${"─".repeat(Math.max(1, 50 - description.length))}`));
     }
 
+    private agentLinePrefix(agentId: string): string {
+        if (!this.showBorder) {
+            return this.showActorIcons ? "   " : "    ";
+        }
+
+        const colorFn = this.getAgentColor(agentId);
+        return this.activeAgentId === agentId ? colorFn("  │ ") : "    ";
+    }
+
     private getAgentColor(agentId: string): (typeof AGENT_COLORS)[number] {
         let color = this.agentColorMap.get(agentId);
 
@@ -496,12 +543,16 @@ export class ClaudeSessionFormatter {
     }
 
     private writeLine(line: string): void {
-        if (this.options.cliOutput !== false) {
-            console.log(line);
+        const indented = this.lineIndent ? `${this.lineIndent}${line}` : line;
+
+        if (this.options.output) {
+            this.options.output(indented);
+        } else if (this.options.cliOutput !== false) {
+            console.log(indented);
         }
 
         if (this.fileStream) {
-            this.fileStream.write(`${stripAnsi(line)}\n`);
+            this.fileStream.write(`${stripAnsi(indented)}\n`);
         }
     }
 }
