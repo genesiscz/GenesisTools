@@ -11,6 +11,7 @@ import { renderMarkdown } from "./terminal-markdown";
 import type {
     AssistantMessage,
     AssistantMessageContent,
+    ContentBlock,
     ConversationMessage,
     ProgressMessage,
     SubagentMessage,
@@ -153,16 +154,23 @@ export class ClaudeSessionFormatter {
     }
 
     closeAgentSection(): void {
-        if (this.activeAgentId) {
-            const startTime = this.agentStartTime.get(this.activeAgentId);
-            const duration = startTime ? this.formatDuration(Date.now() - startTime) : "";
-            const colorFn = this.getAgentColor(this.activeAgentId);
-            const suffix = duration ? ` done (${duration})` : " done";
-            this.writeLine(
-                colorFn(`  \u2514${"─".repeat(40)}${"─".repeat(Math.max(0, 20 - suffix.length))} \u2713${suffix} ─`)
-            );
-            this.activeAgentId = null;
+        if (!this.activeAgentId) {
+            return;
         }
+
+        if (!this.showBorder) {
+            this.activeAgentId = null;
+            return;
+        }
+
+        const startTime = this.agentStartTime.get(this.activeAgentId);
+        const duration = startTime ? this.formatDuration(Date.now() - startTime) : "";
+        const colorFn = this.getAgentColor(this.activeAgentId);
+        const suffix = duration ? ` done (${duration})` : " done";
+        this.writeLine(
+            colorFn(`  └${"─".repeat(40)}${"─".repeat(Math.max(0, 20 - suffix.length))} ✓${suffix} ─`)
+        );
+        this.activeAgentId = null;
     }
 
     printBanner(options: {
@@ -227,35 +235,36 @@ export class ClaudeSessionFormatter {
 
             text = textParts.join("\n");
 
-            for (const block of content) {
-                if (block.type !== "tool_result") {
-                    continue;
-                }
+            if (!this.isMini) {
+                for (const block of content) {
+                    if (block.type !== "tool_result") {
+                        continue;
+                    }
 
-                const result = extractToolResultText(block);
+                    const result = extractToolResultText(block);
 
-                if (!result) {
-                    continue;
-                }
+                    if (!result) {
+                        continue;
+                    }
 
-                // Show agent completion stats from Agent tool_result
-                const agentStats = parseAgentCompletionStats(result);
+                    const agentStats = parseAgentCompletionStats(result);
 
-                if (agentStats && this.options.includeSpec.shouldShow("agents:result")) {
-                    const dur = this.formatDuration(agentStats.durationMs);
-                    const line = `  ⏱ Agent ${agentStats.agentId.slice(0, 8)}: ${dur}, ${agentStats.toolUses} tools, ${agentStats.totalTokens.toLocaleString()} tokens`;
-                    this.writeLine(this.options.colors ? pc.dim(line) : line);
-                    continue;
-                }
+                    if (agentStats && this.options.includeSpec.shouldShow("agents:result")) {
+                        const dur = this.formatDuration(agentStats.durationMs);
+                        const line = `  ⏱ Agent ${agentStats.agentId.slice(0, 8)}: ${dur}, ${agentStats.toolUses} tools, ${agentStats.totalTokens.toLocaleString()} tokens`;
+                        this.writeLine(this.options.colors ? pc.dim(line) : line);
+                        continue;
+                    }
 
-                if (this.options.includeSpec.shouldShow("tools:out")) {
-                    const maxChars = this.options.includeSpec.truncationLength("tools:out");
-                    const isError = block.is_error;
-                    const truncated = truncateText(result.trim(), maxChars);
-                    const prefix = isError ? "  ✗ " : "  → ";
-                    const line = `${prefix}${truncated}`;
-                    const formatted = this.options.colors ? (isError ? pc.red(line) : pc.dim(line)) : line;
-                    this.writeLine(formatted);
+                    if (this.options.includeSpec.shouldShow("tools:out")) {
+                        const maxChars = this.options.includeSpec.truncationLength("tools:out");
+                        const isError = block.is_error;
+                        const truncated = truncateText(result.trim(), maxChars);
+                        const prefix = isError ? "  ✗ " : "  → ";
+                        const line = `${prefix}${truncated}`;
+                        const formatted = this.options.colors ? (isError ? pc.red(line) : pc.dim(line)) : line;
+                        this.writeLine(formatted);
+                    }
                 }
             }
         }
@@ -264,8 +273,15 @@ export class ClaudeSessionFormatter {
             return;
         }
 
-        // Skip meta/internal user messages
         if (msg.isMeta) {
+            return;
+        }
+
+        if (this.isMini) {
+            const collapsed = text.trim().replace(/\n+/g, " ");
+            const truncated = truncateText(collapsed, this.maxChars);
+            const icon = this.showActorIcons ? "🧑 " : "";
+            this.writeLine(this.options.colors ? `${icon}${pc.green(truncated)}` : `${icon}${truncated}`);
             return;
         }
 
@@ -289,6 +305,11 @@ export class ClaudeSessionFormatter {
         const blocks = msg.message?.content;
 
         if (!Array.isArray(blocks)) {
+            return;
+        }
+
+        if (this.isMini) {
+            this.formatAssistantMini(blocks);
             return;
         }
 
@@ -345,6 +366,41 @@ export class ClaudeSessionFormatter {
         }
     }
 
+    private formatAssistantMini(blocks: ContentBlock[]): void {
+        const textParts: string[] = [];
+        const toolSummaries: string[] = [];
+
+        for (const block of blocks) {
+            if (block.type === "text" && block.text.trim()) {
+                textParts.push(block.text.trim());
+            }
+
+            if (block.type === "tool_use" && this.options.includeSpec.shouldShow("tools:in")) {
+                const summary = extractToolInputSummary(block);
+                const maxLen = this.options.includeSpec.truncationLength("tools:in");
+                const truncated = this.formatToolSummary(summary, maxLen);
+
+                if (this.options.colors) {
+                    toolSummaries.push(`${this.colorizeToolName(block.name)} ${pc.dim(truncated)}`);
+                } else {
+                    toolSummaries.push(`[${block.name}] ${truncated}`);
+                }
+            }
+        }
+
+        if (textParts.length > 0) {
+            const collapsed = textParts.join(" ").replace(/\n+/g, " ");
+            const truncated = truncateText(collapsed, this.maxChars);
+            const icon = this.showActorIcons ? "🤖 " : "";
+            this.writeLine(this.options.colors ? `${icon}${pc.blue(truncated)}` : `${icon}${truncated}`);
+        }
+
+        for (const tool of toolSummaries) {
+            const padding = this.showActorIcons ? "   " : "  ";
+            this.writeLine(`${padding}◆ ${tool}`);
+        }
+    }
+
     private formatSubagentMessage(msg: SubagentMessage, timestamp: string): void {
         const agentId = msg.agentId || "unknown";
         const time = formatTime(timestamp);
@@ -362,8 +418,7 @@ export class ClaudeSessionFormatter {
 
                         if (result) {
                             const truncated = truncateText(result.trim(), maxChars);
-                            const colorFn = this.getAgentColor(agentId);
-                            const prefix = this.activeAgentId === agentId ? colorFn("  │ ") : "    ";
+                            const prefix = this.agentLinePrefix(agentId);
                             const marker = isError ? "  ✗ " : "  → ";
                             const line = `${prefix}${marker}${truncated}`;
                             const formatted = this.options.colors ? (isError ? pc.red(line) : pc.dim(line)) : line;
@@ -402,8 +457,7 @@ export class ClaudeSessionFormatter {
             return;
         }
 
-        const colorFn = this.getAgentColor(agentId);
-        const prefix = this.activeAgentId === agentId ? colorFn("  │ ") : "    ";
+        const prefix = this.agentLinePrefix(agentId);
 
         for (const block of assistantContent) {
             if (block.type === "thinking" && this.options.includeSpec.shouldShow("agents:thinking")) {
@@ -464,6 +518,14 @@ export class ClaudeSessionFormatter {
         const colorFn = this.getAgentColor(agentId);
         this.activeAgentId = agentId;
         this.agentStartTime.set(agentId, Date.now());
+
+        if (!this.showBorder) {
+            const padding = this.showActorIcons ? "   " : "  ";
+            const desc = truncateText(description, this.maxChars);
+            const line = `${padding}◆ Agent → "${desc}"`;
+            this.writeLine(this.options.colors ? colorFn(line) : line);
+            return;
+        }
 
         const time = formatTime(timestamp);
         this.writeLine("");
