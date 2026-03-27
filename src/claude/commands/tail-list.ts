@@ -103,8 +103,8 @@ export async function renderActiveSessionList(
 
     console.log(
         options.colors
-            ? pc.yellow(`⚠ ${activeSessions.length} active sessions — pick one:`)
-            : `⚠ ${activeSessions.length} active sessions — pick one:`
+            ? pc.yellow(`⚠️ ${activeSessions.length} active sessions — pick one:`)
+            : `⚠️ ${activeSessions.length} active sessions — pick one:`
     );
     console.log();
 
