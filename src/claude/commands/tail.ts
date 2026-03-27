@@ -7,10 +7,13 @@ import { INCLUDE_HELP, IncludeSpec } from "@app/utils/claude/cli/dsl";
 import { encodedProjectDir, PROJECTS_DIR } from "@app/utils/claude/index";
 import { ClaudeSession } from "@app/utils/claude/session";
 import type { TailTarget } from "@app/utils/claude/session.types";
+import { readHeadTailLines } from "@app/utils/claude/session.utils";
 import { suggestCommand } from "@app/utils/cli/executor";
+import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { getActiveSessionIds, renderActiveSessionList, renderSessionList } from "./tail-list";
 
 function validatePositiveInt(value: string | undefined, name: string): number | undefined {
     if (value === undefined) {
@@ -29,6 +32,20 @@ function validatePositiveInt(value: string | undefined, name: string): number | 
 
 const STATUSLINE_DIR = resolve(homedir(), ".claude", "statusline");
 
+function countListFlags(): number {
+    let count = 0;
+
+    for (const arg of process.argv.slice(2)) {
+        if (/^-l+$/.test(arg)) {
+            count += arg.length - 1;
+        } else if (arg === "--list-sessions") {
+            count += 1;
+        }
+    }
+
+    return Math.min(count, 2);
+}
+
 interface TailOptions {
     follow: boolean;
     stopOnFinish: boolean;
@@ -43,6 +60,7 @@ interface TailOptions {
     output?: string;
     outputCli: boolean;
     project?: string;
+    listSessions: boolean;
 }
 
 export function registerTailCommand(program: Command): void {
@@ -63,86 +81,189 @@ export function registerTailCommand(program: Command): void {
         .option("-o, --output <file>", "Write formatted output to file")
         .option("--output-cli", "Also print to CLI when using -o", false)
         .option("-p, --project <path>", "Search in specific project directory")
+        .option("-l, --list-sessions", "List recent sessions (-l compact, -ll verbose)", false)
         .addHelpText("after", `\n${INCLUDE_HELP}`)
         .action(async (query: string | undefined, opts: TailOptions) => {
-            const target = await resolveTarget(query, opts);
-
-            if (!target) {
-                console.error(pc.red("No matching session or agent found."));
-                process.exit(1);
-            }
-
-            const includeSpec = await resolveIncludeSpec(opts);
-            const isAgent = target.isAgent;
-            const effectiveSpec = isAgent ? includeSpec.forAgent() : includeSpec;
-
             const useColors = opts.colors !== false && (process.stdout.isTTY ?? false);
-            const cliOutput = opts.output ? opts.outputCli : true;
+            const listLevel = countListFlags();
+            const projectPath = opts.project ? resolve(opts.project) : undefined;
 
-            if (opts.output && !opts.outputCli) {
-                console.log(pc.dim(`Tailing to ${opts.output}...`));
-                console.log(pc.dim(suggestCommand("tools cc", { add: ["--output-cli"] })));
-            }
-
-            const formatter = new ClaudeSessionFormatter({
-                includeSpec: effectiveSpec,
-                colors: useColors,
-                outputFile: opts.output,
-                cliOutput,
-                raw: opts.raw,
-            });
-
-            if (!opts.raw) {
-                formatter.printBanner({
-                    target,
-                    includeSpec: effectiveSpec,
-                    follow: opts.follow,
-                    stopOnFinish: opts.stopOnFinish,
+            if (listLevel > 0) {
+                await renderSessionList({
+                    level: Math.min(listLevel, 2) as 1 | 2,
+                    project: projectPath,
+                    colors: useColors,
                 });
+                return;
             }
 
-            const lastCalls = validatePositiveInt(opts.lastCalls, "last-calls");
-            const lastTurns = lastCalls ? undefined : (validatePositiveInt(opts.lastTurns, "last-turns") ?? 5);
-            const maxTurns = validatePositiveInt(opts.maxTurns, "max-turns");
-            const maxCalls = validatePositiveInt(opts.maxCalls, "max-calls");
+            if (query) {
+                const target = await resolveTarget(query, opts);
 
-            const tailer = new ClaudeSessionTailer({
-                filePath: target.filePath,
-                onRecord: (record) => formatter.format(record),
-                onFinished: async () => {
-                    await formatter.close();
+                if (!target) {
+                    console.error(pc.red("No matching session or agent found."));
+                    process.exit(1);
+                }
 
-                    if (opts.output) {
-                        console.log(pc.dim(`\nOutput written to ${opts.output}`));
-                    }
-
-                    process.exit(0);
-                },
-                includeSpec: effectiveSpec,
-                lastTurns,
-                lastCalls,
-                maxTurns,
-                maxCalls,
-                follow: opts.follow,
-                stopOnFinish: opts.stopOnFinish,
-                isAgent,
-            });
-
-            process.on("SIGINT", async () => {
-                tailer.stop();
-                await formatter.close();
-                console.log(pc.dim("\nStopped tailing."));
-                process.exit(0);
-            });
-
-            await tailer.start();
-
-            if (opts.follow) {
-                await new Promise(() => {});
-            } else {
-                await formatter.close();
+                await startTailing(target, opts);
+                return;
             }
+
+            const activeIds = getActiveSessionIds();
+            const activeTargets = findActiveTargets(activeIds, projectPath);
+
+            if (activeTargets.length === 0) {
+                await renderSessionList({ level: 1, project: projectPath, colors: useColors });
+                return;
+            }
+
+            if (activeTargets.length === 1) {
+                const target = activeTargets[0];
+                const shortId = target.sessionId.slice(0, 8);
+                const branch = await getSessionBranch(target.filePath);
+                const name = branch ?? shortId;
+                const listCmd = suggestCommand("tools claude", {
+                    replaceCommand: ["tail", "-l"],
+                    keepFlags: ["-p", "--project"],
+                });
+
+                console.log(
+                    useColors
+                        ? pc.yellow(
+                              `⚠ Auto-selected ${pc.bold(shortId)} (${name}). Run \`${listCmd}\` to pick another.`
+                          )
+                        : `! Auto-selected ${shortId} (${name}). Run \`${listCmd}\` to pick another.`
+                );
+                console.log();
+
+                await startTailing(target, opts);
+                return;
+            }
+
+            const sessions = await ClaudeSession.findSessions({
+                project: projectPath,
+            });
+            const activeSessionInfos = sessions.filter((s) => s.sessionId && activeIds.has(s.sessionId));
+
+            await renderActiveSessionList(activeSessionInfos, activeIds, {
+                level: 1,
+                project: projectPath,
+                colors: useColors,
+            });
         });
+}
+
+async function startTailing(target: TailTarget, opts: TailOptions): Promise<void> {
+    const includeSpec = await resolveIncludeSpec(opts);
+    const isAgent = target.isAgent;
+    const effectiveSpec = isAgent ? includeSpec.forAgent() : includeSpec;
+    const useColors = opts.colors !== false && (process.stdout.isTTY ?? false);
+    const cliOutput = opts.output ? opts.outputCli : true;
+
+    if (opts.output && !opts.outputCli) {
+        console.log(pc.dim(`Tailing to ${opts.output}...`));
+        console.log(pc.dim(suggestCommand("tools cc", { add: ["--output-cli"] })));
+    }
+
+    const formatter = new ClaudeSessionFormatter({
+        includeSpec: effectiveSpec,
+        colors: useColors,
+        outputFile: opts.output,
+        cliOutput,
+        raw: opts.raw,
+    });
+
+    if (!opts.raw) {
+        formatter.printBanner({
+            target,
+            includeSpec: effectiveSpec,
+            follow: opts.follow,
+            stopOnFinish: opts.stopOnFinish,
+        });
+    }
+
+    const lastCalls = validatePositiveInt(opts.lastCalls, "last-calls");
+    const lastTurns = lastCalls ? undefined : (validatePositiveInt(opts.lastTurns, "last-turns") ?? 5);
+    const maxTurns = validatePositiveInt(opts.maxTurns, "max-turns");
+    const maxCalls = validatePositiveInt(opts.maxCalls, "max-calls");
+
+    const tailer = new ClaudeSessionTailer({
+        filePath: target.filePath,
+        onRecord: (record) => formatter.format(record),
+        onFinished: async () => {
+            await formatter.close();
+
+            if (opts.output) {
+                console.log(pc.dim(`\nOutput written to ${opts.output}`));
+            }
+
+            process.exit(0);
+        },
+        includeSpec: effectiveSpec,
+        lastTurns,
+        lastCalls,
+        maxTurns,
+        maxCalls,
+        follow: opts.follow,
+        stopOnFinish: opts.stopOnFinish,
+        isAgent,
+    });
+
+    process.on("SIGINT", async () => {
+        tailer.stop();
+        await formatter.close();
+        console.log(pc.dim("\nStopped tailing."));
+        process.exit(0);
+    });
+
+    await tailer.start();
+
+    if (opts.follow) {
+        await new Promise(() => {});
+    } else {
+        await formatter.close();
+    }
+}
+
+function findActiveTargets(activeIds: Set<string>, projectPath?: string): TailTarget[] {
+    const dirs = getProjectDirs(projectPath);
+    const targets: TailTarget[] = [];
+
+    for (const id of activeIds) {
+        for (const dir of dirs) {
+            const jsonlPath = resolve(dir, `${id}.jsonl`);
+
+            if (existsSync(jsonlPath)) {
+                targets.push({
+                    filePath: jsonlPath,
+                    label: id,
+                    sessionId: id,
+                    isAgent: false,
+                });
+                break;
+            }
+        }
+    }
+
+    return targets;
+}
+
+async function getSessionBranch(filePath: string): Promise<string | null> {
+    const lines = await readHeadTailLines(filePath, 5, 0);
+
+    for (const line of lines) {
+        try {
+            const obj = SafeJSON.parse(line) as Record<string, unknown>;
+
+            if (typeof obj.gitBranch === "string") {
+                return obj.gitBranch;
+            }
+        } catch {
+            // Skip
+        }
+    }
+
+    return null;
 }
 
 async function resolveTarget(query: string | undefined, opts: TailOptions): Promise<TailTarget | null> {
