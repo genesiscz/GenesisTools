@@ -123,20 +123,13 @@ async function renderCompactSession(
     options: ListSessionsOptions
 ): Promise<void> {
     const c = options.colors;
-    const isActive = session.sessionId ? activeIds.has(session.sessionId) : false;
-    const shortId = (session.sessionId ?? "unknown").slice(0, 8);
-
-    const icon = isActive ? "🟢 " : "   ";
-    const displayTime = session.lastTimestamp ?? session.startDate;
-    const timeStr = displayTime ? formatRelativeTime(displayTime, { compact: true }) : "?";
-    const branch = session.gitBranch ?? "";
-
-    const header = c
-        ? `${icon}${pc.bold(pc.white(shortId))}  ${pc.dim(timeStr.padEnd(8))} ${pc.cyan(branch)}`
-        : `${icon}${shortId}  ${timeStr.padEnd(8)} ${branch}`;
-    console.log(header);
-
     const preview = await extractSessionPreview(session.filePath);
+
+    if (!preview.lastUserMessage && preview.assistantExcerpts.length === 0) {
+        return;
+    }
+
+    renderSessionHeader(session, activeIds, options);
 
     if (preview.lastUserMessage) {
         const collapsed = preview.lastUserMessage.replace(/\n+/g, " ");
@@ -153,17 +146,14 @@ async function renderCompactSession(
     console.log();
 }
 
-// ─── Verbose List (-ll) ─────────────────────────────────────────────────────
-
-async function renderVerboseSession(
+function renderSessionHeader(
     session: SessionInfo,
     activeIds: Set<string>,
     options: ListSessionsOptions
-): Promise<void> {
+): void {
     const c = options.colors;
     const isActive = session.sessionId ? activeIds.has(session.sessionId) : false;
     const shortId = (session.sessionId ?? "unknown").slice(0, 8);
-
     const icon = isActive ? "🟢 " : "   ";
     const displayTime = session.lastTimestamp ?? session.startDate;
     const timeStr = displayTime ? formatRelativeTime(displayTime, { compact: true }) : "?";
@@ -173,20 +163,24 @@ async function renderVerboseSession(
         ? `${icon}${pc.bold(pc.white(shortId))}  ${pc.dim(timeStr.padEnd(8))} ${pc.cyan(branch)}`
         : `${icon}${shortId}  ${timeStr.padEnd(8)} ${branch}`;
     console.log(header);
+}
+
+// ─── Verbose List (-ll) ─────────────────────────────────────────────────────
+
+async function renderVerboseSession(
+    session: SessionInfo,
+    activeIds: Set<string>,
+    options: ListSessionsOptions
+): Promise<void> {
+    const c = options.colors;
 
     const records = await extractTailRecords(session.filePath, 100);
-
     const displayable = records.filter(
         (r) => r.type === "user" || r.type === "assistant" || r.type === "subagent" || r.type === "progress"
     );
     const lastRecords = displayable.slice(-8);
 
-    if (lastRecords.length === 0) {
-        console.log(c ? pc.dim("   (no displayable messages)") : "   (no displayable messages)");
-        console.log();
-        return;
-    }
-
+    const lines: string[] = [];
     const formatter = new ClaudeSessionFormatter({
         includeSpec: IncludeSpec.defaults(),
         colors: c,
@@ -195,7 +189,7 @@ async function renderVerboseSession(
         border: false,
         maxCharsPerMessage: 200,
         indent: "   ",
-        output: (line) => console.log(line),
+        output: (line) => lines.push(line),
     });
 
     for (const record of lastRecords) {
@@ -203,6 +197,17 @@ async function renderVerboseSession(
     }
 
     formatter.closeAgentSection();
+
+    if (lines.length === 0) {
+        return;
+    }
+
+    renderSessionHeader(session, activeIds, options);
+
+    for (const line of lines) {
+        console.log(line);
+    }
+
     console.log();
 }
 
