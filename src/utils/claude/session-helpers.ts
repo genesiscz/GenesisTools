@@ -71,7 +71,8 @@ const SKIP_PARAMS = new Set([
 export function formatToolCallSignature(tool: ToolUseBlock, maxPrimaryChars: number): string {
     const { name, input } = tool;
     const primaryKey = PRIMARY_PARAMS[name];
-    const primary = primaryKey && primaryKey in input ? String(input[primaryKey]) : null;
+    const rawPrimary = primaryKey && primaryKey in input ? input[primaryKey] : null;
+    const primary = rawPrimary != null && rawPrimary !== "" ? String(rawPrimary) : null;
 
     const parts: string[] = [];
 

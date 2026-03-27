@@ -132,7 +132,7 @@ export function registerTailCommand(program: Command): void {
                         ? pc.yellow(
                               `⚠ Auto-selected ${pc.bold(shortId)} (${name}). Run \`${listCmd}\` to pick another.`
                           )
-                        : `! Auto-selected ${shortId} (${name}). Run \`${listCmd}\` to pick another.`
+                        : `⚠ Auto-selected ${shortId} (${name}). Run \`${listCmd}\` to pick another.`
                 );
                 console.log();
 
