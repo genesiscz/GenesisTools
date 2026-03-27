@@ -283,6 +283,7 @@ export class ClaudeSession {
                 let gitBranch: string | null = null;
                 let projectName: string | null = null;
                 let startDate: Date | null = null;
+                let lastTimestamp: Date | null = null;
                 let messageCount = 0;
 
                 for (const line of lines) {
@@ -302,8 +303,16 @@ export class ClaudeSession {
                         if (typeof obj.gitBranch === "string" && !gitBranch) {
                             gitBranch = obj.gitBranch;
                         }
-                        if (typeof obj.timestamp === "string" && !startDate) {
-                            startDate = new Date(obj.timestamp);
+                        if (typeof obj.timestamp === "string") {
+                            const ts = new Date(obj.timestamp);
+
+                            if (!startDate) {
+                                startDate = ts;
+                            }
+
+                            if (!lastTimestamp || ts > lastTimestamp) {
+                                lastTimestamp = ts;
+                            }
                         }
                     } catch {
                         // Skip unparseable lines
@@ -345,6 +354,7 @@ export class ClaudeSession {
                     gitBranch,
                     project: projectName,
                     startDate,
+                    lastTimestamp,
                     fileSize: fileStat.size,
                     messageCount,
                     isSubagent: isSubagentFile(filePath),

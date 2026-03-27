@@ -1,16 +1,17 @@
 import { createWriteStream, type WriteStream } from "node:fs";
 import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
-import { stripAnsi, truncatePath, truncateText } from "@app/utils/string";
+import { stripAnsi, truncateText } from "@app/utils/string";
 import pc from "picocolors";
 import type { IncludeSpec } from "./cli/dsl";
 import type { TailTarget } from "./session.types";
 import { agentProgressToSubagent, parseAgentCompletionStats } from "./session.utils";
-import { extractToolInputSummary, extractToolResultText } from "./session-helpers";
+import { extractToolResultText, formatToolCallSignature } from "./session-helpers";
 import { renderMarkdown } from "./terminal-markdown";
 import type {
     AssistantMessage,
     AssistantMessageContent,
+    ContentBlock,
     ConversationMessage,
     ProgressMessage,
     SubagentMessage,
@@ -31,6 +32,20 @@ interface FormatterOptions {
     outputFile?: string;
     cliOutput?: boolean;
     raw?: boolean;
+    /** "full" = current behavior, "mini" = condensed for list views. Default: "full" */
+    mode?: "full" | "mini";
+    /** Show box borders around agent sections. Default: true in full, false in mini */
+    border?: boolean;
+    /** Use actor icons instead of "You:"/"Claude:". Default: false in full, true in mini */
+    actorIcons?: boolean;
+    /** Max chars per message text in mini mode. Default: 200 */
+    maxCharsPerMessage?: number;
+    /** Prefix string for each output line. Default: "" */
+    indent?: string;
+    /** Custom output callback — when set, writeLine calls this instead of console.log */
+    output?: (line: string) => void;
+    /** Show timestamps. Default: true in full, false in mini */
+    timestamps?: boolean;
 }
 
 const AGENT_COLORS = [pc.cyan, pc.magenta, pc.yellow, pc.green, pc.blue] as const;
@@ -58,6 +73,30 @@ export class ClaudeSessionFormatter {
         if (options.outputFile) {
             this.fileStream = createWriteStream(options.outputFile, { flags: "a" });
         }
+    }
+
+    private get isMini(): boolean {
+        return this.options.mode === "mini";
+    }
+
+    private get showBorder(): boolean {
+        return this.options.border ?? !this.isMini;
+    }
+
+    private get showActorIcons(): boolean {
+        return this.options.actorIcons ?? this.isMini;
+    }
+
+    private get showTimestamps(): boolean {
+        return this.options.timestamps ?? !this.isMini;
+    }
+
+    private get maxChars(): number {
+        return this.options.maxCharsPerMessage ?? (this.isMini ? 200 : Infinity);
+    }
+
+    private get lineIndent(): string {
+        return this.options.indent ?? "";
     }
 
     format(record: ConversationMessage): void {
@@ -115,16 +154,21 @@ export class ClaudeSessionFormatter {
     }
 
     closeAgentSection(): void {
-        if (this.activeAgentId) {
-            const startTime = this.agentStartTime.get(this.activeAgentId);
-            const duration = startTime ? this.formatDuration(Date.now() - startTime) : "";
-            const colorFn = this.getAgentColor(this.activeAgentId);
-            const suffix = duration ? ` done (${duration})` : " done";
-            this.writeLine(
-                colorFn(`  \u2514${"─".repeat(40)}${"─".repeat(Math.max(0, 20 - suffix.length))} \u2713${suffix} ─`)
-            );
-            this.activeAgentId = null;
+        if (!this.activeAgentId) {
+            return;
         }
+
+        if (!this.showBorder) {
+            this.activeAgentId = null;
+            return;
+        }
+
+        const startTime = this.agentStartTime.get(this.activeAgentId);
+        const duration = startTime ? this.formatDuration(Date.now() - startTime) : "";
+        const colorFn = this.getAgentColor(this.activeAgentId);
+        const suffix = duration ? ` done (${duration})` : " done";
+        this.writeLine(colorFn(`  └${"─".repeat(40)}${"─".repeat(Math.max(0, 20 - suffix.length))} ✓${suffix} ─`));
+        this.activeAgentId = null;
     }
 
     printBanner(options: {
@@ -189,35 +233,35 @@ export class ClaudeSessionFormatter {
 
             text = textParts.join("\n");
 
-            for (const block of content) {
-                if (block.type !== "tool_result") {
-                    continue;
-                }
+            if (!this.isMini) {
+                for (const block of content) {
+                    if (block.type !== "tool_result") {
+                        continue;
+                    }
 
-                const result = extractToolResultText(block);
+                    const result = extractToolResultText(block);
 
-                if (!result) {
-                    continue;
-                }
+                    if (!result) {
+                        continue;
+                    }
 
-                // Show agent completion stats from Agent tool_result
-                const agentStats = parseAgentCompletionStats(result);
+                    const agentStats = parseAgentCompletionStats(result);
 
-                if (agentStats && this.options.includeSpec.shouldShow("agents:result")) {
-                    const dur = this.formatDuration(agentStats.durationMs);
-                    const line = `  ⏱ Agent ${agentStats.agentId.slice(0, 8)}: ${dur}, ${agentStats.toolUses} tools, ${agentStats.totalTokens.toLocaleString()} tokens`;
-                    this.writeLine(this.options.colors ? pc.dim(line) : line);
-                    continue;
-                }
+                    if (agentStats && this.options.includeSpec.shouldShow("agents:result")) {
+                        const dur = this.formatDuration(agentStats.durationMs);
+                        const line = `  ⏱ Agent ${agentStats.agentId.slice(0, 8)}: ${dur}, ${agentStats.toolUses} tools, ${agentStats.totalTokens.toLocaleString()} tokens`;
+                        this.writeLine(this.options.colors ? pc.dim(line) : line);
+                        continue;
+                    }
 
-                if (this.options.includeSpec.shouldShow("tools:out")) {
-                    const maxChars = this.options.includeSpec.truncationLength("tools:out");
-                    const isError = block.is_error;
-                    const truncated = truncateText(result.trim(), maxChars);
-                    const prefix = isError ? "  ✗ " : "  → ";
-                    const line = `${prefix}${truncated}`;
-                    const formatted = this.options.colors ? (isError ? pc.red(line) : pc.dim(line)) : line;
-                    this.writeLine(formatted);
+                    if (this.options.includeSpec.shouldShow("tools:out")) {
+                        const maxChars = this.options.includeSpec.truncationLength("tools:out");
+                        const isError = block.is_error;
+                        const truncated = truncateText(result.trim(), maxChars);
+                        const line = `  ⎿ ${truncated}`;
+                        const formatted = this.options.colors ? (isError ? pc.red(line) : pc.dim(line)) : line;
+                        this.writeLine(formatted);
+                    }
                 }
             }
         }
@@ -226,24 +270,36 @@ export class ClaudeSessionFormatter {
             return;
         }
 
-        // Skip meta/internal user messages
         if (msg.isMeta) {
             return;
         }
 
-        const time = formatTime(timestamp);
+        if (this.isMini) {
+            const collapsed = text.trim().replace(/\n+/g, " ");
+            const truncated = truncateText(collapsed, this.maxChars);
+            const icon = this.showActorIcons ? "🧑 " : "";
+            this.writeLine(this.options.colors ? `${icon}${pc.green(truncated)}` : `${icon}${truncated}`);
+            return;
+        }
+
+        const time = this.showTimestamps ? formatTime(timestamp) : "";
         const rendered = this.options.colors ? renderMarkdown(text.trim()) : text.trim();
         const lines = rendered.split("\n");
         const firstLine = lines[0];
+        const pad = this.showTimestamps ? "         " : "  ";
 
         if (this.options.colors) {
-            this.writeLine(`${pc.dim(time)} ${pc.bold(pc.green("You:"))} ${firstLine}`);
+            this.writeLine(
+                time
+                    ? `${pc.dim(time)} ${pc.bold(pc.green("❯"))} ${firstLine}`
+                    : `${pc.bold(pc.green("❯"))} ${firstLine}`
+            );
         } else {
-            this.writeLine(`${time} You: ${firstLine}`);
+            this.writeLine(time ? `${time} ❯ ${firstLine}` : `❯ ${firstLine}`);
         }
 
         for (const line of lines.slice(1)) {
-            this.writeLine(`         ${line}`);
+            this.writeLine(`${pad}${line}`);
         }
     }
 
@@ -254,7 +310,13 @@ export class ClaudeSessionFormatter {
             return;
         }
 
-        const time = formatTime(timestamp);
+        if (this.isMini) {
+            this.formatAssistantMini(blocks);
+            return;
+        }
+
+        const time = this.showTimestamps ? formatTime(timestamp) : "";
+        const pad = this.showTimestamps ? "         " : "  ";
         let hasTextOutput = false;
 
         for (const block of blocks) {
@@ -264,8 +326,8 @@ export class ClaudeSessionFormatter {
                 if (thinking) {
                     const firstLine = thinking.split("\n")[0];
                     const formatted = this.options.colors
-                        ? pc.dim(`${time} 💭 ${firstLine}`)
-                        : `${time} [thinking] ${firstLine}`;
+                        ? pc.dim(time ? `${time} ∴ ${firstLine}` : `∴ ${firstLine}`)
+                        : `${time ? `${time} ` : ""}∴ ${firstLine}`;
                     this.writeLine(formatted);
                 }
             }
@@ -280,30 +342,64 @@ export class ClaudeSessionFormatter {
                     const firstLine = lines[0];
 
                     if (this.options.colors) {
-                        this.writeLine(`${pc.dim(time)} ${pc.bold(pc.blue("Claude:"))} ${firstLine}`);
+                        this.writeLine(
+                            time ? `${pc.dim(time)} ${pc.blue("⏺")} ${firstLine}` : `${pc.blue("⏺")} ${firstLine}`
+                        );
                     } else {
-                        this.writeLine(`${time} Claude: ${firstLine}`);
+                        this.writeLine(time ? `${time} ⏺ ${firstLine}` : `⏺ ${firstLine}`);
                     }
 
                     for (const line of lines.slice(1)) {
-                        this.writeLine(line ? `         ${line}` : "");
+                        this.writeLine(line ? `${pad}${line}` : "");
                     }
                 }
             }
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("tools:in")) {
-                const inputSummary = extractToolInputSummary(block);
                 const maxChars = this.options.includeSpec.truncationLength("tools:in");
-                const truncated = this.formatToolSummary(inputSummary, maxChars);
-                const timePrefix = hasTextOutput ? "        " : time;
+                const signature = formatToolCallSignature(block, maxChars);
+                const timePrefix = hasTextOutput ? pad.slice(0, -1) : time;
 
                 if (this.options.colors) {
-                    const toolLabel = this.colorizeToolName(block.name);
-                    this.writeLine(`${pc.dim(timePrefix)}   ${toolLabel} ${pc.dim(truncated)}`);
+                    this.writeLine(`${pc.dim(timePrefix)} ${this.colorizeSignature(block.name, signature)}`);
                 } else {
-                    this.writeLine(`${timePrefix}   [${block.name}] ${truncated}`);
+                    this.writeLine(`${timePrefix} ⏺ ${signature}`);
                 }
             }
+        }
+    }
+
+    private formatAssistantMini(blocks: ContentBlock[]): void {
+        const textParts: string[] = [];
+        const toolSummaries: string[] = [];
+
+        for (const block of blocks) {
+            if (block.type === "text" && block.text.trim()) {
+                textParts.push(block.text.trim());
+            }
+
+            if (block.type === "tool_use" && this.options.includeSpec.shouldShow("tools:in")) {
+                const maxLen = this.options.includeSpec.truncationLength("tools:in");
+                const signature = formatToolCallSignature(block, maxLen);
+
+                if (this.options.colors) {
+                    toolSummaries.push(this.colorizeSignature(block.name, signature));
+                } else {
+                    toolSummaries.push(signature);
+                }
+            }
+        }
+
+        if (textParts.length > 0) {
+            const collapsed = textParts.join(" ").replace(/\n+/g, " ");
+            const truncated = truncateText(collapsed, this.maxChars);
+            const icon = this.showActorIcons ? "🤖 " : "";
+            this.writeLine(this.options.colors ? `${icon}${pc.blue(truncated)}` : `${icon}${truncated}`);
+        }
+
+        for (const tool of toolSummaries) {
+            const padding = this.showActorIcons ? "   " : "  ";
+            this.writeLine(`${padding}◆ ${tool}`);
         }
     }
 
@@ -324,10 +420,8 @@ export class ClaudeSessionFormatter {
 
                         if (result) {
                             const truncated = truncateText(result.trim(), maxChars);
-                            const colorFn = this.getAgentColor(agentId);
-                            const prefix = this.activeAgentId === agentId ? colorFn("  │ ") : "    ";
-                            const marker = isError ? "  ✗ " : "  → ";
-                            const line = `${prefix}${marker}${truncated}`;
+                            const prefix = this.agentLinePrefix(agentId);
+                            const line = `${prefix}  ⎿ ${truncated}`;
                             const formatted = this.options.colors ? (isError ? pc.red(line) : pc.dim(line)) : line;
                             this.writeLine(formatted);
                         }
@@ -364,8 +458,7 @@ export class ClaudeSessionFormatter {
             return;
         }
 
-        const colorFn = this.getAgentColor(agentId);
-        const prefix = this.activeAgentId === agentId ? colorFn("  │ ") : "    ";
+        const prefix = this.agentLinePrefix(agentId);
 
         for (const block of assistantContent) {
             if (block.type === "thinking" && this.options.includeSpec.shouldShow("agents:thinking")) {
@@ -374,7 +467,7 @@ export class ClaudeSessionFormatter {
                 if (thinking) {
                     const firstLine = thinking.split("\n")[0];
                     this.writeLine(
-                        `${prefix}${this.options.colors ? pc.dim(`${time} 💭 ${firstLine}`) : `${time} [thinking] ${firstLine}`}`
+                        `${prefix}${this.options.colors ? pc.dim(`${time} ∴ ${firstLine}`) : `${time} ∴ ${firstLine}`}`
                     );
                 }
             }
@@ -390,23 +483,21 @@ export class ClaudeSessionFormatter {
                     const firstLine = text.split("\n")[0];
 
                     if (this.options.colors) {
-                        this.writeLine(`${prefix}${pc.dim(time)} ${pc.bold(pc.blue("Claude:"))} ${firstLine}`);
+                        this.writeLine(`${prefix}${pc.dim(time)} ${pc.blue("⏺")} ${firstLine}`);
                     } else {
-                        this.writeLine(`${prefix}${time} Claude: ${firstLine}`);
+                        this.writeLine(`${prefix}${time} ⏺ ${firstLine}`);
                     }
                 }
             }
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("agents:tools:in")) {
-                const inputSummary = extractToolInputSummary(block);
                 const maxChars = this.options.includeSpec.truncationLength("agents:tools:in");
-                const truncated = this.formatToolSummary(inputSummary, maxChars);
+                const signature = formatToolCallSignature(block, maxChars);
 
                 if (this.options.colors) {
-                    const toolLabel = this.colorizeToolName(block.name);
-                    this.writeLine(`${prefix}  ${toolLabel} ${pc.dim(truncated)}`);
+                    this.writeLine(`${prefix}  ${this.colorizeSignature(block.name, signature)}`);
                 } else {
-                    this.writeLine(`${prefix}  [${block.name}] ${truncated}`);
+                    this.writeLine(`${prefix}  ⏺ ${signature}`);
                 }
             }
         }
@@ -427,12 +518,33 @@ export class ClaudeSessionFormatter {
         this.activeAgentId = agentId;
         this.agentStartTime.set(agentId, Date.now());
 
+        if (!this.showBorder) {
+            const padding = this.showActorIcons ? "   " : "  ";
+            const desc = truncateText(description, this.maxChars);
+            const line = `${padding}◆ Agent → "${desc}"`;
+            this.writeLine(this.options.colors ? colorFn(line) : line);
+            return;
+        }
+
         const time = formatTime(timestamp);
+        const shortDesc = truncateText(description, 80);
+
         this.writeLine("");
         this.writeLine(
-            `${this.options.colors ? pc.dim(time) : time}   ${this.options.colors ? pc.bold("[Agent]") : "[Agent]"} ${description}`
+            this.options.colors
+                ? `${pc.dim(time)} ${pc.green(`⏺ Agent(${shortDesc})`)}`
+                : `${time} ⏺ Agent(${shortDesc})`
         );
-        this.writeLine(colorFn(`  ┌─ Agent: ${description} ${"─".repeat(Math.max(1, 50 - description.length))}`));
+        this.writeLine(colorFn(`  ┌─ ${shortDesc} ${"─".repeat(Math.max(1, 50 - shortDesc.length))}`));
+    }
+
+    private agentLinePrefix(agentId: string): string {
+        if (!this.showBorder) {
+            return this.showActorIcons ? "   " : "    ";
+        }
+
+        const colorFn = this.getAgentColor(agentId);
+        return this.activeAgentId === agentId ? colorFn("  │ ") : "    ";
     }
 
     private getAgentColor(agentId: string): (typeof AGENT_COLORS)[number] {
@@ -447,37 +559,36 @@ export class ClaudeSessionFormatter {
         return color;
     }
 
-    private colorizeToolName(name: string): string {
-        const label = `[${name}]`;
-
+    private colorizeToolLabel(name: string): string {
         switch (name) {
             case "Read":
             case "Glob":
             case "Grep":
-                return pc.cyan(label);
+                return pc.cyan(name);
             case "Edit":
             case "Write":
-                return pc.yellow(label);
+                return pc.yellow(name);
             case "Bash":
-                return pc.magenta(label);
+                return pc.magenta(name);
             case "Agent":
-                return pc.green(label);
+                return pc.green(name);
             default:
-                return pc.dim(label);
+                return pc.dim(name);
         }
     }
 
-    private formatToolSummary(inputSummary: string, maxChars: number): string {
-        if (this.looksLikePath(inputSummary)) {
-            return truncatePath(inputSummary, maxChars);
+    private colorizeSignature(name: string, signature: string): string {
+        const parenIdx = signature.indexOf("(");
+
+        if (parenIdx === -1) {
+            return `⏺ ${this.colorizeToolLabel(name)}`;
         }
 
-        return truncateText(inputSummary, maxChars);
+        const args = signature.slice(parenIdx);
+        return `${pc.blue("⏺")} ${this.colorizeToolLabel(name)}${pc.dim(args)}`;
     }
 
-    private looksLikePath(text: string): boolean {
-        return text.includes("/") || text.includes("\\");
-    }
+
 
     private formatDuration(ms: number): string {
         if (ms < 1000) {
@@ -496,12 +607,16 @@ export class ClaudeSessionFormatter {
     }
 
     private writeLine(line: string): void {
-        if (this.options.cliOutput !== false) {
-            console.log(line);
+        const indented = this.lineIndent ? `${this.lineIndent}${line}` : line;
+
+        if (this.options.output) {
+            this.options.output(indented);
+        } else if (this.options.cliOutput !== false) {
+            console.log(indented);
         }
 
         if (this.fileStream) {
-            this.fileStream.write(`${stripAnsi(line)}\n`);
+            this.fileStream.write(`${stripAnsi(indented)}\n`);
         }
     }
 }
