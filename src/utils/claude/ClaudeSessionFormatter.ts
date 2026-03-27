@@ -1,12 +1,12 @@
 import { createWriteStream, type WriteStream } from "node:fs";
 import { formatDateTime } from "@app/utils/date";
 import { SafeJSON } from "@app/utils/json";
-import { stripAnsi, truncatePath, truncateText } from "@app/utils/string";
+import { stripAnsi, truncateText } from "@app/utils/string";
 import pc from "picocolors";
 import type { IncludeSpec } from "./cli/dsl";
 import type { TailTarget } from "./session.types";
 import { agentProgressToSubagent, parseAgentCompletionStats } from "./session.utils";
-import { extractToolInputSummary, extractToolResultText, formatToolCallSignature } from "./session-helpers";
+import { extractToolResultText, formatToolCallSignature } from "./session-helpers";
 import { renderMarkdown } from "./terminal-markdown";
 import type {
     AssistantMessage,
@@ -379,14 +379,13 @@ export class ClaudeSessionFormatter {
             }
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("tools:in")) {
-                const summary = extractToolInputSummary(block);
                 const maxLen = this.options.includeSpec.truncationLength("tools:in");
-                const truncated = this.formatToolSummary(summary, maxLen);
+                const signature = formatToolCallSignature(block, maxLen);
 
                 if (this.options.colors) {
-                    toolSummaries.push(`${this.colorizeToolName(block.name)} ${pc.dim(truncated)}`);
+                    toolSummaries.push(this.colorizeSignature(block.name, signature));
                 } else {
-                    toolSummaries.push(`[${block.name}] ${truncated}`);
+                    toolSummaries.push(signature);
                 }
             }
         }
@@ -560,26 +559,6 @@ export class ClaudeSessionFormatter {
         return color;
     }
 
-    private colorizeToolName(name: string): string {
-        const label = `[${name}]`;
-
-        switch (name) {
-            case "Read":
-            case "Glob":
-            case "Grep":
-                return pc.cyan(label);
-            case "Edit":
-            case "Write":
-                return pc.yellow(label);
-            case "Bash":
-                return pc.magenta(label);
-            case "Agent":
-                return pc.green(label);
-            default:
-                return pc.dim(label);
-        }
-    }
-
     private colorizeToolLabel(name: string): string {
         switch (name) {
             case "Read":
@@ -609,17 +588,7 @@ export class ClaudeSessionFormatter {
         return `${pc.blue("⏺")} ${this.colorizeToolLabel(name)}${pc.dim(args)}`;
     }
 
-    private formatToolSummary(inputSummary: string, maxChars: number): string {
-        if (this.looksLikePath(inputSummary)) {
-            return truncatePath(inputSummary, maxChars);
-        }
 
-        return truncateText(inputSummary, maxChars);
-    }
-
-    private looksLikePath(text: string): boolean {
-        return text.includes("/") || text.includes("\\");
-    }
 
     private formatDuration(ms: number): string {
         if (ms < 1000) {
