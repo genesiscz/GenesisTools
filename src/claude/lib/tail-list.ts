@@ -123,13 +123,9 @@ async function renderCompactSession(
     options: ListSessionsOptions
 ): Promise<void> {
     const c = options.colors;
-    const preview = await extractSessionPreview(session.filePath);
-
-    if (!preview.lastUserMessage && preview.assistantExcerpts.length === 0) {
-        return;
-    }
-
     renderSessionHeader(session, activeIds, options);
+
+    const preview = await extractSessionPreview(session.filePath);
 
     if (preview.lastUserMessage) {
         const collapsed = preview.lastUserMessage.replace(/\n+/g, " ");
@@ -146,11 +142,7 @@ async function renderCompactSession(
     console.log();
 }
 
-function renderSessionHeader(
-    session: SessionInfo,
-    activeIds: Set<string>,
-    options: ListSessionsOptions
-): void {
+function renderSessionHeader(session: SessionInfo, activeIds: Set<string>, options: ListSessionsOptions): void {
     const c = options.colors;
     const isActive = session.sessionId ? activeIds.has(session.sessionId) : false;
     const shortId = (session.sessionId ?? "unknown").slice(0, 8);
@@ -197,10 +189,6 @@ async function renderVerboseSession(
     }
 
     formatter.closeAgentSection();
-
-    if (lines.length === 0) {
-        return;
-    }
 
     renderSessionHeader(session, activeIds, options);
 
