@@ -90,6 +90,7 @@ export interface SessionInfo {
     gitBranch: string | null;
     project: string | null;
     startDate: Date | null;
+    lastTimestamp: Date | null;
     fileSize: number;
     messageCount: number;
     isSubagent: boolean;
