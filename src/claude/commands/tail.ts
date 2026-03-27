@@ -13,7 +13,7 @@ import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { getActiveSessionIds, renderActiveSessionList, renderSessionList } from "./tail-list";
+import { getActiveSessionIds, renderActiveSessionList, renderSessionList } from "../lib/tail-list";
 
 function validatePositiveInt(value: string | undefined, name: string): number | undefined {
     if (value === undefined) {
@@ -85,7 +85,7 @@ export function registerTailCommand(program: Command): void {
         .addHelpText("after", `\n${INCLUDE_HELP}`)
         .action(async (query: string | undefined, opts: TailOptions) => {
             const useColors = opts.colors !== false && (process.stdout.isTTY ?? false);
-            const listLevel = countListFlags();
+            const listLevel = countListFlags() || (opts.listSessions ? 1 : 0);
             const projectPath = opts.project ? resolve(opts.project) : undefined;
 
             if (listLevel > 0) {
@@ -127,14 +127,16 @@ export function registerTailCommand(program: Command): void {
                     keepFlags: ["-p", "--project"],
                 });
 
-                console.log(
-                    useColors
-                        ? pc.yellow(
-                              `⚠️ Auto-selected ${pc.bold(shortId)} (${name}). Run \`${listCmd}\` to pick another.`
-                          )
-                        : `⚠️ Auto-selected ${shortId} (${name}). Run \`${listCmd}\` to pick another.`
-                );
-                console.log();
+                if (!opts.raw) {
+                    console.error(
+                        useColors
+                            ? pc.yellow(
+                                  `⚠️ Auto-selected ${pc.bold(shortId)} (${name}). Run \`${listCmd}\` to pick another.`
+                              )
+                            : `⚠️ Auto-selected ${shortId} (${name}). Run \`${listCmd}\` to pick another.`
+                    );
+                    console.error();
+                }
 
                 await startTailing(target, opts);
                 return;
@@ -142,6 +144,7 @@ export function registerTailCommand(program: Command): void {
 
             const sessions = await ClaudeSession.findSessions({
                 project: projectPath,
+                allProjects: !projectPath,
             });
             const activeSessionInfos = sessions.filter((s) => s.sessionId && activeIds.has(s.sessionId));
 
