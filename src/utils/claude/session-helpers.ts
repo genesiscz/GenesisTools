@@ -55,8 +55,13 @@ const PRIMARY_PARAMS: Record<string, string> = {
 };
 
 const SKIP_PARAMS = new Set([
-    "old_string", "new_string", "content", "prompt", "replace_all",
-    "dangerouslyDisableSandbox", "run_in_background",
+    "old_string",
+    "new_string",
+    "content",
+    "prompt",
+    "replace_all",
+    "dangerouslyDisableSandbox",
+    "run_in_background",
 ]);
 
 /**

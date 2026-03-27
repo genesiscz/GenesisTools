@@ -289,7 +289,11 @@ export class ClaudeSessionFormatter {
         const pad = this.showTimestamps ? "         " : "  ";
 
         if (this.options.colors) {
-            this.writeLine(time ? `${pc.dim(time)} ${pc.bold(pc.green("❯"))} ${firstLine}` : `${pc.bold(pc.green("❯"))} ${firstLine}`);
+            this.writeLine(
+                time
+                    ? `${pc.dim(time)} ${pc.bold(pc.green("❯"))} ${firstLine}`
+                    : `${pc.bold(pc.green("❯"))} ${firstLine}`
+            );
         } else {
             this.writeLine(time ? `${time} ❯ ${firstLine}` : `❯ ${firstLine}`);
         }
@@ -338,7 +342,9 @@ export class ClaudeSessionFormatter {
                     const firstLine = lines[0];
 
                     if (this.options.colors) {
-                        this.writeLine(time ? `${pc.dim(time)} ${pc.blue("⏺")} ${firstLine}` : `${pc.blue("⏺")} ${firstLine}`);
+                        this.writeLine(
+                            time ? `${pc.dim(time)} ${pc.blue("⏺")} ${firstLine}` : `${pc.blue("⏺")} ${firstLine}`
+                        );
                     } else {
                         this.writeLine(time ? `${time} ⏺ ${firstLine}` : `⏺ ${firstLine}`);
                     }
