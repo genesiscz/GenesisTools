@@ -1,4 +1,5 @@
 import { SafeJSON } from "@app/utils/json";
+import { truncateText } from "@app/utils/string";
 import type { ConversationMessage, TextBlock, ToolResultBlock, ToolUseBlock } from "./types";
 
 /** Shorthand "A" variant that some JSONL sessions use for assistant messages. */
@@ -22,6 +23,10 @@ export function extractToolInputSummary(tool: ToolUseBlock): string {
         return input.pattern;
     }
 
+    if ("description" in input && typeof input.description === "string") {
+        return input.description;
+    }
+
     if ("query" in input && typeof input.query === "string") {
         return input.query;
     }
@@ -32,6 +37,62 @@ export function extractToolInputSummary(tool: ToolUseBlock): string {
 
     const safeInput = SafeJSON.stringify(input);
     return safeInput;
+}
+
+const PRIMARY_PARAMS: Record<string, string> = {
+    Bash: "command",
+    Read: "file_path",
+    Edit: "file_path",
+    Write: "file_path",
+    MultiEdit: "file_path",
+    Grep: "pattern",
+    Glob: "pattern",
+    Agent: "description",
+    Skill: "skill",
+    WebFetch: "url",
+    WebSearch: "query",
+    NotebookEdit: "notebook_path",
+};
+
+const SKIP_PARAMS = new Set([
+    "old_string", "new_string", "content", "prompt", "replace_all",
+    "dangerouslyDisableSandbox", "run_in_background",
+]);
+
+/**
+ * Format a tool call as a function-call signature: `Bash(git log --oneline)`.
+ * Primary param is positional; other non-skipped params shown as `key: value`.
+ */
+export function formatToolCallSignature(tool: ToolUseBlock, maxPrimaryChars: number): string {
+    const { name, input } = tool;
+    const primaryKey = PRIMARY_PARAMS[name];
+    const primary = primaryKey && primaryKey in input ? String(input[primaryKey]) : null;
+
+    const parts: string[] = [];
+
+    if (primary) {
+        parts.push(truncateText(primary, maxPrimaryChars));
+    }
+
+    for (const [k, v] of Object.entries(input)) {
+        if (k === primaryKey || SKIP_PARAMS.has(k)) {
+            continue;
+        }
+
+        if (v === undefined || v === null || v === false) {
+            continue;
+        }
+
+        if (v === true) {
+            parts.push(k);
+            continue;
+        }
+
+        const val = typeof v === "string" ? truncateText(v, 60) : String(v);
+        parts.push(`${k}: ${val}`);
+    }
+
+    return `${name}(${parts.join(", ")})`;
 }
 
 export function extractToolResultText(block: ToolResultBlock): string {

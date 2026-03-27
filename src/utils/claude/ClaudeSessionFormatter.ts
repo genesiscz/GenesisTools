@@ -6,7 +6,7 @@ import pc from "picocolors";
 import type { IncludeSpec } from "./cli/dsl";
 import type { TailTarget } from "./session.types";
 import { agentProgressToSubagent, parseAgentCompletionStats } from "./session.utils";
-import { extractToolInputSummary, extractToolResultText } from "./session-helpers";
+import { extractToolInputSummary, extractToolResultText, formatToolCallSignature } from "./session-helpers";
 import { renderMarkdown } from "./terminal-markdown";
 import type {
     AssistantMessage,
@@ -167,9 +167,7 @@ export class ClaudeSessionFormatter {
         const duration = startTime ? this.formatDuration(Date.now() - startTime) : "";
         const colorFn = this.getAgentColor(this.activeAgentId);
         const suffix = duration ? ` done (${duration})` : " done";
-        this.writeLine(
-            colorFn(`  └${"─".repeat(40)}${"─".repeat(Math.max(0, 20 - suffix.length))} ✓${suffix} ─`)
-        );
+        this.writeLine(colorFn(`  └${"─".repeat(40)}${"─".repeat(Math.max(0, 20 - suffix.length))} ✓${suffix} ─`));
         this.activeAgentId = null;
     }
 
@@ -260,8 +258,7 @@ export class ClaudeSessionFormatter {
                         const maxChars = this.options.includeSpec.truncationLength("tools:out");
                         const isError = block.is_error;
                         const truncated = truncateText(result.trim(), maxChars);
-                        const prefix = isError ? "  ✗ " : "  → ";
-                        const line = `${prefix}${truncated}`;
+                        const line = `  ⎿ ${truncated}`;
                         const formatted = this.options.colors ? (isError ? pc.red(line) : pc.dim(line)) : line;
                         this.writeLine(formatted);
                     }
@@ -291,9 +288,9 @@ export class ClaudeSessionFormatter {
         const firstLine = lines[0];
 
         if (this.options.colors) {
-            this.writeLine(`${pc.dim(time)} ${pc.bold(pc.green("You:"))} ${firstLine}`);
+            this.writeLine(`${pc.dim(time)} ${pc.bold(pc.green("❯"))} ${firstLine}`);
         } else {
-            this.writeLine(`${time} You: ${firstLine}`);
+            this.writeLine(`${time} ❯ ${firstLine}`);
         }
 
         for (const line of lines.slice(1)) {
@@ -323,8 +320,8 @@ export class ClaudeSessionFormatter {
                 if (thinking) {
                     const firstLine = thinking.split("\n")[0];
                     const formatted = this.options.colors
-                        ? pc.dim(`${time} 💭 ${firstLine}`)
-                        : `${time} [thinking] ${firstLine}`;
+                        ? pc.dim(`${time} ∴ ${firstLine}`)
+                        : `${time} ∴ ${firstLine}`;
                     this.writeLine(formatted);
                 }
             }
@@ -339,9 +336,9 @@ export class ClaudeSessionFormatter {
                     const firstLine = lines[0];
 
                     if (this.options.colors) {
-                        this.writeLine(`${pc.dim(time)} ${pc.bold(pc.blue("Claude:"))} ${firstLine}`);
+                        this.writeLine(`${pc.dim(time)} ${pc.blue("⏺")} ${firstLine}`);
                     } else {
-                        this.writeLine(`${time} Claude: ${firstLine}`);
+                        this.writeLine(`${time} ⏺ ${firstLine}`);
                     }
 
                     for (const line of lines.slice(1)) {
@@ -351,16 +348,14 @@ export class ClaudeSessionFormatter {
             }
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("tools:in")) {
-                const inputSummary = extractToolInputSummary(block);
                 const maxChars = this.options.includeSpec.truncationLength("tools:in");
-                const truncated = this.formatToolSummary(inputSummary, maxChars);
+                const signature = formatToolCallSignature(block, maxChars);
                 const timePrefix = hasTextOutput ? "        " : time;
 
                 if (this.options.colors) {
-                    const toolLabel = this.colorizeToolName(block.name);
-                    this.writeLine(`${pc.dim(timePrefix)}   ${toolLabel} ${pc.dim(truncated)}`);
+                    this.writeLine(`${pc.dim(timePrefix)} ${this.colorizeSignature(block.name, signature)}`);
                 } else {
-                    this.writeLine(`${timePrefix}   [${block.name}] ${truncated}`);
+                    this.writeLine(`${timePrefix} ⏺ ${signature}`);
                 }
             }
         }
@@ -419,8 +414,7 @@ export class ClaudeSessionFormatter {
                         if (result) {
                             const truncated = truncateText(result.trim(), maxChars);
                             const prefix = this.agentLinePrefix(agentId);
-                            const marker = isError ? "  ✗ " : "  → ";
-                            const line = `${prefix}${marker}${truncated}`;
+                            const line = `${prefix}  ⎿ ${truncated}`;
                             const formatted = this.options.colors ? (isError ? pc.red(line) : pc.dim(line)) : line;
                             this.writeLine(formatted);
                         }
@@ -466,7 +460,7 @@ export class ClaudeSessionFormatter {
                 if (thinking) {
                     const firstLine = thinking.split("\n")[0];
                     this.writeLine(
-                        `${prefix}${this.options.colors ? pc.dim(`${time} 💭 ${firstLine}`) : `${time} [thinking] ${firstLine}`}`
+                        `${prefix}${this.options.colors ? pc.dim(`${time} ∴ ${firstLine}`) : `${time} ∴ ${firstLine}`}`
                     );
                 }
             }
@@ -482,23 +476,21 @@ export class ClaudeSessionFormatter {
                     const firstLine = text.split("\n")[0];
 
                     if (this.options.colors) {
-                        this.writeLine(`${prefix}${pc.dim(time)} ${pc.bold(pc.blue("Claude:"))} ${firstLine}`);
+                        this.writeLine(`${prefix}${pc.dim(time)} ${pc.blue("⏺")} ${firstLine}`);
                     } else {
-                        this.writeLine(`${prefix}${time} Claude: ${firstLine}`);
+                        this.writeLine(`${prefix}${time} ⏺ ${firstLine}`);
                     }
                 }
             }
 
             if (block.type === "tool_use" && this.options.includeSpec.shouldShow("agents:tools:in")) {
-                const inputSummary = extractToolInputSummary(block);
                 const maxChars = this.options.includeSpec.truncationLength("agents:tools:in");
-                const truncated = this.formatToolSummary(inputSummary, maxChars);
+                const signature = formatToolCallSignature(block, maxChars);
 
                 if (this.options.colors) {
-                    const toolLabel = this.colorizeToolName(block.name);
-                    this.writeLine(`${prefix}  ${toolLabel} ${pc.dim(truncated)}`);
+                    this.writeLine(`${prefix}  ${this.colorizeSignature(block.name, signature)}`);
                 } else {
-                    this.writeLine(`${prefix}  [${block.name}] ${truncated}`);
+                    this.writeLine(`${prefix}  ⏺ ${signature}`);
                 }
             }
         }
@@ -528,11 +520,15 @@ export class ClaudeSessionFormatter {
         }
 
         const time = formatTime(timestamp);
+        const shortDesc = truncateText(description, 80);
+
         this.writeLine("");
         this.writeLine(
-            `${this.options.colors ? pc.dim(time) : time}   ${this.options.colors ? pc.bold("[Agent]") : "[Agent]"} ${description}`
+            this.options.colors
+                ? `${pc.dim(time)} ${pc.green(`⏺ Agent(${shortDesc})`)}`
+                : `${time} ⏺ Agent(${shortDesc})`
         );
-        this.writeLine(colorFn(`  ┌─ Agent: ${description} ${"─".repeat(Math.max(1, 50 - description.length))}`));
+        this.writeLine(colorFn(`  ┌─ ${shortDesc} ${"─".repeat(Math.max(1, 50 - shortDesc.length))}`));
     }
 
     private agentLinePrefix(agentId: string): string {
@@ -574,6 +570,35 @@ export class ClaudeSessionFormatter {
             default:
                 return pc.dim(label);
         }
+    }
+
+    private colorizeToolLabel(name: string): string {
+        switch (name) {
+            case "Read":
+            case "Glob":
+            case "Grep":
+                return pc.cyan(name);
+            case "Edit":
+            case "Write":
+                return pc.yellow(name);
+            case "Bash":
+                return pc.magenta(name);
+            case "Agent":
+                return pc.green(name);
+            default:
+                return pc.dim(name);
+        }
+    }
+
+    private colorizeSignature(name: string, signature: string): string {
+        const parenIdx = signature.indexOf("(");
+
+        if (parenIdx === -1) {
+            return `⏺ ${this.colorizeToolLabel(name)}`;
+        }
+
+        const args = signature.slice(parenIdx);
+        return `${pc.blue("⏺")} ${this.colorizeToolLabel(name)}${pc.dim(args)}`;
     }
 
     private formatToolSummary(inputSummary: string, maxChars: number): string {
