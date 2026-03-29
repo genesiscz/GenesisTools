@@ -9,6 +9,7 @@ import { ModelManager } from "@app/utils/ai/ModelManager.ts";
 import type { AIProviderType, AITask } from "@app/utils/ai/types.ts";
 import { copyToClipboard, readFromClipboard } from "@app/utils/clipboard.ts";
 import { formatBytes } from "@app/utils/format.ts";
+import { ensurePackage } from "@app/utils/packages.ts";
 import { classifyText } from "@app/utils/macos/classification.ts";
 import { detectLanguage } from "@app/utils/macos/nlp.ts";
 import { withCancel } from "@app/utils/prompts/clack/helpers.ts";
@@ -198,6 +199,9 @@ async function cmdImage(prompt: string, opts: ImageFlags): Promise<void> {
     s.start(`Generating image with ${pc.bold(model)}...`);
 
     try {
+        await ensurePackage("@huggingface/inference", {
+            label: "HuggingFace Inference (image generation)",
+        });
         const { InferenceClient } = await import("@huggingface/inference");
         const client = new InferenceClient(token);
 

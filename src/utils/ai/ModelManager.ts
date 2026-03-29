@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import logger from "@app/logger";
 import { formatBytes } from "@app/utils/format";
+import { ensurePackage } from "@app/utils/packages";
 
 const HF_CACHE_DIR = join(homedir(), ".cache", "huggingface", "hub");
 
@@ -103,6 +104,9 @@ export class ModelManager {
     ): Promise<void> {
         logger.info(`Downloading model: ${modelId}`);
 
+        await ensurePackage("@huggingface/transformers", {
+            label: "HuggingFace Transformers (ML models)",
+        });
         const { pipeline } = await import("@huggingface/transformers");
         // Trigger a download by creating a pipeline — HF caches the model automatically
         const pipe = await pipeline("feature-extraction", modelId, {
