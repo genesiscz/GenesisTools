@@ -1,4 +1,5 @@
 import { AsyncOpQueue } from "@app/utils/async";
+import { ensurePackage } from "@app/utils/packages";
 import { bruteForceVectorSearch, type VectorSearchHit, type VectorStore } from "./vector-store";
 
 export interface QdrantClientLike {
@@ -90,6 +91,8 @@ export class QdrantVectorStore implements VectorStore {
      */
     async init(): Promise<void> {
         if (!this.client) {
+            await ensurePackage("@qdrant/js-client-rest", { label: "Qdrant vector DB client" });
+
             let url = this.config.url;
 
             if (!url || url.includes("localhost") || url.includes("127.0.0.1")) {
