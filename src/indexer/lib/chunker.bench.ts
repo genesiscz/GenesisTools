@@ -23,7 +23,7 @@ for (const { path: filePath, strategy } of testFiles) {
     const absPath = resolve(filePath);
     const content = readFileSync(absPath, "utf-8");
     const start = performance.now();
-    const result = chunkFile({ filePath: absPath, content, strategy });
+    const result = await chunkFile({ filePath: absPath, content, strategy });
     const elapsed = performance.now() - start;
     const charSizes = result.chunks.map((c) => c.content.length);
 
@@ -49,7 +49,7 @@ for (const [name, content, filePath] of [
     ["huge-class", hugeClass, "huge.ts"],
 ] as const) {
     const start = performance.now();
-    const result = chunkFile({ filePath, content, strategy: "auto" });
+    const result = await chunkFile({ filePath, content, strategy: "auto" });
     const elapsed = performance.now() - start;
     const charSizes = result.chunks.map((c) => c.content.length);
 

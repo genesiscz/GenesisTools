@@ -64,7 +64,7 @@ async function buildGraphFromIndex(name: string) {
         return null;
     }
 
-    return buildCodeGraph(fileContents, config.baseDir);
+    return await buildCodeGraph(fileContents, config.baseDir);
 }
 
 async function handleGraphBuild(args: { name: string }): Promise<string> {

@@ -424,12 +424,12 @@ function mergeSmallChunks(opts: { chunks: ChunkRecord[]; maxTokens: number }): C
 }
 
 // ─── AST strategy ───────────────────────────────────────────────
-function chunkByAst(opts: {
+async function chunkByAst(opts: {
     filePath: string;
     content: string;
     maxTokens: number;
     overlap: number;
-}): ChunkResult | null {
+}): Promise<ChunkResult | null> {
     const { filePath, content, maxTokens } = opts;
     const ext = extname(filePath).toLowerCase();
 
@@ -445,7 +445,7 @@ function chunkByAst(opts: {
             return null;
         }
 
-        ensureDynamicLanguages();
+        await ensureDynamicLanguages();
         lang = dynamicLang;
         isDynamic = true;
     }
@@ -987,14 +987,14 @@ function selectAutoStrategy(opts: {
 }
 
 // ─── Main entry point ───────────────────────────────────────────
-export function chunkFile(opts: {
+export async function chunkFile(opts: {
     filePath: string;
     content: string;
     strategy: "ast" | "line" | "heading" | "message" | "json" | "character" | "auto";
     maxTokens?: number;
     indexType?: "code" | "files" | "mail" | "chat";
     overlap?: number;
-}): ChunkResult {
+}): Promise<ChunkResult> {
     const { filePath, content, strategy, indexType } = opts;
     const maxTokens = opts.maxTokens ?? 500;
     const overlap = opts.overlap ?? 0;
@@ -1011,7 +1011,7 @@ export function chunkFile(opts: {
 
     switch (effectiveStrategy) {
         case "ast": {
-            const astResult = chunkByAst({ filePath, content, maxTokens, overlap });
+            const astResult = await chunkByAst({ filePath, content, maxTokens, overlap });
 
             if (astResult) {
                 result = astResult;
