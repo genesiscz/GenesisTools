@@ -1,7 +1,7 @@
 import logger from "@app/logger";
 import { toFloat32Audio } from "@app/utils/audio/converter";
 import { formatBytes } from "@app/utils/format";
-import type { PipelineType } from "@huggingface/transformers";
+import { ensurePackage } from "@app/utils/packages";
 import { createLanguageDetector, type LanguageDetector } from "../LanguageDetector";
 import { getDefaultModel } from "../ModelManager";
 import { suppressConsoleWarnings } from "../suppress-warnings";
@@ -41,7 +41,12 @@ export class AILocalProvider
     private langDetector: LanguageDetector | null = null;
 
     async isAvailable(): Promise<boolean> {
-        return true;
+        try {
+            await import("@huggingface/transformers");
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     supports(task: AITask): boolean {
@@ -316,7 +321,7 @@ export class AILocalProvider
         return results;
     }
 
-    private async getPipeline(task: PipelineType, model: string, onProgress?: OnProgress): Promise<PipelineInstance> {
+    private async getPipeline(task: string, model: string, onProgress?: OnProgress): Promise<PipelineInstance> {
         const key = `${task}:${model}`;
         const existing = this.pipelines.get(key);
 
@@ -331,6 +336,9 @@ export class AILocalProvider
         }
 
         const load = (async () => {
+            await ensurePackage("@huggingface/transformers", {
+                label: "HuggingFace Transformers (ML models)",
+            });
             const { pipeline, env } = await import("@huggingface/transformers");
 
             const restoreWarnings = suppressConsoleWarnings({
@@ -338,7 +346,7 @@ export class AILocalProvider
             });
 
             try {
-                const pipe = (await pipeline(task, model, {
+                const pipe = (await pipeline(task as Parameters<typeof pipeline>[0], model, {
                     // Whisper (encoder-decoder) is extremely sensitive to encoder quantization.
                     // HF docs: "encoder-decoder models like Whisper are extremely sensitive to
                     // quantization settings: especially of the encoder."
