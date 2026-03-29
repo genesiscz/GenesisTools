@@ -4,7 +4,7 @@ import { chunkFile } from "./chunker";
 
 describe("chunkFile", () => {
     describe("AST strategy", () => {
-        it("extracts TypeScript functions with names", () => {
+        it("extracts TypeScript functions with names", async () => {
             const content = `
 function greet(name: string): string {
     return "Hello, " + name;
@@ -15,7 +15,7 @@ function farewell(name: string): string {
 }
 `.trim();
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "test.ts",
                 content,
                 strategy: "ast",
@@ -31,7 +31,7 @@ function farewell(name: string): string {
             expect(allContent).toContain("Goodbye");
         });
 
-        it("extracts class with methods", () => {
+        it("extracts class with methods", async () => {
             const content = `
 class Calculator {
     add(a: number, b: number): number {
@@ -44,7 +44,7 @@ class Calculator {
 }
 `.trim();
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "calc.ts",
                 content,
                 strategy: "ast",
@@ -57,10 +57,10 @@ class Calculator {
             expect(classChunk!.name).toBe("Calculator");
         });
 
-        it("falls back to line for unsupported extensions", () => {
+        it("falls back to line for unsupported extensions", async () => {
             const content = "some random content\nwith multiple lines\n";
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "test.xyz",
                 content,
                 strategy: "ast",
@@ -69,7 +69,7 @@ class Calculator {
             expect(result.parser).toBe("line");
         });
 
-        it("extracts interface declarations", () => {
+        it("extracts interface declarations", async () => {
             const content = `
 interface User {
     id: string;
@@ -78,7 +78,7 @@ interface User {
 }
 `.trim();
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "types.ts",
                 content,
                 strategy: "ast",
@@ -93,7 +93,7 @@ interface User {
     });
 
     describe("Heading strategy", () => {
-        it("splits markdown at headings", () => {
+        it("splits markdown at headings", async () => {
             const content = `# Title
 
 Some intro text.
@@ -112,7 +112,7 @@ Config section content.
 Sub section content.
 `;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "README.md",
                 content,
                 strategy: "heading",
@@ -241,7 +241,7 @@ Sub section content.
     });
 
     describe("JSON strategy", () => {
-        it("chunks JSON array into elements", () => {
+        it("chunks JSON array into elements", async () => {
             const content = SafeJSON.stringify(
                 [
                     { id: 1, name: "Alice" },
@@ -252,7 +252,7 @@ Sub section content.
                 2
             );
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "data.json",
                 content,
                 strategy: "json",
@@ -265,7 +265,7 @@ Sub section content.
             expect(result.chunks[0].kind).toBe("json_element");
         });
 
-        it("chunks JSON object by keys", () => {
+        it("chunks JSON object by keys", async () => {
             const content = SafeJSON.stringify(
                 {
                     users: [1, 2, 3],
@@ -276,7 +276,7 @@ Sub section content.
                 2
             );
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "config.json",
                 content,
                 strategy: "json",
@@ -289,10 +289,10 @@ Sub section content.
     });
 
     describe("Line strategy", () => {
-        it("splits at double newlines", () => {
+        it("splits at double newlines", async () => {
             const content = "First paragraph with some text.\n\nSecond paragraph with more text.\n\nThird paragraph.";
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "notes.txt",
                 content,
                 strategy: "line",
@@ -306,7 +306,7 @@ Sub section content.
     });
 
     describe("Message strategy", () => {
-        it("chunks email-style content", () => {
+        it("chunks email-style content", async () => {
             const content = `Subject: Hello World
 From: alice@example.com
 
@@ -317,7 +317,7 @@ From: bob@example.com
 
 This is another email body.`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "emails.txt",
                 content,
                 strategy: "message",
@@ -330,10 +330,10 @@ This is another email body.`;
     });
 
     describe("Auto strategy", () => {
-        it("selects ast for .ts files", () => {
+        it("selects ast for .ts files", async () => {
             const content = 'function test() { return "hello"; }';
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "test.ts",
                 content,
                 strategy: "auto",
@@ -343,10 +343,10 @@ This is another email body.`;
             expect(result.parser).toBe("ast");
         });
 
-        it("selects heading for .md files", () => {
+        it("selects heading for .md files", async () => {
             const content = "# Title\n\nSome content.";
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "readme.md",
                 content,
                 strategy: "auto",
@@ -355,10 +355,10 @@ This is another email body.`;
             expect(result.parser).toBe("heading");
         });
 
-        it("selects json for .json files", () => {
+        it("selects json for .json files", async () => {
             const content = '{"key": "value"}';
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "data.json",
                 content,
                 strategy: "auto",
@@ -367,10 +367,10 @@ This is another email body.`;
             expect(result.parser).toBe("json");
         });
 
-        it("selects message for mail index type", () => {
+        it("selects message for mail index type", async () => {
             const content = "Some content here.";
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "inbox.txt",
                 content,
                 strategy: "auto",
@@ -380,10 +380,10 @@ This is another email body.`;
             expect(result.parser).toBe("message");
         });
 
-        it("selects line for unknown extensions", () => {
+        it("selects line for unknown extensions", async () => {
             const content = "Some random content.";
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "data.xyz",
                 content,
                 strategy: "auto",
@@ -395,15 +395,15 @@ This is another email body.`;
     });
 
     describe("SHA-256 hashing", () => {
-        it("produces deterministic hash for same content", () => {
+        it("produces deterministic hash for same content", async () => {
             const content = 'function test() { return "hello"; }';
 
-            const result1 = chunkFile({
+            const result1 = await chunkFile({
                 filePath: "a.ts",
                 content,
                 strategy: "ast",
             });
-            const result2 = chunkFile({
+            const result2 = await chunkFile({
                 filePath: "b.ts",
                 content,
                 strategy: "ast",
@@ -414,13 +414,13 @@ This is another email body.`;
             expect(result1.chunks[0].id).toBe(result2.chunks[0].id);
         });
 
-        it("produces different hashes for different content", () => {
-            const result1 = chunkFile({
+        it("produces different hashes for different content", async () => {
+            const result1 = await chunkFile({
                 filePath: "a.ts",
                 content: 'function a() { return "a"; }',
                 strategy: "ast",
             });
-            const result2 = chunkFile({
+            const result2 = await chunkFile({
                 filePath: "b.ts",
                 content: 'function b() { return "b"; }',
                 strategy: "ast",
@@ -431,7 +431,7 @@ This is another email body.`;
     });
 
     describe("maxTokens splitting", () => {
-        it("splits large chunks at line boundaries", () => {
+        it("splits large chunks at line boundaries", async () => {
             // Create content that exceeds maxTokens (1 token ~ 4 chars, so 20 tokens = ~80 chars)
             const longLines = Array.from(
                 { length: 20 },
@@ -439,7 +439,7 @@ This is another email body.`;
             );
             const content = `function bigFunction() {\n${longLines.join("\n")}\n}`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "big.ts",
                 content,
                 strategy: "ast",
@@ -458,7 +458,7 @@ This is another email body.`;
     });
 
     describe("Chunk overlap", () => {
-        it("includes overlap lines from previous chunk in next chunk", () => {
+        it("includes overlap lines from previous chunk in next chunk", async () => {
             // Create content with enough lines to produce multiple chunks at low maxTokens
             const lines = Array.from(
                 { length: 40 },
@@ -466,7 +466,7 @@ This is another email body.`;
             );
             const content = lines.join("\n");
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "test.txt",
                 content,
                 strategy: "line",
@@ -485,11 +485,11 @@ This is another email body.`;
             expect(overlapInSecond).toEqual(overlapFromFirst);
         });
 
-        it("first chunk has no prefix overlap", () => {
+        it("first chunk has no prefix overlap", async () => {
             const lines = Array.from({ length: 40 }, (_, i) => `Line ${i + 1}: content`);
             const content = lines.join("\n");
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "test.txt",
                 content,
                 strategy: "line",
@@ -501,11 +501,11 @@ This is another email body.`;
             expect(result.chunks[0].startLine).toBe(0);
         });
 
-        it("defaults to 0 overlap when not specified", () => {
+        it("defaults to 0 overlap when not specified", async () => {
             const lines = Array.from({ length: 40 }, (_, i) => `Line ${i + 1}: content padding text`);
             const content = lines.join("\n");
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "test.txt",
                 content,
                 strategy: "line",
@@ -522,11 +522,11 @@ This is another email body.`;
     });
 
     describe("Hard character cap", () => {
-        it("truncates chunks exceeding MAX_CHUNK_CHARS", () => {
+        it("truncates chunks exceeding MAX_CHUNK_CHARS", async () => {
             // Create a single massive line that will become one chunk
             const longContent = "x".repeat(5000);
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "big.txt",
                 content: longContent,
                 strategy: "line",
@@ -537,7 +537,7 @@ This is another email body.`;
             }
         });
 
-        it("applies character cap to AST chunks", () => {
+        it("applies character cap to AST chunks", async () => {
             // A single giant function body
             const body = Array.from(
                 { length: 100 },
@@ -546,7 +546,7 @@ This is another email body.`;
             ).join("\n");
             const content = `function huge() {\n${body}\n}`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "huge.ts",
                 content,
                 strategy: "ast",
@@ -558,11 +558,11 @@ This is another email body.`;
             }
         });
 
-        it("applies character cap to JSON chunks", () => {
+        it("applies character cap to JSON chunks", async () => {
             const bigValue = "y".repeat(3000);
             const content = SafeJSON.stringify({ key: bigValue });
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "data.json",
                 content,
                 strategy: "json",
@@ -574,11 +574,11 @@ This is another email body.`;
             }
         });
 
-        it("truncates at last safe boundary (newline or space)", () => {
+        it("truncates at last safe boundary (newline or space)", async () => {
             // Content with spaces — truncation should land on a space boundary
             const words = Array.from({ length: 500 }, (_, i) => `word${i}`).join(" ");
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "words.txt",
                 content: words,
                 strategy: "line",
@@ -591,11 +591,11 @@ This is another email body.`;
     });
 
     describe("Minified file detection", () => {
-        it("detects minified content by average line length", () => {
+        it("detects minified content by average line length", async () => {
             // Simulate minified JS: one very long line
             const minified = `var a=1;${"function b(){return a+1;}".repeat(200)}`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "app.min.js",
                 content: minified,
                 strategy: "auto",
@@ -610,10 +610,10 @@ This is another email body.`;
             }
         });
 
-        it("produces multiple chunks from long minified content", () => {
+        it("produces multiple chunks from long minified content", async () => {
             const minified = "x=1;".repeat(2000); // ~8000 chars
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "bundle.min.js",
                 content: minified,
                 strategy: "auto",
@@ -624,10 +624,10 @@ This is another email body.`;
             expect(result.chunks.length).toBeGreaterThan(1);
         });
 
-        it("splits at safe boundaries (semicolon, space, newline)", () => {
+        it("splits at safe boundaries (semicolon, space, newline)", async () => {
             const minified = Array.from({ length: 500 }, (_, i) => `var v${i}=null`).join(";");
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "min.js",
                 content: minified,
                 strategy: "auto",
@@ -644,10 +644,10 @@ This is another email body.`;
             }
         });
 
-        it("does NOT use character-based for normal files", () => {
+        it("does NOT use character-based for normal files", async () => {
             const normal = Array.from({ length: 20 }, (_, i) => `const x${i} = ${i};`).join("\n");
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "normal.js",
                 content: normal,
                 strategy: "auto",
@@ -659,7 +659,7 @@ This is another email body.`;
     });
 
     describe("AST strategy — extended languages", () => {
-        it("extracts Python function and class definitions", () => {
+        it("extracts Python function and class definitions", async () => {
             const content = `
 def greet(name):
     return f"Hello, {name}"
@@ -676,7 +676,7 @@ class Calculator:
         pass
 `.trim();
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "test.py",
                 content,
                 strategy: "ast",
@@ -687,7 +687,7 @@ class Calculator:
             expect(result.chunks.length).toBeGreaterThanOrEqual(2);
         });
 
-        it("extracts Go function and type declarations", () => {
+        it("extracts Go function and type declarations", async () => {
             const content = `
 package main
 
@@ -704,7 +704,7 @@ func (c *Calculator) Add(a, b int) int {
 }
 `.trim();
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "main.go",
                 content,
                 strategy: "ast",
@@ -715,7 +715,7 @@ func (c *Calculator) Add(a, b int) int {
             expect(result.chunks.length).toBeGreaterThanOrEqual(1);
         });
 
-        it("extracts Rust function, impl, struct, and trait items", () => {
+        it("extracts Rust function, impl, struct, and trait items", async () => {
             const content = `
 fn greet(name: &str) -> String {
     format!("Hello, {}", name)
@@ -742,7 +742,7 @@ enum Color {
 }
 `.trim();
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "lib.rs",
                 content,
                 strategy: "ast",
@@ -753,7 +753,7 @@ enum Color {
             expect(result.chunks.length).toBeGreaterThanOrEqual(3);
         });
 
-        it("extracts Java class and method declarations", () => {
+        it("extracts Java class and method declarations", async () => {
             const content = `
 public class Calculator {
     public int add(int a, int b) {
@@ -770,7 +770,7 @@ interface Computable {
 }
 `.trim();
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "Calculator.java",
                 content,
                 strategy: "ast",
@@ -783,7 +783,7 @@ interface Computable {
     });
 
     describe("AST strategy — extended languages batch 2", () => {
-        it("extracts C function definitions and structs", () => {
+        it("extracts C function definitions and structs", async () => {
             const content = `
 #include <stdio.h>
 
@@ -801,12 +801,12 @@ int add(int a, int b) {
 }
 `.trim();
 
-            const result = chunkFile({ filePath: "main.c", content, strategy: "ast" });
+            const result = await chunkFile({ filePath: "main.c", content, strategy: "ast" });
             expect(result.parser).toBe("ast");
             expect(result.chunks.length).toBeGreaterThanOrEqual(1);
         });
 
-        it("extracts C++ class and namespace definitions", () => {
+        it("extracts C++ class and namespace definitions", async () => {
             const content = `
 #include <string>
 
@@ -822,12 +822,12 @@ public:
 }
 `.trim();
 
-            const result = chunkFile({ filePath: "calc.cpp", content, strategy: "ast" });
+            const result = await chunkFile({ filePath: "calc.cpp", content, strategy: "ast" });
             expect(result.parser).toBe("ast");
             expect(result.chunks.length).toBeGreaterThanOrEqual(1);
         });
 
-        it("extracts Ruby methods, classes, and modules", () => {
+        it("extracts Ruby methods, classes, and modules", async () => {
             const content = `
 module Greetings
   class Greeter
@@ -842,12 +842,12 @@ def standalone_method
 end
 `.trim();
 
-            const result = chunkFile({ filePath: "greet.rb", content, strategy: "ast" });
+            const result = await chunkFile({ filePath: "greet.rb", content, strategy: "ast" });
             expect(result.parser).toBe("ast");
             expect(result.chunks.length).toBeGreaterThanOrEqual(1);
         });
 
-        it("extracts PHP class and function declarations", () => {
+        it("extracts PHP class and function declarations", async () => {
             const content = `<?php
 
 class Calculator {
@@ -861,12 +861,12 @@ function greet($name) {
 }
 `.trim();
 
-            const result = chunkFile({ filePath: "calc.php", content, strategy: "ast" });
+            const result = await chunkFile({ filePath: "calc.php", content, strategy: "ast" });
             expect(result.parser).toBe("ast");
             expect(result.chunks.length).toBeGreaterThanOrEqual(1);
         });
 
-        it("extracts Swift class, struct, and function declarations", () => {
+        it("extracts Swift class, struct, and function declarations", async () => {
             const content = `
 struct Point {
     var x: Int
@@ -888,12 +888,12 @@ protocol Computable {
 }
 `.trim();
 
-            const result = chunkFile({ filePath: "calc.swift", content, strategy: "ast" });
+            const result = await chunkFile({ filePath: "calc.swift", content, strategy: "ast" });
             expect(result.parser).toBe("ast");
             expect(result.chunks.length).toBeGreaterThanOrEqual(2);
         });
 
-        it("extracts Kotlin class and function declarations", () => {
+        it("extracts Kotlin class and function declarations", async () => {
             const content = `
 class Calculator {
     fun add(a: Int, b: Int): Int {
@@ -910,12 +910,12 @@ object Singleton {
 }
 `.trim();
 
-            const result = chunkFile({ filePath: "calc.kt", content, strategy: "ast" });
+            const result = await chunkFile({ filePath: "calc.kt", content, strategy: "ast" });
             expect(result.parser).toBe("ast");
             expect(result.chunks.length).toBeGreaterThanOrEqual(1);
         });
 
-        it("extracts Scala class, object, and trait definitions", () => {
+        it("extracts Scala class, object, and trait definitions", async () => {
             const content = `
 class Calculator {
   def add(a: Int, b: Int): Int = a + b
@@ -932,12 +932,12 @@ trait Computable {
 }
 `.trim();
 
-            const result = chunkFile({ filePath: "calc.scala", content, strategy: "ast" });
+            const result = await chunkFile({ filePath: "calc.scala", content, strategy: "ast" });
             expect(result.parser).toBe("ast");
             expect(result.chunks.length).toBeGreaterThanOrEqual(1);
         });
 
-        it("extracts C# class, interface, and method declarations", () => {
+        it("extracts C# class, interface, and method declarations", async () => {
             const content = `
 namespace MyApp {
     public class Calculator {
@@ -952,14 +952,14 @@ namespace MyApp {
 }
 `.trim();
 
-            const result = chunkFile({ filePath: "Calculator.cs", content, strategy: "ast" });
+            const result = await chunkFile({ filePath: "Calculator.cs", content, strategy: "ast" });
             expect(result.parser).toBe("ast");
             expect(result.chunks.length).toBeGreaterThanOrEqual(1);
         });
     });
 
     describe("AST merge small nodes", () => {
-        it("merges adjacent small type aliases into one chunk", () => {
+        it("merges adjacent small type aliases into one chunk", async () => {
             const content = `
 type A = string;
 type B = number;
@@ -967,7 +967,7 @@ type C = boolean;
 type D = null;
 `.trim();
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "types.ts",
                 content,
                 strategy: "ast",
@@ -980,11 +980,11 @@ type D = null;
             expect(result.chunks[0].content).toContain("type D");
         });
 
-        it("does not merge nodes that together exceed max chunk lines", () => {
+        it("does not merge nodes that together exceed max chunk lines", async () => {
             // Create enough small declarations that merging all would exceed CHUNK_SIZE
             const decls = Array.from({ length: 30 }, (_, i) => `type T${i} = { field: string };\n`).join("\n");
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "many-types.ts",
                 content: decls.trim(),
                 strategy: "ast",
@@ -996,12 +996,12 @@ type D = null;
             expect(result.chunks.length).toBeGreaterThan(1);
         });
 
-        it("keeps large declarations as their own chunk", () => {
+        it("keeps large declarations as their own chunk", async () => {
             const smallType = "type Small = string;";
             const bigFn = `function big() {\n${Array.from({ length: 20 }, (_, i) => `    const x${i} = ${i};`).join("\n")}\n}`;
             const content = `${smallType}\n\n${bigFn}`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "mixed.ts",
                 content,
                 strategy: "ast",
@@ -1018,8 +1018,8 @@ type D = null;
     });
 
     describe("Edge cases", () => {
-        it("handles empty file content", () => {
-            const result = chunkFile({
+        it("handles empty file content", async () => {
+            const result = await chunkFile({
                 filePath: "empty.ts",
                 content: "",
                 strategy: "ast",
@@ -1028,8 +1028,8 @@ type D = null;
             expect(result.chunks).toHaveLength(0);
         });
 
-        it("handles whitespace-only content", () => {
-            const result = chunkFile({
+        it("handles whitespace-only content", async () => {
+            const result = await chunkFile({
                 filePath: "whitespace.ts",
                 content: "   \n\n\t\t\n   ",
                 strategy: "ast",
@@ -1038,7 +1038,7 @@ type D = null;
             expect(result.chunks).toHaveLength(0);
         });
 
-        it("handles comment-only TypeScript file", () => {
+        it("handles comment-only TypeScript file", async () => {
             const content = `
 // This is a comment
 // Another comment
@@ -1046,7 +1046,7 @@ type D = null;
    spanning multiple lines */
 `.trim();
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "comments.ts",
                 content,
                 strategy: "ast",
@@ -1057,7 +1057,7 @@ type D = null;
             expect(result.parser).toBe("ast");
         });
 
-        it("handles Unicode content in code", () => {
+        it("handles Unicode content in code", async () => {
             const content = `
 export function greet(name: string): string {
     return \`Bonjour, \${name}! Bienvenue a notre cafe. Prix: 5\u20AC\`;
@@ -1068,7 +1068,7 @@ export const cjk = "\u4F60\u597D\u4E16\u754C";
 export const arabic = "\u0645\u0631\u062D\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645";
 `.trim();
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "unicode.ts",
                 content,
                 strategy: "ast",
@@ -1082,14 +1082,14 @@ export const arabic = "\u0645\u0631\u062D\u0628\u0627 \u0628\u0627\u0644\u0639\u
             expect(allContent).toContain("emoji");
         });
 
-        it("handles file with only import statements", () => {
+        it("handles file with only import statements", async () => {
             const content = `
 import { a } from "./a";
 import { b } from "./b";
 import { c } from "./c";
 `.trim();
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "imports-only.ts",
                 content,
                 strategy: "ast",
@@ -1099,8 +1099,8 @@ import { c } from "./c";
             expect(result.parser).toBe("ast");
         });
 
-        it("handles single-line file", () => {
-            const result = chunkFile({
+        it("handles single-line file", async () => {
+            const result = await chunkFile({
                 filePath: "oneliner.ts",
                 content: "export const VERSION = 42;",
                 strategy: "ast",
@@ -1109,11 +1109,11 @@ import { c } from "./c";
             expect(result.chunks.length).toBeGreaterThanOrEqual(1);
         });
 
-        it("handles file with BOM marker", () => {
+        it("handles file with BOM marker", async () => {
             const bom = "\uFEFF";
             const content = `${bom}export function test(): void { console.log("BOM"); }`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "bom.ts",
                 content,
                 strategy: "ast",
@@ -1125,7 +1125,7 @@ import { c } from "./c";
     });
 
     describe("AST sub-chunk large declarations", () => {
-        it("sub-chunks a class with >150 lines", () => {
+        it("sub-chunks a class with >150 lines", async () => {
             const methods = Array.from(
                 { length: 50 },
                 (_, i) => `
@@ -1136,7 +1136,7 @@ import { c } from "./c";
             ).join("\n");
             const content = `class HugeClass {\n${methods}\n}`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "huge.ts",
                 content,
                 strategy: "ast",
@@ -1153,7 +1153,7 @@ import { c } from "./c";
             }
         });
 
-        it("sub-chunks preserve overlap between consecutive sub-chunks", () => {
+        it("sub-chunks preserve overlap between consecutive sub-chunks", async () => {
             const methods = Array.from(
                 { length: 50 },
                 (_, i) => `
@@ -1164,7 +1164,7 @@ import { c } from "./c";
             ).join("\n");
             const content = `class HugeClass {\n${methods}\n}`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "huge.ts",
                 content,
                 strategy: "ast",
@@ -1187,11 +1187,11 @@ import { c } from "./c";
             }
         });
 
-        it("does not sub-chunk declarations <=150 lines", () => {
+        it("does not sub-chunk declarations <=150 lines", async () => {
             const body = Array.from({ length: 10 }, (_, i) => `    const x${i} = ${i};`).join("\n");
             const content = `function normal() {\n${body}\n}`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "normal.ts",
                 content,
                 strategy: "ast",

@@ -339,7 +339,7 @@ function resolvePythonImport(specifier: string, fileSet: Set<string>): string | 
  * @param baseDir - Base directory for resolving relative imports
  * @returns CodeGraph with nodes and edges
  */
-export function buildCodeGraph(files: Map<string, string>, baseDir: string): CodeGraph {
+export async function buildCodeGraph(files: Map<string, string>, baseDir: string): Promise<CodeGraph> {
     const aliases = loadPathAliases(baseDir);
     const fileSet = new Set(files.keys());
     const edges: CodeGraphEdge[] = [];
@@ -355,7 +355,7 @@ export function buildCodeGraph(files: Map<string, string>, baseDir: string): Cod
         }
 
         nodeLanguages.set(filePath, language);
-        const imports = extractImports(content, language);
+        const imports = await extractImports(content, language);
 
         for (const imp of imports) {
             let resolved: string | null = null;

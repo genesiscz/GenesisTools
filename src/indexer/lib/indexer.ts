@@ -403,21 +403,21 @@ export class Indexer extends IndexerEventEmitter {
     }
 
     /** Chunk a batch of SourceEntry[] into ChunkRecords + path hash data */
-    private chunkEntries(
+    private async chunkEntries(
         entries: SourceEntry[],
         strategy: "ast" | "line" | "heading" | "message" | "json" | "character" | "auto",
         maxTokens: number
-    ): {
+    ): Promise<{
         chunks: ChunkRecord[];
         pathEntries: Array<{ path: string; hash: string }>;
         perEntry: Map<string, { chunkCount: number; parser: string }>;
-    } {
+    }> {
         const chunks: ChunkRecord[] = [];
         const pathEntries: Array<{ path: string; hash: string }> = [];
         const perEntry = new Map<string, { chunkCount: number; parser: string }>();
 
         for (const entry of entries) {
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: entry.path,
                 content: entry.content,
                 strategy,
@@ -682,7 +682,7 @@ export class Indexer extends IndexerEventEmitter {
                 fromDate: opts.scanOptions?.fromDate,
                 toDate: opts.scanOptions?.toDate,
                 onBatch: async (batch) => {
-                    const { chunks, pathEntries, perEntry } = this.chunkEntries(batch, strategy, maxTokens);
+                    const { chunks, pathEntries, perEntry } = await this.chunkEntries(batch, strategy, maxTokens);
 
                     if (chunks.length > 0) {
                         await this.store.insertChunks(chunks);
@@ -805,7 +805,7 @@ export class Indexer extends IndexerEventEmitter {
                         chunks,
                         pathEntries: remainingPathEntries,
                         perEntry,
-                    } = this.chunkEntries(remaining, strategy, maxTokens);
+                    } = await this.chunkEntries(remaining, strategy, maxTokens);
 
                     if (chunks.length > 0) {
                         await this.store.insertChunks(chunks);

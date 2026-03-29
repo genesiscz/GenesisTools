@@ -7,13 +7,13 @@ import { extractImports } from "./graph-imports";
 
 describe("extractImports", () => {
     describe("TypeScript/JavaScript", () => {
-        test("extracts static imports", () => {
+        test("extracts static imports", async () => {
             const source = `
 import { foo } from "./foo";
 import bar from "../bar";
 import * as baz from "./baz";
 `;
-            const imports = extractImports(source, "typescript");
+            const imports = await extractImports(source, "typescript");
             expect(imports).toHaveLength(3);
             expect(imports[0].specifier).toBe("./foo");
             expect(imports[0].isDynamic).toBe(false);
@@ -21,44 +21,44 @@ import * as baz from "./baz";
             expect(imports[2].specifier).toBe("./baz");
         });
 
-        test("extracts require calls", () => {
+        test("extracts require calls", async () => {
             const source = `const x = require("./module");`;
-            const imports = extractImports(source, "typescript");
+            const imports = await extractImports(source, "typescript");
             expect(imports.some((i) => i.specifier === "./module")).toBe(true);
         });
 
-        test("extracts dynamic imports", () => {
+        test("extracts dynamic imports", async () => {
             const source = `const mod = await import("./lazy");`;
-            const imports = extractImports(source, "typescript");
+            const imports = await extractImports(source, "typescript");
             const dynImport = imports.find((i) => i.specifier === "./lazy");
             expect(dynImport).toBeTruthy();
             expect(dynImport!.isDynamic).toBe(true);
         });
 
-        test("extracts re-exports", () => {
+        test("extracts re-exports", async () => {
             const source = `export { default } from "./other";`;
-            const imports = extractImports(source, "typescript");
+            const imports = await extractImports(source, "typescript");
             expect(imports.some((i) => i.specifier === "./other")).toBe(true);
         });
 
-        test("does not double-count nested require calls", () => {
+        test("does not double-count nested require calls", async () => {
             const source = `const x = foo(require("./module"));`;
-            const imports = extractImports(source, "typescript");
+            const imports = await extractImports(source, "typescript");
             const moduleImports = imports.filter((i) => i.specifier === "./module");
             expect(moduleImports).toHaveLength(1);
         });
 
-        test("does not match myrequire or similar", () => {
+        test("does not match myrequire or similar", async () => {
             const source = `const x = myrequire("./fake");`;
-            const imports = extractImports(source, "typescript");
+            const imports = await extractImports(source, "typescript");
             expect(imports).toHaveLength(0);
         });
     });
 
     describe("TSX", () => {
-        test("extracts imports from TSX files", () => {
+        test("extracts imports from TSX files", async () => {
             const source = `import React from "react";\nimport { Button } from "./Button";`;
-            const imports = extractImports(source, "tsx");
+            const imports = await extractImports(source, "tsx");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("react");
             expect(imports[1].specifier).toBe("./Button");
@@ -66,64 +66,64 @@ import * as baz from "./baz";
     });
 
     describe("Python", () => {
-        test("extracts import statements", () => {
+        test("extracts import statements", async () => {
             const source = `
 import os
 import foo.bar
 `;
-            const imports = extractImports(source, "python");
+            const imports = await extractImports(source, "python");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("os");
             expect(imports[1].specifier).toBe("foo.bar");
         });
 
-        test("extracts from...import statements", () => {
+        test("extracts from...import statements", async () => {
             const source = `from mypackage.utils import helper`;
-            const imports = extractImports(source, "python");
+            const imports = await extractImports(source, "python");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("mypackage.utils");
         });
 
-        test("extracts comma-separated imports", () => {
+        test("extracts comma-separated imports", async () => {
             const source = `import os, sys, json`;
-            const imports = extractImports(source, "python");
+            const imports = await extractImports(source, "python");
             expect(imports).toHaveLength(3);
             expect(imports.map((i) => i.specifier)).toEqual(["os", "sys", "json"]);
         });
 
-        test("extracts aliased imports", () => {
+        test("extracts aliased imports", async () => {
             const source = `import numpy as np\nimport pandas as pd`;
-            const imports = extractImports(source, "python");
+            const imports = await extractImports(source, "python");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("numpy");
             expect(imports[1].specifier).toBe("pandas");
         });
 
-        test("extracts relative from-imports", () => {
+        test("extracts relative from-imports", async () => {
             const source = `from . import utils\nfrom ..models import User`;
-            const imports = extractImports(source, "python");
+            const imports = await extractImports(source, "python");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe(".");
             expect(imports[1].specifier).toBe("..models");
         });
 
-        test("ignores imports inside comments and strings", () => {
+        test("ignores imports inside comments and strings", async () => {
             const source = `# import fake\nx = "import also_fake"\nimport real`;
-            const imports = extractImports(source, "python");
+            const imports = await extractImports(source, "python");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("real");
         });
     });
 
     describe("Go", () => {
-        test("extracts single imports", () => {
+        test("extracts single imports", async () => {
             const source = `import "github.com/user/repo"`;
-            const imports = extractImports(source, "go");
+            const imports = await extractImports(source, "go");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("github.com/user/repo");
         });
 
-        test("extracts grouped imports including stdlib", () => {
+        test("extracts grouped imports including stdlib", async () => {
             const source = `
 import (
     "fmt"
@@ -131,35 +131,35 @@ import (
     "github.com/other/pkg"
 )
 `;
-            const imports = extractImports(source, "go");
+            const imports = await extractImports(source, "go");
             expect(imports).toHaveLength(3);
             expect(imports[0].specifier).toBe("fmt");
             expect(imports[1].specifier).toBe("github.com/user/repo");
             expect(imports[2].specifier).toBe("github.com/other/pkg");
         });
 
-        test("extracts stdlib imports (filtering is done at resolution layer)", () => {
+        test("extracts stdlib imports (filtering is done at resolution layer)", async () => {
             const source = `import "fmt"`;
-            const imports = extractImports(source, "go");
+            const imports = await extractImports(source, "go");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("fmt");
         });
 
-        test("extracts aliased imports", () => {
+        test("extracts aliased imports", async () => {
             const source = `import cfg "example.com/config"`;
-            const imports = extractImports(source, "go");
+            const imports = await extractImports(source, "go");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("example.com/config");
         });
 
-        test("extracts blank identifier imports", () => {
+        test("extracts blank identifier imports", async () => {
             const source = `import _ "modernc.org/sqlite"`;
-            const imports = extractImports(source, "go");
+            const imports = await extractImports(source, "go");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("modernc.org/sqlite");
         });
 
-        test("extracts all imports from grouped block including aliases", () => {
+        test("extracts all imports from grouped block including aliases", async () => {
             const source = `
 import (
     "fmt"
@@ -168,7 +168,7 @@ import (
     "github.com/user/repo"
 )
 `;
-            const imports = extractImports(source, "go");
+            const imports = await extractImports(source, "go");
             expect(imports).toHaveLength(4);
             expect(imports.map((i) => i.specifier)).toContain("fmt");
             expect(imports.map((i) => i.specifier)).toContain("github.com/lib/pq");
@@ -176,217 +176,217 @@ import (
             expect(imports.map((i) => i.specifier)).toContain("github.com/user/repo");
         });
 
-        test("ignores imports inside comments", () => {
+        test("ignores imports inside comments", async () => {
             const source = `
 package main
 // import "fake"
 import "github.com/real/pkg"
 `;
-            const imports = extractImports(source, "go");
+            const imports = await extractImports(source, "go");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("github.com/real/pkg");
         });
     });
 
     describe("Java", () => {
-        test("extracts import declarations", () => {
+        test("extracts import declarations", async () => {
             const source = `import com.example.models.User;\nimport com.example.utils.Helper;`;
-            const imports = extractImports(source, "java");
+            const imports = await extractImports(source, "java");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("com.example.models.User");
             expect(imports[1].specifier).toBe("com.example.utils.Helper");
         });
 
-        test("extracts static imports", () => {
+        test("extracts static imports", async () => {
             const source = `import static org.junit.Assert.assertEquals;`;
-            const imports = extractImports(source, "java");
+            const imports = await extractImports(source, "java");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("org.junit.Assert.assertEquals");
         });
 
-        test("extracts wildcard imports", () => {
+        test("extracts wildcard imports", async () => {
             const source = `import java.util.*;`;
-            const imports = extractImports(source, "java");
+            const imports = await extractImports(source, "java");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("java.util.*");
         });
     });
 
     describe("Rust", () => {
-        test("extracts use declarations", () => {
+        test("extracts use declarations", async () => {
             const source = `use std::collections::HashMap;\nuse crate::models::User;`;
-            const imports = extractImports(source, "rust");
+            const imports = await extractImports(source, "rust");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("std::collections::HashMap");
             expect(imports[1].specifier).toBe("crate::models::User");
         });
 
-        test("extracts mod declarations (external file references)", () => {
+        test("extracts mod declarations (external file references)", async () => {
             const source = `mod config;\nmod utils;`;
-            const imports = extractImports(source, "rust");
+            const imports = await extractImports(source, "rust");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("config");
             expect(imports[1].specifier).toBe("utils");
         });
 
-        test("ignores inline mod definitions", () => {
+        test("ignores inline mod definitions", async () => {
             const source = `mod inline {\n    pub fn foo() {}\n}`;
-            const imports = extractImports(source, "rust");
+            const imports = await extractImports(source, "rust");
             expect(imports).toHaveLength(0);
         });
 
-        test("extracts grouped use declarations", () => {
+        test("extracts grouped use declarations", async () => {
             const source = `use std::io::{self, Read, Write};`;
-            const imports = extractImports(source, "rust");
+            const imports = await extractImports(source, "rust");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("std::io::{self, Read, Write}");
         });
     });
 
     describe("C/C++", () => {
-        test("extracts local includes (quoted)", () => {
+        test("extracts local includes (quoted)", async () => {
             const source = `#include "myheader.h"\n#include "utils/helpers.h"`;
-            const imports = extractImports(source, "c");
+            const imports = await extractImports(source, "c");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("myheader.h");
             expect(imports[1].specifier).toBe("utils/helpers.h");
         });
 
-        test("skips system includes (angle brackets)", () => {
+        test("skips system includes (angle brackets)", async () => {
             const source = `#include <stdio.h>\n#include <stdlib.h>\n#include "local.h"`;
-            const imports = extractImports(source, "c");
+            const imports = await extractImports(source, "c");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("local.h");
         });
 
-        test("works for C++ files", () => {
+        test("works for C++ files", async () => {
             const source = `#include "myclass.hpp"\n#include <iostream>`;
-            const imports = extractImports(source, "cpp");
+            const imports = await extractImports(source, "cpp");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("myclass.hpp");
         });
     });
 
     describe("Ruby", () => {
-        test("extracts require statements", () => {
+        test("extracts require statements", async () => {
             const source = `require "json"\nrequire "fileutils"`;
-            const imports = extractImports(source, "ruby");
+            const imports = await extractImports(source, "ruby");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("json");
             expect(imports[1].specifier).toBe("fileutils");
         });
 
-        test("extracts require_relative statements", () => {
+        test("extracts require_relative statements", async () => {
             const source = `require_relative "./helper"\nrequire_relative "../models/user"`;
-            const imports = extractImports(source, "ruby");
+            const imports = await extractImports(source, "ruby");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("./helper");
             expect(imports[1].specifier).toBe("../models/user");
         });
 
-        test("handles parenthesized form", () => {
+        test("handles parenthesized form", async () => {
             const source = `require("net/http")`;
-            const imports = extractImports(source, "ruby");
+            const imports = await extractImports(source, "ruby");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("net/http");
         });
     });
 
     describe("Swift", () => {
-        test("extracts import declarations", () => {
+        test("extracts import declarations", async () => {
             const source = `import Foundation\nimport UIKit`;
-            const imports = extractImports(source, "swift");
+            const imports = await extractImports(source, "swift");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("Foundation");
             expect(imports[1].specifier).toBe("UIKit");
         });
 
-        test("extracts submodule imports", () => {
+        test("extracts submodule imports", async () => {
             const source = `import struct Foundation.URL`;
-            const imports = extractImports(source, "swift");
+            const imports = await extractImports(source, "swift");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("struct Foundation.URL");
         });
     });
 
     describe("PHP", () => {
-        test("extracts use declarations", () => {
+        test("extracts use declarations", async () => {
             const source = `<?php\nuse App\\Models\\User;\nuse App\\Services\\AuthService;`;
-            const imports = extractImports(source, "php");
+            const imports = await extractImports(source, "php");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("App\\Models\\User");
             expect(imports[1].specifier).toBe("App\\Services\\AuthService");
         });
 
-        test("extracts grouped use declarations", () => {
+        test("extracts grouped use declarations", async () => {
             const source = `<?php\nuse App\\Models\\{User, Post, Comment};`;
-            const imports = extractImports(source, "php");
+            const imports = await extractImports(source, "php");
             expect(imports).toHaveLength(3);
             expect(imports[0].specifier).toBe("App\\Models\\User");
             expect(imports[1].specifier).toBe("App\\Models\\Post");
             expect(imports[2].specifier).toBe("App\\Models\\Comment");
         });
 
-        test("extracts require/include statements", () => {
+        test("extracts require/include statements", async () => {
             const source = `<?php\nrequire_once './config.php';\ninclude 'helpers.php';`;
-            const imports = extractImports(source, "php");
+            const imports = await extractImports(source, "php");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("./config.php");
             expect(imports[1].specifier).toBe("helpers.php");
         });
 
-        test("handles aliased use", () => {
+        test("handles aliased use", async () => {
             const source = `<?php\nuse App\\Models\\User as UserModel;`;
-            const imports = extractImports(source, "php");
+            const imports = await extractImports(source, "php");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("App\\Models\\User");
         });
     });
 
     describe("Kotlin", () => {
-        test("extracts import declarations", () => {
+        test("extracts import declarations", async () => {
             const source = `import com.example.models.User\nimport com.example.utils.Helper`;
-            const imports = extractImports(source, "kotlin");
+            const imports = await extractImports(source, "kotlin");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("com.example.models.User");
             expect(imports[1].specifier).toBe("com.example.utils.Helper");
         });
 
-        test("extracts aliased imports", () => {
+        test("extracts aliased imports", async () => {
             const source = `import com.example.models.User as AppUser`;
-            const imports = extractImports(source, "kotlin");
+            const imports = await extractImports(source, "kotlin");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("com.example.models.User");
         });
 
-        test("extracts wildcard imports", () => {
+        test("extracts wildcard imports", async () => {
             const source = `import com.example.utils.*`;
-            const imports = extractImports(source, "kotlin");
+            const imports = await extractImports(source, "kotlin");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("com.example.utils.*");
         });
     });
 
     describe("Scala", () => {
-        test("extracts import declarations", () => {
+        test("extracts import declarations", async () => {
             const source = `import scala.collection.mutable\nimport com.example.Service`;
-            const imports = extractImports(source, "scala");
+            const imports = await extractImports(source, "scala");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("scala.collection.mutable");
             expect(imports[1].specifier).toBe("com.example.Service");
         });
 
-        test("extracts grouped imports with all members", () => {
+        test("extracts grouped imports with all members", async () => {
             const source = `import scala.collection.{mutable, immutable}`;
-            const imports = extractImports(source, "scala");
+            const imports = await extractImports(source, "scala");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("scala.collection.mutable");
             expect(imports[1].specifier).toBe("scala.collection.immutable");
         });
 
-        test("extracts grouped import with rename", () => {
+        test("extracts grouped import with rename", async () => {
             const source = `import java.util.{List => JList, Map}`;
-            const imports = extractImports(source, "scala");
+            const imports = await extractImports(source, "scala");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("java.util.List");
             expect(imports[1].specifier).toBe("java.util.Map");
@@ -394,45 +394,45 @@ import "github.com/real/pkg"
     });
 
     describe("C#", () => {
-        test("extracts using directives", () => {
+        test("extracts using directives", async () => {
             const source = `using System;\nusing System.Collections.Generic;`;
-            const imports = extractImports(source, "csharp");
+            const imports = await extractImports(source, "csharp");
             expect(imports).toHaveLength(2);
             expect(imports[0].specifier).toBe("System");
             expect(imports[1].specifier).toBe("System.Collections.Generic");
         });
 
-        test("extracts static using directives", () => {
+        test("extracts static using directives", async () => {
             const source = `using static System.Math;`;
-            const imports = extractImports(source, "csharp");
+            const imports = await extractImports(source, "csharp");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("System.Math");
         });
 
-        test("extracts aliased using directives", () => {
+        test("extracts aliased using directives", async () => {
             const source = `using MyAlias = System.Text;`;
-            const imports = extractImports(source, "csharp");
+            const imports = await extractImports(source, "csharp");
             expect(imports).toHaveLength(1);
             expect(imports[0].specifier).toBe("System.Text");
         });
 
-        test("ignores using var statements", () => {
+        test("ignores using var statements", async () => {
             const source = `using var stream = new FileStream("test", FileMode.Open);`;
-            const imports = extractImports(source, "csharp");
+            const imports = await extractImports(source, "csharp");
             expect(imports).toHaveLength(0);
         });
     });
 });
 
 describe("buildCodeGraph", () => {
-    test("builds graph from TypeScript files", () => {
+    test("builds graph from TypeScript files", async () => {
         const files = new Map<string, string>([
             ["src/index.ts", `import { helper } from "./utils/helper";`],
             ["src/utils/helper.ts", `import { format } from "./format";`],
             ["src/utils/format.ts", `export function format() {}`],
         ]);
 
-        const graph = buildCodeGraph(files, "/project");
+        const graph = await buildCodeGraph(files, "/project");
 
         expect(graph.nodes.length).toBeGreaterThanOrEqual(3);
 
@@ -445,129 +445,129 @@ describe("buildCodeGraph", () => {
         expect(edge2).toBeTruthy();
     });
 
-    test("skips unresolvable imports (external packages)", () => {
+    test("skips unresolvable imports (external packages)", async () => {
         const files = new Map<string, string>([
             ["src/app.ts", `import { something } from "lodash"; import { local } from "./local";`],
             ["src/local.ts", `export const local = 1;`],
         ]);
 
-        const graph = buildCodeGraph(files, "/project");
+        const graph = await buildCodeGraph(files, "/project");
 
         // Only the local import should be an edge
         expect(graph.edges).toHaveLength(1);
         expect(graph.edges[0].to).toBe("src/local.ts");
     });
 
-    test("handles files with no imports", () => {
+    test("handles files with no imports", async () => {
         const files = new Map<string, string>([["src/standalone.ts", `export const x = 42;`]]);
 
-        const graph = buildCodeGraph(files, "/project");
+        const graph = await buildCodeGraph(files, "/project");
         expect(graph.nodes.length).toBe(1);
         expect(graph.edges.length).toBe(0);
     });
 
-    test("resolves index files", () => {
+    test("resolves index files", async () => {
         const files = new Map<string, string>([
             ["src/app.ts", `import { util } from "./utils";`],
             ["src/utils/index.ts", `export const util = 1;`],
         ]);
 
-        const graph = buildCodeGraph(files, "/project");
+        const graph = await buildCodeGraph(files, "/project");
         expect(graph.edges).toHaveLength(1);
         expect(graph.edges[0].to).toBe("src/utils/index.ts");
     });
 
-    test("builds graph from C files with includes", () => {
+    test("builds graph from C files with includes", async () => {
         const files = new Map<string, string>([
             ["src/main.c", `#include "utils.h"\n#include <stdio.h>`],
             ["src/utils.h", `void helper();`],
             ["src/utils.c", `#include "utils.h"\nvoid helper() {}`],
         ]);
 
-        const graph = buildCodeGraph(files, "/project");
+        const graph = await buildCodeGraph(files, "/project");
         const edge = graph.edges.find((e) => e.from === "src/main.c" && e.to === "src/utils.h");
         expect(edge).toBeTruthy();
     });
 
-    test("builds graph from Rust files with mod", () => {
+    test("builds graph from Rust files with mod", async () => {
         const files = new Map<string, string>([
             ["src/main.rs", `mod config;\nfn main() {}`],
             ["src/config.rs", `pub fn load() {}`],
         ]);
 
-        const graph = buildCodeGraph(files, "/project");
+        const graph = await buildCodeGraph(files, "/project");
         const edge = graph.edges.find((e) => e.from === "src/main.rs" && e.to === "src/config.rs");
         expect(edge).toBeTruthy();
     });
 
-    test("builds graph from Python files with relative imports", () => {
+    test("builds graph from Python files with relative imports", async () => {
         const files = new Map<string, string>([
             ["app/main.py", `from .utils import helper`],
             ["app/utils.py", `def helper(): pass`],
         ]);
 
-        const graph = buildCodeGraph(files, "/project");
+        const graph = await buildCodeGraph(files, "/project");
         expect(graph.nodes.length).toBeGreaterThanOrEqual(2);
     });
 });
 
 describe("toMermaidDiagram", () => {
-    test("produces valid Mermaid syntax", () => {
+    test("produces valid Mermaid syntax", async () => {
         const files = new Map<string, string>([
             ["src/a.ts", `import { b } from "./b";`],
             ["src/b.ts", `export const b = 1;`],
         ]);
 
-        const graph = buildCodeGraph(files, "/project");
+        const graph = await buildCodeGraph(files, "/project");
         const mermaid = toMermaidDiagram(graph);
 
         expect(mermaid).toContain("graph LR");
         expect(mermaid).toContain("-->");
     });
 
-    test("respects maxNodes limit", () => {
+    test("respects maxNodes limit", async () => {
         const files = new Map<string, string>();
 
         for (let i = 0; i < 50; i++) {
             files.set(`src/file${i}.ts`, `export const x${i} = ${i};`);
         }
 
-        const graph = buildCodeGraph(files, "/project");
+        const graph = await buildCodeGraph(files, "/project");
         const mermaid = toMermaidDiagram(graph, { maxNodes: 5 });
         const nodeDeclarations = mermaid.split("\n").filter((l) => l.includes('["'));
         expect(nodeDeclarations.length).toBeLessThanOrEqual(5);
     });
 
-    test("shows dynamic imports with dashed line", () => {
+    test("shows dynamic imports with dashed line", async () => {
         const files = new Map<string, string>([
             ["src/a.ts", `const mod = await import("./b");`],
             ["src/b.ts", `export const b = 1;`],
         ]);
 
-        const graph = buildCodeGraph(files, "/project");
+        const graph = await buildCodeGraph(files, "/project");
         const mermaid = toMermaidDiagram(graph, { showDynamic: true });
         expect(mermaid).toContain("-.->|dynamic|");
     });
 
-    test("Mermaid diagram includes classDef for languages", () => {
+    test("Mermaid diagram includes classDef for languages", async () => {
         const files = new Map<string, string>([
             ["src/a.ts", `import { b } from "./b";`],
             ["src/b.ts", `export const b = 1;`],
         ]);
 
-        const graph = buildCodeGraph(files, "/project");
+        const graph = await buildCodeGraph(files, "/project");
         const mermaid = toMermaidDiagram(graph);
         expect(mermaid).toContain("classDef ts fill:#3178c6,color:#fff");
         expect(mermaid).toContain(":::ts");
     });
 
-    test("Mermaid diagram highlights circular dependency edges", () => {
+    test("Mermaid diagram highlights circular dependency edges", async () => {
         const files = new Map<string, string>([
             ["src/a.ts", `import { b } from "./b";`],
             ["src/b.ts", `import { a } from "./a";`],
         ]);
 
-        const graph = buildCodeGraph(files, "/project");
+        const graph = await buildCodeGraph(files, "/project");
         const mermaid = toMermaidDiagram(graph);
         expect(mermaid).toContain("-.->|cycle|");
         expect(mermaid).toContain("stroke:#ff0000");
@@ -595,7 +595,7 @@ describe("findCircularDependencies", () => {
         };
     }
 
-    test("detects simple A->B->A cycle", () => {
+    test("detects simple A->B->A cycle", async () => {
         const graph = makeGraph([
             ["a.ts", "b.ts"],
             ["b.ts", "a.ts"],
@@ -608,7 +608,7 @@ describe("findCircularDependencies", () => {
         expect(cycles[0].cycle).toContain("b.ts");
     });
 
-    test("detects A->B->C->A cycle", () => {
+    test("detects A->B->C->A cycle", async () => {
         const graph = makeGraph([
             ["a.ts", "b.ts"],
             ["b.ts", "c.ts"],
@@ -620,7 +620,7 @@ describe("findCircularDependencies", () => {
         expect(cycles[0].length).toBe(3);
     });
 
-    test("returns empty for acyclic graph", () => {
+    test("returns empty for acyclic graph", async () => {
         const graph = makeGraph([
             ["a.ts", "b.ts"],
             ["b.ts", "c.ts"],
@@ -630,7 +630,7 @@ describe("findCircularDependencies", () => {
         expect(cycles).toHaveLength(0);
     });
 
-    test("deduplicates same cycle found from different start nodes", () => {
+    test("deduplicates same cycle found from different start nodes", async () => {
         const graph = makeGraph([
             ["a.ts", "b.ts"],
             ["b.ts", "a.ts"],
@@ -641,14 +641,14 @@ describe("findCircularDependencies", () => {
         expect(cycles).toHaveLength(1);
     });
 
-    test("handles self-import", () => {
+    test("handles self-import", async () => {
         const graph = makeGraph([["self.ts", "self.ts"]]);
 
         const cycles = findCircularDependencies(graph);
         expect(cycles.length).toBeGreaterThanOrEqual(1);
     });
 
-    test("handles diamond dependency (no false positive)", () => {
+    test("handles diamond dependency (no false positive)", async () => {
         const graph = makeGraph([
             ["a.ts", "b.ts"],
             ["a.ts", "c.ts"],
@@ -663,7 +663,7 @@ describe("findCircularDependencies", () => {
 });
 
 describe("getGraphStats", () => {
-    test("returns correct counts", () => {
+    test("returns correct counts", async () => {
         const files = new Map<string, string>([
             ["src/a.ts", `import { b } from "./b"; import { c } from "./c";`],
             ["src/b.ts", `import { c } from "./c";`],
@@ -671,7 +671,7 @@ describe("getGraphStats", () => {
             ["src/orphan.ts", `export const x = 42;`],
         ]);
 
-        const graph = buildCodeGraph(files, "/project");
+        const graph = await buildCodeGraph(files, "/project");
         const stats = getGraphStats(graph);
 
         expect(stats.totalNodes).toBe(4);
@@ -682,20 +682,20 @@ describe("getGraphStats", () => {
         expect(stats.circularDependencies).toBe(0);
     });
 
-    test("counts circular dependencies", () => {
+    test("counts circular dependencies", async () => {
         const files = new Map<string, string>([
             ["src/a.ts", `import { b } from "./b";`],
             ["src/b.ts", `import { a } from "./a";`],
         ]);
 
-        const graph = buildCodeGraph(files, "/project");
+        const graph = await buildCodeGraph(files, "/project");
         const stats = getGraphStats(graph);
         expect(stats.circularDependencies).toBe(1);
     });
 });
 
 describe("parsePathAliases", () => {
-    test("parses wildcard aliases", () => {
+    test("parses wildcard aliases", async () => {
         const tsconfig = SafeJSON.stringify({
             compilerOptions: {
                 baseUrl: ".",
@@ -712,7 +712,7 @@ describe("parsePathAliases", () => {
         expect(aliases.entries.get("@utils/")).toEqual(["src/utils"]);
     });
 
-    test("parses exact aliases", () => {
+    test("parses exact aliases", async () => {
         const tsconfig = SafeJSON.stringify({
             compilerOptions: {
                 baseUrl: ".",
@@ -725,7 +725,7 @@ describe("parsePathAliases", () => {
         expect(aliases.entries.get("~")).toEqual(["src"]);
     });
 
-    test("strips JSON comments", () => {
+    test("strips JSON comments", async () => {
         const tsconfig = `{
             // This is a comment
             "compilerOptions": {
@@ -739,33 +739,33 @@ describe("parsePathAliases", () => {
         expect(aliases.entries.size).toBe(1);
     });
 
-    test("returns empty for missing compilerOptions", () => {
+    test("returns empty for missing compilerOptions", async () => {
         const tsconfig = SafeJSON.stringify({});
         const aliases = parsePathAliases(tsconfig, "/project");
         expect(aliases.entries.size).toBe(0);
     });
 
-    test("returns empty for invalid JSON", () => {
+    test("returns empty for invalid JSON", async () => {
         const aliases = parsePathAliases("not json", "/project");
         expect(aliases.entries.size).toBe(0);
     });
 });
 
 describe("loadPathAliases", () => {
-    test("returns empty aliases for directory without tsconfig", () => {
+    test("returns empty aliases for directory without tsconfig", async () => {
         const aliases = loadPathAliases("/nonexistent/path");
         expect(aliases.entries.size).toBe(0);
     });
 });
 
 describe("graph persistence round-trip", () => {
-    test("serialized graph preserves structure", () => {
+    test("serialized graph preserves structure", async () => {
         const files = new Map<string, string>([
             ["src/a.ts", `import { b } from "./b";`],
             ["src/b.ts", `export const b = 1;`],
         ]);
 
-        const graph = buildCodeGraph(files, "/project");
+        const graph = await buildCodeGraph(files, "/project");
         const json = SafeJSON.stringify(graph);
         const restored = SafeJSON.parse(json) as typeof graph;
 

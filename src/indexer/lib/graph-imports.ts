@@ -69,7 +69,6 @@ function extractJsTsImports(root: AstRoot): ImportInfo[] {
 
 /** Extract Python imports via ast-grep AST parsing */
 function extractPythonImports(source: string): ImportInfo[] {
-    ensureDynamicLanguages();
     const imports: ImportInfo[] = [];
 
     try {
@@ -114,7 +113,6 @@ function extractPythonImports(source: string): ImportInfo[] {
 
 /** Extract Go imports via ast-grep AST parsing */
 function extractGoImports(source: string): ImportInfo[] {
-    ensureDynamicLanguages();
     const imports: ImportInfo[] = [];
 
     try {
@@ -141,7 +139,6 @@ function extractGoImports(source: string): ImportInfo[] {
 
 /** Extract Java imports via ast-grep AST parsing */
 function extractJavaImports(source: string): ImportInfo[] {
-    ensureDynamicLanguages();
     const imports: ImportInfo[] = [];
 
     try {
@@ -166,7 +163,6 @@ function extractJavaImports(source: string): ImportInfo[] {
 
 /** Extract Rust imports via ast-grep AST parsing */
 function extractRustImports(source: string): ImportInfo[] {
-    ensureDynamicLanguages();
     const imports: ImportInfo[] = [];
 
     try {
@@ -207,7 +203,6 @@ function extractRustImports(source: string): ImportInfo[] {
 
 /** Extract C/C++ #include directives via ast-grep AST parsing */
 function extractCCppIncludes(source: string, lang: "c" | "cpp"): ImportInfo[] {
-    ensureDynamicLanguages();
     const imports: ImportInfo[] = [];
 
     try {
@@ -233,7 +228,6 @@ function extractCCppIncludes(source: string, lang: "c" | "cpp"): ImportInfo[] {
 
 /** Extract Ruby require/require_relative via ast-grep AST parsing */
 function extractRubyImports(source: string): ImportInfo[] {
-    ensureDynamicLanguages();
     const imports: ImportInfo[] = [];
 
     try {
@@ -261,7 +255,6 @@ function extractRubyImports(source: string): ImportInfo[] {
 
 /** Extract Swift imports via ast-grep AST parsing */
 function extractSwiftImports(source: string): ImportInfo[] {
-    ensureDynamicLanguages();
     const imports: ImportInfo[] = [];
 
     try {
@@ -286,7 +279,6 @@ function extractSwiftImports(source: string): ImportInfo[] {
 
 /** Extract PHP use/require/include via ast-grep AST parsing */
 function extractPhpImports(source: string): ImportInfo[] {
-    ensureDynamicLanguages();
     const imports: ImportInfo[] = [];
 
     try {
@@ -345,7 +337,6 @@ function extractPhpImports(source: string): ImportInfo[] {
 
 /** Extract Kotlin imports via ast-grep AST parsing */
 function extractKotlinImports(source: string): ImportInfo[] {
-    ensureDynamicLanguages();
     const imports: ImportInfo[] = [];
 
     try {
@@ -377,7 +368,6 @@ function extractKotlinImports(source: string): ImportInfo[] {
 
 /** Extract Scala imports via ast-grep AST parsing */
 function extractScalaImports(source: string): ImportInfo[] {
-    ensureDynamicLanguages();
     const imports: ImportInfo[] = [];
 
     try {
@@ -424,7 +414,6 @@ function extractScalaImports(source: string): ImportInfo[] {
 
 /** Extract C# using directives via ast-grep AST parsing */
 function extractCSharpImports(source: string): ImportInfo[] {
-    ensureDynamicLanguages();
     const imports: ImportInfo[] = [];
 
     try {
@@ -458,7 +447,9 @@ function extractCSharpImports(source: string): ImportInfo[] {
  * Supports: TypeScript/JavaScript, TSX/JSX, Python, Go, Java, Rust, C, C++,
  * Ruby, Swift, PHP, Kotlin, Scala, C#.
  */
-export function extractImports(source: string, language: string): ImportInfo[] {
+export async function extractImports(source: string, language: string): Promise<ImportInfo[]> {
+    await ensureDynamicLanguages();
+
     switch (language) {
         case "typescript":
         case "javascript": {

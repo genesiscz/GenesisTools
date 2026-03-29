@@ -36,7 +36,7 @@ export function registerGraphCommand(program: Command): void {
                     p.log.step("Building code graph...");
                     const startTime = performance.now();
                     const fileContents = store.getAllFileContents();
-                    graph = buildCodeGraph(fileContents, config.baseDir);
+                    graph = await buildCodeGraph(fileContents, config.baseDir);
                     const buildMs = performance.now() - startTime;
                     p.log.info(`Graph built in ${Math.round(buildMs)}ms`);
 
@@ -72,7 +72,7 @@ export function registerGraphCommand(program: Command): void {
         });
 }
 
-function showGraphStats(graph: ReturnType<typeof buildCodeGraph>): void {
+function showGraphStats(graph: CodeGraph): void {
     const stats = getGraphStats(graph);
 
     const entries: Array<[string, string]> = [
@@ -139,7 +139,7 @@ function showCircularDependencies(graph: CodeGraph): void {
     }
 }
 
-function showFileDependencies(graph: ReturnType<typeof buildCodeGraph>, filePath: string): void {
+function showFileDependencies(graph: CodeGraph, filePath: string): void {
     const node = graph.nodes.find((n) => n.path === filePath || n.path.endsWith(filePath));
 
     if (!node) {

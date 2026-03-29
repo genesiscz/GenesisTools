@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { Lang, registerDynamicLanguage } from "@ast-grep/napi";
+import { ensurePackages, isPackageInstalled } from "@app/utils/packages";
 
 const esmRequire = createRequire(import.meta.url);
 
@@ -99,13 +100,21 @@ export function getLanguageForExt(ext: string): string | null {
 
 let dynamicLangsRegistered = false;
 
-/** Register dynamic language grammars. Safe to call multiple times. */
-export function ensureDynamicLanguages(): void {
+/** Register dynamic language grammars, installing missing ones on-demand. Safe to call multiple times. */
+export async function ensureDynamicLanguages(): Promise<void> {
     if (dynamicLangsRegistered) {
         return;
     }
 
     dynamicLangsRegistered = true;
+
+    const missing = DYNAMIC_LANG_PACKAGES
+        .filter(([, pkg]) => !isPackageInstalled(pkg))
+        .map(([, pkg]) => pkg);
+
+    if (missing.length > 0) {
+        await ensurePackages(missing, { label: `AST grammars (${missing.length} languages)` });
+    }
 
     const modules: Record<string, { libraryPath: string; extensions: string[]; languageSymbol?: string }> = {};
 
@@ -113,7 +122,7 @@ export function ensureDynamicLanguages(): void {
         try {
             modules[name] = esmRequire(pkg);
         } catch {
-            // Grammar not installed — skip
+            // Still missing after install attempt — skip
         }
     }
 
