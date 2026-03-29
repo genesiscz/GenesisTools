@@ -1,4 +1,5 @@
 import { AsyncOpQueue } from "@app/utils/async";
+import { ensurePackage } from "@app/utils/packages";
 import { bruteForceVectorSearch, type VectorSearchHit, type VectorStore } from "./vector-store";
 
 interface ArrowVector {
@@ -158,6 +159,7 @@ export class LanceDBVectorStore implements VectorStore {
     }
 
     private async initialize(): Promise<void> {
+        await ensurePackage("@lancedb/lancedb", { label: "LanceDB vector store" });
         const lancedb = await import("@lancedb/lancedb");
         this.db = (await lancedb.connect(this.config.dbPath)) as unknown as LanceDBConnection;
 
