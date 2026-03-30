@@ -17,8 +17,9 @@ import { stat } from "node:fs/promises";
 import { basename, dirname, resolve, sep } from "node:path";
 import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
-import { glob } from "glob";
-import { encodedProjectDir, PROJECTS_DIR, parseJsonlTranscript } from "./index";
+import { discoverSessionFiles } from "./discovery";
+import { parseJsonlTranscript } from "./index";
+import { PROJECTS_DIR, encodedProjectDir, extractProjectName } from "./projects";
 import {
     agentProgressToSubagent,
     extractFilePathFromInput,
@@ -222,53 +223,14 @@ export class ClaudeSession {
     static async findSessions(options: SessionDiscoveryOptions = {}): Promise<SessionInfo[]> {
         const { project, allProjects = false, since, until, includeSubagents = false, limit } = options;
 
-        // Build glob patterns
-        const patterns: string[] = [];
-
-        if (allProjects) {
-            patterns.push(resolve(PROJECTS_DIR, "*", "*.jsonl"));
-
-            if (includeSubagents) {
-                patterns.push(resolve(PROJECTS_DIR, "*", "*", "subagents", "*.jsonl"));
-            }
-        } else {
-            // Determine search directory
-            const baseDir = project
-                ? resolve(PROJECTS_DIR, encodedProjectDir(project))
-                : resolve(PROJECTS_DIR, encodedProjectDir());
-
-            if (existsSync(baseDir)) {
-                patterns.push(resolve(baseDir, "*.jsonl"));
-
-                if (includeSubagents) {
-                    patterns.push(resolve(baseDir, "*", "subagents", "*.jsonl"));
-                }
-            } else if (project) {
-                // Fallback: glob for any dir containing the project name
-                patterns.push(`${PROJECTS_DIR}/*${project}*/*.jsonl`);
-
-                if (includeSubagents) {
-                    patterns.push(`${PROJECTS_DIR}/*${project}*/*/subagents/*.jsonl`);
-                }
-            }
-        }
-
-        if (patterns.length === 0) {
-            return [];
-        }
-
-        // Discover files
-        let files: string[] = [];
-        for (const pattern of patterns) {
-            const matched = await glob(pattern, { absolute: true });
-            files.push(...matched);
-        }
-        files = [...new Set(files)];
-
-        // Filter out subagent files if not requested
-        if (!includeSubagents) {
-            files = files.filter((f) => !isSubagentFile(f));
-        }
+        // Discover files using shared discovery layer
+        const projectFilter = project ? encodedProjectDir(project) : undefined;
+        const files = await discoverSessionFiles({
+            project: projectFilter,
+            allProjects,
+            includeSubagents,
+            excludeSubagents: !includeSubagents,
+        });
 
         // Extract lightweight metadata from each file
         const results: SessionInfo[] = [];
@@ -319,14 +281,8 @@ export class ClaudeSession {
                     }
                 }
 
-                // Derive project name from path
-                const pathAfterProjects = filePath.replace(PROJECTS_DIR + sep, "");
-                const encodedDir = pathAfterProjects.split(sep)[0];
-                if (encodedDir) {
-                    // Take the last segment of the decoded path as project name
-                    const parts = encodedDir.split("-").filter(Boolean);
-                    projectName = parts[parts.length - 1] || null;
-                }
+                // Derive project name from encoded path via filesystem-walking resolver
+                projectName = extractProjectName(filePath) || null;
 
                 // Estimate message count from file size instead of re-reading the whole file.
                 // readHeadTailLines already returns all lines for small files.
