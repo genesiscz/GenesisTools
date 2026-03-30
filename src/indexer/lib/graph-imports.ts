@@ -1,5 +1,5 @@
 import { Lang, parse } from "@ast-grep/napi";
-import { ensureDynamicLanguages } from "./ast-languages";
+import { DYNAMIC_LANG_NAMES, ensureDynamicLanguages } from "./ast-languages";
 
 export interface ImportInfo {
     /** Raw module specifier from the source code */
@@ -448,7 +448,9 @@ function extractCSharpImports(source: string): ImportInfo[] {
  * Ruby, Swift, PHP, Kotlin, Scala, C#.
  */
 export async function extractImports(source: string, language: string): Promise<ImportInfo[]> {
-    await ensureDynamicLanguages({ only: [language] });
+    if (DYNAMIC_LANG_NAMES.has(language)) {
+        await ensureDynamicLanguages({ only: [language] });
+    }
 
     switch (language) {
         case "typescript":
