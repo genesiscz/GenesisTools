@@ -105,3 +105,22 @@ export function encodedProjectDir(cwd?: string): string {
     const p = cwd ?? getMainRepoRootSync(process.cwd());
     return `-${p.replace(/^\//, "").replaceAll(sep, "-")}`;
 }
+
+/**
+ * Resolve the current working directory to a project filter string
+ * that matches ~/.claude/projects/ directory names.
+ *
+ * Returns the encoded dir name (e.g. "-Users-jane-Projects-acme-corp-web-app")
+ * if it exists, or falls back to basename(cwd) for partial glob matching.
+ */
+export function resolveProjectFilter(cwd?: string): string | undefined {
+    const encoded = encodedProjectDir(cwd);
+    const projectsDir = resolve(homedir(), ".claude", "projects");
+    const exact = resolve(projectsDir, encoded);
+
+    if (existsSync(exact)) {
+        return encoded;
+    }
+
+    return basename(cwd ?? process.cwd()) || undefined;
+}

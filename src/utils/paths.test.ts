@@ -150,6 +150,41 @@ describe("paths: expandPath", () => {
 });
 
 // ---------------------------------------------------------------------------
+// collapsePath
+// ---------------------------------------------------------------------------
+
+describe("paths: collapsePath", () => {
+    let collapsePath: typeof import("./paths").collapsePath;
+    const home = process.env.HOME || process.env.USERPROFILE || "/mock-home";
+
+    beforeEach(async () => {
+        const mod = await import("./paths");
+        collapsePath = mod.collapsePath;
+    });
+
+    it("collapses home directory to ~", () => {
+        expect(collapsePath(home)).toBe("~");
+    });
+
+    it("collapses paths under home with ~/", () => {
+        expect(collapsePath(`${home}/Projects/foo`)).toBe("~/Projects/foo");
+    });
+
+    it("leaves paths outside home unchanged", () => {
+        expect(collapsePath("/usr/local/bin")).toBe("/usr/local/bin");
+    });
+
+    it("handles home with trailing slash", () => {
+        // homedir() on some platforms may return with trailing slash
+        expect(collapsePath(`${home}/`)).not.toBe(home);
+    });
+
+    it("collapses paths under home with forward slash", () => {
+        expect(collapsePath(`${home}/Projects`)).toBe("~/Projects");
+    });
+});
+
+// ---------------------------------------------------------------------------
 // Windows simulation tests
 // ---------------------------------------------------------------------------
 

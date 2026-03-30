@@ -16,6 +16,7 @@ import { glob } from "glob";
 import {
     invalidateToday as _invalidateToday,
     aggregateDailyStats,
+    clearSessionMetadata,
     type DailyStats,
     type DateRange,
     getAllSessionMetadata,
@@ -31,7 +32,6 @@ import {
     getSessionMetadataByDir,
     invalidateDateRange,
     removeSessionMetadataBatch,
-    resetDatabase,
     type SessionMetadataRecord,
     setCacheMeta,
     type TokenUsage,
@@ -85,10 +85,18 @@ export const PROJECTS_DIR = resolve(CLAUDE_DIR, "projects");
 export async function findConversationFiles(filters: SearchFilters): Promise<string[]> {
     const patterns: string[] = [];
 
+    const isEncodedDir = filters.project?.startsWith("-");
+
     if (filters.project && filters.project !== "all") {
-        // Search specific project
-        const projectPattern = `${PROJECTS_DIR}/*${filters.project}*/**/*.jsonl`;
-        patterns.push(projectPattern);
+        if (isEncodedDir) {
+            // Encoded dir — match exact dir + worktree/variant dirs that share the prefix
+            // e.g. "-Users-Martin-Projects-Foo" also matches "-Users-Martin-Projects-Foo--worktrees-bar"
+            patterns.push(`${PROJECTS_DIR}/${filters.project}/**/*.jsonl`);
+            patterns.push(`${PROJECTS_DIR}/${filters.project}-*/**/*.jsonl`);
+        } else {
+            // Partial name — glob match
+            patterns.push(`${PROJECTS_DIR}/*${filters.project}*/**/*.jsonl`);
+        }
     } else {
         // Search all projects
         patterns.push(`${PROJECTS_DIR}/**/*.jsonl`);
@@ -97,10 +105,16 @@ export async function findConversationFiles(filters: SearchFilters): Promise<str
     if (filters.agentsOnly) {
         // Only subagent files - preserve project scope if specified
         if (filters.project && filters.project !== "all") {
-            // Transform project pattern to agent-specific patterns
             patterns.length = 0;
-            patterns.push(`${PROJECTS_DIR}/*${filters.project}*/subagents/*.jsonl`);
-            patterns.push(`${PROJECTS_DIR}/*${filters.project}*/agent-*.jsonl`);
+            if (isEncodedDir) {
+                patterns.push(`${PROJECTS_DIR}/${filters.project}/subagents/*.jsonl`);
+                patterns.push(`${PROJECTS_DIR}/${filters.project}/agent-*.jsonl`);
+                patterns.push(`${PROJECTS_DIR}/${filters.project}-*/subagents/*.jsonl`);
+                patterns.push(`${PROJECTS_DIR}/${filters.project}-*/agent-*.jsonl`);
+            } else {
+                patterns.push(`${PROJECTS_DIR}/*${filters.project}*/subagents/*.jsonl`);
+                patterns.push(`${PROJECTS_DIR}/*${filters.project}*/agent-*.jsonl`);
+            }
         } else {
             // Search all projects for agents
             patterns.length = 0;
@@ -1342,7 +1356,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
     const cachedVersion = getCacheMeta("metadata_version");
     const reindexed = cachedVersion !== METADATA_VERSION;
     if (reindexed) {
-        resetDatabase();
+        clearSessionMetadata();
         setCacheMeta("metadata_version", METADATA_VERSION);
     }
 
@@ -1478,16 +1492,17 @@ async function findConversationFilesInDir(projectDir: string, excludeSubagents: 
  * Captures: summary, custom-title, sessionId, gitBranch, cwd,
  * full first prompt, and all user message text (capped at 5000 chars).
  */
-async function extractSessionMetadataFromFile(filePath: string, mtime: number): Promise<SessionMetadataRecord | null> {
+export async function extractSessionMetadataFromFile(
+    filePath: string,
+    mtime: number
+): Promise<SessionMetadataRecord | null> {
     const project = extractProjectName(filePath);
     const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
 
     try {
-        // Skip extremely large session files to avoid performance issues
+        // For large files, read only the first N lines to extract metadata
         const fileStat = await stat(filePath);
-        if (fileStat.size > 10 * 1024 * 1024) {
-            return null;
-        }
+        const isLargeFile = fileStat.size > 10 * 1024 * 1024;
 
         const fileStream = createReadStream(filePath);
         const rl = createInterface({ input: fileStream, crlfDelay: Number.POSITIVE_INFINITY });
@@ -1502,10 +1517,17 @@ async function extractSessionMetadataFromFile(filePath: string, mtime: number): 
         const userTexts: string[] = [];
         let userTextLen = 0;
         const USER_TEXT_CAP = 5000;
+        const LINE_LIMIT = isLargeFile ? 200 : Number.POSITIVE_INFINITY;
+        let lineCount = 0;
 
         for await (const line of rl) {
             if (!line.trim()) {
                 continue;
+            }
+
+            lineCount++;
+            if (lineCount > LINE_LIMIT) {
+                break;
             }
 
             try {

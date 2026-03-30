@@ -135,7 +135,8 @@ Sub section content.
         it("preserves heading context in sub-chunks when section exceeds maxTokens", async () => {
             const longParagraphs = Array.from(
                 { length: 20 },
-                (_, i) => `This is paragraph ${i} with enough text to contribute meaningful tokens to the overall section content length.`
+                (_, i) =>
+                    `This is paragraph ${i} with enough text to contribute meaningful tokens to the overall section content length.`
             ).join("\n\n");
             const content = `## Big Section\n\n${longParagraphs}`;
 
@@ -1204,7 +1205,10 @@ import { c } from "./c";
 
     describe("Heading strategy — improved splitting", () => {
         it("preserves heading context in sub-chunks of large sections", async () => {
-            const bigBody = Array.from({ length: 200 }, (_, i) => `Line ${i} of content with enough words to consume tokens.`).join("\n\n");
+            const bigBody = Array.from(
+                { length: 200 },
+                (_, i) => `Line ${i} of content with enough words to consume tokens.`
+            ).join("\n\n");
             const content = `## Big Section\n\n${bigBody}`;
 
             const result = await chunkFile({

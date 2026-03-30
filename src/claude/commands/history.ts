@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import {
     type AssistantMessage,
     type ConversationMessage,
@@ -13,6 +13,7 @@ import {
     type ToolUseBlock,
     type UserMessage,
 } from "@app/claude/lib/history/search";
+import { resolveProjectFilter } from "@app/utils/claude";
 import { SafeJSON } from "@app/utils/json";
 import { PROJECT_ROOT } from "@app/utils/paths";
 import { input, search, select } from "@inquirer/prompts";
@@ -231,13 +232,12 @@ export function registerHistoryCommand(program: Command): void {
                 } else {
                     let project = options.project;
                     if (!project && !options.all) {
-                        const cwd = process.cwd();
-                        const cwdParts = cwd.split(sep);
-                        const projectIndex = cwdParts.findIndex((p: string) => p === "Projects" || p === "projects");
-                        if (projectIndex !== -1 && cwdParts[projectIndex + 1]) {
-                            project = cwdParts[projectIndex + 1];
+                        project = resolveProjectFilter();
+                        if (project) {
+                            // For encoded dirs like "-Users-Martin-Projects-Foo", show just the leaf
+                            const displayName = project.startsWith("-") ? project.split("-").pop() || project : project;
                             console.log(
-                                chalk.dim(`Auto-detected project: ${project} (use --all to search all projects)`)
+                                chalk.dim(`Auto-detected project: ${displayName} (use --all to search all projects)`)
                             );
                         }
                     }

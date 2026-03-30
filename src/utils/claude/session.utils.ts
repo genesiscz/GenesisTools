@@ -98,9 +98,16 @@ export async function readTailBytes(filePath: string, bytes = 8192): Promise<str
     const tail = await file.slice(start, size).text();
     const lines = tail.split("\n").filter((l) => l.trim());
 
-    // First line may be partial if we sliced mid-line — drop it unless we read from start
+    // First line may be partial if we sliced mid-line — drop it unless:
+    // 1. We read from the start of the file
+    // 2. The slice starts exactly on a newline boundary
     if (start > 0 && lines.length > 0) {
-        lines.shift();
+        const prevByte = await file.slice(start - 1, start).text();
+        const startsOnBoundary = tail.startsWith("\n") || prevByte === "\n";
+
+        if (!startsOnBoundary) {
+            lines.shift();
+        }
     }
 
     return lines;

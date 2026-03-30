@@ -7,7 +7,7 @@ import {
     type SessionMetadataRecord,
     searchConversations,
 } from "@app/claude/lib/history/search";
-import { detectCurrentProject, findClaudeCommand } from "@app/utils/claude";
+import { findClaudeCommand, resolveProjectFilter } from "@app/utils/claude";
 import { formatDateTime } from "@app/utils/date";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -110,7 +110,7 @@ interface LoadResult {
 }
 
 async function loadSessions(allProjects: boolean, spinner: Spinner): Promise<LoadResult> {
-    const project = allProjects ? undefined : detectCurrentProject();
+    const project = allProjects ? undefined : resolveProjectFilter();
     const result = await getSessionListing({
         project,
         excludeSubagents: true,
