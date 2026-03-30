@@ -42,11 +42,11 @@ describe("parseBezrealitkyNextData", () => {
                             price: 18000,
                             charges: 3000,
                             currency: "CZK",
-                            "address({\"locale\":\"CS\"})": "Testovací 42, Hradec Králové",
+                            'address({"locale":"CS"})': "Testovací 42, Hradec Králové",
                             gps: { __typename: "GPSPoint", lat: 50.21, lng: 15.83 },
                             reserved: false,
                         },
-                        "ROOT_QUERY": {
+                        ROOT_QUERY: {
                             __typename: "Query",
                             "listAdverts({})": {
                                 __typename: "AdvertList",
@@ -85,7 +85,7 @@ describe("parseBezrealitkyNextData", () => {
                             price: 15000,
                             charges: 2000,
                             currency: "CZK",
-                            "address({\"locale\":\"CS\"})": "Reserved 1, Praha",
+                            'address({"locale":"CS"})': "Reserved 1, Praha",
                             gps: { __typename: "GPSPoint", lat: 50.0, lng: 14.4 },
                             reserved: true,
                         },
