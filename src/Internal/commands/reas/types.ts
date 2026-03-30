@@ -52,6 +52,8 @@ export interface TargetProperty {
     srealityDistrictId: number;
 }
 
+export type ProviderName = "reas" | "sreality" | "ereality" | "bezrealitky" | "mf";
+
 export interface AnalysisFilters {
     estateType: string;
     constructionType: string;
@@ -63,6 +65,11 @@ export interface AnalysisFilters {
         srealityId: number;
         srealityLocality: "district" | "region";
     };
+    priceMin?: number;
+    priceMax?: number;
+    areaMin?: number;
+    areaMax?: number;
+    providers?: ProviderName[];
 }
 
 export interface DateRange {

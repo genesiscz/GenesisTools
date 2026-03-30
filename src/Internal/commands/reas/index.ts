@@ -15,10 +15,12 @@ import { fetchRentalListings } from "./api/sreality-client";
 import { clearCache } from "./cache/index";
 import type { DistrictInfo } from "./data/districts";
 import { getAllDistrictNames, getDistrict, getPrahaDistrictNames, searchDistricts } from "./data/districts";
-import type { AnalysisFilters, DateRange, ReasListing, TargetProperty } from "./types";
+import { resolveAddress } from "./lib/address-resolver";
+import type { AnalysisFilters, DateRange, ProviderName, ReasListing, TargetProperty } from "./types";
 
 interface ReasOptions {
     district?: string;
+    address?: string;
     type?: string;
     disposition?: string;
     periods?: string;
@@ -29,6 +31,11 @@ interface ReasOptions {
     output?: string;
     refresh?: boolean;
     search?: string;
+    priceMin?: string;
+    priceMax?: string;
+    areaMin?: string;
+    areaMax?: string;
+    providers?: string;
 }
 
 const PROPERTY_TYPES: Array<{ value: string; label: string }> = [
@@ -108,16 +115,41 @@ function resolveDistrict(name: string): DistrictInfo {
     }
 
     if (matches.length > 1) {
-        throw new Error(
-            `Ambiguous district "${name}". Matches: ${matches.map((d) => d.name).join(", ")}`
-        );
+        throw new Error(`Ambiguous district "${name}". Matches: ${matches.map((d) => d.name).join(", ")}`);
     }
 
     throw new Error(`Unknown district: "${name}". Use --district with one of: ${getAllDistrictNames().join(", ")}`);
 }
 
+async function resolveDistrictFromAddress(address: string): Promise<DistrictInfo> {
+    const results = await resolveAddress(address);
+
+    if (results.length === 0) {
+        throw new Error(`No district found for address "${address}". Try using --district instead.`);
+    }
+
+    if (results.length === 1) {
+        return results[0].district;
+    }
+
+    const picked = await p.select({
+        message: `Multiple districts found for "${address}"`,
+        options: results.map((r) => ({
+            value: r.district.name,
+            label: `${r.district.name} (${r.municipalityName})`,
+        })),
+    });
+
+    if (p.isCancel(picked)) {
+        p.cancel("Operation cancelled.");
+        process.exit(0);
+    }
+
+    return getDistrict(picked)!;
+}
+
 function hasSufficientFlags(options: ReasOptions): boolean {
-    return !!(options.district && options.type && options.price && options.area);
+    return !!((options.district || options.address) && options.type && options.price && options.area);
 }
 
 async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; target: TargetProperty; refresh: boolean }> {
@@ -128,6 +160,7 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
         options: [
             ...getAllDistrictNames().map((name) => ({ value: name, label: name })),
             { value: "__search__", label: "Search by name..." },
+            { value: "__address__", label: "Search by address (Sreality)..." },
         ],
     });
 
@@ -138,7 +171,43 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
 
     let district: DistrictInfo;
 
-    if (districtName === "__search__") {
+    if (districtName === "__address__") {
+        const addressQuery = await p.text({ message: "Enter address or locality" });
+
+        if (p.isCancel(addressQuery)) {
+            p.cancel("Operation cancelled.");
+            process.exit(0);
+        }
+
+        const spinner = p.spinner();
+        spinner.start("Searching via Sreality...");
+        const addressResults = await resolveAddress(addressQuery);
+        spinner.stop(`Found ${addressResults.length} result(s).`);
+
+        if (addressResults.length === 0) {
+            p.cancel(`No districts found for "${addressQuery}"`);
+            process.exit(1);
+        }
+
+        if (addressResults.length === 1) {
+            district = addressResults[0].district;
+        } else {
+            const picked = await p.select({
+                message: "Select district",
+                options: addressResults.map((r) => ({
+                    value: r.district.name,
+                    label: `${r.district.name} (${r.municipalityName})`,
+                })),
+            });
+
+            if (p.isCancel(picked)) {
+                p.cancel("Operation cancelled.");
+                process.exit(0);
+            }
+
+            district = getDistrict(picked)!;
+        }
+    } else if (districtName === "__search__") {
         const query = await p.text({ message: "Type city/district name" });
 
         if (p.isCancel(query)) {
@@ -296,8 +365,23 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
     return { filters, target, refresh: false };
 }
 
-function buildFromFlags(options: ReasOptions): { filters: AnalysisFilters; target: TargetProperty } {
-    const district = resolveDistrict(options.district!);
+function parseProviders(raw: string | undefined): ProviderName[] | undefined {
+    if (!raw) {
+        return undefined;
+    }
+
+    const valid: ProviderName[] = ["reas", "sreality", "ereality", "bezrealitky", "mf"];
+
+    return raw
+        .split(",")
+        .map((s) => s.trim().toLowerCase() as ProviderName)
+        .filter((name) => valid.includes(name));
+}
+
+async function buildFromFlags(options: ReasOptions): Promise<{ filters: AnalysisFilters; target: TargetProperty }> {
+    const district = options.address
+        ? await resolveDistrictFromAddress(options.address)
+        : resolveDistrict(options.district!);
     const constructionType = options.type!;
     const disposition = options.disposition && options.disposition !== "all" ? options.disposition : undefined;
     const dateRanges = parsePeriods(options.periods);
@@ -308,6 +392,11 @@ function buildFromFlags(options: ReasOptions): { filters: AnalysisFilters; targe
         disposition,
         periods: dateRanges,
         district,
+        priceMin: options.priceMin ? Number(options.priceMin) : undefined,
+        priceMax: options.priceMax ? Number(options.priceMax) : undefined,
+        areaMin: options.areaMin ? Number(options.areaMin) : undefined,
+        areaMax: options.areaMax ? Number(options.areaMax) : undefined,
+        providers: parseProviders(options.providers),
     };
 
     const target: TargetProperty = {
@@ -325,6 +414,32 @@ function buildFromFlags(options: ReasOptions): { filters: AnalysisFilters; targe
     return { filters, target };
 }
 
+function isProviderEnabled(filters: AnalysisFilters, provider: ProviderName): boolean {
+    return !filters.providers || filters.providers.includes(provider);
+}
+
+function applyListingFilters(listings: ReasListing[], filters: AnalysisFilters): ReasListing[] {
+    let result = listings;
+
+    if (filters.priceMin) {
+        result = result.filter((l) => l.soldPrice >= filters.priceMin!);
+    }
+
+    if (filters.priceMax) {
+        result = result.filter((l) => l.soldPrice <= filters.priceMax!);
+    }
+
+    if (filters.areaMin) {
+        result = result.filter((l) => l.utilityArea >= filters.areaMin!);
+    }
+
+    if (filters.areaMax) {
+        result = result.filter((l) => l.utilityArea <= filters.areaMax!);
+    }
+
+    return result;
+}
+
 async function fetchAndAnalyze(
     filters: AnalysisFilters,
     target: TargetProperty,
@@ -334,20 +449,26 @@ async function fetchAndAnalyze(
     const spinner = p.spinner();
     spinner.start("Fetching sold data from reas.cz...");
 
-    const allListings: ReasListing[] = [];
+    let allListings: ReasListing[] = [];
 
-    for (const period of filters.periods) {
-        const listings = await fetchSoldListings(filters, period, refresh);
-        allListings.push(...listings);
+    if (isProviderEnabled(filters, "reas")) {
+        for (const period of filters.periods) {
+            const listings = await fetchSoldListings(filters, period, refresh);
+            allListings.push(...listings);
+        }
     }
+
+    allListings = applyListingFilters(allListings, filters);
 
     spinner.message(`Found ${allListings.length} sold listings. Fetching rental data from sreality.cz...`);
 
-    const rentalListings = await fetchRentalListings(filters, refresh);
+    const rentalListings = isProviderEnabled(filters, "sreality") ? await fetchRentalListings(filters, refresh) : [];
 
     spinner.message(`Found ${rentalListings.length} rentals. Loading MF rental benchmarks...`);
 
-    const mfBenchmarks = await fetchMfRentalData(filters.district.name, refresh);
+    const mfBenchmarks = isProviderEnabled(filters, "mf")
+        ? await fetchMfRentalData(filters.district.name, refresh)
+        : [];
 
     spinner.stop(
         `Data fetched: ${allListings.length} sold, ${rentalListings.length} rentals, ${mfBenchmarks.length} MF benchmarks.`
@@ -474,7 +595,7 @@ async function runReasAnalysis(options: ReasOptions): Promise<void> {
     }
 
     if (hasSufficientFlags(options)) {
-        const { filters, target } = buildFromFlags(options);
+        const { filters, target } = await buildFromFlags(options);
         await fetchAndAnalyze(filters, target, !!options.refresh, options.output);
         return;
     }
@@ -488,6 +609,7 @@ export function registerReasCommand(program: Command): void {
         .command("reas")
         .description("Real estate investment analyzer (reas.cz + sreality + MF cenová mapa)")
         .option("--district <name>", "District name (e.g. 'Hradec Králové')")
+        .option("--address <query>", "Resolve district from address via Sreality suggest")
         .option("--type <type>", "Property type: panel, brick, house")
         .option("--disposition <disp>", "Disposition (e.g. 3+1, 3+kk, 2+1)")
         .option("--periods <periods>", "Comma-separated periods (e.g. 2024,2025)")
@@ -496,6 +618,11 @@ export function registerReasCommand(program: Command): void {
         .option("--rent <czk>", "Expected monthly rent in CZK")
         .option("--monthly-costs <czk>", "Monthly costs (fond oprav + utilities) in CZK")
         .option("--search <query>", "Search sold listings by address (e.g. 'Gebauerova')")
+        .option("--price-min <czk>", "Minimum sold price filter")
+        .option("--price-max <czk>", "Maximum sold price filter")
+        .option("--area-min <m2>", "Minimum area filter")
+        .option("--area-max <m2>", "Maximum area filter")
+        .option("--providers <list>", "Comma-separated providers (reas,sreality,mf)")
         .option("-o, --output <path>", "Write report to file")
         .option("--refresh", "Force re-fetch (ignore cache)")
         .action(async (opts: ReasOptions) => {
