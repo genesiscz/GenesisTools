@@ -1203,11 +1203,11 @@ import { c } from "./c";
     });
 
     describe("Heading strategy — improved splitting", () => {
-        it("preserves heading context in sub-chunks of large sections", () => {
+        it("preserves heading context in sub-chunks of large sections", async () => {
             const bigBody = Array.from({ length: 200 }, (_, i) => `Line ${i} of content with enough words to consume tokens.`).join("\n\n");
             const content = `## Big Section\n\n${bigBody}`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "doc.md",
                 content,
                 strategy: "heading",
@@ -1223,13 +1223,13 @@ import { c } from "./c";
             }
         });
 
-        it("splits at paragraph boundaries, not mid-paragraph", () => {
+        it("splits at paragraph boundaries, not mid-paragraph", async () => {
             const para1 = "First paragraph with several words that make it meaningful.";
             const para2 = "Second paragraph also has content that should stay together.";
             const para3 = "Third paragraph is the final one in this section.";
             const content = `## Section\n\n${para1}\n\n${para2}\n\n${para3}`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "doc.md",
                 content,
                 strategy: "heading",
@@ -1255,10 +1255,10 @@ import { c } from "./c";
             }
         });
 
-        it("names preamble content before first heading", () => {
+        it("names preamble content before first heading", async () => {
             const content = `This is preamble text before any heading.\n\nMore preamble.\n\n## First Heading\n\nContent here.`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "doc.md",
                 content,
                 strategy: "heading",
@@ -1272,10 +1272,10 @@ import { c } from "./c";
             expect(preambleChunk.content).toContain("preamble text");
         });
 
-        it("keeps small sections as single chunks", () => {
+        it("keeps small sections as single chunks", async () => {
             const content = `## Small Section\n\nJust a few words here.`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "doc.md",
                 content,
                 strategy: "heading",
@@ -1287,10 +1287,10 @@ import { c } from "./c";
             expect(result.chunks[0].name).not.toContain("(part");
         });
 
-        it("handles markdown with no headings at all", () => {
+        it("handles markdown with no headings at all", async () => {
             const content = `Just plain text.\n\nWith some paragraphs.\n\nAnd nothing else.`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "doc.md",
                 content,
                 strategy: "heading",

@@ -433,7 +433,11 @@ export function calculateRelevanceScore(
 export function extractCommitHashes(messages: ConversationMessage[]): string[] {
     const hashes = new Set<string>();
     const commitPattern = /\b([a-f0-9]{7,40})\b/gi;
-    const gitCommitPattern = /git commit|committed|Commit:/i;
+    // Match contexts where commit hashes appear:
+    // - "git commit" / "committed" / "Commit:" — commit commands/messages
+    // - "[branch hash]" — git commit output format
+    // - "hash msg" lines — git log --oneline format (7+ hex chars at start of line)
+    const gitCommitPattern = /git commit|committed|Commit:|^\[[^\]]+\s+[a-f0-9]{7,40}\]|\b[a-f0-9]{7,40}\b\s+\S/im;
 
     for (const msg of messages) {
         if (msg.type === "user") {
@@ -579,7 +583,12 @@ async function processFileForCommit(
 
     const commitHashes = extractCommitHashes(messages);
 
-    if (!commitHashes.some((h) => h.toLowerCase().startsWith(hashLower))) {
+    if (
+        !commitHashes.some((h) => {
+            const hLower = h.toLowerCase();
+            return hLower.startsWith(hashLower) || hashLower.startsWith(hLower);
+        })
+    ) {
         return null;
     }
 
