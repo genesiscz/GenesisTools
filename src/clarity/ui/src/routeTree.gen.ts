@@ -19,6 +19,7 @@ import { Route as ApiUpdateAuthRouteImport } from './routes/api/update-auth'
 import { Route as ApiTimelogEntriesRouteImport } from './routes/api/timelog-entries'
 import { Route as ApiTestConnectionRouteImport } from './routes/api/test-connection'
 import { Route as ApiStatusRouteImport } from './routes/api/status'
+import { Route as ApiPostNoteRouteImport } from './routes/api/post-note'
 import { Route as ApiMoveMappingRouteImport } from './routes/api/move-mapping'
 import { Route as ApiMappingsRouteImport } from './routes/api/mappings'
 import { Route as ApiExportRouteImport } from './routes/api/export'
@@ -77,6 +78,11 @@ const ApiTestConnectionRoute = ApiTestConnectionRouteImport.update({
 const ApiStatusRoute = ApiStatusRouteImport.update({
   id: '/api/status',
   path: '/api/status',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPostNoteRoute = ApiPostNoteRouteImport.update({
+  id: '/api/post-note',
+  path: '/api/post-note',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiMoveMappingRoute = ApiMoveMappingRouteImport.update({
@@ -138,6 +144,7 @@ export interface FileRoutesByFullPath {
   '/api/export': typeof ApiExportRoute
   '/api/mappings': typeof ApiMappingsRoute
   '/api/move-mapping': typeof ApiMoveMappingRoute
+  '/api/post-note': typeof ApiPostNoteRoute
   '/api/status': typeof ApiStatusRoute
   '/api/test-connection': typeof ApiTestConnectionRoute
   '/api/timelog-entries': typeof ApiTimelogEntriesRoute
@@ -159,6 +166,7 @@ export interface FileRoutesByTo {
   '/api/export': typeof ApiExportRoute
   '/api/mappings': typeof ApiMappingsRoute
   '/api/move-mapping': typeof ApiMoveMappingRoute
+  '/api/post-note': typeof ApiPostNoteRoute
   '/api/status': typeof ApiStatusRoute
   '/api/test-connection': typeof ApiTestConnectionRoute
   '/api/timelog-entries': typeof ApiTimelogEntriesRoute
@@ -181,6 +189,7 @@ export interface FileRoutesById {
   '/api/export': typeof ApiExportRoute
   '/api/mappings': typeof ApiMappingsRoute
   '/api/move-mapping': typeof ApiMoveMappingRoute
+  '/api/post-note': typeof ApiPostNoteRoute
   '/api/status': typeof ApiStatusRoute
   '/api/test-connection': typeof ApiTestConnectionRoute
   '/api/timelog-entries': typeof ApiTimelogEntriesRoute
@@ -204,6 +213,7 @@ export interface FileRouteTypes {
     | '/api/export'
     | '/api/mappings'
     | '/api/move-mapping'
+    | '/api/post-note'
     | '/api/status'
     | '/api/test-connection'
     | '/api/timelog-entries'
@@ -225,6 +235,7 @@ export interface FileRouteTypes {
     | '/api/export'
     | '/api/mappings'
     | '/api/move-mapping'
+    | '/api/post-note'
     | '/api/status'
     | '/api/test-connection'
     | '/api/timelog-entries'
@@ -246,6 +257,7 @@ export interface FileRouteTypes {
     | '/api/export'
     | '/api/mappings'
     | '/api/move-mapping'
+    | '/api/post-note'
     | '/api/status'
     | '/api/test-connection'
     | '/api/timelog-entries'
@@ -268,6 +280,7 @@ export interface RootRouteChildren {
   ApiExportRoute: typeof ApiExportRoute
   ApiMappingsRoute: typeof ApiMappingsRoute
   ApiMoveMappingRoute: typeof ApiMoveMappingRoute
+  ApiPostNoteRoute: typeof ApiPostNoteRoute
   ApiStatusRoute: typeof ApiStatusRoute
   ApiTestConnectionRoute: typeof ApiTestConnectionRoute
   ApiTimelogEntriesRoute: typeof ApiTimelogEntriesRoute
@@ -349,6 +362,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiStatusRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/post-note': {
+      id: '/api/post-note'
+      path: '/api/post-note'
+      fullPath: '/api/post-note'
+      preLoaderRoute: typeof ApiPostNoteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/move-mapping': {
       id: '/api/move-mapping'
       path: '/api/move-mapping'
@@ -428,6 +448,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiExportRoute: ApiExportRoute,
   ApiMappingsRoute: ApiMappingsRoute,
   ApiMoveMappingRoute: ApiMoveMappingRoute,
+  ApiPostNoteRoute: ApiPostNoteRoute,
   ApiStatusRoute: ApiStatusRoute,
   ApiTestConnectionRoute: ApiTestConnectionRoute,
   ApiTimelogEntriesRoute: ApiTimelogEntriesRoute,

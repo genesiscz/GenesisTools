@@ -2,8 +2,10 @@ import { SafeJSON } from "@app/utils/json";
 import type {
     ApiDebugInfo,
     CarouselEntry,
+    CreateTimesheetNoteRequest,
     TimesheetAppResponse,
     TimesheetResponse,
+    TimesheetWithNotesResponse,
     UpdateTimeEntryRequest,
     UpdateTimesheetStatusRequest,
 } from "./types/index.js";
@@ -141,6 +143,40 @@ export class ClarityApi {
         }
 
         return { data: responseBody, debug };
+    }
+
+    /** Fetch timesheet with expanded notes */
+    async getTimesheetWithNotes(timesheetId: number): Promise<TimesheetWithNotesResponse> {
+        const expand = encodeURIComponent(
+            "(timesheetNotes=(fields=(noteText,createdDate,author,lastUpdatedDate,resourceName,resourceFirstName,resourceId,noteDate),limit=500,sort=(lastUpdatedDate desc)))"
+        );
+        return this.request<TimesheetWithNotesResponse>(`/timesheets/${timesheetId}?expand=${expand}`);
+    }
+
+    /** Post a note to a timesheet. Returns void — API returns 200 with empty body. */
+    async createTimesheetNote(timesheetId: number, noteText: string, authorUserId: number): Promise<void> {
+        const url = `${this.config.baseUrl}/ppm/rest/v1/timesheets/${timesheetId}/timesheetNotes`;
+        const body: CreateTimesheetNoteRequest = { noteText, author: authorUserId };
+
+        const response = await fetch(url, {
+            method: "POST",
+            signal: AbortSignal.timeout(30_000),
+            tls: { rejectUnauthorized: false },
+            headers: {
+                Accept: "application/json, text/plain, */*",
+                "Content-Type": "application/json;charset=UTF-8",
+                authToken: this.config.authToken,
+                "Cache-Control": "no-cache",
+                "x-api-full-response": "true",
+                Cookie: this.config.cookies || `sessionId=${this.config.sessionId}`,
+            },
+            body: SafeJSON.stringify(body),
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Failed to post timesheet note (${response.status}): ${text.slice(0, 500)}`);
+        }
     }
 
     /** Submit timesheet (status=1) */
