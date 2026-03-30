@@ -30,7 +30,7 @@ interface FormatOptions {
 export function toDisplayPath(filePath: string, indexName: string, baseDirs?: Map<string, string>): string {
     const baseDir = baseDirs?.get(indexName);
 
-    if (baseDir && filePath.startsWith("/")) {
+    if (baseDir && filePath.startsWith(baseDir)) {
         return relative(baseDir, filePath);
     }
 

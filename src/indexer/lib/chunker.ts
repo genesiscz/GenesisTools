@@ -642,25 +642,27 @@ function splitByParagraphs(opts: {
             return;
         }
 
-        let chunkContent = accumulated.join("\n\n");
+        const sourceContent = accumulated.join("\n\n");
 
-        if (chunkContent.trim().length === 0) {
+        if (sourceContent.trim().length === 0) {
             return;
         }
 
+        let chunkContent = sourceContent;
+
         // Prepend heading to sub-chunks after the first for context
         if (chunks.length > 0 && headingLine) {
-            chunkContent = `${headingLine}\n\n${chunkContent}`;
+            chunkContent = `${headingLine}\n\n${sourceContent}`;
         }
 
-        const lineCount = chunkContent.split("\n").length;
+        const sourceLineCount = sourceContent.split("\n").length;
         const partLabel = chunks.length > 0 ? ` (part ${chunks.length + 1})` : "";
 
         chunks.push({
             id: xxhash(chunkContent),
             filePath,
             startLine: accStartLine,
-            endLine: accStartLine + lineCount - 1,
+            endLine: accStartLine + sourceLineCount - 1,
             content: chunkContent,
             kind,
             name: name ? `${name}${partLabel}` : undefined,
@@ -673,6 +675,23 @@ function splitByParagraphs(opts: {
     let lineOffset = startLine;
 
     for (const para of paragraphs) {
+        // If a single paragraph exceeds maxTokens, fall back to line splitting
+        if (accumulated.length === 0 && estimateTokens(para) > maxTokens) {
+            const paraChunks = splitChunkByLines({
+                content: headingLine ? `${headingLine}\n\n${para}` : para,
+                filePath,
+                startLine: lineOffset,
+                kind,
+                name,
+                language: "markdown",
+                maxTokens,
+            });
+            chunks.push(...paraChunks);
+            lineOffset += para.split("\n").length + 1;
+            accStartLine = lineOffset;
+            continue;
+        }
+
         const candidate = [...accumulated, para].join("\n\n");
         const withHeading = chunks.length > 0 && headingLine ? `${headingLine}\n\n${candidate}` : candidate;
 
@@ -682,7 +701,7 @@ function splitByParagraphs(opts: {
         }
 
         accumulated.push(para);
-        lineOffset += para.split("\n").length + 1; // +1 for the blank line separator
+        lineOffset += para.split("\n").length + 1;
     }
 
     flush();

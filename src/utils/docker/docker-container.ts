@@ -31,12 +31,7 @@ export class DockerContainer {
 
     async isImagePresent(): Promise<boolean> {
         try {
-            const stdout = await this.run([
-                "images",
-                "--format",
-                "{{.Repository}}:{{.Tag}}",
-                this.config.image,
-            ]);
+            const stdout = await this.run(["images", "--format", "{{.Repository}}:{{.Tag}}", this.config.image]);
             return stdout.includes(this.config.image);
         } catch {
             return false;
@@ -53,12 +48,12 @@ export class DockerContainer {
 
             if (msg.includes("timed out")) {
                 throw new Error(
-                    `Image download timed out after 10 minutes. Check your network connection and try again.`,
+                    `Image download timed out after 10 minutes. Check your network connection and try again.`
                 );
             }
 
             throw new Error(
-                `Failed to download image ${this.config.image}. Check your network connection and available disk space.\nDetails: ${msg}`,
+                `Failed to download image ${this.config.image}. Check your network connection and available disk space.\nDetails: ${msg}`
             );
         }
     }
@@ -68,11 +63,11 @@ export class DockerContainer {
             const stdout = await this.run([
                 "ps",
                 "--filter",
-                `name=${this.config.name}`,
+                `name=^${this.config.name}$`,
                 "--format",
                 "{{.Names}}",
             ]);
-            return stdout.trim().includes(this.config.name);
+            return stdout.trim().split("\n").includes(this.config.name);
         } catch {
             return false;
         }
@@ -84,11 +79,11 @@ export class DockerContainer {
                 "ps",
                 "-a",
                 "--filter",
-                `name=${this.config.name}`,
+                `name=^${this.config.name}$`,
                 "--format",
                 "{{.Names}}",
             ]);
-            return stdout.trim().includes(this.config.name);
+            return stdout.trim().split("\n").includes(this.config.name);
         } catch {
             return false;
         }
@@ -136,7 +131,7 @@ export class DockerContainer {
             const msg = error instanceof Error ? error.message : String(error);
             const portList = this.config.ports.map((p) => p.host).join(", ");
             throw new Error(
-                `Failed to start container ${this.config.name}. Are ports ${portList} already in use?\nDetails: ${msg}`,
+                `Failed to start container ${this.config.name}. Are ports ${portList} already in use?\nDetails: ${msg}`
             );
         }
 
@@ -156,7 +151,7 @@ export class DockerContainer {
 
         if (!(await this.isDockerAvailable())) {
             throw new Error(
-                "Docker is not available. Please install Docker Desktop (https://www.docker.com/products/docker-desktop/) and make sure it is running.",
+                "Docker is not available. Please install Docker Desktop (https://www.docker.com/products/docker-desktop/) and make sure it is running."
             );
         }
 
@@ -189,11 +184,16 @@ export class DockerContainer {
             stderr: "pipe",
         });
 
+        let timer: Timer | undefined;
+
         const result = await (timeoutMs > 0
             ? Promise.race([
-                  proc.exited,
+                  proc.exited.then((code) => {
+                      clearTimeout(timer);
+                      return code;
+                  }),
                   new Promise<never>((_resolve, reject) => {
-                      setTimeout(() => {
+                      timer = setTimeout(() => {
                           proc.kill();
                           reject(new Error(`docker ${args[0]} timed out after ${timeoutMs / 1000}s`));
                       }, timeoutMs);
@@ -227,7 +227,7 @@ export class DockerContainer {
         }
 
         throw new Error(
-            `${this.config.name} did not become ready at ${this.config.healthUrl} within ${(retries * delayMs) / 1000}s`,
+            `${this.config.name} did not become ready at ${this.config.healthUrl} within ${(retries * delayMs) / 1000}s`
         );
     }
 }

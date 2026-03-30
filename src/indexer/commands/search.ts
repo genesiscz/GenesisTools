@@ -104,7 +104,7 @@ export function registerSearchCommand(program: Command): void {
                         const cwd = process.cwd();
                         const cwdMatch = allMeta.find((m) => {
                             const baseDir = m.config.baseDir;
-                            return cwd === baseDir || cwd.startsWith(baseDir + "/");
+                            return cwd === baseDir || cwd.startsWith(`${baseDir}/`);
                         });
 
                         if (cwdMatch) {

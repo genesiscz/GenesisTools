@@ -90,11 +90,12 @@ export class QdrantVectorStore implements VectorStore {
      */
     async init(): Promise<void> {
         if (!this.client) {
-            const url = this.config.url ?? "http://localhost:16335";
+            let url = this.config.url;
 
-            if (url.includes("localhost") || url.includes("127.0.0.1")) {
-                const { ensureQdrantReady } = await import("@app/utils/docker/qdrant");
+            if (!url || url.includes("localhost") || url.includes("127.0.0.1")) {
+                const { ensureQdrantReady, getQdrantUrl } = await import("@app/utils/docker/qdrant");
                 await ensureQdrantReady();
+                url = url ?? getQdrantUrl();
             }
 
             const { QdrantClient } = await import("@qdrant/js-client-rest");
