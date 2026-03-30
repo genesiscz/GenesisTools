@@ -608,103 +608,110 @@ function chunkByLine(opts: { filePath: string; content: string; maxTokens: numbe
     return { chunks, language, parser: "line" };
 }
 
-// ─── Paragraph-aware splitting for markdown ─────────────────────
+// ─── Split content by paragraph boundaries ──────────────────────
 function splitByParagraphs(opts: {
     content: string;
     filePath: string;
     startLine: number;
     kind: string;
     name?: string;
-    maxTokens: number;
+    language?: string;
     headingLine?: string;
+    maxTokens: number;
 }): ChunkRecord[] {
-    const { content, filePath, startLine, kind, name, maxTokens, headingLine } = opts;
+    const { content, filePath, startLine, kind, name, language, headingLine, maxTokens } = opts;
+
     const paragraphs = content.split(/\n\n+/);
-
-    if (paragraphs.length <= 1) {
-        return splitChunkByLines({
-            content,
-            filePath,
-            startLine,
-            kind,
-            name,
-            language: "markdown",
-            maxTokens,
-        });
-    }
-
     const chunks: ChunkRecord[] = [];
-    let accumulated: string[] = [];
-    let accStartLine = startLine;
+    let accumulatedParagraphs: string[] = [];
+    let accumulatedStartLine = startLine;
+    let lineOffset = startLine;
 
-    function flush(): void {
-        if (accumulated.length === 0) {
+    function flushAccumulated(): void {
+        if (accumulatedParagraphs.length === 0) {
             return;
         }
 
-        const sourceContent = accumulated.join("\n\n");
+        let chunkContent = accumulatedParagraphs.join("\n\n");
 
-        if (sourceContent.trim().length === 0) {
+        if (chunkContent.trim().length === 0) {
+            accumulatedParagraphs = [];
             return;
         }
 
-        let chunkContent = sourceContent;
-
-        // Prepend heading to sub-chunks after the first for context
-        if (chunks.length > 0 && headingLine) {
-            chunkContent = `${headingLine}\n\n${sourceContent}`;
+        if (headingLine && chunks.length > 0) {
+            chunkContent = `${headingLine}\n\n${chunkContent}`;
         }
 
-        const sourceLineCount = sourceContent.split("\n").length;
-        const partLabel = chunks.length > 0 ? ` (part ${chunks.length + 1})` : "";
-
+        const chunkLines = chunkContent.split("\n");
         chunks.push({
             id: xxhash(chunkContent),
             filePath,
-            startLine: accStartLine,
-            endLine: accStartLine + sourceLineCount - 1,
+            startLine: accumulatedStartLine,
+            endLine: accumulatedStartLine + chunkLines.length - 1,
             content: chunkContent,
             kind,
-            name: name ? `${name}${partLabel}` : undefined,
-            language: "markdown",
+            name: chunks.length > 0 ? (name ? `${name} (part ${chunks.length + 1})` : undefined) : name,
+            language,
         });
 
-        accumulated = [];
+        accumulatedParagraphs = [];
     }
 
-    let lineOffset = startLine;
+    for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
+        const paragraph = paragraphs[pIdx];
+        const paragraphLines = paragraph.split("\n").length;
+        const separatorLines = pIdx > 0 ? 1 : 0;
 
-    for (const para of paragraphs) {
-        // If a single paragraph exceeds maxTokens, fall back to line splitting
-        if (accumulated.length === 0 && estimateTokens(para) > maxTokens) {
-            const paraChunks = splitChunkByLines({
-                content: headingLine ? `${headingLine}\n\n${para}` : para,
+        if (accumulatedParagraphs.length === 0) {
+            accumulatedStartLine = lineOffset;
+        }
+
+        // Single paragraph exceeds maxTokens — fall back to line splitting for this paragraph
+        const prefixForEstimate = headingLine && (chunks.length > 0 || accumulatedParagraphs.length > 0)
+            ? `${headingLine}\n\n`
+            : "";
+
+        if (estimateTokens(prefixForEstimate + paragraph) > maxTokens) {
+            flushAccumulated();
+
+            const contentToSplit = headingLine && chunks.length > 0
+                ? `${headingLine}\n\n${paragraph}`
+                : paragraph;
+
+            const subChunks = splitChunkByLines({
+                content: contentToSplit,
                 filePath,
                 startLine: lineOffset,
                 kind,
                 name,
-                language: "markdown",
+                language,
                 maxTokens,
             });
-            chunks.push(...paraChunks);
-            lineOffset += para.split("\n").length + 1;
-            accStartLine = lineOffset;
+
+            chunks.push(...subChunks);
+            lineOffset += paragraphLines + separatorLines;
             continue;
         }
 
-        const candidate = [...accumulated, para].join("\n\n");
-        const withHeading = chunks.length > 0 && headingLine ? `${headingLine}\n\n${candidate}` : candidate;
+        const candidateContent = accumulatedParagraphs.length > 0
+            ? `${accumulatedParagraphs.join("\n\n")}\n\n${paragraph}`
+            : paragraph;
 
-        if (estimateTokens(withHeading) > maxTokens && accumulated.length > 0) {
-            flush();
-            accStartLine = lineOffset;
+        const candidateWithHeading = headingLine && chunks.length > 0
+            ? `${headingLine}\n\n${candidateContent}`
+            : candidateContent;
+
+        if (estimateTokens(candidateWithHeading) > maxTokens) {
+            flushAccumulated();
+            accumulatedStartLine = lineOffset;
         }
 
-        accumulated.push(para);
-        lineOffset += para.split("\n").length + 1;
+        accumulatedParagraphs.push(paragraph);
+        lineOffset += paragraphLines + separatorLines;
     }
 
-    flush();
+    flushAccumulated();
 
     return chunks;
 }
@@ -715,8 +722,8 @@ function chunkByHeading(opts: { filePath: string; content: string; maxTokens: nu
     const lines = content.split("\n");
     const chunks: ChunkRecord[] = [];
     let currentLines: string[] = [];
-    let currentName: string | undefined;
     let currentHeadingLine: string | undefined;
+    let currentName: string | undefined;
     let currentStartLine = 0;
     let seenHeading = false;
 
@@ -732,11 +739,12 @@ function chunkByHeading(opts: { filePath: string; content: string; maxTokens: nu
         }
 
         if (estimateTokens(sectionContent) <= maxTokens) {
+            const sectionLines = sectionContent.split("\n");
             chunks.push({
                 id: xxhash(sectionContent),
                 filePath,
                 startLine: currentStartLine,
-                endLine: currentStartLine + currentLines.length - 1,
+                endLine: currentStartLine + sectionLines.length - 1,
                 content: sectionContent,
                 kind: "heading",
                 name: currentName,
@@ -751,8 +759,9 @@ function chunkByHeading(opts: { filePath: string; content: string; maxTokens: nu
             startLine: currentStartLine,
             kind: "heading",
             name: currentName,
-            maxTokens,
+            language: "markdown",
             headingLine: currentHeadingLine,
+            maxTokens,
         });
 
         chunks.push(...subChunks);
@@ -765,14 +774,13 @@ function chunkByHeading(opts: { filePath: string; content: string; maxTokens: nu
         if (headingMatch) {
             flushSection();
             currentLines = [line];
-            currentName = headingMatch[2].trim();
             currentHeadingLine = line;
+            currentName = headingMatch[2].trim();
             currentStartLine = i;
             seenHeading = true;
         } else {
-            // Name preamble content (before first heading)
-            if (!seenHeading && !currentName && line.trim().length > 0) {
-                currentName = line.trim().length > 50 ? `${line.trim().slice(0, 50)}...` : line.trim();
+            if (!seenHeading && currentLines.length === 0 && line.trim().length > 0 && currentName === undefined) {
+                currentName = line.trim().slice(0, 50) || "(preamble)";
             }
 
             currentLines.push(line);

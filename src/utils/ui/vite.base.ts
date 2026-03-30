@@ -80,7 +80,7 @@ export function createDashboardViteConfig({
             port,
             host: true,
             fs: {
-                allow: [root, resolve(__dirname, "..")],
+                allow: [root, resolve(__dirname, "../../..")],
             },
             watch: {
                 ignored: ["**/routeTree.gen.ts"],

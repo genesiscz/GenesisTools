@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve, sep } from "node:path";
 import {
@@ -15,6 +14,7 @@ import {
     type UserMessage,
 } from "@app/claude/lib/history/search";
 import { SafeJSON } from "@app/utils/json";
+import { PROJECT_ROOT } from "@app/utils/paths";
 import { input, search, select } from "@inquirer/prompts";
 import { spawn } from "bun";
 import chalk from "chalk";
@@ -334,26 +334,22 @@ export function registerHistoryCommand(program: Command): void {
         .action(async (options) => {
             const dashboardDir = resolve(import.meta.dir, "../../claude-history-dashboard");
 
-            if (!existsSync(resolve(dashboardDir, "node_modules"))) {
-                console.log(chalk.cyan("Installing dashboard dependencies..."));
-                const install = spawn({
-                    cmd: ["bun", "install"],
-                    cwd: dashboardDir,
-                    stdio: ["inherit", "inherit", "inherit"],
-                });
-                if ((await install.exited) !== 0) {
-                    console.error(chalk.red("Failed to install dependencies."));
-                    process.exit(1);
-                }
-            }
-
             console.log(chalk.cyan("Starting Claude History Dashboard..."));
             console.log(chalk.dim(`   Port: ${options.port}`));
             console.log();
 
             const proc = spawn({
-                cmd: ["bun", "run", "dev", "--port", options.port],
-                cwd: dashboardDir,
+                cmd: [
+                    "bun",
+                    "--bun",
+                    "vite",
+                    "dev",
+                    "-c",
+                    resolve(dashboardDir, "vite.config.ts"),
+                    "--port",
+                    options.port,
+                ],
+                cwd: PROJECT_ROOT,
                 stdio: ["inherit", "inherit", "inherit"],
             });
 
