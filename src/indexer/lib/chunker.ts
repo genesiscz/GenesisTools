@@ -608,6 +608,88 @@ function chunkByLine(opts: { filePath: string; content: string; maxTokens: numbe
     return { chunks, language, parser: "line" };
 }
 
+// ─── Paragraph-aware splitting for markdown ─────────────────────
+function splitByParagraphs(opts: {
+    content: string;
+    filePath: string;
+    startLine: number;
+    kind: string;
+    name?: string;
+    maxTokens: number;
+    headingLine?: string;
+}): ChunkRecord[] {
+    const { content, filePath, startLine, kind, name, maxTokens, headingLine } = opts;
+    const paragraphs = content.split(/\n\n+/);
+
+    if (paragraphs.length <= 1) {
+        return splitChunkByLines({
+            content,
+            filePath,
+            startLine,
+            kind,
+            name,
+            language: "markdown",
+            maxTokens,
+        });
+    }
+
+    const chunks: ChunkRecord[] = [];
+    let accumulated: string[] = [];
+    let accStartLine = startLine;
+
+    function flush(): void {
+        if (accumulated.length === 0) {
+            return;
+        }
+
+        let chunkContent = accumulated.join("\n\n");
+
+        if (chunkContent.trim().length === 0) {
+            return;
+        }
+
+        // Prepend heading to sub-chunks after the first for context
+        if (chunks.length > 0 && headingLine) {
+            chunkContent = `${headingLine}\n\n${chunkContent}`;
+        }
+
+        const lineCount = chunkContent.split("\n").length;
+        const partLabel = chunks.length > 0 ? ` (part ${chunks.length + 1})` : "";
+
+        chunks.push({
+            id: xxhash(chunkContent),
+            filePath,
+            startLine: accStartLine,
+            endLine: accStartLine + lineCount - 1,
+            content: chunkContent,
+            kind,
+            name: name ? `${name}${partLabel}` : undefined,
+            language: "markdown",
+        });
+
+        accumulated = [];
+    }
+
+    let lineOffset = startLine;
+
+    for (const para of paragraphs) {
+        const candidate = [...accumulated, para].join("\n\n");
+        const withHeading = chunks.length > 0 && headingLine ? `${headingLine}\n\n${candidate}` : candidate;
+
+        if (estimateTokens(withHeading) > maxTokens && accumulated.length > 0) {
+            flush();
+            accStartLine = lineOffset;
+        }
+
+        accumulated.push(para);
+        lineOffset += para.split("\n").length + 1; // +1 for the blank line separator
+    }
+
+    flush();
+
+    return chunks;
+}
+
 // ─── Heading strategy (markdown) ────────────────────────────────
 function chunkByHeading(opts: { filePath: string; content: string; maxTokens: number }): ChunkResult {
     const { filePath, content, maxTokens } = opts;
@@ -615,7 +697,9 @@ function chunkByHeading(opts: { filePath: string; content: string; maxTokens: nu
     const chunks: ChunkRecord[] = [];
     let currentLines: string[] = [];
     let currentName: string | undefined;
+    let currentHeadingLine: string | undefined;
     let currentStartLine = 0;
+    let seenHeading = false;
 
     function flushSection(): void {
         if (currentLines.length === 0) {
@@ -628,14 +712,28 @@ function chunkByHeading(opts: { filePath: string; content: string; maxTokens: nu
             return;
         }
 
-        const subChunks = splitChunkByLines({
+        if (estimateTokens(sectionContent) <= maxTokens) {
+            chunks.push({
+                id: xxhash(sectionContent),
+                filePath,
+                startLine: currentStartLine,
+                endLine: currentStartLine + currentLines.length - 1,
+                content: sectionContent,
+                kind: "heading",
+                name: currentName,
+                language: "markdown",
+            });
+            return;
+        }
+
+        const subChunks = splitByParagraphs({
             content: sectionContent,
             filePath,
             startLine: currentStartLine,
             kind: "heading",
             name: currentName,
-            language: "markdown",
             maxTokens,
+            headingLine: currentHeadingLine,
         });
 
         chunks.push(...subChunks);
@@ -649,8 +747,15 @@ function chunkByHeading(opts: { filePath: string; content: string; maxTokens: nu
             flushSection();
             currentLines = [line];
             currentName = headingMatch[2].trim();
+            currentHeadingLine = line;
             currentStartLine = i;
+            seenHeading = true;
         } else {
+            // Name preamble content (before first heading)
+            if (!seenHeading && !currentName && line.trim().length > 0) {
+                currentName = line.trim().length > 50 ? `${line.trim().slice(0, 50)}...` : line.trim();
+            }
+
             currentLines.push(line);
         }
     }

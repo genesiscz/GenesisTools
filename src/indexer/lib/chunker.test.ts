@@ -1092,4 +1092,104 @@ import { c } from "./c";
             expect(result.chunks.length).toBe(1);
         });
     });
+
+    describe("Heading strategy — improved splitting", () => {
+        it("preserves heading context in sub-chunks of large sections", () => {
+            const bigBody = Array.from({ length: 200 }, (_, i) => `Line ${i} of content with enough words to consume tokens.`).join("\n\n");
+            const content = `## Big Section\n\n${bigBody}`;
+
+            const result = chunkFile({
+                filePath: "doc.md",
+                content,
+                strategy: "heading",
+                maxTokens: 100,
+            });
+
+            expect(result.parser).toBe("heading");
+            expect(result.chunks.length).toBeGreaterThan(1);
+
+            // Every sub-chunk after the first should contain the heading
+            for (const chunk of result.chunks.slice(1)) {
+                expect(chunk.content).toContain("## Big Section");
+            }
+        });
+
+        it("splits at paragraph boundaries, not mid-paragraph", () => {
+            const para1 = "First paragraph with several words that make it meaningful.";
+            const para2 = "Second paragraph also has content that should stay together.";
+            const para3 = "Third paragraph is the final one in this section.";
+            const content = `## Section\n\n${para1}\n\n${para2}\n\n${para3}`;
+
+            const result = chunkFile({
+                filePath: "doc.md",
+                content,
+                strategy: "heading",
+                maxTokens: 50,
+            });
+
+            expect(result.parser).toBe("heading");
+
+            for (const chunk of result.chunks) {
+                // No paragraph should be cut in the middle — each paragraph
+                // should appear fully in exactly one chunk
+                if (chunk.content.includes("First paragraph")) {
+                    expect(chunk.content).toContain(para1);
+                }
+
+                if (chunk.content.includes("Second paragraph")) {
+                    expect(chunk.content).toContain(para2);
+                }
+
+                if (chunk.content.includes("Third paragraph")) {
+                    expect(chunk.content).toContain(para3);
+                }
+            }
+        });
+
+        it("names preamble content before first heading", () => {
+            const content = `This is preamble text before any heading.\n\nMore preamble.\n\n## First Heading\n\nContent here.`;
+
+            const result = chunkFile({
+                filePath: "doc.md",
+                content,
+                strategy: "heading",
+            });
+
+            expect(result.parser).toBe("heading");
+
+            const preambleChunk = result.chunks[0];
+            expect(preambleChunk.name).toBeDefined();
+            expect(preambleChunk.name).not.toBe("chunk");
+            expect(preambleChunk.content).toContain("preamble text");
+        });
+
+        it("keeps small sections as single chunks", () => {
+            const content = `## Small Section\n\nJust a few words here.`;
+
+            const result = chunkFile({
+                filePath: "doc.md",
+                content,
+                strategy: "heading",
+            });
+
+            expect(result.parser).toBe("heading");
+            expect(result.chunks.length).toBe(1);
+            expect(result.chunks[0].name).toBe("Small Section");
+            expect(result.chunks[0].name).not.toContain("(part");
+        });
+
+        it("handles markdown with no headings at all", () => {
+            const content = `Just plain text.\n\nWith some paragraphs.\n\nAnd nothing else.`;
+
+            const result = chunkFile({
+                filePath: "doc.md",
+                content,
+                strategy: "heading",
+            });
+
+            expect(result.parser).toBe("heading");
+            expect(result.chunks.length).toBeGreaterThanOrEqual(1);
+            expect(result.chunks[0].name).toBeDefined();
+        });
+    });
 });

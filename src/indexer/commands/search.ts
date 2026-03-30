@@ -1,9 +1,11 @@
 import { toToon } from "@app/json/lib/toon";
+import { isInteractive } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import type { SearchResult } from "@app/utils/search/types";
 import { truncateText } from "@app/utils/string";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
+import pc from "picocolors";
 import { normalizeConfidence } from "../lib/confidence";
 import { formatChunkDisplayName } from "../lib/display-name";
 import { parseQueryWords } from "../lib/highlight";
@@ -56,7 +58,7 @@ export function registerSearchCommand(program: Command): void {
         .command("search")
         .description("Search across indexes")
         .argument("<query>", "Search query")
-        .option("-i, --index <name>", "Search specific index (default: all)")
+        .option("-i, --index <name>", "Index to search (auto-detect from cwd; 'all' for all)")
         .option("-m, --mode <mode>", "Search mode: fulltext, vector, hybrid (default: auto-detect)")
         .option("-l, --limit <n>", "Max results", parseInt, 20)
         .option("-f, --file <filter>", "Filter results to files matching this substring")
@@ -82,14 +84,60 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
-                const names = opts.index ? [opts.index] : manager.getIndexNames();
+                let names: string[];
+
+                if (opts.index === "all") {
+                    names = manager.getIndexNames();
+                } else if (opts.index) {
+                    names = [opts.index];
+                } else {
+                    const allMeta = manager.listIndexes();
+
+                    if (allMeta.length === 0) {
+                        p.log.info("No indexes configured. Run: tools indexer add <path>");
+                        return;
+                    }
+
+                    if (allMeta.length === 1) {
+                        names = [allMeta[0].name];
+                    } else {
+                        const cwd = process.cwd();
+                        const cwdMatch = allMeta.find((m) => {
+                            const baseDir = m.config.baseDir;
+                            return cwd === baseDir || cwd.startsWith(baseDir + "/");
+                        });
+
+                        if (cwdMatch) {
+                            names = [cwdMatch.name];
+                            p.log.info(pc.dim(`(using index "${cwdMatch.name}" from cwd)`));
+                        } else if (isInteractive()) {
+                            const allNames = allMeta.map((m) => m.name);
+                            const selected = await p.select({
+                                message: "Select index to search",
+                                options: [
+                                    { value: "__all__", label: "All indexes" },
+                                    ...allNames.map((n) => ({ value: n, label: n })),
+                                ],
+                            });
+
+                            if (p.isCancel(selected)) {
+                                p.log.info("Cancelled");
+                                return;
+                            }
+
+                            names = selected === "__all__" ? allNames : [selected];
+                        } else {
+                            p.log.error("Multiple indexes found. Use -i <name> or -i all.");
+                            return;
+                        }
+                    }
+                }
 
                 if (names.length === 0) {
                     p.log.info("No indexes configured. Run: tools indexer add <path>");
                     return;
                 }
 
-                // Load all indexers upfront for mode detection across all indexes
                 const indexers = await Promise.all(names.map((n) => manager.getIndex(n)));
 
                 let mode: SearchMode;
@@ -171,6 +219,13 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
+                const baseDirs = new Map<string, string>();
+
+                for (const indexer of indexers) {
+                    const cfg = indexer.getConfig();
+                    baseDirs.set(cfg.name, cfg.baseDir);
+                }
+
                 const words = parseQueryWords(query);
                 const output = formatSearchResults({
                     results: filtered,
@@ -178,6 +233,8 @@ export function registerSearchCommand(program: Command): void {
                     query,
                     mode: effectiveMode,
                     highlightWords: words,
+                    baseDirs,
+                    multiIndex: names.length > 1,
                 });
                 console.log(output);
             } finally {
