@@ -1,7 +1,7 @@
 import logger from "@app/logger";
 import { toFloat32Audio } from "@app/utils/audio/converter";
 import { formatBytes } from "@app/utils/format";
-import { ensurePackage } from "@app/utils/packages";
+import { ensureHuggingFaceTransformers } from "../ensure-hf";
 import { createLanguageDetector, type LanguageDetector } from "../LanguageDetector";
 import { getDefaultModel } from "../ModelManager";
 import { suppressConsoleWarnings } from "../suppress-warnings";
@@ -41,12 +41,7 @@ export class AILocalProvider
     private langDetector: LanguageDetector | null = null;
 
     async isAvailable(): Promise<boolean> {
-        try {
-            await import("@huggingface/transformers");
-            return true;
-        } catch {
-            return false;
-        }
+        return true;
     }
 
     supports(task: AITask): boolean {
@@ -336,9 +331,12 @@ export class AILocalProvider
         }
 
         const load = (async () => {
-            await ensurePackage("@huggingface/transformers", {
-                label: "HuggingFace Transformers (ML models)",
-            });
+            const installed = await ensureHuggingFaceTransformers();
+
+            if (!installed) {
+                throw new Error("HuggingFace Transformers not available — install was declined or failed");
+            }
+
             const { pipeline, env } = await import("@huggingface/transformers");
 
             const restoreWarnings = suppressConsoleWarnings({

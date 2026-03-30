@@ -1,5 +1,5 @@
 import { toFloat32Audio } from "@app/utils/audio/converter";
-import { ensurePackage } from "@app/utils/packages";
+import { ensureHuggingFaceTransformers } from "./ensure-hf";
 
 // ============================================
 // Types
@@ -217,9 +217,12 @@ export class WhisperLanguageDriver implements LanguageDetectionDriver {
             return;
         }
 
-        await ensurePackage("@huggingface/transformers", {
-            label: "HuggingFace Transformers (ML models)",
-        });
+        const installed = await ensureHuggingFaceTransformers();
+
+        if (!installed) {
+            throw new Error("HuggingFace Transformers not available — install was declined or failed");
+        }
+
         const { AutoProcessor, WhisperForConditionalGeneration } = await import("@huggingface/transformers");
         this.processor = (await AutoProcessor.from_pretrained(this.model)) as unknown as typeof this.processor;
         this.whisperModel = (await WhisperForConditionalGeneration.from_pretrained(this.model, {
@@ -276,9 +279,12 @@ export class MmsLidDriver implements LanguageDetectionDriver {
             return;
         }
 
-        await ensurePackage("@huggingface/transformers", {
-            label: "HuggingFace Transformers (ML models)",
-        });
+        const installed = await ensureHuggingFaceTransformers();
+
+        if (!installed) {
+            throw new Error("HuggingFace Transformers not available — install was declined or failed");
+        }
+
         const { pipeline } = await import("@huggingface/transformers");
         this.pipeline = (await pipeline("audio-classification", this.model, {
             dtype: "fp32",
