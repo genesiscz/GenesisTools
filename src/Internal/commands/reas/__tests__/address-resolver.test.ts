@@ -1,10 +1,6 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { DistrictInfo } from "../data/districts";
 
-// Mock fetch globally for suggestLocality calls
-const mockFetch = mock(() => Promise.resolve(new Response("{}")));
-
-// We'll test the pure functions directly, and mock fetch for the async ones
 describe("parseResolvedAddress", () => {
     test("extracts district from suggest result with matching district DB entry", async () => {
         const { parseResolvedAddress } = await import("../lib/address-resolver");
