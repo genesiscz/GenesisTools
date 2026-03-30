@@ -8,7 +8,7 @@ mock.module("picocolors", () => {
 });
 
 import { stripAnsi } from "@app/utils/string";
-import { type FormattedSearchResult, formatSearchResults } from "./search-output";
+import { type FormattedSearchResult, formatSearchResults, renderCodeBlock, toDisplayPath } from "./search-output";
 
 function makeResult(overrides: Partial<FormattedSearchResult> = {}): FormattedSearchResult {
     return {
@@ -40,7 +40,7 @@ const defaultOpts = {
 
 describe("formatSearchResults", () => {
     describe("pretty format", () => {
-        test("contains fenced code block with correct language marker", () => {
+        test("contains rendered code block with box-drawing and language label", () => {
             const output = formatSearchResults({
                 results: [makeResult()],
                 format: "pretty",
@@ -48,8 +48,9 @@ describe("formatSearchResults", () => {
             });
             const plain = stripAnsi(output);
 
-            expect(plain).toContain("```php");
-            expect(plain).toMatch(/```\s*$/);
+            expect(plain).toContain("\u256D\u2500 php");
+            expect(plain).toContain("\u2502");
+            expect(plain).toContain("\u2570");
         });
 
         test("shows confidence as percentage", () => {
@@ -93,16 +94,18 @@ describe("formatSearchResults", () => {
             expect(plain).toContain("60%");
         });
 
-        test("handles null language with empty code fence marker", () => {
+        test("handles null language with box-drawing header (no language label)", () => {
             const output = formatSearchResults({
                 results: [makeResult({ language: null })],
                 format: "pretty",
                 ...defaultOpts,
             });
             const plain = stripAnsi(output);
+            const headerLine = plain.split("\n").find((l) => l.includes("\u256D\u2500"));
 
-            expect(plain).toContain("```\n");
-            expect(plain).not.toContain("```php");
+            expect(headerLine).toBeDefined();
+            expect(headerLine).toContain("\u256D\u2500 L45");
+            expect(headerLine).not.toContain("php");
         });
 
         test("shows result count and query in header", () => {
@@ -343,7 +346,7 @@ describe("formatSearchResults", () => {
             const simplePlain = stripAnsi(simple);
             const tablePlain = stripAnsi(table);
 
-            expect(prettyPlain).toContain("```");
+            expect(prettyPlain).toContain("\u256D\u2500");
             expect(simplePlain).toContain("45|");
             expect(tablePlain).toContain("File");
         });
@@ -409,6 +412,167 @@ describe("formatSearchResults", () => {
             expect(high).toContain("\x1b[32m"); // green for >=70
             expect(medium).toContain("\x1b[33m"); // yellow for 40-69
             expect(low).toContain("\x1b[31m"); // red for <40
+        });
+    });
+
+    describe("toDisplayPath", () => {
+        test("returns relative path when baseDir matches", () => {
+            const baseDirs = new Map([["TestIndex", "/project"]]);
+            const result = toDisplayPath("/project/app/Services/BookingService.php", "TestIndex", baseDirs);
+            expect(result).toBe("app/Services/BookingService.php");
+        });
+
+        test("returns original path when no baseDirs provided", () => {
+            const result = toDisplayPath("/project/app/Services/BookingService.php", "TestIndex");
+            expect(result).toBe("/project/app/Services/BookingService.php");
+        });
+
+        test("returns original path when index not in baseDirs", () => {
+            const baseDirs = new Map([["OtherIndex", "/other"]]);
+            const result = toDisplayPath("/project/app/Services/BookingService.php", "TestIndex", baseDirs);
+            expect(result).toBe("/project/app/Services/BookingService.php");
+        });
+
+        test("returns original path when filePath is not absolute", () => {
+            const baseDirs = new Map([["TestIndex", "/project"]]);
+            const result = toDisplayPath("relative/path.ts", "TestIndex", baseDirs);
+            expect(result).toBe("relative/path.ts");
+        });
+    });
+
+    describe("renderCodeBlock", () => {
+        test("includes language label and line range in header", () => {
+            const output = renderCodeBlock("const x = 1;", "typescript", 10, 10);
+            const plain = stripAnsi(output);
+            expect(plain).toContain("\u256D\u2500 typescript L10\u201310");
+        });
+
+        test("omits language label when null", () => {
+            const output = renderCodeBlock("const x = 1;", null, 5, 5);
+            const plain = stripAnsi(output);
+            expect(plain).toContain("\u256D\u2500 L5\u20135");
+            expect(plain).not.toContain("null");
+        });
+
+        test("renders line numbers with gutter", () => {
+            const output = renderCodeBlock("line1\nline2\nline3", "js", 98, 100);
+            const plain = stripAnsi(output);
+            expect(plain).toContain(" 98 \u2502 line1");
+            expect(plain).toContain(" 99 \u2502 line2");
+            expect(plain).toContain("100 \u2502 line3");
+        });
+
+        test("right-aligns line numbers to gutter width", () => {
+            const output = renderCodeBlock("a\nb", "ts", 9, 10);
+            const plain = stripAnsi(output);
+            expect(plain).toContain(" 9 \u2502 a");
+            expect(plain).toContain("10 \u2502 b");
+        });
+
+        test("includes closing border", () => {
+            const output = renderCodeBlock("x", null, 1, 1);
+            const plain = stripAnsi(output);
+            expect(plain).toContain("\u2570");
+            expect(plain).toContain("\u2500".repeat(40));
+        });
+    });
+
+    describe("multiIndex labels", () => {
+        test("pretty format shows index name above file path when multiIndex", () => {
+            const output = formatSearchResults({
+                results: [makeResult({ indexName: "BackendIndex" })],
+                format: "pretty",
+                ...defaultOpts,
+                multiIndex: true,
+            });
+            const plain = stripAnsi(output);
+            expect(plain).toContain("[BackendIndex]");
+        });
+
+        test("pretty format hides index name when not multiIndex", () => {
+            const output = formatSearchResults({
+                results: [makeResult({ indexName: "BackendIndex" })],
+                format: "pretty",
+                ...defaultOpts,
+                multiIndex: false,
+            });
+            const plain = stripAnsi(output);
+            expect(plain).not.toContain("[BackendIndex]");
+        });
+
+        test("simple format appends index label when multiIndex", () => {
+            const output = formatSearchResults({
+                results: [makeResult({ indexName: "FrontendIndex" })],
+                format: "simple",
+                ...defaultOpts,
+                multiIndex: true,
+            });
+            const plain = stripAnsi(output);
+            expect(plain).toContain("[FrontendIndex]");
+        });
+
+        test("simple format hides index label when not multiIndex", () => {
+            const output = formatSearchResults({
+                results: [makeResult({ indexName: "FrontendIndex" })],
+                format: "simple",
+                ...defaultOpts,
+            });
+            const plain = stripAnsi(output);
+            expect(plain).not.toContain("[FrontendIndex]");
+        });
+
+        test("table format adds Index column when multiIndex", () => {
+            const output = formatSearchResults({
+                results: [makeResult({ indexName: "TestIndex" })],
+                format: "table",
+                ...defaultOpts,
+                multiIndex: true,
+            });
+            const plain = stripAnsi(output);
+            expect(plain).toContain("Index");
+            expect(plain).toContain("TestIndex");
+        });
+
+        test("table format has no Index column when not multiIndex", () => {
+            const output = formatSearchResults({
+                results: [makeResult()],
+                format: "table",
+                ...defaultOpts,
+            });
+            const plain = stripAnsi(output);
+            const lines = plain.split("\n");
+            const headerLine = lines.find((l) => l.includes("File"));
+            expect(headerLine).toBeDefined();
+            expect(headerLine).not.toContain("Index");
+        });
+    });
+
+    describe("baseDirs relative path display", () => {
+        test("pretty format shows relative paths with baseDirs", () => {
+            const baseDirs = new Map([["TestIndex", "/project"]]);
+            const output = formatSearchResults({
+                results: [makeResult()],
+                format: "pretty",
+                ...defaultOpts,
+                baseDirs,
+            });
+            const plain = stripAnsi(output);
+            expect(plain).toContain("app/Services/BookingService.php");
+            expect(plain).not.toContain("/project/app");
+        });
+
+        test("table format truncates long relative paths from left", () => {
+            const baseDirs = new Map([["TestIndex", "/root"]]);
+            const longPath = "/root/src/modules/services/handlers/controllers/deeply/nested/structure/file.ts";
+            const output = formatSearchResults({
+                results: [makeResult({ filePath: longPath })],
+                format: "table",
+                ...defaultOpts,
+                baseDirs,
+            });
+            const plain = stripAnsi(output);
+            expect(plain).toContain("...");
+            expect(plain).not.toContain(longPath);
         });
     });
 });

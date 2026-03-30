@@ -52,7 +52,7 @@ describe("formatSearchResults", () => {
     });
 
     describe("pretty format", () => {
-        it("contains fenced code block with language marker", () => {
+        it("contains rendered code block with box-drawing and language label", () => {
             const result = formatSearchResults({
                 results: [makeResult({ language: "php" })],
                 format: "pretty",
@@ -60,8 +60,9 @@ describe("formatSearchResults", () => {
                 mode: "hybrid",
             });
             const plain = stripAnsi(result);
-            expect(plain).toContain("```php");
-            expect(plain).toMatch(/```\n|```$/);
+            expect(plain).toContain("\u256D\u2500 php");
+            expect(plain).toContain("\u2502");
+            expect(plain).toContain("\u2570");
         });
 
         it("contains confidence as percentage", () => {
@@ -114,16 +115,17 @@ describe("formatSearchResults", () => {
             expect(pathOccurrences).toBe(1);
         });
 
-        it("highlights query words in content", () => {
+        it("renders code block with line numbers", () => {
             const result = formatSearchResults({
-                results: [makeResult()],
+                results: [makeResult({ startLine: 45, endLine: 48 })],
                 format: "pretty",
                 query: "sendNotification",
                 mode: "hybrid",
-                highlightWords: ["sendNotification"],
             });
             const plain = stripAnsi(result);
-            expect(result.length).toBeGreaterThan(plain.length);
+            expect(plain).toContain("45 \u2502");
+            expect(plain).toContain("48 \u2502");
+            expect(plain).toContain("L45\u201348");
         });
     });
 
@@ -292,7 +294,7 @@ describe("formatSearchResults", () => {
             expect(outputs[0]).not.toBe(outputs[2]);
         });
 
-        it("null language uses plain code block in pretty format", () => {
+        it("null language omits language label in code block header", () => {
             const result = formatSearchResults({
                 results: [makeResult({ language: null })],
                 format: "pretty",
@@ -300,8 +302,8 @@ describe("formatSearchResults", () => {
                 mode: "hybrid",
             });
             const plain = stripAnsi(result);
-            expect(plain).toContain("```\n");
-            expect(plain).not.toContain("```null");
+            expect(plain).toContain("\u256D\u2500 L45");
+            expect(plain).not.toContain("null");
         });
     });
 });
