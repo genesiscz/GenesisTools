@@ -1,21 +1,9 @@
 import { cacheKey, getCached, SREALITY_TTL, setCache } from "../cache/index";
+import { getSrealityCategorySubCb } from "../data/disposition-map";
 import type { AnalysisFilters, CacheEntry, SrealityRental } from "../types";
 
 const BASE_URL = "https://www.sreality.cz/api/cs/v2";
 const PER_PAGE = 60;
-
-const DISPOSITION_MAP: Record<string, number> = {
-    "1+kk": 2,
-    "1+1": 3,
-    "2+kk": 4,
-    "2+1": 5,
-    "3+kk": 6,
-    "3+1": 7,
-    "4+kk": 8,
-    "4+1": 9,
-    "5+kk": 10,
-    "5+1": 11,
-};
 
 const BUILDING_TYPE_MAP: Record<string, number> = {
     panel: 1,
@@ -95,13 +83,17 @@ function buildSearchParams(filters: AnalysisFilters, page: number): URLSearchPar
 
     params.set("category_main_cb", "1");
     params.set("category_type_cb", "2");
-    params.set("locality_district_id", String(filters.district.srealityId));
+
+    const localityParam =
+        filters.district.srealityLocality === "region" ? "locality_region_id" : "locality_district_id";
+    params.set(localityParam, String(filters.district.srealityId));
+
     params.set("per_page", String(PER_PAGE));
     params.set("page", String(page));
     params.set("tms", String(Date.now()));
 
     if (filters.disposition) {
-        const subCb = DISPOSITION_MAP[filters.disposition];
+        const subCb = getSrealityCategorySubCb(filters.disposition);
 
         if (subCb !== undefined) {
             params.set("category_sub_cb", String(subCb));
