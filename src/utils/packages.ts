@@ -1,13 +1,16 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import * as p from "@clack/prompts";
 import logger from "@app/logger";
 import { isInteractive } from "@app/utils/cli";
 import { Storage } from "@app/utils/storage/storage";
-import * as p from "@clack/prompts";
 
 const PROJECT_ROOT = resolve(import.meta.dirname, "../..");
 
 const inflight = new Map<string, Promise<void>>();
+
+// Serializes all bun add invocations to prevent concurrent writes to the workspace
+let installQueue: Promise<void> = Promise.resolve();
 
 const packageStorage = new Storage("packages");
 
@@ -118,7 +121,8 @@ export async function ensurePackages(packages: string[], options?: EnsurePackage
     }
 
     if (toInstall.length > 0) {
-        const installPromise = runBunAdd(toInstall, { label, silent });
+        // Enqueue behind any in-progress bun add to prevent concurrent workspace writes
+        const installPromise = enqueueInstall(toInstall, { label, silent });
 
         for (const pkg of toInstall) {
             inflight.set(pkg, installPromise);
@@ -140,6 +144,12 @@ export async function ensurePackage(pkg: string, options?: EnsurePackagesOptions
     return ensurePackages([pkg], options);
 }
 
+function enqueueInstall(packages: string[], opts: { label: string; silent: boolean }): Promise<void> {
+    const run = installQueue.then(() => runBunAdd(packages, opts));
+    installQueue = run.catch(() => {});
+    return run;
+}
+
 async function runBunAdd(packages: string[], opts: { label: string; silent: boolean }): Promise<void> {
     if (!opts.silent) {
         logger.info(`Installing ${opts.label}...`);
@@ -151,10 +161,13 @@ async function runBunAdd(packages: string[], opts: { label: string; silent: bool
         stderr: "pipe",
     });
 
+    // Start draining stderr concurrently — waiting until after proc.exited can deadlock
+    // if the child writes enough to fill the OS pipe buffer
+    const stderrP = new Response(proc.stderr).text();
     const exitCode = await proc.exited;
 
     if (exitCode !== 0) {
-        const stderr = await new Response(proc.stderr).text();
+        const stderr = await stderrP;
         throw new Error(`bun add ${packages.join(" ")} failed (exit ${exitCode}):\n${stderr.trim()}`);
     }
 }

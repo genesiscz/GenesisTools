@@ -1,12 +1,15 @@
 /**
- * Stub type declarations for on-demand packages.
+ * Fallback type stubs for on-demand packages.
  *
  * These packages are NOT installed by default — they're installed at runtime
  * via ensurePackage() when first needed. The stubs let TypeScript accept
- * dynamic import() expressions without having the packages in node_modules.
+ * dynamic import() expressions without the packages in node_modules.
  *
- * When a package IS installed, its real types from node_modules/@types or
- * the package's own .d.ts files take precedence over these stubs.
+ * ⚠️ WARNING: These bare ambient declarations permanently override real package
+ * types. Even if the package is installed and ships its own .d.ts files, this
+ * stub will shadow them, making all imports resolve as `any`. This is an
+ * intentional trade-off to keep the project compilable without these
+ * optional dependencies installed.
  */
 
 declare module "@huggingface/transformers";
