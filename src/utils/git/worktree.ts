@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Executor } from "@app/utils/cli";
@@ -151,6 +152,39 @@ export async function getMainRepoRoot(cwd?: string): Promise<string> {
     // .git/worktrees/<name> → .git → parent
     const gitDir = absCommon.replace(/[/\\]worktrees[/\\][^/\\]+$/, "");
     return resolve(gitDir, "..");
+}
+
+/**
+ * Sync version of getMainRepoRoot. If `dir` is inside a git worktree,
+ * returns the main repo root. Otherwise returns `dir` unchanged.
+ * Falls back to `dir` on any error (not a git repo, git not available).
+ */
+export function getMainRepoRootSync(dir?: string): string {
+    const cwd = dir ?? process.cwd();
+
+    try {
+        const gitCommonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+            cwd,
+            encoding: "utf-8",
+            timeout: 2000,
+            stdio: ["pipe", "pipe", "pipe"],
+        }).trim();
+
+        const gitDir = execFileSync("git", ["rev-parse", "--git-dir"], {
+            cwd,
+            encoding: "utf-8",
+            timeout: 2000,
+            stdio: ["pipe", "pipe", "pipe"],
+        }).trim();
+
+        if (gitCommonDir !== gitDir) {
+            return resolve(cwd, gitCommonDir, "..");
+        }
+    } catch {
+        // Not a git repo or git not available
+    }
+
+    return cwd;
 }
 
 /**
