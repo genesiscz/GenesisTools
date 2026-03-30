@@ -48,13 +48,14 @@ export interface TimesheetRecord {
     lastUpdatedBy: string;
     numberOfEntries: number;
     hasNotes: boolean;
+    numberOfNotes: number;
     hasAssignments: boolean;
     timePeriodIsOpen: boolean;
     employmentType: LookupField;
     resourceType: LookupField;
     _authorization: TimesheetAuthorization;
     timeentries: TimeEntriesSection;
-    timesheetNotes: { _self: string };
+    timesheetNotes: { _self: string } | TimesheetNotesExpanded;
     timeEntries: { _self: string }; // camelCase variant
     // Optional fields
     definedTeamId: number | null;
@@ -83,6 +84,32 @@ export interface TimesheetAuthorization {
     delete: boolean;
     return: boolean;
 }
+
+// -- Timesheet Notes --
+export interface TimesheetNote {
+    _internalId: number;
+    noteText: string;
+    resourceId: number;
+    lastUpdatedDate: string;
+    _parent: string;
+    createdDate: string;
+    noteDate: string | null;
+    author: number;
+    resourceName: string;
+    _self: string;
+    resourceFirstName: string;
+}
+
+export interface TimesheetNotesExpanded {
+    _pageSize: number;
+    _self: string;
+    _metadata: Record<string, unknown>;
+    _totalCount: number;
+    _results: TimesheetNote[];
+    _recordsReturned: number;
+}
+
+export type TimesheetWithNotesResponse = TimesheetRecord;
 
 // -- Time Entries --
 export interface TimeEntriesSection {

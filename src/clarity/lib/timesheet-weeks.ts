@@ -16,7 +16,7 @@ export async function getTimesheetWeeks(
     mappings: ClarityMapping[],
     month?: number,
     year?: number
-): Promise<{ weeks: TimesheetWeek[] }> {
+): Promise<{ weeks: TimesheetWeek[]; userId?: number }> {
     // Try to find a valid timePeriodId to seed the carousel.
     // When a specific month/year is requested, try to navigate to a period covering that month
     // so the carousel window is anchored correctly.
@@ -38,6 +38,7 @@ export async function getTimesheetWeeks(
     }
 
     const app = await api.getTimesheetApp(timePeriodId);
+    const userId = app.resource?._results?.[0]?.user_id;
     let carousel = app.tscarousel?._results;
 
     // If carousel is empty, try extracting timePeriodId from the timesheets section
@@ -51,7 +52,7 @@ export async function getTimesheetWeeks(
     }
 
     if (!carousel?.length) {
-        return { weeks: [] };
+        return { weeks: [], userId };
     }
 
     // Build a map of timesheetId → numberOfEntries from the timesheets section (current period)
@@ -187,7 +188,7 @@ export async function getTimesheetWeeks(
         }
     }
 
-    return { weeks };
+    return { weeks, userId };
 }
 
 /** Check if an error indicates a "not found" condition (vs auth/transport failure) */

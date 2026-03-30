@@ -40,6 +40,8 @@ interface WeekPreview {
     }>;
     unmappedWorkItems: Array<{ workItemId: number; minutes: number }>;
     clarityTotalMinutes?: number;
+    hasNotes?: boolean;
+    numberOfNotes?: number;
 }
 
 export interface FillPreviewResult {
@@ -47,6 +49,7 @@ export interface FillPreviewResult {
     totalMapped: number;
     totalUnmapped: number;
     adoConfig?: { org: string; project: string };
+    userId?: number;
     diagnostics?: {
         reason: string;
         message: string;
@@ -141,7 +144,7 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
         };
     }
 
-    const { weeks: clarityWeeks } = await getTimesheetWeeks(clarityApi, clarityConfig.mappings, month, year);
+    const { weeks: clarityWeeks, userId } = await getTimesheetWeeks(clarityApi, clarityConfig.mappings, month, year);
 
     if (clarityWeeks.length === 0) {
         return {
@@ -246,6 +249,8 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
                 }
 
                 wp.clarityTotalMinutes = weekClarityTotal;
+                wp.hasNotes = ts.hasNotes ?? false;
+                wp.numberOfNotes = ts.numberOfNotes ?? 0;
             } catch {
                 // Non-fatal — clarity state indicators will be absent
             }
@@ -257,7 +262,20 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
         totalMapped: [...fillMap.values()].reduce((s, f) => s + f.totalMinutes, 0),
         totalUnmapped: [...unmappedByWi.values()].reduce((s, v) => s + v, 0),
         adoConfig: adoInfo,
+        userId,
     };
+}
+
+export async function postTimesheetNote(timesheetId: number, noteText: string, userId: number): Promise<void> {
+    const clarityConfig = await requireConfig();
+    const clarityApi = new ClarityApi({
+        baseUrl: clarityConfig.baseUrl,
+        authToken: clarityConfig.authToken,
+        sessionId: clarityConfig.sessionId,
+        cookies: clarityConfig.cookies,
+    });
+
+    await clarityApi.createTimesheetNote(timesheetId, noteText, userId);
 }
 
 export async function executeFill(month: number, year: number, weekIds: number[]): Promise<ExecuteFillResult> {

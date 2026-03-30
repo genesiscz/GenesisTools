@@ -1,14 +1,18 @@
+import { buildWeekComment } from "@app/clarity/lib/comment-builder";
 import { SafeJSON } from "@app/utils/json";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { Alert, AlertDescription } from "@ui/components/alert";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
 import { AlertTriangle, Bug, CheckCircle, ChevronRight, Play, SkipForward, XCircle } from "lucide-react";
-import { Fragment, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
+import { CommentPopup } from "../components/CommentPopup";
 import { FillWeekCard } from "../components/FillWeekCard";
 import { MonthPicker } from "../components/MonthPicker";
+import { PostFillReviewDialog } from "../components/PostFillReviewDialog";
 import { useAppContext } from "../context/AppContext";
 
 interface FillEntryResult {
@@ -51,6 +55,32 @@ async function fetchFillPreview(month: number, year: number) {
     return res.json();
 }
 
+interface PreviewWeekTimelogEntry {
+    workItemId: number;
+    workItemTitle: string;
+    workItemType: string;
+    timeTypeDescription: string;
+    comment: string | null;
+    date: string;
+    minutes: number;
+}
+
+interface PreviewWeek {
+    timesheetId: number;
+    periodStart: string;
+    periodFinish: string;
+    hasNotes?: boolean;
+    numberOfNotes?: number;
+    entries: Array<{
+        clarityTaskName: string;
+        clarityTaskCode: string;
+        dayValues: Record<string, number>;
+        totalMinutes: number;
+        timelogEntries?: PreviewWeekTimelogEntry[];
+    }>;
+    unmappedWorkItems: Array<{ workItemId: number; minutes: number }>;
+}
+
 async function executeFillApi(month: number, year: number, weekIds: number[]): Promise<ExecuteFillResult> {
     const res = await fetch("/api/fill/execute", {
         method: "POST",
@@ -74,6 +104,9 @@ function ImportPage() {
     const { month, year, setMonthYear } = useAppContext();
     const [selectedWeeks, setSelectedWeeks] = useState<Set<number>>(new Set());
     const [showConfirm, setShowConfirm] = useState(false);
+    const [alsoPostComments, setAlsoPostComments] = useState(false);
+    const [commentedWeekIds, setCommentedWeekIds] = useState<number[]>([]);
+    const [showReviewDialog, setShowReviewDialog] = useState(false);
 
     const {
         data: preview,
@@ -84,11 +117,59 @@ function ImportPage() {
         queryFn: () => fetchFillPreview(month, year),
     });
 
+    const selectedWeekNotes = useMemo(() => {
+        if (!preview?.weeks) {
+            return [];
+        }
+
+        return preview.weeks
+            .filter((w: PreviewWeek) => selectedWeeks.has(w.timesheetId))
+            .map((w: PreviewWeek) => ({
+                timesheetId: w.timesheetId,
+                periodStart: w.periodStart,
+                periodFinish: w.periodFinish,
+                hasNotes: w.hasNotes,
+                numberOfNotes: w.numberOfNotes,
+                timelogEntries: w.entries.flatMap((e) => e.timelogEntries ?? []),
+            }));
+    }, [preview, selectedWeeks]);
+
     const fillMutation = useMutation({
         mutationFn: () => executeFillApi(month, year, [...selectedWeeks]),
-        onSuccess: () => {
+        onSuccess: async () => {
+            const commented: number[] = [];
+
+            if (alsoPostComments && preview?.userId) {
+                for (const week of selectedWeekNotes) {
+                    const text = buildWeekComment(week.timelogEntries);
+
+                    if (text.trim()) {
+                        try {
+                            const res = await fetch("/api/post-note", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: SafeJSON.stringify({
+                                    timesheetId: week.timesheetId,
+                                    noteText: text,
+                                    userId: preview.userId,
+                                }),
+                            });
+
+                            if (res.ok) {
+                                commented.push(week.timesheetId);
+                            }
+                        } catch {
+                            // Non-fatal — fill succeeded, comment failed
+                        }
+                    }
+                }
+            }
+
+            setCommentedWeekIds(commented);
             setShowConfirm(false);
             setSelectedWeeks(new Set());
+            setAlsoPostComments(false);
+            setShowReviewDialog(true);
         },
     });
 
@@ -181,28 +262,15 @@ function ImportPage() {
                         </Card>
                     ) : (
                         <div className="space-y-4">
-                            {preview.weeks.map(
-                                (week: {
-                                    timesheetId: number;
-                                    periodStart: string;
-                                    periodFinish: string;
-                                    entries: Array<{
-                                        clarityTaskName: string;
-                                        clarityTaskCode: string;
-                                        dayValues: Record<string, number>;
-                                        totalMinutes: number;
-                                    }>;
-                                    unmappedWorkItems: Array<{ workItemId: number; minutes: number }>;
-                                }) => (
-                                    <FillWeekCard
-                                        key={week.timesheetId}
-                                        {...week}
-                                        selected={selectedWeeks.has(week.timesheetId)}
-                                        onToggle={() => toggleWeek(week.timesheetId)}
-                                        adoConfig={preview.adoConfig}
-                                    />
-                                )
-                            )}
+                            {preview.weeks.map((week: PreviewWeek) => (
+                                <FillWeekCard
+                                    key={week.timesheetId}
+                                    {...week}
+                                    selected={selectedWeeks.has(week.timesheetId)}
+                                    onToggle={() => toggleWeek(week.timesheetId)}
+                                    adoConfig={preview.adoConfig}
+                                />
+                            ))}
                         </div>
                     )}
 
@@ -226,10 +294,28 @@ function ImportPage() {
                                         </CardTitle>
                                     </CardHeader>
                                     <CardContent>
-                                        <p className="text-sm text-gray-400 font-mono mb-4">
+                                        <p className="text-sm text-gray-400 font-mono mb-3">
                                             This will update {selectedWeeks.size} Clarity timesheet(s). This action
                                             cannot be easily undone.
                                         </p>
+                                        <label className="flex items-center gap-2 text-xs font-mono text-gray-400 mb-3 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={alsoPostComments}
+                                                onChange={(e) => setAlsoPostComments(e.target.checked)}
+                                                className="accent-amber-500"
+                                            />
+                                            Also post weekly comments
+                                        </label>
+                                        {alsoPostComments && (
+                                            <Alert variant="warning" className="mb-3">
+                                                <AlertTriangle className="w-4 h-4" />
+                                                <AlertDescription className="font-mono text-[10px]">
+                                                    Comments are additive — each post creates a new note. Clarity only
+                                                    shows the first note per week to PM. Review after posting.
+                                                </AlertDescription>
+                                            </Alert>
+                                        )}
                                         <div className="flex gap-3">
                                             <Button
                                                 onClick={() => fillMutation.mutate()}
@@ -266,6 +352,17 @@ function ImportPage() {
                             </CardContent>
                         </Card>
                     )}
+
+                    {fillMutation.data && (
+                        <PostFillReviewDialog
+                            open={showReviewDialog}
+                            onClose={() => setShowReviewDialog(false)}
+                            result={fillMutation.data}
+                            commentedWeeks={commentedWeekIds}
+                        />
+                    )}
+
+                    <CommentPopup weeks={selectedWeekNotes} userId={preview.userId} />
                 </>
             )}
         </div>

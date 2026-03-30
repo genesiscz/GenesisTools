@@ -5,6 +5,11 @@ export interface UpdateTimeEntryRequest {
     actuals: TimeSeriesValue;
 }
 
+export interface CreateTimesheetNoteRequest {
+    noteText: string;
+    author: number;
+}
+
 export interface UpdateTimesheetStatusRequest {
     status: "0" | "1" | "2"; // 0=Open, 1=Submit, 2=Revert
 }
