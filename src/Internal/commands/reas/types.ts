@@ -57,7 +57,12 @@ export interface AnalysisFilters {
     constructionType: string;
     disposition?: string;
     periods: DateRange[];
-    district: { name: string; reasId: number; srealityId: number };
+    district: {
+        name: string;
+        reasId: number;
+        srealityId: number;
+        srealityLocality: "district" | "region";
+    };
 }
 
 export interface DateRange {

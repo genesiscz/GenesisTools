@@ -13,6 +13,8 @@ import { fetchMfRentalData } from "./api/mf-rental";
 import { fetchSoldListings } from "./api/reas-client";
 import { fetchRentalListings } from "./api/sreality-client";
 import { clearCache } from "./cache/index";
+import type { DistrictInfo } from "./data/districts";
+import { getAllDistrictNames, getDistrict, getPrahaDistrictNames, searchDistricts } from "./data/districts";
 import type { AnalysisFilters, DateRange, ReasListing, TargetProperty } from "./types";
 
 interface ReasOptions {
@@ -28,24 +30,6 @@ interface ReasOptions {
     refresh?: boolean;
     search?: string;
 }
-
-interface DistrictInfo {
-    name: string;
-    reasId: number;
-    srealityId: number;
-}
-
-const DISTRICTS: Record<string, DistrictInfo> = {
-    "Hradec Králové": { name: "Hradec Králové", reasId: 3602, srealityId: 28 },
-    Praha: { name: "Praha", reasId: 3100, srealityId: 1 },
-    Brno: { name: "Brno", reasId: 3702, srealityId: 4 },
-};
-
-const DISTRICT_OPTIONS: Array<{ value: DistrictInfo; label: string }> = [
-    { value: DISTRICTS["Hradec Králové"], label: "Hradec Králové" },
-    { value: DISTRICTS.Praha, label: "Praha" },
-    { value: DISTRICTS.Brno, label: "Brno" },
-];
 
 const PROPERTY_TYPES: Array<{ value: string; label: string }> = [
     { value: "panel", label: "Panel" },
@@ -111,14 +95,25 @@ function parsePeriods(periodsStr: string | undefined): DateRange[] {
 }
 
 function resolveDistrict(name: string): DistrictInfo {
-    const match = Object.entries(DISTRICTS).find(([key]) => key.toLowerCase() === name.toLowerCase());
+    const exact = getDistrict(name);
 
-    if (!match) {
-        const available = Object.keys(DISTRICTS).join(", ");
-        throw new Error(`Unknown district: "${name}". Available: ${available}`);
+    if (exact) {
+        return exact;
     }
 
-    return match[1];
+    const matches = searchDistricts(name);
+
+    if (matches.length === 1) {
+        return matches[0];
+    }
+
+    if (matches.length > 1) {
+        throw new Error(
+            `Ambiguous district "${name}". Matches: ${matches.map((d) => d.name).join(", ")}`
+        );
+    }
+
+    throw new Error(`Unknown district: "${name}". Use --district with one of: ${getAllDistrictNames().join(", ")}`);
 }
 
 function hasSufficientFlags(options: ReasOptions): boolean {
@@ -128,14 +123,64 @@ function hasSufficientFlags(options: ReasOptions): boolean {
 async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; target: TargetProperty; refresh: boolean }> {
     p.intro(pc.cyan(pc.bold("REAS Investment Analyzer")));
 
-    const district = await p.select({
+    const districtName = await p.select({
         message: "Select district",
-        options: DISTRICT_OPTIONS,
+        options: [
+            ...getAllDistrictNames().map((name) => ({ value: name, label: name })),
+            { value: "__search__", label: "Search by name..." },
+        ],
     });
 
-    if (p.isCancel(district)) {
+    if (p.isCancel(districtName)) {
         p.cancel("Operation cancelled.");
         process.exit(0);
+    }
+
+    let district: DistrictInfo;
+
+    if (districtName === "__search__") {
+        const query = await p.text({ message: "Type city/district name" });
+
+        if (p.isCancel(query)) {
+            p.cancel("Operation cancelled.");
+            process.exit(0);
+        }
+
+        const matches = searchDistricts(query);
+
+        if (matches.length === 0) {
+            p.cancel(`No districts found for "${query}"`);
+            process.exit(1);
+        }
+
+        const picked = await p.select({
+            message: "Select from matches",
+            options: matches.map((d) => ({ value: d.name, label: d.name })),
+        });
+
+        if (p.isCancel(picked)) {
+            p.cancel("Operation cancelled.");
+            process.exit(0);
+        }
+
+        district = getDistrict(picked)!;
+    } else if (districtName === "Praha") {
+        const subDistrict = await p.select({
+            message: "Select Praha district (or city-wide)",
+            options: [
+                { value: "Praha", label: "Praha (cel\u00E1)" },
+                ...getPrahaDistrictNames().map((name) => ({ value: name, label: name })),
+            ],
+        });
+
+        if (p.isCancel(subDistrict)) {
+            p.cancel("Operation cancelled.");
+            process.exit(0);
+        }
+
+        district = getDistrict(subDistrict)!;
+    } else {
+        district = getDistrict(districtName)!;
     }
 
     const propertyType = await p.select({
