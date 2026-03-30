@@ -1,6 +1,6 @@
 import type { AccountUsage } from "@app/claude/lib/usage/api";
 
-export type TabId = "overview" | "timeline" | "rates" | "history";
+export type TabId = "overview" | "timeline" | "rates" | "history" | "sessions";
 
 export interface TabDefinition {
     id: TabId;
@@ -13,6 +13,7 @@ export const TABS: TabDefinition[] = [
     { id: "timeline", label: "Timeline", shortcut: "2" },
     { id: "rates", label: "Rates", shortcut: "3" },
     { id: "history", label: "History", shortcut: "4" },
+    { id: "sessions", label: "Sessions", shortcut: "5" },
 ];
 
 export interface PollResult {

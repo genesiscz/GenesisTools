@@ -8,6 +8,7 @@ import { HelpOverlay } from "./components/help-overlay";
 import { HistoryView } from "./components/history/history-view";
 import { OverviewView } from "./components/overview/overview-view";
 import { RatesView } from "./components/rates/rates-view";
+import { SessionsView } from "./components/sessions/sessions-view";
 import { StatusBar } from "./components/status-bar";
 import { TabBar } from "./components/tab-bar";
 import { TimelineView } from "./components/timeline/timeline-view";
@@ -88,6 +89,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
             {activeTab === "timeline" && <TimelineView db={db} results={results} config={config} />}
             {activeTab === "rates" && <RatesView db={db} results={results} dbVersion={dbVersion} />}
             {activeTab === "history" && <HistoryView db={db} dbVersion={dbVersion} />}
+            {activeTab === "sessions" && <SessionsView notifications={notifications} />}
             <AlertBanner
                 alerts={notifications?.alerts ?? []}
                 onDismiss={() => {

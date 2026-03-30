@@ -2,6 +2,16 @@ import { sendNotification } from "@app/utils/macos/notifications";
 import { BUCKET_LABELS, BUCKET_THRESHOLD_MAP } from "./constants";
 import type { UsageDashboardConfig } from "./dashboard-config";
 
+type CacheStatus = "HOT" | "COOLING" | "CRITICAL" | "COLD";
+
+interface CacheSessionRow {
+    sessionId: string;
+    title: string | null;
+    cwdShort: string;
+    mtime: number;
+    cacheStatus: CacheStatus;
+}
+
 export interface UsageAlert {
     id: string;
     accountName: string;
@@ -130,6 +140,91 @@ export class NotificationManager {
     dismissAll(): void {
         for (const alert of this._alerts) {
             alert.dismissed = true;
+        }
+    }
+
+    // Track which cache thresholds have been notified per session
+    private cacheTrackers = new Map<string, { lastThreshold: number | null; lastMtime: number }>();
+
+    processCacheSessions(sessions: CacheSessionRow[]): void {
+        if (!this.config.enabled) {
+            return;
+        }
+
+        const now = Date.now();
+
+        for (const session of sessions) {
+            const key = session.sessionId;
+            let tracker = this.cacheTrackers.get(key);
+
+            // Reset tracker if session sent a new message (mtime changed = cache refreshed)
+            if (tracker && tracker.lastMtime !== session.mtime) {
+                tracker = undefined;
+                this.cacheTrackers.delete(key);
+            }
+
+            if (!tracker) {
+                tracker = { lastThreshold: null, lastMtime: session.mtime };
+                this.cacheTrackers.set(key, tracker);
+            }
+
+            const status: CacheStatus = session.cacheStatus;
+            const sessionLabel = session.title?.slice(0, 40) ?? session.sessionId.slice(0, 8);
+            const projectLabel = session.cwdShort;
+
+            if (status === "COOLING" && tracker.lastThreshold === null) {
+                tracker.lastThreshold = 10;
+                tracker.lastMtime = session.mtime;
+
+                const message = `Cache cooling — 10 min left\n${sessionLabel}\n${projectLabel}`;
+
+                if (this.config.inTui) {
+                    this._alerts.push({
+                        id: `cache-${++this.alertIdCounter}`,
+                        accountName: projectLabel,
+                        bucket: "cache",
+                        utilization: 83, // ~10min left of 60min
+                        message,
+                        severity: "warning",
+                        timestamp: new Date(now),
+                        dismissed: false,
+                    });
+                }
+
+                if (this.config.macos) {
+                    sendNotification({
+                        title: "Claude Cache Cooling",
+                        message,
+                        sound: this.config.sound || "Purr",
+                    });
+                }
+            } else if (status === "CRITICAL" && (tracker.lastThreshold === null || tracker.lastThreshold < 5)) {
+                tracker.lastThreshold = 5;
+                tracker.lastMtime = session.mtime;
+
+                const message = `Cache critical — 5 min left\n${sessionLabel}\n${projectLabel}`;
+
+                if (this.config.inTui) {
+                    this._alerts.push({
+                        id: `cache-${++this.alertIdCounter}`,
+                        accountName: projectLabel,
+                        bucket: "cache",
+                        utilization: 92, // ~5min left
+                        message,
+                        severity: "critical",
+                        timestamp: new Date(now),
+                        dismissed: false,
+                    });
+                }
+
+                if (this.config.macos) {
+                    sendNotification({
+                        title: "Claude Cache Critical",
+                        message,
+                        sound: this.config.sound || "Purr",
+                    });
+                }
+            }
         }
     }
 
