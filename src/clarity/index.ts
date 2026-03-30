@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { PROJECT_ROOT } from "@app/utils/paths";
 import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure.js";
 import { registerFillCommand } from "./commands/fill.js";
@@ -21,11 +22,14 @@ program
     .description("Launch the Clarity dashboard web UI")
     .action(async () => {
         const uiDir = resolve(import.meta.dirname, "ui");
-        const proc = Bun.spawn(["bun", "run", "dev"], {
-            cwd: uiDir,
-            stdio: ["inherit", "inherit", "inherit"],
-            env: { ...process.env, CLARITY_PROJECT_CWD: process.cwd() },
-        });
+        const proc = Bun.spawn(
+            ["bun", "--bun", "vite", "dev", "-c", resolve(uiDir, "vite.config.ts"), "--strictPort"],
+            {
+                cwd: PROJECT_ROOT,
+                stdio: ["inherit", "inherit", "inherit"],
+                env: { ...process.env, CLARITY_PROJECT_CWD: process.cwd() },
+            }
+        );
 
         // Open browser after a short delay
         setTimeout(() => {

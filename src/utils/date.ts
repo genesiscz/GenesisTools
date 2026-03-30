@@ -18,7 +18,8 @@ function resolveLocale(override?: string): string {
     return _resolveLocale();
 }
 
-export { getSystemLocale } from "./date-locale";
+// getSystemLocale uses node:child_process — import directly from ./date-locale
+// when needed server-side. Do NOT re-export here (Vite would bundle it into client code).
 
 // ============================================
 // Locale-Aware Display Formatting

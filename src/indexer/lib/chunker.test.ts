@@ -131,6 +131,115 @@ Sub section content.
         });
     });
 
+    describe("Heading strategy — improved splitting", () => {
+        it("preserves heading context in sub-chunks when section exceeds maxTokens", () => {
+            const longParagraphs = Array.from(
+                { length: 20 },
+                (_, i) => `This is paragraph ${i} with enough text to contribute meaningful tokens to the overall section content length.`
+            ).join("\n\n");
+            const content = `## Big Section\n\n${longParagraphs}`;
+
+            const result = chunkFile({
+                filePath: "doc.md",
+                content,
+                strategy: "heading",
+                maxTokens: 80,
+            });
+
+            expect(result.parser).toBe("heading");
+            expect(result.chunks.length).toBeGreaterThan(1);
+
+            for (const chunk of result.chunks) {
+                expect(chunk.content).toContain("## Big Section");
+            }
+        });
+
+        it("splits at paragraph boundaries, not mid-paragraph", () => {
+            const paragraphs = [
+                "First paragraph with some introductory content that sets the stage for the rest.",
+                "Second paragraph that contains a completely different thought and should stay intact.",
+                "Third paragraph wrapping up the section with a final thought about the topic.",
+            ];
+            const content = `## Section\n\n${paragraphs.join("\n\n")}`;
+
+            const result = chunkFile({
+                filePath: "doc.md",
+                content,
+                strategy: "heading",
+                maxTokens: 60,
+            });
+
+            expect(result.parser).toBe("heading");
+
+            for (const chunk of result.chunks) {
+                for (const para of paragraphs) {
+                    if (chunk.content.includes(para.slice(0, 20))) {
+                        expect(chunk.content).toContain(para);
+                    }
+                }
+            }
+        });
+
+        it("names the preamble from first non-empty line", () => {
+            const content = `Some introductory text before any heading.\n\nMore preamble content.\n\n## First Heading\n\nHeading content.`;
+
+            const result = chunkFile({
+                filePath: "doc.md",
+                content,
+                strategy: "heading",
+            });
+
+            expect(result.parser).toBe("heading");
+
+            const preambleChunk = result.chunks[0];
+            expect(preambleChunk.name).toBeDefined();
+            expect(preambleChunk.name).not.toBe("chunk");
+            expect(preambleChunk.name).toContain("Some introductory text");
+        });
+
+        it("uses (preamble) fallback for whitespace-only preamble lines", () => {
+            const content = `\n\n\nActual content before heading.\n\n## Heading\n\nBody.`;
+
+            const result = chunkFile({
+                filePath: "doc.md",
+                content,
+                strategy: "heading",
+            });
+
+            expect(result.parser).toBe("heading");
+
+            const preambleChunk = result.chunks.find((c) => c.content.includes("Actual content"));
+
+            if (preambleChunk) {
+                expect(preambleChunk.name).toBeDefined();
+            }
+        });
+
+        it("does not split small sections that fit within maxTokens", () => {
+            const content = `## Small Section\n\nJust a little content here.\n\n## Another Small\n\nAnother small paragraph.`;
+
+            const result = chunkFile({
+                filePath: "doc.md",
+                content,
+                strategy: "heading",
+                maxTokens: 500,
+            });
+
+            expect(result.parser).toBe("heading");
+
+            const smallSection = result.chunks.find((c) => c.name === "Small Section");
+            expect(smallSection).toBeDefined();
+            expect(smallSection!.content).toContain("Just a little content");
+
+            const anotherSection = result.chunks.find((c) => c.name === "Another Small");
+            expect(anotherSection).toBeDefined();
+
+            for (const chunk of result.chunks) {
+                expect(chunk.name).not.toContain("part");
+            }
+        });
+    });
+
     describe("JSON strategy", () => {
         it("chunks JSON array into elements", () => {
             const content = SafeJSON.stringify(

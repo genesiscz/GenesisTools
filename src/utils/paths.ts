@@ -60,6 +60,11 @@ export function expandPath(p: string): string {
 }
 
 /**
+ * Absolute path to the GenesisTools project root (where package.json lives).
+ */
+export const PROJECT_ROOT = resolve(import.meta.dirname, "../..");
+
+/**
  * The platform's path separator (re-exported for convenience).
  */
 export { sep };
