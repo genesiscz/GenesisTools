@@ -43,7 +43,13 @@ describe("percentile()", () => {
 });
 
 describe("analyzeComparables()", () => {
-    const makeListing = (soldPrice: number, utilityArea: number, originalPrice: number, soldAt: string, firstVisibleAt: string): ReasListing => ({
+    const makeListing = (
+        soldPrice: number,
+        utilityArea: number,
+        originalPrice: number,
+        soldAt: string,
+        firstVisibleAt: string
+    ): ReasListing => ({
         _id: `listing-${soldPrice}`,
         formattedAddress: "Test Address",
         formattedLocation: "Test Location",

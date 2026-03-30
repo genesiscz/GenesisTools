@@ -165,7 +165,7 @@ export function computeInvestmentScore(input: ScoreInput): InvestmentScore {
         yieldResult.score * W_YIELD +
             discountResult.score * W_DISCOUNT +
             trendResult.score * W_TREND +
-            velocityResult.score * W_VELOCITY,
+            velocityResult.score * W_VELOCITY
     );
 
     return {

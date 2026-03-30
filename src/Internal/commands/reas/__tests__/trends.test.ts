@@ -55,7 +55,7 @@ describe("analyzeTrends()", () => {
         ];
 
         const result = analyzeTrends(listings);
-        expect(result.direction).toBe("falling");
+        expect(result.direction).toBe("declining");
     });
 
     test("returns null yoyChange with insufficient data", () => {
@@ -78,10 +78,7 @@ describe("analyzeTrends()", () => {
     });
 
     test("period change is null for first period", () => {
-        const listings = [
-            makeListing("2024-01-15", 60, 3_000_000),
-            makeListing("2024-04-10", 60, 3_300_000),
-        ];
+        const listings = [makeListing("2024-01-15", 60, 3_000_000), makeListing("2024-04-10", 60, 3_300_000)];
 
         const result = analyzeTrends(listings);
         expect(result.periods[0].change).toBeNull();

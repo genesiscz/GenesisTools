@@ -27,7 +27,7 @@ describe("buildDashboardExport()", () => {
             atMarketPrice: { price: 3_300_000, grossYield: 5.5, netYield: 4.0, paybackYears: 25 },
             benchmarks: [],
         },
-        rentals: [],
+        rentalListings: [],
         mfBenchmarks: [],
         filters: {
             estateType: "flat" as const,

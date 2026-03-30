@@ -1,3 +1,4 @@
+import { SafeJSON } from "@app/utils/json";
 import { stripAnsi } from "@app/utils/string";
 import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
@@ -8,7 +9,7 @@ import { analyzeDiscount } from "./analysis/discount";
 import { computeInvestmentScore } from "./analysis/investment-score";
 import { detectMomentum } from "./analysis/market-momentum";
 import { analyzeRentalYield } from "./analysis/rental-yield";
-import { renderReport } from "./analysis/report";
+import { type FullAnalysis, renderReport } from "./analysis/report";
 import { analyzeTimeOnMarket } from "./analysis/time-on-market";
 import { analyzeTrends } from "./analysis/trends";
 import { fetchMfRentalData } from "./api/mf-rental";
@@ -46,6 +47,9 @@ interface ReasOptions {
     areaMin?: string;
     areaMax?: string;
     providers?: string;
+    format?: string;
+    server?: boolean;
+    port?: number;
 }
 
 const PROPERTY_TYPES: Array<{ value: string; label: string }> = [
@@ -388,7 +392,9 @@ function parseProviders(raw: string | undefined): ProviderName[] | undefined {
         .filter((name) => valid.includes(name));
 }
 
-async function buildFromFlags(options: ReasOptions): Promise<{ filters: AnalysisFilters; target: TargetProperty }> {
+export async function buildFromFlags(
+    options: ReasOptions
+): Promise<{ filters: AnalysisFilters; target: TargetProperty }> {
     const district = options.address
         ? await resolveDistrictFromAddress(options.address)
         : resolveDistrict(options.district!);
@@ -450,12 +456,11 @@ function applyListingFilters(listings: ReasListing[], filters: AnalysisFilters):
     return result;
 }
 
-async function fetchAndAnalyze(
+export async function fetchAndAnalyze(
     filters: AnalysisFilters,
     target: TargetProperty,
-    refresh: boolean,
-    outputPath?: string
-): Promise<void> {
+    refresh: boolean
+): Promise<FullAnalysis> {
     const spinner = p.spinner();
     spinner.start("Fetching sold data from reas.cz...");
 
@@ -534,13 +539,13 @@ async function fetchAndAnalyze(
     const investmentScore = computeInvestmentScore({
         netYield: yieldResult.netYield,
         discount: discount.medianDiscount,
-        trendDirection: trends.direction === "falling" ? "declining" : (trends.direction as "rising" | "stable"),
+        trendDirection: trends.direction,
         trendYoY: trends.yoyChange ?? 0,
         medianDaysOnMarket: timeOnMarket.median,
         districtMedianDays: timeOnMarket.median,
     });
 
-    const report = renderReport({
+    return {
         comparables,
         trends,
         yield: yieldResult,
@@ -552,8 +557,26 @@ async function fetchAndAnalyze(
         filters,
         investmentScore,
         momentum,
-    });
+    };
+}
 
+async function outputAnalysis(analysis: FullAnalysis, format: string, outputPath?: string): Promise<void> {
+    if (format === "json") {
+        const { buildDashboardExport } = await import("./lib/api-export");
+        const exportData = buildDashboardExport(analysis);
+        const json = SafeJSON.stringify(exportData, null, 2);
+
+        if (outputPath) {
+            await Bun.write(outputPath, json);
+            console.log(pc.green(`JSON export written to ${outputPath}`));
+        } else {
+            console.log(json);
+        }
+
+        return;
+    }
+
+    const report = renderReport(analysis);
     console.log(report);
 
     if (outputPath) {
@@ -638,6 +661,12 @@ async function runSearch(query: string, options: ReasOptions): Promise<void> {
 }
 
 async function runReasAnalysis(options: ReasOptions): Promise<void> {
+    if (options.server) {
+        const { startServer } = await import("./server");
+        await startServer(options.port);
+        return;
+    }
+
     if (options.refresh) {
         await clearCache();
         console.log(pc.dim("Cache cleared."));
@@ -648,14 +677,18 @@ async function runReasAnalysis(options: ReasOptions): Promise<void> {
         return;
     }
 
+    const format = options.format ?? "terminal";
+
     if (hasSufficientFlags(options)) {
         const { filters, target } = await buildFromFlags(options);
-        await fetchAndAnalyze(filters, target, !!options.refresh, options.output);
+        const analysis = await fetchAndAnalyze(filters, target, !!options.refresh);
+        await outputAnalysis(analysis, format, options.output);
         return;
     }
 
     const { filters, target, refresh } = await runInteractiveWizard();
-    await fetchAndAnalyze(filters, target, refresh, options.output);
+    const analysis = await fetchAndAnalyze(filters, target, refresh);
+    await outputAnalysis(analysis, format, options.output);
 }
 
 export function registerReasCommand(program: Command): void {
@@ -677,8 +710,11 @@ export function registerReasCommand(program: Command): void {
         .option("--area-min <m2>", "Minimum area filter")
         .option("--area-max <m2>", "Maximum area filter")
         .option("--providers <list>", "Comma-separated providers (reas,sreality,mf)")
+        .option("--format <format>", "Output format: terminal (default), json", "terminal")
         .option("-o, --output <path>", "Write report to file")
         .option("--refresh", "Force re-fetch (ignore cache)")
+        .option("--server", "Start dashboard API server")
+        .option("--port <port>", "Server port (default: 3456)", parseInt)
         .action(async (opts: ReasOptions) => {
             await runReasAnalysis(opts);
         });

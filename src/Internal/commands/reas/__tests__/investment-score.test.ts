@@ -79,8 +79,22 @@ describe("computeInvestmentScore()", () => {
 
     test("recommendation matches grade", () => {
         const scenarios = [
-            { netYield: 6.0, discount: -10, trendDirection: "rising" as const, trendYoY: 8, medianDaysOnMarket: 20, districtMedianDays: 45 },
-            { netYield: 1.0, discount: 10, trendDirection: "declining" as const, trendYoY: -5, medianDaysOnMarket: 100, districtMedianDays: 45 },
+            {
+                netYield: 6.0,
+                discount: -10,
+                trendDirection: "rising" as const,
+                trendYoY: 8,
+                medianDaysOnMarket: 20,
+                districtMedianDays: 45,
+            },
+            {
+                netYield: 1.0,
+                discount: 10,
+                trendDirection: "declining" as const,
+                trendYoY: -5,
+                medianDaysOnMarket: 100,
+                districtMedianDays: 45,
+            },
         ];
 
         for (const input of scenarios) {

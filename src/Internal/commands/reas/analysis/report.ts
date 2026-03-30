@@ -21,6 +21,7 @@ export interface FullAnalysis {
     filters: AnalysisFilters;
     investmentScore?: InvestmentScore;
     momentum?: MarketMomentum;
+    rentalAggregation?: import("./rental-aggregation").AggregatedRentalStats[];
 }
 
 const SEPARATOR_WIDTH = 72;
@@ -266,7 +267,7 @@ function renderPriceTrend(analysis: FullAnalysis): string {
     const dirArrow =
         trends.direction === "rising"
             ? pc.green("\u2191")
-            : trends.direction === "falling"
+            : trends.direction === "declining"
               ? pc.red("\u2193")
               : pc.dim("\u2192");
     const dirLabel = trends.direction.charAt(0).toUpperCase() + trends.direction.slice(1);

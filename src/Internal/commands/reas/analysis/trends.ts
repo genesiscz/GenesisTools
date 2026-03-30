@@ -11,7 +11,7 @@ export interface TrendPeriod {
 export interface TrendsResult {
     periods: TrendPeriod[];
     yoyChange: number | null;
-    direction: "rising" | "falling" | "stable";
+    direction: "rising" | "declining" | "stable";
 }
 
 function getQuarterLabel(date: Date): string {
@@ -99,7 +99,7 @@ function computeYoY(periods: TrendPeriod[]): number | null {
     return null;
 }
 
-function determineDirection(periods: TrendPeriod[]): "rising" | "falling" | "stable" {
+function determineDirection(periods: TrendPeriod[]): "rising" | "declining" | "stable" {
     if (periods.length < 2) {
         return "stable";
     }
@@ -114,7 +114,7 @@ function determineDirection(periods: TrendPeriod[]): "rising" | "falling" | "sta
     const allFalling = recent.every((p) => p.change !== null && p.change < 0);
 
     if (allFalling) {
-        return "falling";
+        return "declining";
     }
 
     return "stable";

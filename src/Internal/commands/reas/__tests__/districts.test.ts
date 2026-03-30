@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
     DISTRICTS,
-    PRAHA_DISTRICTS,
     getAllDistrictNames,
     getDistrict,
     getPrahaDistrictNames,
+    PRAHA_DISTRICTS,
     searchDistricts,
 } from "../data/districts";
 

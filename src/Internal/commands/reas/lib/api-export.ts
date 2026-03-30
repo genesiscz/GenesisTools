@@ -1,10 +1,6 @@
-import type { ComparablesResult } from "../analysis/comparables";
-import type { DiscountResult } from "../analysis/discount";
 import type { AggregatedRentalStats } from "../analysis/rental-aggregation";
-import type { YieldResult } from "../analysis/rental-yield";
-import type { TimeOnMarketResult } from "../analysis/time-on-market";
-import type { TrendsResult } from "../analysis/trends";
-import type { AnalysisFilters, MfRentalBenchmark, SrealityRental, TargetProperty } from "../types";
+import type { FullAnalysis } from "../analysis/report";
+import type { AnalysisFilters, MfRentalBenchmark, TargetProperty } from "../types";
 
 export interface DashboardExport {
     meta: {
@@ -82,18 +78,7 @@ export interface DashboardExport {
     };
 }
 
-export interface FullAnalysis {
-    comparables: ComparablesResult;
-    trends: TrendsResult;
-    timeOnMarket: TimeOnMarketResult;
-    discount: DiscountResult;
-    yield: YieldResult;
-    rentals: SrealityRental[];
-    mfBenchmarks: MfRentalBenchmark[];
-    filters: AnalysisFilters;
-    target: TargetProperty;
-    rentalAggregation?: AggregatedRentalStats[];
-}
+export type { FullAnalysis };
 
 export function buildDashboardExport(analysis: FullAnalysis): DashboardExport {
     const { comparables, trends, timeOnMarket, discount, yield: yieldResult } = analysis;
@@ -119,7 +104,7 @@ export function buildDashboardExport(analysis: FullAnalysis): DashboardExport {
                 link: l.link ?? "",
                 source: "reas",
             })),
-            rentals: analysis.rentals.map((r) => ({
+            rentals: analysis.rentalListings.map((r) => ({
                 disposition: r.disposition ?? "",
                 area: r.area ?? 0,
                 rent: r.price,

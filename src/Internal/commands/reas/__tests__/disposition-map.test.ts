@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
-import { normalizeDisposition, DISPOSITIONS, getSrealityCategorySubCb } from "../data/disposition-map";
+import { describe, expect, test } from "bun:test";
+import { DISPOSITIONS, getSrealityCategorySubCb, normalizeDisposition } from "../data/disposition-map";
 
 describe("Disposition Map", () => {
     test("normalizes common Czech variants", () => {
