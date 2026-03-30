@@ -16,7 +16,15 @@ import { clearCache } from "./cache/index";
 import type { DistrictInfo } from "./data/districts";
 import { getAllDistrictNames, getDistrict, getPrahaDistrictNames, searchDistricts } from "./data/districts";
 import { resolveAddress } from "./lib/address-resolver";
-import type { AnalysisFilters, DateRange, ProviderName, ReasListing, TargetProperty } from "./types";
+import type {
+    AnalysisFilters,
+    DateRange,
+    MfRentalBenchmark,
+    ProviderName,
+    ReasListing,
+    SrealityRental,
+    TargetProperty,
+} from "./types";
 
 interface ReasOptions {
     district?: string;
@@ -449,12 +457,17 @@ async function fetchAndAnalyze(
     const spinner = p.spinner();
     spinner.start("Fetching sold data from reas.cz...");
 
+    const warnings: string[] = [];
     let allListings: ReasListing[] = [];
 
     if (isProviderEnabled(filters, "reas")) {
-        for (const period of filters.periods) {
-            const listings = await fetchSoldListings(filters, period, refresh);
-            allListings.push(...listings);
+        try {
+            for (const period of filters.periods) {
+                const listings = await fetchSoldListings(filters, period, refresh);
+                allListings.push(...listings);
+            }
+        } catch (error) {
+            warnings.push(`REAS: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -462,17 +475,41 @@ async function fetchAndAnalyze(
 
     spinner.message(`Found ${allListings.length} sold listings. Fetching rental data from sreality.cz...`);
 
-    const rentalListings = isProviderEnabled(filters, "sreality") ? await fetchRentalListings(filters, refresh) : [];
+    let rentalListings: SrealityRental[] = [];
+
+    if (isProviderEnabled(filters, "sreality")) {
+        try {
+            rentalListings = await fetchRentalListings(filters, refresh);
+        } catch (error) {
+            warnings.push(`Sreality: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
 
     spinner.message(`Found ${rentalListings.length} rentals. Loading MF rental benchmarks...`);
 
-    const mfBenchmarks = isProviderEnabled(filters, "mf")
-        ? await fetchMfRentalData(filters.district.name, refresh)
-        : [];
+    let mfBenchmarks: MfRentalBenchmark[] = [];
+
+    if (isProviderEnabled(filters, "mf")) {
+        try {
+            mfBenchmarks = await fetchMfRentalData(filters.district.name, refresh);
+        } catch (error) {
+            warnings.push(`MF cenova mapa: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
 
     spinner.stop(
         `Data fetched: ${allListings.length} sold, ${rentalListings.length} rentals, ${mfBenchmarks.length} MF benchmarks.`
     );
+
+    if (warnings.length > 0) {
+        console.log(pc.yellow("\nSome providers returned errors (analysis continues with available data):"));
+
+        for (const w of warnings) {
+            console.log(pc.dim(`  - ${w}`));
+        }
+
+        console.log();
+    }
 
     const comparables = analyzeComparables(allListings, target);
     const trends = analyzeTrends(allListings);
