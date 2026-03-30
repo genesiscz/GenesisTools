@@ -19,6 +19,22 @@ describe("deduplicateListings()", () => {
         expect(deduped.length).toBe(1);
     });
 
+    test("keeps same-address same-rent listings when area differs", () => {
+        const sources: RentalSource[] = [
+            {
+                provider: "sreality",
+                listings: [{ disposition: "2+kk", area: 50, rent: 15_000, address: "Letňany, Praha 9" }],
+            },
+            {
+                provider: "ereality",
+                listings: [{ disposition: "2+kk", area: 62, rent: 15_000, address: "Letňany, Praha 9" }],
+            },
+        ];
+
+        const deduped = deduplicateListings(sources);
+        expect(deduped.length).toBe(2);
+    });
+
     test("keeps listings with different prices", () => {
         const sources: RentalSource[] = [
             {

@@ -6,10 +6,9 @@ export interface MarketMomentum {
     interpretation: string;
 }
 
-interface TrendPeriodInput {
-    medianPerM2: number;
-    count: number;
-}
+import type { TrendPeriod } from "./trends";
+
+type TrendPeriodInput = Pick<TrendPeriod, "medianPerM2" | "count">;
 
 export function detectMomentum(periods: TrendPeriodInput[]): MarketMomentum {
     if (periods.length < 2) {

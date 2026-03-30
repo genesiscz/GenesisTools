@@ -389,17 +389,29 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
     return { filters, target, refresh: false };
 }
 
+function parseOptionalNumber(raw: string | undefined): number | undefined {
+    if (raw === undefined) {
+        return undefined;
+    }
+
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : undefined;
+}
+
 function parseProviders(raw: string | undefined): ProviderName[] | undefined {
     if (!raw) {
         return undefined;
     }
 
     const valid = new Set<ProviderName>(["reas", "sreality", "ereality", "bezrealitky", "mf"]);
+    const tokens = raw.split(",").map((s) => s.trim().toLowerCase());
+    const unknown = tokens.filter((t) => !valid.has(t as ProviderName));
 
-    return raw
-        .split(",")
-        .map((s) => s.trim().toLowerCase())
-        .filter((name): name is ProviderName => valid.has(name as ProviderName));
+    if (unknown.length > 0) {
+        throw new Error(`Unknown provider(s): ${unknown.join(", ")}. Valid: ${[...valid].join(", ")}`);
+    }
+
+    return tokens.filter((name): name is ProviderName => valid.has(name as ProviderName));
 }
 
 export async function buildFromFlags(
@@ -418,10 +430,10 @@ export async function buildFromFlags(
         disposition,
         periods: dateRanges,
         district,
-        priceMin: options.priceMin ? Number(options.priceMin) : undefined,
-        priceMax: options.priceMax ? Number(options.priceMax) : undefined,
-        areaMin: options.areaMin ? Number(options.areaMin) : undefined,
-        areaMax: options.areaMax ? Number(options.areaMax) : undefined,
+        priceMin: parseOptionalNumber(options.priceMin),
+        priceMax: parseOptionalNumber(options.priceMax),
+        areaMin: parseOptionalNumber(options.areaMin),
+        areaMax: parseOptionalNumber(options.areaMax),
         providers: parseProviders(options.providers),
     };
 
@@ -447,19 +459,19 @@ function isProviderEnabled(filters: AnalysisFilters, provider: ProviderName): bo
 function applyListingFilters(listings: ReasListing[], filters: AnalysisFilters): ReasListing[] {
     let result = listings;
 
-    if (filters.priceMin) {
+    if (filters.priceMin !== undefined) {
         result = result.filter((l) => l.soldPrice >= filters.priceMin!);
     }
 
-    if (filters.priceMax) {
+    if (filters.priceMax !== undefined) {
         result = result.filter((l) => l.soldPrice <= filters.priceMax!);
     }
 
-    if (filters.areaMin) {
+    if (filters.areaMin !== undefined) {
         result = result.filter((l) => l.utilityArea >= filters.areaMin!);
     }
 
-    if (filters.areaMax) {
+    if (filters.areaMax !== undefined) {
         result = result.filter((l) => l.utilityArea <= filters.areaMax!);
     }
 

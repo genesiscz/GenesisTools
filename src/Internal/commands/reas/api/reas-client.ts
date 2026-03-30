@@ -6,6 +6,18 @@ const BASE_URL = "https://catalog.reas.cz/catalog";
 const CLIENT_ID = "6988cb437c5b9d2963280369";
 const PAGE_LIMIT = 20;
 const MAX_PAGES = 1000;
+const FETCH_TIMEOUT_MS = 30_000;
+
+async function fetchWithTimeout(url: string): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+    try {
+        return await fetch(url, { signal: controller.signal });
+    } finally {
+        clearTimeout(timeout);
+    }
+}
 
 interface CountResponse {
     success: boolean;
@@ -78,7 +90,7 @@ export async function fetchSoldCount(filters: AnalysisFilters, dateRange: DateRa
     const params = buildQueryParams(filters, dateRange);
     const url = `${BASE_URL}/listings/count?${params.toString()}`;
 
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
 
     if (!response.ok) {
         throw new Error(`Reas API error (count): ${response.status} ${response.statusText}`);
@@ -120,7 +132,7 @@ export async function fetchSoldListings(
         params.set("limit", String(PAGE_LIMIT));
 
         const url = `${BASE_URL}/listings?${params.toString()}`;
-        const response = await fetch(url);
+        const response = await fetchWithTimeout(url);
 
         if (!response.ok) {
             throw new Error(`Reas API error (listings page ${page}): ${response.status} ${response.statusText}`);
