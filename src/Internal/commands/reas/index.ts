@@ -534,7 +534,7 @@ async function fetchAndAnalyze(
     const investmentScore = computeInvestmentScore({
         netYield: yieldResult.netYield,
         discount: discount.medianDiscount,
-        trendDirection: trends.direction === "falling" ? "declining" : trends.direction,
+        trendDirection: trends.direction === "falling" ? "declining" : (trends.direction as "rising" | "stable"),
         trendYoY: trends.yoyChange ?? 0,
         medianDaysOnMarket: timeOnMarket.median,
         districtMedianDays: timeOnMarket.median,
