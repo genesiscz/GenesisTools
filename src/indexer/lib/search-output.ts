@@ -126,7 +126,8 @@ function formatPretty(opts: FormatOptions): string {
             const header = [pc.bold(r.displayName), colorConfidence(r.confidence), pc.dim(r.method)].join("  ");
             lines.push(header);
 
-            const codeBlock = renderCodeBlock(r.content, r.language, r.startLine, r.endLine);
+            const highlighted = highlightContent(r.content, opts.highlightWords);
+            const codeBlock = renderCodeBlock(highlighted, r.language, r.startLine, r.endLine);
             lines.push(codeBlock);
             lines.push("");
         }

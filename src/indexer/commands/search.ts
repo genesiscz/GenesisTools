@@ -5,6 +5,7 @@ import type { SearchResult } from "@app/utils/search/types";
 import { truncateText } from "@app/utils/string";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
+import { isAbsolute, relative, sep } from "node:path";
 import pc from "picocolors";
 import { normalizeConfidence } from "../lib/confidence";
 import { formatChunkDisplayName } from "../lib/display-name";
@@ -102,12 +103,19 @@ export function registerSearchCommand(program: Command): void {
                         names = [allMeta[0].name];
                     } else {
                         const cwd = process.cwd();
-                        const cwdMatch = allMeta.find((m) => {
-                            const baseDir = m.config.baseDir;
-                            return cwd === baseDir || cwd.startsWith(`${baseDir}/`);
-                        });
+                        const cwdMatches = allMeta
+                            .filter((m) => {
+                                const rel = relative(m.config.baseDir, cwd);
+                                return rel === "" || (!rel.startsWith("..") && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+                            })
+                            .sort((a, b) => b.config.baseDir.length - a.config.baseDir.length);
 
-                        if (cwdMatch) {
+                        const cwdMatch = cwdMatches[0];
+                        const isUniqueDeepest =
+                            cwdMatches.length < 2 ||
+                            cwdMatches[0].config.baseDir.length > cwdMatches[1].config.baseDir.length;
+
+                        if (cwdMatch && isUniqueDeepest) {
                             names = [cwdMatch.name];
                             p.log.info(pc.dim(`(using index "${cwdMatch.name}" from cwd)`));
                         } else if (isInteractive()) {
