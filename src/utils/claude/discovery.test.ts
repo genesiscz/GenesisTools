@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { PROJECTS_DIR, encodedProjectDir } from "./projects";
+import { encodedProjectDir, PROJECTS_DIR } from "./projects";
 
 describe("discovery.ts — discoverSessionFiles", () => {
     it("returns files when allProjects is true", async () => {

@@ -9,9 +9,9 @@ import { stat } from "node:fs/promises";
 import { basename, sep } from "node:path";
 import { createInterface } from "node:readline";
 import logger from "@app/logger";
-import { Executor } from "@app/utils/cli";
 import { discoverSessionFiles, discoverSessionFilesInDir } from "@app/utils/claude/discovery";
-import { PROJECTS_DIR, extractProjectName, resolveProjectDir } from "@app/utils/claude/projects";
+import { extractProjectName, PROJECTS_DIR, resolveProjectDir } from "@app/utils/claude/projects";
+import { Executor } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { glob } from "glob";
 import {
@@ -87,7 +87,7 @@ export { CLAUDE_DIR, PROJECTS_DIR } from "@app/utils/claude/projects";
 export async function findConversationFiles(filters: SearchFilters): Promise<string[]> {
     const isAll = !filters.project || filters.project === "all";
 
-    let files = await discoverSessionFiles({
+    const files = await discoverSessionFiles({
         project: isAll ? undefined : filters.project,
         allProjects: isAll,
         subagentsOnly: filters.agentsOnly,

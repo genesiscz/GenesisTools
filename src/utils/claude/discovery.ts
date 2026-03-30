@@ -9,8 +9,8 @@
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { glob } from "glob";
-import { isSubagentFile } from "./session.utils";
 import { PROJECTS_DIR, resolveProjectFilter } from "./projects";
+import { isSubagentFile } from "./session.utils";
 
 export interface DiscoveryOptions {
     /** Project filter: encoded dir name (starts with "-"), project name, or undefined (=current). */
@@ -83,10 +83,7 @@ export async function discoverSessionFiles(options: DiscoveryOptions = {}): Prom
  * Discover JSONL files in a specific project directory using readdir (no glob).
  * Faster than `discoverSessionFiles` when the exact directory is known.
  */
-export function discoverSessionFilesInDir(
-    projectDir: string,
-    options: { excludeSubagents?: boolean } = {},
-): string[] {
+export function discoverSessionFilesInDir(projectDir: string, options: { excludeSubagents?: boolean } = {}): string[] {
     try {
         const entries = readdirSync(projectDir);
         let files = entries.filter((e) => e.endsWith(".jsonl")).map((e) => resolve(projectDir, e));

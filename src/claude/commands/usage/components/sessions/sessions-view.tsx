@@ -167,9 +167,7 @@ export function SessionsView({ notifications }: SessionsViewProps) {
             if (input === "2") {
                 const cmd = `${claudeCmd} --resume '${actionMenu.sessionId}'`;
                 setActionMenu({ open: false });
-                import("clipboardy")
-                    .then((clipboard) => clipboard.default.write(cmd))
-                    .catch(() => {});
+                import("clipboardy").then((clipboard) => clipboard.default.write(cmd)).catch(() => {});
                 return;
             }
 

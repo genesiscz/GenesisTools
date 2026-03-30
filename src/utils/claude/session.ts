@@ -19,7 +19,7 @@ import { SafeJSON } from "@app/utils/json";
 import { estimateTokens } from "@app/utils/tokens";
 import { discoverSessionFiles } from "./discovery";
 import { parseJsonlTranscript } from "./index";
-import { PROJECTS_DIR, encodedProjectDir, extractProjectName } from "./projects";
+import { encodedProjectDir, extractProjectName, PROJECTS_DIR } from "./projects";
 import {
     agentProgressToSubagent,
     extractFilePathFromInput,
