@@ -111,6 +111,10 @@ function createTerminalRenderer(): Renderer {
 const terminalRenderer = createTerminalRenderer();
 
 export function renderMarkdown(text: string): string {
-    const result = marked(text, { renderer: terminalRenderer }) as string;
-    return result.replace(/\n{3,}/g, "\n\n").trimEnd();
+    try {
+        const result = marked(text, { renderer: terminalRenderer }) as string;
+        return result.replace(/\n{3,}/g, "\n\n").trimEnd();
+    } catch {
+        return text.trimEnd();
+    }
 }

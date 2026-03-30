@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import { basename, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 
+import { getMainRepoRootSync } from "@app/utils/git/worktree";
 import { SafeJSON } from "@app/utils/json";
 
 export const CLAUDE_DIR = resolve(homedir(), ".claude");
@@ -96,9 +97,11 @@ export function detectCurrentProject(): string | undefined {
 /**
  * Get the encoded project directory name for a cwd path.
  * Claude encodes /Users/jane/Projects/Foo as -Users-jane-Projects-Foo.
+ *
+ * When running inside a git worktree, resolves to the main repo root
+ * so sessions are found in the correct ~/.claude/projects/ directory.
  */
 export function encodedProjectDir(cwd?: string): string {
-    const p = cwd ?? process.cwd();
-    // Prepend a dash to match the observed encoding format.
+    const p = cwd ?? getMainRepoRootSync(process.cwd());
     return `-${p.replace(/^\//, "").replaceAll(sep, "-")}`;
 }
