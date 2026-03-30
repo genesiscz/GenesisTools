@@ -101,24 +101,36 @@ export function getLanguageForExt(ext: string): string | null {
 let dynamicLangsRegistered = false;
 
 /** Register dynamic language grammars, installing missing ones on-demand. Safe to call multiple times. */
-export async function ensureDynamicLanguages(): Promise<void> {
-    if (dynamicLangsRegistered) {
+export async function ensureDynamicLanguages(options?: {
+    only?: string[]; // Only install these languages (e.g. ["python", "go"])
+}): Promise<void> {
+    if (dynamicLangsRegistered && !options?.only) {
         return;
     }
 
-    dynamicLangsRegistered = true;
+    if (!options?.only) {
+        dynamicLangsRegistered = true;
+    }
 
-    const missing = DYNAMIC_LANG_PACKAGES
+    const targetLangs = options?.only
+        ? DYNAMIC_LANG_PACKAGES.filter(([name]) => options.only!.includes(name))
+        : DYNAMIC_LANG_PACKAGES;
+
+    const missing = targetLangs
         .filter(([, pkg]) => !isPackageInstalled(pkg))
         .map(([, pkg]) => pkg);
 
     if (missing.length > 0) {
-        await ensurePackages(missing, { label: `AST grammars (${missing.length} languages)` });
+        await ensurePackages(missing, {
+            label: `AST grammars (${missing.length} language${missing.length > 1 ? "s" : ""})`,
+            interactive: true,
+            reason: "Enables code parsing for syntax-aware indexing and search",
+        });
     }
 
     const modules: Record<string, { libraryPath: string; extensions: string[]; languageSymbol?: string }> = {};
 
-    for (const [name, pkg] of DYNAMIC_LANG_PACKAGES) {
+    for (const [name, pkg] of targetLangs) {
         try {
             modules[name] = esmRequire(pkg);
         } catch {

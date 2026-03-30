@@ -448,7 +448,7 @@ function extractCSharpImports(source: string): ImportInfo[] {
  * Ruby, Swift, PHP, Kotlin, Scala, C#.
  */
 export async function extractImports(source: string, language: string): Promise<ImportInfo[]> {
-    await ensureDynamicLanguages();
+    await ensureDynamicLanguages({ only: [language] });
 
     switch (language) {
         case "typescript":
