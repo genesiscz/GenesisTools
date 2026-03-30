@@ -32,18 +32,8 @@ function validatePositiveInt(value: string | undefined, name: string): number | 
 
 const STATUSLINE_DIR = resolve(homedir(), ".claude", "statusline");
 
-function countListFlags(): number {
-    let count = 0;
-
-    for (const arg of process.argv.slice(2)) {
-        if (/^-l+$/.test(arg)) {
-            count += arg.length - 1;
-        } else if (arg === "--list-sessions") {
-            count += 1;
-        }
-    }
-
-    return Math.min(count, 2);
+function increaseCount(_value: string, previous: number): number {
+    return previous + 1;
 }
 
 interface TailOptions {
@@ -60,7 +50,7 @@ interface TailOptions {
     output?: string;
     outputCli: boolean;
     project?: string;
-    listSessions: boolean;
+    listSessions: number;
 }
 
 export function registerTailCommand(program: Command): void {
@@ -81,11 +71,12 @@ export function registerTailCommand(program: Command): void {
         .option("-o, --output <file>", "Write formatted output to file")
         .option("--output-cli", "Also print to CLI when using -o", false)
         .option("-p, --project <path>", "Search in specific project directory")
-        .option("-l, --list-sessions", "List recent sessions (-l compact, -ll verbose)", false)
+        .option("-l, --list-sessions", "List recent sessions (-l compact, -ll verbose)", increaseCount, 0)
+        .combineFlagAndOptionalValue(false)
         .addHelpText("after", `\n${INCLUDE_HELP}`)
         .action(async (query: string | undefined, opts: TailOptions) => {
             const useColors = opts.colors !== false && (process.stdout.isTTY ?? false);
-            const listLevel = countListFlags() || (opts.listSessions ? 1 : 0);
+            const listLevel = Math.min(opts.listSessions, 2) as 0 | 1 | 2;
             const projectPath = opts.project ? resolve(opts.project) : undefined;
 
             if (listLevel > 0) {

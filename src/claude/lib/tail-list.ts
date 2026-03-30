@@ -211,7 +211,7 @@ async function extractSessionPreview(filePath: string): Promise<SessionPreview> 
 
     for (const line of lines) {
         try {
-            const obj = SafeJSON.parse(line) as Record<string, unknown>;
+            const obj = SafeJSON.parse(line, { strict: true }) as Record<string, unknown>;
 
             if (!obj || typeof obj.type !== "string") {
                 continue;
@@ -264,7 +264,7 @@ async function extractTailRecords(filePath: string, count: number): Promise<Conv
 
     for (const line of lines) {
         try {
-            const obj = SafeJSON.parse(line) as ConversationMessage;
+            const obj = SafeJSON.parse(line, { strict: true }) as ConversationMessage;
 
             if (obj && typeof obj.type === "string") {
                 records.push(obj);

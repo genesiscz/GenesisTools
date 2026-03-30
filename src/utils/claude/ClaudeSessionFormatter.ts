@@ -588,8 +588,6 @@ export class ClaudeSessionFormatter {
         return `${pc.blue("⏺")} ${this.colorizeToolLabel(name)}${pc.dim(args)}`;
     }
 
-
-
     private formatDuration(ms: number): string {
         if (ms < 1000) {
             return `${ms}ms`;
