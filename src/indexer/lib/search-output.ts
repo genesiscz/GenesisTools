@@ -1,4 +1,4 @@
-import { relative } from "node:path";
+import { isAbsolute, relative } from "node:path";
 import { formatTable } from "@app/utils/table";
 import pc from "picocolors";
 import { highlightQueryWords } from "./highlight";
@@ -30,8 +30,12 @@ interface FormatOptions {
 export function toDisplayPath(filePath: string, indexName: string, baseDirs?: Map<string, string>): string {
     const baseDir = baseDirs?.get(indexName);
 
-    if (baseDir && filePath.startsWith(baseDir)) {
-        return relative(baseDir, filePath);
+    if (baseDir) {
+        const rel = relative(baseDir, filePath);
+
+        if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {
+            return rel;
+        }
     }
 
     return filePath;

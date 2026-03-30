@@ -1,3 +1,4 @@
+import { isAbsolute, relative } from "node:path";
 import { toToon } from "@app/json/lib/toon";
 import { isInteractive } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
@@ -5,7 +6,6 @@ import type { SearchResult } from "@app/utils/search/types";
 import { truncateText } from "@app/utils/string";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
-import { isAbsolute, relative, sep } from "node:path";
 import pc from "picocolors";
 import { normalizeConfidence } from "../lib/confidence";
 import { formatChunkDisplayName } from "../lib/display-name";
@@ -106,7 +106,7 @@ export function registerSearchCommand(program: Command): void {
                         const cwdMatches = allMeta
                             .filter((m) => {
                                 const rel = relative(m.config.baseDir, cwd);
-                                return rel === "" || (!rel.startsWith("..") && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+                                return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
                             })
                             .sort((a, b) => b.config.baseDir.length - a.config.baseDir.length);
 
