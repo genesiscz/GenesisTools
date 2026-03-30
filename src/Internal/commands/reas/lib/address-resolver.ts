@@ -64,8 +64,8 @@ export async function resolveAddress(query: string): Promise<ResolvedAddress[]> 
 export function parseResolvedAddress(suggestion: SuggestResult): ResolvedAddress | null {
     const municipality = suggestion.municipality;
 
-    // Strategy 1: Exact match on municipality name
-    let district = getDistrict(municipality);
+    // Strategy 1: Try the suggest value first (e.g. "Praha 4" before "Praha")
+    let district = getDistrict(suggestion.value);
 
     if (district) {
         return {
@@ -75,23 +75,23 @@ export function parseResolvedAddress(suggestion: SuggestResult): ResolvedAddress
         };
     }
 
-    // Strategy 2: Fuzzy search on municipality
+    // Strategy 2: Exact match on municipality name
+    district = getDistrict(municipality);
+
+    if (district) {
+        return {
+            district,
+            municipalityName: municipality,
+            suggestResult: suggestion,
+        };
+    }
+
+    // Strategy 3: Fuzzy search on municipality
     const fuzzyResults = searchDistricts(municipality);
 
     if (fuzzyResults.length > 0) {
         return {
             district: fuzzyResults[0],
-            municipalityName: municipality,
-            suggestResult: suggestion,
-        };
-    }
-
-    // Strategy 3: Try the suggest value itself (may differ from municipality)
-    district = getDistrict(suggestion.value);
-
-    if (district) {
-        return {
-            district,
             municipalityName: municipality,
             suggestResult: suggestion,
         };

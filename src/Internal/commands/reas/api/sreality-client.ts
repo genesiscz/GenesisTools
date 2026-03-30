@@ -1,9 +1,11 @@
+import { SafeJSON } from "@app/utils/json";
 import { cacheKey, getCached, SREALITY_TTL, setCache } from "../cache/index";
 import { getSrealityCategorySubCb } from "../data/disposition-map";
 import type { AnalysisFilters, CacheEntry, SrealityRental } from "../types";
 
 const BASE_URL = "https://www.sreality.cz/api/cs/v2";
 const PER_PAGE = 60;
+const MAX_PAGES = 1000;
 
 const BUILDING_TYPE_MAP: Record<string, number> = {
     panel: 1,
@@ -176,14 +178,15 @@ export async function fetchRentalListings(filters: AnalysisFilters, refresh = fa
             throw new Error(`Sreality API error (page ${page}): ${response.status} ${response.statusText}`);
         }
 
-        const body = (await response.json()) as SrealityListResponse;
+        const text = await response.text();
+        const body = SafeJSON.parse(text) as SrealityListResponse;
         const estates = body._embedded?.estates ?? [];
 
         for (const estate of estates) {
             allListings.push(mapEstate(estate));
         }
 
-        if (estates.length === 0 || page * PER_PAGE >= body.result_size) {
+        if (estates.length === 0 || page * PER_PAGE >= body.result_size || page >= MAX_PAGES) {
             hasMore = false;
         } else {
             page++;
@@ -218,7 +221,8 @@ export async function suggestLocality(phrase: string): Promise<SuggestResult[]> 
         throw new Error(`Sreality suggest error: ${response.status} ${response.statusText}`);
     }
 
-    const body = (await response.json()) as SrealitySuggestResponse;
+    const text = await response.text();
+    const body = SafeJSON.parse(text) as SrealitySuggestResponse;
     const suggestions = body.data ?? [];
 
     return suggestions.map((s) => ({

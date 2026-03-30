@@ -40,7 +40,8 @@ export function deduplicateListings(sources: RentalSource[]): UnifiedListing[] {
         // Dedupe key: normalized address + price (±500 CZK tolerance)
         const addrNorm = listing.address.toLowerCase().replace(/\s+/g, " ").trim();
         const priceGroup = Math.round(listing.rent / 500) * 500;
-        const key = `${addrNorm}|${listing.disposition}|${priceGroup}`;
+        const areaGroup = listing.area > 0 ? Math.round(listing.area) : 0;
+        const key = `${addrNorm}|${listing.disposition}|${areaGroup}|${priceGroup}`;
 
         if (seen.has(key)) {
             return false;
@@ -71,8 +72,10 @@ export function aggregateRentals(sources: RentalSource[]): AggregatedRentalStats
 
     for (const [disposition, listings] of groups) {
         const rents = listings.map((l) => l.rent).sort((a, b) => a - b);
-        const areas = listings.filter((l) => l.area > 0).map((l) => l.area);
-        const meanArea = areas.length > 0 ? areas.reduce((a, b) => a + b, 0) / areas.length : 0;
+        const rentPerM2Values = listings
+            .filter((l) => l.area > 0)
+            .map((l) => l.rent / l.area)
+            .sort((a, b) => a - b);
         const medianRent = median(rents);
 
         // Per-provider stats
@@ -100,7 +103,7 @@ export function aggregateRentals(sources: RentalSource[]): AggregatedRentalStats
             meanRent: rents.reduce((a, b) => a + b, 0) / rents.length,
             minRent: rents[0],
             maxRent: rents[rents.length - 1],
-            rentPerM2: meanArea > 0 ? medianRent / meanArea : 0,
+            rentPerM2: rentPerM2Values.length > 0 ? median(rentPerM2Values) : 0,
             sources: sourcesMap,
             confidence: listings.length >= 10 ? "high" : listings.length >= 5 ? "medium" : "low",
         });

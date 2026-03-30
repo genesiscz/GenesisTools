@@ -79,9 +79,9 @@ export function detectMomentum(periods: TrendPeriodInput[]): MarketMomentum {
     const totalSamples = periods.reduce((sum, p) => sum + p.count, 0);
     let confidence: MarketMomentum["confidence"];
 
-    if (periods.length >= 4 && totalSamples >= 30) {
+    if (changes.length >= 3 && totalSamples >= 30) {
         confidence = "high";
-    } else if (periods.length >= 3 && totalSamples >= 15) {
+    } else if (changes.length >= 2 && totalSamples >= 15) {
         confidence = "medium";
     } else {
         confidence = "low";

@@ -32,7 +32,7 @@ export function analyzeDiscount(listings: ReasListing[]): DiscountResult {
     const values = discounts.map((d) => d.discount).sort((a, b) => a - b);
     const sum = values.reduce((acc, v) => acc + v, 0);
 
-    const noDiscountCount = discounts.filter((d) => d.discount >= 0).length;
+    const noDiscountCount = listings.filter((l) => l.originalPrice > 0 && l.soldPrice >= l.originalPrice).length;
 
     return {
         avgDiscount: sum / values.length,

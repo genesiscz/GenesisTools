@@ -194,10 +194,11 @@ function renderRentalListings(analysis: FullAnalysis): string {
         })
     );
 
-    const disp = filters.disposition ?? "all";
-    const matchingRentals = rentalListings.filter(
-        (l) => l.disposition && l.disposition.toLowerCase() === disp.toLowerCase()
-    );
+    const disp = filters.disposition ?? target.disposition;
+    const matchingRentals =
+        disp && disp !== "all"
+            ? rentalListings.filter((l) => l.disposition?.toLowerCase() === disp.toLowerCase())
+            : rentalListings;
 
     let srealityAvg = 0;
     let srealityPpm2 = 0;

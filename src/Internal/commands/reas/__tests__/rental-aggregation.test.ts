@@ -142,7 +142,7 @@ describe("aggregateRentals()", () => {
         ];
 
         const result = aggregateRentals(sources);
-        // rentPerM2 = medianRent / meanArea = 15000 / 50 = 300
+        // rentPerM2 = median of per-listing rent/area = 15000/50 = 300
         expect(result[0].rentPerM2).toBe(300);
     });
 });

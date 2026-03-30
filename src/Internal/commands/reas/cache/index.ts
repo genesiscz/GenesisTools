@@ -1,4 +1,5 @@
-import { mkdirSync, existsSync, readdirSync, unlinkSync } from "node:fs";
+import { SafeJSON } from "@app/utils/json";
+import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { CacheEntry } from "../types";
@@ -24,7 +25,7 @@ export function cacheKey(params: Record<string, unknown>): string {
         }, {});
 
     const hasher = new Bun.CryptoHasher("sha256");
-    hasher.update(JSON.stringify(sorted));
+    hasher.update(SafeJSON.stringify(sorted));
     return hasher.digest("hex");
 }
 
@@ -36,20 +37,24 @@ export async function getCached<T>(key: string, ttlMs: number): Promise<CacheEnt
         return null;
     }
 
-    const entry: CacheEntry<T> = await file.json();
-    const age = Date.now() - new Date(entry.fetchedAt).getTime();
+    try {
+        const entry: CacheEntry<T> = await file.json();
+        const age = Date.now() - new Date(entry.fetchedAt).getTime();
 
-    if (age > ttlMs) {
+        if (age > ttlMs) {
+            return null;
+        }
+
+        return entry;
+    } catch {
         return null;
     }
-
-    return entry;
 }
 
 export async function setCache<T>(key: string, entry: CacheEntry<T>): Promise<void> {
     ensureCacheDir();
     const filePath = join(CACHE_DIR, `${key}.json`);
-    await Bun.write(filePath, JSON.stringify(entry, null, 2));
+    await Bun.write(filePath, SafeJSON.stringify(entry, null, 2));
 }
 
 export async function clearCache(): Promise<void> {

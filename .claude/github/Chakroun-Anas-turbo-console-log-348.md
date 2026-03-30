@@ -27,7 +27,7 @@ When having the `typescriptteam.native-preview` extension alongside turbo consol
 - Install `chakrounanas.turbo-console-log`
 - Open any large typescript repo, like these ones: https://github.com/microsoft/TypeScript or https://github.com/microsoft/typescript-go/
 - The `tsgo` process usually takes about 150MB, but in this case, it takes more than 20GB
-- If you check the output for `typescript-native-preview`, you can see a bunch of `didOpen`requests sent to the typescript LSP even when I only have 1 file opened in the IDE:
+- If you check the output for `typescript-native-preview`, you can see a bunch of `didOpen` requests sent to the typescript LSP even when I only have 1 file opened in the IDE:
 
 <img width="1512" height="888" alt="Image" src="https://github.com/user-attachments/assets/71988df4-3d0d-497a-b786-59ea01c3098c" />
 

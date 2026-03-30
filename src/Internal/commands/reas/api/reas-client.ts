@@ -1,9 +1,11 @@
-import { getCached, setCache, cacheKey, REAS_TTL } from "../cache/index";
-import type { ReasListing, AnalysisFilters, DateRange, CacheEntry } from "../types";
+import { SafeJSON } from "@app/utils/json";
+import { cacheKey, getCached, REAS_TTL, setCache } from "../cache/index";
+import type { AnalysisFilters, CacheEntry, DateRange, ReasListing } from "../types";
 
 const BASE_URL = "https://catalog.reas.cz/catalog";
 const CLIENT_ID = "6988cb437c5b9d2963280369";
 const PAGE_LIMIT = 20;
+const MAX_PAGES = 1000;
 
 interface CountResponse {
     success: boolean;
@@ -26,17 +28,17 @@ interface ListingsResponse {
 function buildQueryParams(filters: AnalysisFilters, dateRange: DateRange): URLSearchParams {
     const params = new URLSearchParams();
 
-    params.set("estateTypes", JSON.stringify([filters.estateType]));
-    params.set("constructionType", JSON.stringify([filters.constructionType]));
+    params.set("estateTypes", SafeJSON.stringify([filters.estateType]));
+    params.set("constructionType", SafeJSON.stringify([filters.constructionType]));
 
     const soldDateRange = {
         from: dateRange.from.toISOString(),
         to: dateRange.to.toISOString(),
     };
-    params.set("soldDateRange", JSON.stringify(soldDateRange));
+    params.set("soldDateRange", SafeJSON.stringify(soldDateRange));
 
     params.set("linkedToTransfer", "true");
-    params.set("locality", JSON.stringify({ districtId: filters.district.reasId }));
+    params.set("locality", SafeJSON.stringify({ districtId: filters.district.reasId }));
     params.set("clientId", CLIENT_ID);
 
     return params;
@@ -82,7 +84,8 @@ export async function fetchSoldCount(filters: AnalysisFilters, dateRange: DateRa
         throw new Error(`Reas API error (count): ${response.status} ${response.statusText}`);
     }
 
-    const body = (await response.json()) as CountResponse;
+    const text = await response.text();
+    const body = SafeJSON.parse(text) as CountResponse;
     return body.data.count;
 }
 
@@ -94,7 +97,7 @@ export async function fetchSoldCount(filters: AnalysisFilters, dateRange: DateRa
 export async function fetchSoldListings(
     filters: AnalysisFilters,
     dateRange: DateRange,
-    refresh = false,
+    refresh = false
 ): Promise<ReasListing[]> {
     const keyParams = buildCacheKeyParams(filters, dateRange);
     const key = cacheKey(keyParams);
@@ -123,10 +126,11 @@ export async function fetchSoldListings(
             throw new Error(`Reas API error (listings page ${page}): ${response.status} ${response.statusText}`);
         }
 
-        const body = (await response.json()) as ListingsResponse;
+        const text = await response.text();
+        const body = SafeJSON.parse(text) as ListingsResponse;
         allListings.push(...body.data);
 
-        if (body.nextPage !== null) {
+        if (body.nextPage !== null && page < MAX_PAGES) {
             page = body.nextPage;
         } else {
             hasMore = false;

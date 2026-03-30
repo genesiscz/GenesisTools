@@ -53,9 +53,12 @@ export function analyzeComparables(listings: ReasListing[], target: TargetProper
         .filter((l) => l.utilityArea > 0)
         .map((l) => {
             const pricePerM2 = l.soldPrice / l.utilityArea;
-            const daysOnMarket = l.firstVisibleAt
-                ? Math.max(0, (new Date(l.soldAt).getTime() - new Date(l.firstVisibleAt).getTime()) / 86_400_000)
-                : 0;
+            const soldAtMs = new Date(l.soldAt).getTime();
+            const firstVisibleMs = l.firstVisibleAt ? new Date(l.firstVisibleAt).getTime() : NaN;
+            const daysOnMarket =
+                Number.isFinite(soldAtMs) && Number.isFinite(firstVisibleMs)
+                    ? Math.max(0, (soldAtMs - firstVisibleMs) / 86_400_000)
+                    : 0;
             const discount = l.originalPrice > 0 ? ((l.soldPrice - l.originalPrice) / l.originalPrice) * 100 : 0;
 
             return { ...l, pricePerM2, daysOnMarket, discount };
@@ -100,5 +103,12 @@ function computeTargetPercentile(sorted: number[], value: number): number {
         }
     }
 
-    return (low / sorted.length) * 100;
+    // Midpoint percentile: average of lower and upper bounds for equal values
+    let upper = low;
+
+    while (upper < sorted.length && sorted[upper] === value) {
+        upper++;
+    }
+
+    return ((low + upper) / 2 / sorted.length) * 100;
 }

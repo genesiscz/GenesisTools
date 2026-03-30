@@ -1,3 +1,4 @@
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { stripAnsi } from "@app/utils/string";
 import { formatTable } from "@app/utils/table";
@@ -70,12 +71,15 @@ const DISPOSITIONS: Array<{ value: string; label: string }> = [
     { value: "all", label: "All" },
 ];
 
-const PERIOD_OPTIONS: Array<{ value: string; label: string }> = [
-    { value: "2025", label: "2025" },
-    { value: "2024", label: "2024" },
-    { value: "2023", label: "2023" },
-    { value: "last6m", label: "Last 6 months" },
-];
+function buildPeriodOptions(): Array<{ value: string; label: string }> {
+    const year = new Date().getFullYear();
+    return [
+        { value: String(year), label: String(year) },
+        { value: String(year - 1), label: String(year - 1) },
+        { value: String(year - 2), label: String(year - 2) },
+        { value: "last6m", label: "Last 6 months" },
+    ];
+}
 
 function parsePeriod(period: string): DateRange {
     const relativeMatch = /^last(\d+)m$/i.exec(period);
@@ -159,7 +163,13 @@ async function resolveDistrictFromAddress(address: string): Promise<DistrictInfo
         process.exit(0);
     }
 
-    return getDistrict(picked)!;
+    const resolved = getDistrict(picked);
+
+    if (!resolved) {
+        throw new Error(`District "${picked}" not found in database`);
+    }
+
+    return resolved;
 }
 
 function hasSufficientFlags(options: ReasOptions): boolean {
@@ -219,7 +229,7 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
                 process.exit(0);
             }
 
-            district = getDistrict(picked)!;
+            district = getDistrict(picked) ?? addressResults[0].district;
         }
     } else if (districtName === "__search__") {
         const query = await p.text({ message: "Type city/district name" });
@@ -246,7 +256,7 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
             process.exit(0);
         }
 
-        district = getDistrict(picked)!;
+        district = getDistrict(picked) ?? matches[0];
     } else if (districtName === "Praha") {
         const subDistrict = await p.select({
             message: "Select Praha district (or city-wide)",
@@ -261,9 +271,9 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
             process.exit(0);
         }
 
-        district = getDistrict(subDistrict)!;
+        district = getDistrict(subDistrict) ?? getDistrict("Praha")!;
     } else {
-        district = getDistrict(districtName)!;
+        district = getDistrict(districtName as string)!;
     }
 
     const propertyType = await p.select({
@@ -288,7 +298,7 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
 
     const periods = await p.multiselect({
         message: "Select periods to analyze",
-        options: PERIOD_OPTIONS,
+        options: buildPeriodOptions(),
         required: true,
     });
 
@@ -354,7 +364,7 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
     }
 
     const parsedDisposition = disposition === "all" ? undefined : disposition;
-    const dateRanges = periods.map((period) => parsePeriod(period));
+    const dateRanges = (periods as string[]).map((period) => parsePeriod(period));
 
     const filters: AnalysisFilters = {
         estateType: "flat",
@@ -384,12 +394,12 @@ function parseProviders(raw: string | undefined): ProviderName[] | undefined {
         return undefined;
     }
 
-    const valid: ProviderName[] = ["reas", "sreality", "ereality", "bezrealitky", "mf"];
+    const valid = new Set<ProviderName>(["reas", "sreality", "ereality", "bezrealitky", "mf"]);
 
     return raw
         .split(",")
-        .map((s) => s.trim().toLowerCase() as ProviderName)
-        .filter((name) => valid.includes(name));
+        .map((s) => s.trim().toLowerCase())
+        .filter((name): name is ProviderName => valid.has(name as ProviderName));
 }
 
 export async function buildFromFlags(
@@ -586,7 +596,10 @@ async function outputAnalysis(analysis: FullAnalysis, format: string, outputPath
     }
 }
 
-const SEARCH_DEFAULT_PERIODS = "2024,2025,2026";
+function getSearchDefaultPeriods(): string {
+    const year = new Date().getFullYear();
+    return `${year - 2},${year - 1},${year}`;
+}
 const SEARCH_DEFAULT_DISTRICT = "Hradec Králové";
 const SEARCH_CONSTRUCTION_TYPES = ["panel", "brick"];
 
@@ -596,7 +609,7 @@ function formatCzk(value: number): string {
 
 async function runSearch(query: string, options: ReasOptions): Promise<void> {
     const district = resolveDistrict(options.district ?? SEARCH_DEFAULT_DISTRICT);
-    const periods = parsePeriods(options.periods ?? SEARCH_DEFAULT_PERIODS);
+    const periods = parsePeriods(options.periods ?? getSearchDefaultPeriods());
     const constructionTypes = options.type ? [options.type] : SEARCH_CONSTRUCTION_TYPES;
     const refresh = !!options.refresh;
     const queryLower = query.toLowerCase();
@@ -684,6 +697,16 @@ async function runReasAnalysis(options: ReasOptions): Promise<void> {
         const analysis = await fetchAndAnalyze(filters, target, !!options.refresh);
         await outputAnalysis(analysis, format, options.output);
         return;
+    }
+
+    if (!isInteractive()) {
+        console.error("Missing required flags in non-interactive mode.");
+        console.log(
+            suggestCommand("tools internal reas", {
+                add: ["--district", "Praha", "--type", "brick", "--price", "5000000", "--area", "80"],
+            })
+        );
+        process.exit(1);
     }
 
     const { filters, target, refresh } = await runInteractiveWizard();

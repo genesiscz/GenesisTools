@@ -90,12 +90,6 @@ function computeYoY(periods: TrendPeriod[]): number | null {
         return ((last.medianPerM2 - sameQuarterPrevYear.medianPerM2) / sameQuarterPrevYear.medianPerM2) * 100;
     }
 
-    const first = periods[0];
-
-    if (first.medianPerM2 > 0) {
-        return ((last.medianPerM2 - first.medianPerM2) / first.medianPerM2) * 100;
-    }
-
     return null;
 }
 
@@ -104,16 +98,17 @@ function determineDirection(periods: TrendPeriod[]): "rising" | "declining" | "s
         return "stable";
     }
 
-    const recent = periods.slice(-2);
-    const allRising = recent.every((p) => p.change !== null && p.change > 0);
+    const recentWithChange = periods.slice(-2).filter((p) => p.change !== null);
 
-    if (allRising) {
+    if (recentWithChange.length === 0) {
+        return "stable";
+    }
+
+    if (recentWithChange.every((p) => p.change! > 0)) {
         return "rising";
     }
 
-    const allFalling = recent.every((p) => p.change !== null && p.change < 0);
-
-    if (allFalling) {
+    if (recentWithChange.every((p) => p.change! < 0)) {
         return "declining";
     }
 

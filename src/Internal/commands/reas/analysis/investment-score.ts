@@ -98,6 +98,10 @@ function scoreTrend(direction: string, yoy: number): { score: number; reasoning:
 }
 
 function scoreVelocity(days: number, districtMedian: number): { score: number; reasoning: string } {
+    if (!Number.isFinite(districtMedian) || districtMedian <= 0) {
+        return { score: 50, reasoning: "Market velocity unavailable — using neutral score" };
+    }
+
     const ratio = days / districtMedian;
     // Faster than median -> high score
     const score = clamp((1 - (ratio - 1)) * 70 + 30, 0, 100);

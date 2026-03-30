@@ -69,10 +69,8 @@ export async function startServer(port = DEFAULT_PORT): Promise<void> {
 
                     return Response.json(exportData, { headers: CORS_HEADERS });
                 } catch (error) {
-                    return Response.json(
-                        { error: error instanceof Error ? error.message : String(error) },
-                        { status: 500, headers: CORS_HEADERS }
-                    );
+                    console.error("Analysis error:", error);
+                    return Response.json({ error: "Analysis failed" }, { status: 500, headers: CORS_HEADERS });
                 }
             }
 

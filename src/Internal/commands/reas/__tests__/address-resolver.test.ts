@@ -46,7 +46,8 @@ describe("parseResolvedAddress", () => {
         });
 
         expect(result).not.toBeNull();
-        expect(result!.district.name).toBe("Praha");
+        // Now resolves to "Praha 3" (value match) instead of "Praha" (municipality match)
+        expect(result!.district.name).toBe("Praha 3");
         expect(result!.district.reasId).toBe(3100);
         expect(result!.municipalityName).toBe("Praha");
     });

@@ -356,10 +356,7 @@ export function getAllDistrictNames(): string[] {
 
 /** Praha sub-district names, sorted by ward number. */
 export function getPrahaDistrictNames(): string[] {
-    return Object.keys(PRAHA_DISTRICTS).sort((a, b) => {
-        const numA = parseInt(a.replace("Praha ", ""), 10);
-        const numB = parseInt(b.replace("Praha ", ""), 10);
-
-        return numA - numB;
-    });
+    return Object.entries(PRAHA_DISTRICTS)
+        .sort(([, a], [, b]) => a.wardNumber - b.wardNumber)
+        .map(([name]) => name);
 }

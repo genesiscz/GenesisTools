@@ -25,7 +25,7 @@ function computeYields(price: number, monthlyRent: number, monthlyCosts: number)
 
     const grossYield = price > 0 ? (annualGross / price) * 100 : 0;
     const netYield = price > 0 ? (annualNet / price) * 100 : 0;
-    const paybackYears = annualNet > 0 ? price / annualNet : Infinity;
+    const paybackYears = price > 0 && annualNet > 0 ? price / annualNet : Infinity;
 
     return { grossYield, netYield, paybackYears };
 }
