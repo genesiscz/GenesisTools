@@ -113,7 +113,7 @@ async function extractTailUsage(filePath: string): Promise<TailUsage> {
 
         for (let i = lines.length - 1; i >= 0; i--) {
             try {
-                const obj = SafeJSON.parse(lines[i]);
+                const obj = SafeJSON.parse(lines[i], { strict: true });
 
                 if (obj.type !== "assistant" || !obj.message?.usage) {
                     continue;

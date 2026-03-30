@@ -94,26 +94,18 @@ export function HistoryView({ db, dbVersion }: HistoryViewProps) {
         try {
             const pairs = db.getAllAccountBuckets();
 
-            // Phase 1: compute deltas per-bucket (delta must compare same-bucket previous values)
-            const perBucket = new Map<string, SnapshotWithDelta[]>();
-
-            for (const { accountName, bucket } of pairs) {
-                const snapshots = db.getSnapshots(accountName, bucket, timeRange);
-                perBucket.set(`${accountName}:${bucket}`, computeDeltas(snapshots));
-            }
-
-            // Phase 2: group by account only, merge all buckets, sort by timestamp desc
+            // Compute deltas per-bucket, then group by account
             const result = new Map<string, SnapshotWithDelta[]>();
 
-            for (const [key, snapshots] of perBucket) {
-                const accountName = key.split(":")[0];
+            for (const { accountName, bucket } of pairs) {
+                const snapshots = computeDeltas(db.getSnapshots(accountName, bucket, timeRange));
                 const existing = result.get(accountName) ?? [];
                 existing.push(...snapshots);
                 result.set(accountName, existing);
             }
 
             for (const [, snapshots] of result) {
-                snapshots.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+                snapshots.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
             }
 
             return result;

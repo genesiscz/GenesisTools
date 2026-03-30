@@ -70,15 +70,20 @@ export const PROJECT_ROOT = resolve(import.meta.dirname, "../..");
  */
 export function collapsePath(p: string): string {
     const home = homedir();
+    const homeNorm = endsWithSep(home) ? home.slice(0, -1) : home;
 
-    if (p === home) {
+    if (p === homeNorm) {
         return "~";
     }
 
-    const prefix = home + (home.endsWith("/") || home.endsWith("\\") ? "" : "/");
+    const unixPrefix = `${homeNorm}/`;
+    if (p.startsWith(unixPrefix)) {
+        return `~/${p.slice(unixPrefix.length)}`;
+    }
 
-    if (p.startsWith(prefix)) {
-        return `~/${p.slice(prefix.length)}`;
+    const winPrefix = `${homeNorm}\\`;
+    if (p.startsWith(winPrefix)) {
+        return `~/${p.slice(winPrefix.length)}`;
     }
 
     return p;

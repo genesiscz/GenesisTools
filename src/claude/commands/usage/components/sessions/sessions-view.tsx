@@ -59,6 +59,7 @@ export function SessionsView({ notifications }: SessionsViewProps) {
     const [claudeCmd, setClaudeCmd] = useState<string>("ccc");
     const [selectedIndex, setSelectedIndex] = useState(0);
     const pingRef = useRef<Map<string, PingState>>(new Map());
+    const pingTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
     // Discover claude command once on mount
     useEffect(() => {
@@ -67,8 +68,18 @@ export function SessionsView({ notifications }: SessionsViewProps) {
             .catch(() => {});
     }, []);
 
+    // Clean up ping timers on unmount
+    useEffect(() => {
+        return () => {
+            for (const timer of pingTimersRef.current.values()) {
+                clearTimeout(timer);
+            }
+        };
+    }, []);
+
     // TabBar(1) + StatusBar(3) + paddingY(2) + hint(1) + colHeader(1) = 8 fixed lines
-    const separatorLines = groups.length > 0 ? 1 + (groups.length - 1) : 0;
+    // Each group header takes 1 line + marginTop(1) for non-first groups
+    const separatorLines = groups.length > 0 ? groups.length + (groups.length - 1) : 0;
     const pageSize = Math.max(3, termHeight - 8 - separatorLines);
 
     const { offset, setOffset } = useScroll({
@@ -106,30 +117,35 @@ export function SessionsView({ notifications }: SessionsViewProps) {
 
             update("pinging");
 
+            const scheduleReset = (sid: string) => {
+                const timer = setTimeout(() => {
+                    const next = new Map(pingRef.current);
+                    next.delete(sid);
+                    pingRef.current = next;
+                    setPingStatuses(new Map(next));
+                    pingTimersRef.current.delete(sid);
+                }, 3000);
+                pingTimersRef.current.set(sid, timer);
+            };
+
             try {
                 const shell = process.env.SHELL ?? "/bin/sh";
                 const proc = Bun.spawn({
                     cmd: [shell, "-ic", `${claudeCmd} --resume '${sessionId}' -p '.' --output-format json 2>/dev/null`],
                     stdio: ["ignore", "ignore", "ignore"],
                 });
-                await proc.exited;
-                update("done");
+                const exitCode = await proc.exited;
 
-                // Reset to idle after 3 seconds
-                setTimeout(() => {
-                    const next = new Map(pingRef.current);
-                    next.delete(sessionId);
-                    pingRef.current = next;
-                    setPingStatuses(new Map(next));
-                }, 3000);
+                if (exitCode !== 0) {
+                    update("error");
+                } else {
+                    update("done");
+                }
+
+                scheduleReset(sessionId);
             } catch {
                 update("error");
-                setTimeout(() => {
-                    const next = new Map(pingRef.current);
-                    next.delete(sessionId);
-                    pingRef.current = next;
-                    setPingStatuses(new Map(next));
-                }, 3000);
+                scheduleReset(sessionId);
             }
         },
         [claudeCmd]
@@ -149,8 +165,11 @@ export function SessionsView({ notifications }: SessionsViewProps) {
             }
 
             if (input === "2") {
+                const cmd = `${claudeCmd} --resume '${actionMenu.sessionId}'`;
                 setActionMenu({ open: false });
-                // Resume: just show the command for now (exec would replace the process)
+                import("clipboardy")
+                    .then((clipboard) => clipboard.default.write(cmd))
+                    .catch(() => {});
                 return;
             }
 
