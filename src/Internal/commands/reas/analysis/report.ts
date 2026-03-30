@@ -3,6 +3,8 @@ import pc from "picocolors";
 import type { AnalysisFilters, MfRentalBenchmark, SrealityRental, TargetProperty } from "../types";
 import type { ComparablesResult } from "./comparables";
 import type { DiscountResult } from "./discount";
+import type { InvestmentScore } from "./investment-score";
+import type { MarketMomentum } from "./market-momentum";
 import type { YieldResult } from "./rental-yield";
 import type { TimeOnMarketResult } from "./time-on-market";
 import type { TrendsResult } from "./trends";
@@ -17,6 +19,8 @@ export interface FullAnalysis {
     mfBenchmarks: MfRentalBenchmark[];
     target: TargetProperty;
     filters: AnalysisFilters;
+    investmentScore?: InvestmentScore;
+    momentum?: MarketMomentum;
 }
 
 const SEPARATOR_WIDTH = 72;
@@ -401,6 +405,54 @@ function renderVerdict(analysis: FullAnalysis): string {
     return lines.join("\n");
 }
 
+function renderInvestmentScoreSection(score: InvestmentScore): string {
+    const gradeColors: Record<string, (s: string) => string> = {
+        A: pc.green,
+        B: pc.cyan,
+        C: pc.yellow,
+        D: pc.red,
+        F: pc.red,
+    };
+    const colorFn = gradeColors[score.grade] ?? pc.dim;
+
+    const lines: string[] = [
+        sectionHeader("INVESTMENT SCORE"),
+        "",
+        `    ${pc.bold("Overall:")} ${colorFn(`${score.grade} (${score.overall}/100)`)}  --  ${pc.bold(score.recommendation.toUpperCase())}`,
+        "",
+        `    ${pc.dim("Factor".padEnd(24))}${pc.dim("Score")}`,
+        `    ${"Yield (30%)".padEnd(24)}${score.factors.yieldScore}/100`,
+        `    ${"Discount (25%)".padEnd(24)}${score.factors.discountScore}/100`,
+        `    ${"Trend (25%)".padEnd(24)}${score.factors.trendScore}/100`,
+        `    ${"Market velocity (20%)".padEnd(24)}${score.factors.marketVelocityScore}/100`,
+        "",
+        ...score.reasoning.map((r) => `    ${pc.dim("-")} ${r}`),
+    ];
+
+    return lines.join("\n");
+}
+
+function renderMomentumSection(momentum: MarketMomentum): string {
+    const dirLabel = momentum.direction === "rising" ? "UP" : momentum.direction === "declining" ? "DOWN" : "FLAT";
+    const momLabel =
+        momentum.momentum === "accelerating"
+            ? "accelerating"
+            : momentum.momentum === "decelerating"
+              ? "decelerating"
+              : "steady";
+
+    const lines = [
+        sectionHeader("MARKET MOMENTUM"),
+        "",
+        `    ${pc.bold("Direction:")} ${dirLabel}  |  ${pc.bold("Momentum:")} ${momLabel}  |  ${pc.bold("Confidence:")} ${momentum.confidence}`,
+        `    ${pc.bold("Velocity:")} ${momentum.priceVelocity > 0 ? "+" : ""}${momentum.priceVelocity}%/quarter`,
+        "",
+        `    ${pc.dim(momentum.interpretation)}`,
+    ];
+
+    return lines.join("\n");
+}
+
 export function renderReport(analysis: FullAnalysis): string {
     const sections = [
         renderSoldComparables(analysis),
@@ -409,8 +461,17 @@ export function renderReport(analysis: FullAnalysis): string {
         renderTimeOnMarket(analysis),
         renderDiscountAnalysis(analysis),
         renderInvestmentYield(analysis),
-        renderVerdict(analysis),
     ];
+
+    if (analysis.investmentScore) {
+        sections.push(renderInvestmentScoreSection(analysis.investmentScore));
+    }
+
+    if (analysis.momentum) {
+        sections.push(renderMomentumSection(analysis.momentum));
+    }
+
+    sections.push(renderVerdict(analysis));
 
     return `${sections.join("\n")}\n`;
 }

@@ -5,6 +5,8 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { analyzeComparables } from "./analysis/comparables";
 import { analyzeDiscount } from "./analysis/discount";
+import { computeInvestmentScore } from "./analysis/investment-score";
+import { detectMomentum } from "./analysis/market-momentum";
 import { analyzeRentalYield } from "./analysis/rental-yield";
 import { renderReport } from "./analysis/report";
 import { analyzeTimeOnMarket } from "./analysis/time-on-market";
@@ -525,6 +527,19 @@ async function fetchAndAnalyze(
 
     const yieldResult = analyzeRentalYield(target, comparables.pricePerM2.median, avgRent);
 
+    const momentum = detectMomentum(
+        trends.periods.map((period) => ({ medianPerM2: period.medianPerM2, count: period.count }))
+    );
+
+    const investmentScore = computeInvestmentScore({
+        netYield: yieldResult.netYield,
+        discount: discount.medianDiscount,
+        trendDirection: trends.direction === "falling" ? "declining" : trends.direction,
+        trendYoY: trends.yoyChange ?? 0,
+        medianDaysOnMarket: timeOnMarket.median,
+        districtMedianDays: timeOnMarket.median,
+    });
+
     const report = renderReport({
         comparables,
         trends,
@@ -535,6 +550,8 @@ async function fetchAndAnalyze(
         mfBenchmarks,
         target,
         filters,
+        investmentScore,
+        momentum,
     });
 
     console.log(report);
