@@ -38,7 +38,7 @@ interface DistrictInfo {
 const DISTRICTS: Record<string, DistrictInfo> = {
     "Hradec Králové": { name: "Hradec Králové", reasId: 3602, srealityId: 28 },
     Praha: { name: "Praha", reasId: 3100, srealityId: 1 },
-    Brno: { name: "Brno", reasId: 3602, srealityId: 4 },
+    Brno: { name: "Brno", reasId: 3702, srealityId: 4 },
 };
 
 const DISTRICT_OPTIONS: Array<{ value: DistrictInfo; label: string }> = [
