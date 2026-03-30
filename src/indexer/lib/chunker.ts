@@ -445,7 +445,7 @@ async function chunkByAst(opts: {
             return null;
         }
 
-        await ensureDynamicLanguages();
+        await ensureDynamicLanguages({ only: [dynamicLang] });
         lang = dynamicLang;
         isDynamic = true;
     }

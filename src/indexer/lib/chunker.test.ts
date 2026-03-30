@@ -132,14 +132,14 @@ Sub section content.
     });
 
     describe("Heading strategy — improved splitting", () => {
-        it("preserves heading context in sub-chunks when section exceeds maxTokens", () => {
+        it("preserves heading context in sub-chunks when section exceeds maxTokens", async () => {
             const longParagraphs = Array.from(
                 { length: 20 },
                 (_, i) => `This is paragraph ${i} with enough text to contribute meaningful tokens to the overall section content length.`
             ).join("\n\n");
             const content = `## Big Section\n\n${longParagraphs}`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "doc.md",
                 content,
                 strategy: "heading",
@@ -154,7 +154,7 @@ Sub section content.
             }
         });
 
-        it("splits at paragraph boundaries, not mid-paragraph", () => {
+        it("splits at paragraph boundaries, not mid-paragraph", async () => {
             const paragraphs = [
                 "First paragraph with some introductory content that sets the stage for the rest.",
                 "Second paragraph that contains a completely different thought and should stay intact.",
@@ -162,7 +162,7 @@ Sub section content.
             ];
             const content = `## Section\n\n${paragraphs.join("\n\n")}`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "doc.md",
                 content,
                 strategy: "heading",
@@ -180,10 +180,10 @@ Sub section content.
             }
         });
 
-        it("names the preamble from first non-empty line", () => {
+        it("names the preamble from first non-empty line", async () => {
             const content = `Some introductory text before any heading.\n\nMore preamble content.\n\n## First Heading\n\nHeading content.`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "doc.md",
                 content,
                 strategy: "heading",
@@ -197,10 +197,10 @@ Sub section content.
             expect(preambleChunk.name).toContain("Some introductory text");
         });
 
-        it("uses (preamble) fallback for whitespace-only preamble lines", () => {
+        it("uses (preamble) fallback for whitespace-only preamble lines", async () => {
             const content = `\n\n\nActual content before heading.\n\n## Heading\n\nBody.`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "doc.md",
                 content,
                 strategy: "heading",
@@ -215,10 +215,10 @@ Sub section content.
             }
         });
 
-        it("does not split small sections that fit within maxTokens", () => {
+        it("does not split small sections that fit within maxTokens", async () => {
             const content = `## Small Section\n\nJust a little content here.\n\n## Another Small\n\nAnother small paragraph.`;
 
-            const result = chunkFile({
+            const result = await chunkFile({
                 filePath: "doc.md",
                 content,
                 strategy: "heading",
