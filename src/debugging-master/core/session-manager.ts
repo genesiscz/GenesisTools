@@ -1,10 +1,19 @@
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { LogEntry, SessionMeta } from "@app/debugging-master/types";
 import { suggestCommand } from "@app/utils/cli/executor";
 import { SafeJSON } from "@app/utils/json";
 import { fuzzyFind } from "@app/utils/string";
 import { ConfigManager } from "./config-manager";
+
+export interface CreateSessionResult {
+    jsonlPath: string;
+    reused?: {
+        lastLogAt: number | null;
+        createdAt: number;
+        totalLogs: number;
+    };
+}
 
 export const ACTIVE_THRESHOLD_MS = 60 * 60 * 1000;
 const TOOL_NAME = "tools debugging-master";
@@ -28,13 +37,28 @@ export class SessionManager {
         return dir;
     }
 
-    async createSession(name: string, projectPath: string, opts?: { serve?: boolean; port?: number }): Promise<string> {
+    async createSession(name: string, projectPath: string, opts?: { serve?: boolean; port?: number }): Promise<CreateSessionResult> {
         const dir = await this.getSessionsDir();
         const jsonlPath = join(dir, `${name}.jsonl`);
         const metaPath = join(dir, `${name}.meta.json`);
 
         if (existsSync(jsonlPath)) {
-            throw new Error(`Session "${name}" already exists. Use a different name or remove it first.`);
+            const stat = statSync(jsonlPath);
+            const meta = existsSync(metaPath)
+                ? (SafeJSON.parse(await Bun.file(metaPath).text()) as SessionMeta)
+                : null;
+            const content = stat.size > 0 ? readFileSync(jsonlPath, "utf-8") : "";
+            const totalLogs = content ? content.trimEnd().split("\n").length : 0;
+
+            await this.config.setRecentSession(name);
+            return {
+                jsonlPath,
+                reused: {
+                    lastLogAt: stat.size > 0 ? stat.mtimeMs : null,
+                    createdAt: meta?.createdAt ?? stat.mtimeMs,
+                    totalLogs,
+                },
+            };
         }
 
         const now = Date.now();
@@ -52,7 +76,7 @@ export class SessionManager {
 
         await this.config.setRecentSession(name);
 
-        return jsonlPath;
+        return { jsonlPath };
     }
 
     async resolveSession(sessionFlag?: string): Promise<string> {

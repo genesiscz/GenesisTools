@@ -4,6 +4,8 @@ import { startServer } from "@app/debugging-master/core/http-server";
 import { SessionManager } from "@app/debugging-master/core/session-manager";
 import type { ProjectConfig } from "@app/debugging-master/types";
 import { suggestCommand } from "@app/utils/cli/executor";
+import { formatRelativeTime } from "@app/utils/format";
+import { getLocalIpv4 } from "@app/utils/network";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -123,7 +125,7 @@ export function registerStartCommand(program: Command): void {
 
             // --- Create session ---
             const sm = new SessionManager();
-            const jsonlPath = await sm.createSession(sessionName, projectPath, {
+            const { jsonlPath, reused } = await sm.createSession(sessionName, projectPath, {
                 serve: opts.serve,
                 port: opts.serve ? port : undefined,
             });
@@ -140,7 +142,16 @@ export function registerStartCommand(program: Command): void {
             const importPath = `./${relSnippet.replace(/\.(ts|php)$/, "")}`;
 
             console.log("");
-            console.log(pc.green(pc.bold("Session created")));
+            if (reused) {
+                const lastLog = reused.lastLogAt
+                    ? `${formatRelativeTime(new Date(reused.lastLogAt))} (${reused.totalLogs} total)`
+                    : "no logs yet";
+                const startup = formatRelativeTime(new Date(reused.createdAt));
+                console.log(pc.yellow(`⚠ Session re-used. Last log ${lastLog}, started ${startup} ago`));
+            } else {
+                console.log(pc.green(pc.bold("Session created")));
+            }
+
             console.log("");
             console.log(`  ${pc.dim("Session:")}   ${sessionName}`);
             console.log(`  ${pc.dim("Project:")}   ${projectPath}`);
@@ -168,18 +179,44 @@ export function registerStartCommand(program: Command): void {
             // --- Optionally start HTTP server ---
             if (opts.serve) {
                 let actualPort: number;
+                let reused = false;
+
                 try {
                     ({ port: actualPort } = startServer(port));
-                } catch (err) {
-                    console.error(`Failed to start HTTP server on port ${port}: ${(err as Error).message}`);
-                    process.exit(1);
+                } catch {
+                    // Port busy — check if it's already our server
+                    try {
+                        const res = await fetch(`http://127.0.0.1:${port}/health`);
+                        const body = await res.json() as { status?: string };
+
+                        if (res.ok && body.status === "ok") {
+                            actualPort = port;
+                            reused = true;
+                        } else {
+                            console.error(`Port ${port} is in use by another process`);
+                            process.exit(1);
+                        }
+                    } catch {
+                        console.error(`Port ${port} is in use by another process`);
+                        process.exit(1);
+                    }
                 }
-                console.log(pc.green(`HTTP server listening on port ${actualPort}`));
-                console.log(pc.dim(`POST http://localhost:${actualPort}/log/${sessionName}`));
+
+                if (reused) {
+                    console.log(pc.green(`Reusing HTTP server on port ${actualPort}`));
+                } else {
+                    console.log(pc.green(`HTTP server listening on port ${actualPort}`));
+                }
+
+                const lanIp = getLocalIpv4();
+                console.log(pc.dim(`POST http://${lanIp}:${actualPort}/log/${sessionName}`));
+                console.log(pc.dim(`GET  http://${lanIp}:${actualPort}/health`));
                 console.log("");
 
-                // Keep process alive
-                await new Promise(() => {});
+                if (!reused) {
+                    // Keep process alive only if we own the server
+                    await new Promise(() => {});
+                }
             }
         });
 }
