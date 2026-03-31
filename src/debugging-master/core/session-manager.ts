@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { LogEntry, SessionMeta } from "@app/debugging-master/types";
 import { suggestCommand } from "@app/utils/cli/executor";
@@ -37,16 +37,18 @@ export class SessionManager {
         return dir;
     }
 
-    async createSession(name: string, projectPath: string, opts?: { serve?: boolean; port?: number }): Promise<CreateSessionResult> {
+    async createSession(
+        name: string,
+        projectPath: string,
+        opts?: { serve?: boolean; port?: number }
+    ): Promise<CreateSessionResult> {
         const dir = await this.getSessionsDir();
         const jsonlPath = join(dir, `${name}.jsonl`);
         const metaPath = join(dir, `${name}.meta.json`);
 
         if (existsSync(jsonlPath)) {
             const stat = statSync(jsonlPath);
-            const meta = existsSync(metaPath)
-                ? (SafeJSON.parse(await Bun.file(metaPath).text()) as SessionMeta)
-                : null;
+            const meta = existsSync(metaPath) ? (SafeJSON.parse(await Bun.file(metaPath).text()) as SessionMeta) : null;
             const content = stat.size > 0 ? readFileSync(jsonlPath, "utf-8") : "";
             const totalLogs = content ? content.trimEnd().split("\n").length : 0;
 

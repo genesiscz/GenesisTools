@@ -147,7 +147,7 @@ export function registerStartCommand(program: Command): void {
                     ? `${formatRelativeTime(new Date(reused.lastLogAt))} (${reused.totalLogs} total)`
                     : "no logs yet";
                 const startup = formatRelativeTime(new Date(reused.createdAt));
-                console.log(pc.yellow(`⚠ Session re-used. Last log ${lastLog}, started ${startup} ago`));
+                console.log(pc.yellow(`⚠ Session re-used. Last log ${lastLog}, started ${startup}`));
             } else {
                 console.log(pc.green(pc.bold("Session created")));
             }
@@ -187,7 +187,7 @@ export function registerStartCommand(program: Command): void {
                     // Port busy — check if it's already our server
                     try {
                         const res = await fetch(`http://127.0.0.1:${port}/health`);
-                        const body = await res.json() as { status?: string };
+                        const body = (await res.json()) as { status?: string };
 
                         if (res.ok && body.status === "ok") {
                             actualPort = port;
