@@ -7,7 +7,7 @@ interface HelpOverlayProps {
 const KEYBINDINGS = [
     ["q", "Quit dashboard"],
     ["←/→", "Navigate tabs"],
-    ["1-4", "Jump to tab"],
+    ["1-5", "Jump to tab"],
     ["r", "Force refresh now"],
     ["p", "Pause/resume polling"],
     ["i", "Cycle poll interval (5/10/15/30/60s)"],
@@ -24,6 +24,14 @@ const KEYBINDINGS = [
     ["Ctrl+d/u", "Page down/up"],
     ["l", "Toggle stacked/side-by-side"],
     ["f", "Cycle time range filter"],
+    ["", ""],
+    ["", ""],
+    ["", "Sessions tab:"],
+    ["↑/↓", "Select session"],
+    ["Enter", "Open action menu (ping / resume)"],
+    ["f", "Cycle time filter (1h/6h/24h/7d/all)"],
+    ["j/k", "Scroll list"],
+    ["g/G", "Top/bottom"],
     ["", ""],
     ["x", "Dismiss alert banner"],
 ];

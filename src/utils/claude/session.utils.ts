@@ -87,6 +87,32 @@ export async function readHeadTailLines(filePath: string, headCount: number, tai
     return [...head, ...tail];
 }
 
+/**
+ * Efficiently read the last N bytes of a file and return complete lines.
+ * Uses Bun.file().slice() to avoid reading entire multi-MB JSONL files into memory.
+ */
+export async function readTailBytes(filePath: string, bytes = 8192): Promise<string[]> {
+    const file = Bun.file(filePath);
+    const size = file.size;
+    const start = Math.max(0, size - bytes);
+    const tail = await file.slice(start, size).text();
+    const lines = tail.split("\n").filter((l) => l.trim());
+
+    // First line may be partial if we sliced mid-line — drop it unless:
+    // 1. We read from the start of the file
+    // 2. The slice starts exactly on a newline boundary
+    if (start > 0 && lines.length > 0) {
+        const prevByte = await file.slice(start - 1, start).text();
+        const startsOnBoundary = tail.startsWith("\n") || prevByte === "\n";
+
+        if (!startsOnBoundary) {
+            lines.shift();
+        }
+    }
+
+    return lines;
+}
+
 /** Extract readable text from a single user message content field. */
 export function extractUserText(content: string | ContentBlock[]): string {
     if (typeof content === "string") {

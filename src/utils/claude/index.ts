@@ -4,26 +4,14 @@
  */
 
 export * from "./auth";
+export * from "./projects";
 export { extractToolInputSummary, extractToolResultText, isAssistantEndTurn } from "./session-helpers";
 export * from "./types";
 
 import { createReadStream, existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 
-import { getMainRepoRootSync } from "@app/utils/git/worktree";
 import { SafeJSON } from "@app/utils/json";
-
-export const CLAUDE_DIR = resolve(homedir(), ".claude");
-export const PROJECTS_DIR = resolve(CLAUDE_DIR, "projects");
-
-/**
- * Get the Claude projects directory path.
- */
-export function getClaudeProjectsDir(): string {
-    return PROJECTS_DIR;
-}
 
 /**
  * Parse a JSONL transcript file into an array of message objects.
@@ -84,24 +72,4 @@ export async function findClaudeCommand(): Promise<string> {
         }
     }
     return "claude";
-}
-
-/**
- * Detect the current project name from cwd.
- * Returns the last path segment (directory name), e.g. "GenesisTools".
- */
-export function detectCurrentProject(): string | undefined {
-    return basename(process.cwd()) || undefined;
-}
-
-/**
- * Get the encoded project directory name for a cwd path.
- * Claude encodes /Users/jane/Projects/Foo as -Users-jane-Projects-Foo.
- *
- * When running inside a git worktree, resolves to the main repo root
- * so sessions are found in the correct ~/.claude/projects/ directory.
- */
-export function encodedProjectDir(cwd?: string): string {
-    const p = cwd ?? getMainRepoRootSync(process.cwd());
-    return `-${p.replace(/^\//, "").replaceAll(sep, "-")}`;
 }

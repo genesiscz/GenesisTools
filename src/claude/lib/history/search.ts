@@ -4,18 +4,20 @@
  */
 
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, readdirSync, readFileSync } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, resolve, sep } from "node:path";
+import { basename, sep } from "node:path";
 import { createInterface } from "node:readline";
 import logger from "@app/logger";
+import { discoverSessionFiles, discoverSessionFilesInDir } from "@app/utils/claude/discovery";
+import { extractProjectName, PROJECTS_DIR, resolveProjectDir } from "@app/utils/claude/projects";
 import { Executor } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { glob } from "glob";
 import {
     invalidateToday as _invalidateToday,
     aggregateDailyStats,
+    clearSessionMetadata,
     type DailyStats,
     type DateRange,
     getAllSessionMetadata,
@@ -31,7 +33,6 @@ import {
     getSessionMetadataByDir,
     invalidateDateRange,
     removeSessionMetadataBatch,
-    resetDatabase,
     type SessionMetadataRecord,
     setCacheMeta,
     type TokenUsage,
@@ -75,54 +76,23 @@ function getMetadataVersion(): string {
 }
 
 const METADATA_VERSION = getMetadataVersion();
-export const CLAUDE_DIR = resolve(homedir(), ".claude");
-export const PROJECTS_DIR = resolve(CLAUDE_DIR, "projects");
+
+// Re-export for backward compatibility (constants now live in @app/utils/claude/projects)
+export { CLAUDE_DIR, PROJECTS_DIR } from "@app/utils/claude/projects";
 
 // =============================================================================
 // File Discovery
 // =============================================================================
 
 export async function findConversationFiles(filters: SearchFilters): Promise<string[]> {
-    const patterns: string[] = [];
+    const isAll = !filters.project || filters.project === "all";
 
-    if (filters.project && filters.project !== "all") {
-        // Search specific project
-        const projectPattern = `${PROJECTS_DIR}/*${filters.project}*/**/*.jsonl`;
-        patterns.push(projectPattern);
-    } else {
-        // Search all projects
-        patterns.push(`${PROJECTS_DIR}/**/*.jsonl`);
-    }
-
-    if (filters.agentsOnly) {
-        // Only subagent files - preserve project scope if specified
-        if (filters.project && filters.project !== "all") {
-            // Transform project pattern to agent-specific patterns
-            patterns.length = 0;
-            patterns.push(`${PROJECTS_DIR}/*${filters.project}*/subagents/*.jsonl`);
-            patterns.push(`${PROJECTS_DIR}/*${filters.project}*/agent-*.jsonl`);
-        } else {
-            // Search all projects for agents
-            patterns.length = 0;
-            patterns.push(`${PROJECTS_DIR}/**/subagents/*.jsonl`);
-            patterns.push(`${PROJECTS_DIR}/**/agent-*.jsonl`);
-        }
-    }
-    // else: Include both main and subagent files (default) - patterns already set
-
-    let files: string[] = [];
-    for (const pattern of patterns) {
-        const matched = await glob(pattern, { absolute: true });
-        files.push(...matched);
-    }
-
-    // Remove duplicates
-    files = [...new Set(files)];
-
-    // Filter out subagents if requested
-    if (filters.excludeAgents) {
-        files = files.filter((f) => !f.includes("/subagents/") && !basename(f).startsWith("agent-"));
-    }
+    const files = await discoverSessionFiles({
+        project: isAll ? undefined : filters.project,
+        allProjects: isAll,
+        subagentsOnly: filters.agentsOnly,
+        excludeSubagents: filters.excludeAgents,
+    });
 
     // Sort by modification time (most recent first)
     const fileStats = await Promise.all(
@@ -136,80 +106,9 @@ export async function findConversationFiles(filters: SearchFilters): Promise<str
     return fileStats.map((f) => f.path);
 }
 
-const projectNameCache = new Map<string, string>();
-
-export function extractProjectName(filePath: string): string {
-    // Extract project name from path like:
-    // ~/.claude/projects/-Users-jane-Code-my-app/...
-    const projectDir = filePath.replace(PROJECTS_DIR + sep, "").split(sep)[0];
-
-    const cached = projectNameCache.get(projectDir);
-    if (cached) {
-        return cached;
-    }
-
-    const name = resolveProjectNameFromEncoded(projectDir);
-    projectNameCache.set(projectDir, name);
-    return name;
-}
-
-/**
- * Resolve a project name from an encoded Claude projects directory name.
- * Claude encodes cwds by replacing "/" with "-", which is ambiguous for
- * directory names containing dashes (e.g. "my-app" → "my" + "app").
- * We resolve by progressively checking the filesystem for each candidate path.
- */
-function resolveProjectNameFromEncoded(projectDir: string): string {
-    if (!projectDir.startsWith("-")) {
-        return projectDir;
-    }
-
-    const home = homedir();
-    const homeEncoded = home.replaceAll("/", "-");
-
-    if (!projectDir.startsWith(homeEncoded)) {
-        // Unknown prefix — fall back to last segment
-        const parts = projectDir.split("-");
-        return parts[parts.length - 1] || projectDir;
-    }
-
-    // Reconstruct original path by progressively resolving dash-separated parts.
-    // E.g. "Code-my-app" → checks ~/Code → exists, then ~/Code/my → no,
-    //   then ~/Code/my-app → exists! → returns "my-app"
-    const relativeEncoded = projectDir.slice(homeEncoded.length + 1);
-    const parts = relativeEncoded.split("-");
-    let resolved = home;
-
-    for (let i = 0; i < parts.length; i++) {
-        const asDir = `${resolved}/${parts[i]}`;
-        if (existsSync(asDir)) {
-            resolved = asDir;
-            continue;
-        }
-
-        // Part might contain dashes — try accumulating remaining parts
-        let accumulated = parts[i];
-        let found = false;
-        for (let j = i + 1; j < parts.length; j++) {
-            accumulated += `-${parts[j]}`;
-            const tryPath = `${resolved}/${accumulated}`;
-            if (existsSync(tryPath)) {
-                resolved = tryPath;
-                i = j;
-                found = true;
-                break;
-            }
-        }
-
-        if (!found) {
-            // Can't resolve further — use accumulated as the name
-            resolved += `/${accumulated}`;
-            break;
-        }
-    }
-
-    return resolved.split("/").pop() || projectDir;
-}
+// extractProjectName and resolveProjectNameFromEncoded are now in @app/utils/claude/projects
+// Re-export for backward compatibility
+export { extractProjectName } from "@app/utils/claude/projects";
 
 // =============================================================================
 // JSONL Parsing
@@ -433,7 +332,11 @@ export function calculateRelevanceScore(
 export function extractCommitHashes(messages: ConversationMessage[]): string[] {
     const hashes = new Set<string>();
     const commitPattern = /\b([a-f0-9]{7,40})\b/gi;
-    const gitCommitPattern = /git commit|committed|Commit:/i;
+    // Match contexts where commit hashes appear:
+    // - "git commit" / "committed" / "Commit:" — commit commands/messages
+    // - "[branch hash]" — git commit output format
+    // - "hash msg" lines — git log --oneline format (7+ hex chars at start of line)
+    const gitCommitPattern = /git commit|committed|Commit:|^\[[^\]]+\s+[a-f0-9]{7,40}\]|\b[a-f0-9]{7,40}\b\s+\S/im;
 
     for (const msg of messages) {
         if (msg.type === "user") {
@@ -579,7 +482,12 @@ async function processFileForCommit(
 
     const commitHashes = extractCommitHashes(messages);
 
-    if (!commitHashes.some((h) => h.toLowerCase().startsWith(hashLower))) {
+    if (
+        !commitHashes.some((h) => {
+            const hLower = h.toLowerCase();
+            return hLower.startsWith(hashLower) || hashLower.startsWith(hLower);
+        })
+    ) {
         return null;
     }
 
@@ -1333,7 +1241,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
     const cachedVersion = getCacheMeta("metadata_version");
     const reindexed = cachedVersion !== METADATA_VERSION;
     if (reindexed) {
-        resetDatabase();
+        clearSessionMetadata();
         setCacheMeta("metadata_version", METADATA_VERSION);
     }
 
@@ -1343,8 +1251,8 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
 
     // 1. Discover JSONL files (scoped to project dir if available)
     const files = projectDir
-        ? await findConversationFilesInDir(projectDir, excludeSubagents)
-        : await findConversationFiles({ excludeAgents: excludeSubagents });
+        ? discoverSessionFilesInDir(projectDir, { excludeSubagents })
+        : await discoverSessionFiles({ excludeSubagents });
 
     // 2. Incrementally index: only parse new/changed files
     const total = files.length;
@@ -1409,76 +1317,25 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
     };
 }
 
-/**
- * Resolve a project name (e.g. "GenesisTools") to its exact encoded dir path.
- * Falls back to glob matching if direct encoding doesn't exist.
- */
-function resolveProjectDir(project: string): string | undefined {
-    // Try exact cwd-based encoding first
-    const cwd = process.cwd();
-    const encoded = cwd.replaceAll(sep, "-");
-    const exact = resolve(PROJECTS_DIR, encoded);
-    if (existsSync(exact)) {
-        return exact;
-    }
-
-    // Fallback: find any dir ending with the project name
-    try {
-        const dirs = readdirSync(PROJECTS_DIR);
-        const match = dirs.find((d) => d.endsWith(`-${project}`) || d === project);
-        if (match) {
-            return resolve(PROJECTS_DIR, match);
-        }
-    } catch {
-        // ignore
-    }
-    return undefined;
-}
-
-/**
- * Find JSONL files in a specific project directory (fast, no glob).
- */
-async function findConversationFilesInDir(projectDir: string, excludeSubagents: boolean): Promise<string[]> {
-    try {
-        const entries = readdirSync(projectDir);
-        let files = entries.filter((e) => e.endsWith(".jsonl")).map((e) => resolve(projectDir, e));
-
-        // Also scan subagents/ subdirectory for .jsonl files
-        if (!excludeSubagents) {
-            const subagentsDir = resolve(projectDir, "subagents");
-            try {
-                const subEntries = readdirSync(subagentsDir);
-                const subFiles = subEntries.filter((e) => e.endsWith(".jsonl")).map((e) => resolve(subagentsDir, e));
-                files = files.concat(subFiles);
-            } catch {
-                // subagents/ doesn't exist or isn't readable — skip
-            }
-        }
-
-        if (excludeSubagents) {
-            files = files.filter((f) => !basename(f).startsWith("agent-"));
-        }
-        return files;
-    } catch {
-        return [];
-    }
-}
+// resolveProjectDir and findConversationFilesInDir are now in shared modules
+// (imported at top of file)
 
 /**
  * Extract session metadata by reading the entire JSONL file.
  * Captures: summary, custom-title, sessionId, gitBranch, cwd,
  * full first prompt, and all user message text (capped at 5000 chars).
  */
-async function extractSessionMetadataFromFile(filePath: string, mtime: number): Promise<SessionMetadataRecord | null> {
+export async function extractSessionMetadataFromFile(
+    filePath: string,
+    mtime: number
+): Promise<SessionMetadataRecord | null> {
     const project = extractProjectName(filePath);
     const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
 
     try {
-        // Skip extremely large session files to avoid performance issues
+        // For large files, read only the first N lines to extract metadata
         const fileStat = await stat(filePath);
-        if (fileStat.size > 10 * 1024 * 1024) {
-            return null;
-        }
+        const isLargeFile = fileStat.size > 10 * 1024 * 1024;
 
         const fileStream = createReadStream(filePath);
         const rl = createInterface({ input: fileStream, crlfDelay: Number.POSITIVE_INFINITY });
@@ -1493,10 +1350,17 @@ async function extractSessionMetadataFromFile(filePath: string, mtime: number): 
         const userTexts: string[] = [];
         let userTextLen = 0;
         const USER_TEXT_CAP = 5000;
+        const LINE_LIMIT = isLargeFile ? 200 : Number.POSITIVE_INFINITY;
+        let lineCount = 0;
 
         for await (const line of rl) {
             if (!line.trim()) {
                 continue;
+            }
+
+            lineCount++;
+            if (lineCount > LINE_LIMIT) {
+                break;
             }
 
             try {

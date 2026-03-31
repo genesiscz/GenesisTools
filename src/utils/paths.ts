@@ -65,6 +65,31 @@ export function expandPath(p: string): string {
 export const PROJECT_ROOT = resolve(import.meta.dirname, "../..");
 
 /**
+ * Replace the user's home directory prefix with `~`.
+ * Inverse of `expandTilde()`.
+ */
+export function collapsePath(p: string): string {
+    const home = homedir();
+    const homeNorm = endsWithSep(home) ? home.slice(0, -1) : home;
+
+    if (p === homeNorm) {
+        return "~";
+    }
+
+    const unixPrefix = `${homeNorm}/`;
+    if (p.startsWith(unixPrefix)) {
+        return `~/${p.slice(unixPrefix.length)}`;
+    }
+
+    const winPrefix = `${homeNorm}\\`;
+    if (p.startsWith(winPrefix)) {
+        return `~/${p.slice(winPrefix.length)}`;
+    }
+
+    return p;
+}
+
+/**
  * The platform's path separator (re-exported for convenience).
  */
 export { sep };

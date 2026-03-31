@@ -93,12 +93,18 @@ export function HistoryView({ db, dbVersion }: HistoryViewProps) {
 
         try {
             const pairs = db.getAllAccountBuckets();
+
             const result = new Map<string, SnapshotWithDelta[]>();
 
             for (const { accountName, bucket } of pairs) {
-                const snapshots = db.getSnapshots(accountName, bucket, timeRange);
-                const key = `${accountName}:${bucket}`;
-                result.set(key, computeDeltas(snapshots).reverse());
+                const snapshots = computeDeltas(db.getSnapshots(accountName, bucket, timeRange));
+                const existing = result.get(accountName) ?? [];
+                existing.push(...snapshots);
+                result.set(accountName, existing);
+            }
+
+            for (const [, snapshots] of result) {
+                snapshots.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
             }
 
             return result;
