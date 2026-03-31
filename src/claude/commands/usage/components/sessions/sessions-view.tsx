@@ -129,9 +129,8 @@ export function SessionsView({ notifications }: SessionsViewProps) {
             };
 
             try {
-                const shell = process.env.SHELL ?? "/bin/sh";
                 const proc = Bun.spawn({
-                    cmd: [shell, "-ic", `${claudeCmd} --resume '${sessionId}' -p '.' --output-format json 2>/dev/null`],
+                    cmd: [claudeCmd, "--resume", sessionId, "-p", ".", "--output-format", "json"],
                     stdio: ["ignore", "ignore", "ignore"],
                 });
                 const exitCode = await proc.exited;

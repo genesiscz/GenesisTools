@@ -1203,7 +1203,7 @@ import { c } from "./c";
         });
     });
 
-    describe("Heading strategy — improved splitting", () => {
+    describe("Heading strategy — large section sub-chunks", () => {
         it("preserves heading context in sub-chunks of large sections", async () => {
             const bigBody = Array.from(
                 { length: 200 },

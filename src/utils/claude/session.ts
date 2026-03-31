@@ -224,9 +224,8 @@ export class ClaudeSession {
         const { project, allProjects = false, since, until, includeSubagents = false, limit } = options;
 
         // Discover files using shared discovery layer
-        const projectFilter = project ? encodedProjectDir(project) : undefined;
         const files = await discoverSessionFiles({
-            project: projectFilter,
+            project,
             allProjects,
             includeSubagents,
             excludeSubagents: !includeSubagents,

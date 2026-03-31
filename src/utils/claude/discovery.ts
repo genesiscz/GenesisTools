@@ -65,7 +65,7 @@ export async function discoverSessionFiles(options: DiscoveryOptions = {}): Prom
 
     let files: string[] = [];
     for (const pattern of patterns) {
-        const matched = await glob(pattern, { absolute: true });
+        const matched = await glob(pattern, { absolute: true, windowsPathsNoEscape: true });
         files.push(...matched);
     }
 

@@ -20,7 +20,7 @@ export const PROJECTS_DIR = resolve(CLAUDE_DIR, "projects");
  */
 export function encodedProjectDir(cwd?: string): string {
     const p = cwd ?? getMainRepoRootSync(process.cwd());
-    return `-${p.replace(/^\//, "").replaceAll(sep, "-")}`;
+    return `-${p.replace(/^[/\\]/, "").replaceAll(sep, "-")}`;
 }
 
 /**
@@ -126,7 +126,7 @@ export function resolveProjectNameFromEncoded(projectDir: string): string {
     }
 
     const home = homedir();
-    const homeEncoded = home.replaceAll("/", "-");
+    const homeEncoded = home.replaceAll("/", "-").replaceAll("\\", "-");
 
     if (!projectDir.startsWith(homeEncoded)) {
         const parts = projectDir.split("-");
@@ -138,7 +138,7 @@ export function resolveProjectNameFromEncoded(projectDir: string): string {
     let resolved = home;
 
     for (let i = 0; i < parts.length; i++) {
-        const asDir = `${resolved}/${parts[i]}`;
+        const asDir = resolve(resolved, parts[i]);
         if (existsSync(asDir)) {
             resolved = asDir;
             continue;
@@ -148,7 +148,7 @@ export function resolveProjectNameFromEncoded(projectDir: string): string {
         let found = false;
         for (let j = i + 1; j < parts.length; j++) {
             accumulated += `-${parts[j]}`;
-            const tryPath = `${resolved}/${accumulated}`;
+            const tryPath = resolve(resolved, accumulated);
             if (existsSync(tryPath)) {
                 resolved = tryPath;
                 i = j;
@@ -158,10 +158,10 @@ export function resolveProjectNameFromEncoded(projectDir: string): string {
         }
 
         if (!found) {
-            resolved += `/${accumulated}`;
+            resolved = resolve(resolved, accumulated);
             break;
         }
     }
 
-    return resolved.split("/").pop() || projectDir;
+    return basename(resolved) || projectDir;
 }

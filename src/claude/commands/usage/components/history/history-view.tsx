@@ -94,7 +94,6 @@ export function HistoryView({ db, dbVersion }: HistoryViewProps) {
         try {
             const pairs = db.getAllAccountBuckets();
 
-            // Compute deltas per-bucket, then group by account
             const result = new Map<string, SnapshotWithDelta[]>();
 
             for (const { accountName, bucket } of pairs) {

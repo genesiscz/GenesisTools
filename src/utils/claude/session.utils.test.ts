@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readTailBytes } from "./session.utils";
@@ -7,9 +7,9 @@ import { readTailBytes } from "./session.utils";
 describe("readTailBytes", () => {
     let dir: string;
 
-    function writeTmpFile(name: string, content: string): string {
+    async function writeTmpFile(name: string, content: string): Promise<string> {
         const p = join(dir, name);
-        writeFileSync(p, content);
+        await Bun.write(p, content);
         return p;
     }
 
@@ -22,7 +22,7 @@ describe("readTailBytes", () => {
     });
 
     it("returns all lines when file is smaller than byte budget", async () => {
-        const path = writeTmpFile("small.jsonl", '{"a":1}\n{"b":2}\n{"c":3}\n');
+        const path = await writeTmpFile("small.jsonl", '{"a":1}\n{"b":2}\n{"c":3}\n');
         const lines = await readTailBytes(path, 8192);
         expect(lines).toEqual(['{"a":1}', '{"b":2}', '{"c":3}']);
     });
@@ -33,7 +33,7 @@ describe("readTailBytes", () => {
         const line2 = '{"id":"bbb"}';
         const line3 = '{"id":"ccc"}';
         const content = `${line1}\n${line2}\n${line3}\n`;
-        const path = writeTmpFile("midline.jsonl", content);
+        const path = await writeTmpFile("midline.jsonl", content);
 
         // Slice enough to get lines 2+3 but cut into line1
         const byteBudget = line2.length + line3.length + 5;
@@ -46,7 +46,7 @@ describe("readTailBytes", () => {
         const line2 = '{"id":"second"}';
         const line3 = '{"id":"third"}';
         const content = `${line1}\n${line2}\n${line3}\n`;
-        const path = writeTmpFile("boundary.jsonl", content);
+        const path = await writeTmpFile("boundary.jsonl", content);
 
         // Slice exactly the last two lines + their newlines
         const tailContent = `${line2}\n${line3}\n`;

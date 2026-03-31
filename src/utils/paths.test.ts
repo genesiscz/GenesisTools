@@ -175,8 +175,7 @@ describe("paths: collapsePath", () => {
     });
 
     it("handles home with trailing slash", () => {
-        // homedir() on some platforms may return with trailing slash
-        expect(collapsePath(`${home}/`)).not.toBe(home);
+        expect(collapsePath(`${home}/`)).toBe("~/");
     });
 
     it("collapses paths under home with forward slash", () => {

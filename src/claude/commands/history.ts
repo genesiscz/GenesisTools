@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import {
     type AssistantMessage,
     type ConversationMessage,
@@ -235,7 +235,7 @@ export function registerHistoryCommand(program: Command): void {
                         project = resolveProjectFilter();
                         if (project) {
                             // For encoded dirs like "-Users-Martin-Projects-Foo", show just the leaf
-                            const displayName = project.startsWith("-") ? project.split("-").pop() || project : project;
+                            const displayName = project.startsWith("-") ? basename(process.cwd()) : project;
                             console.log(
                                 chalk.dim(`Auto-detected project: ${displayName} (use --all to search all projects)`)
                             );
