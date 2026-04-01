@@ -18,6 +18,7 @@ export function createShowCommand(): Command {
         .description("Show a single todo in detail")
         .argument("<id>", "Todo ID")
         .option("-f, --format <format>", "Output format: ai|json|md|table")
+        .option("--colors", "Force colorized output even in non-TTY")
         .action(async (id, opts) => {
             const projectRoot = findProjectRoot(process.cwd()) ?? process.cwd();
             const store = TodoStore.forProject(projectRoot);
@@ -34,6 +35,6 @@ export function createShowCommand(): Command {
             }
 
             const format = resolveFormat(opts.format);
-            console.log(formatTodo(todo, format));
+            console.log(formatTodo(todo, format, { colors: opts.colors }));
         });
 }

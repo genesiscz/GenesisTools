@@ -35,6 +35,7 @@ export function createEditCommand(): Command {
         .option("--session-id <id>", "Set session ID")
         .option("--sync-to <target>", "Auto-sync reminders: calendar|reminders|both")
         .option("-f, --format <format>", "Output format")
+        .option("--colors", "Force colorized output even in non-TTY")
         .action(async (id, opts) => {
             const projectRoot = findProjectRoot(process.cwd()) ?? process.cwd();
             const store = TodoStore.forProject(projectRoot);
@@ -97,7 +98,7 @@ export function createEditCommand(): Command {
             }
 
             const todo = await store.update(id, patch);
-            console.log(formatTodo(todo, resolveFormat(opts.format)));
+            console.log(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
 
             if (opts.syncTo && todo.reminders.length > 0) {
                 const target = opts.syncTo as SyncTarget;

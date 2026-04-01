@@ -25,6 +25,7 @@ export function createListCommand(): Command {
         .option("--tag <tags>", "Filter by tags (comma-separated)")
         .option("--session <id>", "Filter by session ID")
         .option("-f, --format <format>", "Output format: ai|json|md|table")
+        .option("--colors", "Force colorized output even in non-TTY")
         .action(async (opts) => {
             const filters: TodoFilters = {};
 
@@ -57,6 +58,6 @@ export function createListCommand(): Command {
             }
 
             const format = resolveFormat(opts.format);
-            console.log(formatTodoList(todos, format));
+            console.log(formatTodoList(todos, format, { colors: opts.colors }));
         });
 }

@@ -19,6 +19,7 @@ export function createSearchCommand(): Command {
         .argument("<query>", "Search query")
         .option("--all", "Search across all projects")
         .option("-f, --format <format>", "Output format: ai|json|md|table")
+        .option("--colors", "Force colorized output even in non-TTY")
         .action(async (query, opts) => {
             let todos: Todo[];
 
@@ -31,6 +32,6 @@ export function createSearchCommand(): Command {
             }
 
             const format = resolveFormat(opts.format);
-            console.log(formatTodoList(todos, format));
+            console.log(formatTodoList(todos, format, { colors: opts.colors }));
         });
 }

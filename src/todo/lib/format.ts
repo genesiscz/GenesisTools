@@ -105,6 +105,14 @@ function renderForTerminal(markdown: string): string {
     return renderMarkdownToCli(markdown, { theme: "dark" });
 }
 
+function shouldColorize(forceColors?: boolean): boolean {
+    if (forceColors !== undefined) {
+        return forceColors;
+    }
+
+    return isInteractive();
+}
+
 function formatTodoTable(todos: Todo[]): string {
     if (todos.length === 0) {
         return "No todos found.";
@@ -116,28 +124,32 @@ function formatTodoTable(todos: Todo[]): string {
     return formatTable(rows, headers, { maxColWidth: 40 });
 }
 
-export function formatTodo(todo: Todo, format: OutputFormat): string {
+export interface FormatOptions {
+    colors?: boolean;
+}
+
+export function formatTodo(todo: Todo, format: OutputFormat, options?: FormatOptions): string {
     switch (format) {
         case "json":
             return SafeJSON.stringify(todo, null, 2);
         case "ai":
         case "md": {
             const md = formatTodoMarkdown(todo);
-            return isInteractive() ? renderForTerminal(md) : md;
+            return shouldColorize(options?.colors) ? renderForTerminal(md) : md;
         }
         case "table":
             return formatTodoTable([todo]);
     }
 }
 
-export function formatTodoList(todos: Todo[], format: OutputFormat): string {
+export function formatTodoList(todos: Todo[], format: OutputFormat, options?: FormatOptions): string {
     switch (format) {
         case "json":
             return SafeJSON.stringify(todos, null, 2);
         case "ai":
         case "md": {
             const md = formatTodoListMarkdown(todos);
-            return isInteractive() ? renderForTerminal(md) : md;
+            return shouldColorize(options?.colors) ? renderForTerminal(md) : md;
         }
         case "table":
             return formatTodoTable(todos);

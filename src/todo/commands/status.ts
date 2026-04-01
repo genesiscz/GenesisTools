@@ -22,10 +22,11 @@ export function createStartCommand(): Command {
         .description("Mark a todo as in-progress")
         .argument("<id>", "Todo ID")
         .option("-f, --format <format>", "Output format")
+        .option("--colors", "Force colorized output even in non-TTY")
         .action(async (id, opts) => {
             const store = TodoStore.forProject(resolveProjectRoot());
             const todo = await store.update(id, { status: "in-progress" });
-            console.log(formatTodo(todo, resolveFormat(opts.format)));
+            console.log(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
         });
 }
 
@@ -34,10 +35,11 @@ export function createBlockCommand(): Command {
         .description("Mark a todo as blocked")
         .argument("<id>", "Todo ID")
         .option("-f, --format <format>", "Output format")
+        .option("--colors", "Force colorized output even in non-TTY")
         .action(async (id, opts) => {
             const store = TodoStore.forProject(resolveProjectRoot());
             const todo = await store.update(id, { status: "blocked" });
-            console.log(formatTodo(todo, resolveFormat(opts.format)));
+            console.log(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
         });
 }
 
@@ -48,10 +50,11 @@ export function createCompleteCommand(): Command {
         .argument("<id>", "Todo ID")
         .option("-n, --note <text>", "Completion note")
         .option("-f, --format <format>", "Output format")
+        .option("--colors", "Force colorized output even in non-TTY")
         .action(async (id, opts) => {
             const store = TodoStore.forProject(resolveProjectRoot());
             const todo = await store.complete(id, opts.note);
-            console.log(formatTodo(todo, resolveFormat(opts.format)));
+            console.log(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
         });
 }
 
@@ -60,6 +63,7 @@ export function createReopenCommand(): Command {
         .description("Reopen a completed todo")
         .argument("<id>", "Todo ID")
         .option("-f, --format <format>", "Output format")
+        .option("--colors", "Force colorized output even in non-TTY")
         .action(async (id, opts) => {
             const store = TodoStore.forProject(resolveProjectRoot());
             const todo = await store.update(id, {
@@ -67,6 +71,6 @@ export function createReopenCommand(): Command {
                 completedAt: undefined,
                 completionNote: undefined,
             });
-            console.log(formatTodo(todo, resolveFormat(opts.format)));
+            console.log(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
         });
 }

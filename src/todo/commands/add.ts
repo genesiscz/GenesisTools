@@ -46,6 +46,7 @@ export function createAddCommand(): Command {
         .option("--project <path>", "Override project root")
         .option("--sync-to <target>", "Auto-sync reminders: calendar|reminders|both")
         .option("-f, --format <format>", "Output format: ai|json|md|table")
+        .option("--colors", "Force colorized output even in non-TTY")
         .action(async (titleArg, opts) => {
             let title: string | undefined = titleArg;
             let priority: TodoPriority | undefined = opts.priority;
@@ -144,7 +145,7 @@ export function createAddCommand(): Command {
             });
 
             const format = resolveFormat(opts.format);
-            console.log(formatTodo(todo, format));
+            console.log(formatTodo(todo, format, { colors: opts.colors }));
 
             if (opts.syncTo && todo.reminders.length > 0) {
                 const target = opts.syncTo as SyncTarget;
