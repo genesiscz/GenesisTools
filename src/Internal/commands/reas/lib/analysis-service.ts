@@ -9,6 +9,7 @@ import { fetchMfRentalData } from "@app/Internal/commands/reas/api/mf-rental";
 import { fetchSoldListings } from "@app/Internal/commands/reas/api/reas-client";
 import { fetchRentalListings } from "@app/Internal/commands/reas/api/sreality-client";
 import { parsePeriods, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
+import { reasDatabase } from "@app/Internal/commands/reas/lib/store";
 import type {
     AnalysisFilters,
     FullAnalysis,
@@ -53,12 +54,18 @@ export function applyListingFilters(listings: ReasListing[], filters: AnalysisFi
     return result;
 }
 
+export interface FetchAndAnalyzeOptions {
+    onProgress?: ProgressCallback;
+    persistResult?: boolean;
+}
+
 export async function fetchAndAnalyze(
     filters: AnalysisFilters,
     target: TargetProperty,
     refresh: boolean,
-    onProgress?: ProgressCallback
+    options?: FetchAndAnalyzeOptions
 ): Promise<FullAnalysis> {
+    const onProgress = options?.onProgress;
     onProgress?.({ phase: "fetching", message: "Fetching data from all providers..." });
 
     const warnings: string[] = [];
@@ -159,6 +166,15 @@ export async function fetchAndAnalyze(
         investmentScore,
         momentum,
     };
+
+    if (options?.persistResult !== false) {
+        try {
+            reasDatabase.saveAnalysis(result);
+            reasDatabase.saveDistrictSnapshot(result);
+        } catch {
+            // Non-fatal — persistence failure should not break analysis
+        }
+    }
 
     onProgress?.({
         phase: "complete",

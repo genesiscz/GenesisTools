@@ -1,16 +1,17 @@
-import { isInteractive, suggestCommand } from "@app/utils/cli";
-import { SafeJSON } from "@app/utils/json";
-import { stripAnsi } from "@app/utils/string";
-import { formatTable } from "@app/utils/table";
-import * as p from "@clack/prompts";
-import type { Command } from "commander";
-import pc from "picocolors";
 import { renderReport } from "@app/Internal/commands/reas/analysis/report";
 import { clearCache } from "@app/Internal/commands/reas/cache/index";
 import type { DistrictInfo } from "@app/Internal/commands/reas/data/districts";
-import { getAllDistrictNames, getDistrict, getPrahaDistrictNames, searchDistricts } from "@app/Internal/commands/reas/data/districts";
+import {
+    getAllDistrictNames,
+    getDistrict,
+    getPrahaDistrictNames,
+    searchDistricts,
+} from "@app/Internal/commands/reas/data/districts";
 import { resolveAddress } from "@app/Internal/commands/reas/lib/address-resolver";
-import { fetchAndAnalyze as fetchAndAnalyzeService, searchListings } from "@app/Internal/commands/reas/lib/analysis-service";
+import {
+    fetchAndAnalyze as fetchAndAnalyzeService,
+    searchListings,
+} from "@app/Internal/commands/reas/lib/analysis-service";
 import {
     buildConfig,
     buildPeriodOptions,
@@ -21,6 +22,13 @@ import {
     resolveDistrict,
 } from "@app/Internal/commands/reas/lib/config-builder";
 import type { AnalysisFilters, FullAnalysis, TargetProperty } from "@app/Internal/commands/reas/types";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { SafeJSON } from "@app/utils/json";
+import { stripAnsi } from "@app/utils/string";
+import { formatTable } from "@app/utils/table";
+import * as p from "@clack/prompts";
+import type { Command } from "commander";
+import pc from "picocolors";
 
 interface ReasOptions {
     district?: string;
@@ -323,7 +331,7 @@ export async function fetchAndAnalyze(
     const spinner = p.spinner();
     spinner.start("Fetching data from all providers...");
 
-    const analysis = await fetchAndAnalyzeService(filters, target, refresh, (progress) => {
+    const analysis = await fetchAndAnalyzeService(filters, target, refresh, { onProgress: (progress) => {
         if (progress.phase === "complete") {
             spinner.stop(progress.message);
         } else {
@@ -339,7 +347,7 @@ export async function fetchAndAnalyze(
 
             console.log();
         }
-    });
+    } });
 
     return analysis;
 }

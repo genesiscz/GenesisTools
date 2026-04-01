@@ -13,7 +13,8 @@
         "lint:dashboard": "cd src/claude-history-dashboard && biome check .",
         "lint:dashboard:fix": "cd src/claude-history-dashboard && biome check --write .",
         "format": "biome format --write .",
-        "format:dashboard": "cd src/claude-history-dashboard && biome format --write ."
+        "format:dashboard": "cd src/claude-history-dashboard && biome format --write .",
+        "dev:reas-dashboard": "bun --bun vite dev --strictPort -c src/Internal/commands/reas/ui/vite.config.ts"
     },
     "devDependencies": {
         "@anthropic-ai/claude-code": "^2.1.45",
