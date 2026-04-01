@@ -1,17 +1,18 @@
 #!/usr/bin/env bun
 
 import { createAddCommand } from "@app/todo/commands/add";
+import { createListCommand } from "@app/todo/commands/list";
+import { createShowCommand } from "@app/todo/commands/show";
 import { enhanceHelp } from "@app/utils/cli";
 import { Command } from "commander";
 
 const program = new Command();
 
-program
-    .name("todo")
-    .description("Task tracking for AI-assisted development sessions")
-    .version("1.0.0");
+program.name("todo").description("Task tracking for AI-assisted development sessions").version("1.0.0");
 
 program.addCommand(createAddCommand());
+program.addCommand(createListCommand());
+program.addCommand(createShowCommand());
 
 enhanceHelp(program);
 
