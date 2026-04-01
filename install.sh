@@ -60,7 +60,7 @@ if [ "$IS_WINDOWS" = true ]; then
     if echo "$CURRENT_PATH" | grep -qi "$(echo "$WIN_DIR" | sed 's/\\/\\\\/g')"; then
         echo "✅ $WIN_DIR is already in user PATH"
     else
-        NEW_PATH="${CURRENT_PATH};${WIN_DIR}"
+        NEW_PATH="${CURRENT_PATH:+$CURRENT_PATH;}$WIN_DIR"
         if powershell.exe -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', '$NEW_PATH', 'User')" 2>/dev/null; then
             echo "📝 Added $WIN_DIR to user PATH"
             SHELL_CONFIG_CHANGED=true
