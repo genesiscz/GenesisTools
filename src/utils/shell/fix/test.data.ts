@@ -898,6 +898,230 @@ export const testCases: TestCase[] = [
             'az rest \\\n  --method PATCH \\\n  --uri "https://dev.azure.com/org/project/_apis/wit/workitems/123?api-version=7.0" \\\n  --body \'[{"op":"replace","path":"/fields/System.State","value":"Active"}]\' \\\n  --headers Content-Type=application/json-patch+json',
         tags: ["real-world", "az-cli", "json", "continuation"],
     },
+    // ═══════════════════════════════════════════════════════════════════
+    // 17. SAFETY — commands that could cause harm if auto-fixed wrong
+    // ═══════════════════════════════════════════════════════════════════
+
+    // --- # comment must NEVER be stripped (could turn comment into executable) ---
+    {
+        name: "# comment with destructive command — must NOT strip #",
+        input: "# rm -rf /",
+        expected: "# rm -rf /",
+        expectedPretty: "# rm -rf /",
+        tags: ["safety", "comment", "destructive"],
+    },
+    {
+        name: "# comment with SQL injection — must NOT strip #",
+        input: "# DROP TABLE users;",
+        expected: "# DROP TABLE users;",
+        expectedPretty: "# DROP TABLE users;",
+        tags: ["safety", "comment", "sql"],
+    },
+    {
+        name: "# TODO comment — must NOT strip #",
+        input: "# TODO: fix this later",
+        expected: "# TODO: fix this later",
+        expectedPretty: "# TODO: fix this later",
+        tags: ["safety", "comment"],
+    },
+    {
+        name: "# separator line — must NOT strip #",
+        input: "# --------------------",
+        expected: "# --------------------",
+        expectedPretty: "# --------------------",
+        tags: ["safety", "comment"],
+    },
+
+    // --- Quotes must be preserved (word-splitting on paths with spaces) ---
+    {
+        name: "quoted path with spaces — quotes must survive",
+        input: 'rm -rf "/path/with spaces/important"',
+        expected: 'rm -rf "/path/with spaces/important"',
+        expectedPretty: 'rm -rf "/path/with spaces/important"',
+        tags: ["safety", "quotes", "destructive"],
+    },
+    {
+        name: "single-quoted path with spaces — quotes must survive",
+        input: "rm -rf '/path/with spaces/important'",
+        expected: "rm -rf '/path/with spaces/important'",
+        expectedPretty: "rm -rf '/path/with spaces/important'",
+        tags: ["safety", "quotes", "destructive"],
+    },
+    {
+        name: "variable in quotes must not be mangled",
+        input: 'rm -rf "$DIR/subfolder"',
+        expected: 'rm -rf "$DIR/subfolder"',
+        expectedPretty: 'rm -rf "$DIR/subfolder"',
+        tags: ["safety", "quotes", "variable"],
+    },
+
+    // --- Mid-word join vs separate args (destructive command context) ---
+    {
+        name: "rm -rf with two separate paths — must NOT merge into one",
+        input: "rm -rf /tmp/safe\n  /home/user/also-delete",
+        expected: "rm -rf /tmp/safe /home/user/also-delete",
+        expectedPretty: "rm -rf /tmp/safe /home/user/also-delete",
+        tags: ["safety", "paths", "destructive"],
+    },
+    {
+        name: "rm -rf with path starting with ~ — must keep as separate arg",
+        input: "rm -rf /tmp/junk\n  ~/important-backup",
+        expected: "rm -rf /tmp/junk ~/important-backup",
+        expectedPretty: "rm -rf /tmp/junk ~/important-backup",
+        tags: ["safety", "paths", "tilde", "destructive"],
+    },
+    {
+        name: "rm -rf with mid-word UUID wrap — should merge (same path)",
+        input: "rm -rf /tmp/session-abc123\n  def456/cache",
+        expected: "rm -rf /tmp/session-abc123def456/cache",
+        expectedPretty: "rm -rf /tmp/session-abc123def456/cache",
+        tags: ["safety", "mid-word", "uuid"],
+    },
+
+    // --- Heredoc body must NEVER be executed as commands ---
+    {
+        name: "heredoc with destructive SQL — body must not flatten",
+        input: "mysql -u root <<EOF\nDROP TABLE users;\nDELETE FROM sessions;\nEOF",
+        expected: "mysql -u root <<EOF\nDROP TABLE users;\nDELETE FROM sessions;\nEOF",
+        expectedPretty: "mysql -u root <<EOF\nDROP TABLE users;\nDELETE FROM sessions;\nEOF",
+        tags: ["safety", "heredoc", "sql"],
+    },
+    {
+        name: "heredoc with shell commands — body must stay as data",
+        input: "cat <<SCRIPT\nrm -rf /\nformat c:\nSCRIPT",
+        expected: "cat <<SCRIPT\nrm -rf /\nformat c:\nSCRIPT",
+        expectedPretty: "cat <<SCRIPT\nrm -rf /\nformat c:\nSCRIPT",
+        tags: ["safety", "heredoc", "destructive"],
+    },
+    {
+        name: "heredoc with dash (<<-) for indented bodies",
+        input: "cat <<-EOF\n\trm -rf /\n\tEOF",
+        expected: "cat <<-EOF\n\trm -rf /\n\tEOF",
+        expectedPretty: "cat <<-EOF\n\trm -rf /\n\tEOF",
+        tags: ["safety", "heredoc", "indented"],
+    },
+
+    // --- Prompt stripping safety ---
+    {
+        name: "$ prompt stripped — safe (unambiguous)",
+        input: "$ rm -rf /tmp/junk",
+        expected: "rm -rf /tmp/junk",
+        expectedPretty: "rm -rf /tmp/junk",
+        tags: ["safety", "prompt", "dollar"],
+    },
+    {
+        name: "$HOME must NOT be stripped (no space after $)",
+        input: "$HOME/bin/my-script",
+        expected: "$HOME/bin/my-script",
+        expectedPretty: "$HOME/bin/my-script",
+        tags: ["safety", "variable", "dollar"],
+    },
+    {
+        name: "% prompt stripped — safe (zsh, always in quotes in awk)",
+        input: "% rm -rf /tmp/junk",
+        expected: "rm -rf /tmp/junk",
+        expectedPretty: "rm -rf /tmp/junk",
+        tags: ["safety", "prompt", "zsh"],
+    },
+    {
+        name: "awk with % inside quotes — must NOT strip %",
+        input: "awk '{printf \"%s\\n\", $1}'",
+        expected: "awk '{printf \"%s\\n\", $1}'",
+        expectedPretty: "awk '{printf \"%s\\n\", $1}'",
+        tags: ["safety", "awk", "percent"],
+    },
+    {
+        name: "user@host prompt stripped — safe (specific pattern)",
+        input: "root@server:~# rm -rf /tmp/junk",
+        expected: "rm -rf /tmp/junk",
+        expectedPretty: "rm -rf /tmp/junk",
+        tags: ["safety", "prompt", "root"],
+    },
+
+    // --- Bash() wrapper edge cases ---
+    {
+        name: "Bash() with nested parens in command substitution",
+        input: "Bash(echo $(( 1 + 2 )) && echo $(date))",
+        expected: "echo $(( 1 + 2 )) && echo $(date)",
+        expectedPretty: "echo $(( 1 + 2 )) && echo $(date)",
+        tags: ["safety", "bash-wrapper", "nested-parens"],
+    },
+    {
+        name: "Bash() with array parens — must not lose closing paren",
+        input: "Bash(declare -a arr=(one two three))",
+        expected: "declare -a arr=(one two three)",
+        expectedPretty: "declare -a arr=(one two three)",
+        tags: ["safety", "bash-wrapper", "array"],
+    },
+    {
+        name: "Not a Bash() wrapper — just starts with word Bash",
+        input: "Bash is a shell",
+        expected: "Bash is a shell",
+        expectedPretty: "Bash is a shell",
+        tags: ["safety", "bash-wrapper", "false-positive"],
+    },
+    {
+        name: "Read() wrapper from Claude output",
+        input: "Read(/Users/Martin/file.txt)",
+        expected: "Read(/Users/Martin/file.txt)",
+        expectedPretty: "Read(/Users/Martin/file.txt)",
+        tags: ["safety", "bash-wrapper", "other-tool"],
+    },
+
+    // --- Redirect safety ---
+    {
+        name: "redirect > must not be swallowed into previous arg",
+        input: "echo secret\n  > /tmp/leaked.txt",
+        expected: "echo secret > /tmp/leaked.txt",
+        expectedPretty: "echo secret > /tmp/leaked.txt",
+        tags: ["safety", "redirect"],
+    },
+    {
+        name: "append >> must not merge with filename",
+        input: "echo data\n  >> /tmp/append.txt",
+        expected: "echo data >> /tmp/append.txt",
+        expectedPretty: "echo data >> /tmp/append.txt",
+        tags: ["safety", "redirect", "append"],
+    },
+
+    // --- Escaped space preservation ---
+    {
+        name: "escaped space in path — single backslash-space preserved",
+        input: "cd my\\ folder && ls",
+        expected: "cd my\\ folder && ls",
+        expectedPretty: "cd my\\ folder && ls",
+        tags: ["safety", "escaped-space"],
+    },
+    {
+        name: "multiple escaped spaces in path",
+        input: "ls my\\ important\\ file.txt",
+        expected: "ls my\\ important\\ file.txt",
+        expectedPretty: "ls my\\ important\\ file.txt",
+        tags: ["safety", "escaped-space"],
+    },
+
+    // --- Empty/whitespace edge cases ---
+    {
+        name: "Bash() with empty content — must not crash",
+        input: "Bash()",
+        expected: "",
+        expectedPretty: "",
+        tags: ["safety", "bash-wrapper", "empty"],
+    },
+    {
+        name: "only newlines — must return empty",
+        input: "\n\n\n",
+        expected: "",
+        expectedPretty: "",
+        tags: ["safety", "empty"],
+    },
+    {
+        name: "Bash() with only whitespace inside",
+        input: "Bash(   \n   \n   )",
+        expected: "",
+        expectedPretty: "",
+        tags: ["safety", "bash-wrapper", "whitespace"],
+    },
 ];
 
 // ── Stats ──────────────────────────────────────────────────────────────
