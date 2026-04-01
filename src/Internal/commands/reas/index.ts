@@ -51,6 +51,8 @@ interface ReasOptions {
     format?: string;
     server?: boolean;
     port?: number;
+    dashboard?: boolean;
+    dashboardPort?: string;
 }
 
 async function resolveDistrictFromAddress(address: string): Promise<DistrictInfo> {
@@ -331,23 +333,25 @@ export async function fetchAndAnalyze(
     const spinner = p.spinner();
     spinner.start("Fetching data from all providers...");
 
-    const analysis = await fetchAndAnalyzeService(filters, target, refresh, { onProgress: (progress) => {
-        if (progress.phase === "complete") {
-            spinner.stop(progress.message);
-        } else {
-            spinner.message(progress.message);
-        }
-
-        if (progress.warnings && progress.warnings.length > 0) {
-            console.log(pc.yellow("\nSome providers returned errors (analysis continues with available data):"));
-
-            for (const w of progress.warnings) {
-                console.log(pc.dim(`  - ${w}`));
+    const analysis = await fetchAndAnalyzeService(filters, target, refresh, {
+        onProgress: (progress) => {
+            if (progress.phase === "complete") {
+                spinner.stop(progress.message);
+            } else {
+                spinner.message(progress.message);
             }
 
-            console.log();
-        }
-    } });
+            if (progress.warnings && progress.warnings.length > 0) {
+                console.log(pc.yellow("\nSome providers returned errors (analysis continues with available data):"));
+
+                for (const w of progress.warnings) {
+                    console.log(pc.dim(`  - ${w}`));
+                }
+
+                console.log();
+            }
+        },
+    });
 
     return analysis;
 }
@@ -431,6 +435,21 @@ async function runSearch(query: string, options: ReasOptions): Promise<void> {
 }
 
 async function runReasAnalysis(options: ReasOptions): Promise<void> {
+    if (options.dashboard) {
+        const { resolve } = await import("node:path");
+        const { spawn } = await import("node:child_process");
+        const configPath = resolve(import.meta.dir, "ui/vite.config.ts");
+        const port = options.dashboardPort ?? "3072";
+        console.log(`Starting REAS dashboard on port ${port}...`);
+        const child = spawn("bun", ["--bun", "vite", "dev", "--strictPort", "-c", configPath, "--port", port], {
+            stdio: "inherit",
+        });
+
+        child.on("error", (err: Error) => console.error("Dashboard failed:", err));
+        await new Promise(() => {});
+        return;
+    }
+
     if (options.server) {
         const { startServer } = await import("@app/Internal/commands/reas/server");
         await startServer(options.port);
@@ -495,6 +514,8 @@ export function registerReasCommand(program: Command): void {
         .option("--refresh", "Force re-fetch (ignore cache)")
         .option("--server", "Start dashboard API server")
         .option("--port <port>", "Server port (default: 3456)", parseInt)
+        .option("--dashboard", "Launch React dashboard")
+        .option("--dashboard-port <port>", "Dashboard port", "3072")
         .action(async (opts: ReasOptions) => {
             await runReasAnalysis(opts);
         });
