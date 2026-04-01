@@ -70,5 +70,10 @@ export function getAllResults(suiteName: string): string[] {
 
 export async function loadResult(filename: string): Promise<SavedResult> {
     const content = await Bun.file(join(RESULTS_DIR, filename)).text();
-    return SafeJSON.parse(content, { strict: true }) as SavedResult;
+
+    try {
+        return SafeJSON.parse(content, { strict: true }) as SavedResult;
+    } catch {
+        throw new Error(`Failed to parse result file: ${filename}`);
+    }
 }

@@ -1,3 +1,4 @@
+import { isInteractive, suggestCommand } from "@app/utils/cli/executor";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
@@ -12,6 +13,12 @@ import { cmdRemove } from "./remove";
 import { cmdShow } from "./show";
 
 export async function interactiveMode(): Promise<void> {
+    if (!isInteractive()) {
+        console.error("Interactive mode requires a TTY.");
+        console.error(suggestCommand("tools benchmark", { add: ["<suite>"] }));
+        process.exit(1);
+    }
+
     p.intro(pc.bgCyan(pc.black(" benchmark ")));
 
     const allSuites = await getAllSuites();
