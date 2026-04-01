@@ -231,7 +231,10 @@ function joinTerminalWrappedLines(lines: string[]): string {
         const raw = lines[i];
 
         if (resultLines.length === 0) {
-            resultLines.push(raw.trimEnd());
+            // Keep trailing whitespace — it's a word-boundary signal from terminal
+            // padding. "cat     " (padded to terminal width) tells us the next line
+            // is a new arg, NOT a mid-word continuation.
+            resultLines.push(raw);
 
             // Check for heredoc on first line
             const heredocDelim = detectHeredocMarker(raw);
@@ -279,13 +282,16 @@ function joinTerminalWrappedLines(lines: string[]): string {
 
         if (prevEndsWithNonSpace && !isRedirect && !isOperator) {
             // Mid-word chars: alphanumeric, dot, underscore.
-            // Slash `/` is NOT included — it's ambiguous but merging causes too
-            // many false positives (cat/file.txt, diff/path1/path2).
-            // For `/`, we rely on trailing whitespace from terminal padding:
-            //   - prev has trailing spaces → word boundary → space-join (handled above)
-            //   - prev has no trailing spaces → ambiguous → space-join (safer default)
-            // Explicitly excluded (always new-arg): `/`, `~`, `@`, `-`, `(`, `"`, `'`
-            const isMidWord = /^[a-zA-Z0-9._]/.test(trimmedCurrent[0]);
+            // Slash `/` only merges when prev ends with `/` (clearly mid-path,
+            // e.g. /path/to/ + subdir). When prev ends with a word char
+            // (e.g. /tmp/foo + /etc/...), it's ambiguous — but short lines
+            // don't terminal-wrap, so two paths on separate lines are likely
+            // intentional separate args → space-join.
+            // Explicitly excluded (always new-arg): `~`, `@`, `-`, `(`, `"`, `'`
+            const prevTrimmed = prev.trimEnd();
+            const isMidWord =
+                /^[a-zA-Z0-9._]/.test(trimmedCurrent[0]) ||
+                (trimmedCurrent[0] === "/" && prevTrimmed.endsWith("/"));
 
             if (isMidWord) {
                 resultLines[resultLines.length - 1] = prev + trimmedCurrent;

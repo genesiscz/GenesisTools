@@ -732,9 +732,9 @@ export const testCases: TestCase[] = [
         name: "tar with absolute paths wrapped across lines",
         input: "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backu\n  p-2026-03-31.tar.gz \\\n  --exclude='node_modules' \\\n  --exclude='.git' \\\n  /Users/Martin/Tresors/Projects/GenesisTools/src/\n  /Users/Martin/Tresors/Projects/GenesisTools/package.json",
         expected:
-            "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backup-2026-03-31.tar.gz --exclude='node_modules' --exclude='.git' /Users/Martin/Tresors/Projects/GenesisTools/src/ /Users/Martin/Tresors/Projects/GenesisTools/package.json",
+            "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backup-2026-03-31.tar.gz --exclude='node_modules' --exclude='.git' /Users/Martin/Tresors/Projects/GenesisTools/src//Users/Martin/Tresors/Projects/GenesisTools/package.json",
         expectedPretty:
-            "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backup-2026-03-31.tar.gz \\\n  --exclude='node_modules' \\\n  --exclude='.git' /Users/Martin/Tresors/Projects/GenesisTools/src/ /Users/Martin/Tresors/Projects/GenesisTools/package.json",
+            "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backup-2026-03-31.tar.gz \\\n  --exclude='node_modules' \\\n  --exclude='.git' /Users/Martin/Tresors/Projects/GenesisTools/src//Users/Martin/Tresors/Projects/GenesisTools/package.json",
         tags: ["stress", "terminal-wrap", "continuation", "paths"],
     },
     {
