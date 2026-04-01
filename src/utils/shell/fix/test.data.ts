@@ -957,7 +957,7 @@ export const testCases: TestCase[] = [
 
     // --- Mid-word join vs separate args (destructive command context) ---
     {
-        name: "rm -rf with two separate paths — must NOT merge into one",
+        name: "rm -rf with / path on next line — space-join (/ = clearly separate arg)",
         input: "rm -rf /tmp/safe\n  /home/user/also-delete",
         expected: "rm -rf /tmp/safe /home/user/also-delete",
         expectedPretty: "rm -rf /tmp/safe /home/user/also-delete",
@@ -992,7 +992,7 @@ export const testCases: TestCase[] = [
         tags: ["safety", "mid-word", "destructive"],
     },
     {
-        name: "rm with absolute path on next line — must space-join (separate arg, could be destructive)",
+        name: "rm with / path on next line — space-join (/ = clearly separate arg)",
         input: "rm -rf /tmp/foo\n  /etc/important",
         expected: "rm -rf /tmp/foo /etc/important",
         expectedPretty: "rm -rf /tmp/foo /etc/important",

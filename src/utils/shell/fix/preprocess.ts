@@ -278,9 +278,13 @@ function joinTerminalWrappedLines(lines: string[]): string {
         const prevEndsWithNonSpace = prev.length > 0 && !/\s$/.test(prev);
 
         if (prevEndsWithNonSpace && !isRedirect && !isOperator) {
-            // Mid-word chars: alphanumeric, dot, underscore only.
+            // Mid-word chars: alphanumeric, dot, underscore.
+            // Slash `/` is NOT included — it's ambiguous but merging causes too
+            // many false positives (cat/file.txt, diff/path1/path2).
+            // For `/`, we rely on trailing whitespace from terminal padding:
+            //   - prev has trailing spaces → word boundary → space-join (handled above)
+            //   - prev has no trailing spaces → ambiguous → space-join (safer default)
             // Explicitly excluded (always new-arg): `/`, `~`, `@`, `-`, `(`, `"`, `'`
-            // Hyphen is excluded because `-flag` always starts a new argument.
             const isMidWord = /^[a-zA-Z0-9._]/.test(trimmedCurrent[0]);
 
             if (isMidWord) {
