@@ -1,11 +1,10 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { extractOrgName } from "@app/azure-devops/config";
+import { fetchTimeLogFunctionsKey } from "@app/azure-devops/lib/timelog-configure";
 import type { AzureConfigWithTimeLog, TimeLogConfig } from "@app/azure-devops/types";
 import { findConfigPath, loadConfig } from "@app/azure-devops/utils";
 import { SafeJSON } from "@app/utils/json";
-import { buildUrl } from "@app/utils/url";
 import * as p from "@clack/prompts";
-import { $ } from "bun";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -63,44 +62,6 @@ function extractOrgNameOrExit(config: AzureConfigWithTimeLog): string {
     }
 
     return orgName;
-}
-
-async function fetchFunctionsKey(orgName: string): Promise<string> {
-    const result = await $`az rest --method GET --resource "499b84ac-1321-427f-aa17-267ca6975798" --uri "${buildUrl({
-        base: "https://extmgmt.dev.azure.com",
-        segments: [
-            orgName,
-            "_apis",
-            "ExtensionManagement",
-            "InstalledExtensions",
-            "TimeLog",
-            "time-logging",
-            "Data",
-            "Scopes",
-            "Default",
-            "Current",
-            "Collections",
-            "%24settings",
-            "Documents",
-        ],
-        queryParams: { "api-version": "7.1-preview" },
-    })}"`.quiet();
-
-    const data = SafeJSON.parse(result.text(), { strict: true });
-    const configDoc = data.find((d: { id: string }) => d.id === "Config");
-
-    if (!configDoc?.value) {
-        throw new Error("TimeLog extension not configured in Azure DevOps");
-    }
-
-    const settings = SafeJSON.parse(configDoc.value, { strict: true });
-    const apiKey = settings.find((s: { id: string }) => s.id === "ApiKeyTextBox")?.value;
-
-    if (!apiKey) {
-        throw new Error("API key not found in TimeLog settings");
-    }
-
-    return apiKey;
 }
 
 function formatCurrentConfig(timelog: TimeLogConfig | undefined): string {
@@ -172,7 +133,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
             spinner.start("Fetching TimeLog API key from Azure DevOps...");
 
             try {
-                const apiKey = await fetchFunctionsKey(orgName);
+                const apiKey = await fetchTimeLogFunctionsKey(orgName);
                 config.timelog.functionsKey = apiKey;
                 spinner.stop("API key fetched successfully");
             } catch (error) {
