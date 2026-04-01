@@ -83,7 +83,11 @@ function benchmark(impl: ImplEntry, prettify: boolean, iterations: number): numb
 
     for (let i = 0; i < iterations; i++) {
         for (const tc of testCases) {
-            impl.fn(tc.input, { prettify });
+            try {
+                impl.fn(tc.input, { prettify });
+            } catch {
+                // Ignore — crashing cases are already reported by runImpl
+            }
         }
     }
 
@@ -167,9 +171,8 @@ if (anyFailures) {
 }
 
 // Benchmark
-console.log(chalk.bold("\nBenchmark (100 iterations × 106 cases, prettify mode):\n"));
-
 const benchIterations = 100;
+console.log(chalk.bold(`\nBenchmark (${benchIterations} iterations × ${total} cases, prettify mode):\n`));
 
 for (const impl of impls) {
     const ms = benchmark(impl, true, benchIterations);

@@ -29,26 +29,27 @@ export interface PreProcessResult {
 /** Claude Code tool output prefixes that wrap content in ToolName(...) */
 const TOOL_PREFIX_RE = /^(Bash|Read|Edit|Write|Grep|Glob)\(/;
 
-function stripBashWrapper(input: string): { content: string; wasBashWrapper: boolean } {
+function stripBashWrapper(input: string): { content: string; wasBashWrapper: boolean; wasBashSpecifically: boolean } {
     const match = input.match(TOOL_PREFIX_RE);
 
     if (!match) {
-        return { content: input, wasBashWrapper: false };
+        return { content: input, wasBashWrapper: false, wasBashSpecifically: false };
     }
 
     const prefix = match[0]; // e.g. "Bash(" or "Read("
+    const isBash = prefix === "Bash(";
     const inner = input.slice(prefix.length);
     const lastParen = inner.lastIndexOf(")");
 
     if (lastParen === -1) {
-        return { content: inner.trimEnd(), wasBashWrapper: true };
+        return { content: inner.trimEnd(), wasBashWrapper: true, wasBashSpecifically: isBash };
     }
 
     const content = inner.slice(0, lastParen);
     const lines = content.split("\n");
 
     if (lines.length === 1) {
-        return { content: content.trim(), wasBashWrapper: true };
+        return { content: content.trim(), wasBashWrapper: true, wasBashSpecifically: isBash };
     }
 
     // Dedent by minimum indentation of non-empty lines (skip first line which
@@ -82,7 +83,7 @@ function stripBashWrapper(input: string): { content: string; wasBashWrapper: boo
         return line.slice(minIndent);
     });
 
-    return { content: dedented.join("\n").trim(), wasBashWrapper: true };
+    return { content: dedented.join("\n").trim(), wasBashWrapper: true, wasBashSpecifically: isBash };
 }
 
 // ─── Prompt stripping ─────────────────────────────────────────────────────────
@@ -222,6 +223,59 @@ export function collapseSpacesOutsideQuotes(s: string): string {
     }
 
     return result;
+}
+
+// ─── Quote-aware marker search ────────────────────────────────────────────────
+
+/**
+ * Find the first occurrence of `marker` that is NOT inside single, double, or
+ * backtick quotes. Returns the index, or -1 if not found.
+ */
+function findUnquotedMarker(s: string, marker: string): number {
+    let inSingle = false;
+    let inDouble = false;
+    let inBacktick = false;
+
+    for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+
+        if (!inSingle && !inDouble && !inBacktick) {
+            if (ch === "\\") {
+                i++; // skip escaped char
+                continue;
+            }
+
+            if (s.startsWith(marker, i)) {
+                return i;
+            }
+
+            if (ch === "'") {
+                inSingle = true;
+            } else if (ch === '"') {
+                inDouble = true;
+            } else if (ch === "`") {
+                inBacktick = true;
+            }
+        } else if (inSingle) {
+            if (ch === "'") {
+                inSingle = false;
+            }
+        } else if (inDouble) {
+            if (ch === "\\") {
+                i++; // skip escaped char inside double quotes
+            } else if (ch === '"') {
+                inDouble = false;
+            }
+        } else if (inBacktick) {
+            if (ch === "\\") {
+                i++;
+            } else if (ch === "`") {
+                inBacktick = false;
+            }
+        }
+    }
+
+    return -1;
 }
 
 // ─── Terminal-wrap line joining ───────────────────────────────────────────────
@@ -621,7 +675,7 @@ function joinTerminalWrappedLines(lines: string[]): string {
         if (trimmedCurrent.length === 0) {
             // Blank line — ensure there will be a space before next token
             if (prev.length > 0 && !/\s$/.test(prev)) {
-                resultLines[resultLines.length - 1] = prev + " ";
+                resultLines[resultLines.length - 1] = `${prev} `;
             }
 
             i++;
@@ -672,9 +726,6 @@ function joinTerminalWrappedLines(lines: string[]): string {
             // TIER 1: Always-merge characters
             const isTier1 = /^[a-zA-Z0-9._]/.test(fc);
 
-            // Slash only when prev ends with /
-            const isSlashContinuation = fc === "/" && prevTrimmed.endsWith("/");
-
             // TIER 2: Context-dependent
             const isAfterColon = prevTrimmed.endsWith(":"); // scp host:/path, docker -v
             const isAfterEquals = prevTrimmed.endsWith("="); // --flag=value, VAR=value
@@ -683,7 +734,6 @@ function joinTerminalWrappedLines(lines: string[]): string {
 
             let isMidWord =
                 isTier1 ||
-                isSlashContinuation ||
                 isAfterColon ||
                 isAfterEquals ||
                 isPathCharAfterSlash ||
@@ -708,19 +758,19 @@ function joinTerminalWrappedLines(lines: string[]): string {
             }
 
             if (isMidWord) {
-                resultLines[resultLines.length - 1] = prev + trimmedCurrent;
+                resultLines[resultLines.length - 1] = `${prev}${trimmedCurrent}`;
             } else {
-                resultLines[resultLines.length - 1] = prev + " " + trimmedCurrent;
+                resultLines[resultLines.length - 1] = `${prev} ${trimmedCurrent}`;
             }
         } else if (isOperator && operatorMatch) {
             // Operator injection protection: ensure space after the operator prefix
             // when it's glued to the following token (e.g. "&&bar" → "&& bar")
             const op = operatorMatch[1];
             const rest = trimmedCurrent.slice(op.length);
-            const spacedCurrent = rest.length > 0 && !/^\s/.test(rest) ? op + " " + rest : trimmedCurrent;
-            resultLines[resultLines.length - 1] = prev.trimEnd() + " " + spacedCurrent;
+            const spacedCurrent = rest.length > 0 && !/^\s/.test(rest) ? `${op} ${rest}` : trimmedCurrent;
+            resultLines[resultLines.length - 1] = `${prev.trimEnd()} ${spacedCurrent}`;
         } else {
-            resultLines[resultLines.length - 1] = prev.trimEnd() + " " + trimmedCurrent;
+            resultLines[resultLines.length - 1] = `${prev.trimEnd()} ${trimmedCurrent}`;
         }
 
         i++;
@@ -767,21 +817,34 @@ export function preProcess(raw: string): PreProcessResult {
 
     // V2 fix: only strip inline ⎿ (mid-line) when a tool call was detected —
     // otherwise ⎿ inside quotes (e.g. `echo "result: ⎿ 42"`) would truncate.
+    // Must be quote-aware: scan for unquoted ⎿ to avoid truncating quoted content.
     if (hadToolCall) {
-        s = s.replace(/\s*⎿[\s\S]*$/, "");
+        const markerIdx = findUnquotedMarker(s, "⎿");
+
+        if (markerIdx >= 0) {
+            // Trim trailing whitespace before the marker
+            let trimStart = markerIdx;
+
+            while (trimStart > 0 && (s[trimStart - 1] === " " || s[trimStart - 1] === "\t")) {
+                trimStart--;
+            }
+
+            s = s.slice(0, trimStart);
+        }
     }
 
     // Strip " · from line NNN" / " · lines NNN-MMM" suffixes on Read() tool calls
     s = s.replace(/\s+·\s+(?:from\s+)?lines?\s+\d+(?:[–-]\d+)?\s*\)?$/, ")");
 
     // Step 1: Strip tool wrapper (Bash(), Read(), etc.) + dedent
-    const { content, wasBashWrapper } = stripBashWrapper(s);
+    const { content, wasBashWrapper, wasBashSpecifically } = stripBashWrapper(s);
     s = content;
 
     const isMultiLine = s.includes("\n");
 
-    if (wasBashWrapper && isMultiLine) {
-        // Multi-line scripts are returned as-is (already dedented + trimmed above)
+    if (wasBashSpecifically && isMultiLine) {
+        // Multi-line Bash() scripts are returned as-is (already dedented + trimmed above).
+        // Other tool wrappers (Read, Edit, etc.) continue through normalization.
         return { text: s, wasBashWrapper, isMultiLine: true };
     }
 
@@ -859,5 +922,90 @@ export function prettifyCommand(s: string): string {
         return s;
     }
 
-    return s.replace(/ (--)(?=[a-zA-Z])/g, " \\\n  $1");
+    // Quote-aware: only split at ` --flag` when not inside quotes or backticks
+    let result = "";
+    let inSingle = false;
+    let inDouble = false;
+    let inBacktick = false;
+    let i = 0;
+
+    while (i < s.length) {
+        const ch = s[i];
+
+        if (!inSingle && !inDouble && !inBacktick) {
+            if (ch === "\\") {
+                result += s[i];
+
+                if (i + 1 < s.length) {
+                    result += s[i + 1];
+                    i += 2;
+                } else {
+                    i++;
+                }
+
+                continue;
+            }
+
+            // Check for ` --<letter>` pattern at current position
+            if (ch === " " && s[i + 1] === "-" && s[i + 2] === "-" && /[a-zA-Z]/.test(s[i + 3] ?? "")) {
+                result += " \\\n  --";
+                i += 4; // skip " --" + first letter already consumed by regex test
+
+                // Append the first letter of the flag
+                result += s[i - 1]; // the [a-zA-Z] char at i+3
+                continue;
+            }
+
+            if (ch === "'") {
+                inSingle = true;
+            } else if (ch === '"') {
+                inDouble = true;
+            } else if (ch === "`") {
+                inBacktick = true;
+            }
+        } else if (inSingle) {
+            if (ch === "'") {
+                inSingle = false;
+            }
+        } else if (inDouble) {
+            if (ch === "\\") {
+                result += s[i];
+
+                if (i + 1 < s.length) {
+                    result += s[i + 1];
+                    i += 2;
+                } else {
+                    i++;
+                }
+
+                continue;
+            }
+
+            if (ch === '"') {
+                inDouble = false;
+            }
+        } else if (inBacktick) {
+            if (ch === "\\") {
+                result += s[i];
+
+                if (i + 1 < s.length) {
+                    result += s[i + 1];
+                    i += 2;
+                } else {
+                    i++;
+                }
+
+                continue;
+            }
+
+            if (ch === "`") {
+                inBacktick = false;
+            }
+        }
+
+        result += ch;
+        i++;
+    }
+
+    return result;
 }

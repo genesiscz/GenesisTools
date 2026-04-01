@@ -28,7 +28,9 @@ CLIPBOARD=$(pbpaste)
 [[ -z "$CLIPBOARD" ]] && exit 0
 
 # Delegate to the TypeScript implementation (preprocess.ts)
-FIXED=$(printf '%s' "$CLIPBOARD" | bun "$CLI" $ARGS 2>/dev/null)
+if ! FIXED=$(printf '%s' "$CLIPBOARD" | bun "$CLI" $ARGS 2>/dev/null); then
+    FIXED="$CLIPBOARD"
+fi
 
 # Only update clipboard if we got content back — never clobber with empty
 if [[ -z "$FIXED" ]]; then

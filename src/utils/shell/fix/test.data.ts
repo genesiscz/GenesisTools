@@ -732,9 +732,9 @@ export const testCases: TestCase[] = [
         name: "tar with absolute paths wrapped across lines",
         input: "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backu\n  p-2026-03-31.tar.gz \\\n  --exclude='node_modules' \\\n  --exclude='.git' \\\n  /Users/Martin/Tresors/Projects/GenesisTools/src/\n  /Users/Martin/Tresors/Projects/GenesisTools/package.json",
         expected:
-            "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backup-2026-03-31.tar.gz --exclude='node_modules' --exclude='.git' /Users/Martin/Tresors/Projects/GenesisTools/src//Users/Martin/Tresors/Projects/GenesisTools/package.json",
+            "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backup-2026-03-31.tar.gz --exclude='node_modules' --exclude='.git' /Users/Martin/Tresors/Projects/GenesisTools/src/ /Users/Martin/Tresors/Projects/GenesisTools/package.json",
         expectedPretty:
-            "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backup-2026-03-31.tar.gz \\\n  --exclude='node_modules' \\\n  --exclude='.git' /Users/Martin/Tresors/Projects/GenesisTools/src//Users/Martin/Tresors/Projects/GenesisTools/package.json",
+            "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backup-2026-03-31.tar.gz \\\n  --exclude='node_modules' \\\n  --exclude='.git' /Users/Martin/Tresors/Projects/GenesisTools/src/ /Users/Martin/Tresors/Projects/GenesisTools/package.json",
         tags: ["stress", "terminal-wrap", "continuation", "paths"],
     },
     {
@@ -1585,6 +1585,51 @@ export const testCases: TestCase[] = [
         expected: "bun add react @types/react",
         expectedPretty: "bun add react @types/react",
         tags: ["safety", "at-newarg"],
+    },
+
+    // ── Section 20: Review fixes (PR #139) ──────────────────────────────────
+
+    // t11: Two absolute paths after slash — must stay separate args, not merge
+    {
+        name: "two absolute paths separated by newline after trailing slash",
+        input: "cp /Users/Martin/src/\n  /Users/Martin/dst/file.txt /tmp/",
+        expected: "cp /Users/Martin/src/ /Users/Martin/dst/file.txt /tmp/",
+        expectedPretty: "cp /Users/Martin/src/ /Users/Martin/dst/file.txt /tmp/",
+        tags: ["review-fix", "slash-separation"],
+    },
+
+    // t13: Read() multi-line should NOT skip normalization (only Bash() should)
+    {
+        name: "Read() multi-line path should be normalized, not returned as-is",
+        input: "Read(/Users/Martin/Tresors/Projects/GenesisTools/src/\n  utils/format.ts)",
+        expected: "/Users/Martin/Tresors/Projects/GenesisTools/src/utils/format.ts",
+        expectedPretty: "/Users/Martin/Tresors/Projects/GenesisTools/src/utils/format.ts",
+        tags: ["review-fix", "tool-wrapper"],
+    },
+
+    // t15: Inline ⎿ inside quotes should not truncate
+    {
+        name: "⎿ inside double quotes should not truncate command",
+        input: '⏺ Bash(echo "result: ⎿ 42")',
+        expected: 'echo "result: ⎿ 42"',
+        expectedPretty: 'echo "result: ⎿ 42"',
+        tags: ["review-fix", "quote-aware-marker"],
+    },
+
+    // t16/t5: prettifyCommand should not split --flags inside quotes
+    {
+        name: "prettify skips --flags inside single quotes",
+        input: "printf '%s' ' --not-a-flag' --color=never",
+        expected: "printf '%s' ' --not-a-flag' --color=never",
+        expectedPretty: "printf '%s' ' --not-a-flag' \\\n  --color=never",
+        tags: ["review-fix", "quote-aware-prettify"],
+    },
+    {
+        name: "prettify skips --flags inside double quotes",
+        input: 'echo "test --verbose output" --silent',
+        expected: 'echo "test --verbose output" --silent',
+        expectedPretty: 'echo "test --verbose output" \\\n  --silent',
+        tags: ["review-fix", "quote-aware-prettify"],
     },
 ];
 
