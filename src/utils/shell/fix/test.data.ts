@@ -977,6 +977,48 @@ export const testCases: TestCase[] = [
         expectedPretty: "rm -rf /tmp/session-abc123def456/cache",
         tags: ["safety", "mid-word", "uuid"],
     },
+    {
+        name: "rm -rf ambiguous relative path — safer to merge (wrong path errors out) than split (nukes both)",
+        input: "rm -rf /tmp/foo\nhome/user",
+        expected: "rm -rf /tmp/foohome/user",
+        expectedPretty: "rm -rf /tmp/foohome/user",
+        tags: ["safety", "mid-word", "destructive", "ambiguous"],
+    },
+    {
+        name: "rm -rf ambiguous word wrap — merge is harmless (nonexistent path), split would delete",
+        input: "rm -rf /var/log/old-backu\n  ps-2026",
+        expected: "rm -rf /var/log/old-backups-2026",
+        expectedPretty: "rm -rf /var/log/old-backups-2026",
+        tags: ["safety", "mid-word", "destructive"],
+    },
+    {
+        name: "rm with absolute path on next line — must space-join (separate arg, could be destructive)",
+        input: "rm -rf /tmp/foo\n  /etc/important",
+        expected: "rm -rf /tmp/foo /etc/important",
+        expectedPretty: "rm -rf /tmp/foo /etc/important",
+        tags: ["safety", "paths", "destructive"],
+    },
+    {
+        name: "rm with ~ path on next line — must space-join (tilde = new arg)",
+        input: "rm -rf /tmp/foo\n  ~/Documents",
+        expected: "rm -rf /tmp/foo ~/Documents",
+        expectedPretty: "rm -rf /tmp/foo ~/Documents",
+        tags: ["safety", "paths", "tilde", "destructive"],
+    },
+    {
+        name: "rm with $HOME path on next line — must space-join ($ = new arg)",
+        input: "rm -rf /tmp/foo\n  $HOME/Documents",
+        expected: "rm -rf /tmp/foo $HOME/Documents",
+        expectedPretty: "rm -rf /tmp/foo $HOME/Documents",
+        tags: ["safety", "paths", "variable", "destructive"],
+    },
+    {
+        name: "rm with -rf flag on next line — must space-join (dash = new arg, not mid-word)",
+        input: "rm\n  -rf /tmp/foo",
+        expected: "rm -rf /tmp/foo",
+        expectedPretty: "rm -rf /tmp/foo",
+        tags: ["safety", "paths", "destructive", "flag"],
+    },
 
     // --- Heredoc body must NEVER be executed as commands ---
     {
@@ -1169,9 +1211,9 @@ export const testCases: TestCase[] = [
     },
     {
         name: "Bash(sayy with inner quotes)",
-        input: "Bash(sayy 0.5 \"Tool wrappers and safety done\")",
-        expected: "sayy 0.5 \"Tool wrappers and safety done\"",
-        expectedPretty: "sayy 0.5 \"Tool wrappers and safety done\"",
+        input: 'Bash(sayy 0.5 "Tool wrappers and safety done")',
+        expected: 'sayy 0.5 "Tool wrappers and safety done"',
+        expectedPretty: 'sayy 0.5 "Tool wrappers and safety done"',
         tags: ["safety", "tool-wrapper", "quotes"],
     },
 
