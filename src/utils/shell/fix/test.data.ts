@@ -1352,7 +1352,7 @@ export const testCases: TestCase[] = [
         tags: ["adversarial", "continuation", "V3"],
     },
     {
-        name: "V3: backslash-newline inside double quotes — should join (bash processes \\ in \"\")",
+        name: 'V3: backslash-newline inside double quotes — should join (bash processes \\ in "")',
         input: 'echo "hello \\\n  world"',
         expected: 'echo "hello world"',
         expectedPretty: 'echo "hello world"',
@@ -1415,7 +1415,7 @@ export const testCases: TestCase[] = [
     },
     {
         name: "V6: triple \\\\\\\\ at end of line — literal \\\\ + continuation \\",
-        input: "echo path\\\\\\\\\nmore",
+        input: "echo path\\\\\\\nmore",
         expected: "echo path\\\\more",
         expectedPretty: "echo path\\\\more",
         tags: ["adversarial", "backslash", "V6"],
@@ -1481,6 +1481,110 @@ export const testCases: TestCase[] = [
         expected: 'echo "very long string that gets terminal wrapped at column boundary"',
         expectedPretty: 'echo "very long string that gets terminal wrapped at column boundary"',
         tags: ["adversarial", "quotes", "terminal-wrap"],
+    },
+
+    // 19. MID-WORD JOIN HEURISTICS — colon, equals, prev-slash, hyphen-digit
+    // ═══════════════════════════════════════════════════════════════════
+
+    // --- Colon + continuation: colon never ends a complete shell token ---
+    {
+        name: "scp host:path wrap — slash after colon merges",
+        input: "scp user@host:\n  /remote/file.txt /local/",
+        expected: "scp user@host:/remote/file.txt /local/",
+        expectedPretty: "scp user@host:/remote/file.txt /local/",
+        tags: ["terminal-wrap", "mid-word", "colon"],
+    },
+    {
+        name: "docker volume -v host:container wrap",
+        input: "docker run -v /host/path:\n  /container/path image",
+        expected: "docker run -v /host/path:/container/path image",
+        expectedPretty: "docker run -v /host/path:/container/path image",
+        tags: ["terminal-wrap", "mid-word", "colon", "docker"],
+    },
+    {
+        name: "PATH env var with colon wrap",
+        input: "export PATH=/usr/local/bin:\n  /usr/bin:$PATH",
+        expected: "export PATH=/usr/local/bin:/usr/bin:$PATH",
+        expectedPretty: "export PATH=/usr/local/bin:/usr/bin:$PATH",
+        tags: ["terminal-wrap", "mid-word", "colon", "env-vars"],
+    },
+    {
+        name: "docker port mapping wrap after colon",
+        input: "docker run -p 8080:\n  80 image",
+        expected: "docker run -p 8080:80 image",
+        expectedPretty: "docker run -p 8080:80 image",
+        tags: ["terminal-wrap", "mid-word", "colon", "docker"],
+    },
+
+    // --- Equals + continuation: equals never ends a complete shell token ---
+    {
+        name: "flag=value wrap after equals",
+        input: "docker run --memory=\n  512m image",
+        expected: "docker run --memory=512m image",
+        expectedPretty: "docker run \\\n  --memory=512m image",
+        tags: ["terminal-wrap", "mid-word", "equals"],
+    },
+    {
+        name: "env var assignment wrap after equals",
+        input: "export NODE_ENV=\n  production",
+        expected: "export NODE_ENV=production",
+        expectedPretty: "export NODE_ENV=production",
+        tags: ["terminal-wrap", "mid-word", "equals", "env-vars"],
+    },
+
+    // --- Prev-slash + hyphen/@: valid path chars after trailing slash ---
+    {
+        name: "path with -special-dir after trailing slash",
+        input: "ls /path/to/\n  -special-dir/file.txt",
+        expected: "ls /path/to/-special-dir/file.txt",
+        expectedPretty: "ls /path/to/-special-dir/file.txt",
+        tags: ["terminal-wrap", "mid-word", "prev-slash"],
+    },
+    {
+        name: "npm @scope path after trailing slash",
+        input: "cat node_modules/\n  @babel/core/package.json",
+        expected: "cat node_modules/@babel/core/package.json",
+        expectedPretty: "cat node_modules/@babel/core/package.json",
+        tags: ["terminal-wrap", "mid-word", "prev-slash"],
+    },
+
+    // --- Hyphen-digit: date/version suffix, never a flag ---
+    {
+        name: "word-hyphen-date compound (backup-2026)",
+        input: "ls backup\n  -2026-03-31.tar.gz",
+        expected: "ls backup-2026-03-31.tar.gz",
+        expectedPretty: "ls backup-2026-03-31.tar.gz",
+        tags: ["terminal-wrap", "mid-word", "hyphen-digit"],
+    },
+
+    // --- Safety: must still space-join with new heuristics ---
+    {
+        name: "cp two paths — slash after word = separate arg (safety, heuristic check)",
+        input: "cp important.txt\n  /backup/important.txt",
+        expected: "cp important.txt /backup/important.txt",
+        expectedPretty: "cp important.txt /backup/important.txt",
+        tags: ["safety", "paths", "destructive"],
+    },
+    {
+        name: "mv src dest — slash after word = separate arg (safety, heuristic check)",
+        input: "mv /tmp/old-name\n  /tmp/new-name",
+        expected: "mv /tmp/old-name /tmp/new-name",
+        expectedPretty: "mv /tmp/old-name /tmp/new-name",
+        tags: ["safety", "paths", "destructive"],
+    },
+    {
+        name: "git checkout -b — hyphen-alpha = flag, not compound (safety, heuristic check)",
+        input: "git checkout\n  -b feature/new",
+        expected: "git checkout -b feature/new",
+        expectedPretty: "git checkout -b feature/new",
+        tags: ["safety", "hyphen-flag"],
+    },
+    {
+        name: "bun add separate packages — @ = new arg, not mid-word (safety, heuristic check)",
+        input: "bun add react\n  @types/react",
+        expected: "bun add react @types/react",
+        expectedPretty: "bun add react @types/react",
+        tags: ["safety", "at-newarg"],
     },
 ];
 
