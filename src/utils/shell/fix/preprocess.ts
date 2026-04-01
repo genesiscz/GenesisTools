@@ -301,10 +301,23 @@ function joinTerminalWrappedLines(lines: string[]): string {
 // ─── Main pre-processing entry point ─────────────────────────────────────────
 
 export function preProcess(raw: string): PreProcessResult {
-    // Step 1: Normalise \r
+    // Step 0: Strip Claude Code UI artifacts
     let s = raw.replace(/\r/g, "");
 
-    // Step 2: Strip Bash() wrapper (dedent multi-line scripts)
+    // Strip ⏺ prefix (tool call marker in Claude Code output)
+    s = s.replace(/^⏺\s*/, "");
+
+    // Strip ⎿ result lines (tool output) — everything from a line starting
+    // with ⎿ onwards is the tool's output, not the command itself.
+    s = s.replace(/\n\s*⎿[\s\S]*$/, "");
+
+    // Also strip inline ⎿ on the same line (e.g. "Bash(cmd)\n  ⎿ output")
+    s = s.replace(/\s*⎿[\s\S]*$/, "");
+
+    // Strip " · from line NNN" / " · lines NNN-MMM" suffixes on Read() tool calls
+    s = s.replace(/\s+·\s+(?:from\s+)?lines?\s+\d+(?:[–-]\d+)?\s*\)?$/, ")");
+
+    // Step 1: Strip tool wrapper (Bash(), Read(), etc.) + dedent
     const { content, wasBashWrapper } = stripBashWrapper(s);
     s = content;
 

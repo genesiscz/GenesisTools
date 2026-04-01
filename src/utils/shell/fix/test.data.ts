@@ -1103,6 +1103,57 @@ export const testCases: TestCase[] = [
         tags: ["safety", "tool-wrapper", "glob"],
     },
 
+    // --- Claude Code UI artifacts (⏺ prefix, ⎿ result lines) ---
+    {
+        name: "⏺ prefix before Bash() — strip both",
+        input: "⏺ Bash(echo hello)",
+        expected: "echo hello",
+        expectedPretty: "echo hello",
+        tags: ["safety", "tool-wrapper", "claude-ui"],
+    },
+    {
+        name: "⏺ prefix before Read() with line suffix — strip all",
+        input: "⏺ Read(/Users/Martin/file.txt · from line 845)",
+        expected: "/Users/Martin/file.txt",
+        expectedPretty: "/Users/Martin/file.txt",
+        tags: ["safety", "tool-wrapper", "claude-ui", "read"],
+    },
+    {
+        name: "⏺ prefix before Read() with line range suffix",
+        input: "⏺ Read(/Users/Martin/file.txt · lines 10-50)",
+        expected: "/Users/Martin/file.txt",
+        expectedPretty: "/Users/Martin/file.txt",
+        tags: ["safety", "tool-wrapper", "claude-ui", "read"],
+    },
+    {
+        name: "⏺ Bash() with ⎿ result lines below — strip output",
+        input: "⏺ Bash(ls -la /tmp)\n  ⎿  total 0\n     drwxrwxrwt  10 root  wheel  320 Mar 31 12:00 .",
+        expected: "ls -la /tmp",
+        expectedPretty: "ls -la /tmp",
+        tags: ["safety", "tool-wrapper", "claude-ui", "result-strip"],
+    },
+    {
+        name: "⏺ Bash() with heredoc commit message + ⎿ result",
+        input: "⏺ Bash(git add src/file.ts && git commit -m \"$(cat <<'EOF'\nfeat: add feature\nEOF\n)\")\n  ⎿  ▶ biome check --write --staged...",
+        expected: "git add src/file.ts && git commit -m \"$(cat <<'EOF'\nfeat: add feature\nEOF\n)\"",
+        expectedPretty: "git add src/file.ts && git commit -m \"$(cat <<'EOF'\nfeat: add feature\nEOF\n)\"",
+        tags: ["safety", "tool-wrapper", "claude-ui", "heredoc"],
+    },
+    {
+        name: "Bash() with inner double quotes — sayy",
+        input: "Bash(sayy 0.5 \"Tool wrappers and safety done\")",
+        expected: "sayy 0.5 \"Tool wrappers and safety done\"",
+        expectedPretty: "sayy 0.5 \"Tool wrappers and safety done\"",
+        tags: ["safety", "tool-wrapper", "claude-ui", "quotes"],
+    },
+    {
+        name: "⏺ without tool wrapper — not stripped beyond prefix",
+        input: "⏺ some random text",
+        expected: "some random text",
+        expectedPretty: "some random text",
+        tags: ["safety", "claude-ui"],
+    },
+
     // --- Redirect safety ---
     {
         name: "redirect > must not be swallowed into previous arg",
