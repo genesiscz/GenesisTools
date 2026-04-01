@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import * as p from "@clack/prompts";
 import logger from "@app/logger";
 import { isInteractive } from "@app/utils/cli";
 import { Storage } from "@app/utils/storage/storage";
+import * as p from "@clack/prompts";
 
 const PROJECT_ROOT = resolve(import.meta.dirname, "../..");
 

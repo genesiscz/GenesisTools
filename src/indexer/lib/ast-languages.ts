@@ -101,9 +101,7 @@ export function getLanguageForExt(ext: string): string | null {
 let dynamicLangsRegistered = false;
 let dynamicLangsInitPromise: Promise<void> | null = null;
 
-async function loadAndRegisterLanguages(
-    targetLangs: Array<[string, string]>
-): Promise<void> {
+async function loadAndRegisterLanguages(targetLangs: Array<[string, string]>): Promise<void> {
     const missing = targetLangs.filter(([, pkg]) => !isPackageInstalled(pkg)).map(([, pkg]) => pkg);
 
     if (missing.length > 0) {

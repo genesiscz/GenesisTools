@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readSync, readdirSync, statSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { LogEntry, SessionMeta } from "@app/debugging-master/types";
 import { suggestCommand } from "@app/utils/cli/executor";

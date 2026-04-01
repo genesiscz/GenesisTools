@@ -60,13 +60,7 @@ export class DockerContainer {
 
     async isRunning(): Promise<boolean> {
         try {
-            const stdout = await this.run([
-                "ps",
-                "--filter",
-                `name=^${this.config.name}$`,
-                "--format",
-                "{{.Names}}",
-            ]);
+            const stdout = await this.run(["ps", "--filter", `name=^${this.config.name}$`, "--format", "{{.Names}}"]);
             return stdout.trim().split("\n").includes(this.config.name);
         } catch {
             return false;

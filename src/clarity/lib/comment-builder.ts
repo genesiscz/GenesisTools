@@ -31,7 +31,7 @@ export function buildWeekComment(entries: CommentEntry[]): string {
     const lines: string[] = [];
 
     for (const date of sortedDates) {
-        const d = new Date(date + "T00:00:00");
+        const d = new Date(`${date}T00:00:00`);
         const dayName = CZECH_DAYS[d.getDay()];
         const day = d.getDate();
         const month = d.getMonth() + 1;

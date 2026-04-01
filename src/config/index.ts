@@ -5,9 +5,7 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { Command } from "commander";
 
-const program = new Command()
-    .name("config")
-    .description("Manage GenesisTools configuration");
+const program = new Command().name("config").description("Manage GenesisTools configuration");
 
 program
     .command("packages")

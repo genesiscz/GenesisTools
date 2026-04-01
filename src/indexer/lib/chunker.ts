@@ -668,16 +668,13 @@ function splitByParagraphs(opts: {
         }
 
         // Single paragraph exceeds maxTokens — fall back to line splitting for this paragraph
-        const prefixForEstimate = headingLine && (chunks.length > 0 || accumulatedParagraphs.length > 0)
-            ? `${headingLine}\n\n`
-            : "";
+        const prefixForEstimate =
+            headingLine && (chunks.length > 0 || accumulatedParagraphs.length > 0) ? `${headingLine}\n\n` : "";
 
         if (estimateTokens(prefixForEstimate + paragraph) > maxTokens) {
             flushAccumulated();
 
-            const contentToSplit = headingLine && chunks.length > 0
-                ? `${headingLine}\n\n${paragraph}`
-                : paragraph;
+            const contentToSplit = headingLine && chunks.length > 0 ? `${headingLine}\n\n${paragraph}` : paragraph;
 
             const subChunks = splitChunkByLines({
                 content: contentToSplit,
@@ -694,13 +691,11 @@ function splitByParagraphs(opts: {
             continue;
         }
 
-        const candidateContent = accumulatedParagraphs.length > 0
-            ? `${accumulatedParagraphs.join("\n\n")}\n\n${paragraph}`
-            : paragraph;
+        const candidateContent =
+            accumulatedParagraphs.length > 0 ? `${accumulatedParagraphs.join("\n\n")}\n\n${paragraph}` : paragraph;
 
-        const candidateWithHeading = headingLine && chunks.length > 0
-            ? `${headingLine}\n\n${candidateContent}`
-            : candidateContent;
+        const candidateWithHeading =
+            headingLine && chunks.length > 0 ? `${headingLine}\n\n${candidateContent}` : candidateContent;
 
         if (estimateTokens(candidateWithHeading) > maxTokens) {
             flushAccumulated();
