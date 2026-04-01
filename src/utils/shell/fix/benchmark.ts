@@ -8,11 +8,7 @@
 
 import { SafeJSON } from "@app/utils/json";
 import chalk from "chalk";
-import { fixShellCommand as fixBashScript } from "./impl-bash-script.js";
-import { fixShellCommand as fixJustBash } from "./impl-just-bash.js";
 import { fixShellCommand as fixRegex } from "./impl-regex.js";
-import { fixShellCommand as fixShellQuote } from "./impl-shell-quote.js";
-import { fixShellCommand as fixShellwords } from "./impl-shellwords.js";
 import { testCases } from "./test.data.js";
 
 type FixFn = (input: string, options?: { prettify?: boolean }) => string;
@@ -23,11 +19,7 @@ interface ImplEntry {
 }
 
 const impls: ImplEntry[] = [
-    { name: "bash-script", fn: fixBashScript },
     { name: "regex", fn: fixRegex },
-    { name: "shell-quote", fn: fixShellQuote },
-    { name: "shellwords", fn: fixShellwords },
-    { name: "just-bash", fn: fixJustBash },
 ];
 
 // ── Run tests ────────────────────────────────────────────────────────────

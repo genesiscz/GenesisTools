@@ -1271,6 +1271,217 @@ export const testCases: TestCase[] = [
         expectedPretty: "",
         tags: ["safety", "bash-wrapper", "whitespace"],
     },
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 18. ADVERSARIAL — quote/heredoc-awareness bugs found by security audit
+    // ═══════════════════════════════════════════════════════════════════
+
+    // --- V1: Heredoc post-delimiter corruption ---
+    {
+        name: "V1: heredoc + command after delimiter — must preserve newline",
+        input: "cat <<EOF\nhello\nEOF\necho done",
+        expected: "cat <<EOF\nhello\nEOF\necho done",
+        expectedPretty: "cat <<EOF\nhello\nEOF\necho done",
+        tags: ["adversarial", "heredoc", "V1"],
+    },
+    {
+        name: "V1: heredoc + pipe after delimiter",
+        input: "cat <<EOF\ndata\nEOF\n| grep pattern",
+        expected: "cat <<EOF\ndata\nEOF\n| grep pattern",
+        expectedPretty: "cat <<EOF\ndata\nEOF\n| grep pattern",
+        tags: ["adversarial", "heredoc", "V1"],
+    },
+    {
+        name: "V1: heredoc + redirect after delimiter",
+        input: "cat <<EOF\ndata\nEOF\n> /tmp/result.txt",
+        expected: "cat <<EOF\ndata\nEOF\n> /tmp/result.txt",
+        expectedPretty: "cat <<EOF\ndata\nEOF\n> /tmp/result.txt",
+        tags: ["adversarial", "heredoc", "V1"],
+    },
+    {
+        name: "V1: heredoc + multiple commands after delimiter",
+        input: "cat <<EOF\ndata\nEOF\necho one\necho two",
+        expected: "cat <<EOF\ndata\nEOF\necho one\necho two",
+        expectedPretty: "cat <<EOF\ndata\nEOF\necho one\necho two",
+        tags: ["adversarial", "heredoc", "V1"],
+    },
+
+    // --- V2: ⎿ stripping inside quotes ---
+    {
+        name: "V2: ⎿ inside double quotes — must NOT truncate",
+        input: 'echo "result: ⎿ 42" > output.txt',
+        expected: 'echo "result: ⎿ 42" > output.txt',
+        expectedPretty: 'echo "result: ⎿ 42" > output.txt',
+        tags: ["adversarial", "quotes", "V2"],
+    },
+    {
+        name: "V2: ⎿ inside single quotes — must NOT truncate",
+        input: "echo 'result: ⎿ 42' > output.txt",
+        expected: "echo 'result: ⎿ 42' > output.txt",
+        expectedPretty: "echo 'result: ⎿ 42' > output.txt",
+        tags: ["adversarial", "quotes", "V2"],
+    },
+    {
+        name: "V2: ⎿ at start of line (real tool output) — should strip",
+        input: "echo hello\n  ⎿  hello",
+        expected: "echo hello",
+        expectedPretty: "echo hello",
+        tags: ["adversarial", "claude-ui", "V2"],
+    },
+
+    // --- V3: Continuation join inside single quotes ---
+    {
+        name: "V3: backslash-newline inside single quotes — must preserve literally",
+        input: "echo 'hello \\\n  world'",
+        expected: "echo 'hello \\\n  world'",
+        expectedPretty: "echo 'hello \\\n  world'",
+        tags: ["adversarial", "quotes", "continuation", "V3"],
+    },
+    {
+        name: "V3: grep pattern with backslash-newline inside single quotes",
+        input: "grep 'pattern\\\n  /in/path' file.txt",
+        expected: "grep 'pattern\\\n  /in/path' file.txt",
+        expectedPretty: "grep 'pattern\\\n  /in/path' file.txt",
+        tags: ["adversarial", "quotes", "continuation", "V3"],
+    },
+    {
+        name: "V3: backslash-newline OUTSIDE quotes — should join (legit continuation)",
+        input: "echo hello \\\n  world",
+        expected: "echo hello world",
+        expectedPretty: "echo hello world",
+        tags: ["adversarial", "continuation", "V3"],
+    },
+    {
+        name: "V3: backslash-newline inside double quotes — should join (bash processes \\ in \"\")",
+        input: 'echo "hello \\\n  world"',
+        expected: 'echo "hello world"',
+        expectedPretty: 'echo "hello world"',
+        tags: ["adversarial", "quotes", "continuation", "V3"],
+    },
+
+    // --- V4: Flattened continuation inside quotes ---
+    {
+        name: "V4: backslash + 2 spaces inside single quotes — must preserve",
+        input: "echo 'hello\\  world'",
+        expected: "echo 'hello\\  world'",
+        expectedPretty: "echo 'hello\\  world'",
+        tags: ["adversarial", "quotes", "flattened", "V4"],
+    },
+    {
+        name: "V4: backslash + spaces inside double quotes — must preserve",
+        input: 'echo "hello\\  world"',
+        expected: 'echo "hello\\  world"',
+        expectedPretty: 'echo "hello\\  world"',
+        tags: ["adversarial", "quotes", "flattened", "V4"],
+    },
+    {
+        name: "V4: backslash + spaces OUTSIDE quotes — should collapse (flattened continuation)",
+        input: "echo hello\\                  world",
+        expected: "echo hello world",
+        expectedPretty: "echo hello world",
+        tags: ["adversarial", "flattened", "V4"],
+    },
+
+    // --- V5: Backtick space collapse ---
+    {
+        name: "V5: spaces inside backtick substitution — must preserve",
+        input: "cmd `echo   foo`   bar",
+        expected: "cmd `echo   foo` bar",
+        expectedPretty: "cmd `echo   foo` bar",
+        tags: ["adversarial", "backtick", "V5"],
+    },
+    {
+        name: "V5: nested backticks with spaces",
+        input: "echo `date   '+%Y   %m'`   done",
+        expected: "echo `date   '+%Y   %m'` done",
+        expectedPretty: "echo `date   '+%Y   %m'` done",
+        tags: ["adversarial", "backtick", "V5"],
+    },
+
+    // --- V6: Double-backslash before newline ---
+    {
+        name: "V6: literal \\\\ at end of line — NOT a continuation, preserve newline",
+        input: "echo path\\\\\nmore",
+        expected: "echo path\\\\\nmore",
+        expectedPretty: "echo path\\\\\nmore",
+        tags: ["adversarial", "backslash", "V6"],
+    },
+    {
+        name: "V6: single \\ at end of line — IS a continuation, join",
+        input: "echo path\\\nmore",
+        expected: "echo pathmore",
+        expectedPretty: "echo pathmore",
+        tags: ["adversarial", "backslash", "V6"],
+    },
+    {
+        name: "V6: triple \\\\\\\\ at end of line — literal \\\\ + continuation \\",
+        input: "echo path\\\\\\\\\nmore",
+        expected: "echo path\\\\more",
+        expectedPretty: "echo path\\\\more",
+        tags: ["adversarial", "backslash", "V6"],
+    },
+
+    // --- V7: Heredoc pattern inside quotes ---
+    {
+        name: "V7: <<EOF inside double quotes — NOT a real heredoc, should join",
+        input: 'echo "<<EOF" some\nother args',
+        expected: 'echo "<<EOF" some other args',
+        expectedPretty: 'echo "<<EOF" some other args',
+        tags: ["adversarial", "heredoc", "quotes", "V7"],
+    },
+    {
+        name: "V7: <<EOF inside single quotes — NOT a real heredoc, should join",
+        input: "echo '<<EOF' some\nother args",
+        expected: "echo '<<EOF' some other args",
+        expectedPretty: "echo '<<EOF' some other args",
+        tags: ["adversarial", "heredoc", "quotes", "V7"],
+    },
+    {
+        name: "V7: real <<EOF not in quotes — IS a heredoc, preserve body",
+        input: "cat <<EOF\nbody\nEOF",
+        expected: "cat <<EOF\nbody\nEOF",
+        expectedPretty: "cat <<EOF\nbody\nEOF",
+        tags: ["adversarial", "heredoc", "V7"],
+    },
+
+    // --- Additional adversarial: operator injection via mid-word join ---
+    {
+        name: "operator injection: foo + &&bar must NOT create && operator",
+        input: "echo foo\n&&bar",
+        expected: "echo foo && bar",
+        expectedPretty: "echo foo && bar",
+        tags: ["adversarial", "operator-injection"],
+    },
+    {
+        name: "operator injection: foo + |bar must NOT create pipe",
+        input: "echo foo\n|bar",
+        expected: "echo foo | bar",
+        expectedPretty: "echo foo | bar",
+        tags: ["adversarial", "operator-injection"],
+    },
+    {
+        name: "operator injection: foo + ;bar must NOT create semicolon",
+        input: "echo foo\n;bar",
+        expected: "echo foo ; bar",
+        expectedPretty: "echo foo ; bar",
+        tags: ["adversarial", "operator-injection"],
+    },
+
+    // --- Additional: mixed quote + continuation scenarios ---
+    {
+        name: "continuation outside quotes, then quoted arg on next line",
+        input: "grep -r \\\n  'pattern' src/",
+        expected: "grep -r 'pattern' src/",
+        expectedPretty: "grep -r 'pattern' src/",
+        tags: ["adversarial", "quotes", "continuation"],
+    },
+    {
+        name: "quoted string spanning multiple lines with terminal wrap",
+        input: 'echo "very long string that gets terminal wrap\n  ped at column boundary"',
+        expected: 'echo "very long string that gets terminal wrapped at column boundary"',
+        expectedPretty: 'echo "very long string that gets terminal wrapped at column boundary"',
+        tags: ["adversarial", "quotes", "terminal-wrap"],
+    },
 ];
 
 // ── Stats ──────────────────────────────────────────────────────────────
