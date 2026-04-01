@@ -1,12 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { captureContext, findProjectRoot } from "../context";
 
 describe("findProjectRoot", () => {
     it("finds .git directory walking up from a nested path", () => {
         const root = findProjectRoot(resolve(import.meta.dir, ".."));
         expect(root).not.toBeNull();
-        expect(root!.endsWith("GenesisTools")).toBe(true);
+        // Works in both main repo and worktrees
+        expect(existsSync(join(root!, ".git"))).toBe(true);
     });
 
     it("finds .git from the repo root itself", () => {
