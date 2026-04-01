@@ -5,40 +5,25 @@ import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { analyzeComparables } from "./analysis/comparables";
-import { analyzeDiscount } from "./analysis/discount";
-import { computeInvestmentScore } from "./analysis/investment-score";
-import { detectMomentum } from "./analysis/market-momentum";
-import { analyzeRentalYield } from "./analysis/rental-yield";
 import { renderReport } from "./analysis/report";
-import { analyzeTimeOnMarket } from "./analysis/time-on-market";
-import { analyzeTrends } from "./analysis/trends";
-import { fetchMfRentalData } from "./api/mf-rental";
-import { fetchSoldListings } from "./api/reas-client";
-import { fetchRentalListings } from "./api/sreality-client";
 import { clearCache } from "./cache/index";
 import type { DistrictInfo } from "./data/districts";
 import { getAllDistrictNames, getDistrict, getPrahaDistrictNames, searchDistricts } from "./data/districts";
 import { resolveAddress } from "./lib/address-resolver";
 import {
-    DISPOSITIONS,
-    PROPERTY_TYPES,
+    fetchAndAnalyze as fetchAndAnalyzeService,
+    searchListings,
+} from "./lib/analysis-service";
+import {
     buildConfig,
     buildPeriodOptions,
+    DISPOSITIONS,
     hasSufficientFlags,
+    PROPERTY_TYPES,
     parsePeriod,
-    parsePeriods,
     resolveDistrict,
 } from "./lib/config-builder";
-import type {
-    AnalysisFilters,
-    FullAnalysis,
-    MfRentalBenchmark,
-    ProviderName,
-    ReasListing,
-    SrealityRental,
-    TargetProperty,
-} from "./types";
+import type { AnalysisFilters, FullAnalysis, TargetProperty } from "./types";
 
 interface ReasOptions {
     district?: string;
@@ -333,147 +318,33 @@ export async function buildFromFlags(
     });
 }
 
-function isProviderEnabled(filters: AnalysisFilters, provider: ProviderName): boolean {
-    return !filters.providers || filters.providers.includes(provider);
-}
-
-function applyListingFilters(listings: ReasListing[], filters: AnalysisFilters): ReasListing[] {
-    let result = listings;
-
-    if (filters.priceMin !== undefined) {
-        result = result.filter((l) => l.soldPrice >= filters.priceMin!);
-    }
-
-    if (filters.priceMax !== undefined) {
-        result = result.filter((l) => l.soldPrice <= filters.priceMax!);
-    }
-
-    if (filters.areaMin !== undefined) {
-        result = result.filter((l) => l.utilityArea >= filters.areaMin!);
-    }
-
-    if (filters.areaMax !== undefined) {
-        result = result.filter((l) => l.utilityArea <= filters.areaMax!);
-    }
-
-    return result;
-}
-
 export async function fetchAndAnalyze(
     filters: AnalysisFilters,
     target: TargetProperty,
-    refresh: boolean
+    refresh: boolean,
 ): Promise<FullAnalysis> {
     const spinner = p.spinner();
     spinner.start("Fetching data from all providers...");
 
-    const warnings: string[] = [];
-
-    // Fetch all providers in parallel
-    const [reasResult, srealityResult, mfResult] = await Promise.allSettled([
-        isProviderEnabled(filters, "reas")
-            ? (async () => {
-                  const listings: ReasListing[] = [];
-                  for (const period of filters.periods) {
-                      listings.push(...(await fetchSoldListings(filters, period, refresh)));
-                  }
-                  return listings;
-              })()
-            : Promise.resolve([] as ReasListing[]),
-        isProviderEnabled(filters, "sreality")
-            ? fetchRentalListings(filters, refresh)
-            : Promise.resolve([] as SrealityRental[]),
-        isProviderEnabled(filters, "mf")
-            ? fetchMfRentalData(filters.district.name, refresh)
-            : Promise.resolve([] as MfRentalBenchmark[]),
-    ]);
-
-    let allListings: ReasListing[] = [];
-
-    if (reasResult.status === "fulfilled") {
-        allListings = reasResult.value;
-    } else {
-        warnings.push(
-            `REAS: ${reasResult.reason instanceof Error ? reasResult.reason.message : String(reasResult.reason)}`
-        );
-    }
-
-    allListings = applyListingFilters(allListings, filters);
-
-    let rentalListings: SrealityRental[] = [];
-
-    if (srealityResult.status === "fulfilled") {
-        rentalListings = srealityResult.value;
-    } else {
-        warnings.push(
-            `Sreality: ${srealityResult.reason instanceof Error ? srealityResult.reason.message : String(srealityResult.reason)}`
-        );
-    }
-
-    let mfBenchmarks: MfRentalBenchmark[] = [];
-
-    if (mfResult.status === "fulfilled") {
-        mfBenchmarks = mfResult.value;
-    } else {
-        warnings.push(
-            `MF cenova mapa: ${mfResult.reason instanceof Error ? mfResult.reason.message : String(mfResult.reason)}`
-        );
-    }
-
-    spinner.stop(
-        `Data fetched: ${allListings.length} sold, ${rentalListings.length} rentals, ${mfBenchmarks.length} MF benchmarks.`
-    );
-
-    if (warnings.length > 0) {
-        console.log(pc.yellow("\nSome providers returned errors (analysis continues with available data):"));
-
-        for (const w of warnings) {
-            console.log(pc.dim(`  - ${w}`));
+    const analysis = await fetchAndAnalyzeService(filters, target, refresh, (progress) => {
+        if (progress.phase === "complete") {
+            spinner.stop(progress.message);
+        } else {
+            spinner.message(progress.message);
         }
 
-        console.log();
-    }
+        if (progress.warnings && progress.warnings.length > 0) {
+            console.log(pc.yellow("\nSome providers returned errors (analysis continues with available data):"));
 
-    const comparables = analyzeComparables(allListings, target);
-    const trends = analyzeTrends(allListings);
-    const timeOnMarket = analyzeTimeOnMarket(allListings);
-    const discount = analyzeDiscount(allListings);
+            for (const w of progress.warnings) {
+                console.log(pc.dim(`  - ${w}`));
+            }
 
-    const matchingRentals = rentalListings.filter((r) => !filters.disposition || r.disposition === filters.disposition);
-
-    const avgRent =
-        matchingRentals.length > 0
-            ? matchingRentals.reduce((sum, r) => sum + r.price, 0) / matchingRentals.length
-            : target.monthlyRent;
-
-    const yieldResult = analyzeRentalYield(target, comparables.pricePerM2.median, avgRent);
-
-    const momentum = detectMomentum(
-        trends.periods.map((period) => ({ medianPerM2: period.medianPerM2, count: period.count }))
-    );
-
-    const investmentScore = computeInvestmentScore({
-        netYield: yieldResult.netYield,
-        discount: discount.medianDiscount,
-        trendDirection: trends.direction,
-        trendYoY: trends.yoyChange ?? 0,
-        medianDaysOnMarket: timeOnMarket.median,
-        districtMedianDays: timeOnMarket.median,
+            console.log();
+        }
     });
 
-    return {
-        comparables,
-        trends,
-        yield: yieldResult,
-        timeOnMarket,
-        discount,
-        rentalListings,
-        mfBenchmarks,
-        target,
-        filters,
-        investmentScore,
-        momentum,
-    };
+    return analysis;
 }
 
 async function outputAnalysis(analysis: FullAnalysis, format: string, outputPath?: string): Promise<void> {
@@ -502,58 +373,33 @@ async function outputAnalysis(analysis: FullAnalysis, format: string, outputPath
     }
 }
 
-function getSearchDefaultPeriods(): string {
-    const year = new Date().getFullYear();
-    return `${year - 2},${year - 1},${year}`;
-}
-const SEARCH_DEFAULT_DISTRICT = "Hradec Králové";
-const SEARCH_CONSTRUCTION_TYPES = ["panel", "brick"];
-
 function formatCzk(value: number): string {
     return value.toLocaleString("cs-CZ");
 }
 
 async function runSearch(query: string, options: ReasOptions): Promise<void> {
-    const district = resolveDistrict(options.district ?? SEARCH_DEFAULT_DISTRICT);
-    const periods = parsePeriods(options.periods ?? getSearchDefaultPeriods());
-    const constructionTypes = options.type ? [options.type] : SEARCH_CONSTRUCTION_TYPES;
-    const refresh = !!options.refresh;
-    const queryLower = query.toLowerCase();
-
     const spinner = p.spinner();
     spinner.start(`Searching sold listings for "${query}"...`);
 
-    const allListings: ReasListing[] = [];
+    const matched = await searchListings({
+        query,
+        district: options.district,
+        periodsStr: options.periods,
+        constructionType: options.type,
+        refresh: options.refresh,
+    });
 
-    for (const constructionType of constructionTypes) {
-        const filters: AnalysisFilters = {
-            estateType: "flat",
-            constructionType,
-            periods,
-            district,
-        };
-
-        for (const period of periods) {
-            const listings = await fetchSoldListings(filters, period, refresh);
-            allListings.push(...listings);
-        }
-    }
-
-    const matched = allListings.filter((l) => l.formattedAddress.toLowerCase().includes(queryLower));
-
-    spinner.stop(`Fetched ${allListings.length} listings, filtering by "${query}".`);
+    spinner.stop(`Found ${matched.length} listing(s) matching "${query}".`);
 
     if (matched.length === 0) {
         console.log(pc.yellow(`\nNo listings found matching "${query}".`));
         return;
     }
 
-    matched.sort((a, b) => new Date(b.soldAt).getTime() - new Date(a.soldAt).getTime());
-
     const rows = matched.map((listing, idx) => {
         const pricePerM2 = listing.utilityArea > 0 ? Math.round(listing.soldPrice / listing.utilityArea) : 0;
-        const soldDate = listing.soldAt ? listing.soldAt.slice(0, 10) : "—";
-        const link = listing.link || "—";
+        const soldDate = listing.soldAt ? listing.soldAt.slice(0, 10) : "\u2014";
+        const link = listing.link || "\u2014";
 
         return [
             String(idx + 1),
@@ -567,13 +413,13 @@ async function runSearch(query: string, options: ReasOptions): Promise<void> {
         ];
     });
 
-    const headers = ["#", "Address", "Disp", "m²", "Sold Price", "CZK/m²", "Sold", "Link"];
+    const headers = ["#", "Address", "Disp", "m\u00B2", "Sold Price", "CZK/m\u00B2", "Sold", "Link"];
     const table = formatTable(rows, headers, {
         alignRight: [0, 3, 4, 5],
     });
 
     console.log(
-        `\n${pc.cyan(pc.bold(`Search results for "${query}"`))} — ${pc.bold(String(matched.length))} listing${matched.length === 1 ? "" : "s"} found\n`
+        `\n${pc.cyan(pc.bold(`Search results for "${query}"`))} \u2014 ${pc.bold(String(matched.length))} listing${matched.length === 1 ? "" : "s"} found\n`,
     );
     console.log(table);
     console.log();
