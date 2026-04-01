@@ -100,7 +100,7 @@ export function createEditCommand(): Command {
             const todo = await store.update(id, patch);
             console.log(formatTodo(todo, resolveFormat(opts.format), { colors: opts.colors }));
 
-            if (opts.syncTo && todo.reminders.length > 0) {
+            if (opts.syncTo) {
                 const target = opts.syncTo as SyncTarget;
                 const count = await syncTodo({ store, todo, target });
 

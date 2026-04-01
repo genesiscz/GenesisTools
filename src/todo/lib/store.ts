@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
@@ -199,6 +199,12 @@ export class TodoStore {
             return false;
         }
 
+        const todoAttachDir = join(this.attachmentsDir, id);
+
+        if (existsSync(todoAttachDir)) {
+            rmSync(todoAttachDir, { recursive: true, force: true });
+        }
+
         await this.writeTodos(filtered);
         await this.writeMeta(filtered);
 
@@ -220,10 +226,17 @@ export class TodoStore {
 
     async bulkImport(incoming: Todo[]): Promise<number> {
         const todos = await this.readTodos();
-        todos.push(...incoming);
+        const existingIds = new Set(todos.map((t) => t.id));
+        const toImport = incoming.filter((t) => !existingIds.has(t.id));
+
+        if (toImport.length === 0) {
+            return 0;
+        }
+
+        todos.push(...toImport);
         await this.writeTodos(todos);
         await this.writeMeta(todos);
-        return incoming.length;
+        return toImport.length;
     }
 
     static async listAllProjects(storageRoot?: string): Promise<ProjectMeta[]> {

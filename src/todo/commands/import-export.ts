@@ -6,7 +6,8 @@ import type { Todo } from "@app/todo/lib/types";
 import { SafeJSON } from "@app/utils/json";
 import { Command } from "commander";
 
-const REQUIRED_FIELDS = ["id", "title", "status"] as const;
+// Must match required fields in Todo (src/todo/lib/types.ts)
+const REQUIRED_FIELDS = ["id", "title", "status", "priority", "tags", "context"] as const;
 
 function validateTodos(data: unknown): Todo[] {
     if (!Array.isArray(data)) {

@@ -147,7 +147,7 @@ export function createAddCommand(): Command {
             const format = resolveFormat(opts.format);
             console.log(formatTodo(todo, format, { colors: opts.colors }));
 
-            if (opts.syncTo && todo.reminders.length > 0) {
+            if (opts.syncTo) {
                 const target = opts.syncTo as SyncTarget;
                 const count = await syncTodo({ store, todo, target });
 

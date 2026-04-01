@@ -18,8 +18,8 @@ function syncReminderToCalendar(todo: Todo, reminder: TodoReminder): string {
 }
 
 function syncTodoToReminders(todo: Todo): string {
-    const firstReminder = todo.reminders.find((r) => !r.synced);
-    const dueDate = firstReminder ? new Date(firstReminder.at) : undefined;
+    const firstUnsynced = todo.reminders.find((r) => !r.synced);
+    const dueDate = firstUnsynced ? new Date(firstUnsynced.at) : undefined;
 
     return createReminder({
         title: todo.title,
@@ -31,16 +31,16 @@ function syncTodoToReminders(todo: Todo): string {
 
 /**
  * Sync a todo's reminders to Calendar and/or Reminders.app.
+ * Performs a single store.update at the end regardless of target.
  * Returns the number of items synced.
  */
 export async function syncTodo(options: { store: TodoStore; todo: Todo; target: SyncTarget }): Promise<number> {
     const { store, todo, target } = options;
     let totalSynced = 0;
+    let updatedReminders = [...todo.reminders];
+    let changed = false;
 
     if (target === "calendar" || target === "both") {
-        const updatedReminders = [...todo.reminders];
-        let changed = false;
-
         for (let i = 0; i < updatedReminders.length; i++) {
             const reminder = updatedReminders[i];
 
@@ -53,34 +53,32 @@ export async function syncTodo(options: { store: TodoStore; todo: Todo; target: 
             changed = true;
             totalSynced++;
         }
-
-        if (changed) {
-            await store.update(todo.id, { reminders: updatedReminders });
-        }
     }
 
     if (target === "reminders" || target === "both") {
-        const freshTodo = await store.get(todo.id);
-
-        if (!freshTodo) {
-            return totalSynced;
-        }
-
-        const alreadySynced = freshTodo.reminders.some((r) => r.synced === "reminders" && r.syncId);
+        const alreadySynced = updatedReminders.some((r) => r.synced === "reminders" && r.syncId);
 
         if (!alreadySynced) {
-            const reminderId = syncTodoToReminders(freshTodo);
-            const updatedReminders = freshTodo.reminders.map((r, i) => {
-                if (i === 0) {
-                    return { ...r, synced: "reminders" as const, syncId: reminderId };
-                }
+            const todoWithUpdatedReminders = { ...todo, reminders: updatedReminders };
+            const reminderId = syncTodoToReminders(todoWithUpdatedReminders);
 
-                return r;
-            });
+            if (updatedReminders.length > 0) {
+                updatedReminders = updatedReminders.map((r, i) => {
+                    if (i === 0) {
+                        return { ...r, synced: "reminders" as const, syncId: reminderId };
+                    }
 
-            await store.update(freshTodo.id, { reminders: updatedReminders });
+                    return r;
+                });
+            }
+
+            changed = true;
             totalSynced++;
         }
+    }
+
+    if (changed) {
+        await store.update(todo.id, { reminders: updatedReminders });
     }
 
     return totalSynced;
