@@ -6,6 +6,7 @@ import { createListCommand } from "@app/todo/commands/list";
 import { createRemoveCommand } from "@app/todo/commands/remove";
 import { createSearchCommand } from "@app/todo/commands/search";
 import { createShowCommand } from "@app/todo/commands/show";
+import { createSyncCommand } from "@app/todo/commands/sync";
 import {
     createBlockCommand,
     createCompleteCommand,
@@ -29,6 +30,7 @@ program.addCommand(createReopenCommand());
 program.addCommand(createEditCommand());
 program.addCommand(createRemoveCommand());
 program.addCommand(createSearchCommand());
+program.addCommand(createSyncCommand());
 
 enhanceHelp(program);
 
