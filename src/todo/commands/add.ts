@@ -2,8 +2,9 @@ import { findProjectRoot } from "@app/todo/lib/context";
 import { formatTodo } from "@app/todo/lib/format";
 import { parseLinks } from "@app/todo/lib/links";
 import { TodoStore } from "@app/todo/lib/store";
+import { type SyncTarget, syncTodo } from "@app/todo/lib/sync";
 import type { OutputFormat, TodoPriority } from "@app/todo/lib/types";
-import { isInteractive, suggestCommand } from "@app/utils/cli";
+import { isInteractive, parseVariadic, suggestCommand } from "@app/utils/cli";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -26,6 +27,10 @@ function resolveProjectRoot(flag: string | undefined): string {
     return findProjectRoot(process.cwd()) ?? process.cwd();
 }
 
+function collect(value: string, previous: string[]): string[] {
+    return [...previous, value];
+}
+
 export function createAddCommand(): Command {
     return new Command("add")
         .description("Add a new todo")
@@ -39,11 +44,12 @@ export function createAddCommand(): Command {
         .option("-a, --attach <path>", "File path to attach (repeatable)", collect, [])
         .option("--md <path>", "Markdown file to inline as content")
         .option("--project <path>", "Override project root")
+        .option("--sync-to <target>", "Auto-sync reminders: calendar|reminders|both")
         .option("-f, --format <format>", "Output format: ai|json|md|table")
         .action(async (titleArg, opts) => {
             let title: string | undefined = titleArg;
             let priority: TodoPriority | undefined = opts.priority;
-            let tags: string[] | undefined = opts.tag ? opts.tag.split(",").map((s: string) => s.trim()) : undefined;
+            let tags: string[] | undefined = opts.tag ? parseVariadic(opts.tag) : undefined;
             let description: string | undefined = opts.description;
 
             if (!title && !isInteractive()) {
@@ -97,10 +103,7 @@ export function createAddCommand(): Command {
                     }
 
                     if (result) {
-                        tags = result
-                            .split(",")
-                            .map((s) => s.trim())
-                            .filter(Boolean);
+                        tags = parseVariadic(result);
                     }
                 }
 
@@ -123,7 +126,10 @@ export function createAddCommand(): Command {
 
             const projectRoot = resolveProjectRoot(opts.project);
             const store = TodoStore.forProject(projectRoot);
-            const links = opts.link.length > 0 ? parseLinks(opts.link) : undefined;
+            const reminders = parseVariadic(opts.reminder);
+            const linkInputs = parseVariadic(opts.link);
+            const links = linkInputs.length > 0 ? parseLinks(linkInputs) : undefined;
+            const attachFiles = parseVariadic(opts.attach);
 
             const todo = await store.add({
                 title: title!,
@@ -131,22 +137,27 @@ export function createAddCommand(): Command {
                 priority,
                 tags,
                 links,
-                reminders: opts.reminder.length > 0 ? opts.reminder : undefined,
+                reminders: reminders.length > 0 ? reminders : undefined,
                 sessionId: opts.sessionId,
-                attachFiles: opts.attach.length > 0 ? opts.attach : undefined,
+                attachFiles: attachFiles.length > 0 ? attachFiles : undefined,
                 mdFile: opts.md,
             });
 
             const format = resolveFormat(opts.format);
             console.log(formatTodo(todo, format));
 
+            if (opts.syncTo && todo.reminders.length > 0) {
+                const target = opts.syncTo as SyncTarget;
+                const count = await syncTodo({ store, todo, target });
+
+                if (count > 0) {
+                    console.error(pc.green(`Synced ${count} reminder(s) to ${target}.`));
+                }
+            }
+
             if (isInteractive()) {
                 p.log.success(`Created ${todo.id}`);
                 p.outro("Done!");
             }
         });
-}
-
-function collect(value: string, previous: string[]): string[] {
-    return [...previous, value];
 }

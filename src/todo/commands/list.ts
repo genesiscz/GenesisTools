@@ -2,7 +2,7 @@ import { findProjectRoot } from "@app/todo/lib/context";
 import { formatTodoList } from "@app/todo/lib/format";
 import { TodoStore } from "@app/todo/lib/store";
 import type { OutputFormat, Todo, TodoFilters, TodoPriority, TodoStatus } from "@app/todo/lib/types";
-import { isInteractive } from "@app/utils/cli";
+import { isInteractive, parseVariadic } from "@app/utils/cli";
 import { Command } from "commander";
 
 const ACTIVE_STATUSES: TodoStatus[] = ["todo", "in-progress", "blocked"];
@@ -29,17 +29,17 @@ export function createListCommand(): Command {
             const filters: TodoFilters = {};
 
             if (opts.status) {
-                filters.status = opts.status.split(",").map((s: string) => s.trim()) as TodoStatus[];
+                filters.status = parseVariadic(opts.status) as TodoStatus[];
             } else {
                 filters.status = ACTIVE_STATUSES;
             }
 
             if (opts.priority) {
-                filters.priority = opts.priority.split(",").map((s: string) => s.trim()) as TodoPriority[];
+                filters.priority = parseVariadic(opts.priority) as TodoPriority[];
             }
 
             if (opts.tag) {
-                filters.tags = opts.tag.split(",").map((s: string) => s.trim());
+                filters.tags = parseVariadic(opts.tag);
             }
 
             if (opts.session) {

@@ -1,5 +1,7 @@
 import { SafeJSON } from "@app/utils/json";
+import { renderMarkdownToCli } from "@app/utils/markdown/index.js";
 import { formatTable } from "@app/utils/table";
+import { isInteractive } from "@app/utils/cli";
 import type { OutputFormat, Todo, TodoLink, TodoReminder } from "./types";
 
 function formatLinkCompact(link: TodoLink): string {
@@ -15,103 +17,53 @@ function formatReminderCompact(reminder: TodoReminder): string {
     return reminder.label ? `${reminder.at} (${reminder.label})` : reminder.at;
 }
 
-function formatTodoAi(todo: Todo): string {
+function formatTodoMarkdown(todo: Todo): string {
     const lines: string[] = [];
-    lines.push(`[${todo.id}] ${todo.title} (${todo.priority}, ${todo.status})`);
+
+    const statusIcon =
+        todo.status === "done"
+            ? "[x]"
+            : todo.status === "in-progress"
+              ? "[-]"
+              : todo.status === "blocked"
+                ? "[!]"
+                : "[ ]";
+
+    lines.push(`## ${statusIcon} ${todo.title}`);
+    lines.push(`**${todo.id}** | **${todo.priority}** | **${todo.status}**`);
 
     if (todo.tags.length > 0) {
-        lines.push(`tags: ${todo.tags.join(", ")}`);
-    }
-
-    const ctxParts: string[] = [];
-
-    if (todo.context.git?.branch) {
-        ctxParts.push(`branch: ${todo.context.git.branch}`);
-    }
-
-    if (todo.context.git?.commitSha) {
-        ctxParts.push(`commit: ${todo.context.git.commitSha.slice(0, 7)}`);
-    }
-
-    if (ctxParts.length > 0) {
-        lines.push(ctxParts.join(" | "));
-    }
-
-    if (todo.sessionId) {
-        lines.push(`session: ${todo.sessionId}`);
-    }
-
-    if (todo.links.length > 0) {
-        lines.push(`links: ${todo.links.map(formatLinkCompact).join(", ")}`);
-    }
-
-    if (todo.reminders.length > 0) {
-        lines.push(`reminders: ${todo.reminders.map(formatReminderCompact).join(", ")}`);
-    }
-
-    if (todo.completedAt) {
-        lines.push(`completed: ${todo.completedAt}`);
-    }
-
-    if (todo.completionNote) {
-        lines.push(`note: ${todo.completionNote}`);
-    }
-
-    if (todo.description) {
-        lines.push("---");
-        lines.push(todo.description);
-    }
-
-    if (todo.inlineContent) {
-        lines.push("---");
-        lines.push(todo.inlineContent);
-    }
-
-    return lines.join("\n");
-}
-
-function formatTodoMdShow(todo: Todo): string {
-    const lines: string[] = [];
-    lines.push(`## ${todo.id}: ${todo.title}`);
-
-    const statusParts = [`**Status:** ${todo.status}`, `**Priority:** ${todo.priority}`];
-    lines.push(statusParts.join(" | "));
-
-    if (todo.tags.length > 0) {
-        lines.push(`**Tags:** ${todo.tags.join(", ")}`);
+        lines.push(`Tags: \`${todo.tags.join("\`, \`")}\``);
     }
 
     lines.push("");
 
-    const hasContext =
-        todo.context.git?.branch ||
-        todo.context.git?.commitSha ||
-        todo.sessionId ||
-        todo.links.length > 0 ||
-        todo.reminders.length > 0;
+    const contextParts: string[] = [];
 
-    if (hasContext) {
-        lines.push("### Context");
+    if (todo.context.git?.branch) {
+        contextParts.push(`Branch: \`${todo.context.git.branch}\``);
+    }
 
-        if (todo.context.git?.branch) {
-            lines.push(`- Branch: \`${todo.context.git.branch}\``);
-        }
+    if (todo.context.git?.commitSha) {
+        const msg = todo.context.git.commitMessage ? ` — ${todo.context.git.commitMessage}` : "";
+        contextParts.push(`Commit: \`${todo.context.git.commitSha.slice(0, 8)}\`${msg}`);
+    }
 
-        if (todo.context.git?.commitSha) {
-            const msg = todo.context.git.commitMessage ? ` — ${todo.context.git.commitMessage}` : "";
-            lines.push(`- Commit: \`${todo.context.git.commitSha.slice(0, 8)}\`${msg}`);
-        }
+    if (todo.sessionId) {
+        contextParts.push(`Session: \`${todo.sessionId}\``);
+    }
 
-        if (todo.sessionId) {
-            lines.push(`- Session: \`${todo.sessionId}\``);
-        }
+    if (todo.links.length > 0) {
+        contextParts.push(`Links: ${todo.links.map(formatLinkCompact).join(", ")}`);
+    }
 
-        if (todo.links.length > 0) {
-            lines.push(`- Links: ${todo.links.map(formatLinkCompact).join(", ")}`);
-        }
+    if (todo.reminders.length > 0) {
+        contextParts.push(`Reminders: ${todo.reminders.map(formatReminderCompact).join(", ")}`);
+    }
 
-        if (todo.reminders.length > 0) {
-            lines.push(`- Reminders: ${todo.reminders.map(formatReminderCompact).join(", ")}`);
+    if (contextParts.length > 0) {
+        for (const part of contextParts) {
+            lines.push(`- ${part}`);
         }
 
         lines.push("");
@@ -128,13 +80,12 @@ function formatTodoMdShow(todo: Todo): string {
     }
 
     if (todo.description) {
-        lines.push("### Description");
         lines.push(todo.description);
         lines.push("");
     }
 
     if (todo.inlineContent) {
-        lines.push("### Content");
+        lines.push("---");
         lines.push(todo.inlineContent);
         lines.push("");
     }
@@ -142,17 +93,16 @@ function formatTodoMdShow(todo: Todo): string {
     return lines.join("\n").trimEnd();
 }
 
-function formatTodoMdList(todos: Todo[]): string {
+function formatTodoListMarkdown(todos: Todo[]): string {
     if (todos.length === 0) {
         return "_No todos found._";
     }
 
-    const lines = todos.map((t) => {
-        const tags = t.tags.length > 0 ? ` [${t.tags.join(", ")}]` : "";
-        return `- **${t.id}**: ${t.title} (${t.priority}, ${t.status})${tags}`;
-    });
+    return todos.map(formatTodoMarkdown).join("\n\n---\n\n");
+}
 
-    return lines.join("\n");
+function renderForTerminal(markdown: string): string {
+    return renderMarkdownToCli(markdown, { theme: "dark" });
 }
 
 function formatTodoTable(todos: Todo[]): string {
@@ -171,9 +121,10 @@ export function formatTodo(todo: Todo, format: OutputFormat): string {
         case "json":
             return SafeJSON.stringify(todo, null, 2);
         case "ai":
-            return formatTodoAi(todo);
-        case "md":
-            return formatTodoMdShow(todo);
+        case "md": {
+            const md = formatTodoMarkdown(todo);
+            return isInteractive() ? renderForTerminal(md) : md;
+        }
         case "table":
             return formatTodoTable([todo]);
     }
@@ -184,9 +135,10 @@ export function formatTodoList(todos: Todo[], format: OutputFormat): string {
         case "json":
             return SafeJSON.stringify(todos, null, 2);
         case "ai":
-            return todos.map(formatTodoAi).join("\n\n");
-        case "md":
-            return formatTodoMdList(todos);
+        case "md": {
+            const md = formatTodoListMarkdown(todos);
+            return isInteractive() ? renderForTerminal(md) : md;
+        }
         case "table":
             return formatTodoTable(todos);
     }

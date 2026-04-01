@@ -53,41 +53,51 @@ describe("formatTodo", () => {
         });
     });
 
-    describe("ai format", () => {
-        it("includes id, title, priority and status on first line", () => {
+    describe("ai/md format (markdown)", () => {
+        it("includes title in heading", () => {
             const output = formatTodo(todo, "ai");
-            expect(output).toContain("[todo_x7k2m] Fix auth bug (critical, in-progress)");
+            expect(output).toContain("Fix auth bug");
+        });
+
+        it("includes id, priority, and status", () => {
+            const output = formatTodo(todo, "ai");
+            expect(output).toContain("todo_x7k2m");
+            expect(output).toContain("critical");
+            expect(output).toContain("in-progress");
         });
 
         it("includes tags", () => {
             const output = formatTodo(todo, "ai");
-            expect(output).toContain("tags: auth, backend");
+            expect(output).toContain("auth");
+            expect(output).toContain("backend");
         });
 
         it("includes branch and commit", () => {
             const output = formatTodo(todo, "ai");
-            expect(output).toContain("branch: feat/auth");
-            expect(output).toContain("commit: abc1234");
+            expect(output).toContain("feat/auth");
+            expect(output).toContain("abc12345");
         });
 
         it("includes session", () => {
             const output = formatTodo(todo, "ai");
-            expect(output).toContain("session: ses_xyz");
+            expect(output).toContain("ses_xyz");
         });
 
         it("includes links", () => {
             const output = formatTodo(todo, "ai");
-            expect(output).toContain("links: pr:142, ado:78901");
+            expect(output).toContain("pr:142");
+            expect(output).toContain("ado:78901");
         });
 
         it("includes reminders", () => {
             const output = formatTodo(todo, "ai");
-            expect(output).toContain("reminders: 2026-04-02T12:00:00Z, 2026-04-03T12:00:00Z");
+            expect(output).toContain("2026-04-02T12:00:00Z");
+            expect(output).toContain("2026-04-03T12:00:00Z");
         });
 
-        it("includes description after separator", () => {
+        it("includes description", () => {
             const output = formatTodo(todo, "ai");
-            expect(output).toContain("---\nThe OAuth flow breaks");
+            expect(output).toContain("The OAuth flow breaks");
         });
 
         it("skips empty sections", () => {
@@ -103,42 +113,29 @@ describe("formatTodo", () => {
                 },
             });
             const output = formatTodo(minimal, "ai");
-            expect(output).not.toContain("tags:");
-            expect(output).not.toContain("links:");
-            expect(output).not.toContain("reminders:");
-            expect(output).not.toContain("session:");
-            expect(output).not.toContain("branch:");
-        });
-    });
-
-    describe("md format", () => {
-        it("includes header with id and title", () => {
-            const output = formatTodo(todo, "md");
-            expect(output).toContain("## todo_x7k2m: Fix auth bug");
+            expect(output).not.toContain("Tags:");
+            expect(output).not.toContain("Links:");
+            expect(output).not.toContain("Reminders:");
+            expect(output).not.toContain("Session:");
+            expect(output).not.toContain("Branch:");
         });
 
-        it("includes status and priority", () => {
-            const output = formatTodo(todo, "md");
-            expect(output).toContain("**Status:** in-progress");
-            expect(output).toContain("**Priority:** critical");
+        it("md format produces same markdown as ai", () => {
+            const ai = formatTodo(todo, "ai");
+            const md = formatTodo(todo, "md");
+            expect(ai).toBe(md);
         });
 
-        it("includes tags", () => {
-            const output = formatTodo(todo, "md");
-            expect(output).toContain("**Tags:** auth, backend");
+        it("shows status icon for done todos", () => {
+            const done = makeTodo({ status: "done", completedAt: "2026-04-01T15:00:00Z" });
+            const output = formatTodo(done, "ai");
+            expect(output).toContain("[x]");
         });
 
-        it("includes context section with branch and commit", () => {
-            const output = formatTodo(todo, "md");
-            expect(output).toContain("### Context");
-            expect(output).toContain("- Branch: `feat/auth`");
-            expect(output).toContain("- Commit: `abc12345`");
-        });
-
-        it("includes description section", () => {
-            const output = formatTodo(todo, "md");
-            expect(output).toContain("### Description");
-            expect(output).toContain("The OAuth flow breaks");
+        it("shows status icon for blocked todos", () => {
+            const blocked = makeTodo({ status: "blocked" });
+            const output = formatTodo(blocked, "ai");
+            expect(output).toContain("[!]");
         });
     });
 
@@ -167,17 +164,15 @@ describe("formatTodoList", () => {
         expect(parsed).toHaveLength(2);
     });
 
-    it("ai format joins with double newline", () => {
+    it("ai format includes all todos", () => {
         const output = formatTodoList(todos, "ai");
-        expect(output).toContain("[todo_x7k2m]");
-        expect(output).toContain("[todo_abc12]");
-        expect(output).toContain("\n\n");
+        expect(output).toContain("Fix auth bug");
+        expect(output).toContain("Second task");
     });
 
-    it("md format produces bullet list", () => {
-        const output = formatTodoList(todos, "md");
-        expect(output).toContain("- **todo_x7k2m**:");
-        expect(output).toContain("- **todo_abc12**:");
+    it("ai format separates todos", () => {
+        const output = formatTodoList(todos, "ai");
+        expect(output).toContain("---");
     });
 
     it("table format includes all rows", () => {
@@ -186,9 +181,11 @@ describe("formatTodoList", () => {
         expect(output).toContain("todo_abc12");
     });
 
-    it("handles empty list", () => {
+    it("handles empty list for md", () => {
         expect(formatTodoList([], "md")).toContain("No todos");
+    });
+
+    it("handles empty list for table", () => {
         expect(formatTodoList([], "table")).toContain("No todos");
-        expect(formatTodoList([], "ai")).toBe("");
     });
 });
