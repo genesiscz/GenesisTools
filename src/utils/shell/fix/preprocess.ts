@@ -304,6 +304,26 @@ export function preProcess(raw: string): PreProcessResult {
     // Step 0: Strip Claude Code UI artifacts
     let s = raw.replace(/\r/g, "");
 
+    // Find the LAST occurrence of `⏺ ToolName(` — everything before it is
+    // previous output noise (error messages, prior tool results, etc.).
+    const toolCallPattern = /⏺\s*(Bash|Read|Edit|Write|Grep|Glob)\(/;
+    const lastToolCallIdx = (() => {
+        let lastIdx = -1;
+
+        for (const match of s.matchAll(new RegExp(toolCallPattern, "g"))) {
+            if (match.index !== undefined) {
+                lastIdx = match.index;
+            }
+        }
+
+        return lastIdx;
+    })();
+
+    if (lastToolCallIdx > 0) {
+        // Drop everything before the last ⏺ ToolName(
+        s = s.slice(lastToolCallIdx);
+    }
+
     // Strip ⏺ prefix (tool call marker in Claude Code output)
     s = s.replace(/^⏺\s*/, "");
 

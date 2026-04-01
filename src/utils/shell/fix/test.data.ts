@@ -1141,9 +1141,9 @@ export const testCases: TestCase[] = [
     },
     {
         name: "Bash() with inner double quotes — sayy",
-        input: "Bash(sayy 0.5 \"Tool wrappers and safety done\")",
-        expected: "sayy 0.5 \"Tool wrappers and safety done\"",
-        expectedPretty: "sayy 0.5 \"Tool wrappers and safety done\"",
+        input: 'Bash(sayy 0.5 "Tool wrappers and safety done")',
+        expected: 'sayy 0.5 "Tool wrappers and safety done"',
+        expectedPretty: 'sayy 0.5 "Tool wrappers and safety done"',
         tags: ["safety", "tool-wrapper", "claude-ui", "quotes"],
     },
     {
@@ -1152,6 +1152,27 @@ export const testCases: TestCase[] = [
         expected: "some random text",
         expectedPretty: "some random text",
         tags: ["safety", "claude-ui"],
+    },
+    {
+        name: "leading noise before ⏺ Bash() — drop noise, keep command",
+        input: "  (use --cached to keep the file, or -f to force removal)\n\n⏺ Bash(git rm -f /tmp/test.ts && echo done)\n  ⎿  rm '/tmp/test.ts'",
+        expected: "git rm -f /tmp/test.ts && echo done",
+        expectedPretty: "git rm -f /tmp/test.ts && echo done",
+        tags: ["safety", "claude-ui", "leading-noise"],
+    },
+    {
+        name: "⏺ Bash() with heredoc commit + leading error + ⎿ result",
+        input: "error: pathspec 'foo' did not match\n\n⏺ Bash(git commit -m \"$(cat <<'EOF'\nfeat: add thing\nEOF\n)\")\n  ⎿  [main abc1234] feat: add thing",
+        expected: "git commit -m \"$(cat <<'EOF'\nfeat: add thing\nEOF\n)\"",
+        expectedPretty: "git commit -m \"$(cat <<'EOF'\nfeat: add thing\nEOF\n)\"",
+        tags: ["safety", "claude-ui", "leading-noise", "heredoc"],
+    },
+    {
+        name: "Bash(sayy with inner quotes)",
+        input: "Bash(sayy 0.5 \"Tool wrappers and safety done\")",
+        expected: "sayy 0.5 \"Tool wrappers and safety done\"",
+        expectedPretty: "sayy 0.5 \"Tool wrappers and safety done\"",
+        tags: ["safety", "tool-wrapper", "quotes"],
     },
 
     // --- Redirect safety ---
