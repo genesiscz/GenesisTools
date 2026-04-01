@@ -182,7 +182,7 @@ export async function interactiveMode(): Promise<void> {
             if (runsInput) {
                 const val = parseInt(runsInput, 10);
 
-                if (!isNaN(val)) {
+                if (!Number.isNaN(val)) {
                     editOpts.runs = val;
                 }
             }
@@ -190,7 +190,7 @@ export async function interactiveMode(): Promise<void> {
             if (warmupInput) {
                 const val = parseInt(warmupInput, 10);
 
-                if (!isNaN(val)) {
+                if (!Number.isNaN(val)) {
                     editOpts.warmup = val;
                 }
             }
