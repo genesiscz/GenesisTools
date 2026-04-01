@@ -22,11 +22,7 @@ function runJxa(script: string, timeout = 15_000): string {
 }
 
 function escapeJxa(str: string): string {
-    return str
-        .replace(/\\/g, "\\\\")
-        .replace(/"/g, '\\"')
-        .replace(/\n/g, "\\n")
-        .replace(/\r/g, "\\r");
+    return str.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r");
 }
 
 export function ensureCalendarExists(name: string): void {
