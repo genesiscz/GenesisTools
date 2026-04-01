@@ -5,25 +5,18 @@
  * and project configuration from any Azure DevOps URL.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { Api, AZURE_DEVOPS_RESOURCE_ID } from "@app/azure-devops/api";
 import { exitWithAuthGuide } from "@app/azure-devops/cli.utils";
-import type { AzureConfig } from "@app/azure-devops/types";
-import { getLocalConfigDir, parseAzureDevOpsUrl } from "@app/azure-devops/utils";
+import { buildAdoConfig, saveAdoConfig } from "@app/azure-devops/lib/ado-configure";
+import { getLocalConfigDir } from "@app/azure-devops/utils";
 import logger from "@app/logger";
 import { SafeJSON } from "@app/utils/json";
 import { $ } from "bun";
 import type { Command } from "commander";
 
-/**
- * Handle the configure command - parse URL, fetch project ID, and save config
- */
 async function handleConfigure(url: string): Promise<void> {
     console.log("🔧 Configuring Azure DevOps CLI...\n");
     logger.debug(`[configure] Starting configuration with URL: ${url}`);
 
-    // Check if logged in
     logger.debug("[configure] Checking Azure CLI login status...");
     try {
         await $`az account show`.quiet();
@@ -33,40 +26,17 @@ async function handleConfigure(url: string): Promise<void> {
         exitWithAuthGuide();
     }
 
-    console.log(`Parsing URL: ${url}\n`);
-    logger.debug("[configure] Parsing Azure DevOps URL...");
+    console.log(`Parsing URL and fetching project ID: ${url}\n`);
 
-    const { org, project } = parseAzureDevOpsUrl(url);
-    logger.debug(`[configure] Parsed org="${org}", project="${project}"`);
+    const newConfig = await buildAdoConfig(url);
+    logger.debug(`[configure] Config built: org="${newConfig.org}", project="${newConfig.project}", projectId="${newConfig.projectId}"`);
 
-    console.log(`  Organization: ${org}`);
-    console.log(`  Project: ${project}`);
+    console.log(`  Organization: ${newConfig.org}`);
+    console.log(`  Project: ${newConfig.project}`);
+    console.log(`  Project ID: ${newConfig.projectId}`);
 
-    console.log("\nFetching project ID from API...");
-    logger.debug("[configure] Fetching project ID via Azure DevOps API...");
-
-    const projectId = await Api.getProjectId(org, project);
-    logger.debug(`[configure] Got projectId="${projectId}"`);
-    console.log(`  Project ID: ${projectId}`);
-
-    const newConfig: AzureConfig = {
-        org,
-        project,
-        projectId,
-        apiResource: AZURE_DEVOPS_RESOURCE_ID,
-    };
-
-    // Save to local config directory (cwd)
     const configDir = getLocalConfigDir();
-    logger.debug(`[configure] Config directory: ${configDir}`);
-    if (!existsSync(configDir)) {
-        logger.debug("[configure] Creating config directory...");
-        mkdirSync(configDir, { recursive: true });
-    }
-
-    const configPath = join(configDir, "config.json");
-    logger.debug(`[configure] Writing config to: ${configPath}`);
-    writeFileSync(configPath, SafeJSON.stringify(newConfig, null, 2));
+    const configPath = saveAdoConfig(newConfig, configDir);
 
     console.log(`\n✅ Configuration saved to: ${configPath}`);
     console.log("\nConfig values:");
@@ -74,15 +44,11 @@ async function handleConfigure(url: string): Promise<void> {
     console.log(SafeJSON.stringify(newConfig, null, 2));
     console.log("```");
 
-    // Configure az devops defaults
     console.log("\nConfiguring az devops defaults...");
-    logger.debug(`[configure] Running: az devops configure --defaults organization=${org} project=${project}`);
     try {
-        await $`az devops configure --defaults organization=${org} project=${project}`.quiet();
-        logger.debug("[configure] az devops defaults configured successfully");
+        await $`az devops configure --defaults organization=${newConfig.org} project=${newConfig.project}`.quiet();
         console.log("✅ az devops defaults configured");
     } catch {
-        logger.debug("[configure] Failed to configure az devops defaults");
         console.log("⚠️  Could not configure az devops defaults");
     }
 
