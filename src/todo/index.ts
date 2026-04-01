@@ -3,6 +3,12 @@
 import { createAddCommand } from "@app/todo/commands/add";
 import { createListCommand } from "@app/todo/commands/list";
 import { createShowCommand } from "@app/todo/commands/show";
+import {
+    createBlockCommand,
+    createCompleteCommand,
+    createReopenCommand,
+    createStartCommand,
+} from "@app/todo/commands/status";
 import { enhanceHelp } from "@app/utils/cli";
 import { Command } from "commander";
 
@@ -13,6 +19,10 @@ program.name("todo").description("Task tracking for AI-assisted development sess
 program.addCommand(createAddCommand());
 program.addCommand(createListCommand());
 program.addCommand(createShowCommand());
+program.addCommand(createStartCommand());
+program.addCommand(createBlockCommand());
+program.addCommand(createCompleteCommand());
+program.addCommand(createReopenCommand());
 
 enhanceHelp(program);
 
