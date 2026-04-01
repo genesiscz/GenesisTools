@@ -26,14 +26,20 @@ export interface PreProcessResult {
     isMultiLine: boolean;
 }
 
-// ─── Bash() wrapper ──────────────────────────────────────────────────────────
+// ─── Tool call wrapper (Bash(), Read(), Edit(), etc.) ────────────────────────
+
+/** Claude Code tool output prefixes that wrap content in ToolName(...) */
+const TOOL_PREFIX_RE = /^(Bash|Read|Edit|Write|Grep|Glob)\(/;
 
 function stripBashWrapper(input: string): { content: string; wasBashWrapper: boolean } {
-    if (!input.startsWith("Bash(")) {
+    const match = input.match(TOOL_PREFIX_RE);
+
+    if (!match) {
         return { content: input, wasBashWrapper: false };
     }
 
-    const inner = input.slice("Bash(".length);
+    const prefix = match[0]; // e.g. "Bash(" or "Read("
+    const inner = input.slice(prefix.length);
     const lastParen = inner.lastIndexOf(")");
 
     if (lastParen === -1) {
