@@ -1,7 +1,7 @@
-import type { Todo, TodoReminder } from "./types";
 import { createCalendarEvent } from "@app/utils/macos/apple-calendar";
 import { createReminder, todoPriorityToApple } from "@app/utils/macos/apple-reminders";
 import type { TodoStore } from "./store";
+import type { Todo, TodoReminder } from "./types";
 
 export type SyncTarget = "calendar" | "reminders" | "both";
 
@@ -33,11 +33,7 @@ function syncTodoToReminders(todo: Todo): string {
  * Sync a todo's reminders to Calendar and/or Reminders.app.
  * Returns the number of items synced.
  */
-export async function syncTodo(options: {
-    store: TodoStore;
-    todo: Todo;
-    target: SyncTarget;
-}): Promise<number> {
+export async function syncTodo(options: { store: TodoStore; todo: Todo; target: SyncTarget }): Promise<number> {
     const { store, todo, target } = options;
     let totalSynced = 0;
 

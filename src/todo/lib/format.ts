@@ -1,7 +1,7 @@
+import { isInteractive } from "@app/utils/cli";
 import { SafeJSON } from "@app/utils/json";
 import { renderMarkdownToCli } from "@app/utils/markdown/index.js";
 import { formatTable } from "@app/utils/table";
-import { isInteractive } from "@app/utils/cli";
 import type { OutputFormat, Todo, TodoLink, TodoReminder } from "./types";
 
 function formatLinkCompact(link: TodoLink): string {
@@ -33,7 +33,7 @@ function formatTodoMarkdown(todo: Todo): string {
     lines.push(`**${todo.id}** | **${todo.priority}** | **${todo.status}**`);
 
     if (todo.tags.length > 0) {
-        lines.push(`Tags: \`${todo.tags.join("\`, \`")}\``);
+        lines.push(`Tags: \`${todo.tags.join("`, `")}\``);
     }
 
     lines.push("");
