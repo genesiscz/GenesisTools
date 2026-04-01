@@ -1,10 +1,44 @@
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { LogEntry, SessionMeta } from "@app/debugging-master/types";
 import { suggestCommand } from "@app/utils/cli/executor";
 import { SafeJSON } from "@app/utils/json";
 import { fuzzyFind } from "@app/utils/string";
 import { ConfigManager } from "./config-manager";
+
+export interface CreateSessionResult {
+    jsonlPath: string;
+    reused?: {
+        lastLogAt: number | null;
+        createdAt: number;
+        totalLogs: number;
+    };
+}
+
+const NEWLINE = 0x0a;
+const COUNT_BUF_SIZE = 16_384;
+
+/** Count newline bytes in a file without reading it into a JS string. */
+function countNewlines(filePath: string, fileSize: number): number {
+    const fd = openSync(filePath, "r");
+    const buf = Buffer.allocUnsafe(Math.min(COUNT_BUF_SIZE, fileSize));
+    let count = 0;
+    let pos = 0;
+
+    while (pos < fileSize) {
+        const bytesRead = readSync(fd, buf, 0, buf.length, pos);
+        for (let i = 0; i < bytesRead; i++) {
+            if (buf[i] === NEWLINE) {
+                count++;
+            }
+        }
+
+        pos += bytesRead;
+    }
+
+    closeSync(fd);
+    return count;
+}
 
 export const ACTIVE_THRESHOLD_MS = 60 * 60 * 1000;
 const TOOL_NAME = "tools debugging-master";
@@ -28,13 +62,29 @@ export class SessionManager {
         return dir;
     }
 
-    async createSession(name: string, projectPath: string, opts?: { serve?: boolean; port?: number }): Promise<string> {
+    async createSession(
+        name: string,
+        projectPath: string,
+        opts?: { serve?: boolean; port?: number }
+    ): Promise<CreateSessionResult> {
         const dir = await this.getSessionsDir();
         const jsonlPath = join(dir, `${name}.jsonl`);
         const metaPath = join(dir, `${name}.meta.json`);
 
         if (existsSync(jsonlPath)) {
-            throw new Error(`Session "${name}" already exists. Use a different name or remove it first.`);
+            const stat = statSync(jsonlPath);
+            const meta = existsSync(metaPath) ? (SafeJSON.parse(await Bun.file(metaPath).text()) as SessionMeta) : null;
+            const totalLogs = stat.size > 0 ? countNewlines(jsonlPath, stat.size) : 0;
+
+            await this.config.setRecentSession(name);
+            return {
+                jsonlPath,
+                reused: {
+                    lastLogAt: stat.size > 0 ? stat.mtimeMs : null,
+                    createdAt: meta?.createdAt ?? stat.birthtimeMs,
+                    totalLogs,
+                },
+            };
         }
 
         const now = Date.now();
@@ -52,7 +102,7 @@ export class SessionManager {
 
         await this.config.setRecentSession(name);
 
-        return jsonlPath;
+        return { jsonlPath };
     }
 
     async resolveSession(sessionFlag?: string): Promise<string> {
