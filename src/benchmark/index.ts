@@ -2,7 +2,7 @@
 
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { formatDuration } from "@app/utils/format";
 import { SafeJSON } from "@app/utils/json";
 import { withCancel } from "@app/utils/prompts/clack/helpers";
@@ -19,21 +19,24 @@ import pc from "picocolors";
 interface BenchmarkCommand {
     label: string;
     cmd: string;
-    prepare?: string; // per-command: runs before each timing run
-    conclude?: string; // per-command: runs after each timing run
-    cleanup?: string; // per-command: runs after all runs for this command
+    prepare?: string;
+    conclude?: string;
+    cleanup?: string;
+    env?: Record<string, string>;
 }
 
 interface BenchmarkSuite {
     name: string;
     commands: BenchmarkCommand[];
     builtIn?: boolean;
-    runs?: number; // --runs (exact count); omit = hyperfine auto-detect
-    warmup?: number; // --warmup (default: 3 if unset)
-    setup?: string; // --setup (once before all timing runs)
-    prepare?: string; // --prepare (before each timing run, all commands)
-    conclude?: string; // --conclude (after each timing run, all commands)
-    cleanup?: string; // --cleanup (after all runs per command)
+    runs?: number;
+    warmup?: number;
+    setup?: string;
+    prepare?: string;
+    conclude?: string;
+    cleanup?: string;
+    cwd?: string;
+    env?: Record<string, string>;
 }
 
 interface HyperfineResult {
@@ -61,12 +64,57 @@ interface SavedResult {
 interface RunOptions {
     compare?: boolean;
     runs?: number;
-    warmup?: number | false; // false when Commander's --no-warmup is used
+    warmup?: number | false;
     noWarmup?: boolean;
     only?: string;
     setup?: string;
     prepare?: string;
+    conclude?: string;
     cleanup?: string;
+    cwd?: string;
+}
+
+interface AddOptions {
+    runs?: number;
+    warmup?: number;
+    setup?: string;
+    prepare?: string;
+    conclude?: string;
+    cleanup?: string;
+    cwd?: string;
+    prepareFor?: string[];
+    concludeFor?: string[];
+    cleanupFor?: string[];
+    env?: string[];
+    envFor?: string[];
+}
+
+interface EditOptions {
+    runs?: number;
+    warmup?: number;
+    setup?: string;
+    prepare?: string;
+    conclude?: string;
+    cleanup?: string;
+    cwd?: string;
+    env?: string[];
+    clearSetup?: boolean;
+    clearPrepare?: boolean;
+    clearConclude?: boolean;
+    clearCleanup?: boolean;
+    clearCwd?: boolean;
+    clearEnv?: boolean;
+    addCmd?: string[];
+    removeCmd?: string[];
+    prepareFor?: string[];
+    concludeFor?: string[];
+    cleanupFor?: string[];
+    envFor?: string[];
+}
+
+interface HistoryOptions {
+    limit?: number;
+    compare?: string;
 }
 
 // ============================================
@@ -111,6 +159,51 @@ async function ensureHyperfine(): Promise<boolean> {
     p.log.error("hyperfine is required but not installed.");
     p.log.info(`Install with: ${pc.bold("brew install hyperfine")}`);
     return false;
+}
+
+// ============================================
+// Helpers
+// ============================================
+
+function collectKeyValue(value: string, prev: string[]): string[] {
+    return [...prev, value];
+}
+
+function parseKeyValuePairs(pairs: string[], flagName: string): Map<string, string> {
+    const map = new Map<string, string>();
+
+    for (const pair of pairs) {
+        const eqIdx = pair.indexOf("=");
+
+        if (eqIdx === -1) {
+            p.log.error(`Invalid ${flagName} format: "${pair}". Expected "label=command".`);
+            process.exit(1);
+        }
+
+        map.set(pair.slice(0, eqIdx), pair.slice(eqIdx + 1));
+    }
+
+    return map;
+}
+
+function shellEscape(s: string): string {
+    if (/^[a-zA-Z0-9_/.:=-]+$/.test(s)) {
+        return s;
+    }
+
+    return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+function buildCommandWithEnv(cmd: BenchmarkCommand, suiteEnv?: Record<string, string>): string {
+    const merged = { ...suiteEnv, ...cmd.env };
+    const envEntries = Object.entries(merged);
+
+    if (envEntries.length === 0) {
+        return cmd.cmd;
+    }
+
+    const prefix = envEntries.map(([k, v]) => `${k}=${shellEscape(v)}`).join(" ");
+    return `${prefix} ${cmd.cmd}`;
 }
 
 // ============================================
@@ -160,8 +253,6 @@ function getResultPath(suiteName: string, label?: string): string {
 async function getLastResult(suiteName: string): Promise<SavedResult | null> {
     ensureResultsDir();
 
-    // Match only full-suite results: {suite}-{YYYY-MM-DD}.json
-    // Exclude --only partial results: {suite}-{label}-{YYYY-MM-DD}.json
     const pattern = new RegExp(`^${suiteName}-\\d{4}-\\d{2}-\\d{2}\\.json$`);
     const files = readdirSync(RESULTS_DIR)
         .filter((f) => pattern.test(f))
@@ -176,6 +267,21 @@ async function getLastResult(suiteName: string): Promise<SavedResult | null> {
     return SafeJSON.parse(content) as SavedResult;
 }
 
+function getAllResults(suiteName: string): string[] {
+    ensureResultsDir();
+
+    const pattern = new RegExp(`^${suiteName}(-[a-zA-Z0-9_-]+)?-\\d{4}-\\d{2}-\\d{2}\\.json$`);
+    return readdirSync(RESULTS_DIR)
+        .filter((f) => pattern.test(f))
+        .sort()
+        .reverse();
+}
+
+async function loadResult(filename: string): Promise<SavedResult> {
+    const content = await Bun.file(join(RESULTS_DIR, filename)).text();
+    return SafeJSON.parse(content) as SavedResult;
+}
+
 // ============================================
 // Run benchmark
 // ============================================
@@ -185,7 +291,6 @@ async function runBenchmark(suite: BenchmarkSuite, opts: RunOptions = {}): Promi
         return null;
     }
 
-    // Filter commands if --only specified
     let commands = suite.commands;
 
     if (opts.only) {
@@ -197,32 +302,25 @@ async function runBenchmark(suite: BenchmarkSuite, opts: RunOptions = {}): Promi
         }
     }
 
-    // Result filename includes label when --only is used to avoid overwriting full-suite results
     const resultPath = getResultPath(suite.name, opts.only);
 
     const args = ["hyperfine"];
 
-    // Warmup: CLI > suite default > 3
-    // Commander's --no-warmup sets opts.warmup to false (boolean negation)
     const warmup = opts.warmup === false || opts.noWarmup ? 0 : (opts.warmup ?? suite.warmup ?? 3);
     args.push("--warmup", String(warmup));
 
-    // Runs: CLI > suite default > omit (let hyperfine auto-detect)
     const runs = opts.runs ?? suite.runs;
 
     if (runs) {
         args.push("--runs", String(runs));
     }
 
-    // Setup: CLI > suite default (runs once before all timing runs)
     const setup = opts.setup ?? suite.setup;
 
     if (setup) {
         args.push("--setup", setup);
     }
 
-    // Prepare: per-command (positional) or suite-level
-    // Hyperfine: N --prepare flags match N commands positionally
     const suitePrepare = opts.prepare ?? suite.prepare;
     const hasPerCmdPrepare = commands.some((c) => c.prepare);
 
@@ -234,8 +332,7 @@ async function runBenchmark(suite: BenchmarkSuite, opts: RunOptions = {}): Promi
         args.push("--prepare", suitePrepare);
     }
 
-    // Conclude: same positional logic as prepare
-    const suiteConclude = suite.conclude;
+    const suiteConclude = opts.conclude ?? suite.conclude;
     const hasPerCmdConclude = commands.some((c) => c.conclude);
 
     if (hasPerCmdConclude) {
@@ -246,7 +343,6 @@ async function runBenchmark(suite: BenchmarkSuite, opts: RunOptions = {}): Promi
         args.push("--conclude", suiteConclude);
     }
 
-    // Cleanup: same positional logic
     const suiteCleanup = opts.cleanup ?? suite.cleanup;
     const hasPerCmdCleanup = commands.some((c) => c.cleanup);
 
@@ -258,15 +354,12 @@ async function runBenchmark(suite: BenchmarkSuite, opts: RunOptions = {}): Promi
         args.push("--cleanup", suiteCleanup);
     }
 
-    // Ignore non-zero exit codes — many benchmark commands fail intentionally
-    // (e.g. tools --help exits 1, tools port 99999 exits 1) but we're measuring timing
     args.push("--ignore-failure");
 
-    // Export + commands
     args.push("--export-json", resultPath);
 
     for (const cmd of commands) {
-        args.push("--command-name", cmd.label, cmd.cmd);
+        args.push("--command-name", cmd.label, buildCommandWithEnv(cmd, suite.env));
     }
 
     p.log.info(`Running benchmark: ${pc.bold(suite.name)}${opts.only ? pc.dim(` (only: ${opts.only})`) : ""}`);
@@ -276,10 +369,25 @@ async function runBenchmark(suite: BenchmarkSuite, opts: RunOptions = {}): Promi
         p.log.step(pc.dim(`  warmup: ${warmup}, runs: ${runs ?? "auto"}`));
     }
 
-    const proc = Bun.spawn(args, {
+    const cwd = opts.cwd ?? suite.cwd;
+    const spawnOpts: Parameters<typeof Bun.spawn>[1] = {
         stdout: "inherit",
         stderr: "inherit",
-    });
+    };
+
+    if (cwd) {
+        const resolved = resolve(cwd);
+
+        if (!existsSync(resolved)) {
+            p.log.error(`Working directory does not exist: ${resolved}`);
+            return null;
+        }
+
+        spawnOpts.cwd = resolved;
+        p.log.step(pc.dim(`  cwd: ${resolved}`));
+    }
+
+    const proc = Bun.spawn(args, spawnOpts);
 
     const exitCode = await proc.exited;
 
@@ -391,18 +499,33 @@ async function cmdAdd(name: string, commandPairs: string[], opts: AddOptions = {
         process.exit(1);
     }
 
-    // Parse --prepare-for pairs into a lookup: label → prepare command
-    const prepareForMap = new Map<string, string>();
+    const prepareForMap = parseKeyValuePairs(opts.prepareFor ?? [], "--prepare-for");
+    const concludeForMap = parseKeyValuePairs(opts.concludeFor ?? [], "--conclude-for");
+    const cleanupForMap = parseKeyValuePairs(opts.cleanupFor ?? [], "--cleanup-for");
 
-    for (const pair of opts.prepareFor ?? []) {
-        const eqIdx = pair.indexOf("=");
+    // Parse per-command env: "label:KEY=val"
+    const envForMap = new Map<string, Record<string, string>>();
 
-        if (eqIdx === -1) {
-            p.log.error(`Invalid --prepare-for format: "${pair}". Expected "label=command".`);
+    for (const entry of opts.envFor ?? []) {
+        const colonIdx = entry.indexOf(":");
+
+        if (colonIdx === -1) {
+            p.log.error(`Invalid --env-for format: "${entry}". Expected "label:KEY=value".`);
             process.exit(1);
         }
 
-        prepareForMap.set(pair.slice(0, eqIdx), pair.slice(eqIdx + 1));
+        const label = entry.slice(0, colonIdx);
+        const rest = entry.slice(colonIdx + 1);
+        const eqIdx = rest.indexOf("=");
+
+        if (eqIdx === -1) {
+            p.log.error(`Invalid --env-for format: "${entry}". Expected "label:KEY=value".`);
+            process.exit(1);
+        }
+
+        const existing = envForMap.get(label) ?? {};
+        existing[rest.slice(0, eqIdx)] = rest.slice(eqIdx + 1);
+        envForMap.set(label, existing);
     }
 
     const commands: BenchmarkCommand[] = [];
@@ -425,6 +548,24 @@ async function cmdAdd(name: string, commandPairs: string[], opts: AddOptions = {
 
         if (perCmdPrepare) {
             cmd.prepare = perCmdPrepare;
+        }
+
+        const perCmdConclude = concludeForMap.get(label);
+
+        if (perCmdConclude) {
+            cmd.conclude = perCmdConclude;
+        }
+
+        const perCmdCleanup = cleanupForMap.get(label);
+
+        if (perCmdCleanup) {
+            cmd.cleanup = perCmdCleanup;
+        }
+
+        const perCmdEnv = envForMap.get(label);
+
+        if (perCmdEnv) {
+            cmd.env = perCmdEnv;
         }
 
         commands.push(cmd);
@@ -453,8 +594,34 @@ async function cmdAdd(name: string, commandPairs: string[], opts: AddOptions = {
         suite.prepare = opts.prepare;
     }
 
+    if (opts.conclude) {
+        suite.conclude = opts.conclude;
+    }
+
     if (opts.cleanup) {
         suite.cleanup = opts.cleanup;
+    }
+
+    if (opts.cwd) {
+        suite.cwd = opts.cwd;
+    }
+
+    // Parse suite-level env
+    const suiteEnv: Record<string, string> = {};
+
+    for (const pair of opts.env ?? []) {
+        const eqIdx = pair.indexOf("=");
+
+        if (eqIdx === -1) {
+            p.log.error(`Invalid --env format: "${pair}". Expected "KEY=value".`);
+            process.exit(1);
+        }
+
+        suiteEnv[pair.slice(0, eqIdx)] = pair.slice(eqIdx + 1);
+    }
+
+    if (Object.keys(suiteEnv).length > 0) {
+        suite.env = suiteEnv;
     }
 
     const custom = await getCustomSuites();
@@ -508,6 +675,348 @@ async function cmdList(): Promise<void> {
     p.note(table, "Benchmark Suites");
 }
 
+async function cmdShow(name: string): Promise<void> {
+    const suite = await findSuite(name);
+
+    if (!suite) {
+        p.log.error(`Suite "${name}" not found. Use ${pc.bold("tools benchmark list")} to see available suites.`);
+        process.exit(1);
+    }
+
+    const lines: string[] = [];
+    lines.push(`${pc.bold("Name:")} ${suite.name}`);
+    lines.push(`${pc.bold("Type:")} ${suite.builtIn ? "built-in" : "custom"}`);
+
+    if (suite.runs) {
+        lines.push(`${pc.bold("Runs:")} ${suite.runs}`);
+    }
+
+    if (suite.warmup !== undefined) {
+        lines.push(`${pc.bold("Warmup:")} ${suite.warmup}`);
+    }
+
+    if (suite.cwd) {
+        lines.push(`${pc.bold("CWD:")} ${suite.cwd}`);
+    }
+
+    if (suite.env) {
+        const envStr = Object.entries(suite.env).map(([k, v]) => `${k}=${v}`).join(" ");
+        lines.push(`${pc.bold("Env:")} ${envStr}`);
+    }
+
+    const hooks: string[] = [];
+
+    if (suite.setup) {
+        hooks.push(`setup: ${pc.dim(suite.setup)}`);
+    }
+
+    if (suite.prepare) {
+        hooks.push(`prepare: ${pc.dim(suite.prepare)}`);
+    }
+
+    if (suite.conclude) {
+        hooks.push(`conclude: ${pc.dim(suite.conclude)}`);
+    }
+
+    if (suite.cleanup) {
+        hooks.push(`cleanup: ${pc.dim(suite.cleanup)}`);
+    }
+
+    if (hooks.length > 0) {
+        lines.push("");
+        lines.push(pc.bold("Suite Hooks:"));
+        for (const h of hooks) {
+            lines.push(`  ${h}`);
+        }
+    }
+
+    lines.push("");
+    lines.push(pc.bold("Commands:"));
+
+    for (const cmd of suite.commands) {
+        lines.push(`  ${pc.cyan(cmd.label)}: ${cmd.cmd}`);
+
+        const cmdHooks: string[] = [];
+
+        if (cmd.prepare) {
+            cmdHooks.push(`prepare: ${cmd.prepare}`);
+        }
+
+        if (cmd.conclude) {
+            cmdHooks.push(`conclude: ${cmd.conclude}`);
+        }
+
+        if (cmd.cleanup) {
+            cmdHooks.push(`cleanup: ${cmd.cleanup}`);
+        }
+
+        if (cmd.env) {
+            const envStr = Object.entries(cmd.env).map(([k, v]) => `${k}=${v}`).join(" ");
+            cmdHooks.push(`env: ${envStr}`);
+        }
+
+        for (const h of cmdHooks) {
+            lines.push(`    ${pc.dim(h)}`);
+        }
+    }
+
+    const lastResult = await getLastResult(suite.name);
+
+    if (lastResult) {
+        lines.push("");
+        lines.push(`${pc.bold("Last run:")} ${lastResult.date.slice(0, 10)}`);
+        for (const r of lastResult.results) {
+            lines.push(`  ${r.command}: ${formatDuration(r.mean * 1000)}`);
+        }
+    }
+
+    p.note(lines.join("\n"), `Suite: ${suite.name}`);
+}
+
+async function cmdEdit(name: string, opts: EditOptions): Promise<void> {
+    if (BUILTIN_SUITES.some((s) => s.name === name)) {
+        p.log.error(`Cannot edit built-in suite "${name}".`);
+        process.exit(1);
+    }
+
+    const custom = await getCustomSuites();
+    const idx = custom.findIndex((s) => s.name === name);
+
+    if (idx === -1) {
+        p.log.error(`Suite "${name}" not found.`);
+        process.exit(1);
+    }
+
+    const suite = custom[idx];
+
+    if (opts.runs !== undefined) {
+        suite.runs = opts.runs;
+    }
+
+    if (opts.warmup !== undefined) {
+        suite.warmup = opts.warmup;
+    }
+
+    if (opts.setup) {
+        suite.setup = opts.setup;
+    }
+
+    if (opts.prepare) {
+        suite.prepare = opts.prepare;
+    }
+
+    if (opts.conclude) {
+        suite.conclude = opts.conclude;
+    }
+
+    if (opts.cleanup) {
+        suite.cleanup = opts.cleanup;
+    }
+
+    if (opts.cwd) {
+        suite.cwd = opts.cwd;
+    }
+
+    if (opts.clearSetup) {
+        delete suite.setup;
+    }
+
+    if (opts.clearPrepare) {
+        delete suite.prepare;
+    }
+
+    if (opts.clearConclude) {
+        delete suite.conclude;
+    }
+
+    if (opts.clearCleanup) {
+        delete suite.cleanup;
+    }
+
+    if (opts.clearCwd) {
+        delete suite.cwd;
+    }
+
+    if (opts.clearEnv) {
+        delete suite.env;
+    }
+
+    if (opts.env && opts.env.length > 0) {
+        const env: Record<string, string> = { ...suite.env };
+
+        for (const pair of opts.env) {
+            const eqIdx = pair.indexOf("=");
+
+            if (eqIdx === -1) {
+                p.log.error(`Invalid --env format: "${pair}". Expected "KEY=value".`);
+                process.exit(1);
+            }
+
+            env[pair.slice(0, eqIdx)] = pair.slice(eqIdx + 1);
+        }
+
+        suite.env = env;
+    }
+
+    for (const pair of opts.addCmd ?? []) {
+        const colonIdx = pair.indexOf(":");
+
+        if (colonIdx === -1) {
+            p.log.error(`Invalid --add-cmd format: "${pair}". Expected "label:command".`);
+            process.exit(1);
+        }
+
+        const label = pair.slice(0, colonIdx);
+        const existingCmd = suite.commands.find((c) => c.label === label);
+
+        if (existingCmd) {
+            existingCmd.cmd = pair.slice(colonIdx + 1);
+        } else {
+            suite.commands.push({ label, cmd: pair.slice(colonIdx + 1) });
+        }
+    }
+
+    for (const label of opts.removeCmd ?? []) {
+        const cmdIdx = suite.commands.findIndex((c) => c.label === label);
+
+        if (cmdIdx === -1) {
+            p.log.warn(`Command "${label}" not found in suite, skipping.`);
+            continue;
+        }
+
+        suite.commands.splice(cmdIdx, 1);
+    }
+
+    if (suite.commands.length < 2) {
+        p.log.error("A suite must have at least 2 commands. Aborting edit.");
+        process.exit(1);
+    }
+
+    const prepareForMap = parseKeyValuePairs(opts.prepareFor ?? [], "--prepare-for");
+    const concludeForMap = parseKeyValuePairs(opts.concludeFor ?? [], "--conclude-for");
+    const cleanupForMap = parseKeyValuePairs(opts.cleanupFor ?? [], "--cleanup-for");
+
+    for (const cmd of suite.commands) {
+        const prep = prepareForMap.get(cmd.label);
+
+        if (prep) {
+            cmd.prepare = prep;
+        }
+
+        const conc = concludeForMap.get(cmd.label);
+
+        if (conc) {
+            cmd.conclude = conc;
+        }
+
+        const clean = cleanupForMap.get(cmd.label);
+
+        if (clean) {
+            cmd.cleanup = clean;
+        }
+    }
+
+    for (const entry of opts.envFor ?? []) {
+        const colonIdx = entry.indexOf(":");
+
+        if (colonIdx === -1) {
+            p.log.error(`Invalid --env-for format: "${entry}". Expected "label:KEY=value".`);
+            process.exit(1);
+        }
+
+        const label = entry.slice(0, colonIdx);
+        const rest = entry.slice(colonIdx + 1);
+        const eqIdx = rest.indexOf("=");
+
+        if (eqIdx === -1) {
+            p.log.error(`Invalid --env-for format: "${entry}". Expected "label:KEY=value".`);
+            process.exit(1);
+        }
+
+        const cmd = suite.commands.find((c) => c.label === label);
+
+        if (!cmd) {
+            p.log.warn(`Command "${label}" not found, skipping env-for.`);
+            continue;
+        }
+
+        cmd.env = { ...cmd.env, [rest.slice(0, eqIdx)]: rest.slice(eqIdx + 1) };
+    }
+
+    custom[idx] = suite;
+    await saveCustomSuites(custom);
+    p.log.success(`Suite "${name}" updated.`);
+}
+
+async function cmdHistory(suiteName: string, opts: HistoryOptions = {}): Promise<void> {
+    const suite = await findSuite(suiteName);
+
+    if (!suite) {
+        p.log.error(`Suite "${suiteName}" not found.`);
+        process.exit(1);
+    }
+
+    const files = getAllResults(suiteName);
+
+    if (files.length === 0) {
+        p.log.info(`No results found for suite "${suiteName}".`);
+        return;
+    }
+
+    if (opts.compare) {
+        const parts = opts.compare.split("..");
+        const dateA = parts[0];
+        const dateB = parts[1];
+
+        const fileA = files.find((f) => f.includes(dateA));
+
+        if (!fileA) {
+            p.log.error(`No result found for date "${dateA}".`);
+            return;
+        }
+
+        const resultA = await loadResult(fileA);
+        let resultB: SavedResult;
+
+        if (dateB) {
+            const fileBMatch = files.find((f) => f.includes(dateB));
+
+            if (!fileBMatch) {
+                p.log.error(`No result found for date "${dateB}".`);
+                return;
+            }
+
+            resultB = await loadResult(fileBMatch);
+        } else {
+            resultB = await loadResult(files[0]);
+        }
+
+        displayComparison(resultB.results, resultA);
+        return;
+    }
+
+    const limit = opts.limit ?? 10;
+    const shown = files.slice(0, limit);
+    const rows: string[][] = [];
+
+    for (const file of shown) {
+        const result = await loadResult(file);
+        const summary = result.results
+            .map((r) => `${r.command}: ${formatDuration(r.mean * 1000)}`)
+            .join(", ");
+        const isPartial = file.replace(`${suiteName}-`, "").split("-").length > 3;
+
+        rows.push([
+            result.date.slice(0, 10),
+            isPartial ? pc.dim("partial") : "full",
+            summary,
+        ]);
+    }
+
+    const table = formatTable(rows, ["Date", "Type", "Results"], {});
+    p.note(table, `History: ${suiteName} (${files.length} total, showing ${shown.length})`);
+}
+
 // ============================================
 // Interactive mode
 // ============================================
@@ -548,10 +1057,15 @@ async function interactiveMode(): Promise<void> {
     const actionOptions: Array<{ value: string; label: string }> = [
         { value: "run", label: "Run benchmark" },
         { value: "compare", label: "Run and compare with last result" },
+        { value: "show", label: "Show suite details" },
+        { value: "history", label: "View result history" },
     ];
 
     if (!suite.builtIn) {
-        actionOptions.push({ value: "delete", label: pc.red("Delete suite") });
+        actionOptions.push(
+            { value: "edit", label: "Edit suite" },
+            { value: "delete", label: pc.red("Delete suite") },
+        );
     }
 
     const action = await withCancel(
@@ -571,6 +1085,151 @@ async function interactiveMode(): Promise<void> {
         }
 
         p.outro(pc.dim("Done."));
+        return;
+    }
+
+    if (action === "show") {
+        await cmdShow(suite.name);
+        p.outro(pc.dim("Done."));
+        return;
+    }
+
+    if (action === "history") {
+        await cmdHistory(suite.name);
+        p.outro(pc.dim("Done."));
+        return;
+    }
+
+    if (action === "edit") {
+        const editChoice = await withCancel(
+            p.select({
+                message: "What to edit?",
+                options: [
+                    { value: "hooks", label: "Suite hooks (setup/prepare/conclude/cleanup)" },
+                    { value: "cwd", label: "Working directory" },
+                    { value: "defaults", label: "Default runs/warmup" },
+                    { value: "commands", label: "Add/remove commands" },
+                ],
+            })
+        );
+
+        if (editChoice === "hooks") {
+            const hookType = await withCancel(
+                p.select({
+                    message: "Which hook?",
+                    options: [
+                        { value: "setup", label: `Setup${suite.setup ? pc.dim(` (current: ${suite.setup})`) : ""}` },
+                        { value: "prepare", label: `Prepare${suite.prepare ? pc.dim(` (current: ${suite.prepare})`) : ""}` },
+                        { value: "conclude", label: `Conclude${suite.conclude ? pc.dim(` (current: ${suite.conclude})`) : ""}` },
+                        { value: "cleanup", label: `Cleanup${suite.cleanup ? pc.dim(` (current: ${suite.cleanup})`) : ""}` },
+                    ],
+                })
+            );
+
+            const hookAction = await withCancel(
+                p.select({
+                    message: "Action?",
+                    options: [
+                        { value: "set", label: "Set new value" },
+                        { value: "clear", label: "Clear (remove)" },
+                    ],
+                })
+            );
+
+            if (hookAction === "set") {
+                const hookKey = hookType as "setup" | "prepare" | "conclude" | "cleanup";
+                const value = await withCancel(
+                    p.text({
+                        message: `Enter ${hookType} command:`,
+                        placeholder: suite[hookKey] ?? "",
+                    })
+                );
+
+                await cmdEdit(suite.name, { [hookKey]: value } as EditOptions);
+            } else {
+                const clearKey = `clear${hookType.charAt(0).toUpperCase()}${hookType.slice(1)}` as keyof EditOptions;
+                await cmdEdit(suite.name, { [clearKey]: true } as EditOptions);
+            }
+        } else if (editChoice === "cwd") {
+            const value = await withCancel(
+                p.text({
+                    message: "Working directory (empty to clear):",
+                    placeholder: suite.cwd ?? "",
+                    defaultValue: "",
+                })
+            );
+
+            if (value) {
+                await cmdEdit(suite.name, { cwd: value });
+            } else {
+                await cmdEdit(suite.name, { clearCwd: true });
+            }
+        } else if (editChoice === "defaults") {
+            const runsInput = await withCancel(
+                p.text({
+                    message: "Default runs (empty for auto):",
+                    placeholder: suite.runs?.toString() ?? "auto",
+                    defaultValue: "",
+                })
+            );
+
+            const warmupInput = await withCancel(
+                p.text({
+                    message: "Default warmup:",
+                    placeholder: suite.warmup?.toString() ?? "3",
+                    defaultValue: "",
+                })
+            );
+
+            const editOpts: EditOptions = {};
+
+            if (runsInput) {
+                editOpts.runs = parseInt(runsInput, 10);
+            }
+
+            if (warmupInput) {
+                editOpts.warmup = parseInt(warmupInput, 10);
+            }
+
+            if (editOpts.runs || editOpts.warmup) {
+                await cmdEdit(suite.name, editOpts);
+            }
+        } else if (editChoice === "commands") {
+            const cmdAction = await withCancel(
+                p.select({
+                    message: "Action?",
+                    options: [
+                        { value: "add", label: "Add a new command" },
+                        { value: "remove", label: "Remove a command" },
+                    ],
+                })
+            );
+
+            if (cmdAction === "add") {
+                const input = await withCancel(
+                    p.text({
+                        message: "New command (label:command):",
+                        placeholder: "my-label:echo hello",
+                    })
+                );
+
+                await cmdEdit(suite.name, { addCmd: [input] });
+            } else {
+                const label = await withCancel(
+                    p.select({
+                        message: "Remove which command?",
+                        options: suite.commands.map((c) => ({
+                            value: c.label,
+                            label: `${c.label} ${pc.dim(`(${c.cmd})`)}`,
+                        })),
+                    })
+                );
+
+                await cmdEdit(suite.name, { removeCmd: [label] });
+            }
+        }
+
+        p.outro(pc.green("Done."));
         return;
     }
 
@@ -633,7 +1292,9 @@ program
     .option("--only <label>", "Run only the command with this label from the suite (results saved separately)")
     .option("--setup <cmd>", "Shell command run once before all timing runs begin")
     .option("--prepare <cmd>", "Shell command run before each timing run (all commands)")
+    .option("--conclude <cmd>", "Shell command run after each timing run (all commands)")
     .option("--cleanup <cmd>", "Shell command run after all runs complete for each command")
+    .option("--cwd <dir>", "Working directory for benchmark commands")
     .action(async (suiteName: string | undefined, opts: RunOptions) => {
         if (suiteName) {
             await cmdRun(suiteName, opts);
@@ -641,19 +1302,6 @@ program
             await interactiveMode();
         }
     });
-
-interface AddOptions {
-    runs?: number;
-    warmup?: number;
-    setup?: string;
-    prepare?: string;
-    cleanup?: string;
-    prepareFor?: string[];
-}
-
-function collectPrepareFor(value: string, prev: string[]): string[] {
-    return [...prev, value];
-}
 
 program
     .command("add")
@@ -664,13 +1312,14 @@ program
     .option("--warmup <n>", "Default warmup count for this suite (default: 3)", (v) => parseInt(v, 10))
     .option("--setup <cmd>", "Setup command run once before all timing runs")
     .option("--prepare <cmd>", "Prepare command run before each timing run (all commands)")
+    .option("--conclude <cmd>", "Conclude command run after each timing run (all commands)")
     .option("--cleanup <cmd>", "Cleanup command run after all runs per command")
-    .option(
-        "--prepare-for <label=cmd>",
-        "Per-command prepare: runs before each timing run for that specific command (repeatable)",
-        collectPrepareFor,
-        []
-    )
+    .option("--cwd <dir>", "Working directory for benchmark commands")
+    .option("--prepare-for <label=cmd>", "Per-command prepare (repeatable)", collectKeyValue, [])
+    .option("--conclude-for <label=cmd>", "Per-command conclude (repeatable)", collectKeyValue, [])
+    .option("--cleanup-for <label=cmd>", "Per-command cleanup (repeatable)", collectKeyValue, [])
+    .option("--env <KEY=val>", "Environment variable for all commands (repeatable)", collectKeyValue, [])
+    .option("--env-for <label:KEY=val>", "Per-command environment variable (repeatable)", collectKeyValue, [])
     .action(async (name: string, commands: string[], opts: AddOptions) => {
         await cmdAdd(name, commands, opts);
     });
@@ -688,6 +1337,52 @@ program
     .description("List all benchmark suites")
     .action(async () => {
         await cmdList();
+    });
+
+program
+    .command("show")
+    .description("Show full details of a benchmark suite")
+    .argument("<name>", "Suite name to inspect")
+    .action(async (name: string) => {
+        await cmdShow(name);
+    });
+
+program
+    .command("edit")
+    .description("Edit an existing custom benchmark suite")
+    .argument("<name>", "Suite name to edit")
+    .option("--runs <n>", "Update default run count", (v) => parseInt(v, 10))
+    .option("--warmup <n>", "Update default warmup count", (v) => parseInt(v, 10))
+    .option("--setup <cmd>", "Update setup command")
+    .option("--prepare <cmd>", "Update prepare command")
+    .option("--conclude <cmd>", "Update conclude command")
+    .option("--cleanup <cmd>", "Update cleanup command")
+    .option("--cwd <dir>", "Update working directory")
+    .option("--env <KEY=val>", "Add/update suite-level env var (repeatable)", collectKeyValue, [])
+    .option("--clear-setup", "Remove the setup command")
+    .option("--clear-prepare", "Remove the suite-level prepare command")
+    .option("--clear-conclude", "Remove the suite-level conclude command")
+    .option("--clear-cleanup", "Remove the suite-level cleanup command")
+    .option("--clear-cwd", "Remove the working directory")
+    .option("--clear-env", "Remove all suite-level env vars")
+    .option("--add-cmd <label:cmd>", "Add or replace a command (repeatable)", collectKeyValue, [])
+    .option("--remove-cmd <label>", "Remove a command by label (repeatable)", collectKeyValue, [])
+    .option("--prepare-for <label=cmd>", "Set per-command prepare (repeatable)", collectKeyValue, [])
+    .option("--conclude-for <label=cmd>", "Set per-command conclude (repeatable)", collectKeyValue, [])
+    .option("--cleanup-for <label=cmd>", "Set per-command cleanup (repeatable)", collectKeyValue, [])
+    .option("--env-for <label:KEY=val>", "Set per-command env var (repeatable)", collectKeyValue, [])
+    .action(async (name: string, opts: EditOptions) => {
+        await cmdEdit(name, opts);
+    });
+
+program
+    .command("history")
+    .description("Browse past benchmark results for a suite")
+    .argument("<suite>", "Suite name")
+    .option("--limit <n>", "Number of results to show (default: 10)", (v) => parseInt(v, 10))
+    .option("--compare <dates>", 'Compare two dates: "YYYY-MM-DD..YYYY-MM-DD" or "YYYY-MM-DD" (vs latest)')
+    .action(async (suite: string, opts: HistoryOptions) => {
+        await cmdHistory(suite, opts);
     });
 
 async function main(): Promise<void> {
