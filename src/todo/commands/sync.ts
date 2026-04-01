@@ -32,11 +32,7 @@ function syncTodoToReminders(todo: Todo): string {
     });
 }
 
-async function syncSingleTodo(options: {
-    store: TodoStore;
-    todo: Todo;
-    target: SyncTarget;
-}): Promise<number> {
+async function syncSingleTodo(options: { store: TodoStore; todo: Todo; target: SyncTarget }): Promise<number> {
     const { store, todo, target } = options;
     let syncCount = 0;
 

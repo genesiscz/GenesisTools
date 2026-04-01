@@ -6,13 +6,13 @@ import { createListCommand } from "@app/todo/commands/list";
 import { createRemoveCommand } from "@app/todo/commands/remove";
 import { createSearchCommand } from "@app/todo/commands/search";
 import { createShowCommand } from "@app/todo/commands/show";
-import { createSyncCommand } from "@app/todo/commands/sync";
 import {
     createBlockCommand,
     createCompleteCommand,
     createReopenCommand,
     createStartCommand,
 } from "@app/todo/commands/status";
+import { createSyncCommand } from "@app/todo/commands/sync";
 import { enhanceHelp } from "@app/utils/cli";
 import { Command } from "commander";
 

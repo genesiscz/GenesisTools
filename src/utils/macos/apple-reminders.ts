@@ -79,10 +79,7 @@ reminder.id();
     return runJxa(script, 30_000);
 }
 
-export function completeReminder(options: {
-    reminderId: string;
-    listName?: string;
-}): boolean {
+export function completeReminder(options: { reminderId: string; listName?: string }): boolean {
     ensureMacOS();
 
     const listName = options.listName ?? "GenesisTools";
@@ -110,10 +107,7 @@ if (lists.length === 0) {
     return result === "true";
 }
 
-export function deleteReminder(options: {
-    reminderId: string;
-    listName?: string;
-}): boolean {
+export function deleteReminder(options: { reminderId: string; listName?: string }): boolean {
     ensureMacOS();
 
     const listName = options.listName ?? "GenesisTools";
