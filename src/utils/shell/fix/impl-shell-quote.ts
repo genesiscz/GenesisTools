@@ -12,7 +12,11 @@
  * Multi-line scripts are returned as-is after pre-processing.
  */
 
-import { preProcess } from "./preprocess.js";
+import { preProcess, prettifyCommand } from "./preprocess.js";
+
+export interface FixOptions {
+    prettify?: boolean;
+}
 
 // shell-quote has no bundled types; declare the minimal interface we need.
 type ShellToken = string | { op: string };
@@ -67,7 +71,7 @@ function reconstruct(preprocessed: string, tokens: ShellToken[]): string {
  *
  * Never throws — falls back to pre-processed string on parse errors.
  */
-export function fixShellCommand(input: string): string {
+export function fixShellCommand(input: string, options?: FixOptions): string {
     try {
         const { text, isMultiLine } = preProcess(input);
 
@@ -84,9 +88,10 @@ export function fixShellCommand(input: string): string {
             // Use shell-quote's parse() as a validation step.
             // If it throws (e.g. unmatched quote), fall back to pre-processed.
             const tokens = shellQuote.parse(text);
-            return reconstruct(text, tokens);
+            const result = reconstruct(text, tokens);
+            return options?.prettify ? prettifyCommand(result) : result;
         } catch {
-            return text;
+            return options?.prettify ? prettifyCommand(text) : text;
         }
     } catch {
         return input.replace(/\r/g, "").trim();

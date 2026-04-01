@@ -373,3 +373,22 @@ export function preProcess(raw: string): PreProcessResult {
 
     return { text: s, wasBashWrapper, isMultiLine: false };
 }
+
+// ─── Prettify (re-split at --long-flags) ────────────────────────────────────
+
+/**
+ * Re-split a single-line command at each `--long-flag`, adding `\` continuations.
+ * Short flags (`-r`, `-rf`, `-c`) stay inline.
+ * Multi-line strings and commands without `--` flags are returned unchanged.
+ */
+export function prettifyCommand(s: string): string {
+    if (s.includes("\n")) {
+        return s;
+    }
+
+    if (!/ --[a-zA-Z]/.test(s)) {
+        return s;
+    }
+
+    return s.replace(/ (--)(?=[a-zA-Z])/g, " \\\n  $1");
+}

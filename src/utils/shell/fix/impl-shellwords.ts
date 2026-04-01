@@ -12,14 +12,18 @@
  */
 
 import { split } from "shellwords";
-import { preProcess } from "./preprocess.js";
+import { preProcess, prettifyCommand } from "./preprocess.js";
+
+export interface FixOptions {
+    prettify?: boolean;
+}
 
 /**
  * Fix a broken shell command string.
  *
  * Never throws — returns best-effort result on any error.
  */
-export function fixShellCommand(input: string): string {
+export function fixShellCommand(input: string, options?: FixOptions): string {
     try {
         const { text, isMultiLine } = preProcess(input);
 
@@ -40,7 +44,7 @@ export function fixShellCommand(input: string): string {
             // Parse error — still return the pre-processed string as best effort
         }
 
-        return text;
+        return options?.prettify ? prettifyCommand(text) : text;
     } catch {
         return input.replace(/\r/g, "").trim();
     }

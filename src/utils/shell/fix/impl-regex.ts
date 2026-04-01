@@ -4,16 +4,21 @@
  * Delegates entirely to the shared pre-processing pipeline.
  */
 
-import { preProcess } from "./preprocess.js";
+import { preProcess, prettifyCommand } from "./preprocess.js";
+
+export interface FixOptions {
+    prettify?: boolean;
+}
 
 /**
  * Fix a broken shell command string using regex/string manipulation only.
  *
  * Never throws — returns best-effort result on any error.
  */
-export function fixShellCommand(input: string): string {
+export function fixShellCommand(input: string, options?: FixOptions): string {
     try {
-        return preProcess(input).text;
+        const result = preProcess(input).text;
+        return options?.prettify ? prettifyCommand(result) : result;
     } catch {
         return input.replace(/\r/g, "").trim();
     }

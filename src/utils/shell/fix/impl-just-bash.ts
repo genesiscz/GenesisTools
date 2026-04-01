@@ -20,14 +20,18 @@
 
 import type { ScriptNode } from "just-bash";
 import { parse, serialize } from "just-bash";
-import { preProcess } from "./preprocess.js";
+import { preProcess, prettifyCommand } from "./preprocess.js";
+
+export interface FixOptions {
+    prettify?: boolean;
+}
 
 /**
  * Fix a broken shell command string.
  *
  * Never throws — falls back to pre-processed string on parse/serialize errors.
  */
-export function fixShellCommand(input: string): string {
+export function fixShellCommand(input: string, options?: FixOptions): string {
     try {
         const { text, isMultiLine } = preProcess(input);
 
@@ -50,7 +54,7 @@ export function fixShellCommand(input: string): string {
             // parse/serialize failure — pre-processed string is still the best result
         }
 
-        return text;
+        return options?.prettify ? prettifyCommand(text) : text;
     } catch {
         return input.replace(/\r/g, "").trim();
     }
