@@ -2,6 +2,7 @@
 
 import { createAddCommand } from "@app/todo/commands/add";
 import { createEditCommand } from "@app/todo/commands/edit";
+import { createExportCommand, createImportCommand } from "@app/todo/commands/import-export";
 import { createListCommand } from "@app/todo/commands/list";
 import { createRemoveCommand } from "@app/todo/commands/remove";
 import { createSearchCommand } from "@app/todo/commands/search";
@@ -31,6 +32,8 @@ program.addCommand(createEditCommand());
 program.addCommand(createRemoveCommand());
 program.addCommand(createSearchCommand());
 program.addCommand(createSyncCommand());
+program.addCommand(createExportCommand());
+program.addCommand(createImportCommand());
 
 enhanceHelp(program);
 

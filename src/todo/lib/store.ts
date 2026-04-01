@@ -218,6 +218,14 @@ export class TodoStore {
         return applyFilters(todos, { search: query });
     }
 
+    async bulkImport(incoming: Todo[]): Promise<number> {
+        const todos = await this.readTodos();
+        todos.push(...incoming);
+        await this.writeTodos(todos);
+        await this.writeMeta(todos);
+        return incoming.length;
+    }
+
     static async listAllProjects(storageRoot?: string): Promise<ProjectMeta[]> {
         const root = storageRoot ?? defaultStorageRoot();
         const projectsDir = join(root, "projects");
