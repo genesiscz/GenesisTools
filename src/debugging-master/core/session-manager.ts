@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { LogEntry, SessionMeta } from "@app/debugging-master/types";
 import { suggestCommand } from "@app/utils/cli/executor";
@@ -13,6 +13,31 @@ export interface CreateSessionResult {
         createdAt: number;
         totalLogs: number;
     };
+}
+
+const NEWLINE = 0x0a;
+const COUNT_BUF_SIZE = 16_384;
+
+/** Count newline bytes in a file without reading it into a JS string. */
+function countNewlines(filePath: string, fileSize: number): number {
+    const fd = openSync(filePath, "r");
+    const buf = Buffer.allocUnsafe(Math.min(COUNT_BUF_SIZE, fileSize));
+    let count = 0;
+    let pos = 0;
+
+    while (pos < fileSize) {
+        const bytesRead = readSync(fd, buf, 0, buf.length, pos);
+        for (let i = 0; i < bytesRead; i++) {
+            if (buf[i] === NEWLINE) {
+                count++;
+            }
+        }
+
+        pos += bytesRead;
+    }
+
+    closeSync(fd);
+    return count;
 }
 
 export const ACTIVE_THRESHOLD_MS = 60 * 60 * 1000;
@@ -49,15 +74,14 @@ export class SessionManager {
         if (existsSync(jsonlPath)) {
             const stat = statSync(jsonlPath);
             const meta = existsSync(metaPath) ? (SafeJSON.parse(await Bun.file(metaPath).text()) as SessionMeta) : null;
-            const content = stat.size > 0 ? readFileSync(jsonlPath, "utf-8") : "";
-            const totalLogs = content ? content.trimEnd().split("\n").length : 0;
+            const totalLogs = stat.size > 0 ? countNewlines(jsonlPath, stat.size) : 0;
 
             await this.config.setRecentSession(name);
             return {
                 jsonlPath,
                 reused: {
                     lastLogAt: stat.size > 0 ? stat.mtimeMs : null,
-                    createdAt: meta?.createdAt ?? stat.mtimeMs,
+                    createdAt: meta?.createdAt ?? stat.birthtimeMs,
                     totalLogs,
                 },
             };

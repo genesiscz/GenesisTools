@@ -179,7 +179,7 @@ export function registerStartCommand(program: Command): void {
             // --- Optionally start HTTP server ---
             if (opts.serve) {
                 let actualPort: number;
-                let reused = false;
+                let serverReused = false;
 
                 try {
                     ({ port: actualPort } = startServer(port));
@@ -191,7 +191,7 @@ export function registerStartCommand(program: Command): void {
 
                         if (res.ok && body.status === "ok") {
                             actualPort = port;
-                            reused = true;
+                            serverReused = true;
                         } else {
                             console.error(`Port ${port} is in use by another process`);
                             process.exit(1);
@@ -202,7 +202,7 @@ export function registerStartCommand(program: Command): void {
                     }
                 }
 
-                if (reused) {
+                if (serverReused) {
                     console.log(pc.green(`Reusing HTTP server on port ${actualPort}`));
                 } else {
                     console.log(pc.green(`HTTP server listening on port ${actualPort}`));
@@ -213,7 +213,7 @@ export function registerStartCommand(program: Command): void {
                 console.log(pc.dim(`GET  http://${lanIp}:${actualPort}/health`));
                 console.log("");
 
-                if (!reused) {
+                if (!serverReused) {
                     // Keep process alive only if we own the server
                     await new Promise(() => {});
                 }
