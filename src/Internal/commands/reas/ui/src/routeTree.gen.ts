@@ -14,6 +14,10 @@ import { Route as HistoryRouteImport } from './routes/history'
 import { Route as CompareRouteImport } from './routes/compare'
 import { Route as AnalyzeRouteImport } from './routes/analyze'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiPropertiesRouteImport } from './routes/api/properties'
+import { Route as ApiHistoryRouteImport } from './routes/api/history'
+import { Route as ApiDistrictsRouteImport } from './routes/api/districts'
+import { Route as ApiAnalysisRouteImport } from './routes/api/analysis'
 
 const WatchlistRoute = WatchlistRouteImport.update({
   id: '/watchlist',
@@ -40,6 +44,26 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPropertiesRoute = ApiPropertiesRouteImport.update({
+  id: '/api/properties',
+  path: '/api/properties',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHistoryRoute = ApiHistoryRouteImport.update({
+  id: '/api/history',
+  path: '/api/history',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDistrictsRoute = ApiDistrictsRouteImport.update({
+  id: '/api/districts',
+  path: '/api/districts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAnalysisRoute = ApiAnalysisRouteImport.update({
+  id: '/api/analysis',
+  path: '/api/analysis',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -47,6 +71,10 @@ export interface FileRoutesByFullPath {
   '/compare': typeof CompareRoute
   '/history': typeof HistoryRoute
   '/watchlist': typeof WatchlistRoute
+  '/api/analysis': typeof ApiAnalysisRoute
+  '/api/districts': typeof ApiDistrictsRoute
+  '/api/history': typeof ApiHistoryRoute
+  '/api/properties': typeof ApiPropertiesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -54,6 +82,10 @@ export interface FileRoutesByTo {
   '/compare': typeof CompareRoute
   '/history': typeof HistoryRoute
   '/watchlist': typeof WatchlistRoute
+  '/api/analysis': typeof ApiAnalysisRoute
+  '/api/districts': typeof ApiDistrictsRoute
+  '/api/history': typeof ApiHistoryRoute
+  '/api/properties': typeof ApiPropertiesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -62,13 +94,45 @@ export interface FileRoutesById {
   '/compare': typeof CompareRoute
   '/history': typeof HistoryRoute
   '/watchlist': typeof WatchlistRoute
+  '/api/analysis': typeof ApiAnalysisRoute
+  '/api/districts': typeof ApiDistrictsRoute
+  '/api/history': typeof ApiHistoryRoute
+  '/api/properties': typeof ApiPropertiesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/analyze' | '/compare' | '/history' | '/watchlist'
+  fullPaths:
+    | '/'
+    | '/analyze'
+    | '/compare'
+    | '/history'
+    | '/watchlist'
+    | '/api/analysis'
+    | '/api/districts'
+    | '/api/history'
+    | '/api/properties'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/analyze' | '/compare' | '/history' | '/watchlist'
-  id: '__root__' | '/' | '/analyze' | '/compare' | '/history' | '/watchlist'
+  to:
+    | '/'
+    | '/analyze'
+    | '/compare'
+    | '/history'
+    | '/watchlist'
+    | '/api/analysis'
+    | '/api/districts'
+    | '/api/history'
+    | '/api/properties'
+  id:
+    | '__root__'
+    | '/'
+    | '/analyze'
+    | '/compare'
+    | '/history'
+    | '/watchlist'
+    | '/api/analysis'
+    | '/api/districts'
+    | '/api/history'
+    | '/api/properties'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -77,6 +141,10 @@ export interface RootRouteChildren {
   CompareRoute: typeof CompareRoute
   HistoryRoute: typeof HistoryRoute
   WatchlistRoute: typeof WatchlistRoute
+  ApiAnalysisRoute: typeof ApiAnalysisRoute
+  ApiDistrictsRoute: typeof ApiDistrictsRoute
+  ApiHistoryRoute: typeof ApiHistoryRoute
+  ApiPropertiesRoute: typeof ApiPropertiesRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -116,6 +184,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/properties': {
+      id: '/api/properties'
+      path: '/api/properties'
+      fullPath: '/api/properties'
+      preLoaderRoute: typeof ApiPropertiesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/history': {
+      id: '/api/history'
+      path: '/api/history'
+      fullPath: '/api/history'
+      preLoaderRoute: typeof ApiHistoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/districts': {
+      id: '/api/districts'
+      path: '/api/districts'
+      fullPath: '/api/districts'
+      preLoaderRoute: typeof ApiDistrictsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/analysis': {
+      id: '/api/analysis'
+      path: '/api/analysis'
+      fullPath: '/api/analysis'
+      preLoaderRoute: typeof ApiAnalysisRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -125,6 +221,10 @@ const rootRouteChildren: RootRouteChildren = {
   CompareRoute: CompareRoute,
   HistoryRoute: HistoryRoute,
   WatchlistRoute: WatchlistRoute,
+  ApiAnalysisRoute: ApiAnalysisRoute,
+  ApiDistrictsRoute: ApiDistrictsRoute,
+  ApiHistoryRoute: ApiHistoryRoute,
+  ApiPropertiesRoute: ApiPropertiesRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
