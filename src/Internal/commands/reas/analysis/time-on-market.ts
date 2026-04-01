@@ -1,5 +1,5 @@
-import type { ReasListing } from "@app/Internal/commands/reas/types";
 import { median as computeMedian } from "@app/Internal/commands/reas/analysis/comparables";
+import type { ReasListing } from "@app/Internal/commands/reas/types";
 
 export interface TimeOnMarketResult {
     median: number;

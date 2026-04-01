@@ -1,9 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
 import {
     getAllDistrictNames,
     getPrahaDistrictNames,
     searchDistricts,
 } from "@app/Internal/commands/reas/data/districts";
+import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler } from "../../server/api-utils";
 
 export const Route = createFileRoute("/api/districts")({

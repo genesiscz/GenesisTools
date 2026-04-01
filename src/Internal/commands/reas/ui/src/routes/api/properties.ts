@@ -1,6 +1,5 @@
 import { fetchAndAnalyze } from "@app/Internal/commands/reas/lib/analysis-service";
 import { buildConfig, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
-import type { SavePropertyInput } from "@app/Internal/commands/reas/lib/store";
 import { reasDatabase } from "@app/Internal/commands/reas/lib/store";
 import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler, jsonBody } from "../../server/api-utils";
@@ -20,9 +19,11 @@ export const Route = createFileRoute("/api/properties")({
                     return body;
                 }
 
-                const input = body as unknown as SavePropertyInput;
+                const name = body.name as string | undefined;
+                const district = body.district as string | undefined;
+                const constructionType = body.constructionType as string | undefined;
 
-                if (!input.name || !input.district || !input.constructionType) {
+                if (!name || !district || !constructionType) {
                     return Response.json(
                         { error: "Missing required fields: name, district, constructionType" },
                         { status: 400 }
@@ -30,17 +31,17 @@ export const Route = createFileRoute("/api/properties")({
                 }
 
                 const id = reasDatabase.saveProperty({
-                    name: input.name,
-                    district: input.district,
-                    constructionType: input.constructionType,
-                    disposition: input.disposition,
-                    targetPrice: Number(input.targetPrice) || 0,
-                    targetArea: Number(input.targetArea) || 0,
-                    monthlyRent: Number(input.monthlyRent) || 0,
-                    monthlyCosts: Number(input.monthlyCosts) || 0,
-                    periods: input.periods,
-                    providers: input.providers,
-                    notes: input.notes,
+                    name,
+                    district,
+                    constructionType,
+                    disposition: body.disposition as string | undefined,
+                    targetPrice: Number(body.targetPrice) || 0,
+                    targetArea: Number(body.targetArea) || 0,
+                    monthlyRent: Number(body.monthlyRent) || 0,
+                    monthlyCosts: Number(body.monthlyCosts) || 0,
+                    periods: body.periods as string | undefined,
+                    providers: body.providers as string | undefined,
+                    notes: body.notes as string | undefined,
                 });
 
                 return Response.json({ id }, { status: 201 });

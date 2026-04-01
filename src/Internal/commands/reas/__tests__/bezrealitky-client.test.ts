@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mapBezrealitkyDisposition, parseBezrealitkyNextData } from "@app/Internal/commands/reas/api/bezrealitky-client";
+import {
+    mapBezrealitkyDisposition,
+    parseBezrealitkyNextData,
+} from "@app/Internal/commands/reas/api/bezrealitky-client";
 
 describe("mapBezrealitkyDisposition", () => {
     test("maps DISP_3_KK to 3+kk", () => {

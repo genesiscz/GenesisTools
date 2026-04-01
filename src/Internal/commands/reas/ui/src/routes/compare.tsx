@@ -1,4 +1,5 @@
 import type { DashboardExport } from "@app/Internal/commands/reas/lib/api-export";
+import { DISPOSITIONS, PROPERTY_TYPES } from "@app/Internal/commands/reas/lib/config-builder";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
@@ -15,24 +16,6 @@ import { ComparisonGrid } from "../components/compare/ComparisonGrid";
 export const Route = createFileRoute("/compare")({
     component: ComparePage,
 });
-
-const PROPERTY_TYPES = [
-    { value: "panel", label: "Panel" },
-    { value: "brick", label: "Brick" },
-    { value: "house", label: "House" },
-];
-
-const DISPOSITIONS = [
-    { value: "all", label: "All" },
-    { value: "1+1", label: "1+1" },
-    { value: "1+kk", label: "1+kk" },
-    { value: "2+1", label: "2+1" },
-    { value: "2+kk", label: "2+kk" },
-    { value: "3+1", label: "3+1" },
-    { value: "3+kk", label: "3+kk" },
-    { value: "4+1", label: "4+1" },
-    { value: "4+kk", label: "4+kk" },
-];
 
 interface DistrictsResponse {
     districts: string[];
@@ -325,7 +308,10 @@ function ComparePage() {
                                     </select>
                                 </label>
                                 <div>
-                                    <label htmlFor="compare-price" className="block text-[10px] font-mono text-gray-500 mb-1">
+                                    <label
+                                        htmlFor="compare-price"
+                                        className="block text-[10px] font-mono text-gray-500 mb-1"
+                                    >
                                         Price (CZK)
                                     </label>
                                     <Input
@@ -337,7 +323,10 @@ function ComparePage() {
                                     />
                                 </div>
                                 <div>
-                                    <label htmlFor="compare-area" className="block text-[10px] font-mono text-gray-500 mb-1">
+                                    <label
+                                        htmlFor="compare-area"
+                                        className="block text-[10px] font-mono text-gray-500 mb-1"
+                                    >
                                         Area (m2)
                                     </label>
                                     <Input

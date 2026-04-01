@@ -50,7 +50,7 @@ export async function startServer(port = DEFAULT_PORT): Promise<void> {
                 }
 
                 const disposition = url.searchParams.get("disposition") ?? undefined;
-                const periods = url.searchParams.get("periods") ?? "2025";
+                const periods = url.searchParams.get("periods") ?? String(new Date().getFullYear());
                 const price = url.searchParams.get("price") ?? "0";
                 const area = url.searchParams.get("area") ?? "0";
                 const rent = url.searchParams.get("rent") ?? "0";

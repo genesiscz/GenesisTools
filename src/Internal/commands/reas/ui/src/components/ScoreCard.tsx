@@ -46,7 +46,7 @@ const RECOMMENDATION_LABELS: Record<Recommendation, string> = {
     "strong-avoid": "Strong Avoid",
 };
 
-function computeScore(data: DashboardExport): ScoreResult {
+export function computeScore(data: DashboardExport): ScoreResult {
     let score = 50;
     const reasoning: string[] = [];
 

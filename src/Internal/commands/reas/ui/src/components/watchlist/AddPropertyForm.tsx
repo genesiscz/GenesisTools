@@ -1,3 +1,4 @@
+import { DISPOSITIONS, PROPERTY_TYPES } from "@app/Internal/commands/reas/lib/config-builder";
 import type { SavePropertyInput } from "@app/Internal/commands/reas/lib/store";
 import { Button } from "@ui/components/button";
 import {
@@ -13,24 +14,6 @@ import { Input } from "@ui/components/input";
 import { Loader2, Plus } from "lucide-react";
 import { useCallback, useState } from "react";
 
-const PROPERTY_TYPES = [
-    { value: "panel", label: "Panel" },
-    { value: "brick", label: "Brick" },
-    { value: "house", label: "House" },
-];
-
-const DISPOSITIONS = [
-    { value: "", label: "All" },
-    { value: "1+1", label: "1+1" },
-    { value: "1+kk", label: "1+kk" },
-    { value: "2+1", label: "2+1" },
-    { value: "2+kk", label: "2+kk" },
-    { value: "3+1", label: "3+1" },
-    { value: "3+kk", label: "3+kk" },
-    { value: "4+1", label: "4+1" },
-    { value: "4+kk", label: "4+kk" },
-];
-
 interface AddPropertyFormProps {
     districts: string[];
     onAdd: (input: SavePropertyInput) => Promise<void>;
@@ -42,7 +25,7 @@ export function AddPropertyForm({ districts, onAdd }: AddPropertyFormProps) {
     const [name, setName] = useState("");
     const [district, setDistrict] = useState("");
     const [constructionType, setConstructionType] = useState("brick");
-    const [disposition, setDisposition] = useState("");
+    const [disposition, setDisposition] = useState("all");
     const [targetPrice, setTargetPrice] = useState("");
     const [targetArea, setTargetArea] = useState("");
     const [monthlyRent, setMonthlyRent] = useState("");
@@ -53,7 +36,7 @@ export function AddPropertyForm({ districts, onAdd }: AddPropertyFormProps) {
         setName("");
         setDistrict("");
         setConstructionType("brick");
-        setDisposition("");
+        setDisposition("all");
         setTargetPrice("");
         setTargetArea("");
         setMonthlyRent("");
@@ -75,7 +58,7 @@ export function AddPropertyForm({ districts, onAdd }: AddPropertyFormProps) {
                 name: name.trim(),
                 district,
                 constructionType,
-                disposition: disposition || undefined,
+                disposition: disposition && disposition !== "all" ? disposition : undefined,
                 targetPrice: Number(targetPrice) || 0,
                 targetArea: Number(targetArea) || 0,
                 monthlyRent: Number(monthlyRent) || 0,
@@ -189,7 +172,7 @@ export function AddPropertyForm({ districts, onAdd }: AddPropertyFormProps) {
                                 className="w-full h-8 rounded bg-black/20 border border-white/10 text-xs font-mono text-gray-300 px-2"
                             >
                                 {DISPOSITIONS.map((d) => (
-                                    <option key={d.value || "all"} value={d.value}>
+                                    <option key={d.value} value={d.value}>
                                         {d.label}
                                     </option>
                                 ))}

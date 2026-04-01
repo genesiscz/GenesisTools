@@ -1,8 +1,8 @@
+import type { InvestmentScore } from "@app/Internal/commands/reas/analysis/investment-score";
+import type { MarketMomentum } from "@app/Internal/commands/reas/analysis/market-momentum";
 import type { FullAnalysis } from "@app/Internal/commands/reas/types";
 import { formatTable } from "@app/utils/table";
 import pc from "picocolors";
-import type { InvestmentScore } from "@app/Internal/commands/reas/analysis/investment-score";
-import type { MarketMomentum } from "@app/Internal/commands/reas/analysis/market-momentum";
 
 const SEPARATOR_WIDTH = 72;
 

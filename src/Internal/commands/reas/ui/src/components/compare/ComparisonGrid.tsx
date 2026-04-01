@@ -3,6 +3,7 @@ import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
 import { ArrowDown, ArrowRight, ArrowUp, BarChart3, Calendar, Percent, ShieldCheck, TrendingUp } from "lucide-react";
+import { computeScore } from "../ScoreCard";
 import { ComparisonMetric } from "./ComparisonMetric";
 
 interface DistrictResult {
@@ -23,30 +24,6 @@ const GRADE_COLORS: Record<string, string> = {
     D: "text-orange-400 border-orange-500/30 bg-orange-500/10",
     F: "text-red-400 border-red-500/30 bg-red-500/10",
 };
-
-function getGradeFromScore(score: number | undefined): string {
-    if (score === undefined) {
-        return "?";
-    }
-
-    if (score >= 80) {
-        return "A";
-    }
-
-    if (score >= 60) {
-        return "B";
-    }
-
-    if (score >= 40) {
-        return "C";
-    }
-
-    if (score >= 20) {
-        return "D";
-    }
-
-    return "F";
-}
 
 function formatCzk(value: number | null | undefined): string {
     if (value === null || value === undefined) {
@@ -177,8 +154,12 @@ export function ComparisonGrid({ results }: ComparisonGridProps) {
     }
 
     const scores = loadedResults.map((r) => {
-        const score = r.data?.analysis.comparables.median;
-        return score !== undefined ? getGradeFromScore(score) : null;
+        if (!r.data) {
+            return null;
+        }
+
+        const { grade } = computeScore(r.data);
+        return grade;
     });
 
     const medians = loadedResults.map((r) => r.data?.analysis.comparables.median ?? null);

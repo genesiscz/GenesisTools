@@ -1,25 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { fetchAndAnalyze } from "@app/Internal/commands/reas/lib/analysis-service";
 import { buildDashboardExport } from "@app/Internal/commands/reas/lib/api-export";
 import { buildConfig, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
+import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler, jsonBody } from "../../server/api-utils";
-
-interface AnalysisRequest {
-    district: string;
-    type: string;
-    price: string;
-    area: string;
-    disposition?: string;
-    periods?: string;
-    rent?: string;
-    monthlyCosts?: string;
-    priceMin?: string;
-    priceMax?: string;
-    areaMin?: string;
-    areaMax?: string;
-    providers?: string;
-    refresh?: boolean;
-}
 
 export const Route = createFileRoute("/api/analysis")({
     server: {
@@ -31,34 +14,38 @@ export const Route = createFileRoute("/api/analysis")({
                     return body;
                 }
 
-                const params = body as unknown as AnalysisRequest;
+                const districtName = body.district as string | undefined;
+                const type = body.type as string | undefined;
+                const price = body.price as string | undefined;
+                const area = body.area as string | undefined;
 
-                if (!params.district || !params.type || !params.price || !params.area) {
+                if (!districtName || !type || !price || !area) {
                     return Response.json(
                         { error: "Missing required fields: district, type, price, area" },
-                        { status: 400 },
+                        { status: 400 }
                     );
                 }
 
-                const district = resolveDistrict(params.district);
+                const district = resolveDistrict(districtName);
 
                 const { filters, target } = buildConfig({
                     district,
-                    constructionType: params.type,
-                    disposition: params.disposition,
-                    periodsStr: params.periods,
-                    price: Number(params.price),
-                    area: Number(params.area),
-                    rent: params.rent ? Number(params.rent) : undefined,
-                    monthlyCosts: params.monthlyCosts ? Number(params.monthlyCosts) : undefined,
-                    priceMin: params.priceMin,
-                    priceMax: params.priceMax,
-                    areaMin: params.areaMin,
-                    areaMax: params.areaMax,
-                    providers: params.providers,
+                    constructionType: type,
+                    disposition: body.disposition as string | undefined,
+                    periodsStr: body.periods as string | undefined,
+                    price: Number(price),
+                    area: Number(area),
+                    rent: body.rent ? Number(body.rent) : undefined,
+                    monthlyCosts: body.monthlyCosts ? Number(body.monthlyCosts) : undefined,
+                    priceMin: body.priceMin as string | undefined,
+                    priceMax: body.priceMax as string | undefined,
+                    areaMin: body.areaMin as string | undefined,
+                    areaMax: body.areaMax as string | undefined,
+                    providers: body.providers as string | undefined,
                 });
 
-                const analysis = await fetchAndAnalyze(filters, target, params.refresh ?? false);
+                const refresh = body.refresh === true;
+                const analysis = await fetchAndAnalyze(filters, target, refresh);
                 const exportData = buildDashboardExport(analysis);
 
                 return Response.json(exportData);

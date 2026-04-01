@@ -1,7 +1,7 @@
-import { SafeJSON } from "@app/utils/json";
 import { cacheKey, getCached, SREALITY_TTL, setCache } from "@app/Internal/commands/reas/cache/index";
 import { getSrealityCategorySubCb } from "@app/Internal/commands/reas/data/disposition-map";
 import type { AnalysisFilters, CacheEntry, SrealityRental } from "@app/Internal/commands/reas/types";
+import { SafeJSON } from "@app/utils/json";
 
 const BASE_URL = "https://www.sreality.cz/api/cs/v2";
 const PER_PAGE = 60;

@@ -10,7 +10,10 @@ export function apiHandler(
             return await fn(request);
         } catch (err) {
             const message = err instanceof Error ? err.message : "Internal server error";
-            const status = (err as { statusCode?: number }).statusCode ?? 500;
+            const status =
+                typeof err === "object" && err !== null && "statusCode" in err && typeof err.statusCode === "number"
+                    ? err.statusCode
+                    : 500;
             return Response.json({ error: message }, { status });
         }
     };
