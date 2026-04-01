@@ -10,13 +10,17 @@ export interface DiscountResult {
     discounts: Array<{ listingId: string; discount: number }>;
 }
 
+const MAX_DISCOUNT_PERCENT = 50;
+
 export function analyzeDiscount(listings: ReasListing[]): DiscountResult {
     const valid = listings.filter((l) => l.originalPrice > 0 && l.originalPrice !== l.soldPrice);
 
-    const discounts = valid.map((l) => ({
-        listingId: l._id,
-        discount: ((l.soldPrice - l.originalPrice) / l.originalPrice) * 100,
-    }));
+    const discounts = valid
+        .map((l) => ({
+            listingId: l._id,
+            discount: ((l.soldPrice - l.originalPrice) / l.originalPrice) * 100,
+        }))
+        .filter((d) => Math.abs(d.discount) <= MAX_DISCOUNT_PERCENT);
 
     if (discounts.length === 0) {
         return {

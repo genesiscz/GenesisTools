@@ -3,7 +3,7 @@ import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
 import { ArrowDown, ArrowRight, ArrowUp, BarChart3, Calendar, Percent, ShieldCheck, TrendingUp } from "lucide-react";
-import { computeScore } from "../ScoreCard";
+import { computeScore, GRADE_COLORS } from "../ScoreCard";
 import { ComparisonMetric } from "./ComparisonMetric";
 
 interface DistrictResult {
@@ -16,14 +16,6 @@ interface DistrictResult {
 interface ComparisonGridProps {
     results: DistrictResult[];
 }
-
-const GRADE_COLORS: Record<string, string> = {
-    A: "text-emerald-400 border-emerald-500/30 bg-emerald-500/10",
-    B: "text-cyan-400 border-cyan-500/30 bg-cyan-500/10",
-    C: "text-amber-400 border-amber-500/30 bg-amber-500/10",
-    D: "text-orange-400 border-orange-500/30 bg-orange-500/10",
-    F: "text-red-400 border-red-500/30 bg-red-500/10",
-};
 
 function formatCzk(value: number | null | undefined): string {
     if (value === null || value === undefined) {

@@ -20,6 +20,17 @@ import type {
     TargetProperty,
 } from "@app/Internal/commands/reas/types";
 
+/** Minimum rental price to filter garbage entries (e.g. 1 CZK placeholder listings) */
+const MIN_RENTAL_PRICE = 1000;
+
+/** Strip diacritics for accent-insensitive matching (e.g. "Letňany" → "Letnany") */
+function stripDiacritics(str: string): string {
+    return str
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase();
+}
+
 export interface AnalysisProgress {
     phase: "fetching" | "analyzing" | "complete";
     message: string;
@@ -103,7 +114,7 @@ export async function fetchAndAnalyze(
     let rentalListings: SrealityRental[] = [];
 
     if (srealityResult.status === "fulfilled") {
-        rentalListings = srealityResult.value;
+        rentalListings = srealityResult.value.filter((r) => r.price >= MIN_RENTAL_PRICE);
     } else {
         warnings.push(
             `Sreality: ${srealityResult.reason instanceof Error ? srealityResult.reason.message : String(srealityResult.reason)}`
@@ -206,7 +217,7 @@ export async function searchListings(options: SearchListingsOptions): Promise<Re
     const periods = parsePeriods(options.periodsStr ?? getSearchDefaultPeriods());
     const constructionTypes = options.constructionType ? [options.constructionType] : SEARCH_CONSTRUCTION_TYPES;
     const refresh = !!options.refresh;
-    const queryLower = options.query.toLowerCase();
+    const queryNormalized = stripDiacritics(options.query);
 
     const allListings: ReasListing[] = [];
 
@@ -224,7 +235,7 @@ export async function searchListings(options: SearchListingsOptions): Promise<Re
         }
     }
 
-    const matched = allListings.filter((l) => l.formattedAddress.toLowerCase().includes(queryLower));
+    const matched = allListings.filter((l) => stripDiacritics(l.formattedAddress).includes(queryNormalized));
     matched.sort((a, b) => new Date(b.soldAt).getTime() - new Date(a.soldAt).getTime());
 
     return matched;

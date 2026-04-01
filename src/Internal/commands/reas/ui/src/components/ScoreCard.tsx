@@ -14,7 +14,7 @@ interface ScoreResult {
     reasoning: string[];
 }
 
-const GRADE_COLORS: Record<Grade, string> = {
+export const GRADE_COLORS: Record<Grade, string> = {
     A: "text-green-400 border-green-500/30 bg-green-500/10",
     B: "text-lime-400 border-lime-500/30 bg-lime-500/10",
     C: "text-amber-400 border-amber-500/30 bg-amber-500/10",
