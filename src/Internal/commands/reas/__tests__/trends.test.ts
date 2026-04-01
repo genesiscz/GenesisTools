@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { analyzeTrends } from "../analysis/trends";
-import type { ReasListing } from "../types";
+import { analyzeTrends } from "@app/Internal/commands/reas/analysis/trends";
+import type { ReasListing } from "@app/Internal/commands/reas/types";
 
 function makeListing(soldAt: string, utilityArea: number, soldPrice: number): ReasListing {
     return {

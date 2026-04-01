@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { RentalSource } from "../analysis/rental-aggregation";
-import { aggregateRentals, deduplicateListings } from "../analysis/rental-aggregation";
+import type { RentalSource } from "@app/Internal/commands/reas/analysis/rental-aggregation";
+import { aggregateRentals, deduplicateListings } from "@app/Internal/commands/reas/analysis/rental-aggregation";
 
 describe("deduplicateListings()", () => {
     test("removes same-address same-price duplicates across providers", () => {

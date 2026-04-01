@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { analyzeRentalYield } from "../analysis/rental-yield";
-import type { TargetProperty } from "../types";
+import { analyzeRentalYield } from "@app/Internal/commands/reas/analysis/rental-yield";
+import type { TargetProperty } from "@app/Internal/commands/reas/types";
 
 const makeTarget = (overrides: Partial<TargetProperty> = {}): TargetProperty => ({
     price: 3_000_000,

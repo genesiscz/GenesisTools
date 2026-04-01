@@ -6,7 +6,7 @@ import {
     getPrahaDistrictNames,
     PRAHA_DISTRICTS,
     searchDistricts,
-} from "../data/districts";
+} from "@app/Internal/commands/reas/data/districts";
 
 describe("District Database", () => {
     test("has at least 13 major Czech cities", () => {

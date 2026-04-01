@@ -1,5 +1,5 @@
-import type { ReasListing } from "../types";
-import { median as computeMedian } from "./comparables";
+import type { ReasListing } from "@app/Internal/commands/reas/types";
+import { median as computeMedian } from "@app/Internal/commands/reas/analysis/comparables";
 
 export interface DiscountResult {
     avgDiscount: number;

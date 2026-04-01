@@ -1,9 +1,5 @@
 import type { DistrictInfo } from "@app/Internal/commands/reas/data/districts";
-import {
-    getAllDistrictNames,
-    getDistrict,
-    searchDistricts,
-} from "@app/Internal/commands/reas/data/districts";
+import { getAllDistrictNames, getDistrict, searchDistricts } from "@app/Internal/commands/reas/data/districts";
 import type { AnalysisFilters, DateRange, ProviderName, TargetProperty } from "@app/Internal/commands/reas/types";
 
 export const PROPERTY_TYPES: Array<{ value: string; label: string }> = [

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { detectMomentum } from "../analysis/market-momentum";
+import { detectMomentum } from "@app/Internal/commands/reas/analysis/market-momentum";
 
 describe("detectMomentum()", () => {
     test("detects accelerating rise", () => {

@@ -1,4 +1,4 @@
-import { median } from "./comparables";
+import { median } from "@app/Internal/commands/reas/analysis/comparables";
 
 export interface RentalSource {
     provider: "sreality" | "ereality" | "bezrealitky";

@@ -1,4 +1,4 @@
-import type { TargetProperty } from "../types";
+import type { TargetProperty } from "@app/Internal/commands/reas/types";
 
 export interface YieldResult {
     grossYield: number;

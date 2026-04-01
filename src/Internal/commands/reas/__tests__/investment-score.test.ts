@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { computeInvestmentScore } from "../analysis/investment-score";
+import { computeInvestmentScore } from "@app/Internal/commands/reas/analysis/investment-score";
 
 describe("computeInvestmentScore()", () => {
     test("high yield + discount + rising = A grade", () => {

@@ -6,7 +6,7 @@ export interface MarketMomentum {
     interpretation: string;
 }
 
-import type { TrendPeriod } from "./trends";
+import type { TrendPeriod } from "@app/Internal/commands/reas/analysis/trends";
 
 type TrendPeriodInput = Pick<TrendPeriod, "medianPerM2" | "count">;
 

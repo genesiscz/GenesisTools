@@ -1,5 +1,5 @@
-import type { ReasListing } from "../types";
-import { median } from "./comparables";
+import type { ReasListing } from "@app/Internal/commands/reas/types";
+import { median } from "@app/Internal/commands/reas/analysis/comparables";
 
 export interface TrendPeriod {
     label: string;

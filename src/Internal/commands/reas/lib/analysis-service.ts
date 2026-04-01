@@ -57,7 +57,7 @@ export async function fetchAndAnalyze(
     filters: AnalysisFilters,
     target: TargetProperty,
     refresh: boolean,
-    onProgress?: ProgressCallback,
+    onProgress?: ProgressCallback
 ): Promise<FullAnalysis> {
     onProgress?.({ phase: "fetching", message: "Fetching data from all providers..." });
 
@@ -87,7 +87,7 @@ export async function fetchAndAnalyze(
         allListings = reasResult.value;
     } else {
         warnings.push(
-            `REAS: ${reasResult.reason instanceof Error ? reasResult.reason.message : String(reasResult.reason)}`,
+            `REAS: ${reasResult.reason instanceof Error ? reasResult.reason.message : String(reasResult.reason)}`
         );
     }
 
@@ -99,7 +99,7 @@ export async function fetchAndAnalyze(
         rentalListings = srealityResult.value;
     } else {
         warnings.push(
-            `Sreality: ${srealityResult.reason instanceof Error ? srealityResult.reason.message : String(srealityResult.reason)}`,
+            `Sreality: ${srealityResult.reason instanceof Error ? srealityResult.reason.message : String(srealityResult.reason)}`
         );
     }
 
@@ -109,7 +109,7 @@ export async function fetchAndAnalyze(
         mfBenchmarks = mfResult.value;
     } else {
         warnings.push(
-            `MF cenova mapa: ${mfResult.reason instanceof Error ? mfResult.reason.message : String(mfResult.reason)}`,
+            `MF cenova mapa: ${mfResult.reason instanceof Error ? mfResult.reason.message : String(mfResult.reason)}`
         );
     }
 
@@ -134,7 +134,7 @@ export async function fetchAndAnalyze(
     const yieldResult = analyzeRentalYield(target, comparables.pricePerM2.median, avgRent);
 
     const momentum = detectMomentum(
-        trends.periods.map((period) => ({ medianPerM2: period.medianPerM2, count: period.count })),
+        trends.periods.map((period) => ({ medianPerM2: period.medianPerM2, count: period.count }))
     );
 
     const investmentScore = computeInvestmentScore({

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@app/utils/json";
-import type { FullAnalysis } from "../lib/api-export";
-import { buildDashboardExport } from "../lib/api-export";
+import type { FullAnalysis } from "@app/Internal/commands/reas/lib/api-export";
+import { buildDashboardExport } from "@app/Internal/commands/reas/lib/api-export";
 
 describe("buildDashboardExport()", () => {
     const mockAnalysis: FullAnalysis = {

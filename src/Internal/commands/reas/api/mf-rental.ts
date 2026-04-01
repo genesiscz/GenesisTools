@@ -1,7 +1,7 @@
 import * as XLSX from "xlsx";
-import { cacheKey, getCached, MF_TTL, setCache } from "../cache/index";
-import { fetchWithTimeout } from "../lib/fetch";
-import type { CacheEntry, MfRentalBenchmark } from "../types";
+import { cacheKey, getCached, MF_TTL, setCache } from "@app/Internal/commands/reas/cache/index";
+import { fetchWithTimeout } from "@app/Internal/commands/reas/lib/fetch";
+import type { CacheEntry, MfRentalBenchmark } from "@app/Internal/commands/reas/types";
 
 type CellValue = string | number | boolean | undefined;
 

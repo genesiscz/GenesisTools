@@ -5,15 +5,12 @@ import { formatTable } from "@app/utils/table";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { renderReport } from "./analysis/report";
-import { clearCache } from "./cache/index";
-import type { DistrictInfo } from "./data/districts";
-import { getAllDistrictNames, getDistrict, getPrahaDistrictNames, searchDistricts } from "./data/districts";
-import { resolveAddress } from "./lib/address-resolver";
-import {
-    fetchAndAnalyze as fetchAndAnalyzeService,
-    searchListings,
-} from "./lib/analysis-service";
+import { renderReport } from "@app/Internal/commands/reas/analysis/report";
+import { clearCache } from "@app/Internal/commands/reas/cache/index";
+import type { DistrictInfo } from "@app/Internal/commands/reas/data/districts";
+import { getAllDistrictNames, getDistrict, getPrahaDistrictNames, searchDistricts } from "@app/Internal/commands/reas/data/districts";
+import { resolveAddress } from "@app/Internal/commands/reas/lib/address-resolver";
+import { fetchAndAnalyze as fetchAndAnalyzeService, searchListings } from "@app/Internal/commands/reas/lib/analysis-service";
 import {
     buildConfig,
     buildPeriodOptions,
@@ -22,8 +19,8 @@ import {
     PROPERTY_TYPES,
     parsePeriod,
     resolveDistrict,
-} from "./lib/config-builder";
-import type { AnalysisFilters, FullAnalysis, TargetProperty } from "./types";
+} from "@app/Internal/commands/reas/lib/config-builder";
+import type { AnalysisFilters, FullAnalysis, TargetProperty } from "@app/Internal/commands/reas/types";
 
 interface ReasOptions {
     district?: string;
@@ -321,7 +318,7 @@ export async function buildFromFlags(
 export async function fetchAndAnalyze(
     filters: AnalysisFilters,
     target: TargetProperty,
-    refresh: boolean,
+    refresh: boolean
 ): Promise<FullAnalysis> {
     const spinner = p.spinner();
     spinner.start("Fetching data from all providers...");
@@ -349,7 +346,7 @@ export async function fetchAndAnalyze(
 
 async function outputAnalysis(analysis: FullAnalysis, format: string, outputPath?: string): Promise<void> {
     if (format === "json") {
-        const { buildDashboardExport } = await import("./lib/api-export");
+        const { buildDashboardExport } = await import("@app/Internal/commands/reas/lib/api-export");
         const exportData = buildDashboardExport(analysis);
         const json = SafeJSON.stringify(exportData, null, 2);
 
@@ -419,7 +416,7 @@ async function runSearch(query: string, options: ReasOptions): Promise<void> {
     });
 
     console.log(
-        `\n${pc.cyan(pc.bold(`Search results for "${query}"`))} \u2014 ${pc.bold(String(matched.length))} listing${matched.length === 1 ? "" : "s"} found\n`,
+        `\n${pc.cyan(pc.bold(`Search results for "${query}"`))} \u2014 ${pc.bold(String(matched.length))} listing${matched.length === 1 ? "" : "s"} found\n`
     );
     console.log(table);
     console.log();
@@ -427,7 +424,7 @@ async function runSearch(query: string, options: ReasOptions): Promise<void> {
 
 async function runReasAnalysis(options: ReasOptions): Promise<void> {
     if (options.server) {
-        const { startServer } = await import("./server");
+        const { startServer } = await import("@app/Internal/commands/reas/server");
         await startServer(options.port);
         return;
     }

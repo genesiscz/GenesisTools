@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { analyzeComparables, median, percentile } from "../analysis/comparables";
-import type { ReasListing, TargetProperty } from "../types";
+import { analyzeComparables, median, percentile } from "@app/Internal/commands/reas/analysis/comparables";
+import type { ReasListing, TargetProperty } from "@app/Internal/commands/reas/types";
 
 describe("median()", () => {
     test("odd-length array", () => {

@@ -1,7 +1,7 @@
-import { type SuggestResult, suggestLocality } from "../api/sreality-client";
-import { type DistrictInfo, getDistrict, searchDistricts } from "../data/districts";
 import { parsePeriod } from "@app/Internal/commands/reas/lib/config-builder";
-import type { AnalysisFilters } from "../types";
+import { type SuggestResult, suggestLocality } from "@app/Internal/commands/reas/api/sreality-client";
+import { type DistrictInfo, getDistrict, searchDistricts } from "@app/Internal/commands/reas/data/districts";
+import type { AnalysisFilters } from "@app/Internal/commands/reas/types";
 
 export interface ResolvedAddress {
     /** The matched district from the database */

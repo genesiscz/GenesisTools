@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { DistrictInfo } from "../data/districts";
+import type { DistrictInfo } from "@app/Internal/commands/reas/data/districts";
 
 describe("parseResolvedAddress", () => {
     test("extracts district from suggest result with matching district DB entry", async () => {

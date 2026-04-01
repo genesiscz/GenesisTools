@@ -1,4 +1,4 @@
-import type { ReasListing, TargetProperty } from "../types";
+import type { ReasListing, TargetProperty } from "@app/Internal/commands/reas/types";
 
 export function median(sorted: number[]): number {
     if (sorted.length === 0) {

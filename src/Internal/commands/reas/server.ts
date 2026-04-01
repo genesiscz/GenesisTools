@@ -1,4 +1,8 @@
-import { getAllDistrictNames, getPrahaDistrictNames, searchDistricts } from "@app/Internal/commands/reas/data/districts";
+import {
+    getAllDistrictNames,
+    getPrahaDistrictNames,
+    searchDistricts,
+} from "@app/Internal/commands/reas/data/districts";
 import { fetchAndAnalyze } from "@app/Internal/commands/reas/lib/analysis-service";
 import { buildDashboardExport } from "@app/Internal/commands/reas/lib/api-export";
 import { buildConfig, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
@@ -24,7 +28,7 @@ export async function startServer(port = DEFAULT_PORT): Promise<void> {
             if (url.pathname === "/api/districts") {
                 return Response.json(
                     { districts: getAllDistrictNames(), praha: getPrahaDistrictNames() },
-                    { headers: CORS_HEADERS },
+                    { headers: CORS_HEADERS }
                 );
             }
 
@@ -41,7 +45,7 @@ export async function startServer(port = DEFAULT_PORT): Promise<void> {
                 if (!districtParam || !type) {
                     return Response.json(
                         { error: "Required params: district, type" },
-                        { status: 400, headers: CORS_HEADERS },
+                        { status: 400, headers: CORS_HEADERS }
                     );
                 }
 

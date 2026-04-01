@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildErealityUrl, parseErealityHtml } from "../api/ereality-client";
+import { buildErealityUrl, parseErealityHtml } from "@app/Internal/commands/reas/api/ereality-client";
 
 describe("buildErealityUrl", () => {
     test("builds URL for district with page 0", () => {

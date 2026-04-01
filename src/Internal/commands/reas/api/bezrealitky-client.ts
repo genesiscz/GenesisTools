@@ -1,6 +1,6 @@
 import { SafeJSON } from "@app/utils/json";
-import { cacheKey, getCached, SREALITY_TTL, setCache } from "../cache/index";
-import type { AnalysisFilters, CacheEntry } from "../types";
+import { cacheKey, getCached, SREALITY_TTL, setCache } from "@app/Internal/commands/reas/cache/index";
+import type { AnalysisFilters, CacheEntry } from "@app/Internal/commands/reas/types";
 
 const BASE_URL = "https://www.bezrealitky.cz/vypis/nabidka-pronajem/byt";
 const PER_PAGE = 15;

@@ -1,5 +1,5 @@
-import type { AggregatedRentalStats } from "../analysis/rental-aggregation";
-import type { AnalysisFilters, FullAnalysis, MfRentalBenchmark, TargetProperty } from "../types";
+import type { AggregatedRentalStats } from "@app/Internal/commands/reas/analysis/rental-aggregation";
+import type { AnalysisFilters, FullAnalysis, MfRentalBenchmark, TargetProperty } from "@app/Internal/commands/reas/types";
 
 export interface DashboardExport {
     meta: {

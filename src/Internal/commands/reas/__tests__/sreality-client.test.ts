@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseSrealityName } from "../api/sreality-client";
+import { parseSrealityName } from "@app/Internal/commands/reas/api/sreality-client";
 
 describe("parseSrealityName()", () => {
     test("parses standard rental name", () => {

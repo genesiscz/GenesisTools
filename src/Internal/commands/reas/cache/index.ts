@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@app/utils/json";
-import type { CacheEntry } from "../types";
+import type { CacheEntry } from "@app/Internal/commands/reas/types";
 
 const CACHE_DIR = join(homedir(), ".genesis-tools", "internal", "reas");
 
