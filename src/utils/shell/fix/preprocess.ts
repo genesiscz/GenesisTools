@@ -93,9 +93,8 @@ function stripPromptPrefix(s: string): string {
         return s.slice(2);
     }
 
-    if (/^#\s/.test(s)) {
-        return s.slice(2);
-    }
+    // NOTE: `# ` is NOT stripped — ambiguous between root prompt and comment.
+    // Stripping `# rm -rf /` would be catastrophic.
 
     if (/^%\s/.test(s)) {
         return s.slice(2);

@@ -31,7 +31,8 @@ export const testCases: TestCase[] = [
         name: "multiple \\ continuations with varying trailing spaces",
         input: 'tools claude history "test" \\\n        --sort-relevance \\\n        --since "2026-03-20" \\\n        -c 5 --all',
         expected: 'tools claude history "test" --sort-relevance --since "2026-03-20" -c 5 --all',
-        expectedPretty: "tools claude history \"test\" \\\n  --sort-relevance \\\n  --since \"2026-03-20\" -c 5 \\\n  --all",
+        expectedPretty:
+            'tools claude history "test" \\\n  --sort-relevance \\\n  --since "2026-03-20" -c 5 \\\n  --all',
         tags: ["continuation", "flags"],
     },
     {
@@ -61,7 +62,8 @@ export const testCases: TestCase[] = [
         ].join("\n"),
         expected:
             "kubectl get pods --namespace production --field-selector status.phase=Running --sort-by .metadata.creationTimestamp -o wide --no-headers --show-labels",
-        expectedPretty: "kubectl get pods \\\n  --namespace production \\\n  --field-selector status.phase=Running \\\n  --sort-by .metadata.creationTimestamp -o wide \\\n  --no-headers \\\n  --show-labels",
+        expectedPretty:
+            "kubectl get pods \\\n  --namespace production \\\n  --field-selector status.phase=Running \\\n  --sort-by .metadata.creationTimestamp -o wide \\\n  --no-headers \\\n  --show-labels",
         tags: ["continuation", "many-flags"],
     },
     {
@@ -100,7 +102,8 @@ export const testCases: TestCase[] = [
         name: "flattened continuation mixed with real newlines",
         input: "cd col-mobile && \\                                              APP_ENV=test ENVFILE=.env yarn expo run:ios \\\n    2>&1 | tee /tmp/new-ios.log && \\\n    cd ..",
         expected: "cd col-mobile && APP_ENV=test ENVFILE=.env yarn expo run:ios 2>&1 | tee /tmp/new-ios.log && cd ..",
-        expectedPretty: "cd col-mobile && APP_ENV=test ENVFILE=.env yarn expo run:ios 2>&1 | tee /tmp/new-ios.log && cd ..",
+        expectedPretty:
+            "cd col-mobile && APP_ENV=test ENVFILE=.env yarn expo run:ios 2>&1 | tee /tmp/new-ios.log && cd ..",
         tags: ["flattened", "mixed"],
     },
     {
@@ -171,7 +174,8 @@ export const testCases: TestCase[] = [
         name: "path with spaces and wrapping",
         input: "cat /very/long/path/to/some/deeply/nested/directory/structure/that/exceeds/terminal/width/fi\n  le.txt",
         expected: "cat /very/long/path/to/some/deeply/nested/directory/structure/that/exceeds/terminal/width/file.txt",
-        expectedPretty: "cat /very/long/path/to/some/deeply/nested/directory/structure/that/exceeds/terminal/width/file.txt",
+        expectedPretty:
+            "cat /very/long/path/to/some/deeply/nested/directory/structure/that/exceeds/terminal/width/file.txt",
         tags: ["terminal-wrap", "mid-word"],
     },
     {
@@ -265,7 +269,7 @@ export const testCases: TestCase[] = [
         name: "Bash() wrapper with flags — should get re-split",
         input: 'Bash(tools claude history --sort-relevance --since "2026-03-20" -c 5)',
         expected: 'tools claude history --sort-relevance --since "2026-03-20" -c 5',
-        expectedPretty: "tools claude history \\\n  --sort-relevance \\\n  --since \"2026-03-20\" -c 5",
+        expectedPretty: 'tools claude history \\\n  --sort-relevance \\\n  --since "2026-03-20" -c 5',
         tags: ["bash-wrapper", "flags"],
     },
     {
@@ -329,7 +333,7 @@ export const testCases: TestCase[] = [
         name: "double-quoted string with escaped pipes",
         input: 'tools claude history "content loader\\|ContentLoader\\|viewBox" \\\n  --sort-relevance',
         expected: 'tools claude history "content loader\\|ContentLoader\\|viewBox" --sort-relevance',
-        expectedPretty: "tools claude history \"content loader\\|ContentLoader\\|viewBox\" \\\n  --sort-relevance",
+        expectedPretty: 'tools claude history "content loader\\|ContentLoader\\|viewBox" \\\n  --sort-relevance',
         tags: ["quotes", "double", "continuation"],
     },
     {
@@ -471,7 +475,8 @@ export const testCases: TestCase[] = [
         name: "git log with format and continuation",
         input: 'git log \\\n  --pretty=format:"%H %an %s" \\\n  --since="2026-01-01" \\\n  --until="2026-03-31" \\\n  --no-merges \\\n  -- src/',
         expected: 'git log --pretty=format:"%H %an %s" --since="2026-01-01" --until="2026-03-31" --no-merges -- src/',
-        expectedPretty: "git log \\\n  --pretty=format:\"%H %an %s\" \\\n  --since=\"2026-01-01\" \\\n  --until=\"2026-03-31\" \\\n  --no-merges -- src/",
+        expectedPretty:
+            'git log \\\n  --pretty=format:"%H %an %s" \\\n  --since="2026-01-01" \\\n  --until="2026-03-31" \\\n  --no-merges -- src/',
         tags: ["real-world", "git", "continuation"],
     },
     {
@@ -479,7 +484,8 @@ export const testCases: TestCase[] = [
         input: "COMPOSE_PROJECT_NAME=myapp \\\n  DOCKER_BUILDKIT=1 \\\n  docker compose \\\n  -f docker-compose.yml \\\n  -f docker-compose.override.yml \\\n  up -d --build",
         expected:
             "COMPOSE_PROJECT_NAME=myapp DOCKER_BUILDKIT=1 docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --build",
-        expectedPretty: "COMPOSE_PROJECT_NAME=myapp DOCKER_BUILDKIT=1 docker compose -f docker-compose.yml -f docker-compose.override.yml up -d \\\n  --build",
+        expectedPretty:
+            "COMPOSE_PROJECT_NAME=myapp DOCKER_BUILDKIT=1 docker compose -f docker-compose.yml -f docker-compose.override.yml up -d \\\n  --build",
         tags: ["real-world", "docker", "env-vars"],
     },
     {
@@ -487,7 +493,8 @@ export const testCases: TestCase[] = [
         input: "rsync -avz \\\n  --exclude='.git' \\\n  --exclude='node_modules' \\\n  --exclude='*.log' \\\n  --progress \\\n  --delete \\\n  /source/path/ \\\n  user@host:/dest/path/",
         expected:
             "rsync -avz --exclude='.git' --exclude='node_modules' --exclude='*.log' --progress --delete /source/path/ user@host:/dest/path/",
-        expectedPretty: "rsync -avz \\\n  --exclude='.git' \\\n  --exclude='node_modules' \\\n  --exclude='*.log' \\\n  --progress \\\n  --delete /source/path/ user@host:/dest/path/",
+        expectedPretty:
+            "rsync -avz \\\n  --exclude='.git' \\\n  --exclude='node_modules' \\\n  --exclude='*.log' \\\n  --progress \\\n  --delete /source/path/ user@host:/dest/path/",
         tags: ["real-world", "rsync", "continuation"],
     },
     {
@@ -509,14 +516,16 @@ export const testCases: TestCase[] = [
         input: 'aws lambda invoke \\\n  --function-name my-function \\\n  --payload \'{"key": "value"}\' \\\n  --log-type Tail \\\n  /tmp/output.json',
         expected:
             'aws lambda invoke --function-name my-function --payload \'{"key": "value"}\' --log-type Tail /tmp/output.json',
-        expectedPretty: "aws lambda invoke \\\n  --function-name my-function \\\n  --payload '{\"key\": \"value\"}' \\\n  --log-type Tail /tmp/output.json",
+        expectedPretty:
+            'aws lambda invoke \\\n  --function-name my-function \\\n  --payload \'{"key": "value"}\' \\\n  --log-type Tail /tmp/output.json',
         tags: ["real-world", "aws", "json"],
     },
     {
         name: "cd && command && cd back — compound",
         input: "cd col-mobile && \\\n    APP_ENV=test ENVFILE=.env yarn expo run:ios \\\n    2>&1 | tee /tmp/new-ios.log && \\\n    cd ..",
         expected: "cd col-mobile && APP_ENV=test ENVFILE=.env yarn expo run:ios 2>&1 | tee /tmp/new-ios.log && cd ..",
-        expectedPretty: "cd col-mobile && APP_ENV=test ENVFILE=.env yarn expo run:ios 2>&1 | tee /tmp/new-ios.log && cd ..",
+        expectedPretty:
+            "cd col-mobile && APP_ENV=test ENVFILE=.env yarn expo run:ios 2>&1 | tee /tmp/new-ios.log && cd ..",
         tags: ["real-world", "compound", "redirect"],
     },
     {
@@ -524,7 +533,8 @@ export const testCases: TestCase[] = [
         input: 'tools claude history "content loader\\|ContentLoader\\|viewBox\\|twitching\\|shimmer" \\\n        --sort-relevance \\\n        --exclude-session "6db1ba4d-2089-4015-8962-d6acc838ac06" \\                                                              \n        --since "2026-03-20" \\                             \n        -c 5 --all',
         expected:
             'tools claude history "content loader\\|ContentLoader\\|viewBox\\|twitching\\|shimmer" --sort-relevance --exclude-session "6db1ba4d-2089-4015-8962-d6acc838ac06" --since "2026-03-20" -c 5 --all',
-        expectedPretty: "tools claude history \"content loader\\|ContentLoader\\|viewBox\\|twitching\\|shimmer\" \\\n  --sort-relevance \\\n  --exclude-session \"6db1ba4d-2089-4015-8962-d6acc838ac06\" \\\n  --since \"2026-03-20\" -c 5 \\\n  --all",
+        expectedPretty:
+            'tools claude history "content loader\\|ContentLoader\\|viewBox\\|twitching\\|shimmer" \\\n  --sort-relevance \\\n  --exclude-session "6db1ba4d-2089-4015-8962-d6acc838ac06" \\\n  --since "2026-03-20" -c 5 \\\n  --all',
         tags: ["real-world", "original-bug", "continuation"],
     },
     {
@@ -682,7 +692,8 @@ export const testCases: TestCase[] = [
         ].join("\n"),
         expected:
             "kubectl apply --filename=deployment.yaml --namespace=production --context=aws-eks-prod --server-side --force-conflicts --field-manager=my-controller --dry-run=server --output=json --show-managed-fields --selector='app=myapp,env=prod' --prune --all --cascade=orphan --grace-period=30 --overwrite",
-        expectedPretty: "kubectl apply \\\n  --filename=deployment.yaml \\\n  --namespace=production \\\n  --context=aws-eks-prod \\\n  --server-side \\\n  --force-conflicts \\\n  --field-manager=my-controller \\\n  --dry-run=server \\\n  --output=json \\\n  --show-managed-fields \\\n  --selector='app=myapp,env=prod' \\\n  --prune \\\n  --all \\\n  --cascade=orphan \\\n  --grace-period=30 \\\n  --overwrite",
+        expectedPretty:
+            "kubectl apply \\\n  --filename=deployment.yaml \\\n  --namespace=production \\\n  --context=aws-eks-prod \\\n  --server-side \\\n  --force-conflicts \\\n  --field-manager=my-controller \\\n  --dry-run=server \\\n  --output=json \\\n  --show-managed-fields \\\n  --selector='app=myapp,env=prod' \\\n  --prune \\\n  --all \\\n  --cascade=orphan \\\n  --grace-period=30 \\\n  --overwrite",
         tags: ["stress", "many-flags", "trailing-spaces"],
     },
     {
@@ -722,7 +733,8 @@ export const testCases: TestCase[] = [
         input: "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backu\n  p-2026-03-31.tar.gz \\\n  --exclude='node_modules' \\\n  --exclude='.git' \\\n  /Users/Martin/Tresors/Projects/GenesisTools/src/\n  /Users/Martin/Tresors/Projects/GenesisTools/package.json",
         expected:
             "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backup-2026-03-31.tar.gz --exclude='node_modules' --exclude='.git' /Users/Martin/Tresors/Projects/GenesisTools/src/ /Users/Martin/Tresors/Projects/GenesisTools/package.json",
-        expectedPretty: "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backup-2026-03-31.tar.gz \\\n  --exclude='node_modules' \\\n  --exclude='.git' /Users/Martin/Tresors/Projects/GenesisTools/src/ /Users/Martin/Tresors/Projects/GenesisTools/package.json",
+        expectedPretty:
+            "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backup-2026-03-31.tar.gz \\\n  --exclude='node_modules' \\\n  --exclude='.git' /Users/Martin/Tresors/Projects/GenesisTools/src/ /Users/Martin/Tresors/Projects/GenesisTools/package.json",
         tags: ["stress", "terminal-wrap", "continuation", "paths"],
     },
     {
@@ -749,7 +761,8 @@ export const testCases: TestCase[] = [
         name: "terminal wrap + flattened on same command",
         input: "rsync -avz \\                  --progress /very/long/sourc\n  e/path/ user@remote:/equally/long/desti\n  nation/path/",
         expected: "rsync -avz --progress /very/long/source/path/ user@remote:/equally/long/destination/path/",
-        expectedPretty: "rsync -avz \\\n  --progress /very/long/source/path/ user@remote:/equally/long/destination/path/",
+        expectedPretty:
+            "rsync -avz \\\n  --progress /very/long/source/path/ user@remote:/equally/long/destination/path/",
         tags: ["flattened", "terminal-wrap", "mixed"],
     },
     {
@@ -771,11 +784,11 @@ export const testCases: TestCase[] = [
         tags: ["prompt", "dollar"],
     },
     {
-        name: "hash prompt prefix (root)",
+        name: "hash prefix NOT stripped (could be comment, not prompt)",
         input: "# apt-get update && apt-get install -y curl",
-        expected: "apt-get update && apt-get install -y curl",
-        expectedPretty: "apt-get update && apt-get install -y curl",
-        tags: ["prompt", "hash"],
+        expected: "# apt-get update && apt-get install -y curl",
+        expectedPretty: "# apt-get update && apt-get install -y curl",
+        tags: ["prompt", "hash", "safety"],
     },
     {
         name: "custom prompt prefix with username",
@@ -865,7 +878,8 @@ export const testCases: TestCase[] = [
         name: "xargs with complex pipeline and wrap",
         input: "find . -name '*.test.ts' -print0 \\\n  | xargs -0 -P4 -I{} bun test {} \\\n  2>&1 | tee /tmp/test-results.log",
         expected: "find . -name '*.test.ts' -print0 | xargs -0 -P4 -I{} bun test {} 2>&1 | tee /tmp/test-results.log",
-        expectedPretty: "find . -name '*.test.ts' -print0 | xargs -0 -P4 -I{} bun test {} 2>&1 | tee /tmp/test-results.log",
+        expectedPretty:
+            "find . -name '*.test.ts' -print0 | xargs -0 -P4 -I{} bun test {} 2>&1 | tee /tmp/test-results.log",
         tags: ["real-world", "xargs", "pipe", "continuation"],
     },
     {
@@ -880,7 +894,8 @@ export const testCases: TestCase[] = [
         input: 'az rest \\\n  --method PATCH \\\n  --uri "https://dev.azure.com/org/project/_apis/wit/workitems/123?api-version=7.0" \\\n  --body \'[{"op":"replace","path":"/fields/System.State","value":"Active"}]\' \\\n  --headers Content-Type=application/json-patch+json',
         expected:
             'az rest --method PATCH --uri "https://dev.azure.com/org/project/_apis/wit/workitems/123?api-version=7.0" --body \'[{"op":"replace","path":"/fields/System.State","value":"Active"}]\' --headers Content-Type=application/json-patch+json',
-        expectedPretty: "az rest \\\n  --method PATCH \\\n  --uri \"https://dev.azure.com/org/project/_apis/wit/workitems/123?api-version=7.0\" \\\n  --body '[{\"op\":\"replace\",\"path\":\"/fields/System.State\",\"value\":\"Active\"}]' \\\n  --headers Content-Type=application/json-patch+json",
+        expectedPretty:
+            'az rest \\\n  --method PATCH \\\n  --uri "https://dev.azure.com/org/project/_apis/wit/workitems/123?api-version=7.0" \\\n  --body \'[{"op":"replace","path":"/fields/System.State","value":"Active"}]\' \\\n  --headers Content-Type=application/json-patch+json',
         tags: ["real-world", "az-cli", "json", "continuation"],
     },
 ];
