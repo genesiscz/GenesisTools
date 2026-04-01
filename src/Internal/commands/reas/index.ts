@@ -10,7 +10,7 @@ import { analyzeDiscount } from "./analysis/discount";
 import { computeInvestmentScore } from "./analysis/investment-score";
 import { detectMomentum } from "./analysis/market-momentum";
 import { analyzeRentalYield } from "./analysis/rental-yield";
-import { type FullAnalysis, renderReport } from "./analysis/report";
+import { renderReport } from "./analysis/report";
 import { analyzeTimeOnMarket } from "./analysis/time-on-market";
 import { analyzeTrends } from "./analysis/trends";
 import { fetchMfRentalData } from "./api/mf-rental";
@@ -23,6 +23,7 @@ import { resolveAddress } from "./lib/address-resolver";
 import type {
     AnalysisFilters,
     DateRange,
+    FullAnalysis,
     MfRentalBenchmark,
     ProviderName,
     ReasListing,
@@ -512,7 +513,9 @@ export async function fetchAndAnalyze(
     if (reasResult.status === "fulfilled") {
         allListings = reasResult.value;
     } else {
-        warnings.push(`REAS: ${reasResult.reason instanceof Error ? reasResult.reason.message : String(reasResult.reason)}`);
+        warnings.push(
+            `REAS: ${reasResult.reason instanceof Error ? reasResult.reason.message : String(reasResult.reason)}`
+        );
     }
 
     allListings = applyListingFilters(allListings, filters);
@@ -522,7 +525,9 @@ export async function fetchAndAnalyze(
     if (srealityResult.status === "fulfilled") {
         rentalListings = srealityResult.value;
     } else {
-        warnings.push(`Sreality: ${srealityResult.reason instanceof Error ? srealityResult.reason.message : String(srealityResult.reason)}`);
+        warnings.push(
+            `Sreality: ${srealityResult.reason instanceof Error ? srealityResult.reason.message : String(srealityResult.reason)}`
+        );
     }
 
     let mfBenchmarks: MfRentalBenchmark[] = [];
@@ -530,7 +535,9 @@ export async function fetchAndAnalyze(
     if (mfResult.status === "fulfilled") {
         mfBenchmarks = mfResult.value;
     } else {
-        warnings.push(`MF cenova mapa: ${mfResult.reason instanceof Error ? mfResult.reason.message : String(mfResult.reason)}`);
+        warnings.push(
+            `MF cenova mapa: ${mfResult.reason instanceof Error ? mfResult.reason.message : String(mfResult.reason)}`
+        );
     }
 
     spinner.stop(

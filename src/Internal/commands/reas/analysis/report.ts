@@ -1,28 +1,8 @@
 import { formatTable } from "@app/utils/table";
 import pc from "picocolors";
-import type { AnalysisFilters, MfRentalBenchmark, SrealityRental, TargetProperty } from "../types";
-import type { ComparablesResult } from "./comparables";
-import type { DiscountResult } from "./discount";
+import type { FullAnalysis } from "@app/Internal/commands/reas/types";
 import type { InvestmentScore } from "./investment-score";
 import type { MarketMomentum } from "./market-momentum";
-import type { YieldResult } from "./rental-yield";
-import type { TimeOnMarketResult } from "./time-on-market";
-import type { TrendsResult } from "./trends";
-
-export interface FullAnalysis {
-    comparables: ComparablesResult;
-    trends: TrendsResult;
-    yield: YieldResult;
-    timeOnMarket: TimeOnMarketResult;
-    discount: DiscountResult;
-    rentalListings: SrealityRental[];
-    mfBenchmarks: MfRentalBenchmark[];
-    target: TargetProperty;
-    filters: AnalysisFilters;
-    investmentScore?: InvestmentScore;
-    momentum?: MarketMomentum;
-    rentalAggregation?: import("./rental-aggregation").AggregatedRentalStats[];
-}
 
 const SEPARATOR_WIDTH = 72;
 

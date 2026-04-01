@@ -1,6 +1,5 @@
 import type { AggregatedRentalStats } from "../analysis/rental-aggregation";
-import type { FullAnalysis } from "../analysis/report";
-import type { AnalysisFilters, MfRentalBenchmark, TargetProperty } from "../types";
+import type { AnalysisFilters, FullAnalysis, MfRentalBenchmark, TargetProperty } from "../types";
 
 export interface DashboardExport {
     meta: {
@@ -78,7 +77,7 @@ export interface DashboardExport {
     };
 }
 
-export type { FullAnalysis };
+export type { FullAnalysis } from "@app/Internal/commands/reas/types";
 
 export function buildDashboardExport(analysis: FullAnalysis): DashboardExport {
     const { comparables, trends, timeOnMarket, discount, yield: yieldResult } = analysis;

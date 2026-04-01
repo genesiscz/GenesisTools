@@ -92,3 +92,18 @@ export interface AnalysisResult {
     target: TargetProperty;
     filters: AnalysisFilters;
 }
+
+export interface FullAnalysis {
+    comparables: import("@app/Internal/commands/reas/analysis/comparables").ComparablesResult;
+    trends: import("@app/Internal/commands/reas/analysis/trends").TrendsResult;
+    yield: import("@app/Internal/commands/reas/analysis/rental-yield").YieldResult;
+    timeOnMarket: import("@app/Internal/commands/reas/analysis/time-on-market").TimeOnMarketResult;
+    discount: import("@app/Internal/commands/reas/analysis/discount").DiscountResult;
+    rentalListings: SrealityRental[];
+    mfBenchmarks: MfRentalBenchmark[];
+    target: TargetProperty;
+    filters: AnalysisFilters;
+    investmentScore?: import("@app/Internal/commands/reas/analysis/investment-score").InvestmentScore;
+    momentum?: import("@app/Internal/commands/reas/analysis/market-momentum").MarketMomentum;
+    rentalAggregation?: import("@app/Internal/commands/reas/analysis/rental-aggregation").AggregatedRentalStats[];
+}
