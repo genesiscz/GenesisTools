@@ -1,5 +1,7 @@
-import { getAllDistrictNames, getPrahaDistrictNames, searchDistricts } from "./data/districts";
-import { buildDashboardExport } from "./lib/api-export";
+import { getAllDistrictNames, getPrahaDistrictNames, searchDistricts } from "@app/Internal/commands/reas/data/districts";
+import { fetchAndAnalyze } from "@app/Internal/commands/reas/lib/analysis-service";
+import { buildDashboardExport } from "@app/Internal/commands/reas/lib/api-export";
+import { buildConfig, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
 
 const DEFAULT_PORT = 3456;
 
@@ -22,7 +24,7 @@ export async function startServer(port = DEFAULT_PORT): Promise<void> {
             if (url.pathname === "/api/districts") {
                 return Response.json(
                     { districts: getAllDistrictNames(), praha: getPrahaDistrictNames() },
-                    { headers: CORS_HEADERS }
+                    { headers: CORS_HEADERS },
                 );
             }
 
@@ -33,13 +35,13 @@ export async function startServer(port = DEFAULT_PORT): Promise<void> {
             }
 
             if (url.pathname === "/api/analysis") {
-                const district = url.searchParams.get("district");
+                const districtParam = url.searchParams.get("district");
                 const type = url.searchParams.get("type");
 
-                if (!district || !type) {
+                if (!districtParam || !type) {
                     return Response.json(
                         { error: "Required params: district, type" },
-                        { status: 400, headers: CORS_HEADERS }
+                        { status: 400, headers: CORS_HEADERS },
                     );
                 }
 
@@ -51,20 +53,19 @@ export async function startServer(port = DEFAULT_PORT): Promise<void> {
                 const costs = url.searchParams.get("costs") ?? "0";
 
                 try {
-                    const { buildFromFlags, fetchAndAnalyze } = await import("./index");
-
-                    const config = await buildFromFlags({
+                    const district = resolveDistrict(districtParam);
+                    const { filters, target } = buildConfig({
                         district,
-                        type,
+                        constructionType: type,
                         disposition,
-                        periods,
-                        price,
-                        area,
-                        rent,
-                        monthlyCosts: costs,
+                        periodsStr: periods,
+                        price: Number(price),
+                        area: Number(area),
+                        rent: Number(rent),
+                        monthlyCosts: Number(costs),
                     });
 
-                    const analysis = await fetchAndAnalyze(config.filters, config.target, false);
+                    const analysis = await fetchAndAnalyze(filters, target, false);
                     const exportData = buildDashboardExport(analysis);
 
                     return Response.json(exportData, { headers: CORS_HEADERS });
