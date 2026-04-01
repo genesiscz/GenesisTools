@@ -1,10 +1,10 @@
-import { isInteractive } from "@app/utils/cli";
 import { findProjectRoot } from "@app/todo/lib/context";
 import { formatTodo } from "@app/todo/lib/format";
 import { parseLink } from "@app/todo/lib/links";
 import { parseReminderTime } from "@app/todo/lib/reminders";
 import { TodoStore } from "@app/todo/lib/store";
 import type { OutputFormat, Todo, TodoPriority } from "@app/todo/lib/types";
+import { isInteractive } from "@app/utils/cli";
 import { Command } from "commander";
 
 function resolveFormat(format: string | undefined): OutputFormat {

@@ -1,6 +1,6 @@
-import { isInteractive } from "@app/utils/cli";
 import { findProjectRoot } from "@app/todo/lib/context";
 import { TodoStore } from "@app/todo/lib/store";
+import { isInteractive } from "@app/utils/cli";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 

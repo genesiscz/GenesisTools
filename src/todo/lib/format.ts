@@ -161,13 +161,7 @@ function formatTodoTable(todos: Todo[]): string {
     }
 
     const headers = ["ID", "Status", "Priority", "Title", "Tags"];
-    const rows = todos.map((t) => [
-        t.id,
-        t.status,
-        t.priority,
-        t.title,
-        t.tags.join(", "),
-    ]);
+    const rows = todos.map((t) => [t.id, t.status, t.priority, t.title, t.tags.join(", ")]);
 
     return formatTable(rows, headers, { maxColWidth: 40 });
 }

@@ -1,9 +1,9 @@
-import { isInteractive, suggestCommand } from "@app/utils/cli";
 import { findProjectRoot } from "@app/todo/lib/context";
 import { formatTodo } from "@app/todo/lib/format";
 import { parseLinks } from "@app/todo/lib/links";
 import { TodoStore } from "@app/todo/lib/store";
 import type { OutputFormat, TodoPriority } from "@app/todo/lib/types";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -48,7 +48,7 @@ export function createAddCommand(): Command {
 
             if (!title && !isInteractive()) {
                 console.error("Error: title is required in non-interactive mode.");
-                console.error(suggestCommand("tools todo add", { add: ["\"My todo title\""] }));
+                console.error(suggestCommand("tools todo add", { add: ['"My todo title"'] }));
                 process.exit(1);
             }
 
@@ -97,7 +97,10 @@ export function createAddCommand(): Command {
                     }
 
                     if (result) {
-                        tags = result.split(",").map((s) => s.trim()).filter(Boolean);
+                        tags = result
+                            .split(",")
+                            .map((s) => s.trim())
+                            .filter(Boolean);
                     }
                 }
 

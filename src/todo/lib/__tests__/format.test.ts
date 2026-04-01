@@ -1,5 +1,5 @@
-import { SafeJSON } from "@app/utils/json";
 import { describe, expect, it } from "bun:test";
+import { SafeJSON } from "@app/utils/json";
 import { formatTodo, formatTodoList } from "../format";
 import type { Todo } from "../types";
 
