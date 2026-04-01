@@ -1,7 +1,10 @@
 #!/usr/bin/env bun
 
 import { createAddCommand } from "@app/todo/commands/add";
+import { createEditCommand } from "@app/todo/commands/edit";
 import { createListCommand } from "@app/todo/commands/list";
+import { createRemoveCommand } from "@app/todo/commands/remove";
+import { createSearchCommand } from "@app/todo/commands/search";
 import { createShowCommand } from "@app/todo/commands/show";
 import {
     createBlockCommand,
@@ -23,6 +26,9 @@ program.addCommand(createStartCommand());
 program.addCommand(createBlockCommand());
 program.addCommand(createCompleteCommand());
 program.addCommand(createReopenCommand());
+program.addCommand(createEditCommand());
+program.addCommand(createRemoveCommand());
+program.addCommand(createSearchCommand());
 
 enhanceHelp(program);
 
