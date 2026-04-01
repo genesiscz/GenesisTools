@@ -18,9 +18,7 @@ interface ImplEntry {
     fn: FixFn;
 }
 
-const impls: ImplEntry[] = [
-    { name: "regex", fn: fixRegex },
-];
+const impls: ImplEntry[] = [{ name: "regex", fn: fixRegex }];
 
 // ── Run tests ────────────────────────────────────────────────────────────
 

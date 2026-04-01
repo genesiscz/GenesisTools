@@ -732,12 +732,7 @@ function joinTerminalWrappedLines(lines: string[]): string {
             const isPathCharAfterSlash = prevTrimmed.endsWith("/") && (fc === "-" || fc === "@"); // /@babel/, /-special/
             const isHyphenDigitSuffix = fc === "-" && /[a-zA-Z0-9]$/.test(prevTrimmed) && /^-\d/.test(trimmedCurrent); // backup-2026
 
-            let isMidWord =
-                isTier1 ||
-                isAfterColon ||
-                isAfterEquals ||
-                isPathCharAfterSlash ||
-                isHyphenDigitSuffix;
+            let isMidWord = isTier1 || isAfterColon || isAfterEquals || isPathCharAfterSlash || isHyphenDigitSuffix;
 
             // When prev has balanced quotes and the current line has multiple
             // space-separated tokens, check if the first token looks like a
