@@ -484,46 +484,53 @@ export async function fetchAndAnalyze(
     refresh: boolean
 ): Promise<FullAnalysis> {
     const spinner = p.spinner();
-    spinner.start("Fetching sold data from reas.cz...");
+    spinner.start("Fetching data from all providers...");
 
     const warnings: string[] = [];
+
+    // Fetch all providers in parallel
+    const [reasResult, srealityResult, mfResult] = await Promise.allSettled([
+        isProviderEnabled(filters, "reas")
+            ? (async () => {
+                  const listings: ReasListing[] = [];
+                  for (const period of filters.periods) {
+                      listings.push(...(await fetchSoldListings(filters, period, refresh)));
+                  }
+                  return listings;
+              })()
+            : Promise.resolve([] as ReasListing[]),
+        isProviderEnabled(filters, "sreality")
+            ? fetchRentalListings(filters, refresh)
+            : Promise.resolve([] as SrealityRental[]),
+        isProviderEnabled(filters, "mf")
+            ? fetchMfRentalData(filters.district.name, refresh)
+            : Promise.resolve([] as MfRentalBenchmark[]),
+    ]);
+
     let allListings: ReasListing[] = [];
 
-    if (isProviderEnabled(filters, "reas")) {
-        try {
-            for (const period of filters.periods) {
-                const listings = await fetchSoldListings(filters, period, refresh);
-                allListings.push(...listings);
-            }
-        } catch (error) {
-            warnings.push(`REAS: ${error instanceof Error ? error.message : String(error)}`);
-        }
+    if (reasResult.status === "fulfilled") {
+        allListings = reasResult.value;
+    } else {
+        warnings.push(`REAS: ${reasResult.reason instanceof Error ? reasResult.reason.message : String(reasResult.reason)}`);
     }
 
     allListings = applyListingFilters(allListings, filters);
 
-    spinner.message(`Found ${allListings.length} sold listings. Fetching rental data from sreality.cz...`);
-
     let rentalListings: SrealityRental[] = [];
 
-    if (isProviderEnabled(filters, "sreality")) {
-        try {
-            rentalListings = await fetchRentalListings(filters, refresh);
-        } catch (error) {
-            warnings.push(`Sreality: ${error instanceof Error ? error.message : String(error)}`);
-        }
+    if (srealityResult.status === "fulfilled") {
+        rentalListings = srealityResult.value;
+    } else {
+        warnings.push(`Sreality: ${srealityResult.reason instanceof Error ? srealityResult.reason.message : String(srealityResult.reason)}`);
     }
-
-    spinner.message(`Found ${rentalListings.length} rentals. Loading MF rental benchmarks...`);
 
     let mfBenchmarks: MfRentalBenchmark[] = [];
 
-    if (isProviderEnabled(filters, "mf")) {
-        try {
-            mfBenchmarks = await fetchMfRentalData(filters.district.name, refresh);
-        } catch (error) {
-            warnings.push(`MF cenova mapa: ${error instanceof Error ? error.message : String(error)}`);
-        }
+    if (mfResult.status === "fulfilled") {
+        mfBenchmarks = mfResult.value;
+    } else {
+        warnings.push(`MF cenova mapa: ${mfResult.reason instanceof Error ? mfResult.reason.message : String(mfResult.reason)}`);
     }
 
     spinner.stop(

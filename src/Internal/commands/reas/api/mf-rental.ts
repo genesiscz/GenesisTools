@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { cacheKey, getCached, MF_TTL, setCache } from "../cache/index";
+import { fetchWithTimeout } from "../lib/fetch";
 import type { CacheEntry, MfRentalBenchmark } from "../types";
 
 type CellValue = string | number | boolean | undefined;
@@ -123,16 +124,7 @@ function parseVkBlock(
  * for the given municipality.
  */
 async function downloadAndParse(municipality: string, url: string): Promise<MfRentalBenchmark[]> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-
-    let response: Response;
-
-    try {
-        response = await fetch(url, { signal: controller.signal });
-    } finally {
-        clearTimeout(timeout);
-    }
+    const response = await fetchWithTimeout(url);
 
     if (!response.ok) {
         throw new Error(`MF XLSX download failed: ${response.status} ${response.statusText} (${url})`);

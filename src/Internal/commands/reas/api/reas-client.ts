@@ -1,23 +1,12 @@
 import { SafeJSON } from "@app/utils/json";
 import { cacheKey, getCached, REAS_TTL, setCache } from "../cache/index";
+import { fetchWithTimeout } from "../lib/fetch";
 import type { AnalysisFilters, CacheEntry, DateRange, ReasListing } from "../types";
 
 const BASE_URL = "https://catalog.reas.cz/catalog";
 const CLIENT_ID = "6988cb437c5b9d2963280369";
 const PAGE_LIMIT = 20;
 const MAX_PAGES = 1000;
-const FETCH_TIMEOUT_MS = 30_000;
-
-async function fetchWithTimeout(url: string): Promise<Response> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
-    try {
-        return await fetch(url, { signal: controller.signal });
-    } finally {
-        clearTimeout(timeout);
-    }
-}
 
 interface CountResponse {
     success: boolean;
