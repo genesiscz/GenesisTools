@@ -22,10 +22,15 @@ export function getResultPath(suiteName: string, label?: string): string {
     return join(RESULTS_DIR, `${suiteName}${suffix}-${date}.json`);
 }
 
+function escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export async function getLastResult(suiteName: string): Promise<SavedResult | null> {
     ensureResultsDir();
 
-    const pattern = new RegExp(`^${suiteName}-\\d{4}-\\d{2}-\\d{2}\\.json$`);
+    const escaped = escapeRegExp(suiteName);
+    const pattern = new RegExp(`^${escaped}-\\d{4}-\\d{2}-\\d{2}\\.json$`);
     const files = readdirSync(RESULTS_DIR)
         .filter((f) => pattern.test(f))
         .sort()
@@ -42,7 +47,8 @@ export async function getLastResult(suiteName: string): Promise<SavedResult | nu
 export function getAllResults(suiteName: string): string[] {
     ensureResultsDir();
 
-    const pattern = new RegExp(`^${suiteName}(-[a-zA-Z0-9_-]+)?-\\d{4}-\\d{2}-\\d{2}\\.json$`);
+    const escaped = escapeRegExp(suiteName);
+    const pattern = new RegExp(`^${escaped}(-[a-zA-Z0-9_-]+)?-\\d{4}-\\d{2}-\\d{2}\\.json$`);
     return readdirSync(RESULTS_DIR)
         .filter((f) => pattern.test(f))
         .sort()

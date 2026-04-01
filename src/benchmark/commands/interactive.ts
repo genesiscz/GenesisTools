@@ -180,11 +180,19 @@ export async function interactiveMode(): Promise<void> {
             const editOpts: EditOptions = {};
 
             if (runsInput) {
-                editOpts.runs = parseInt(runsInput, 10);
+                const val = parseInt(runsInput, 10);
+
+                if (!isNaN(val)) {
+                    editOpts.runs = val;
+                }
             }
 
             if (warmupInput) {
-                editOpts.warmup = parseInt(warmupInput, 10);
+                const val = parseInt(warmupInput, 10);
+
+                if (!isNaN(val)) {
+                    editOpts.warmup = val;
+                }
             }
 
             if (editOpts.runs || editOpts.warmup) {
