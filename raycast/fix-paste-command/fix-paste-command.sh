@@ -56,9 +56,13 @@ FIXED=$(printf '%s\n' "$FIXED" | perl -0777 -pe 's/\\\h*\n\h*/ /g')
 # Bash() content keeps its intentional newlines (multi-line scripts).
 if [[ "$IS_BASH_WRAPPED" == false ]]; then
     FIXED=$(printf '%s\n' "$FIXED" | perl -0777 -pe '
-        # Mid-word wraps: line ends with non-space → join WITHOUT space
-        s/(\S)\n\h*/$1/g;
-        # Word-boundary wraps: line ends with space(s) → join WITH single space
+        # Mid-word wraps: line ends with non-space AND next token starts with
+        # a word-continuation char (alphanumeric, dot, underscore, hyphen),
+        # but NOT a shell redirection like 2>/dev/null.
+        # If next token starts with / ~ $ > | & — it is a new argument, NOT
+        # a continuation, so fall through to the space-join below.
+        s/(\S)\n\h*(?=[a-zA-Z0-9._-])(?!\d+>)/$1/g;
+        # Everything else: join WITH single space
         s/\h*\n\h*/ /g;
     ')
 fi
@@ -66,10 +70,11 @@ fi
 # Step 3: Collapse runs of spaces into one, trim leading/trailing
 FIXED=$(printf '%s\n' "$FIXED" | sed -E 's/  +/ /g; s/^ +//; s/ +$//')
 
-# --- Re-split single commands with proper \ per flag ---
+# --- Re-split single commands with proper \ per long flag ---
+# Only split at --long-flags (not short -r, -rf, -c which break commands like rm/cp)
 LINE_COUNT=$(printf '%s\n' "$FIXED" | wc -l | tr -d ' ')
-if [[ "$LINE_COUNT" -eq 1 ]] && printf '%s' "$FIXED" | grep -qE ' --?[a-zA-Z]'; then
-    FIXED=$(printf '%s\n' "$FIXED" | perl -pe 's/ (--?)(?=[a-zA-Z])/ \\\n  $1/g')
+if [[ "$LINE_COUNT" -eq 1 ]] && printf '%s' "$FIXED" | grep -qE ' --[a-zA-Z]'; then
+    FIXED=$(printf '%s\n' "$FIXED" | perl -pe 's/ (--)(?=[a-zA-Z])/ \\\n  $1/g')
 fi
 
 # Strip trailing whitespace from every line
