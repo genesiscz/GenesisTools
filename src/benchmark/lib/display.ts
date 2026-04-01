@@ -32,7 +32,7 @@ export function displayComparison(current: HyperfineResult[], previous: SavedRes
         }
 
         const diff = cur.mean - prev.mean;
-        const pct = (diff / prev.mean) * 100;
+        const pct = prev.mean !== 0 ? (diff / prev.mean) * 100 : 0;
         const sign = diff > 0 ? "+" : "";
         const color = diff > 0 ? pc.red : pc.green;
 

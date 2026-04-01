@@ -162,7 +162,7 @@ export async function runBenchmark(suite: BenchmarkSuite, opts: RunOptions = {})
     }
 
     const content = await Bun.file(resultPath).text();
-    const output = SafeJSON.parse(content) as HyperfineOutput;
+    const output = SafeJSON.parse(content, { strict: true }) as HyperfineOutput;
 
     const saved: SavedResult = {
         suite: suite.name,

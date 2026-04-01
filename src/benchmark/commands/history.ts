@@ -28,11 +28,16 @@ export async function cmdHistory(suiteName: string, opts: HistoryOptions = {}): 
         const dateA = parts[0];
         const dateB = parts[1];
 
+        if (!dateA) {
+            p.log.error('Invalid --compare format. Expected "YYYY-MM-DD..YYYY-MM-DD" or "YYYY-MM-DD".');
+            process.exit(1);
+        }
+
         const fileA = files.find((f) => f.includes(dateA));
 
         if (!fileA) {
             p.log.error(`No result found for date "${dateA}".`);
-            return;
+            process.exit(1);
         }
 
         const resultA = await loadResult(fileA);
@@ -43,7 +48,7 @@ export async function cmdHistory(suiteName: string, opts: HistoryOptions = {}): 
 
             if (!fileBMatch) {
                 p.log.error(`No result found for date "${dateB}".`);
-                return;
+                process.exit(1);
             }
 
             resultB = await loadResult(fileBMatch);

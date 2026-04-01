@@ -21,10 +21,20 @@ export async function cmdEdit(name: string, opts: EditOptions): Promise<void> {
     const suite = custom[idx];
 
     if (opts.runs !== undefined) {
+        if (!Number.isInteger(opts.runs) || opts.runs < 1) {
+            p.log.error("--runs must be a positive integer.");
+            process.exit(1);
+        }
+
         suite.runs = opts.runs;
     }
 
     if (opts.warmup !== undefined) {
+        if (!Number.isInteger(opts.warmup) || opts.warmup < 0) {
+            p.log.error("--warmup must be a non-negative integer.");
+            process.exit(1);
+        }
+
         suite.warmup = opts.warmup;
     }
 

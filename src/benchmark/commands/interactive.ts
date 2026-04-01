@@ -12,10 +12,6 @@ import { cmdRemove } from "./remove";
 import { cmdShow } from "./show";
 
 export async function interactiveMode(): Promise<void> {
-    if (!(await ensureHyperfine())) {
-        process.exit(1);
-    }
-
     p.intro(pc.bgCyan(pc.black(" benchmark ")));
 
     const allSuites = await getAllSuites();
@@ -195,7 +191,7 @@ export async function interactiveMode(): Promise<void> {
                 }
             }
 
-            if (editOpts.runs || editOpts.warmup) {
+            if (editOpts.runs !== undefined || editOpts.warmup !== undefined) {
                 await cmdEdit(suite.name, editOpts);
             }
         } else if (editChoice === "commands") {
@@ -235,6 +231,10 @@ export async function interactiveMode(): Promise<void> {
 
         p.outro(pc.green("Done."));
         return;
+    }
+
+    if (!(await ensureHyperfine())) {
+        process.exit(1);
     }
 
     const runCountInput = await withCancel(

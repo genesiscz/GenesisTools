@@ -16,7 +16,7 @@ export async function cmdRun(suiteName: string, opts: RunOptions): Promise<void>
         process.exit(1);
     }
 
-    const previous = opts.compare ? await getLastResult(suiteName) : null;
+    const previous = opts.compare ? await getLastResult(suiteName, opts.only) : null;
     const results = await runBenchmark(suite, opts);
 
     if (!results) {
