@@ -20,9 +20,18 @@ import { clearCache } from "./cache/index";
 import type { DistrictInfo } from "./data/districts";
 import { getAllDistrictNames, getDistrict, getPrahaDistrictNames, searchDistricts } from "./data/districts";
 import { resolveAddress } from "./lib/address-resolver";
+import {
+    DISPOSITIONS,
+    PROPERTY_TYPES,
+    buildConfig,
+    buildPeriodOptions,
+    hasSufficientFlags,
+    parsePeriod,
+    parsePeriods,
+    resolveDistrict,
+} from "./lib/config-builder";
 import type {
     AnalysisFilters,
-    DateRange,
     FullAnalysis,
     MfRentalBenchmark,
     ProviderName,
@@ -52,92 +61,6 @@ interface ReasOptions {
     format?: string;
     server?: boolean;
     port?: number;
-}
-
-const PROPERTY_TYPES: Array<{ value: string; label: string }> = [
-    { value: "panel", label: "Panel" },
-    { value: "brick", label: "Brick" },
-    { value: "house", label: "House" },
-];
-
-const DISPOSITIONS: Array<{ value: string; label: string }> = [
-    { value: "1+1", label: "1+1" },
-    { value: "1+kk", label: "1+kk" },
-    { value: "2+1", label: "2+1" },
-    { value: "2+kk", label: "2+kk" },
-    { value: "3+1", label: "3+1" },
-    { value: "3+kk", label: "3+kk" },
-    { value: "4+1", label: "4+1" },
-    { value: "4+kk", label: "4+kk" },
-    { value: "all", label: "All" },
-];
-
-function buildPeriodOptions(): Array<{ value: string; label: string }> {
-    const year = new Date().getFullYear();
-    return [
-        { value: String(year), label: String(year) },
-        { value: String(year - 1), label: String(year - 1) },
-        { value: String(year - 2), label: String(year - 2) },
-        { value: "last6m", label: "Last 6 months" },
-    ];
-}
-
-function parsePeriod(period: string): DateRange {
-    const relativeMatch = /^last(\d+)m$/i.exec(period);
-
-    if (relativeMatch) {
-        const months = parseInt(relativeMatch[1], 10);
-        const now = new Date();
-        const from = new Date(now);
-        from.setMonth(from.getMonth() - months);
-
-        return {
-            label: `Last ${months} months`,
-            from,
-            to: now,
-        };
-    }
-
-    const year = parseInt(period, 10);
-
-    if (Number.isNaN(year)) {
-        throw new Error(`Invalid period: "${period}". Expected a year (e.g. 2024), "last6m", "last12m", etc.`);
-    }
-
-    return {
-        label: String(year),
-        from: new Date(`${year}-01-01T00:00:00`),
-        to: new Date(`${year}-12-31T23:59:59`),
-    };
-}
-
-function parsePeriods(periodsStr: string | undefined): DateRange[] {
-    if (!periodsStr) {
-        const currentYear = new Date().getFullYear();
-        return [parsePeriod(String(currentYear))];
-    }
-
-    return periodsStr.split(",").map((s) => parsePeriod(s.trim()));
-}
-
-function resolveDistrict(name: string): DistrictInfo {
-    const exact = getDistrict(name);
-
-    if (exact) {
-        return exact;
-    }
-
-    const matches = searchDistricts(name);
-
-    if (matches.length === 1) {
-        return matches[0];
-    }
-
-    if (matches.length > 1) {
-        throw new Error(`Ambiguous district "${name}". Matches: ${matches.map((d) => d.name).join(", ")}`);
-    }
-
-    throw new Error(`Unknown district: "${name}". Use --district with one of: ${getAllDistrictNames().join(", ")}`);
 }
 
 async function resolveDistrictFromAddress(address: string): Promise<DistrictInfo> {
@@ -171,10 +94,6 @@ async function resolveDistrictFromAddress(address: string): Promise<DistrictInfo
     }
 
     return resolved;
-}
-
-function hasSufficientFlags(options: ReasOptions): boolean {
-    return !!((options.district || options.address) && options.type && options.price && options.area);
 }
 
 async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; target: TargetProperty; refresh: boolean }> {
@@ -390,67 +309,28 @@ async function runInteractiveWizard(): Promise<{ filters: AnalysisFilters; targe
     return { filters, target, refresh: false };
 }
 
-function parseOptionalNumber(raw: string | undefined): number | undefined {
-    if (raw === undefined) {
-        return undefined;
-    }
-
-    const num = Number(raw);
-    return Number.isFinite(num) ? num : undefined;
-}
-
-function parseProviders(raw: string | undefined): ProviderName[] | undefined {
-    if (!raw) {
-        return undefined;
-    }
-
-    const valid = new Set<ProviderName>(["reas", "sreality", "ereality", "bezrealitky", "mf"]);
-    const tokens = raw.split(",").map((s) => s.trim().toLowerCase());
-    const unknown = tokens.filter((t) => !valid.has(t as ProviderName));
-
-    if (unknown.length > 0) {
-        throw new Error(`Unknown provider(s): ${unknown.join(", ")}. Valid: ${[...valid].join(", ")}`);
-    }
-
-    return tokens.filter((name): name is ProviderName => valid.has(name as ProviderName));
-}
-
 export async function buildFromFlags(
     options: ReasOptions
 ): Promise<{ filters: AnalysisFilters; target: TargetProperty }> {
     const district = options.address
         ? await resolveDistrictFromAddress(options.address)
         : resolveDistrict(options.district!);
-    const constructionType = options.type!;
-    const disposition = options.disposition && options.disposition !== "all" ? options.disposition : undefined;
-    const dateRanges = parsePeriods(options.periods);
 
-    const filters: AnalysisFilters = {
-        estateType: "flat",
-        constructionType,
-        disposition,
-        periods: dateRanges,
+    return buildConfig({
         district,
-        priceMin: parseOptionalNumber(options.priceMin),
-        priceMax: parseOptionalNumber(options.priceMax),
-        areaMin: parseOptionalNumber(options.areaMin),
-        areaMax: parseOptionalNumber(options.areaMax),
-        providers: parseProviders(options.providers),
-    };
-
-    const target: TargetProperty = {
+        constructionType: options.type!,
+        disposition: options.disposition,
+        periodsStr: options.periods,
         price: Number(options.price),
         area: Number(options.area),
-        disposition: disposition ?? "all",
-        constructionType,
-        monthlyRent: Number(options.rent ?? "0"),
+        rent: Number(options.rent ?? "0"),
         monthlyCosts: Number(options.monthlyCosts ?? "0"),
-        district: district.name,
-        districtId: district.reasId,
-        srealityDistrictId: district.srealityId,
-    };
-
-    return { filters, target };
+        priceMin: options.priceMin,
+        priceMax: options.priceMax,
+        areaMin: options.areaMin,
+        areaMax: options.areaMax,
+        providers: options.providers,
+    });
 }
 
 function isProviderEnabled(filters: AnalysisFilters, provider: ProviderName): boolean {

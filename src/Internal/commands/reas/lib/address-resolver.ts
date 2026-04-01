@@ -1,6 +1,7 @@
 import { type SuggestResult, suggestLocality } from "../api/sreality-client";
 import { type DistrictInfo, getDistrict, searchDistricts } from "../data/districts";
-import type { AnalysisFilters, DateRange } from "../types";
+import { parsePeriod } from "@app/Internal/commands/reas/lib/config-builder";
+import type { AnalysisFilters } from "../types";
 
 export interface ResolvedAddress {
     /** The matched district from the database */
@@ -122,36 +123,11 @@ export function buildSearchFilters(options: BuildFiltersOptions): AnalysisFilter
     };
 }
 
-function parsePeriodStrings(periods?: string[]): DateRange[] {
+function parsePeriodStrings(periods?: string[]) {
     if (!periods || periods.length === 0) {
         const currentYear = new Date().getFullYear();
         return [parsePeriod(String(currentYear))];
     }
 
     return periods.map(parsePeriod);
-}
-
-function parsePeriod(period: string): DateRange {
-    const relativeMatch = /^last(\d+)m$/i.exec(period);
-
-    if (relativeMatch) {
-        const months = parseInt(relativeMatch[1], 10);
-        const now = new Date();
-        const from = new Date(now);
-        from.setMonth(from.getMonth() - months);
-
-        return { label: `Last ${months} months`, from, to: now };
-    }
-
-    const year = parseInt(period, 10);
-
-    if (Number.isNaN(year)) {
-        throw new Error(`Invalid period: "${period}". Expected a year (e.g. 2024), "last6m", etc.`);
-    }
-
-    return {
-        label: String(year),
-        from: new Date(`${year}-01-01T00:00:00`),
-        to: new Date(`${year}-12-31T23:59:59`),
-    };
 }
