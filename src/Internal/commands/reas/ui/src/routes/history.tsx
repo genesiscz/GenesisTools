@@ -138,10 +138,18 @@ function HistoryPage() {
                     </div>
                 </div>
                 <div>
-                    <label htmlFor="history-construction" className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider">
+                    <label
+                        htmlFor="history-construction"
+                        className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider"
+                    >
                         Construction
                     </label>
-                    <select id="history-construction" value={chartType} onChange={(e) => setChartType(e.target.value)} className="cyber-select">
+                    <select
+                        id="history-construction"
+                        value={chartType}
+                        onChange={(e) => setChartType(e.target.value)}
+                        className="cyber-select"
+                    >
                         <option value="brick">Brick</option>
                         <option value="panel">Panel</option>
                         <option value="house">House</option>

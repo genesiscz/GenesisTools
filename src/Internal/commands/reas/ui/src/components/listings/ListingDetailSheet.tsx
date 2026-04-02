@@ -189,12 +189,12 @@ function Metric({ label, value, accent = false }: { label: string; value: string
 
 function DetailSkeleton() {
     return (
-            <div className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-2">
-                    {DETAIL_SKELETON_KEYS.map((key) => (
-                        <Skeleton key={key} variant="card" className="h-24" />
-                    ))}
-                </div>
+        <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+                {DETAIL_SKELETON_KEYS.map((key) => (
+                    <Skeleton key={key} variant="card" className="h-24" />
+                ))}
+            </div>
             <Skeleton variant="card" className="h-32" />
             <Skeleton variant="card" className="h-64" />
         </div>
