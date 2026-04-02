@@ -14,6 +14,7 @@ import { cn } from "@ui/lib/utils";
 import { Building2, ExternalLink, Filter, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { type FormEvent, type HTMLInputTypeAttribute, useMemo, useState } from "react";
 import { ListingDetailSheet } from "../components/listings/ListingDetailSheet";
+import { SourceBadge } from "../components/listings/SourceBadge";
 
 export const Route = createFileRoute("/listings")({
     component: ListingsPage,
@@ -64,14 +65,6 @@ const SORT_OPTIONS: Array<{ value: SortBy; label: string }> = [
     { value: "price_per_m2", label: "Price / m2" },
     { value: "area", label: "Area" },
 ];
-
-const SOURCE_STYLES: Record<string, string> = {
-    sreality: "border-cyan-500/30 bg-cyan-500/10 text-cyan-300",
-    bezrealitky: "border-violet-500/30 bg-violet-500/10 text-violet-300",
-    ereality: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
-    "mf-rental": "border-amber-500/30 bg-amber-500/10 text-amber-300",
-    reas: "border-rose-500/30 bg-rose-500/10 text-rose-300",
-};
 
 const LISTING_SKELETON_KEYS = ["one", "two", "three", "four", "five", "six", "seven", "eight"] as const;
 
@@ -375,15 +368,7 @@ function ListingsPage() {
                                         {listings.map((listing) => (
                                             <TableRow key={listing.id} className="border-white/5 hover:bg-white/[0.03]">
                                                 <TableCell>
-                                                    <Badge
-                                                        variant="outline"
-                                                        className={cn(
-                                                            "text-[10px] font-mono uppercase tracking-[0.16em]",
-                                                            getSourceStyle(listing.source)
-                                                        )}
-                                                    >
-                                                        {listing.source}
-                                                    </Badge>
+                                                    <SourceBadge source={listing.source} />
                                                 </TableCell>
                                                 <TableCell className="max-w-[280px] whitespace-normal">
                                                     <div className="flex items-start gap-2">
@@ -594,10 +579,6 @@ function countActiveFilters(filters: ListingsFilters) {
 
 function readableSortLabel(sortBy: SortBy) {
     return SORT_OPTIONS.find((option) => option.value === sortBy)?.label.toLowerCase() ?? sortBy;
-}
-
-function getSourceStyle(source: string) {
-    return SOURCE_STYLES[source] ?? "border-white/10 bg-white/[0.03] text-gray-300";
 }
 
 function formatPrice(value: number) {

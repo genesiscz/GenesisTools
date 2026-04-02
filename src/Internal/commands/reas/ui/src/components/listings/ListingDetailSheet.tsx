@@ -8,6 +8,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Skeleton } from "@ui/components/skeleton";
 import { cn } from "@ui/lib/utils";
 import { ExternalLink, MapPin } from "lucide-react";
+import { SourceBadge } from "./SourceBadge";
 
 interface ListingDetailResponse {
     listing: ListingRow;
@@ -19,14 +20,6 @@ interface ListingDetailSheetProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
 }
-
-const SOURCE_STYLES: Record<string, string> = {
-    sreality: "border-cyan-500/30 bg-cyan-500/10 text-cyan-300",
-    bezrealitky: "border-violet-500/30 bg-violet-500/10 text-violet-300",
-    ereality: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
-    "mf-rental": "border-amber-500/30 bg-amber-500/10 text-amber-300",
-    reas: "border-rose-500/30 bg-rose-500/10 text-rose-300",
-};
 
 const DETAIL_SKELETON_KEYS = ["one", "two", "three", "four", "five", "six"] as const;
 
@@ -63,15 +56,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                         <div className="flex flex-wrap items-center gap-2">
                             {listing && (
                                 <>
-                                    <Badge
-                                        variant="outline"
-                                        className={cn(
-                                            "text-[10px] font-mono uppercase tracking-[0.2em]",
-                                            getSourceStyle(listing.source)
-                                        )}
-                                    >
-                                        {listing.source}
-                                    </Badge>
+                                    <SourceBadge source={listing.source} className="tracking-[0.2em]" />
                                     <Badge
                                         variant="outline"
                                         className={cn(
@@ -199,10 +184,6 @@ function DetailSkeleton() {
             <Skeleton variant="card" className="h-64" />
         </div>
     );
-}
-
-function getSourceStyle(source: string) {
-    return SOURCE_STYLES[source] ?? "border-white/10 bg-white/[0.03] text-gray-300";
 }
 
 function getStatusStyle(status: string) {
