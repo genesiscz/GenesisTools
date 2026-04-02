@@ -1,13 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-
-interface DataPoint {
-    date: string;
-    value: number;
-    district: string;
-}
+import { normalizeTrendChartData, type TrendChartPoint } from "./trend-chart-utils";
 
 interface TrendChartProps {
-    data: DataPoint[];
+    data: TrendChartPoint[];
     height?: number;
 }
 
@@ -29,6 +24,7 @@ interface TooltipState {
 export function TrendChart({ data, height = 200 }: TrendChartProps) {
     const svgRef = useRef<SVGSVGElement>(null);
     const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+    const normalizedData = useMemo(() => normalizeTrendChartData(data), [data]);
 
     const WIDTH = 700;
     const PADDING = { top: 20, right: 20, bottom: 30, left: 60 };
@@ -39,7 +35,7 @@ export function TrendChart({ data, height = 200 }: TrendChartProps) {
         const districtSet = new Set<string>();
         const dateSet = new Set<string>();
 
-        for (const d of data) {
+        for (const d of normalizedData) {
             districtSet.add(d.district);
             dateSet.add(d.date);
         }
@@ -59,7 +55,7 @@ export function TrendChart({ data, height = 200 }: TrendChartProps) {
             };
         }
 
-        const values = data.map((d) => d.value);
+        const values = normalizedData.map((d) => d.value);
         const minVal = Math.min(...values);
         const maxVal = Math.max(...values);
         const padding = (maxVal - minVal) * 0.1 || 1000;
@@ -77,7 +73,7 @@ export function TrendChart({ data, height = 200 }: TrendChartProps) {
         };
 
         const lineData = districtsList.map((district, i) => {
-            const points = data
+            const points = normalizedData
                 .filter((d) => d.district === district)
                 .sort((a, b) => a.date.localeCompare(b.date))
                 .map((d) => ({
@@ -106,7 +102,7 @@ export function TrendChart({ data, height = 200 }: TrendChartProps) {
             xScale: xScaleFn,
             yScale: yScaleFn,
         };
-    }, [data, chartWidth, chartHeight]);
+    }, [normalizedData, chartWidth, chartHeight]);
 
     const yTicks = useMemo(() => {
         const count = 5;
@@ -179,7 +175,7 @@ export function TrendChart({ data, height = 200 }: TrendChartProps) {
         setTooltip(null);
     }, []);
 
-    if (data.length === 0) {
+    if (normalizedData.length === 0) {
         return (
             <div className="flex items-center justify-center border border-white/5 rounded-lg" style={{ height }}>
                 <p className="text-xs font-mono text-gray-500">No snapshot data available</p>
