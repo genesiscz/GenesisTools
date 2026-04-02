@@ -28,6 +28,7 @@ describe("buildDashboardExport()", () => {
             benchmarks: [],
         },
         rentalListings: [],
+        saleListings: [],
         mfBenchmarks: [],
         filters: {
             estateType: "flat" as const,
@@ -46,6 +47,28 @@ describe("buildDashboardExport()", () => {
             districtId: 3100,
             srealityDistrictId: 1,
         },
+        investmentScore: {
+            overall: 81,
+            grade: "A",
+            factors: { yieldScore: 80, discountScore: 82, trendScore: 79, marketVelocityScore: 83 },
+            reasoning: ["Healthy yield"],
+            recommendation: "buy",
+        },
+        momentum: {
+            priceVelocity: 1.8,
+            direction: "rising",
+            momentum: "accelerating",
+            confidence: "high",
+            interpretation: "Growing market",
+        },
+        providerSummary: [
+            {
+                provider: "sreality",
+                sourceContract: "sreality-v2",
+                count: 0,
+                fetchedAt: "2026-04-02T00:00:00.000Z",
+            },
+        ],
     };
 
     test("produces valid DashboardExport structure", () => {
@@ -58,6 +81,7 @@ describe("buildDashboardExport()", () => {
     test("includes target property in meta", () => {
         const result = buildDashboardExport(mockAnalysis);
         expect(result.meta.target.price).toBe(3_500_000);
+        expect(result.meta.providerSummary).toHaveLength(1);
     });
 
     test("serializes to valid JSON", () => {
@@ -70,6 +94,12 @@ describe("buildDashboardExport()", () => {
         const result = buildDashboardExport(mockAnalysis);
         expect(result.analysis.yield.grossYield).toBe(5.2);
         expect(result.analysis.yield.netYield).toBe(3.8);
+    });
+
+    test("includes score and momentum data", () => {
+        const result = buildDashboardExport(mockAnalysis);
+        expect(result.analysis.investmentScore?.grade).toBe("A");
+        expect(result.analysis.momentum?.direction).toBe("rising");
     });
 
     test("includes time on market stats", () => {

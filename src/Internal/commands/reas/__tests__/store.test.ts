@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { SavePropertyInput } from "@app/Internal/commands/reas/lib/store";
 import { ReasDatabase } from "@app/Internal/commands/reas/lib/store";
 import type { FullAnalysis } from "@app/Internal/commands/reas/types";
+import { SafeJSON } from "@app/utils/json";
 
 function makeAnalysis(overrides?: Partial<Pick<FullAnalysis, "target" | "filters">>): FullAnalysis {
     return {
@@ -195,6 +196,7 @@ describe("saved_properties", () => {
         monthlyCosts: 4000,
         periods: "2024,2025",
         providers: "reas,sreality",
+        listingUrl: "https://www.sreality.cz/detail/101",
         notes: "Near the park",
     };
 
@@ -208,6 +210,7 @@ describe("saved_properties", () => {
         expect(row!.district).toBe("Hradec Kralove");
         expect(row!.construction_type).toBe("brick");
         expect(row!.target_price).toBe(4000000);
+        expect(row!.listing_url).toBe("https://www.sreality.cz/detail/101");
         expect(row!.notes).toBe("Near the park");
     });
 
@@ -227,8 +230,18 @@ describe("saved_properties", () => {
         expect(row!.last_score).toBe(72);
         expect(row!.last_grade).toBe("B");
         expect(row!.last_net_yield).toBe(4.2);
+        expect(row!.last_gross_yield).toBe(5.5);
+        expect(row!.comparable_count).toBe(1);
+        expect(row!.rental_count).toBe(0);
+        expect(row!.last_analysis_json).toContain('"grossYield":5.5');
         expect(row!.last_median_price_per_m2).toBe(85000);
         expect(row!.last_analyzed_at).not.toBeNull();
+
+        const history = db.getPropertyAnalysisHistory(id);
+        expect(history).toHaveLength(1);
+        expect(history[0].property_id).toBe(id);
+        expect(history[0].grade).toBe("B");
+        expect(history[0].score).toBe(72);
     });
 
     test("deleteProperty removes the property", () => {
@@ -279,5 +292,64 @@ describe("district_snapshots", () => {
 
         const panelRows = db.getDistrictHistory("Hradec Kralove", "panel");
         expect(panelRows).toHaveLength(1);
+    });
+});
+
+describe("listings", () => {
+    test("upsertListings saves and updates normalized listings", () => {
+        db.upsertListings(
+            [
+                {
+                    source: "sreality",
+                    sourceContract: "sreality-v2",
+                    type: "rental",
+                    sourceId: "101",
+                    district: "Praha 2",
+                    disposition: "2+kk",
+                    area: 60,
+                    price: 15000,
+                    pricePerM2: 250,
+                    address: "Praha 2, Vinohrady",
+                    link: "https://sreality.cz/101",
+                    status: "active",
+                    fetchedAt: "2026-04-02T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ id: 101 }),
+                },
+            ],
+            "Praha 2"
+        );
+
+        db.upsertListings(
+            [
+                {
+                    source: "sreality",
+                    sourceContract: "sreality-v2",
+                    type: "rental",
+                    sourceId: "101",
+                    district: "Praha 2",
+                    disposition: "2+kk",
+                    area: 60,
+                    price: 16000,
+                    pricePerM2: 267,
+                    address: "Praha 2, Vinohrady",
+                    link: "https://sreality.cz/101",
+                    status: "active",
+                    fetchedAt: "2026-04-03T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ id: 101, updated: true }),
+                },
+            ],
+            "Praha 2"
+        );
+
+        const listings = db.getListings({ type: "rental", district: "Praha 2" });
+        expect(listings).toHaveLength(1);
+        expect(listings[0].price).toBe(16000);
+        expect(listings[0].source).toBe("sreality");
+        expect(listings[0].source_contract).toBe("sreality-v2");
+        expect(listings[0].raw_json).toContain('"updated":true');
+
+        const listing = db.getListing(listings[0].id);
+        expect(listing).not.toBeNull();
+        expect(listing!.source_id).toBe("101");
     });
 });

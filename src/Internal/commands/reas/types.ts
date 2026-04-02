@@ -5,11 +5,14 @@ export interface ReasListing {
     soldPrice: number;
     price: number;
     originalPrice: number;
+    pricePerM2?: number;
     disposition: string;
     utilityArea: number;
     displayArea: number;
     soldAt: string;
     firstVisibleAt: string;
+    daysOnMarket?: number;
+    discount?: number;
     point: { type: string; coordinates: [number, number] };
     cadastralAreaSlug: string;
     municipalitySlug: string;
@@ -17,6 +20,11 @@ export interface ReasListing {
 }
 
 export interface SrealityRental {
+    id: string;
+    source: "sreality";
+    sourceId: string;
+    sourceContract: string;
+    type: "rental";
     hash_id: number;
     name: string;
     price: number;
@@ -26,6 +34,77 @@ export interface SrealityRental {
     disposition?: string;
     area?: number;
     link?: string;
+}
+
+export interface ProviderLink {
+    url: string;
+    type?: string;
+    status?: string;
+}
+
+export interface ListingCoordinates {
+    lat: number;
+    lng: number;
+}
+
+export interface RentalListing {
+    id: string;
+    source: Exclude<ProviderName, "reas" | "mf">;
+    sourceId: string;
+    sourceContract: string;
+    type: "rental";
+    hash_id?: number;
+    name?: string;
+    price: number;
+    locality: string;
+    disposition?: string;
+    area?: number;
+    link?: string;
+    charges?: number;
+    gps?: { lat: number; lon: number };
+    coordinates?: ListingCoordinates;
+    description?: string;
+    labels: string[];
+    uri?: string;
+    originalPrice?: number;
+    isDiscounted?: boolean;
+    availableFrom?: number | string | null;
+    imageAltText?: string;
+    links?: ProviderLink[];
+    rawData?: unknown;
+}
+
+export interface SaleListing {
+    id: string;
+    source: Exclude<ProviderName, "mf">;
+    sourceId: string;
+    sourceContract: string;
+    type: "sale" | "sold";
+    price: number;
+    address: string;
+    disposition?: string;
+    area?: number;
+    pricePerM2?: number;
+    link: string;
+    coordinates?: ListingCoordinates;
+    soldAt?: string;
+    daysOnMarket?: number;
+    discount?: number;
+    originalPrice?: number;
+    isDiscounted?: boolean;
+    imageAltText?: string;
+    description?: string;
+    uri?: string;
+    links?: ProviderLink[];
+    rawData?: unknown;
+}
+
+export interface ProviderFetchSummary {
+    provider: ProviderName;
+    sourceContract: string;
+    count: number;
+    fetchedAt: string;
+    error?: string;
 }
 
 export interface MfRentalBenchmark {
@@ -87,7 +166,7 @@ export interface CacheEntry<T> {
 
 export interface AnalysisResult {
     soldComparables: ReasListing[];
-    rentalListings: SrealityRental[];
+    rentalListings: RentalListing[];
     mfBenchmarks: MfRentalBenchmark[];
     target: TargetProperty;
     filters: AnalysisFilters;
@@ -99,11 +178,13 @@ export interface FullAnalysis {
     yield: import("@app/Internal/commands/reas/analysis/rental-yield").YieldResult;
     timeOnMarket: import("@app/Internal/commands/reas/analysis/time-on-market").TimeOnMarketResult;
     discount: import("@app/Internal/commands/reas/analysis/discount").DiscountResult;
-    rentalListings: SrealityRental[];
+    rentalListings: RentalListing[];
+    saleListings?: SaleListing[];
     mfBenchmarks: MfRentalBenchmark[];
     target: TargetProperty;
     filters: AnalysisFilters;
     investmentScore?: import("@app/Internal/commands/reas/analysis/investment-score").InvestmentScore;
     momentum?: import("@app/Internal/commands/reas/analysis/market-momentum").MarketMomentum;
     rentalAggregation?: import("@app/Internal/commands/reas/analysis/rental-aggregation").AggregatedRentalStats[];
+    providerSummary?: ProviderFetchSummary[];
 }

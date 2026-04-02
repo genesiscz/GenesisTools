@@ -2,26 +2,130 @@ import { analyzeComparables } from "@app/Internal/commands/reas/analysis/compara
 import { analyzeDiscount } from "@app/Internal/commands/reas/analysis/discount";
 import { computeInvestmentScore } from "@app/Internal/commands/reas/analysis/investment-score";
 import { detectMomentum } from "@app/Internal/commands/reas/analysis/market-momentum";
+import { aggregateRentals } from "@app/Internal/commands/reas/analysis/rental-aggregation";
 import { analyzeRentalYield } from "@app/Internal/commands/reas/analysis/rental-yield";
 import { analyzeTimeOnMarket } from "@app/Internal/commands/reas/analysis/time-on-market";
 import { analyzeTrends } from "@app/Internal/commands/reas/analysis/trends";
+import { fetchBezrealitkyRentals, fetchBezrealitkySales } from "@app/Internal/commands/reas/api/bezrealitky-client";
+import { fetchErealityRentals } from "@app/Internal/commands/reas/api/ereality-client";
 import { fetchMfRentalData } from "@app/Internal/commands/reas/api/mf-rental";
 import { fetchSoldListings } from "@app/Internal/commands/reas/api/reas-client";
-import { fetchRentalListings } from "@app/Internal/commands/reas/api/sreality-client";
+import { fetchRentalListings, fetchSaleListings } from "@app/Internal/commands/reas/api/sreality-client";
 import { parsePeriods, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
-import { reasDatabase } from "@app/Internal/commands/reas/lib/store";
+import { reasDatabase, type UpsertListingInput } from "@app/Internal/commands/reas/lib/store";
 import type {
     AnalysisFilters,
     FullAnalysis,
     MfRentalBenchmark,
+    ProviderFetchSummary,
     ProviderName,
     ReasListing,
-    SrealityRental,
+    RentalListing,
+    SaleListing,
     TargetProperty,
 } from "@app/Internal/commands/reas/types";
+import { SafeJSON } from "@app/utils/json";
 
 /** Minimum rental price to filter garbage entries (e.g. 1 CZK placeholder listings) */
 const MIN_RENTAL_PRICE = 1000;
+
+function buildProviderSummary({
+    provider,
+    sourceContract,
+    count,
+    error,
+}: {
+    provider: ProviderName;
+    sourceContract: string;
+    count: number;
+    error?: string;
+}): ProviderFetchSummary {
+    return {
+        provider,
+        sourceContract,
+        count,
+        fetchedAt: new Date().toISOString(),
+        error,
+    };
+}
+
+function buildPersistedListings({
+    districtName,
+    fetchedAt,
+    soldListings,
+    saleListings,
+    rentalListings,
+}: {
+    districtName: string;
+    fetchedAt: string;
+    soldListings: ReasListing[];
+    saleListings: SaleListing[];
+    rentalListings: RentalListing[];
+}): UpsertListingInput[] {
+    const persistedSoldListings = soldListings.map((listing) => ({
+        source: "reas",
+        sourceContract: "reas-catalog",
+        type: "sold" as const,
+        status: "sold" as const,
+        sourceId: listing._id,
+        district: districtName,
+        disposition: listing.disposition,
+        area: listing.utilityArea || listing.displayArea,
+        price: listing.soldPrice,
+        pricePerM2: listing.pricePerM2,
+        address: listing.formattedAddress,
+        link: listing.link,
+        fetchedAt,
+        soldAt: listing.soldAt,
+        daysOnMarket: listing.daysOnMarket,
+        discount: listing.discount,
+        coordinatesLat: listing.point.coordinates[1],
+        coordinatesLng: listing.point.coordinates[0],
+        rawJson: SafeJSON.stringify(listing),
+    }));
+
+    const persistedSaleListings = saleListings.map((listing) => ({
+        source: listing.source,
+        sourceContract: listing.sourceContract,
+        type: "sale" as const,
+        status: "active" as const,
+        sourceId: listing.sourceId,
+        district: districtName,
+        disposition: listing.disposition,
+        area: listing.area,
+        price: listing.price,
+        pricePerM2: listing.pricePerM2,
+        address: listing.address,
+        link: listing.link,
+        fetchedAt,
+        coordinatesLat: listing.coordinates?.lat,
+        coordinatesLng: listing.coordinates?.lng,
+        description: listing.description,
+        rawJson: SafeJSON.stringify(listing.rawData ?? listing),
+    }));
+
+    const persistedRentalListings = rentalListings.map((listing) => ({
+        source: listing.source,
+        sourceContract: listing.sourceContract,
+        type: "rental" as const,
+        status: "active" as const,
+        sourceId: listing.sourceId,
+        district: districtName,
+        disposition: listing.disposition,
+        area: listing.area,
+        price: listing.price,
+        pricePerM2: listing.area ? listing.price / listing.area : undefined,
+        address: listing.locality,
+        link: listing.link ?? "",
+        fetchedAt,
+        coordinatesLat: listing.coordinates?.lat ?? listing.gps?.lat,
+        coordinatesLng: listing.coordinates?.lng ?? listing.gps?.lon,
+        description: listing.description,
+        rawJson: SafeJSON.stringify(listing.rawData ?? listing),
+    }));
+
+    return [...persistedSoldListings, ...persistedSaleListings, ...persistedRentalListings];
+}
 
 /** Strip diacritics for accent-insensitive matching (e.g. "Letňany" → "Letnany") */
 function stripDiacritics(str: string): string {
@@ -81,7 +185,15 @@ export async function fetchAndAnalyze(
 
     const warnings: string[] = [];
 
-    const [reasResult, srealityResult, mfResult] = await Promise.allSettled([
+    const [
+        reasResult,
+        srealityRentalResult,
+        srealitySaleResult,
+        bezrealitkyRentalResult,
+        bezrealitkySaleResult,
+        erealityResult,
+        mfResult,
+    ] = await Promise.allSettled([
         isProviderEnabled(filters, "reas")
             ? (async () => {
                   const listings: ReasListing[] = [];
@@ -93,11 +205,25 @@ export async function fetchAndAnalyze(
             : Promise.resolve([] as ReasListing[]),
         isProviderEnabled(filters, "sreality")
             ? fetchRentalListings(filters, refresh)
-            : Promise.resolve([] as SrealityRental[]),
+            : Promise.resolve([] as RentalListing[]),
+        isProviderEnabled(filters, "sreality")
+            ? fetchSaleListings(filters, refresh)
+            : Promise.resolve([] as SaleListing[]),
+        isProviderEnabled(filters, "bezrealitky")
+            ? fetchBezrealitkyRentals(filters, refresh)
+            : Promise.resolve([] as RentalListing[]),
+        isProviderEnabled(filters, "bezrealitky")
+            ? fetchBezrealitkySales(filters, refresh)
+            : Promise.resolve([] as SaleListing[]),
+        isProviderEnabled(filters, "ereality")
+            ? fetchErealityRentals(filters, refresh)
+            : Promise.resolve([] as RentalListing[]),
         isProviderEnabled(filters, "mf")
             ? fetchMfRentalData(filters.district.name, refresh)
             : Promise.resolve([] as MfRentalBenchmark[]),
     ]);
+
+    const providerSummary: ProviderFetchSummary[] = [];
 
     let allListings: ReasListing[] = [];
 
@@ -111,13 +237,103 @@ export async function fetchAndAnalyze(
 
     allListings = applyListingFilters(allListings, filters);
 
-    let rentalListings: SrealityRental[] = [];
+    const rentalListings: RentalListing[] = [];
+    const saleListings: SaleListing[] = [];
 
-    if (srealityResult.status === "fulfilled") {
-        rentalListings = srealityResult.value.filter((r) => r.price >= MIN_RENTAL_PRICE);
+    if (srealityRentalResult.status === "fulfilled") {
+        const nextListings = srealityRentalResult.value.filter((listing) => listing.price >= MIN_RENTAL_PRICE);
+        rentalListings.push(...nextListings);
+        providerSummary.push(
+            buildProviderSummary({
+                provider: "sreality",
+                sourceContract: "sreality-v2",
+                count: nextListings.length,
+            })
+        );
     } else {
         warnings.push(
-            `Sreality: ${srealityResult.reason instanceof Error ? srealityResult.reason.message : String(srealityResult.reason)}`
+            `Sreality rentals: ${srealityRentalResult.reason instanceof Error ? srealityRentalResult.reason.message : String(srealityRentalResult.reason)}`
+        );
+        providerSummary.push(
+            buildProviderSummary({
+                provider: "sreality",
+                sourceContract: "sreality-v2",
+                count: 0,
+                error:
+                    srealityRentalResult.reason instanceof Error
+                        ? srealityRentalResult.reason.message
+                        : String(srealityRentalResult.reason),
+            })
+        );
+    }
+
+    if (srealitySaleResult.status === "fulfilled") {
+        saleListings.push(...srealitySaleResult.value);
+    } else {
+        warnings.push(
+            `Sreality sales: ${srealitySaleResult.reason instanceof Error ? srealitySaleResult.reason.message : String(srealitySaleResult.reason)}`
+        );
+    }
+
+    if (bezrealitkyRentalResult.status === "fulfilled") {
+        const nextListings = bezrealitkyRentalResult.value.filter((listing) => listing.price >= MIN_RENTAL_PRICE);
+        rentalListings.push(...nextListings);
+        providerSummary.push(
+            buildProviderSummary({
+                provider: "bezrealitky",
+                sourceContract: "graphql:listAdverts",
+                count: nextListings.length,
+            })
+        );
+    } else {
+        warnings.push(
+            `Bezrealitky rentals: ${bezrealitkyRentalResult.reason instanceof Error ? bezrealitkyRentalResult.reason.message : String(bezrealitkyRentalResult.reason)}`
+        );
+        providerSummary.push(
+            buildProviderSummary({
+                provider: "bezrealitky",
+                sourceContract: "graphql:listAdverts",
+                count: 0,
+                error:
+                    bezrealitkyRentalResult.reason instanceof Error
+                        ? bezrealitkyRentalResult.reason.message
+                        : String(bezrealitkyRentalResult.reason),
+            })
+        );
+    }
+
+    if (bezrealitkySaleResult.status === "fulfilled") {
+        saleListings.push(...bezrealitkySaleResult.value);
+    } else {
+        warnings.push(
+            `Bezrealitky sales: ${bezrealitkySaleResult.reason instanceof Error ? bezrealitkySaleResult.reason.message : String(bezrealitkySaleResult.reason)}`
+        );
+    }
+
+    if (erealityResult.status === "fulfilled") {
+        const nextListings = erealityResult.value.filter((listing) => listing.price >= MIN_RENTAL_PRICE);
+        rentalListings.push(...nextListings);
+        providerSummary.push(
+            buildProviderSummary({
+                provider: "ereality",
+                sourceContract: "ereality-html",
+                count: nextListings.length,
+            })
+        );
+    } else {
+        warnings.push(
+            `eReality rentals: ${erealityResult.reason instanceof Error ? erealityResult.reason.message : String(erealityResult.reason)}`
+        );
+        providerSummary.push(
+            buildProviderSummary({
+                provider: "ereality",
+                sourceContract: "ereality-html",
+                count: 0,
+                error:
+                    erealityResult.reason instanceof Error
+                        ? erealityResult.reason.message
+                        : String(erealityResult.reason),
+            })
         );
     }
 
@@ -133,7 +349,7 @@ export async function fetchAndAnalyze(
 
     onProgress?.({
         phase: "analyzing",
-        message: `Data fetched: ${allListings.length} sold, ${rentalListings.length} rentals, ${mfBenchmarks.length} MF benchmarks.`,
+        message: `Data fetched: ${allListings.length} sold, ${saleListings.length} active sales, ${rentalListings.length} rentals, ${mfBenchmarks.length} MF benchmarks.`,
         warnings: warnings.length > 0 ? warnings : undefined,
     });
 
@@ -164,6 +380,42 @@ export async function fetchAndAnalyze(
         districtMedianDays: timeOnMarket.median,
     });
 
+    const rentalAggregation = aggregateRentals([
+        {
+            provider: "sreality",
+            listings: rentalListings
+                .filter((listing) => listing.source === "sreality" && listing.disposition && listing.area)
+                .map((listing) => ({
+                    disposition: listing.disposition ?? "",
+                    area: listing.area ?? 0,
+                    rent: listing.price,
+                    address: listing.locality,
+                })),
+        },
+        {
+            provider: "bezrealitky",
+            listings: rentalListings
+                .filter((listing) => listing.source === "bezrealitky" && listing.disposition && listing.area)
+                .map((listing) => ({
+                    disposition: listing.disposition ?? "",
+                    area: listing.area ?? 0,
+                    rent: listing.price,
+                    address: listing.locality,
+                })),
+        },
+        {
+            provider: "ereality",
+            listings: rentalListings
+                .filter((listing) => listing.source === "ereality" && listing.disposition && listing.area)
+                .map((listing) => ({
+                    disposition: listing.disposition ?? "",
+                    area: listing.area ?? 0,
+                    rent: listing.price,
+                    address: listing.locality,
+                })),
+        },
+    ]);
+
     const result: FullAnalysis = {
         comparables,
         trends,
@@ -171,17 +423,31 @@ export async function fetchAndAnalyze(
         timeOnMarket,
         discount,
         rentalListings,
+        saleListings,
         mfBenchmarks,
         target,
         filters,
         investmentScore,
         momentum,
+        rentalAggregation,
+        providerSummary,
     };
 
     if (options?.persistResult !== false) {
         try {
+            const fetchedAt = new Date().toISOString();
             reasDatabase.saveAnalysis(result);
             reasDatabase.saveDistrictSnapshot(result);
+            reasDatabase.upsertListings(
+                buildPersistedListings({
+                    districtName: filters.district.name,
+                    fetchedAt,
+                    soldListings: allListings,
+                    saleListings,
+                    rentalListings,
+                }),
+                filters.district.name
+            );
         } catch {
             // Non-fatal — persistence failure should not break analysis
         }
@@ -189,7 +455,7 @@ export async function fetchAndAnalyze(
 
     onProgress?.({
         phase: "complete",
-        message: `Data fetched: ${allListings.length} sold, ${rentalListings.length} rentals, ${mfBenchmarks.length} MF benchmarks.`,
+        message: `Data fetched: ${allListings.length} sold, ${saleListings.length} active sales, ${rentalListings.length} rentals, ${mfBenchmarks.length} MF benchmarks.`,
         warnings: warnings.length > 0 ? warnings : undefined,
     });
 

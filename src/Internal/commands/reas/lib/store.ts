@@ -6,8 +6,6 @@ import { SafeJSON } from "@app/utils/json";
 
 const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "internal", "reas", "reas.sqlite");
 
-// --- Row types ---
-
 export interface AnalysisHistoryRow {
     id: number;
     district: string;
@@ -44,14 +42,112 @@ export interface SavedPropertyRow {
     monthly_costs: number;
     periods: string | null;
     providers: string | null;
+    listing_url: string | null;
     last_score: number | null;
     last_grade: string | null;
     last_net_yield: number | null;
+    last_gross_yield: number | null;
     last_median_price_per_m2: number | null;
+    score: number | null;
+    gross_yield: number | null;
+    payback_years: number | null;
+    percentile: number | null;
+    comparable_count: number | null;
+    rental_count: number | null;
+    time_on_market: number | null;
+    discount_vs_market: number | null;
+    momentum: string | null;
+    last_analysis_json: string | null;
+    mortgage_rate: number | null;
+    mortgage_term: number | null;
+    down_payment: number | null;
+    loan_amount: number | null;
+    alert_yield_floor: number | null;
+    alert_grade_change: number | null;
     last_analyzed_at: string | null;
     notes: string | null;
     created_at: string;
     updated_at: string;
+}
+
+export interface PropertyAnalysisHistoryRow {
+    id: number;
+    property_id: number;
+    analyzed_at: string;
+    grade: string | null;
+    score: number | null;
+    net_yield: number | null;
+    gross_yield: number | null;
+    median_price_per_m2: number | null;
+    comparable_count: number | null;
+    rental_median: number | null;
+    full_result_json: string;
+}
+
+export interface ListingRow {
+    id: number;
+    source: string;
+    source_contract: string;
+    type: string;
+    status: string;
+    district: string;
+    disposition: string | null;
+    area: number | null;
+    price: number;
+    price_per_m2: number | null;
+    address: string;
+    link: string;
+    source_id: string;
+    fetched_at: string;
+    sold_at: string | null;
+    days_on_market: number | null;
+    discount: number | null;
+    coordinates_lat: number | null;
+    coordinates_lng: number | null;
+    building_type: string | null;
+    description: string | null;
+    raw_json: string;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface UpsertListingInput {
+    source: string;
+    sourceContract: string;
+    type: "sale" | "rental" | "sold";
+    status: "active" | "sold" | "removed";
+    sourceId: string;
+    district: string;
+    disposition?: string;
+    area?: number;
+    price: number;
+    pricePerM2?: number;
+    address: string;
+    link: string;
+    fetchedAt: string;
+    soldAt?: string;
+    daysOnMarket?: number;
+    discount?: number;
+    coordinatesLat?: number;
+    coordinatesLng?: number;
+    buildingType?: string;
+    description?: string;
+    rawJson: string;
+}
+
+export interface GetListingsOptions {
+    type?: "sale" | "rental" | "sold";
+    district?: string;
+    disposition?: string;
+    source?: string;
+    priceMin?: number;
+    priceMax?: number;
+    areaMin?: number;
+    areaMax?: number;
+    sortBy?: "fetched_at" | "sold_at" | "price" | "price_per_m2" | "area";
+    sortDir?: "asc" | "desc";
+    limit?: number;
+    offset?: number;
 }
 
 export interface SavePropertyInput {
@@ -65,6 +161,11 @@ export interface SavePropertyInput {
     monthlyCosts: number;
     periods?: string;
     providers?: string;
+    listingUrl?: string;
+    mortgageRate?: number;
+    mortgageTerm?: number;
+    downPayment?: number;
+    loanAmount?: number;
     notes?: string;
 }
 
@@ -80,8 +181,6 @@ export interface DistrictSnapshotRow {
     snapshot_date: string;
     created_at: string;
 }
-
-// --- Database class ---
 
 export class ReasDatabase extends BaseDatabase {
     constructor(dbPath: string = DEFAULT_DB_PATH) {
@@ -128,15 +227,79 @@ export class ReasDatabase extends BaseDatabase {
                 monthly_costs INTEGER NOT NULL,
                 periods TEXT,
                 providers TEXT,
+                listing_url TEXT,
                 last_score INTEGER,
                 last_grade TEXT,
                 last_net_yield REAL,
+                last_gross_yield REAL,
                 last_median_price_per_m2 REAL,
+                score INTEGER,
+                gross_yield REAL,
+                payback_years REAL,
+                percentile REAL,
+                comparable_count INTEGER,
+                rental_count INTEGER,
+                time_on_market REAL,
+                discount_vs_market REAL,
+                momentum TEXT,
+                last_analysis_json TEXT,
+                mortgage_rate REAL,
+                mortgage_term INTEGER,
+                down_payment REAL,
+                loan_amount REAL,
+                alert_yield_floor REAL,
+                alert_grade_change INTEGER DEFAULT 0,
                 last_analyzed_at TEXT,
                 notes TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
+
+            CREATE TABLE IF NOT EXISTS property_analysis_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                property_id INTEGER NOT NULL,
+                analyzed_at TEXT NOT NULL DEFAULT (datetime('now')),
+                grade TEXT,
+                score INTEGER,
+                net_yield REAL,
+                gross_yield REAL,
+                median_price_per_m2 REAL,
+                comparable_count INTEGER,
+                rental_median REAL,
+                full_result_json TEXT NOT NULL,
+                FOREIGN KEY (property_id) REFERENCES saved_properties(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_pah_property ON property_analysis_history(property_id, analyzed_at DESC);
+
+            CREATE TABLE IF NOT EXISTS listings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                source_contract TEXT NOT NULL,
+                type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                district TEXT NOT NULL,
+                disposition TEXT,
+                area REAL,
+                price INTEGER NOT NULL,
+                price_per_m2 REAL,
+                address TEXT NOT NULL,
+                link TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                fetched_at TEXT NOT NULL,
+                sold_at TEXT,
+                days_on_market REAL,
+                discount REAL,
+                coordinates_lat REAL,
+                coordinates_lng REAL,
+                building_type TEXT,
+                description TEXT,
+                raw_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(source, source_contract, source_id, type)
+            );
+            CREATE INDEX IF NOT EXISTS idx_listings_type_district ON listings(type, district);
+            CREATE INDEX IF NOT EXISTS idx_listings_source ON listings(source, source_id);
 
             CREATE TABLE IF NOT EXISTS district_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,9 +315,26 @@ export class ReasDatabase extends BaseDatabase {
             );
             CREATE INDEX IF NOT EXISTS idx_ds_district ON district_snapshots(district, snapshot_date);
         `);
-    }
 
-    // --- Analysis history ---
+        this.ensureColumn("saved_properties", "listing_url", "TEXT");
+        this.ensureColumn("saved_properties", "last_gross_yield", "REAL");
+        this.ensureColumn("saved_properties", "score", "INTEGER");
+        this.ensureColumn("saved_properties", "gross_yield", "REAL");
+        this.ensureColumn("saved_properties", "payback_years", "REAL");
+        this.ensureColumn("saved_properties", "percentile", "REAL");
+        this.ensureColumn("saved_properties", "comparable_count", "INTEGER");
+        this.ensureColumn("saved_properties", "rental_count", "INTEGER");
+        this.ensureColumn("saved_properties", "time_on_market", "REAL");
+        this.ensureColumn("saved_properties", "discount_vs_market", "REAL");
+        this.ensureColumn("saved_properties", "momentum", "TEXT");
+        this.ensureColumn("saved_properties", "last_analysis_json", "TEXT");
+        this.ensureColumn("saved_properties", "mortgage_rate", "REAL");
+        this.ensureColumn("saved_properties", "mortgage_term", "INTEGER");
+        this.ensureColumn("saved_properties", "down_payment", "REAL");
+        this.ensureColumn("saved_properties", "loan_amount", "REAL");
+        this.ensureColumn("saved_properties", "alert_yield_floor", "REAL");
+        this.ensureColumn("saved_properties", "alert_grade_change", "INTEGER DEFAULT 0");
+    }
 
     saveAnalysis(analysis: FullAnalysis): number {
         const stmt = this.db.prepare(`
@@ -215,18 +395,20 @@ export class ReasDatabase extends BaseDatabase {
             .all({ $limit: limit }) as AnalysisHistoryRow[];
     }
 
-    // --- Saved properties ---
-
     saveProperty(input: SavePropertyInput): number {
         const stmt = this.db.prepare(`
             INSERT INTO saved_properties (
                 name, district, construction_type, disposition,
                 target_price, target_area, monthly_rent, monthly_costs,
-                periods, providers, notes
+                periods, providers, listing_url,
+                mortgage_rate, mortgage_term, down_payment, loan_amount,
+                notes
             ) VALUES (
                 $name, $district, $construction_type, $disposition,
                 $target_price, $target_area, $monthly_rent, $monthly_costs,
-                $periods, $providers, $notes
+                $periods, $providers, $listing_url,
+                $mortgage_rate, $mortgage_term, $down_payment, $loan_amount,
+                $notes
             )
         `);
 
@@ -241,6 +423,11 @@ export class ReasDatabase extends BaseDatabase {
             $monthly_costs: input.monthlyCosts,
             $periods: input.periods ?? null,
             $providers: input.providers ?? null,
+            $listing_url: input.listingUrl ?? null,
+            $mortgage_rate: input.mortgageRate ?? null,
+            $mortgage_term: input.mortgageTerm ?? null,
+            $down_payment: input.downPayment ?? null,
+            $loan_amount: input.loanAmount ?? null,
             $notes: input.notes ?? null,
         });
 
@@ -260,13 +447,27 @@ export class ReasDatabase extends BaseDatabase {
     }
 
     updatePropertyAnalysis(id: number, analysis: FullAnalysis): void {
+        const serializedAnalysis = SafeJSON.stringify(analysis);
+        const rentalMedian = this.getRentalMedian(analysis);
+
         this.db
             .prepare(`
                 UPDATE saved_properties SET
                     last_score = $last_score,
                     last_grade = $last_grade,
                     last_net_yield = $last_net_yield,
+                    last_gross_yield = $last_gross_yield,
                     last_median_price_per_m2 = $last_median_price_per_m2,
+                    score = $score,
+                    gross_yield = $gross_yield,
+                    payback_years = $payback_years,
+                    percentile = $percentile,
+                    comparable_count = $comparable_count,
+                    rental_count = $rental_count,
+                    time_on_market = $time_on_market,
+                    discount_vs_market = $discount_vs_market,
+                    momentum = $momentum,
+                    last_analysis_json = $last_analysis_json,
                     last_analyzed_at = datetime('now'),
                     updated_at = datetime('now')
                 WHERE id = $id
@@ -276,15 +477,271 @@ export class ReasDatabase extends BaseDatabase {
                 $last_score: analysis.investmentScore?.overall ?? null,
                 $last_grade: analysis.investmentScore?.grade ?? null,
                 $last_net_yield: analysis.yield.netYield ?? null,
+                $last_gross_yield: analysis.yield.grossYield ?? null,
                 $last_median_price_per_m2: analysis.comparables.pricePerM2.median ?? null,
+                $score: analysis.investmentScore?.overall ?? null,
+                $gross_yield: analysis.yield.grossYield ?? null,
+                $payback_years: Number.isFinite(analysis.yield.paybackYears) ? analysis.yield.paybackYears : null,
+                $percentile: analysis.comparables.targetPercentile ?? null,
+                $comparable_count: analysis.comparables.listings.length,
+                $rental_count: analysis.rentalListings.length,
+                $time_on_market: analysis.timeOnMarket.median ?? null,
+                $discount_vs_market: analysis.discount.medianDiscount ?? null,
+                $momentum: analysis.momentum?.direction ?? null,
+                $last_analysis_json: serializedAnalysis,
             });
+
+        this.db
+            .prepare(`
+                INSERT INTO property_analysis_history (
+                    property_id,
+                    grade,
+                    score,
+                    net_yield,
+                    gross_yield,
+                    median_price_per_m2,
+                    comparable_count,
+                    rental_median,
+                    full_result_json
+                ) VALUES (
+                    $property_id,
+                    $grade,
+                    $score,
+                    $net_yield,
+                    $gross_yield,
+                    $median_price_per_m2,
+                    $comparable_count,
+                    $rental_median,
+                    $full_result_json
+                )
+            `)
+            .run({
+                $property_id: id,
+                $grade: analysis.investmentScore?.grade ?? null,
+                $score: analysis.investmentScore?.overall ?? null,
+                $net_yield: analysis.yield.netYield ?? null,
+                $gross_yield: analysis.yield.grossYield ?? null,
+                $median_price_per_m2: analysis.comparables.pricePerM2.median ?? null,
+                $comparable_count: analysis.comparables.listings.length,
+                $rental_median: rentalMedian,
+                $full_result_json: serializedAnalysis,
+            });
+
+        this.db
+            .prepare(`
+                DELETE FROM property_analysis_history
+                WHERE property_id = $property_id
+                  AND id NOT IN (
+                      SELECT id FROM property_analysis_history
+                      WHERE property_id = $property_id
+                      ORDER BY analyzed_at DESC, id DESC
+                      LIMIT 100
+                  )
+            `)
+            .run({ $property_id: id });
+    }
+
+    getPropertyAnalysisHistory(propertyId: number, limit = 50): PropertyAnalysisHistoryRow[] {
+        return this.db
+            .prepare(`
+                SELECT * FROM property_analysis_history
+                WHERE property_id = $property_id
+                ORDER BY analyzed_at DESC, id DESC
+                LIMIT $limit
+            `)
+            .all({ $property_id: propertyId, $limit: limit }) as PropertyAnalysisHistoryRow[];
     }
 
     deleteProperty(id: number): void {
         this.db.prepare("DELETE FROM saved_properties WHERE id = $id").run({ $id: id });
     }
 
-    // --- District snapshots ---
+    upsertListings(listings: UpsertListingInput[], district?: string): void {
+        const stmt = this.db.prepare(`
+            INSERT INTO listings (
+                source,
+                source_contract,
+                type,
+                status,
+                district,
+                disposition,
+                area,
+                price,
+                price_per_m2,
+                address,
+                link,
+                source_id,
+                fetched_at,
+                sold_at,
+                days_on_market,
+                discount,
+                coordinates_lat,
+                coordinates_lng,
+                building_type,
+                description,
+                raw_json,
+                updated_at
+            ) VALUES (
+                $source,
+                $source_contract,
+                $type,
+                $status,
+                $district,
+                $disposition,
+                $area,
+                $price,
+                $price_per_m2,
+                $address,
+                $link,
+                $source_id,
+                $fetched_at,
+                $sold_at,
+                $days_on_market,
+                $discount,
+                $coordinates_lat,
+                $coordinates_lng,
+                $building_type,
+                $description,
+                $raw_json,
+                datetime('now')
+            )
+            ON CONFLICT(source, source_contract, source_id, type)
+            DO UPDATE SET
+                status = excluded.status,
+                district = excluded.district,
+                disposition = excluded.disposition,
+                area = excluded.area,
+                price = excluded.price,
+                price_per_m2 = excluded.price_per_m2,
+                address = excluded.address,
+                link = excluded.link,
+                fetched_at = excluded.fetched_at,
+                sold_at = excluded.sold_at,
+                days_on_market = excluded.days_on_market,
+                discount = excluded.discount,
+                coordinates_lat = excluded.coordinates_lat,
+                coordinates_lng = excluded.coordinates_lng,
+                building_type = excluded.building_type,
+                description = excluded.description,
+                raw_json = excluded.raw_json,
+                updated_at = datetime('now')
+        `);
+
+        for (const listing of listings) {
+            stmt.run({
+                $source: listing.source,
+                $source_contract: listing.sourceContract,
+                $type: listing.type,
+                $status: listing.status,
+                $district: listing.district || district || "",
+                $disposition: listing.disposition ?? null,
+                $area: listing.area ?? null,
+                $price: listing.price,
+                $price_per_m2: listing.pricePerM2 ?? null,
+                $address: listing.address,
+                $link: listing.link,
+                $source_id: listing.sourceId,
+                $fetched_at: listing.fetchedAt,
+                $sold_at: listing.soldAt ?? null,
+                $days_on_market: listing.daysOnMarket ?? null,
+                $discount: listing.discount ?? null,
+                $coordinates_lat: listing.coordinatesLat ?? null,
+                $coordinates_lng: listing.coordinatesLng ?? null,
+                $building_type: listing.buildingType ?? null,
+                $description: listing.description ?? null,
+                $raw_json: listing.rawJson,
+            });
+        }
+    }
+
+    getListings(options: GetListingsOptions = {}): ListingRow[] {
+        const { whereClause, params } = this.buildListingsQuery(options);
+        const orderColumn = options.sortBy ?? "fetched_at";
+        const orderDirection = options.sortDir === "asc" ? "ASC" : "DESC";
+
+        return this.db
+            .prepare(`
+                SELECT * FROM listings
+                ${whereClause}
+                ORDER BY ${orderColumn} ${orderDirection}, id DESC
+                LIMIT $limit OFFSET $offset
+            `)
+            .all(params) as ListingRow[];
+    }
+
+    getListingsCount(options: GetListingsOptions = {}): number {
+        const { whereClause, params } = this.buildListingsQuery(options);
+        const result = this.db
+            .prepare(`
+                SELECT COUNT(*) as count FROM listings
+                ${whereClause}
+            `)
+            .get(params) as { count: number } | undefined;
+
+        return result?.count ?? 0;
+    }
+
+    private buildListingsQuery(options: GetListingsOptions): {
+        whereClause: string;
+        params: Record<string, string | number>;
+    } {
+        const where: string[] = [];
+        const params: Record<string, string | number> = {
+            $limit: options.limit ?? 100,
+            $offset: options.offset ?? 0,
+        };
+
+        if (options.type) {
+            where.push("type = $type");
+            params.$type = options.type;
+        }
+
+        if (options.district) {
+            where.push("district = $district");
+            params.$district = options.district;
+        }
+
+        if (options.disposition) {
+            where.push("disposition = $disposition");
+            params.$disposition = options.disposition;
+        }
+
+        if (options.source) {
+            where.push("source = $source");
+            params.$source = options.source;
+        }
+
+        if (options.priceMin !== undefined) {
+            where.push("price >= $price_min");
+            params.$price_min = options.priceMin;
+        }
+
+        if (options.priceMax !== undefined) {
+            where.push("price <= $price_max");
+            params.$price_max = options.priceMax;
+        }
+
+        if (options.areaMin !== undefined) {
+            where.push("area >= $area_min");
+            params.$area_min = options.areaMin;
+        }
+
+        if (options.areaMax !== undefined) {
+            where.push("area <= $area_max");
+            params.$area_max = options.areaMax;
+        }
+
+        const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+
+        return { whereClause, params };
+    }
+
+    getListing(id: number): ListingRow | null {
+        return (
+            (this.db.prepare("SELECT * FROM listings WHERE id = $id").get({ $id: id }) as ListingRow | undefined) ??
+            null
+        );
+    }
 
     saveDistrictSnapshot(analysis: FullAnalysis): void {
         this.db
@@ -326,6 +783,35 @@ export class ReasDatabase extends BaseDatabase {
                 $construction_type: constructionType,
                 $cutoff: cutoff,
             }) as DistrictSnapshotRow[];
+    }
+
+    private ensureColumn(table: string, column: string, definition: string): void {
+        const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+
+        if (columns.some((entry) => entry.name === column)) {
+            return;
+        }
+
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+
+    private getRentalMedian(analysis: FullAnalysis): number | null {
+        const prices = analysis.rentalListings
+            .map((listing) => listing.price)
+            .filter((price) => Number.isFinite(price));
+
+        if (prices.length === 0) {
+            return null;
+        }
+
+        const sorted = [...prices].sort((left, right) => left - right);
+        const middle = Math.floor(sorted.length / 2);
+
+        if (sorted.length % 2 === 0) {
+            return (sorted[middle - 1] + sorted[middle]) / 2;
+        }
+
+        return sorted[middle];
     }
 }
 

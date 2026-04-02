@@ -57,6 +57,11 @@ describe("integration: full analysis → JSON export pipeline", () => {
         },
         rentalListings: [
             {
+                id: "sreality-101",
+                source: "sreality",
+                sourceId: "101",
+                sourceContract: "sreality-v2",
+                type: "rental",
                 hash_id: 101,
                 name: "Pronájem bytu 2+kk 60 m²",
                 price: 15_000,
@@ -66,6 +71,21 @@ describe("integration: full analysis → JSON export pipeline", () => {
                 link: "https://sreality.cz/101",
                 gps: { lat: 50.07, lon: 14.43 },
                 labels: [],
+            },
+        ],
+        saleListings: [
+            {
+                id: "sale-1",
+                source: "sreality",
+                sourceId: "201",
+                sourceContract: "sreality-v2",
+                type: "sale",
+                price: 4200000,
+                address: "Praha 2, Vinohrady",
+                disposition: "2+kk",
+                area: 62,
+                pricePerM2: 67742,
+                link: "https://sreality.cz/201",
             },
         ],
         mfBenchmarks: [],
@@ -86,6 +106,28 @@ describe("integration: full analysis → JSON export pipeline", () => {
             districtId: 3100,
             srealityDistrictId: 1,
         },
+        investmentScore: {
+            overall: 72,
+            grade: "B",
+            factors: { yieldScore: 65, discountScore: 70, trendScore: 80, marketVelocityScore: 75 },
+            reasoning: ["Solid yield above bonds"],
+            recommendation: "buy",
+        },
+        momentum: {
+            priceVelocity: 2.5,
+            direction: "rising",
+            momentum: "accelerating",
+            confidence: "high",
+            interpretation: "Market momentum is accelerating",
+        },
+        providerSummary: [
+            {
+                provider: "sreality",
+                sourceContract: "sreality-v2",
+                count: 2,
+                fetchedAt: "2026-04-02T00:00:00.000Z",
+            },
+        ],
     };
 
     test("produces valid DashboardExport with all sections", () => {
@@ -101,6 +143,7 @@ describe("integration: full analysis → JSON export pipeline", () => {
         expect(result.listings.sold[0].area).toBe(60); // utilityArea preferred
         expect(result.listings.rentals).toHaveLength(1);
         expect(result.listings.rentals[0].rent).toBe(15_000);
+        expect(result.listings.activeSales).toHaveLength(1);
 
         // Analysis
         expect(result.analysis.comparables.median).toBe(55_000);
@@ -110,6 +153,11 @@ describe("integration: full analysis → JSON export pipeline", () => {
         expect(result.analysis.yield.netYield).toBe(3.8);
         expect(result.analysis.timeOnMarket.median).toBe(45);
         expect(result.analysis.discount.avgDiscount).toBe(-3.5);
+        expect(result.analysis.investmentScore?.grade).toBe("B");
+        expect(result.analysis.momentum?.direction).toBe("rising");
+        expect(result.analysis.priceHistogram.length).toBeGreaterThan(0);
+        expect(result.analysis.scatter.length).toBe(1);
+        expect(result.meta.providerSummary).toHaveLength(1);
 
         // Benchmarks
         expect(result.benchmarks.investmentBenchmarks).toHaveLength(3);
@@ -125,6 +173,7 @@ describe("integration: full analysis → JSON export pipeline", () => {
         expect(parsed.analysis.yield.grossYield).toBe(5.2);
         expect(parsed.listings.sold).toHaveLength(1);
         expect(parsed.listings.rentals).toHaveLength(1);
+        expect(parsed.listings.activeSales).toHaveLength(1);
         expect(parsed.benchmarks.investmentBenchmarks).toHaveLength(3);
     });
 
@@ -139,6 +188,7 @@ describe("integration: full analysis → JSON export pipeline", () => {
 
         expect(result.listings.sold).toHaveLength(0);
         expect(result.listings.rentals).toHaveLength(0);
+        expect(result.listings.activeSales).toHaveLength(1);
         expect(result.analysis.comparables.count).toBe(0);
         expect(result.analysis.comparables.median).toBe(55_000); // stats still from pricePerM2
     });
