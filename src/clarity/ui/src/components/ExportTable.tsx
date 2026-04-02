@@ -46,11 +46,11 @@ export function ExportTable({ entries, entriesByDay, mappedWorkItemIds, adoConfi
         <Table>
             <TableHeader>
                 <TableRow className="border-amber-500/20">
-                    <TableHead className="font-mono text-xs text-gray-400">Date</TableHead>
-                    <TableHead className="font-mono text-xs text-gray-400">Hours</TableHead>
+                    <TableHead className="font-mono text-xs text-gray-400 w-24">Date</TableHead>
+                    <TableHead className="font-mono text-xs text-gray-400 w-16">Hours</TableHead>
                     <TableHead className="font-mono text-xs text-gray-400">Work Item</TableHead>
-                    <TableHead className="font-mono text-xs text-gray-400">Comment</TableHead>
-                    <TableHead className="font-mono text-xs text-gray-400">Status</TableHead>
+                    <TableHead className="font-mono text-xs text-gray-400 max-w-48">Comment</TableHead>
+                    <TableHead className="font-mono text-xs text-gray-400 w-24 text-right">Status</TableHead>
                 </TableRow>
             </TableHeader>
             <TableBody>
@@ -91,7 +91,7 @@ export function ExportTable({ entries, entriesByDay, mappedWorkItemIds, adoConfi
                                         )}
                                     </div>
                                     {entry.workItemTitle && (
-                                        <div className="text-sm text-gray-400 truncate mt-0.5">
+                                        <div className="text-xs text-gray-500 truncate mt-0.5">
                                             {entry.workItemTitle}
                                         </div>
                                     )}
@@ -103,7 +103,7 @@ export function ExportTable({ entries, entriesByDay, mappedWorkItemIds, adoConfi
                             >
                                 {entry.comment || ""}
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="text-right whitespace-nowrap">
                                 {mappedWorkItemIds.has(entry.workItemId) ? (
                                     <Badge variant="outline" className="text-xs border-green-500/30 text-green-400">
                                         Mapped

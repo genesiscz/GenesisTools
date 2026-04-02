@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
@@ -19,13 +20,16 @@ export interface DashboardViteConfig {
     tanstackStartOptions?: Parameters<typeof tanstackStart>[0] | false;
     /** Options passed to @vitejs/plugin-react (e.g., babel config) */
     reactOptions?: Parameters<typeof viteReact>[0];
+    /** Extra sibling directories under @app to watch for SSR hot-reload (e.g. ["azure-devops"]).
+     *  The tool's own directory and utils/ are watched automatically. */
+    watchDirs?: string[];
 }
 
 /**
  * Vite plugin that ensures bare module imports from shared UI files
  * resolve against the dashboard's node_modules, not the file's location.
  */
-export function resolveSharedDeps(appRoot: string): Plugin {
+function resolveSharedDeps(appRoot: string): Plugin {
     const uiDir = resolve(__dirname, ".");
 
     return {
@@ -54,6 +58,69 @@ export function resolveSharedDeps(appRoot: string): Plugin {
     };
 }
 
+/**
+ * Vite plugin that watches directories outside root so SSR module cache
+ * invalidates when files imported via path aliases (e.g. @app) change.
+ */
+function watchExternalDirs(dirs: string[]): Plugin {
+    return {
+        name: "watch-external-dirs",
+        configureServer(server) {
+            for (const dir of dirs) {
+                server.watcher.add(dir);
+            }
+        },
+    };
+}
+
+/**
+ * Derive which directories outside `root` should be watched for SSR hot-reload.
+ *
+ * Auto-detects:
+ * - The tool's own source directory (e.g. root=src/clarity/ui → watches src/clarity/)
+ * - src/utils/ (shared utilities)
+ *
+ * Plus any explicit `extraDirs` (resolved relative to `appDir`).
+ */
+function deriveWatchDirs(root: string, appDir: string, extraDirs: string[]): string[] {
+    const normalRoot = root.endsWith("/") ? root : `${root}/`;
+    const normalApp = appDir.endsWith("/") ? appDir : `${appDir}/`;
+    const dirs: string[] = [];
+
+    // If root is nested inside @app, find the tool directory
+    // e.g. root=src/clarity/ui/, appDir=src/ → toolDir=src/clarity/
+    if (normalRoot.startsWith(normalApp)) {
+        const relative = normalRoot.slice(normalApp.length); // "clarity/ui/"
+        const toolName = relative.split("/")[0];
+
+        if (toolName) {
+            const toolDir = resolve(appDir, toolName);
+
+            if (toolDir !== root) {
+                dirs.push(toolDir);
+            }
+        }
+    }
+
+    // Always watch shared utils
+    const utilsDir = resolve(appDir, "utils");
+
+    if (utilsDir !== root && existsSync(utilsDir)) {
+        dirs.push(utilsDir);
+    }
+
+    // Explicit extra directories (e.g. "azure-devops" → src/azure-devops/)
+    for (const extra of extraDirs) {
+        const dir = resolve(appDir, extra);
+
+        if (dir !== root && existsSync(dir)) {
+            dirs.push(dir);
+        }
+    }
+
+    return dirs;
+}
+
 export function createDashboardViteConfig({
     root,
     port,
@@ -62,10 +129,18 @@ export function createDashboardViteConfig({
     overrides = {},
     tanstackStartOptions,
     reactOptions,
+    watchDirs: extraWatchDirs = [],
 }: DashboardViteConfig): UserConfig {
     const { plugins: _ignored, resolve: _resolveIgnored, ...rest } = overrides;
+    const allAliases: Record<string, string> = { "@app": resolve(root, "src"), ...aliases };
+    const appDir = allAliases["@app"];
+    const externalWatchDirs = appDir ? deriveWatchDirs(root, appDir, extraWatchDirs) : [];
 
     const corePlugins: PluginOption[] = [resolveSharedDeps(root), tailwindcss()];
+
+    if (externalWatchDirs.length > 0) {
+        corePlugins.push(watchExternalDirs(externalWatchDirs));
+    }
 
     if (tanstackStartOptions !== false) {
         corePlugins.push(tanstackStart(tanstackStartOptions ?? {}));
@@ -89,8 +164,7 @@ export function createDashboardViteConfig({
         resolve: {
             alias: {
                 "@ui": resolve(__dirname, "."),
-                "@app": resolve(root, "src"),
-                ...aliases,
+                ...allAliases,
             },
         },
         ...rest,

@@ -11,6 +11,47 @@ export interface TimesheetWeek {
     entryCount?: number;
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: Clarity carousel entries have inconsistent shapes
+type CarouselEntry = any;
+
+interface NestedTimesheet {
+    _results: Array<{
+        timesheet_id: number;
+        total: string;
+        prstatus: { _results: Array<{ displayValue: string }> };
+    }>;
+}
+
+/**
+ * Parse a single carousel entry into a TimesheetWeek.
+ * Handles two response shapes: flat (with filter) and nested (tpTimesheet._results[0]).
+ */
+function parseCarouselEntry(entry: CarouselEntry, entryCountMap: Map<number, number>): TimesheetWeek {
+    const raw = entry as Record<string, unknown>;
+    const nested = raw.tpTimesheet as NestedTimesheet | undefined;
+    const tp = nested?._results?.[0];
+
+    const timesheetId = entry.timesheet_id ?? tp?.timesheet_id;
+    const totalRaw: unknown = entry.total ?? tp?.total;
+    const total =
+        typeof totalRaw === "string"
+            ? Number.parseFloat(totalRaw.replace(",", "."))
+            : typeof totalRaw === "number"
+              ? totalRaw
+              : 0;
+    const status = entry.prstatus?.displayValue ?? tp?.prstatus?._results?.[0]?.displayValue ?? "unknown";
+
+    return {
+        timesheetId,
+        timePeriodId: entry.id,
+        startDate: entry.start_date.split("T")[0],
+        finishDate: entry.finish_date.split("T")[0],
+        totalHours: total,
+        status,
+        entryCount: entryCountMap.get(timesheetId),
+    };
+}
+
 export async function getTimesheetWeeks(
     api: ClarityApi,
     mappings: ClarityMapping[],
@@ -62,42 +103,7 @@ export async function getTimesheetWeeks(
         entryCountMap.set(ts._internalId, ts.numberOfEntries ?? 0);
     }
 
-    let weeks: TimesheetWeek[] = carousel.map((entry) => {
-        // Handle two response shapes:
-        // With filter: timesheet_id, total, prstatus at top level
-        // Without filter: nested in tpTimesheet._results[0]
-        const raw = entry as unknown as Record<string, unknown>;
-        const nested = raw.tpTimesheet as
-            | {
-                  _results: Array<{
-                      timesheet_id: number;
-                      total: string;
-                      prstatus: { _results: Array<{ displayValue: string }> };
-                  }>;
-              }
-            | undefined;
-        const tp = nested?._results?.[0];
-
-        const timesheetId = entry.timesheet_id ?? tp?.timesheet_id;
-        const totalRaw: unknown = entry.total ?? tp?.total;
-        const total =
-            typeof totalRaw === "string"
-                ? parseFloat(totalRaw.replace(",", "."))
-                : typeof totalRaw === "number"
-                  ? totalRaw
-                  : 0;
-        const status = entry.prstatus?.displayValue ?? tp?.prstatus?._results?.[0]?.displayValue ?? "unknown";
-
-        return {
-            timesheetId,
-            timePeriodId: entry.id,
-            startDate: entry.start_date.split("T")[0],
-            finishDate: entry.finish_date.split("T")[0],
-            totalHours: total,
-            status,
-            entryCount: entryCountMap.get(timesheetId),
-        };
-    });
+    let weeks: TimesheetWeek[] = carousel.map((entry: CarouselEntry) => parseCarouselEntry(entry, entryCountMap));
 
     // If a specific month is requested and the carousel doesn't cover it fully,
     // fetch additional carousel pages by navigating to earlier/later timePeriodIds
@@ -110,49 +116,38 @@ export async function getTimesheetWeeks(
         const firstStart = weeks[0]?.startDate;
 
         if (firstStart && firstStart > monthStart) {
-            // Navigate backwards: use first carousel ID minus offset
             const firstId = weeks[0].timePeriodId;
-            const offset = Math.ceil(4); // ~4 weeks back should cover a month boundary
 
             try {
-                const earlier = await api.getTimesheetApp(firstId - offset);
-                const earlierCarousel = earlier.tscarousel?._results ?? [];
+                const earlier = await api.getTimesheetApp(firstId - 4);
 
-                for (const entry of earlierCarousel) {
-                    const eRaw = entry as unknown as Record<string, unknown>;
-                    const eNested = eRaw.tpTimesheet as
-                        | {
-                              _results: Array<{
-                                  timesheet_id: number;
-                                  total: string;
-                                  prstatus: { _results: Array<{ displayValue: string }> };
-                              }>;
-                          }
-                        | undefined;
-                    const eTp = eNested?._results?.[0];
-                    const eTimesheetId = entry.timesheet_id ?? eTp?.timesheet_id;
-                    const eTotalRaw: unknown = entry.total ?? eTp?.total;
-                    const eTotal =
-                        typeof eTotalRaw === "string"
-                            ? parseFloat(eTotalRaw.replace(",", "."))
-                            : typeof eTotalRaw === "number"
-                              ? eTotalRaw
-                              : 0;
-                    const eStatus =
-                        entry.prstatus?.displayValue ?? eTp?.prstatus?._results?.[0]?.displayValue ?? "unknown";
+                for (const entry of earlier.tscarousel?._results ?? []) {
                     const sd = entry.start_date.split("T")[0];
 
-                    // Only add if not already in our weeks list
                     if (!weeks.some((w) => w.timePeriodId === entry.id) && sd < firstStart) {
-                        weeks.unshift({
-                            timesheetId: eTimesheetId,
-                            timePeriodId: entry.id,
-                            startDate: sd,
-                            finishDate: entry.finish_date.split("T")[0],
-                            totalHours: eTotal,
-                            status: eStatus,
-                            entryCount: entryCountMap.get(eTimesheetId),
-                        });
+                        weeks.unshift(parseCarouselEntry(entry, entryCountMap));
+                    }
+                }
+
+                weeks.sort((a, b) => a.startDate.localeCompare(b.startDate));
+            } catch {
+                // Navigation failed, return what we have
+            }
+        }
+
+        // Check if we need later weeks (last finishDate doesn't cover month end)
+        const lastFinish = weeks[weeks.length - 1]?.finishDate;
+
+        if (lastFinish && lastFinish <= monthEnd) {
+            const lastId = weeks[weeks.length - 1].timePeriodId;
+            try {
+                const later = await api.getTimesheetApp(lastId + 1);
+
+                for (const entry of later.tscarousel?._results ?? []) {
+                    const sd = entry.start_date.split("T")[0];
+
+                    if (!weeks.some((w) => w.timePeriodId === entry.id) && sd >= lastFinish) {
+                        weeks.push(parseCarouselEntry(entry, entryCountMap));
                     }
                 }
 

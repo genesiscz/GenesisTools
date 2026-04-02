@@ -3,6 +3,15 @@
  * For locale detection (requires Node.js), see ./date-locale.ts.
  */
 
+/**
+ * Parse a date string as UTC midnight, regardless of whether it contains a time part.
+ * JS spec: "2026-03-02" → UTC, but "2026-03-02T00:00:00" → LOCAL time.
+ * Stripping the time part ensures consistent UTC parsing.
+ */
+function parseUTCDate(s: string): Date {
+    return new Date(s.split("T")[0]);
+}
+
 let _resolveLocale: (() => string) | undefined;
 
 function resolveLocale(override?: string): string {
@@ -313,8 +322,8 @@ export function subtractDay(date: string): string {
  * Format: "YYYY-MM-DD".
  */
 export function getDaysInPeriod(periodStart: string, periodFinish: string): Array<{ label: string; date: string }> {
-    const start = new Date(periodStart);
-    const finish = new Date(periodFinish);
+    const start = parseUTCDate(periodStart);
+    const finish = parseUTCDate(periodFinish);
     const days: Array<{ label: string; date: string }> = [];
     const current = new Date(start);
 
@@ -344,8 +353,8 @@ export function buildDailyValues<T>(
     getValue: (date: string) => T
 ): Array<{ date: string; iso: string; value: T }> {
     const result: Array<{ date: string; iso: string; value: T }> = [];
-    const start = new Date(periodStart);
-    const end = new Date(periodFinish);
+    const start = parseUTCDate(periodStart);
+    const end = parseUTCDate(periodFinish);
     const current = new Date(start);
 
     while (current < end) {
