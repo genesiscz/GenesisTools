@@ -48,21 +48,25 @@ function requireAdoTimeLogConfig(): { config: AzureConfigWithTimeLog; user: Time
     const config = loadAdoConfig() as AzureConfigWithTimeLog | null;
 
     if (!config) {
-        throw new Error("Azure DevOps not configured. Run: tools azure-devops configure <url>");
+        throw new Error("Azure DevOps is not configured. Open Settings and complete the Azure DevOps section.");
     }
 
     if (!config.orgId) {
-        throw new Error("Organization ID missing from config. Re-run: tools azure-devops configure <url>");
+        throw new Error("Organization ID missing from config. Open Settings and reconnect Azure DevOps.");
+    }
+
+    if (!config.projectId) {
+        throw new Error("Project ID missing from config. Open Settings and reconnect Azure DevOps.");
     }
 
     if (!config.timelog?.functionsKey) {
-        throw new Error("TimeLog not configured. Run: tools azure-devops timelog configure");
+        throw new Error("TimeLog API key is missing. Open Settings and complete the TimeLog section.");
     }
 
     const user = config.timelog.defaultUser;
 
     if (!user) {
-        throw new Error("TimeLog user not configured. Run: tools azure-devops timelog configure");
+        throw new Error("TimeLog user is missing. Open Settings and choose a TimeLog team member.");
     }
 
     const api = new TimeLogApi(config.orgId, config.projectId, config.timelog.functionsKey, user);
