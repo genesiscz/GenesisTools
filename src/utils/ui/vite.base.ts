@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
@@ -83,20 +83,25 @@ function watchExternalDirs(dirs: string[]): Plugin {
  * Plus any explicit `extraDirs` (resolved relative to `appDir`).
  */
 function deriveWatchDirs(root: string, appDir: string, extraDirs: string[]): string[] {
-    const normalRoot = root.endsWith("/") ? root : `${root}/`;
-    const normalApp = appDir.endsWith("/") ? appDir : `${appDir}/`;
     const dirs: string[] = [];
 
     // If root is nested inside @app, find the tool directory
     // e.g. root=src/clarity/ui/, appDir=src/ → toolDir=src/clarity/
-    if (normalRoot.startsWith(normalApp)) {
-        const relative = normalRoot.slice(normalApp.length); // "clarity/ui/"
-        const toolName = relative.split("/")[0];
+    const rootRelativeToApp = relative(appDir, root);
+
+    if (
+        rootRelativeToApp &&
+        rootRelativeToApp !== "." &&
+        !isAbsolute(rootRelativeToApp) &&
+        rootRelativeToApp !== ".." &&
+        !rootRelativeToApp.startsWith(`..${sep}`)
+    ) {
+        const toolName = rootRelativeToApp.split(/[\\/]/)[0];
 
         if (toolName) {
             const toolDir = resolve(appDir, toolName);
 
-            if (toolDir !== root) {
+            if (toolDir !== root && existsSync(toolDir)) {
                 dirs.push(toolDir);
             }
         }

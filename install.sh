@@ -32,8 +32,8 @@ else
     echo "✅ Dependencies already installed"
 fi
 
-# Get the current directory of the script
-CURRENT_DIR="$(pwd)"
+# Get the directory where install.sh is located
+CURRENT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # Detect Windows (Git Bash / MSYS2 / Cygwin)
 IS_WINDOWS=false
@@ -57,11 +57,16 @@ if [ "$IS_WINDOWS" = true ]; then
 
     # Add to user PATH if not already present (case-insensitive check)
     CURRENT_PATH="$(powershell.exe -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path', 'User')" 2>/dev/null | tr -d '\r')"
-    if echo "$CURRENT_PATH" | grep -qi "$(echo "$WIN_DIR" | sed 's/\\/\\\\/g')"; then
+    HAS_PATH_ENTRY="$(powershell.exe -NoProfile -Command "\
+      \$p=[Environment]::GetEnvironmentVariable('Path','User'); \
+      \$target='${WIN_DIR//\\/\\\\}'; \
+      if ((\$p -split ';') | Where-Object { \$_.Trim() -ieq \$target }) { 'true' } else { 'false' }" 2>/dev/null | tr -d '\r')"
+    if [ "$HAS_PATH_ENTRY" = "true" ]; then
         echo "✅ $WIN_DIR is already in user PATH"
     else
         NEW_PATH="${CURRENT_PATH:+$CURRENT_PATH;}$WIN_DIR"
-        if powershell.exe -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', '$NEW_PATH', 'User')" 2>/dev/null; then
+        export NEW_PATH
+        if powershell.exe -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', \$env:NEW_PATH, 'User')" 2>/dev/null; then
             echo "📝 Added $WIN_DIR to user PATH"
             SHELL_CONFIG_CHANGED=true
         else
@@ -80,6 +85,8 @@ if [ "$IS_WINDOWS" = true ]; then
 @echo off
 bun run "%~dp0tools" %*
 CMDEOF
+    # Convert to CRLF for Windows batch compatibility
+    sed -i 's/$/\r/' "$TOOLS_CMD" 2>/dev/null
     echo "✅ Created tools.cmd for CMD/PowerShell"
 else
     TOOLS_LINE="export GENESIS_TOOLS_PATH=\"$CURRENT_DIR\""

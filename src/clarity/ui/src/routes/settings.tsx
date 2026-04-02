@@ -132,6 +132,7 @@ function SettingsPage() {
                 setAdoUrl("");
                 setShowAdoForm(false);
                 queryClient.invalidateQueries({ queryKey: ["granular-status"] });
+                queryClient.invalidateQueries({ queryKey: ["team-members"] });
                 toast.success(result.message);
             }
         },

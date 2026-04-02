@@ -1,11 +1,10 @@
+import { SafeJSON } from "@app/utils/json";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeft, Bot, Calendar, ChevronRight, FolderOpen, GitBranch, User, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { getConversation } from "@/server/conversations";
-
-import { SafeJSON } from "@app/utils/json";
 
 export const Route = createFileRoute("/conversation/$id")({
 	component: ConversationPage,
@@ -29,9 +28,8 @@ function ConversationPage() {
 	}
 
 	return (
-        <div className="min-h-screen bg-background">
-            {/* Header */}
-            <header className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border">
+		<div className="min-h-screen bg-background">
+			<header className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border">
 				<div className="max-w-5xl mx-auto px-6 py-4">
 					<Link
 						to="/"
@@ -68,21 +66,19 @@ function ConversationPage() {
 					</div>
 				</div>
 			</header>
-            {/* Messages */}
-            <ScrollArea className="h-[calc(100vh-160px)]">
+			<ScrollArea className="h-[calc(100vh-160px)]">
 				<div className="max-w-5xl mx-auto px-6 py-6">
 					<div className="space-y-4">
 						{conversation.messages
 							.filter((msg) => msg.type === "user" || msg.type === "assistant")
 							.map((msg, idx) => (
-								/* biome-ignore lint/suspicious/noArrayIndexKey: messages have no stable unique id */
-								(<MessageCard key={idx} message={msg} />)
+								<MessageCard key={idx} message={msg} />
 							))}
 					</div>
 				</div>
 			</ScrollArea>
-        </div>
-    );
+		</div>
+	);
 }
 
 // Format tool call summary for display
@@ -159,8 +155,8 @@ function MessageCard({
 	const showTextContent = message.content && message.content.trim().length > 0;
 
 	return (
-        <Card className={isUser ? "bg-primary/5 border-primary/20" : ""}>
-            <CardHeader className="pb-2 pt-3 px-4">
+		<Card className={isUser ? "bg-primary/5 border-primary/20" : ""}>
+			<CardHeader className="pb-2 pt-3 px-4">
 				<div className="flex items-center gap-2">
 					{isUser ? <User className="w-4 h-4 text-primary" /> : <Bot className="w-4 h-4 text-secondary" />}
 					<span className={`text-sm font-medium ${isUser ? "text-primary" : "text-secondary"}`}>
@@ -176,7 +172,7 @@ function MessageCard({
 					)}
 				</div>
 			</CardHeader>
-            <CardContent className="px-4 pb-4">
+			<CardContent className="px-4 pb-4">
 				{/* Only show text content if there's actual text */}
 				{showTextContent && (
 					<div className="prose prose-sm prose-invert max-w-none">
@@ -198,9 +194,8 @@ function MessageCard({
 							const isShort = countLines(inputJson) <= 10;
 
 							return (
-                                /* biome-ignore lint/suspicious/noArrayIndexKey: tool uses have no stable unique id */
-                                <details key={i} className="group" open={isShort}>
-                                    <summary className="flex items-center gap-2 cursor-pointer list-none text-sm text-muted-foreground hover:text-foreground">
+								<details key={i} className="group" open={isShort}>
+									<summary className="flex items-center gap-2 cursor-pointer list-none text-sm text-muted-foreground hover:text-foreground">
 										<ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90" />
 										<Wrench className="w-3 h-3" />
 										<span className="font-mono text-xs">{formatted.title}</span>
@@ -208,9 +203,9 @@ function MessageCard({
 											<span className="text-xs text-muted-foreground/70 ml-1">— {formatted.subtitle}</span>
 										)}
 									</summary>
-                                    <pre className="text-xs bg-muted p-2 rounded mt-2 ml-6 overflow-auto">{inputJson}</pre>
-                                </details>
-                            );
+									<pre className="text-xs bg-muted p-2 rounded mt-2 ml-6 overflow-auto">{inputJson}</pre>
+								</details>
+							);
 						})}
 					</div>
 				)}
@@ -218,29 +213,28 @@ function MessageCard({
 				{/* Tool Results (user messages) - expandable */}
 				{message.toolResults && message.toolResults.length > 0 && (
 					<div className={`${showTextContent ? "mt-3 pt-3 border-t border-border" : ""} space-y-2`}>
-						{message.toolResults.map((result, i) => {
+						{message.toolResults.map((result) => {
 							const isShort = countLines(result.content) <= 10;
 
 							return (
-                                /* biome-ignore lint/suspicious/noArrayIndexKey: tool results have no stable unique id */
-                                <details key={i} className="group" open={isShort}>
-                                    <summary
+								<details key={result.toolUseId} className="group" open={isShort}>
+									<summary
 										className={`flex items-center gap-2 cursor-pointer list-none text-sm hover:text-foreground ${result.isError ? "text-red-500" : "text-muted-foreground"}`}
 									>
 										<ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90" />
 										<span className="font-medium">Tool Result {result.isError && "(Error)"}</span>
 									</summary>
-                                    <pre
+									<pre
 										className={`text-xs p-2 rounded mt-2 ml-6 overflow-auto ${result.isError ? "bg-red-500/10" : "bg-muted"}`}
 									>
 										{result.content}
 									</pre>
-                                </details>
-                            );
+								</details>
+							);
 						})}
 					</div>
 				)}
 			</CardContent>
-        </Card>
-    );
+		</Card>
+	);
 }

@@ -1034,8 +1034,17 @@ export class Api {
             throw new Error(`Failed to get org connection data: ${response.status} ${response.statusText}`);
         }
 
-        const data = (await response.json()) as { instanceId: string };
-        logger.debug(`[api:static] Org ID: ${data.instanceId}`);
-        return data.instanceId;
+        const data: unknown = await response.json();
+        const instanceId =
+            data && typeof data === "object" && "instanceId" in data && typeof data.instanceId === "string"
+                ? data.instanceId
+                : null;
+
+        if (!instanceId) {
+            throw new Error("Azure DevOps connectionData response did not include instanceId");
+        }
+
+        logger.debug(`[api:static] Org ID: ${instanceId}`);
+        return instanceId;
     }
 }

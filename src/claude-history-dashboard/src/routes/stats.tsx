@@ -535,7 +535,6 @@ function HourlyHeatmapSkeleton() {
 			<CardContent>
 				<div className="grid grid-cols-12 gap-1 mb-4">
 					{Array.from({ length: 24 }).map((_, i) => (
-						/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
 						<Skeleton key={i} className="aspect-square rounded-sm" style={{ animationDelay: `${i * 50}ms` }} />
 					))}
 				</div>
@@ -543,7 +542,6 @@ function HourlyHeatmapSkeleton() {
 					<Skeleton className="h-3 w-8" />
 					<div className="flex gap-0.5">
 						{Array.from({ length: 5 }).map((_, i) => (
-							/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
 							<Skeleton key={i} className="w-3 h-3 rounded-sm" />
 						))}
 					</div>
@@ -567,7 +565,6 @@ function ToolCategoriesSkeleton() {
 				<Skeleton className="h-8 w-full rounded-lg mb-4" variant="data-stream" />
 				<div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
 					{Array.from({ length: 6 }).map((_, i) => (
-						/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
 						<div key={i} className="flex items-center gap-2">
 							<Skeleton className="w-3 h-3 rounded-sm" />
 							<Skeleton className="h-3 flex-1" style={{ animationDelay: `${i * 100}ms` }} />
@@ -623,7 +620,6 @@ function TokenUsageSkeleton() {
 				<Skeleton className="h-3 w-full rounded-full mb-4" />
 				<div className="grid grid-cols-2 gap-2">
 					{Array.from({ length: 4 }).map((_, i) => (
-						/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
 						<Skeleton key={i} className="h-4 w-full" style={{ animationDelay: `${i * 75}ms` }} />
 					))}
 				</div>
@@ -646,7 +642,6 @@ function ModelUsageSkeleton() {
 					<Skeleton className="w-28 h-28 rounded-full" />
 					<div className="flex-1 space-y-2">
 						{Array.from({ length: 3 }).map((_, i) => (
-							/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
 							<Skeleton key={i} className="h-5 w-full" style={{ animationDelay: `${i * 100}ms` }} />
 						))}
 					</div>
@@ -668,7 +663,6 @@ function BranchActivitySkeleton() {
 			<CardContent>
 				<div className="space-y-3">
 					{Array.from({ length: 6 }).map((_, i) => (
-						/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
 						<div key={i} className="space-y-1">
 							<div className="flex justify-between">
 								<Skeleton className="h-3 w-32" />
@@ -703,7 +697,6 @@ function ConversationLengthSkeleton() {
 				<div className="flex items-end gap-2 h-24 mb-2">
 					{Array.from({ length: 6 }).map((_, i) => (
 						<Skeleton
-							// biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list
 							key={i}
 							className="flex-1 rounded-t"
 							style={{ height: `${CONVERSATION_LENGTH_HEIGHTS[i]}%`, animationDelay: `${i * 75}ms` }}
@@ -712,7 +705,6 @@ function ConversationLengthSkeleton() {
 				</div>
 				<div className="flex gap-2">
 					{Array.from({ length: 6 }).map((_, i) => (
-						/* biome-ignore lint/suspicious/noArrayIndexKey: static skeleton list */
 						<Skeleton key={i} className="flex-1 h-3" />
 					))}
 				</div>
