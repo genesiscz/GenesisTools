@@ -47,8 +47,12 @@ function clarityDotColor(clarity: GranularStatus["clarity"]): "green" | "red" {
     return clarity.configured && clarity.hasAuth ? "green" : "red";
 }
 
-function adoDotColor(ado: GranularStatus["ado"]): "green" | "red" {
-    return ado.configured ? "green" : "red";
+function adoDotColor(ado: GranularStatus["ado"]): "green" | "amber" | "red" {
+    if (!ado.configured) {
+        return "red";
+    }
+
+    return ado.hasOrgId ? "green" : "amber";
 }
 
 function timelogDotColor(timelog: GranularStatus["timelog"]): "green" | "amber" | "red" {
@@ -70,9 +74,8 @@ function DirectoryWarning({ projectCwd }: { projectCwd: string }) {
             <div className="text-xs text-amber-300/80">
                 <span className="font-mono text-amber-300">{projectCwd}</span>
                 <br />
-                Config is read from this directory. Run{" "}
-                <span className="font-mono">tools clarity ui</span> from the same folder where you ran{" "}
-                <span className="font-mono">tools azure-devops configure</span>.
+                Config is read from this directory. Run <span className="font-mono">tools clarity ui</span> from the
+                same folder where you ran <span className="font-mono">tools azure-devops configure</span>.
             </div>
         </div>
     );
@@ -88,23 +91,15 @@ function ClaritySection({ clarity }: { clarity: GranularStatus["clarity"] }) {
 
             {clarity.configured ? (
                 <div className="ml-4 space-y-1">
-                    {clarity.baseUrl && (
-                        <div className="text-xs font-mono text-gray-400">{clarity.baseUrl}</div>
-                    )}
+                    {clarity.baseUrl && <div className="text-xs font-mono text-gray-400">{clarity.baseUrl}</div>}
                     <div className="flex items-center gap-2 text-xs font-mono text-gray-400">
                         Auth: <AuthBadge hasAuth={clarity.hasAuth} />
                     </div>
-                    <div className="text-xs font-mono text-gray-400">
-                        Mappings: {clarity.mappingsCount}
-                    </div>
-                    {clarity.uniqueName && (
-                        <div className="text-xs font-mono text-gray-400">{clarity.uniqueName}</div>
-                    )}
+                    <div className="text-xs font-mono text-gray-400">Mappings: {clarity.mappingsCount}</div>
+                    {clarity.uniqueName && <div className="text-xs font-mono text-gray-400">{clarity.uniqueName}</div>}
                 </div>
             ) : (
-                <div className="ml-4 text-xs font-mono text-gray-500">
-                    Not configured — paste a cURL command below
-                </div>
+                <div className="ml-4 text-xs font-mono text-gray-500">Not configured — paste a cURL command below</div>
             )}
         </div>
     );
@@ -122,6 +117,11 @@ function AdoSection({ ado }: { ado: GranularStatus["ado"] }) {
                 <div className="ml-4 space-y-1">
                     <div className="text-xs font-mono text-gray-400">Org: {ado.org}</div>
                     <div className="text-xs font-mono text-gray-400">Project: {ado.project}</div>
+                    {!ado.hasOrgId && (
+                        <div className="text-xs font-mono text-amber-400/80">
+                            Org ID missing — reconfigure below to fix TimeLog
+                        </div>
+                    )}
                 </div>
             ) : (
                 <div className="ml-4 text-xs font-mono text-amber-400/80">
@@ -174,9 +174,7 @@ function CompactStatusCard({ status }: { status: GranularStatus }) {
     return (
         <Card className="border-amber-500/20">
             <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
-                    System status
-                </CardTitle>
+                <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">System status</CardTitle>
             </CardHeader>
             <CardContent>
                 <div className="space-y-2">

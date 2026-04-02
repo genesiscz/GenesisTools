@@ -51,7 +51,11 @@ function requireAdoTimeLogConfig(): { config: AzureConfigWithTimeLog; user: Time
         throw new Error("Azure DevOps not configured. Run: tools azure-devops configure <url>");
     }
 
-    if (!config.orgId || !config.timelog?.functionsKey) {
+    if (!config.orgId) {
+        throw new Error("Organization ID missing from config. Re-run: tools azure-devops configure <url>");
+    }
+
+    if (!config.timelog?.functionsKey) {
         throw new Error("TimeLog not configured. Run: tools azure-devops timelog configure");
     }
 

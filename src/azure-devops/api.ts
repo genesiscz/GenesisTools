@@ -1005,4 +1005,37 @@ export class Api {
         logger.debug(`[api:static] Found ${data.value.length} projects`);
         return data.value.map((p) => ({ id: p.id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name));
     }
+
+    /**
+     * Get the organization GUID from the Azure DevOps connectionData endpoint.
+     * The instanceId returned is the org GUID used by third-party extensions like TimeLog.
+     *
+     * Uses api-version 5.0-preview — the connectionData endpoint rejects 7.x.
+     */
+    static async getOrgId(org: string): Promise<string> {
+        logger.debug("[api:static] Fetching organization ID");
+        const result =
+            await $`az account get-access-token --resource ${AZURE_DEVOPS_RESOURCE_ID} --query accessToken -o tsv`.quiet();
+        const token = result.text().trim();
+
+        // connectionData needs its own api-version — orgUrlRaw forces 7.1 which returns 400
+        const url = buildUrl({
+            base: org,
+            segments: ["_apis", "connectionData"],
+            queryParams: { "api-version": "5.0-preview" },
+        });
+        logger.debug(`[api:static] GET ${url.replace(org, "")}`);
+
+        const response = await fetch(url, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to get org connection data: ${response.status} ${response.statusText}`);
+        }
+
+        const data = (await response.json()) as { instanceId: string };
+        logger.debug(`[api:static] Org ID: ${data.instanceId}`);
+        return data.instanceId;
+    }
 }

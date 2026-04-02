@@ -152,6 +152,7 @@ export interface GranularStatus {
         org: string | null;
         project: string | null;
         projectId: string | null;
+        hasOrgId: boolean;
     };
     timelog: {
         configured: boolean;
@@ -190,12 +191,14 @@ export async function getGranularStatus(): Promise<GranularStatus> {
               org: adoConfig.org,
               project: adoConfig.project,
               projectId: adoConfig.projectId,
+              hasOrgId: !!(adoConfig as AzureConfigWithTimeLog).orgId,
           }
         : {
               configured: false,
               org: null,
               project: null,
               projectId: null,
+              hasOrgId: false,
           };
 
     const timelog: GranularStatus["timelog"] = {

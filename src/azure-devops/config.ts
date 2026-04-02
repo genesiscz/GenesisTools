@@ -68,7 +68,6 @@ export function extractOrgName(orgUrl: string): string | null {
 
 /**
  * Load config from file or return null if not found.
- * Auto-derives orgId from org URL if missing.
  */
 export function loadConfig(): AzureConfig | null {
     const configPath = findConfigPath();
@@ -78,17 +77,7 @@ export function loadConfig(): AzureConfig | null {
     }
 
     try {
-        const config = SafeJSON.parse(readFileSync(configPath, "utf-8"));
-
-        if (config?.org && !(config as AzureConfigWithTimeLog).orgId) {
-            const orgName = extractOrgName(config.org);
-
-            if (orgName) {
-                (config as AzureConfigWithTimeLog).orgId = orgName;
-            }
-        }
-
-        return config;
+        return SafeJSON.parse(readFileSync(configPath, "utf-8"));
     } catch {
         return null;
     }
@@ -128,6 +117,17 @@ export function requireTimeLogConfig(): AzureConfigWithTimeLog {
 ❌ No Azure DevOps configuration found.
 
 Run configure with any Azure DevOps URL from your project:
+
+  tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
+`);
+        process.exit(1);
+    }
+
+    if (!config.orgId) {
+        console.error(`
+❌ Organization ID missing from config.
+
+Re-run configure to fetch the org ID:
 
   tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
 `);

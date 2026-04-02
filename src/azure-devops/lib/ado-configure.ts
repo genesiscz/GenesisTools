@@ -14,10 +14,10 @@ export async function checkAzureCliLogin(): Promise<void> {
     }
 }
 
-export async function buildAdoConfig(url: string): Promise<AzureConfig> {
+export async function buildAdoConfig(url: string): Promise<AzureConfig & { orgId: string }> {
     const { org, project } = parseAzureDevOpsUrl(url);
-    const projectId = await Api.getProjectId(org, project);
-    return { org, project, projectId, apiResource: AZURE_DEVOPS_RESOURCE_ID };
+    const [projectId, orgId] = await Promise.all([Api.getProjectId(org, project), Api.getOrgId(org)]);
+    return { org, project, projectId, orgId, apiResource: AZURE_DEVOPS_RESOURCE_ID };
 }
 
 export function saveAdoConfig(config: AzureConfig, configDir: string): string {
