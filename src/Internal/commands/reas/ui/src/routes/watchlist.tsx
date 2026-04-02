@@ -2,14 +2,16 @@ import type { SavedPropertyRow, SavePropertyInput } from "@app/Internal/commands
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useRouterState } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
+import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Input } from "@ui/components/input";
 import { Skeleton } from "@ui/components/skeleton";
 import { toast } from "@ui/index";
-import { ArrowDownAZ, ArrowUpAZ, Search, Star } from "lucide-react";
+import { ArrowDownAZ, ArrowUpAZ, Loader2, RefreshCw, Search, Star } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { AddPropertyForm } from "../components/watchlist/AddPropertyForm";
 import { PropertyCard } from "../components/watchlist/PropertyCard";
+import { refreshPropertiesSequentially, type RefreshAllProgress } from "../components/watchlist/refresh-all";
 import {
     formatCurrencyCompact,
     formatNumber,
@@ -96,6 +98,8 @@ function WatchlistIndexPage() {
     const [analysisFilter, setAnalysisFilter] = useState("all");
     const [sortKey, setSortKey] = useState<SortKey>("updated");
     const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+    const [refreshAllProgress, setRefreshAllProgress] = useState<RefreshAllProgress | null>(null);
+    const [refreshAllActive, setRefreshAllActive] = useState(false);
 
     const addMutation = useMutation({
         mutationFn: async (input: SavePropertyInput) => {
@@ -160,6 +164,17 @@ function WatchlistIndexPage() {
         [queryClient]
     );
 
+    const refreshProperty = useCallback(async (id: number) => {
+        const res = await fetch(`/api/properties?id=${id}`, {
+            method: "PATCH",
+        });
+
+        if (!res.ok) {
+            const body = (await res.json()) as { error?: string };
+            throw new Error(body.error ?? `Failed to refresh property ${id}`);
+        }
+    }, []);
+
     const handleDelete = useCallback(
         (id: number) => {
             deleteMutation.mutate(id);
@@ -175,6 +190,40 @@ function WatchlistIndexPage() {
     );
 
     const properties = propertiesData?.properties ?? [];
+
+    const handleRefreshAll = useCallback(async () => {
+        if (properties.length === 0 || refreshAllActive) {
+            return;
+        }
+
+        setRefreshAllActive(true);
+        setRefreshAllProgress({
+            completed: 0,
+            failed: 0,
+            total: properties.length,
+            propertyId: properties[0]?.id ?? 0,
+        });
+
+        try {
+            const result = await refreshPropertiesSequentially({
+                propertyIds: properties.map((property) => property.id),
+                refreshProperty,
+                onProgress: (progress) => {
+                    setRefreshAllProgress(progress);
+                },
+            });
+
+            await queryClient.invalidateQueries({ queryKey: ["properties"] });
+
+            if (result.failed > 0) {
+                toast.error(`Refreshed ${result.completed}/${result.total}; ${result.failed} failed`);
+            } else {
+                toast.success(`Refreshed ${result.completed} properties`);
+            }
+        } finally {
+            setRefreshAllActive(false);
+        }
+    }, [properties, queryClient, refreshAllActive, refreshProperty]);
 
     const summary = useMemo(() => {
         const analyzed = properties.filter((property) => property.last_analyzed_at);
@@ -277,8 +326,48 @@ function WatchlistIndexPage() {
                         </div>
                     </div>
 
-                    <AddPropertyForm onAdd={handleAdd} />
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handleRefreshAll}
+                            disabled={refreshAllActive || properties.length === 0}
+                            className="border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 font-mono text-xs"
+                        >
+                            {refreshAllActive ? (
+                                <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                            ) : (
+                                <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                            )}
+                            Refresh All
+                        </Button>
+                        <AddPropertyForm onAdd={handleAdd} />
+                    </div>
                 </div>
+
+                {refreshAllProgress && (
+                    <div className="flex flex-wrap gap-2 text-[10px] font-mono">
+                        <Badge variant="outline" className="border-cyan-500/20 bg-cyan-500/5 text-cyan-300">
+                            Bulk refresh {refreshAllProgress.completed + refreshAllProgress.failed}/
+                            {refreshAllProgress.total}
+                        </Badge>
+                        <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-400">
+                            Success {refreshAllProgress.completed}
+                        </Badge>
+                        <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-400">
+                            Failed {refreshAllProgress.failed}
+                        </Badge>
+                        {refreshAllActive && (
+                            <Badge
+                                variant="outline"
+                                className="border-amber-500/20 bg-amber-500/5 text-amber-300"
+                            >
+                                Refreshing property #{refreshAllProgress.propertyId}
+                            </Badge>
+                        )}
+                    </div>
+                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                     <SummaryMetric
