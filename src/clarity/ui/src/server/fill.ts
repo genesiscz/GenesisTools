@@ -119,7 +119,7 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
 
     const totalMapped = [...fillMap.values()].reduce((s, f) => s + f.totalMinutes, 0);
     const totalUnmapped = [...unmappedByWi.values()].reduce((s, v) => s + v, 0);
-    const adoInfo = adoConfig.orgId ? { org: adoConfig.orgId, project: adoConfig.projectId } : undefined;
+    const adoInfo = { org: adoConfig.org, project: adoConfig.project };
 
     if (clarityConfig.mappings.length === 0) {
         return {
@@ -201,10 +201,6 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
                     timelogEntries: weekTimelogs,
                 });
             }
-        }
-
-        if (weekEntries.length === 0) {
-            continue;
         }
 
         // Filter unmapped entries to this week's date range, then aggregate per work item

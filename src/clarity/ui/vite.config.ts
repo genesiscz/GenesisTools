@@ -7,4 +7,5 @@ export default createDashboardViteConfig({
     aliases: {
         "@app": resolve(__dirname, "../.."),
     },
+    watchDirs: ["azure-devops"],
 });
