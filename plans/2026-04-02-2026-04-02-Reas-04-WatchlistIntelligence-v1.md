@@ -23,11 +23,11 @@ Transform the shallow `/watchlist` page from a flat property summary into a full
 
 ### Phase A: Backend — Rich Property Data
 
-- [ ] 1. **Extend `saved_properties` table** — Add columns: `score`, `grossYield`, `paybackYears`, `percentile`, `comparableCount`, `rentalCount`, `timeOnMarket`, `discountVsMarket`, `momentum`, `lastAnalysisJson` (full DashboardExport blob). Migration: ALTER TABLE with defaults.
-- [ ] 2. **Store analysis history per property** — Create `property_analysis_history` table: `id, propertyId, analyzedAt, grade, score, netYield, grossYield, medianPricePerM2, comparableCount, rentalMedian`. On each refresh, insert a row. This enables tracking changes over time.
-- [ ] 3. **Extend PATCH `/api/properties` to store full analysis on refresh** — When refresh is triggered, store the complete DashboardExport JSON and extract summary metrics into the new columns.
-- [ ] 4. **Create `/api/properties/[id]/history` endpoint** — Returns analysis history for a specific property. Used for trend sparklines.
-- [ ] 5. **Add mortgage calculation parameters to `SavePropertyInput`** — Add: `mortgageRate`, `mortgageTerm`, `downPayment`, `loanAmount`. Compute monthly payment, total interest, DSTI, cash-on-cash return.
+- [x] 1. **Extend `saved_properties` table** — Add columns: `score`, `grossYield`, `paybackYears`, `percentile`, `comparableCount`, `rentalCount`, `timeOnMarket`, `discountVsMarket`, `momentum`, `lastAnalysisJson` (full DashboardExport blob). Migration: ALTER TABLE with defaults.
+- [x] 2. **Store analysis history per property** — Create `property_analysis_history` table: `id, propertyId, analyzedAt, grade, score, netYield, grossYield, medianPricePerM2, comparableCount, rentalMedian`. On each refresh, insert a row. This enables tracking changes over time.
+- [x] 3. **Extend PATCH `/api/properties` to store full analysis on refresh** — When refresh is triggered, store the complete DashboardExport JSON and extract summary metrics into the new columns.
+- [x] 4. **Create `/api/properties/[id]/history` endpoint** — Returns analysis history for a specific property. Used for trend sparklines.
+- [x] 5. **Add mortgage calculation parameters to `SavePropertyInput`** — Add: `mortgageRate`, `mortgageTerm`, `downPayment`, `loanAmount`. Compute monthly payment, total interest, DSTI, cash-on-cash return.
 
 ### Phase B: Property Card Redesign
 
@@ -37,19 +37,19 @@ Transform the shallow `/watchlist` page from a flat property summary into a full
 - [ ] 9. **Build `PropertyVerdictMini` component** — Compact verdict block: pass/fail checklist (6 criteria with checkmarks), score gauge (small), buy/hold/avoid recommendation. Matches `letnany-live-dashboard.jsx:494-545` but condensed.
 - [ ] 10. **Build `PropertyYieldBreakdown` component** — Shows: gross yield, net yield, at-market comparison, mortgage-adjusted yield (if mortgage params provided), payback years, benchmark comparison bar. Matches `YieldCard` but with mortgage intelligence added.
 - [ ] 11. **Build `PropertyMortgageCard` component** — If mortgage params are set: monthly payment, total interest over term, LTV ratio, DSTI ratio (if income provided), cash-on-cash return, break-even occupancy rate. Amortization sparkline.
-- [ ] 12. **Build `PropertySourceLinks` component** — Shows all data sources with direct links: "Data from: reas.cz (477 sold), sreality.cz (89 rentals), bezrealitky.cz (34 rentals), MF cenova mapa". Each source is a clickable link.
+- [x] 12. **Build `PropertySourceLinks` component** — Shows all data sources with direct links: "Data from: reas.cz (477 sold), sreality.cz (89 rentals), bezrealitky.cz (34 rentals), MF cenova mapa". Each source is a clickable link.
 
 ### Phase C: Enhanced Add/Edit Form
 
-- [ ] 13. **Add mortgage section to AddPropertyForm** — Collapsible "Hypotéka" section with: interest rate (%), term (years), down payment / LTV. Auto-computes monthly payment and cash flow preview.
+- [x] 13. **Add mortgage section to AddPropertyForm** — Collapsible "Hypotéka" section with: interest rate (%), term (years), down payment / LTV. Auto-computes monthly payment and cash flow preview.
 - [ ] 14. **Add auto-rent estimation** — When district + disposition + area are filled, make an API call to get median rent for that combination. Pre-fill the rent field with "Estimated: X Kč" that user can accept or override.
 - [ ] 15. **Add "Import from URL" feature** — Text input accepting listing URL (sreality, bezrealitky, reas). Parse URL to extract source and listing ID, fetch listing details, auto-fill form fields.
-- [ ] 16. **Add providers selection** — Checkboxes for which data providers to use in analysis (reas, sreality, bezrealitky, ereality, mf). Matches `SavePropertyInput.providers` field that exists but is never exposed.
-- [ ] 17. **Add timeframe selection** — Select analysis period (6mo, 12mo, 24mo). Matches `SavePropertyInput.periods` field that exists but is never exposed.
+- [x] 16. **Add providers selection** — Checkboxes for which data providers to use in analysis (reas, sreality, bezrealitky, ereality, mf). Matches `SavePropertyInput.providers` field that exists but is never exposed.
+- [x] 17. **Add timeframe selection** — Select analysis period (6mo, 12mo, 24mo). Matches `SavePropertyInput.periods` field that exists but is never exposed.
 
 ### Phase D: Watchlist Page Layout
 
-- [ ] 18. **Add summary stats row at top** — Total properties, average yield, best performer, worst performer, total portfolio value, weighted average grade.
+- [x] 18. **Add summary stats row at top** — Total properties, average yield, best performer, worst performer, total portfolio value, weighted average grade.
 - [ ] 19. **Add sort/filter controls** — Sort watchlist by: grade, yield, percentile, last updated, name. Filter by: district, grade range, yield range.
 - [ ] 20. **Add "Refresh All" bulk action** — Button to re-analyze all watchlist properties in sequence with progress indicator.
 - [ ] 21. **Add comparison action** — Select 2-4 watchlist properties and navigate to comparison view with them pre-loaded.

@@ -25,27 +25,27 @@ Create two new pages (`/listings/live` and `/listings/sold`) that let users brow
 
 ### Phase A: Backend — Listing Persistence & API
 
-- [ ] 1. **Add `listings` table to `lib/store.ts`** — New SQLite table: `id, source, type (sale|rental|sold), district, disposition, area, price, pricePerM2, address, link, sourceId, fetchedAt, soldAt, daysOnMarket, discount, status (active|sold|removed), raw JSON blob`. Index on `source + sourceId` for dedup, index on `district + type` for filtering.
-- [ ] 2. **Create listing ingestion in analysis-service.ts** — After `fetchAndAnalyze` completes, persist all fetched listings (sold from reas, rentals from sreality/bezrealitky/ereality) into the listings table. Upsert by `source + sourceId`.
-- [ ] 3. **Create `/api/listings` server route** — GET endpoint with query params: `type` (sale|rental|sold), `district`, `disposition`, `source`, `priceMin`, `priceMax`, `areaMin`, `areaMax`, `sortBy`, `sortDir`, `page`, `limit`. Returns paginated listing array with total count.
-- [ ] 4. **Create `/api/listings/[id]` server route** — GET single listing detail by ID. Returns full listing with raw JSON blob for maximum detail.
+- [x] 1. **Add `listings` table to `lib/store.ts`** — New SQLite table: `id, source, type (sale|rental|sold), district, disposition, area, price, pricePerM2, address, link, sourceId, fetchedAt, soldAt, daysOnMarket, discount, status (active|sold|removed), raw JSON blob`. Index on `source + sourceId` for dedup, index on `district + type` for filtering.
+- [x] 2. **Create listing ingestion in analysis-service.ts** — After `fetchAndAnalyze` completes, persist all fetched listings (sold from reas, rentals from sreality/bezrealitky/ereality) into the listings table. Upsert by `source + sourceId`.
+- [x] 3. **Create `/api/listings` server route** — GET endpoint with query params: `type` (sale|rental|sold), `district`, `disposition`, `source`, `priceMin`, `priceMax`, `areaMin`, `areaMax`, `sortBy`, `sortDir`, `page`, `limit`. Returns paginated listing array with total count.
+- [x] 4. **Create `/api/listings/[id]` server route** — GET single listing detail by ID. Returns full listing with raw JSON blob for maximum detail.
 - [ ] 5. **Extend bezrealitky and ereality clients to return standardized listing format** — Create a `UnifiedListing` interface that all providers map to. Include: `sourceId`, `source`, `type`, `link`, `address`, `disposition`, `area`, `price`, `pricePerM2`, `rent`, `rentPerM2`, `buildingType`, `description` (if available from GraphQL/provider payload), `images` (if available), `coordinates`, `fetchedAt`. Bezrealitky should map from GraphQL as the primary contract; legacy SSR scraping is _DEPRECATED_.
 
 ### Phase B: shadcn Components Needed
 
-- [ ] 6. **Add `DropdownMenu` to `src/ui/`** — For listing action menus (open source, add to watchlist, compare).
-- [ ] 7. **Add `Pagination` to `src/ui/`** — For paginated listing table.
-- [ ] 8. **Add `Sheet` (side panel) to `src/ui/`** — For listing detail slide-out without leaving the listing page.
-- [ ] 9. **Add `Popover` to `src/ui/`** — For filter popovers on listing columns.
+- [x] 6. **Add `DropdownMenu` to `src/ui/`** — For listing action menus (open source, add to watchlist, compare).
+- [x] 7. **Add `Pagination` to `src/ui/`** — For paginated listing table.
+- [x] 8. **Add `Sheet` (side panel) to `src/ui/`** — For listing detail slide-out without leaving the listing page.
+- [x] 9. **Add `Popover` to `src/ui/`** — For filter popovers on listing columns.
 
 ### Phase C: Listings Pages
 
-- [ ] 10. **Create `/listings` route with sub-tabs** — Main listings page with 3 tabs: "Na prodej" (For Sale — active), "Pronájmy" (Rentals — active), "Prodané" (Sold). Each tab is a filterable, sortable, paginated table.
+- [x] 10. **Create `/listings` route with sub-tabs** — Main listings page with 3 tabs: "Na prodej" (For Sale — active), "Pronájmy" (Rentals — active), "Prodané" (Sold). Each tab is a filterable, sortable, paginated table.
 - [ ] 11. **Build `ListingsTable` component** — Reusable table with shadcn Table, sortable columns, pagination. Columns: Source icon/badge, Address (linked to source URL), Disposition, Area, Price, CZK/m², District, Date (fetchedAt or soldAt), Actions. Source badges show origin (reas.cz, sreality.cz, bezrealitky.cz, ereality.cz) with colored indicators.
 - [ ] 12. **Build `ListingFilters` component** — Horizontal filter bar with: District select, Disposition multi-select, Price range (min/max inputs), Area range, Source multi-select (checkboxes for each provider), Date range picker. Uses shadcn Select, Input, DateRangePicker.
 - [ ] 13. **Build `ListingDetail` sheet/panel** — Side panel (shadcn Sheet) that slides in when clicking a listing row. Shows: Full address, all metrics, map embed (if coordinates available), link to source, "Add to Watchlist" button, listing history (price changes if tracked). For sold listings: shows soldAt date, original price, sold price, discount, days on market. For Bezrealitky active listings, hydrate the panel from GraphQL `AdvertDetail` so it can render structured charges, deposit, `availableFrom`, media gallery, `poiData`, `regionTree`, `formattedAds`, related adverts, and `nemoreport` links.
 - [ ] 14. **Build `SourceBadge` component** — Small colored badge showing data source with link. Reas = blue, Sreality = green, Bezrealitky = orange, Ereality = purple, MF = gray.
-- [ ] 15. **Add listings navigation to `__root.tsx`** — Add "Listings" nav item to the root layout at `__root.tsx:36-56`.
+- [x] 15. **Add listings navigation to `__root.tsx`** — Add "Listings" nav item to the root layout at `__root.tsx:36-56`.
 
 ### Phase D: Data Freshness & Auto-Fetch
 
@@ -85,4 +85,3 @@ Create two new pages (`/listings/live` and `/listings/sold`) that let users brow
 - [ ] **Store richer listing payloads from discovery-backed endpoints** — When Plan 5 validates Sreality v1 / `_next/data` and Bezrealitky GraphQL contracts, extend the listings store to keep images, `originalPrice`, mortgage hints, richer locality metadata, source-native links, and raw provider payload snapshots so the listings browser can show more than the current minimal normalized fields.
 - [ ] **Prefer first-class provider links and media** — Use discovered Sreality and Bezrealitky fields to populate clickable source URLs, thumbnails, image galleries, and related-listing links in the listing detail sheet instead of relying only on reconstructed URLs.
 - [ ] **Tag the exact source contract used for each listing** — Distinguish `sreality-v2`, `sreality-v1`, `sreality-next-data`, `bezrealitky-graphql`, `bezrealitky-ssr-deprecated`, `reas-catalog`, and `ereality-html` in persistence so debugging provenance is possible from the browser UI.
-

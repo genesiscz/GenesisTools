@@ -25,7 +25,7 @@ Transform the flat `/compare` page into an interactive Prague district compariso
 
 ### Phase A: Backend Enrichment
 
-- [ ] 1. **Create `/api/district-comparison` endpoint** — New server route that accepts array of district IDs and returns pre-computed comparison data for all requested districts in a single batch call. Runs parallel analysis for each district (cached). Returns: per-district median/m², yield, DOM, discount, trend, rental stats, listing count, momentum.
+- [x] 1. **Create `/api/district-comparison` endpoint** — New server route that accepts array of district IDs and returns pre-computed comparison data for all requested districts in a single batch call. Runs parallel analysis for each district (cached). Returns: per-district median/m², yield, DOM, discount, trend, rental stats, listing count, momentum.
 - [ ] 2. **Add district-level rental yield aggregation** — Extend `analysis-service.ts` to compute and persist per-district rental yield estimates. Use sreality median rent / reas median sale price ratio per district.
 - [ ] 3. **Add district price snapshot time-series** — Enhance `district_snapshots` to store monthly snapshots. Create endpoint to return time-series for multiple districts for overlay charting.
 - [ ] 4. **Pre-seed Praha district data** — Create a background job or CLI command that fetches and caches analysis for all 22 Praha wards, building the district comparison dataset proactively instead of on-demand only.

@@ -22,19 +22,19 @@ Transform the flat `/analyze` page into a rich, multi-tabbed property analysis e
 
 ### Phase A: Backend / API Export Enrichment
 
-- [ ] 1. **Extend `DashboardExport` to include `investmentScore` and `momentum`** — Add `investmentScore` (grade, score, factors[], reasoning[]) and `momentum` (direction, velocity, acceleration, interpretation) to the export type at `lib/api-export.ts:9-83`. Wire them from `FullAnalysis` in `buildDashboardExport()` at line 87.
-- [ ] 2. **Extend `DashboardExport` to include histogram data** — Add a `priceHistogram: Array<{range: string, count: number}>` field. Compute histogram buckets from `comparables.listings` in `buildDashboardExport()`. Also add `domDistribution` (days-on-market distribution buckets).
-- [ ] 3. **Wire bezrealitky + ereality into `analysis-service.ts`** — Currently only `fetchRentalListings` (sreality) is called at `lib/analysis-service.ts:84-100`. Add `fetchBezrealitkyListings` and `fetchErealityListings` to the `Promise.allSettled` call. Use `rental-aggregation.ts` to merge and deduplicate. This dramatically increases rental data volume.
-- [ ] 4. **Add scatter plot data to DashboardExport** — Include per-listing `{area, pricePerM2, disposition}` array for scatter chart rendering.
+- [x] 1. **Extend `DashboardExport` to include `investmentScore` and `momentum`** — Add `investmentScore` (grade, score, factors[], reasoning[]) and `momentum` (direction, velocity, acceleration, interpretation) to the export type at `lib/api-export.ts:9-83`. Wire them from `FullAnalysis` in `buildDashboardExport()` at line 87.
+- [x] 2. **Extend `DashboardExport` to include histogram data** — Add a `priceHistogram: Array<{range: string, count: number}>` field. Compute histogram buckets from `comparables.listings` in `buildDashboardExport()`. Also add `domDistribution` (days-on-market distribution buckets).
+- [x] 3. **Wire bezrealitky + ereality into `analysis-service.ts`** — Currently only `fetchRentalListings` (sreality) is called at `lib/analysis-service.ts:84-100`. Add `fetchBezrealitkyListings` and `fetchErealityListings` to the `Promise.allSettled` call. Use `rental-aggregation.ts` to merge and deduplicate. This dramatically increases rental data volume.
+- [x] 4. **Add scatter plot data to DashboardExport** — Include per-listing `{area, pricePerM2, disposition}` array for scatter chart rendering.
 
 ### Phase B: shadcn Foundation Components
 
-- [ ] 5. **Add `Tabs` component to `src/ui/`** — shadcn Tabs (Radix `@radix-ui/react-tabs`). This is the core navigation primitive for the tabbed analysis. Add to `src/utils/ui/components/tabs.tsx` and re-export from index.
-- [ ] 6. **Add `Select` component to `src/ui/`** — shadcn Select (Radix `@radix-ui/react-select`). Needed for disposition/location/timeframe filters on multiple tabs.
-- [ ] 7. **Add `Tooltip` component to `src/ui/`** — shadcn Tooltip (Radix `@radix-ui/react-tooltip`). Needed for chart hover states and metric explanations.
-- [ ] 8. **Add `Progress` component to `src/ui/`** — shadcn Progress. Needed for scoring progress bars in Verdict tab.
-- [ ] 9. **Add `Separator` component to `src/ui/`** — For visual section breaks between analysis blocks.
-- [ ] 10. **Install `recharts`** — Add to package.json. Replace handrolled SVG charts. All Hypoteka dashboards use Recharts (`BarChart`, `AreaChart`, `LineChart`, `ScatterChart`, `ComposedChart`, `ResponsiveContainer`).
+- [x] 5. **Add `Tabs` component to `src/ui/`** — shadcn Tabs (Radix `@radix-ui/react-tabs`). This is the core navigation primitive for the tabbed analysis. Add to `src/utils/ui/components/tabs.tsx` and re-export from index.
+- [x] 6. **Add `Select` component to `src/ui/`** — shadcn Select (Radix `@radix-ui/react-select`). Needed for disposition/location/timeframe filters on multiple tabs.
+- [x] 7. **Add `Tooltip` component to `src/ui/`** — shadcn Tooltip (Radix `@radix-ui/react-tooltip`). Needed for chart hover states and metric explanations.
+- [x] 8. **Add `Progress` component to `src/ui/`** — shadcn Progress. Needed for scoring progress bars in Verdict tab.
+- [x] 9. **Add `Separator` component to `src/ui/`** — For visual section breaks between analysis blocks.
+- [x] 10. **Install `recharts`** — Add to package.json. Replace handrolled SVG charts. All Hypoteka dashboards use Recharts (`BarChart`, `AreaChart`, `LineChart`, `ScatterChart`, `ComposedChart`, `ResponsiveContainer`).
 
 ### Phase C: Reusable Analysis Building Blocks
 
@@ -56,7 +56,7 @@ Transform the flat `/analyze` page into a rich, multi-tabbed property analysis e
 
 ### Phase E: Wiring and Polish
 
-- [ ] 23. **Rewrite `AnalysisResults.tsx`** — Replace the flat layout with shadcn Tabs. Each tab lazy-renders its content. Pass full `DashboardExport` to each tab.
+- [x] 23. **Rewrite `AnalysisResults.tsx`** — Replace the flat layout with shadcn Tabs. Each tab lazy-renders its content. Pass full `DashboardExport` to each tab.
 - [ ] 24. **Fix duplicated scoring logic** — Remove client-side `computeScore()` from `ScoreCard.tsx:49-141`. Use `data.investmentScore` from the extended DashboardExport. Single source of truth.
 - [ ] 25. **Fix duplicated momentum logic** — Remove client-side `computeMomentum()` from `MomentumCard.tsx:22-81`. Use `data.momentum` from the extended DashboardExport.
 - [ ] 26. **Unify GRADE_COLORS** — Extract to shared constant. Currently defined independently in `ScoreCard.tsx:17-23`, `PropertyCard.tsx:9-15`, and `HistoryTable.tsx:25-31`.
@@ -93,4 +93,3 @@ Transform the flat `/analyze` page into a rich, multi-tabbed property analysis e
 - [ ] **Feed the dashboard from discovered Sreality web endpoints where they are richer than the current client** — After the HAR capture in Plan 5, expose `filter_page/histogram` output directly to the price-distribution tab, `search/clusters` output to map/list density widgets, `localities/geometries` to interactive district overlays, and `_next/data` result fields to richer listing cards when they carry data not present in the current v2 adapter.
 - [ ] **Expose Bezrealitky GraphQL-only fields in the dashboard UI** — Once the GraphQL path is validated, surface `publicImages`, `mortgageData`, `originalPrice`, `isDiscounted`, `links`, `dataJson`, and `AdvertDetail`-level fields such as structured charges, `availableFrom`, `deposit`, `poiData`, `regionTree`, `formattedAds`, related adverts, and `nemoreport` wherever they materially improve the Overview, Rentals, Investment, and Verdict tabs.
 - [ ] **Keep source provenance visible per widget** — Every histogram, rental aggregate, and listing table added in this plan should explicitly say whether it came from REAS, Sreality v1/v2, Bezrealitky GraphQL, Bezrealitky SSR _DEPRECATED_ legacy data, eReality, or MF so the richer dashboard never becomes a black box.
-

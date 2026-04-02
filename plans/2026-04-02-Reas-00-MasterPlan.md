@@ -181,11 +181,11 @@ No truncation — show all comparables (could be 400+ rows), with virtual scroll
 
 Dependencies for ALL subplans. Do this first.
 
-- [ ] **0.1** Create and maintain deep Playwright MCP verification from the start — do not wait until the end. After each major slice, exercise the implemented flows in the running UI, fix regressions immediately, and do a final end-to-end pass before closing the plan.
-- [ ] **0.2** `bun add recharts ofetch` — install recharts + ofetch dependencies
+- [x] **0.1** Create and maintain deep Playwright MCP verification from the start — do not wait until the end. After each major slice, exercise the implemented flows in the running UI, fix regressions immediately, and do a final end-to-end pass before closing the plan.
+- [x] **0.2** `bun add recharts ofetch` — install recharts + ofetch dependencies
 - [ ] **0.3** Create `src/utils/api/ApiClient.ts` — wraps `ofetch.create()` with pino logging interceptors, retry, rate limiting, timing
-- [ ] **0.4** Create `src/utils/ui/graphs/` — chart theme, tooltip, container, colors (re-exports recharts)
-- [ ] **0.5** Add shadcn components needed across plans:
+- [x] **0.4** Create `src/utils/ui/graphs/` — chart theme, tooltip, container, colors (re-exports recharts)
+- [x] **0.5** Add shadcn components needed across plans:
    - `Tabs` (Plan 01, 04)
    - `Select` (Plan 01, 02, 03)
    - `Tooltip` (Plan 01, 04)
@@ -196,19 +196,19 @@ Dependencies for ALL subplans. Do this first.
    - `Popover` (Plan 02, 03)
    - `Checkbox` (Plan 03, 05)
    - `Switch` (Plan 03)
-- [ ] **0.6** Migrate all provider clients to use `ApiClient` instead of raw `fetch()`
-- [ ] **0.7** Schema migration: extend `saved_properties` with `listing_url`, `last_analysis_json`, and new metric columns (from Plan 04 Phase A)
+- [x] **0.6** Migrate all provider clients to use `ApiClient` instead of raw `fetch()`
+- [x] **0.7** Schema migration: extend `saved_properties` with `listing_url`, `last_analysis_json`, and new metric columns (from Plan 04 Phase A)
 
 ### Phase 1: Provider Integration (Subplan 05)
 
 Must come before UI work — enriches the data pipeline that everything else renders.
 
-- [ ] **1.1** Bezrealitky: Add autocomplete API for OSM ID resolution
-- [ ] **1.2** Bezrealitky: Rewrite `fetchBezrealitkyRentals()` to use GraphQL with `regionOsmIds`
-- [ ] **1.3** Bezrealitky: Add `fetchBezrealitkySales()` GraphQL query
-- [ ] **1.4** Wire bezrealitky + ereality into `fetchAndAnalyze()` pipeline
-- [ ] **1.5** Call `aggregateRentals()` in pipeline — already implemented but never called
-- [ ] **1.6** Create unified `RentalListing` interface across all providers
+- [x] **1.1** Bezrealitky: Add autocomplete API for OSM ID resolution
+- [x] **1.2** Bezrealitky: Rewrite `fetchBezrealitkyRentals()` to use GraphQL with `regionOsmIds`
+- [x] **1.3** Bezrealitky: Add `fetchBezrealitkySales()` GraphQL query
+- [x] **1.4** Wire bezrealitky + ereality into `fetchAndAnalyze()` pipeline
+- [x] **1.5** Call `aggregateRentals()` in pipeline — already implemented but never called
+- [x] **1.6** Create unified `RentalListing` interface across all providers
 - [ ] **1.7** Add `BezrealitkyListing[]` to `FullAnalysis` type
 - [ ] **1.8** Add source tagging to every data point (Plan 05 Phase D)
 
@@ -218,16 +218,16 @@ Must come before UI work — enriches the data pipeline that everything else ren
 
 The user's primary request. Depends on Phase 1 for enriched data.
 
-- [ ] **2.1** Schema: `property_analysis_history` table for tracking changes over time
-- [ ] **2.2** Store full analysis JSON on PATCH refresh
-- [ ] **2.3** Create `/api/property-detail?id=N` endpoint
+- [x] **2.1** Schema: `property_analysis_history` table for tracking changes over time
+- [x] **2.2** Store full analysis JSON on PATCH refresh
+- [x] **2.3** Create `/api/property-detail?id=N` endpoint
 - [ ] **2.4** Add `listing_url` to AddPropertyForm + "Import from URL" feature
 - [ ] **2.5** Shared detail components: `StatCard`, `DataTable`, `InfoBox`, `ScoreGauge`, formatters
 - [ ] **2.6** Detail page tabs: Overview, Comparables, Rentals, Investment, Verdict
-- [ ] **2.7** Wire up `/watchlist/$propertyId` route
-- [ ] **2.8** Enhanced PropertyCard: clickable -> detail, listing URL, provider badges
-- [ ] **2.9** `ProviderLinks` component — search result URLs per provider
-- [ ] **2.10** URL builder: `lib/url-builder.ts` for browseable search URLs
+- [x] **2.7** Wire up `/watchlist/$propertyId` route
+- [x] **2.8** Enhanced PropertyCard: clickable -> detail, listing URL, provider badges
+- [x] **2.9** `ProviderLinks` component — search result URLs per provider
+- [x] **2.10** URL builder: `lib/url-builder.ts` for browseable search URLs
 
 > Full task details: `plans/2026-04-02-2026-04-02-Reas-04-WatchlistIntelligence-v1.md`
 
@@ -235,9 +235,9 @@ The user's primary request. Depends on Phase 1 for enriched data.
 
 Reuses chart components from Phase 0 and data from Phase 1.
 
-- [ ] **3.1** Extend `DashboardExport` with score, momentum, histogram, scatter data
+- [x] **3.1** Extend `DashboardExport` with score, momentum, histogram, scatter data
 - [ ] **3.2** Build analysis building blocks (StatCard, SectionTitle, etc. — shared with Phase 2)
-- [ ] **3.3** 7 tabs: Overview, Price Distribution, Trend, Comparables, Rentals, Investment, Verdict
+- [x] **3.3** 7 tabs: Overview, Price Distribution, Trend, Comparables, Rentals, Investment, Verdict
 - [ ] **3.4** Replace handrolled SVG charts with recharts
 
 > Full task details: `plans/2026-04-02-2026-04-02-Reas-01-RichAnalysisDashboard-v1.md`
@@ -246,9 +246,9 @@ Reuses chart components from Phase 0 and data from Phase 1.
 
 Depends on Phase 1 (all providers wired) and Phase 0 (persistence schema).
 
-- [ ] **4.1** `listings` SQLite table + ingestion in analysis pipeline
-- [ ] **4.2** `/api/listings` endpoint with filters + pagination
-- [ ] **4.3** Listings page with 3 tabs: For Sale, Rentals, Sold
+- [x] **4.1** `listings` SQLite table + ingestion in analysis pipeline
+- [x] **4.2** `/api/listings` endpoint with filters + pagination
+- [x] **4.3** Listings page with 3 tabs: For Sale, Rentals, Sold
 - [ ] **4.4** `ListingsTable`, `ListingFilters`, `ListingDetail` sheet, `SourceBadge`
 
 > Full task details: `plans/2026-04-02-2026-04-02-Reas-02-ListingsBrowser-v1.md`
@@ -257,7 +257,7 @@ Depends on Phase 1 (all providers wired) and Phase 0 (persistence schema).
 
 Depends on Phase 1 (enriched district data) and Phase 0 (charts).
 
-- [ ] **5.1** `/api/district-comparison` batch endpoint
+- [x] **5.1** `/api/district-comparison` batch endpoint
 - [ ] **5.2** District-level charts: price bar, yield bar, trend overlay, radar
 - [ ] **5.3** Rewrite `/compare` as multi-section page
 
@@ -267,9 +267,9 @@ Depends on Phase 1 (enriched district data) and Phase 0 (charts).
 
 Polish. Depends on Phase 2-3 for rich data to export.
 
-- [ ] **6.1** `lib/pdf-export.ts` — Markdown builder + md-to-pdf
+- [x] **6.1** `lib/pdf-export.ts` — Markdown builder + md-to-pdf
 - [ ] **6.2** `--format pdf` CLI flag
-- [ ] **6.3** Dashboard PDF download button
+- [x] **6.3** Dashboard PDF download button
 
 > Full task details: `.claude/plans/2026-04-01-ReasPdfExport.md`
 
