@@ -18,11 +18,16 @@ import { Route as ApiWorkitemTypeColorsRouteImport } from './routes/api/workitem
 import { Route as ApiUpdateAuthRouteImport } from './routes/api/update-auth'
 import { Route as ApiTimelogEntriesRouteImport } from './routes/api/timelog-entries'
 import { Route as ApiTestConnectionRouteImport } from './routes/api/test-connection'
+import { Route as ApiTeamMembersRouteImport } from './routes/api/team-members'
 import { Route as ApiStatusRouteImport } from './routes/api/status'
 import { Route as ApiPostNoteRouteImport } from './routes/api/post-note'
 import { Route as ApiMoveMappingRouteImport } from './routes/api/move-mapping'
 import { Route as ApiMappingsRouteImport } from './routes/api/mappings'
+import { Route as ApiGranularStatusRouteImport } from './routes/api/granular-status'
 import { Route as ApiExportRouteImport } from './routes/api/export'
+import { Route as ApiConfigureTimelogUserRouteImport } from './routes/api/configure-timelog-user'
+import { Route as ApiConfigureTimelogKeyRouteImport } from './routes/api/configure-timelog-key'
+import { Route as ApiConfigureAdoRouteImport } from './routes/api/configure-ado'
 import { Route as ApiClarityWeeksRouteImport } from './routes/api/clarity-weeks'
 import { Route as ApiClarityTasksRouteImport } from './routes/api/clarity-tasks'
 import { Route as ApiAdoWorkitemsRouteImport } from './routes/api/ado-workitems'
@@ -75,6 +80,11 @@ const ApiTestConnectionRoute = ApiTestConnectionRouteImport.update({
   path: '/api/test-connection',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiTeamMembersRoute = ApiTeamMembersRouteImport.update({
+  id: '/api/team-members',
+  path: '/api/team-members',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiStatusRoute = ApiStatusRouteImport.update({
   id: '/api/status',
   path: '/api/status',
@@ -95,9 +105,29 @@ const ApiMappingsRoute = ApiMappingsRouteImport.update({
   path: '/api/mappings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiGranularStatusRoute = ApiGranularStatusRouteImport.update({
+  id: '/api/granular-status',
+  path: '/api/granular-status',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiExportRoute = ApiExportRouteImport.update({
   id: '/api/export',
   path: '/api/export',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiConfigureTimelogUserRoute = ApiConfigureTimelogUserRouteImport.update({
+  id: '/api/configure-timelog-user',
+  path: '/api/configure-timelog-user',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiConfigureTimelogKeyRoute = ApiConfigureTimelogKeyRouteImport.update({
+  id: '/api/configure-timelog-key',
+  path: '/api/configure-timelog-key',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiConfigureAdoRoute = ApiConfigureAdoRouteImport.update({
+  id: '/api/configure-ado',
+  path: '/api/configure-ado',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiClarityWeeksRoute = ApiClarityWeeksRouteImport.update({
@@ -141,11 +171,16 @@ export interface FileRoutesByFullPath {
   '/api/ado-workitems': typeof ApiAdoWorkitemsRoute
   '/api/clarity-tasks': typeof ApiClarityTasksRoute
   '/api/clarity-weeks': typeof ApiClarityWeeksRoute
+  '/api/configure-ado': typeof ApiConfigureAdoRoute
+  '/api/configure-timelog-key': typeof ApiConfigureTimelogKeyRoute
+  '/api/configure-timelog-user': typeof ApiConfigureTimelogUserRoute
   '/api/export': typeof ApiExportRoute
+  '/api/granular-status': typeof ApiGranularStatusRoute
   '/api/mappings': typeof ApiMappingsRoute
   '/api/move-mapping': typeof ApiMoveMappingRoute
   '/api/post-note': typeof ApiPostNoteRoute
   '/api/status': typeof ApiStatusRoute
+  '/api/team-members': typeof ApiTeamMembersRoute
   '/api/test-connection': typeof ApiTestConnectionRoute
   '/api/timelog-entries': typeof ApiTimelogEntriesRoute
   '/api/update-auth': typeof ApiUpdateAuthRoute
@@ -163,11 +198,16 @@ export interface FileRoutesByTo {
   '/api/ado-workitems': typeof ApiAdoWorkitemsRoute
   '/api/clarity-tasks': typeof ApiClarityTasksRoute
   '/api/clarity-weeks': typeof ApiClarityWeeksRoute
+  '/api/configure-ado': typeof ApiConfigureAdoRoute
+  '/api/configure-timelog-key': typeof ApiConfigureTimelogKeyRoute
+  '/api/configure-timelog-user': typeof ApiConfigureTimelogUserRoute
   '/api/export': typeof ApiExportRoute
+  '/api/granular-status': typeof ApiGranularStatusRoute
   '/api/mappings': typeof ApiMappingsRoute
   '/api/move-mapping': typeof ApiMoveMappingRoute
   '/api/post-note': typeof ApiPostNoteRoute
   '/api/status': typeof ApiStatusRoute
+  '/api/team-members': typeof ApiTeamMembersRoute
   '/api/test-connection': typeof ApiTestConnectionRoute
   '/api/timelog-entries': typeof ApiTimelogEntriesRoute
   '/api/update-auth': typeof ApiUpdateAuthRoute
@@ -186,11 +226,16 @@ export interface FileRoutesById {
   '/api/ado-workitems': typeof ApiAdoWorkitemsRoute
   '/api/clarity-tasks': typeof ApiClarityTasksRoute
   '/api/clarity-weeks': typeof ApiClarityWeeksRoute
+  '/api/configure-ado': typeof ApiConfigureAdoRoute
+  '/api/configure-timelog-key': typeof ApiConfigureTimelogKeyRoute
+  '/api/configure-timelog-user': typeof ApiConfigureTimelogUserRoute
   '/api/export': typeof ApiExportRoute
+  '/api/granular-status': typeof ApiGranularStatusRoute
   '/api/mappings': typeof ApiMappingsRoute
   '/api/move-mapping': typeof ApiMoveMappingRoute
   '/api/post-note': typeof ApiPostNoteRoute
   '/api/status': typeof ApiStatusRoute
+  '/api/team-members': typeof ApiTeamMembersRoute
   '/api/test-connection': typeof ApiTestConnectionRoute
   '/api/timelog-entries': typeof ApiTimelogEntriesRoute
   '/api/update-auth': typeof ApiUpdateAuthRoute
@@ -210,11 +255,16 @@ export interface FileRouteTypes {
     | '/api/ado-workitems'
     | '/api/clarity-tasks'
     | '/api/clarity-weeks'
+    | '/api/configure-ado'
+    | '/api/configure-timelog-key'
+    | '/api/configure-timelog-user'
     | '/api/export'
+    | '/api/granular-status'
     | '/api/mappings'
     | '/api/move-mapping'
     | '/api/post-note'
     | '/api/status'
+    | '/api/team-members'
     | '/api/test-connection'
     | '/api/timelog-entries'
     | '/api/update-auth'
@@ -232,11 +282,16 @@ export interface FileRouteTypes {
     | '/api/ado-workitems'
     | '/api/clarity-tasks'
     | '/api/clarity-weeks'
+    | '/api/configure-ado'
+    | '/api/configure-timelog-key'
+    | '/api/configure-timelog-user'
     | '/api/export'
+    | '/api/granular-status'
     | '/api/mappings'
     | '/api/move-mapping'
     | '/api/post-note'
     | '/api/status'
+    | '/api/team-members'
     | '/api/test-connection'
     | '/api/timelog-entries'
     | '/api/update-auth'
@@ -254,11 +309,16 @@ export interface FileRouteTypes {
     | '/api/ado-workitems'
     | '/api/clarity-tasks'
     | '/api/clarity-weeks'
+    | '/api/configure-ado'
+    | '/api/configure-timelog-key'
+    | '/api/configure-timelog-user'
     | '/api/export'
+    | '/api/granular-status'
     | '/api/mappings'
     | '/api/move-mapping'
     | '/api/post-note'
     | '/api/status'
+    | '/api/team-members'
     | '/api/test-connection'
     | '/api/timelog-entries'
     | '/api/update-auth'
@@ -277,11 +337,16 @@ export interface RootRouteChildren {
   ApiAdoWorkitemsRoute: typeof ApiAdoWorkitemsRoute
   ApiClarityTasksRoute: typeof ApiClarityTasksRoute
   ApiClarityWeeksRoute: typeof ApiClarityWeeksRoute
+  ApiConfigureAdoRoute: typeof ApiConfigureAdoRoute
+  ApiConfigureTimelogKeyRoute: typeof ApiConfigureTimelogKeyRoute
+  ApiConfigureTimelogUserRoute: typeof ApiConfigureTimelogUserRoute
   ApiExportRoute: typeof ApiExportRoute
+  ApiGranularStatusRoute: typeof ApiGranularStatusRoute
   ApiMappingsRoute: typeof ApiMappingsRoute
   ApiMoveMappingRoute: typeof ApiMoveMappingRoute
   ApiPostNoteRoute: typeof ApiPostNoteRoute
   ApiStatusRoute: typeof ApiStatusRoute
+  ApiTeamMembersRoute: typeof ApiTeamMembersRoute
   ApiTestConnectionRoute: typeof ApiTestConnectionRoute
   ApiTimelogEntriesRoute: typeof ApiTimelogEntriesRoute
   ApiUpdateAuthRoute: typeof ApiUpdateAuthRoute
@@ -355,6 +420,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTestConnectionRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/team-members': {
+      id: '/api/team-members'
+      path: '/api/team-members'
+      fullPath: '/api/team-members'
+      preLoaderRoute: typeof ApiTeamMembersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/status': {
       id: '/api/status'
       path: '/api/status'
@@ -383,11 +455,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiMappingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/granular-status': {
+      id: '/api/granular-status'
+      path: '/api/granular-status'
+      fullPath: '/api/granular-status'
+      preLoaderRoute: typeof ApiGranularStatusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/export': {
       id: '/api/export'
       path: '/api/export'
       fullPath: '/api/export'
       preLoaderRoute: typeof ApiExportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/configure-timelog-user': {
+      id: '/api/configure-timelog-user'
+      path: '/api/configure-timelog-user'
+      fullPath: '/api/configure-timelog-user'
+      preLoaderRoute: typeof ApiConfigureTimelogUserRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/configure-timelog-key': {
+      id: '/api/configure-timelog-key'
+      path: '/api/configure-timelog-key'
+      fullPath: '/api/configure-timelog-key'
+      preLoaderRoute: typeof ApiConfigureTimelogKeyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/configure-ado': {
+      id: '/api/configure-ado'
+      path: '/api/configure-ado'
+      fullPath: '/api/configure-ado'
+      preLoaderRoute: typeof ApiConfigureAdoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/clarity-weeks': {
@@ -445,11 +545,16 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAdoWorkitemsRoute: ApiAdoWorkitemsRoute,
   ApiClarityTasksRoute: ApiClarityTasksRoute,
   ApiClarityWeeksRoute: ApiClarityWeeksRoute,
+  ApiConfigureAdoRoute: ApiConfigureAdoRoute,
+  ApiConfigureTimelogKeyRoute: ApiConfigureTimelogKeyRoute,
+  ApiConfigureTimelogUserRoute: ApiConfigureTimelogUserRoute,
   ApiExportRoute: ApiExportRoute,
+  ApiGranularStatusRoute: ApiGranularStatusRoute,
   ApiMappingsRoute: ApiMappingsRoute,
   ApiMoveMappingRoute: ApiMoveMappingRoute,
   ApiPostNoteRoute: ApiPostNoteRoute,
   ApiStatusRoute: ApiStatusRoute,
+  ApiTeamMembersRoute: ApiTeamMembersRoute,
   ApiTestConnectionRoute: ApiTestConnectionRoute,
   ApiTimelogEntriesRoute: ApiTimelogEntriesRoute,
   ApiUpdateAuthRoute: ApiUpdateAuthRoute,

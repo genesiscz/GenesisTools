@@ -29,7 +29,9 @@ async function handleConfigure(url: string): Promise<void> {
     console.log(`Parsing URL and fetching project ID: ${url}\n`);
 
     const newConfig = await buildAdoConfig(url);
-    logger.debug(`[configure] Config built: org="${newConfig.org}", project="${newConfig.project}", projectId="${newConfig.projectId}"`);
+    logger.debug(
+        `[configure] Config built: org="${newConfig.org}", project="${newConfig.project}", projectId="${newConfig.projectId}"`
+    );
 
     console.log(`  Organization: ${newConfig.org}`);
     console.log(`  Project: ${newConfig.project}`);

@@ -10,9 +10,7 @@ export async function checkAzureCliLogin(): Promise<void> {
     try {
         await $`az account show`.quiet();
     } catch {
-        throw new Error(
-            "Azure CLI not logged in. Run: az login --allow-no-subscriptions --use-device-code"
-        );
+        throw new Error("Azure CLI not logged in. Run: az login --allow-no-subscriptions --use-device-code");
     }
 }
 
