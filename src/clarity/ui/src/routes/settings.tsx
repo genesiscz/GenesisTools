@@ -107,12 +107,26 @@ function SettingsPage() {
             {/* Update Auth section */}
             <Card className="border-amber-500/20 mb-6">
                 <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-mono text-gray-400">Update Auth Tokens</CardTitle>
+                    <CardTitle className="text-sm font-mono text-gray-400">Configure / Update Auth</CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <p className="text-xs text-gray-500 font-mono mb-3">
-                        Paste a cURL command from your browser&apos;s network tab to extract auth tokens.
-                    </p>
+                    <div className="text-xs text-gray-500 font-mono mb-3 space-y-1">
+                        <p>Paste a cURL command from your browser to set up or refresh auth tokens:</p>
+                        <ol className="list-decimal list-inside space-y-0.5 text-gray-600 pl-1">
+                            <li>Open Clarity PPM in Chrome/Edge, go to Timesheets</li>
+                            <li>
+                                Press <kbd className="px-1 py-0.5 bg-white/5 rounded text-gray-400">F12</kbd> to open
+                                Developer Tools
+                            </li>
+                            <li>
+                                Click the <span className="text-gray-400">Network</span> tab, then reload the page (F5)
+                            </li>
+                            <li>
+                                Find any request containing <span className="text-gray-400">/ppm/rest/v1/</span>
+                            </li>
+                            <li>Right-click it &rarr; Copy &rarr; Copy as cURL (bash)</li>
+                        </ol>
+                    </div>
                     <textarea
                         value={curlInput}
                         onChange={(e) => setCurlInput(e.target.value)}

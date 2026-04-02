@@ -161,7 +161,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                             )}
                         </div>
                     ) : (
-                        <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                        <div className="space-y-1.5">
                             {weeksData?.weeks.map((week) => {
                                 const current = isCurrentWeek(week.startDate, week.finishDate);
                                 const selected = selectedWeek?.timesheetId === week.timesheetId;
@@ -249,7 +249,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                         <span className="block text-xs font-mono text-gray-500 mb-1.5">
                             Step 2: Select Clarity task
                         </span>
-                        <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                        <div className="space-y-1.5">
                             {tasksMutation.data.tasks.map((task) => (
                                 <button
                                     key={task.taskId}

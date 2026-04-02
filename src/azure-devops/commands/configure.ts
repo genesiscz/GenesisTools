@@ -89,9 +89,9 @@ async function handleConfigure(url: string): Promise<void> {
     console.log(`
 🎉 Done! You can now use the tool:
 
-  tools azure-devops --query <id>
-  tools azure-devops --workitem <id>
-  tools azure-devops --dashboard <id>
+  tools azure-devops query <id>
+  tools azure-devops workitem <id>
+  tools azure-devops dashboard <id>
 `);
 }
 

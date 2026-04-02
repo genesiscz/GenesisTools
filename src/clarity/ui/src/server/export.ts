@@ -10,12 +10,16 @@ export type { TimelogWorkItemGroup };
 function requireAdoConfig(): AzureConfigWithTimeLog {
     const adoConfig = loadAdoConfig() as AzureConfigWithTimeLog | null;
 
-    if (!adoConfig?.orgId || !adoConfig.timelog?.functionsKey) {
-        throw new Error("Azure DevOps / TimeLog not configured. Run: tools azure-devops configure");
+    if (!adoConfig) {
+        throw new Error("Azure DevOps not configured. Run: tools azure-devops configure <url>");
+    }
+
+    if (!adoConfig.timelog?.functionsKey) {
+        throw new Error("TimeLog not configured. Run: tools azure-devops timelog configure");
     }
 
     if (!adoConfig.timelog.defaultUser) {
-        throw new Error("TimeLog user not configured in Azure DevOps config");
+        throw new Error("TimeLog user not configured. Run: tools azure-devops timelog configure");
     }
 
     return adoConfig;

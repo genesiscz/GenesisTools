@@ -47,7 +47,28 @@ export function getLocalConfigDir(): string {
 }
 
 /**
- * Load config from file or return null if not found
+ * Extract the short org name from config.org URL.
+ * Handles both "https://dev.azure.com/MyOrg" and "https://myorg.visualstudio.com" formats.
+ */
+export function extractOrgName(orgUrl: string): string | null {
+    const devAzureMatch = orgUrl.match(/dev\.azure\.com\/([^/]+)/i);
+
+    if (devAzureMatch) {
+        return devAzureMatch[1];
+    }
+
+    const vsMatch = orgUrl.match(/([^/.]+)\.visualstudio\.com/i);
+
+    if (vsMatch) {
+        return vsMatch[1];
+    }
+
+    return null;
+}
+
+/**
+ * Load config from file or return null if not found.
+ * Auto-derives orgId from org URL if missing.
  */
 export function loadConfig(): AzureConfig | null {
     const configPath = findConfigPath();
@@ -57,7 +78,17 @@ export function loadConfig(): AzureConfig | null {
     }
 
     try {
-        return SafeJSON.parse(readFileSync(configPath, "utf-8"));
+        const config = SafeJSON.parse(readFileSync(configPath, "utf-8"));
+
+        if (config?.org && !(config as AzureConfigWithTimeLog).orgId) {
+            const orgName = extractOrgName(config.org);
+
+            if (orgName) {
+                (config as AzureConfigWithTimeLog).orgId = orgName;
+            }
+        }
+
+        return config;
     } catch {
         return null;
     }
@@ -73,10 +104,10 @@ export function requireConfig(): AzureConfig {
         console.error(`
 ❌ No Azure DevOps configuration found.
 
-Run --configure with any Azure DevOps URL from your project:
+Run configure with any Azure DevOps URL from your project:
 
-  tools azure-devops --configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
-  tools azure-devops --configure "https://myorg.visualstudio.com/MyProject/_queries/query/..."
+  tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
+  tools azure-devops configure "https://myorg.visualstudio.com/MyProject/_queries/query/..."
 
 This will create .claude/azure/config.json in the current directory.
 `);
@@ -99,17 +130,6 @@ export function requireTimeLogConfig(): AzureConfigWithTimeLog {
 Run configure with any Azure DevOps URL from your project:
 
   tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
-`);
-        process.exit(1);
-    }
-
-    if (!config.orgId) {
-        console.error(`
-❌ Organization ID not found in config.
-
-Re-run configure to update your config:
-
-  tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems" --force
 `);
         process.exit(1);
     }

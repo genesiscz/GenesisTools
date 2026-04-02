@@ -87,21 +87,40 @@ export async function searchAdoWorkItems(
 }
 
 export async function updateAuth(curl: string): Promise<{ success: boolean; message: string }> {
-    const config = await getConfig();
-
-    if (!config) {
-        return { success: false, message: "Not configured. Run: tools clarity configure" };
-    }
-
     try {
-        const { authToken, sessionId, cookies } = parseAuthCurl(curl);
+        const { baseUrl, authToken, sessionId, cookies } = parseAuthCurl(curl);
 
-        config.authToken = authToken;
-        config.sessionId = sessionId;
-        config.cookies = cookies;
-        await saveConfig(config);
+        const existing = await getConfig();
 
-        return { success: true, message: "Auth tokens updated" };
+        if (existing) {
+            existing.authToken = authToken;
+            existing.sessionId = sessionId;
+            existing.cookies = cookies;
+            if (baseUrl) {
+                existing.baseUrl = baseUrl;
+            }
+
+            await saveConfig(existing);
+            return { success: true, message: "Auth tokens updated" };
+        }
+
+        // First-time setup: create config from cURL, then fetch resource info
+        const api = new ClarityApi({ baseUrl, authToken, sessionId, cookies });
+        const appData = await api.getTimesheetApp(0);
+        const resource = appData.resource._results[0];
+
+        await saveConfig({
+            baseUrl,
+            authToken,
+            sessionId,
+            cookies,
+            resourceId: resource?.id,
+            uniqueName: resource?.email,
+            mappings: [],
+        });
+
+        const name = resource ? ` as ${resource.full_name}` : "";
+        return { success: true, message: `Clarity configured${name}` };
     } catch (err) {
         return {
             success: false,

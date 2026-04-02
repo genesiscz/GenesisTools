@@ -285,7 +285,7 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                         {timelogError instanceof Error ? timelogError.message : "Failed to load"}
                     </div>
                 ) : (
-                    <div className="space-y-1 max-h-56 overflow-y-auto">
+                    <div className="space-y-1">
                         {filteredTimelog.map((wi) => {
                             const isMapped = mappedIds.has(wi.id);
                             const isSelected = selectedWorkItems.has(wi.id);
@@ -376,7 +376,7 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                 )}
 
                 {adoSearchMutation.data && (
-                    <div className="space-y-1 mt-1.5 max-h-40 overflow-y-auto">
+                    <div className="space-y-1 mt-1.5">
                         {adoSearchMutation.data.items.map((wi) => {
                             const isMapped = mappedIds.has(wi.id);
                             const isSelected = selectedWorkItems.has(wi.id);

@@ -87,13 +87,17 @@ async function runInteractiveSetup(): Promise<void> {
     clack.note(
         [
             "To configure Clarity, you need to paste a cURL command from your browser.",
+            "This lets the tool extract your authentication tokens automatically.",
             "",
             "Steps:",
-            "  1. Open Clarity PPM in your browser and navigate to Timesheets",
-            "  2. Open Developer Tools (F12) -> Network tab",
-            "  3. Right-click any request to /ppm/rest/v1/",
-            "  4. Select Copy > Copy as cURL",
-            "  5. Paste it below (multi-line is OK, press Enter twice to finish)",
+            "  1. Open Clarity PPM in Chrome/Edge and go to Timesheets",
+            "  2. Press F12 (or Ctrl+Shift+I / Cmd+Option+I on Mac) to open Developer Tools",
+            "  3. Click the 'Network' tab at the top of the Developer Tools panel",
+            "  4. Reload the page (F5) so requests appear in the list",
+            "  5. Look for any request whose name contains '/ppm/rest/v1/'",
+            "     (click the 'Name' column to sort, or use the filter box to search 'ppm')",
+            "  6. Right-click that request -> Copy -> Copy as cURL (bash)",
+            "  7. Paste it below (multi-line is OK, press Enter twice when done)",
         ].join("\n"),
         "How to get the cURL command"
     );
@@ -236,10 +240,12 @@ export function registerConfigureCommand(program: Command): void {
                     "Your mappings will be preserved.",
                     "",
                     "Steps:",
-                    "  1. Open Clarity PPM in your browser",
-                    "  2. Open Developer Tools (F12) -> Network tab",
-                    "  3. Right-click any request to /ppm/rest/v1/",
-                    "  4. Copy as cURL and paste below",
+                    "  1. Open Clarity PPM in Chrome/Edge, go to Timesheets",
+                    "  2. Press F12 (or Ctrl+Shift+I / Cmd+Option+I on Mac) to open Developer Tools",
+                    "  3. Click the 'Network' tab, then reload the page (F5)",
+                    "  4. Find any request containing '/ppm/rest/v1/'",
+                    "  5. Right-click it -> Copy -> Copy as cURL (bash)",
+                    "  6. Paste below (multi-line is OK, press Enter twice when done)",
                 ].join("\n"),
                 "Update credentials"
             );
@@ -334,7 +340,14 @@ export function registerConfigureCommand(program: Command): void {
 
             if (action === "update-auth") {
                 clack.note(
-                    "Paste a fresh cURL command from Clarity to update credentials.\nYour mappings will be preserved.",
+                    [
+                        "Paste a fresh cURL command from Clarity to update credentials.",
+                        "Your mappings will be preserved.",
+                        "",
+                        "  1. Open Clarity PPM in Chrome/Edge, press F12 to open Developer Tools",
+                        "  2. Click 'Network' tab, reload the page (F5)",
+                        "  3. Right-click any '/ppm/rest/v1/' request -> Copy -> Copy as cURL (bash)",
+                    ].join("\n"),
                     "Update credentials"
                 );
 
