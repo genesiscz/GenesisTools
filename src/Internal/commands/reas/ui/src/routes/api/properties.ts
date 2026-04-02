@@ -41,6 +41,11 @@ export const Route = createFileRoute("/api/properties")({
                     monthlyCosts: Number(body.monthlyCosts) || 0,
                     periods: body.periods as string | undefined,
                     providers: body.providers as string | undefined,
+                    listingUrl: body.listingUrl as string | undefined,
+                    mortgageRate: body.mortgageRate ? Number(body.mortgageRate) : undefined,
+                    mortgageTerm: body.mortgageTerm ? Number(body.mortgageTerm) : undefined,
+                    downPayment: body.downPayment ? Number(body.downPayment) : undefined,
+                    loanAmount: body.loanAmount ? Number(body.loanAmount) : undefined,
                     notes: body.notes as string | undefined,
                 });
 

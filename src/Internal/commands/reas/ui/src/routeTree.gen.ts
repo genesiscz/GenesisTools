@@ -10,18 +10,32 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WatchlistRouteImport } from './routes/watchlist'
+import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as CompareRouteImport } from './routes/compare'
 import { Route as AnalyzeRouteImport } from './routes/analyze'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as WatchlistPropertyIdRouteImport } from './routes/watchlist.$propertyId'
+import { Route as ApiPropertyDetailRouteImport } from './routes/api/property-detail'
 import { Route as ApiPropertiesRouteImport } from './routes/api/properties'
+import { Route as ApiListingsRouteImport } from './routes/api/listings'
 import { Route as ApiHistoryRouteImport } from './routes/api/history'
+import { Route as ApiExportPdfRouteImport } from './routes/api/export-pdf'
 import { Route as ApiDistrictsRouteImport } from './routes/api/districts'
+import { Route as ApiDistrictSnapshotsRouteImport } from './routes/api/district-snapshots'
+import { Route as ApiDistrictComparisonRouteImport } from './routes/api/district-comparison'
 import { Route as ApiAnalysisRouteImport } from './routes/api/analysis'
+import { Route as ApiListingsIdRouteImport } from './routes/api/listings.$id'
+import { Route as ApiPropertiesIdHistoryRouteImport } from './routes/api/properties.$id.history'
 
 const WatchlistRoute = WatchlistRouteImport.update({
   id: '/watchlist',
   path: '/watchlist',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ListingsRoute = ListingsRouteImport.update({
+  id: '/listings',
+  path: '/listings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HistoryRoute = HistoryRouteImport.update({
@@ -44,9 +58,24 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WatchlistPropertyIdRoute = WatchlistPropertyIdRouteImport.update({
+  id: '/$propertyId',
+  path: '/$propertyId',
+  getParentRoute: () => WatchlistRoute,
+} as any)
+const ApiPropertyDetailRoute = ApiPropertyDetailRouteImport.update({
+  id: '/api/property-detail',
+  path: '/api/property-detail',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPropertiesRoute = ApiPropertiesRouteImport.update({
   id: '/api/properties',
   path: '/api/properties',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiListingsRoute = ApiListingsRouteImport.update({
+  id: '/api/listings',
+  path: '/api/listings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiHistoryRoute = ApiHistoryRouteImport.update({
@@ -54,9 +83,24 @@ const ApiHistoryRoute = ApiHistoryRouteImport.update({
   path: '/api/history',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiExportPdfRoute = ApiExportPdfRouteImport.update({
+  id: '/api/export-pdf',
+  path: '/api/export-pdf',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiDistrictsRoute = ApiDistrictsRouteImport.update({
   id: '/api/districts',
   path: '/api/districts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDistrictSnapshotsRoute = ApiDistrictSnapshotsRouteImport.update({
+  id: '/api/district-snapshots',
+  path: '/api/district-snapshots',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDistrictComparisonRoute = ApiDistrictComparisonRouteImport.update({
+  id: '/api/district-comparison',
+  path: '/api/district-comparison',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAnalysisRoute = ApiAnalysisRouteImport.update({
@@ -64,28 +108,56 @@ const ApiAnalysisRoute = ApiAnalysisRouteImport.update({
   path: '/api/analysis',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiListingsIdRoute = ApiListingsIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => ApiListingsRoute,
+} as any)
+const ApiPropertiesIdHistoryRoute = ApiPropertiesIdHistoryRouteImport.update({
+  id: '/$id/history',
+  path: '/$id/history',
+  getParentRoute: () => ApiPropertiesRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/analyze': typeof AnalyzeRoute
   '/compare': typeof CompareRoute
   '/history': typeof HistoryRoute
-  '/watchlist': typeof WatchlistRoute
+  '/listings': typeof ListingsRoute
+  '/watchlist': typeof WatchlistRouteWithChildren
   '/api/analysis': typeof ApiAnalysisRoute
+  '/api/district-comparison': typeof ApiDistrictComparisonRoute
+  '/api/district-snapshots': typeof ApiDistrictSnapshotsRoute
   '/api/districts': typeof ApiDistrictsRoute
+  '/api/export-pdf': typeof ApiExportPdfRoute
   '/api/history': typeof ApiHistoryRoute
-  '/api/properties': typeof ApiPropertiesRoute
+  '/api/listings': typeof ApiListingsRouteWithChildren
+  '/api/properties': typeof ApiPropertiesRouteWithChildren
+  '/api/property-detail': typeof ApiPropertyDetailRoute
+  '/watchlist/$propertyId': typeof WatchlistPropertyIdRoute
+  '/api/listings/$id': typeof ApiListingsIdRoute
+  '/api/properties/$id/history': typeof ApiPropertiesIdHistoryRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/analyze': typeof AnalyzeRoute
   '/compare': typeof CompareRoute
   '/history': typeof HistoryRoute
-  '/watchlist': typeof WatchlistRoute
+  '/listings': typeof ListingsRoute
+  '/watchlist': typeof WatchlistRouteWithChildren
   '/api/analysis': typeof ApiAnalysisRoute
+  '/api/district-comparison': typeof ApiDistrictComparisonRoute
+  '/api/district-snapshots': typeof ApiDistrictSnapshotsRoute
   '/api/districts': typeof ApiDistrictsRoute
+  '/api/export-pdf': typeof ApiExportPdfRoute
   '/api/history': typeof ApiHistoryRoute
-  '/api/properties': typeof ApiPropertiesRoute
+  '/api/listings': typeof ApiListingsRouteWithChildren
+  '/api/properties': typeof ApiPropertiesRouteWithChildren
+  '/api/property-detail': typeof ApiPropertyDetailRoute
+  '/watchlist/$propertyId': typeof WatchlistPropertyIdRoute
+  '/api/listings/$id': typeof ApiListingsIdRoute
+  '/api/properties/$id/history': typeof ApiPropertiesIdHistoryRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -93,11 +165,20 @@ export interface FileRoutesById {
   '/analyze': typeof AnalyzeRoute
   '/compare': typeof CompareRoute
   '/history': typeof HistoryRoute
-  '/watchlist': typeof WatchlistRoute
+  '/listings': typeof ListingsRoute
+  '/watchlist': typeof WatchlistRouteWithChildren
   '/api/analysis': typeof ApiAnalysisRoute
+  '/api/district-comparison': typeof ApiDistrictComparisonRoute
+  '/api/district-snapshots': typeof ApiDistrictSnapshotsRoute
   '/api/districts': typeof ApiDistrictsRoute
+  '/api/export-pdf': typeof ApiExportPdfRoute
   '/api/history': typeof ApiHistoryRoute
-  '/api/properties': typeof ApiPropertiesRoute
+  '/api/listings': typeof ApiListingsRouteWithChildren
+  '/api/properties': typeof ApiPropertiesRouteWithChildren
+  '/api/property-detail': typeof ApiPropertyDetailRoute
+  '/watchlist/$propertyId': typeof WatchlistPropertyIdRoute
+  '/api/listings/$id': typeof ApiListingsIdRoute
+  '/api/properties/$id/history': typeof ApiPropertiesIdHistoryRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -106,33 +187,60 @@ export interface FileRouteTypes {
     | '/analyze'
     | '/compare'
     | '/history'
+    | '/listings'
     | '/watchlist'
     | '/api/analysis'
+    | '/api/district-comparison'
+    | '/api/district-snapshots'
     | '/api/districts'
+    | '/api/export-pdf'
     | '/api/history'
+    | '/api/listings'
     | '/api/properties'
+    | '/api/property-detail'
+    | '/watchlist/$propertyId'
+    | '/api/listings/$id'
+    | '/api/properties/$id/history'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/analyze'
     | '/compare'
     | '/history'
+    | '/listings'
     | '/watchlist'
     | '/api/analysis'
+    | '/api/district-comparison'
+    | '/api/district-snapshots'
     | '/api/districts'
+    | '/api/export-pdf'
     | '/api/history'
+    | '/api/listings'
     | '/api/properties'
+    | '/api/property-detail'
+    | '/watchlist/$propertyId'
+    | '/api/listings/$id'
+    | '/api/properties/$id/history'
   id:
     | '__root__'
     | '/'
     | '/analyze'
     | '/compare'
     | '/history'
+    | '/listings'
     | '/watchlist'
     | '/api/analysis'
+    | '/api/district-comparison'
+    | '/api/district-snapshots'
     | '/api/districts'
+    | '/api/export-pdf'
     | '/api/history'
+    | '/api/listings'
     | '/api/properties'
+    | '/api/property-detail'
+    | '/watchlist/$propertyId'
+    | '/api/listings/$id'
+    | '/api/properties/$id/history'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -140,11 +248,17 @@ export interface RootRouteChildren {
   AnalyzeRoute: typeof AnalyzeRoute
   CompareRoute: typeof CompareRoute
   HistoryRoute: typeof HistoryRoute
-  WatchlistRoute: typeof WatchlistRoute
+  ListingsRoute: typeof ListingsRoute
+  WatchlistRoute: typeof WatchlistRouteWithChildren
   ApiAnalysisRoute: typeof ApiAnalysisRoute
+  ApiDistrictComparisonRoute: typeof ApiDistrictComparisonRoute
+  ApiDistrictSnapshotsRoute: typeof ApiDistrictSnapshotsRoute
   ApiDistrictsRoute: typeof ApiDistrictsRoute
+  ApiExportPdfRoute: typeof ApiExportPdfRoute
   ApiHistoryRoute: typeof ApiHistoryRoute
-  ApiPropertiesRoute: typeof ApiPropertiesRoute
+  ApiListingsRoute: typeof ApiListingsRouteWithChildren
+  ApiPropertiesRoute: typeof ApiPropertiesRouteWithChildren
+  ApiPropertyDetailRoute: typeof ApiPropertyDetailRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -154,6 +268,13 @@ declare module '@tanstack/react-router' {
       path: '/watchlist'
       fullPath: '/watchlist'
       preLoaderRoute: typeof WatchlistRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/listings': {
+      id: '/listings'
+      path: '/listings'
+      fullPath: '/listings'
+      preLoaderRoute: typeof ListingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/history': {
@@ -184,11 +305,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/watchlist/$propertyId': {
+      id: '/watchlist/$propertyId'
+      path: '/$propertyId'
+      fullPath: '/watchlist/$propertyId'
+      preLoaderRoute: typeof WatchlistPropertyIdRouteImport
+      parentRoute: typeof WatchlistRoute
+    }
+    '/api/property-detail': {
+      id: '/api/property-detail'
+      path: '/api/property-detail'
+      fullPath: '/api/property-detail'
+      preLoaderRoute: typeof ApiPropertyDetailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/properties': {
       id: '/api/properties'
       path: '/api/properties'
       fullPath: '/api/properties'
       preLoaderRoute: typeof ApiPropertiesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/listings': {
+      id: '/api/listings'
+      path: '/api/listings'
+      fullPath: '/api/listings'
+      preLoaderRoute: typeof ApiListingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/history': {
@@ -198,11 +340,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiHistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/export-pdf': {
+      id: '/api/export-pdf'
+      path: '/api/export-pdf'
+      fullPath: '/api/export-pdf'
+      preLoaderRoute: typeof ApiExportPdfRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/districts': {
       id: '/api/districts'
       path: '/api/districts'
       fullPath: '/api/districts'
       preLoaderRoute: typeof ApiDistrictsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/district-snapshots': {
+      id: '/api/district-snapshots'
+      path: '/api/district-snapshots'
+      fullPath: '/api/district-snapshots'
+      preLoaderRoute: typeof ApiDistrictSnapshotsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/district-comparison': {
+      id: '/api/district-comparison'
+      path: '/api/district-comparison'
+      fullPath: '/api/district-comparison'
+      preLoaderRoute: typeof ApiDistrictComparisonRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/analysis': {
@@ -212,19 +375,75 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAnalysisRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/listings/$id': {
+      id: '/api/listings/$id'
+      path: '/$id'
+      fullPath: '/api/listings/$id'
+      preLoaderRoute: typeof ApiListingsIdRouteImport
+      parentRoute: typeof ApiListingsRoute
+    }
+    '/api/properties/$id/history': {
+      id: '/api/properties/$id/history'
+      path: '/$id/history'
+      fullPath: '/api/properties/$id/history'
+      preLoaderRoute: typeof ApiPropertiesIdHistoryRouteImport
+      parentRoute: typeof ApiPropertiesRoute
+    }
   }
 }
+
+interface WatchlistRouteChildren {
+  WatchlistPropertyIdRoute: typeof WatchlistPropertyIdRoute
+}
+
+const WatchlistRouteChildren: WatchlistRouteChildren = {
+  WatchlistPropertyIdRoute: WatchlistPropertyIdRoute,
+}
+
+const WatchlistRouteWithChildren = WatchlistRoute._addFileChildren(
+  WatchlistRouteChildren,
+)
+
+interface ApiListingsRouteChildren {
+  ApiListingsIdRoute: typeof ApiListingsIdRoute
+}
+
+const ApiListingsRouteChildren: ApiListingsRouteChildren = {
+  ApiListingsIdRoute: ApiListingsIdRoute,
+}
+
+const ApiListingsRouteWithChildren = ApiListingsRoute._addFileChildren(
+  ApiListingsRouteChildren,
+)
+
+interface ApiPropertiesRouteChildren {
+  ApiPropertiesIdHistoryRoute: typeof ApiPropertiesIdHistoryRoute
+}
+
+const ApiPropertiesRouteChildren: ApiPropertiesRouteChildren = {
+  ApiPropertiesIdHistoryRoute: ApiPropertiesIdHistoryRoute,
+}
+
+const ApiPropertiesRouteWithChildren = ApiPropertiesRoute._addFileChildren(
+  ApiPropertiesRouteChildren,
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AnalyzeRoute: AnalyzeRoute,
   CompareRoute: CompareRoute,
   HistoryRoute: HistoryRoute,
-  WatchlistRoute: WatchlistRoute,
+  ListingsRoute: ListingsRoute,
+  WatchlistRoute: WatchlistRouteWithChildren,
   ApiAnalysisRoute: ApiAnalysisRoute,
+  ApiDistrictComparisonRoute: ApiDistrictComparisonRoute,
+  ApiDistrictSnapshotsRoute: ApiDistrictSnapshotsRoute,
   ApiDistrictsRoute: ApiDistrictsRoute,
+  ApiExportPdfRoute: ApiExportPdfRoute,
   ApiHistoryRoute: ApiHistoryRoute,
-  ApiPropertiesRoute: ApiPropertiesRoute,
+  ApiListingsRoute: ApiListingsRouteWithChildren,
+  ApiPropertiesRoute: ApiPropertiesRouteWithChildren,
+  ApiPropertyDetailRoute: ApiPropertyDetailRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

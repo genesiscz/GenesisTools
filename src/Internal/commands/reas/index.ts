@@ -372,6 +372,14 @@ async function outputAnalysis(analysis: FullAnalysis, format: string, outputPath
         return;
     }
 
+    if (format === "pdf") {
+        const { exportToPdf } = await import("@app/Internal/commands/reas/lib/pdf-export");
+        const path = outputPath ?? `reas-report-${analysis.target.district}-${Date.now()}.pdf`;
+        await exportToPdf(analysis, path);
+        console.log(pc.green(`PDF report written to ${path}`));
+        return;
+    }
+
     const report = renderReport(analysis);
     console.log(report);
 

@@ -2,11 +2,11 @@ import { buildPeriodOptions, DISPOSITIONS, PROPERTY_TYPES } from "@app/Internal/
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
+import { DistrictCommandSelect } from "@ui/components/command";
 import { Input } from "@ui/components/input";
 import { cn } from "@ui/lib/utils";
 import { Building2, Calendar, DollarSign, Home, Loader2, Maximize2, Ruler, Search, Wallet } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
-import { DistrictSelector } from "./DistrictSelector";
 
 interface AnalysisFormData {
     district: string;
@@ -99,9 +99,9 @@ export function AnalysisForm({ onSubmit, isLoading }: AnalysisFormProps) {
             <CardContent className="space-y-5">
                 {/* District */}
                 <FormField label="District" icon={<Home className="h-3.5 w-3.5" />} required error={errors.district}>
-                    <DistrictSelector
+                    <DistrictCommandSelect
                         value={form.district}
-                        onChange={(v) => updateField("district", v)}
+                        onValueChange={(v) => updateField("district", v)}
                         error={errors.district}
                     />
                 </FormField>
@@ -240,7 +240,12 @@ export function AnalysisForm({ onSubmit, isLoading }: AnalysisFormProps) {
                 </div>
 
                 {/* Submit */}
-                <Button variant="default" className="w-full font-mono" onClick={handleSubmit} disabled={isLoading}>
+                <Button
+                    variant="outline"
+                    className="w-full font-mono text-sm gap-2 h-10 bg-amber-500/10 hover:bg-amber-500/15 border-amber-500/40 text-amber-400 hover:text-amber-300 hover:border-amber-500/60 shadow-[0_0_15px_rgba(245,158,11,0.08)] hover:shadow-[0_0_20px_rgba(245,158,11,0.15)] transition-all"
+                    onClick={handleSubmit}
+                    disabled={isLoading}
+                >
                     {isLoading ? (
                         <>
                             <Loader2 className="h-4 w-4 animate-spin" />

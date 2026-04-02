@@ -1,116 +1,33 @@
-import type { DashboardExport } from "@app/Internal/commands/reas/lib/api-export";
 import { DISPOSITIONS, PROPERTY_TYPES } from "@app/Internal/commands/reas/lib/config-builder";
-import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
+import { DistrictCommandSelect } from "@ui/components/command";
 import { Input } from "@ui/components/input";
-import { ScrollArea } from "@ui/components/scroll-area";
 import { Skeleton } from "@ui/components/skeleton";
-import { cn } from "@ui/lib/utils";
-import { Check, GitCompare, Loader2, X } from "lucide-react";
+import { GitCompare, Loader2, X } from "lucide-react";
 import { useCallback, useState } from "react";
 import { ComparisonGrid } from "../components/compare/ComparisonGrid";
+import { ComparisonMarketTable } from "../components/compare/ComparisonMarketTable";
+import { ComparisonOverview } from "../components/compare/ComparisonOverview";
+import { ComparisonRankingsTable } from "../components/compare/ComparisonRankingsTable";
+import { ComparisonTrendSection } from "../components/compare/ComparisonTrendSection";
+import type { DistrictComparison } from "../components/compare/types";
 
 export const Route = createFileRoute("/compare")({
     component: ComparePage,
 });
 
-interface DistrictsResponse {
-    districts: string[];
-    praha: string[];
-}
-
-interface DistrictAnalysisResult {
+interface DistrictComparisonResult {
     district: string;
-    data: DashboardExport | null;
+    comparison: DistrictComparison | null;
     isLoading: boolean;
     error: string | null;
 }
 
-function useDistrictsList() {
-    return useQuery<DistrictsResponse>({
-        queryKey: ["districts"],
-        queryFn: async () => {
-            const res = await fetch("/api/districts");
-
-            if (!res.ok) {
-                throw new Error("Failed to fetch districts");
-            }
-
-            return res.json();
-        },
-        staleTime: 60_000 * 10,
-    });
-}
-
-function DistrictSelector({
-    districts,
-    selected,
-    onToggle,
-    maxSelection,
-}: {
-    districts: string[];
-    selected: string[];
-    onToggle: (district: string) => void;
-    maxSelection: number;
-}) {
-    const [filter, setFilter] = useState("");
-    const filtered = filter ? districts.filter((d) => d.toLowerCase().includes(filter.toLowerCase())) : districts;
-
-    return (
-        <Card className="border-white/5 bg-white/[0.02]">
-            <CardHeader className="pb-2">
-                <CardTitle className="text-xs font-mono text-gray-400">
-                    Select Districts ({selected.length}/{maxSelection})
-                </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-                <Input
-                    placeholder="Filter districts..."
-                    value={filter}
-                    onChange={(e) => setFilter(e.target.value)}
-                    className="h-8 text-xs font-mono bg-black/20 border-white/10"
-                />
-                <ScrollArea className="h-48">
-                    <div className="space-y-1">
-                        {filtered.map((d) => {
-                            const isSelected = selected.includes(d);
-                            const isDisabled = !isSelected && selected.length >= maxSelection;
-
-                            return (
-                                <button
-                                    key={d}
-                                    type="button"
-                                    onClick={() => {
-                                        if (!isDisabled) {
-                                            onToggle(d);
-                                        }
-                                    }}
-                                    className={cn(
-                                        "w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs font-mono transition-all text-left",
-                                        isSelected
-                                            ? "bg-amber-500/10 text-amber-400 border border-amber-500/30"
-                                            : isDisabled
-                                              ? "text-gray-600 cursor-not-allowed"
-                                              : "text-gray-400 hover:bg-white/5 hover:text-gray-200"
-                                    )}
-                                >
-                                    {isSelected ? (
-                                        <Check className="w-3 h-3 text-amber-400 shrink-0" />
-                                    ) : (
-                                        <div className="w-3 h-3 rounded-sm border border-white/10 shrink-0" />
-                                    )}
-                                    {d}
-                                </button>
-                            );
-                        })}
-                    </div>
-                </ScrollArea>
-            </CardContent>
-        </Card>
-    );
+interface DistrictComparisonResponse {
+    comparisons: DistrictComparison[];
 }
 
 function ComparePage() {
@@ -123,30 +40,10 @@ function ComparePage() {
     const [price, setPrice] = useState("5000000");
     const [area, setArea] = useState("80");
     const [isComparing, setIsComparing] = useState(false);
-    const [results, setResults] = useState<DistrictAnalysisResult[]>([]);
-
-    const { data: districtsData, isLoading: districtsLoading } = useDistrictsList();
-
-    const allDistricts = districtsData
-        ? [...districtsData.praha, ...districtsData.districts.filter((d) => !districtsData.praha.includes(d))]
-        : [];
-
-    const toggleDistrict = useCallback((district: string) => {
-        setSelectedDistricts((prev) => {
-            if (prev.includes(district)) {
-                return prev.filter((d) => d !== district);
-            }
-
-            if (prev.length >= MAX_DISTRICTS) {
-                return prev;
-            }
-
-            return [...prev, district];
-        });
-    }, []);
+    const [results, setResults] = useState<DistrictComparisonResult[]>([]);
 
     const removeDistrict = useCallback((district: string) => {
-        setSelectedDistricts((prev) => prev.filter((d) => d !== district));
+        setSelectedDistricts((prev) => prev.filter((value) => value !== district));
     }, []);
 
     const runComparison = useCallback(async () => {
@@ -156,111 +53,125 @@ function ComparePage() {
 
         setIsComparing(true);
         setResults(
-            selectedDistricts.map((d) => ({
-                district: d,
-                data: null,
+            selectedDistricts.map((district) => ({
+                district,
+                comparison: null,
                 isLoading: true,
                 error: null,
             }))
         );
 
-        const settled = await Promise.allSettled(
-            selectedDistricts.map(async (district) => {
-                const res = await fetch("/api/analysis", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: globalThis.JSON.stringify({
-                        district,
-                        type: propertyType,
-                        disposition: disposition === "all" ? undefined : disposition,
-                        price,
-                        area,
-                    }),
-                });
+        try {
+            const response = await fetch("/api/district-comparison", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: globalThis.JSON.stringify({
+                    districts: selectedDistricts,
+                    type: propertyType,
+                    disposition: disposition === "all" ? undefined : disposition,
+                    price,
+                    area,
+                }),
+            });
 
-                if (!res.ok) {
-                    const body = (await res.json()) as { error?: string };
-                    throw new Error(body.error ?? `HTTP ${res.status}`);
-                }
-
-                return (await res.json()) as DashboardExport;
-            })
-        );
-
-        const finalResults: DistrictAnalysisResult[] = settled.map((result, i) => {
-            if (result.status === "fulfilled") {
-                return {
-                    district: selectedDistricts[i],
-                    data: result.value,
-                    isLoading: false,
-                    error: null,
-                };
+            if (!response.ok) {
+                const body = (await response.json()) as { error?: string };
+                throw new Error(body.error ?? `HTTP ${response.status}`);
             }
 
-            return {
-                district: selectedDistricts[i],
-                data: null,
-                isLoading: false,
-                error: result.reason instanceof Error ? result.reason.message : "Unknown error",
-            };
-        });
+            const body = (await response.json()) as DistrictComparisonResponse;
+            const byDistrict = new Map(body.comparisons.map((comparison) => [comparison.district, comparison]));
 
-        setResults(finalResults);
-        setIsComparing(false);
+            setResults(
+                selectedDistricts.map((district) => {
+                    const comparison = byDistrict.get(district) ?? null;
+
+                    if (!comparison) {
+                        return {
+                            district,
+                            comparison: null,
+                            isLoading: false,
+                            error: "Comparison result missing from response",
+                        };
+                    }
+
+                    return {
+                        district,
+                        comparison,
+                        isLoading: false,
+                        error: null,
+                    };
+                })
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
+
+            setResults(
+                selectedDistricts.map((district) => ({
+                    district,
+                    comparison: null,
+                    isLoading: false,
+                    error: message,
+                }))
+            );
+        } finally {
+            setIsComparing(false);
+        }
     }, [selectedDistricts, propertyType, disposition, price, area]);
 
     const canCompare = selectedDistricts.length >= MIN_DISTRICTS && !isComparing;
+    const loadedComparisons = results.flatMap((result) => (result.comparison ? [result.comparison] : []));
+    const errors = results.filter((result) => result.error);
 
     return (
-        <div className="max-w-6xl mx-auto px-6 py-8">
-            {/* Header */}
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
             <div className="flex items-center gap-3 mb-6">
                 <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30">
                     <GitCompare className="w-5 h-5 text-amber-400" />
                 </div>
                 <div>
                     <h1 className="text-xl font-mono font-bold text-gray-200">Compare</h1>
-                    <p className="text-xs text-gray-500 font-mono">Side-by-side district comparison with trends</p>
+                    <p className="text-xs text-gray-500 font-mono">
+                        District comparison with shared filters, rankings, charts, and export-ready summaries
+                    </p>
                 </div>
             </div>
 
-            {/* Configuration */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-                {/* District selector */}
-                <div className="lg:col-span-1">
-                    {districtsLoading ? (
-                        <Card className="border-white/5 bg-white/[0.02]">
-                            <CardContent className="p-4 space-y-2">
-                                <Skeleton variant="text" className="h-4 w-2/3" />
-                                <Skeleton variant="text" className="h-8 w-full" />
-                                <Skeleton variant="text" className="h-32 w-full" />
-                            </CardContent>
-                        </Card>
-                    ) : (
-                        <DistrictSelector
-                            districts={allDistricts}
-                            selected={selectedDistricts}
-                            onToggle={toggleDistrict}
-                            maxSelection={MAX_DISTRICTS}
-                        />
-                    )}
+                <div className="lg:col-span-1 self-start" style={{ zIndex: 20 }}>
+                    <Card className="border-white/5 bg-white/[0.02] overflow-visible">
+                        <CardHeader>
+                            <CardTitle className="text-xs font-mono text-gray-400">
+                                Select Districts ({selectedDistricts.length}/{MAX_DISTRICTS})
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="overflow-visible">
+                            <DistrictCommandSelect
+                                mode="multi"
+                                selected={selectedDistricts}
+                                onValueChange={setSelectedDistricts}
+                                maxSelections={MAX_DISTRICTS}
+                                placeholder="Select districts..."
+                                searchPlaceholder="Search districts..."
+                                shouldFilter={false}
+                            />
+                        </CardContent>
+                    </Card>
                 </div>
 
-                {/* Config + selected */}
                 <div className="lg:col-span-2 space-y-4">
-                    {/* Selected districts */}
                     {selectedDistricts.length > 0 && (
                         <div className="flex flex-wrap gap-2">
-                            {selectedDistricts.map((d) => (
+                            {selectedDistricts.map((district) => (
                                 <Badge
-                                    key={d}
+                                    key={district}
                                     variant="outline"
                                     className="border-amber-500/30 text-amber-400 bg-amber-500/5 text-xs font-mono px-2 py-1 flex items-center gap-1"
                                 >
-                                    {d}
+                                    {district}
                                     <button
                                         type="button"
-                                        onClick={() => removeDistrict(d)}
+                                        onClick={() => removeDistrict(district)}
                                         className="hover:text-red-400"
                                     >
                                         <X className="w-3 h-3" />
@@ -270,7 +181,6 @@ function ComparePage() {
                         </div>
                     )}
 
-                    {/* Shared config */}
                     <Card className="border-white/5 bg-white/[0.02]">
                         <CardHeader className="pb-2">
                             <CardTitle className="text-xs font-mono text-gray-400">Shared Configuration</CardTitle>
@@ -283,12 +193,12 @@ function ComparePage() {
                                     </span>
                                     <select
                                         value={propertyType}
-                                        onChange={(e) => setPropertyType(e.target.value)}
-                                        className="w-full h-8 rounded bg-black/20 border border-white/10 text-xs font-mono text-gray-300 px-2"
+                                        onChange={(event) => setPropertyType(event.target.value)}
+                                        className="cyber-select"
                                     >
-                                        {PROPERTY_TYPES.map((t) => (
-                                            <option key={t.value} value={t.value}>
-                                                {t.label}
+                                        {PROPERTY_TYPES.map((type) => (
+                                            <option key={type.value} value={type.value}>
+                                                {type.label}
                                             </option>
                                         ))}
                                     </select>
@@ -297,12 +207,12 @@ function ComparePage() {
                                     <span className="block text-[10px] font-mono text-gray-500 mb-1">Disposition</span>
                                     <select
                                         value={disposition}
-                                        onChange={(e) => setDisposition(e.target.value)}
-                                        className="w-full h-8 rounded bg-black/20 border border-white/10 text-xs font-mono text-gray-300 px-2"
+                                        onChange={(event) => setDisposition(event.target.value)}
+                                        className="cyber-select"
                                     >
-                                        {DISPOSITIONS.map((d) => (
-                                            <option key={d.value} value={d.value}>
-                                                {d.label}
+                                        {DISPOSITIONS.map((value) => (
+                                            <option key={value.value} value={value.value}>
+                                                {value.label}
                                             </option>
                                         ))}
                                     </select>
@@ -318,7 +228,7 @@ function ComparePage() {
                                         id="compare-price"
                                         type="number"
                                         value={price}
-                                        onChange={(e) => setPrice(e.target.value)}
+                                        onChange={(event) => setPrice(event.target.value)}
                                         className="h-8 text-xs font-mono bg-black/20 border-white/10"
                                     />
                                 </div>
@@ -333,7 +243,7 @@ function ComparePage() {
                                         id="compare-area"
                                         type="number"
                                         value={area}
-                                        onChange={(e) => setArea(e.target.value)}
+                                        onChange={(event) => setArea(event.target.value)}
                                         className="h-8 text-xs font-mono bg-black/20 border-white/10"
                                     />
                                 </div>
@@ -341,7 +251,6 @@ function ComparePage() {
                         </CardContent>
                     </Card>
 
-                    {/* Compare button */}
                     <Button
                         onClick={runComparison}
                         disabled={!canCompare}
@@ -350,7 +259,7 @@ function ComparePage() {
                         {isComparing ? (
                             <>
                                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Analyzing {selectedDistricts.length} districts...
+                                Comparing {selectedDistricts.length} districts...
                             </>
                         ) : (
                             <>
@@ -362,10 +271,41 @@ function ComparePage() {
                 </div>
             </div>
 
-            {/* Results */}
-            {results.length > 0 && <ComparisonGrid results={results} />}
+            {results.length > 0 && (
+                <div className="space-y-6">
+                    {isComparing && <ComparisonLoadingState districts={selectedDistricts} />}
 
-            {/* Empty state */}
+                    {!isComparing && errors.length > 0 && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {errors.map((result) => (
+                                <Card key={result.district} className="border-red-500/20 bg-red-500/5">
+                                    <CardHeader className="pb-2">
+                                        <CardTitle className="text-sm font-mono text-red-300">
+                                            {result.district}
+                                        </CardTitle>
+                                    </CardHeader>
+                                    <CardContent>
+                                        <p className="text-xs font-mono text-red-200/80">{result.error}</p>
+                                    </CardContent>
+                                </Card>
+                            ))}
+                        </div>
+                    )}
+
+                    {!isComparing && loadedComparisons.length > 0 && (
+                        <>
+                            <ComparisonOverview comparisons={loadedComparisons} />
+                            <ComparisonGrid comparisons={loadedComparisons} />
+                            <ComparisonTrendSection comparisons={loadedComparisons} />
+                            <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
+                                <ComparisonRankingsTable comparisons={loadedComparisons} />
+                                <ComparisonMarketTable comparisons={loadedComparisons} />
+                            </div>
+                        </>
+                    )}
+                </div>
+            )}
+
             {results.length === 0 && !isComparing && (
                 <div className="border border-white/5 rounded-lg p-8 text-center">
                     <p className="text-sm text-gray-500 font-mono">
@@ -375,6 +315,26 @@ function ComparePage() {
                     </p>
                 </div>
             )}
+        </div>
+    );
+}
+
+function ComparisonLoadingState({ districts }: { districts: string[] }) {
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {districts.map((district) => (
+                <Card key={district} className="border-white/5 bg-white/[0.02]">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-mono text-gray-300">{district}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                        <Skeleton variant="line" className="h-4 w-2/3" />
+                        <Skeleton variant="line" className="h-4 w-1/2" />
+                        <Skeleton variant="line" className="h-4 w-3/4" />
+                        <Skeleton variant="default" className="h-20 w-full rounded-lg" />
+                    </CardContent>
+                </Card>
+            ))}
         </div>
     );
 }

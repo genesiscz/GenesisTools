@@ -1,6 +1,7 @@
 import { DISPOSITIONS, PROPERTY_TYPES } from "@app/Internal/commands/reas/lib/config-builder";
 import type { SavePropertyInput } from "@app/Internal/commands/reas/lib/store";
 import { Button } from "@ui/components/button";
+import { DistrictCommandSelect } from "@ui/components/command";
 import {
     Dialog,
     DialogContent,
@@ -15,11 +16,10 @@ import { Loader2, Plus } from "lucide-react";
 import { useCallback, useState } from "react";
 
 interface AddPropertyFormProps {
-    districts: string[];
     onAdd: (input: SavePropertyInput) => Promise<void>;
 }
 
-export function AddPropertyForm({ districts, onAdd }: AddPropertyFormProps) {
+export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
     const [open, setOpen] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [name, setName] = useState("");
@@ -30,6 +30,7 @@ export function AddPropertyForm({ districts, onAdd }: AddPropertyFormProps) {
     const [targetArea, setTargetArea] = useState("");
     const [monthlyRent, setMonthlyRent] = useState("");
     const [monthlyCosts, setMonthlyCosts] = useState("");
+    const [listingUrl, setListingUrl] = useState("");
     const [notes, setNotes] = useState("");
 
     const resetForm = useCallback(() => {
@@ -41,6 +42,7 @@ export function AddPropertyForm({ districts, onAdd }: AddPropertyFormProps) {
         setTargetArea("");
         setMonthlyRent("");
         setMonthlyCosts("");
+        setListingUrl("");
         setNotes("");
     }, []);
 
@@ -63,6 +65,7 @@ export function AddPropertyForm({ districts, onAdd }: AddPropertyFormProps) {
                 targetArea: Number(targetArea) || 0,
                 monthlyRent: Number(monthlyRent) || 0,
                 monthlyCosts: Number(monthlyCosts) || 0,
+                listingUrl: listingUrl.trim() || undefined,
                 notes: notes.trim() || undefined,
             });
 
@@ -81,6 +84,7 @@ export function AddPropertyForm({ districts, onAdd }: AddPropertyFormProps) {
         targetArea,
         monthlyRent,
         monthlyCosts,
+        listingUrl,
         notes,
         onAdd,
         resetForm,
@@ -127,19 +131,12 @@ export function AddPropertyForm({ districts, onAdd }: AddPropertyFormProps) {
                         <label htmlFor="prop-district" className="block text-[10px] font-mono text-gray-500 mb-1">
                             District *
                         </label>
-                        <select
-                            id="prop-district"
+                        <DistrictCommandSelect
                             value={district}
-                            onChange={(e) => setDistrict(e.target.value)}
-                            className="w-full h-8 rounded bg-black/20 border border-white/10 text-xs font-mono text-gray-300 px-2"
-                        >
-                            <option value="">Select district...</option>
-                            {districts.map((d) => (
-                                <option key={d} value={d}>
-                                    {d}
-                                </option>
-                            ))}
-                        </select>
+                            onValueChange={setDistrict}
+                            placeholder="Select district..."
+                            shouldFilter={false}
+                        />
                     </div>
 
                     {/* Type + Disposition */}
@@ -152,7 +149,7 @@ export function AddPropertyForm({ districts, onAdd }: AddPropertyFormProps) {
                                 id="prop-type"
                                 value={constructionType}
                                 onChange={(e) => setConstructionType(e.target.value)}
-                                className="w-full h-8 rounded bg-black/20 border border-white/10 text-xs font-mono text-gray-300 px-2"
+                                className="cyber-select"
                             >
                                 {PROPERTY_TYPES.map((t) => (
                                     <option key={t.value} value={t.value}>
@@ -169,7 +166,7 @@ export function AddPropertyForm({ districts, onAdd }: AddPropertyFormProps) {
                                 id="prop-disp"
                                 value={disposition}
                                 onChange={(e) => setDisposition(e.target.value)}
-                                className="w-full h-8 rounded bg-black/20 border border-white/10 text-xs font-mono text-gray-300 px-2"
+                                className="cyber-select"
                             >
                                 {DISPOSITIONS.map((d) => (
                                     <option key={d.value} value={d.value}>
@@ -238,6 +235,20 @@ export function AddPropertyForm({ districts, onAdd }: AddPropertyFormProps) {
                                 className="h-8 text-xs font-mono bg-black/20 border-white/10"
                             />
                         </div>
+                    </div>
+
+                    <div>
+                        <label htmlFor="prop-url" className="block text-[10px] font-mono text-gray-500 mb-1">
+                            Listing URL
+                        </label>
+                        <Input
+                            id="prop-url"
+                            type="url"
+                            value={listingUrl}
+                            onChange={(e) => setListingUrl(e.target.value)}
+                            placeholder="https://www.sreality.cz/..."
+                            className="h-8 text-xs font-mono bg-black/20 border-white/10"
+                        />
                     </div>
 
                     {/* Notes */}

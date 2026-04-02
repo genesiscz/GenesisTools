@@ -57,7 +57,7 @@ function AnalyzePage() {
     };
 
     return (
-        <div className="max-w-7xl mx-auto px-6 py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
             {/* Page header */}
             <div className="flex items-center gap-3 mb-6">
                 <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30">
@@ -102,28 +102,40 @@ function AnalyzePage() {
 }
 
 function LoadingSkeleton() {
+    const tabSkeletonKeys = [
+        "overview",
+        "price-distribution",
+        "trend",
+        "comparables",
+        "rentals",
+        "investment",
+        "verdict",
+    ];
+    const metricSkeletonKeys = ["score", "yield", "tempo", "supply"];
+
     return (
         <div className="space-y-4 animate-slide-up">
-            {/* Header skeleton */}
             <div className="flex items-center gap-3">
                 <Skeleton variant="line" className="h-5 w-48" />
                 <Skeleton variant="line" className="h-5 w-20" />
             </div>
 
-            {/* Score + Yield row */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Skeleton variant="card" className="h-48" />
-                <Skeleton variant="card" className="h-48" />
+            <div className="flex flex-wrap gap-2">
+                {tabSkeletonKeys.map((key) => (
+                    <Skeleton key={key} variant="line" className="h-9 w-28 rounded-xl" />
+                ))}
             </div>
 
-            {/* Chart skeleton */}
-            <Skeleton variant="card" className="h-56" />
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+                <Skeleton variant="card" className="h-72" />
+                <Skeleton variant="card" className="h-72" />
+            </div>
 
-            {/* Momentum skeleton */}
-            <Skeleton variant="card" className="h-40" />
-
-            {/* Table skeleton */}
-            <Skeleton variant="card" className="h-64" />
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
+                {metricSkeletonKeys.map((key) => (
+                    <Skeleton key={key} variant="card" className="h-40" />
+                ))}
+            </div>
         </div>
     );
 }

@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
+import { DistrictCommandSelect } from "@ui/components/command";
 import { Skeleton } from "@ui/components/skeleton";
-import { BarChart3, Clock } from "lucide-react";
+import { BarChart3, Clock, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { HistoryTable } from "../components/history/HistoryTable";
 import { TrendChart } from "../components/history/TrendChart";
@@ -33,11 +34,6 @@ interface HistoryResponse {
     history: HistoryEntry[];
 }
 
-interface DistrictsResponse {
-    districts: string[];
-    praha: string[];
-}
-
 interface SnapshotEntry {
     district: string;
     medianPricePerM2: number;
@@ -63,22 +59,6 @@ function useHistory(limit: number) {
     });
 }
 
-function useDistricts() {
-    return useQuery<DistrictsResponse>({
-        queryKey: ["districts"],
-        queryFn: async () => {
-            const res = await fetch("/api/districts");
-
-            if (!res.ok) {
-                throw new Error("Failed to fetch districts");
-            }
-
-            return res.json();
-        },
-        staleTime: 60_000 * 10,
-    });
-}
-
 function useDistrictSnapshots(district: string, type: string) {
     return useQuery<SnapshotResponse>({
         queryKey: ["district-snapshots", district, type],
@@ -97,25 +77,11 @@ function useDistrictSnapshots(district: string, type: string) {
 }
 
 function HistoryPage() {
-    const [districtFilter, setDistrictFilter] = useState("");
-    const [chartDistrict, setChartDistrict] = useState("");
+    const [selectedDistrict, setSelectedDistrict] = useState("");
     const [chartType, setChartType] = useState("brick");
 
     const { data: historyData, isLoading: historyLoading } = useHistory(200);
-    const { data: districtsData } = useDistricts();
-    const { data: snapshotData, isLoading: snapshotsLoading } = useDistrictSnapshots(chartDistrict, chartType);
-
-    const allDistricts = districtsData
-        ? [...districtsData.praha, ...districtsData.districts.filter((d) => !districtsData.praha.includes(d))]
-        : [];
-
-    const uniqueHistoryDistricts = useMemo(() => {
-        if (!historyData?.history) {
-            return [];
-        }
-
-        return [...new Set(historyData.history.map((h) => h.district))].sort();
-    }, [historyData]);
+    const { data: snapshotData, isLoading: snapshotsLoading } = useDistrictSnapshots(selectedDistrict, chartType);
 
     const chartData = useMemo(() => {
         if (!snapshotData?.snapshots) {
@@ -132,7 +98,7 @@ function HistoryPage() {
     const entries = historyData?.history ?? [];
 
     return (
-        <div className="max-w-6xl mx-auto px-6 py-8">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
             {/* Header */}
             <div className="flex items-center gap-3 mb-6">
                 <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30">
@@ -144,54 +110,63 @@ function HistoryPage() {
                 </div>
             </div>
 
+            {/* District + Type selector toolbar */}
+            <div className="flex flex-col sm:flex-row gap-3 mb-6">
+                <div className="flex-1 max-w-xs">
+                    <div className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider">
+                        District
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <div className="flex-1">
+                            <DistrictCommandSelect
+                                value={selectedDistrict}
+                                onValueChange={setSelectedDistrict}
+                                placeholder="All districts..."
+                                shouldFilter={false}
+                            />
+                        </div>
+                        {selectedDistrict && (
+                            <button
+                                type="button"
+                                onClick={() => setSelectedDistrict("")}
+                                className="p-1.5 rounded text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-colors"
+                                title="Clear filter"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        )}
+                    </div>
+                </div>
+                <div>
+                    <label htmlFor="history-construction" className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider">
+                        Construction
+                    </label>
+                    <select id="history-construction" value={chartType} onChange={(e) => setChartType(e.target.value)} className="cyber-select">
+                        <option value="brick">Brick</option>
+                        <option value="panel">Panel</option>
+                        <option value="house">House</option>
+                    </select>
+                </div>
+            </div>
+
             {/* Trend Chart Section */}
             <Card className="border-white/5 bg-white/[0.02] mb-6">
                 <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                        <CardTitle className="text-sm font-mono text-amber-400 flex items-center gap-2">
-                            <BarChart3 className="w-4 h-4" />
-                            Price Trend (CZK/m2)
-                        </CardTitle>
-                        <div className="flex items-center gap-2">
-                            <label htmlFor="chart-district">
-                                <span className="sr-only">Chart district</span>
-                                <select
-                                    id="chart-district"
-                                    value={chartDistrict}
-                                    onChange={(e) => setChartDistrict(e.target.value)}
-                                    className="h-7 rounded bg-black/20 border border-white/10 text-xs font-mono text-gray-300 px-2"
-                                >
-                                    <option value="">Select district...</option>
-                                    {allDistricts.map((d) => (
-                                        <option key={d} value={d}>
-                                            {d}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                            <label htmlFor="chart-type">
-                                <span className="sr-only">Construction type</span>
-                                <select
-                                    id="chart-type"
-                                    value={chartType}
-                                    onChange={(e) => setChartType(e.target.value)}
-                                    className="h-7 rounded bg-black/20 border border-white/10 text-xs font-mono text-gray-300 px-2"
-                                >
-                                    <option value="brick">Brick</option>
-                                    <option value="panel">Panel</option>
-                                    <option value="house">House</option>
-                                </select>
-                            </label>
-                        </div>
-                    </div>
+                    <CardTitle className="text-sm font-mono text-amber-400 flex items-center gap-2">
+                        <BarChart3 className="w-4 h-4" />
+                        Price Trend (CZK/m2)
+                        {selectedDistrict && <span className="text-gray-500 font-normal">— {selectedDistrict}</span>}
+                    </CardTitle>
                 </CardHeader>
                 <CardContent>
-                    {!chartDistrict ? (
+                    {!selectedDistrict ? (
                         <div className="flex items-center justify-center h-[200px] border border-white/5 rounded-lg">
-                            <p className="text-xs font-mono text-gray-500">Select a district to view price trends</p>
+                            <p className="text-xs font-mono text-gray-500">
+                                Select a district above to view price trends
+                            </p>
                         </div>
                     ) : snapshotsLoading ? (
-                        <Skeleton variant="chart" className="h-[200px] w-full" />
+                        <Skeleton variant="default" className="h-[200px] w-full rounded-lg" />
                     ) : (
                         <TrendChart data={chartData} />
                     )}
@@ -201,38 +176,21 @@ function HistoryPage() {
             {/* History Table Section */}
             <Card className="border-white/5 bg-white/[0.02]">
                 <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                        <CardTitle className="text-sm font-mono text-amber-400 flex items-center gap-2">
-                            <Clock className="w-4 h-4" />
-                            Analysis History
-                        </CardTitle>
-                        <label htmlFor="table-district">
-                            <span className="sr-only">Filter by district</span>
-                            <select
-                                id="table-district"
-                                value={districtFilter}
-                                onChange={(e) => setDistrictFilter(e.target.value)}
-                                className="h-7 rounded bg-black/20 border border-white/10 text-xs font-mono text-gray-300 px-2"
-                            >
-                                <option value="">All districts</option>
-                                {uniqueHistoryDistricts.map((d) => (
-                                    <option key={d} value={d}>
-                                        {d}
-                                    </option>
-                                ))}
-                            </select>
-                        </label>
-                    </div>
+                    <CardTitle className="text-sm font-mono text-amber-400 flex items-center gap-2">
+                        <Clock className="w-4 h-4" />
+                        Analysis History
+                        {selectedDistrict && <span className="text-gray-500 font-normal">— {selectedDistrict}</span>}
+                    </CardTitle>
                 </CardHeader>
                 <CardContent>
                     {historyLoading ? (
                         <div className="space-y-2">
                             {["skel-1", "skel-2", "skel-3", "skel-4", "skel-5"].map((key) => (
-                                <Skeleton key={key} variant="text" className="h-8 w-full" />
+                                <Skeleton key={key} variant="default" className="h-8 w-full" />
                             ))}
                         </div>
                     ) : (
-                        <HistoryTable entries={entries} districtFilter={districtFilter} />
+                        <HistoryTable entries={entries} districtFilter={selectedDistrict} />
                     )}
                 </CardContent>
             </Card>
