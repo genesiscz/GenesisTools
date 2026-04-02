@@ -13,6 +13,7 @@ import { AddPropertyForm } from "../components/watchlist/AddPropertyForm";
 import { buildWatchlistCompareQuery } from "../components/watchlist/compare-query";
 import { PropertyCard } from "../components/watchlist/PropertyCard";
 import { type RefreshAllProgress, refreshPropertiesSequentially } from "../components/watchlist/refresh-all";
+import { screenWatchlistProperties, type WatchlistSortKey } from "../components/watchlist/watchlist-screening";
 import {
     formatCurrencyCompact,
     formatNumber,
@@ -27,8 +28,6 @@ export const Route = createFileRoute("/watchlist")({
 interface PropertiesResponse {
     properties: SavedPropertyRow[];
 }
-
-type SortKey = "updated" | "yield" | "score" | "price" | "district";
 
 interface SummaryMetricProps {
     label: string;
@@ -98,7 +97,9 @@ function WatchlistIndexPage() {
     const [districtFilter, setDistrictFilter] = useState("all");
     const [gradeFilter, setGradeFilter] = useState("all");
     const [analysisFilter, setAnalysisFilter] = useState("all");
-    const [sortKey, setSortKey] = useState<SortKey>("updated");
+    const [yieldMin, setYieldMin] = useState("");
+    const [yieldMax, setYieldMax] = useState("");
+    const [sortKey, setSortKey] = useState<WatchlistSortKey>("updated");
     const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
     const [refreshAllProgress, setRefreshAllProgress] = useState<RefreshAllProgress | null>(null);
     const [refreshAllActive, setRefreshAllActive] = useState(false);
@@ -278,62 +279,17 @@ function WatchlistIndexPage() {
     }, [properties]);
 
     const filteredProperties = useMemo(() => {
-        const searchTerm = search.trim().toLowerCase();
-
-        const filtered = properties.filter((property) => {
-            if (districtFilter !== "all" && property.district !== districtFilter) {
-                return false;
-            }
-
-            if (gradeFilter !== "all" && (property.last_grade ?? "ungraded") !== gradeFilter) {
-                return false;
-            }
-
-            if (analysisFilter === "fresh" && getStalenessInfo(property.last_analyzed_at).isStale) {
-                return false;
-            }
-
-            if (analysisFilter === "stale" && !getStalenessInfo(property.last_analyzed_at).isStale) {
-                return false;
-            }
-
-            if (!searchTerm) {
-                return true;
-            }
-
-            const haystack = [property.name, property.district, property.notes ?? "", property.listing_url ?? ""]
-                .join(" ")
-                .toLowerCase();
-
-            return haystack.includes(searchTerm);
+        return screenWatchlistProperties(properties, {
+            search,
+            districtFilter,
+            gradeFilter,
+            analysisFilter,
+            yieldMin,
+            yieldMax,
+            sortKey,
+            sortDirection,
         });
-
-        filtered.sort((left, right) => {
-            const direction = sortDirection === "asc" ? 1 : -1;
-
-            if (sortKey === "district") {
-                return direction * left.district.localeCompare(right.district);
-            }
-
-            if (sortKey === "updated") {
-                const leftValue = left.last_analyzed_at ? new Date(left.last_analyzed_at).getTime() : 0;
-                const rightValue = right.last_analyzed_at ? new Date(right.last_analyzed_at).getTime() : 0;
-                return direction * (leftValue - rightValue);
-            }
-
-            const valueMap: Record<Exclude<SortKey, "district" | "updated">, keyof SavedPropertyRow> = {
-                yield: "last_net_yield",
-                score: "last_score",
-                price: "target_price",
-            };
-
-            const leftValue = Number(left[valueMap[sortKey]] ?? 0);
-            const rightValue = Number(right[valueMap[sortKey]] ?? 0);
-            return direction * (leftValue - rightValue);
-        });
-
-        return filtered;
-    }, [analysisFilter, districtFilter, gradeFilter, properties, search, sortDirection, sortKey]);
+    }, [analysisFilter, districtFilter, gradeFilter, properties, search, sortDirection, sortKey, yieldMax, yieldMin]);
 
     const toggleSortDirection = useCallback(() => {
         setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
@@ -445,7 +401,7 @@ function WatchlistIndexPage() {
                     <CardTitle className="text-sm font-mono text-amber-400">Screening</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                    <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_repeat(4,minmax(0,1fr))] gap-3">
+                    <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_repeat(6,minmax(0,1fr))] gap-3">
                         <div className="block">
                             <label
                                 htmlFor="watchlist-search"
@@ -493,6 +449,10 @@ function WatchlistIndexPage() {
                                 className="cyber-select"
                             >
                                 <option value="all">All grades</option>
+                                <option value="A-B">A-B</option>
+                                <option value="A-C">A-C</option>
+                                <option value="B-D">B-D</option>
+                                <option value="D-F">D-F</option>
                                 <option value="A">A</option>
                                 <option value="B">B</option>
                                 <option value="C">C</option>
@@ -501,6 +461,33 @@ function WatchlistIndexPage() {
                                 <option value="ungraded">Ungraded</option>
                             </select>
                         </label>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            <label className="block">
+                                <span className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider">
+                                    Yield Min
+                                </span>
+                                <Input
+                                    value={yieldMin}
+                                    onChange={(event) => setYieldMin(event.target.value)}
+                                    placeholder="3.5"
+                                    type="number"
+                                    className="h-9 text-xs font-mono bg-black/20 border-white/10"
+                                />
+                            </label>
+                            <label className="block">
+                                <span className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider">
+                                    Yield Max
+                                </span>
+                                <Input
+                                    value={yieldMax}
+                                    onChange={(event) => setYieldMax(event.target.value)}
+                                    placeholder="6"
+                                    type="number"
+                                    className="h-9 text-xs font-mono bg-black/20 border-white/10"
+                                />
+                            </label>
+                        </div>
 
                         <label className="block">
                             <span className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider">
@@ -524,11 +511,14 @@ function WatchlistIndexPage() {
                             <div className="flex gap-2">
                                 <select
                                     value={sortKey}
-                                    onChange={(event) => setSortKey(event.target.value as SortKey)}
+                                    onChange={(event) => setSortKey(event.target.value as WatchlistSortKey)}
                                     className="cyber-select"
                                 >
+                                    <option value="name">Name</option>
                                     <option value="updated">Last analyzed</option>
+                                    <option value="grade">Grade</option>
                                     <option value="yield">Net yield</option>
+                                    <option value="percentile">Percentile</option>
                                     <option value="score">Score</option>
                                     <option value="price">Target price</option>
                                     <option value="district">District</option>
