@@ -17,6 +17,7 @@ import { MomentumCard } from "../components/MomentumCard";
 import { PriceTrendChart } from "../components/PriceTrendChart";
 import { ScoreCard } from "../components/ScoreCard";
 import { PropertyHistoryChart } from "../components/watchlist/PropertyHistoryChart";
+import { ProviderLinks } from "../components/watchlist/ProviderLinks";
 import {
     formatConstructionType,
     formatCurrencyCompact,
@@ -28,6 +29,9 @@ import {
     formatYield,
     GRADE_COLORS,
     getStalenessInfo,
+    parseSavedProviders,
+    PROVIDER_BADGE_STYLES,
+    PROVIDER_LABELS,
 } from "../components/watchlist/watchlist-utils";
 import { YieldCard } from "../components/YieldCard";
 
@@ -172,6 +176,7 @@ function WatchlistPropertyDetailPage() {
 
     const staleness = getStalenessInfo(property.last_analyzed_at);
     const gradeStyle = property.last_grade ? (GRADE_COLORS[property.last_grade] ?? "") : "";
+    const providers = parseSavedProviders(property.providers);
 
     return (
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
@@ -208,6 +213,18 @@ function WatchlistPropertyDetailPage() {
                                 <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-400">
                                     Last analyzed {formatDateTime(property.last_analyzed_at)}
                                 </Badge>
+                                {providers.map((provider) => (
+                                    <Badge
+                                        key={provider}
+                                        variant="outline"
+                                        className={cn(
+                                            "border-white/10 bg-white/[0.02] text-[10px] font-mono",
+                                            PROVIDER_BADGE_STYLES[provider] ?? "text-gray-400"
+                                        )}
+                                    >
+                                        {PROVIDER_LABELS[provider] ?? provider}
+                                    </Badge>
+                                ))}
                             </div>
                         </div>
 
@@ -232,6 +249,8 @@ function WatchlistPropertyDetailPage() {
                         </div>
                     </CardContent>
                 </Card>
+
+                <ProviderLinks district={property.district} listingUrl={property.listing_url} providers={providers} />
 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                     <DetailMetric label="Net Yield" value={formatYield(property.last_net_yield)} tone="accent" />

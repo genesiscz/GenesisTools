@@ -15,6 +15,9 @@ import {
     formatYield,
     GRADE_COLORS,
     getStalenessInfo,
+    parseSavedProviders,
+    PROVIDER_BADGE_STYLES,
+    PROVIDER_LABELS,
 } from "./watchlist-utils";
 
 interface PropertyCardProps {
@@ -54,6 +57,7 @@ export function PropertyCard({ property, onRefresh, onDelete }: PropertyCardProp
 
     const staleness = getStalenessInfo(property.last_analyzed_at);
     const gradeStyle = property.last_grade ? (GRADE_COLORS[property.last_grade] ?? "") : "";
+    const providers = parseSavedProviders(property.providers);
 
     const handleRefresh = useCallback(async () => {
         setRefreshing(true);
@@ -110,6 +114,23 @@ export function PropertyCard({ property, onRefresh, onDelete }: PropertyCardProp
                         <ExternalLink className="h-3 w-3 shrink-0" />
                         <span className="truncate">{property.listing_url}</span>
                     </a>
+                )}
+
+                {providers.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                        {providers.map((provider) => (
+                            <Badge
+                                key={provider}
+                                variant="outline"
+                                className={cn(
+                                    "border-white/10 bg-white/[0.02] text-[10px] font-mono",
+                                    PROVIDER_BADGE_STYLES[provider] ?? "text-gray-400"
+                                )}
+                            >
+                                {PROVIDER_LABELS[provider] ?? provider}
+                            </Badge>
+                        ))}
+                    </div>
                 )}
             </CardHeader>
             <CardContent className="space-y-4">

@@ -16,7 +16,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
 }
 
-function hasObjectProperty(value: Record<string, unknown>, key: string): value is Record<string, Record<string, unknown>> {
+function hasObjectProperty(
+    value: Record<string, unknown>,
+    key: string
+): value is Record<string, Record<string, unknown>> {
     return isRecord(value[key]);
 }
 
@@ -177,7 +180,11 @@ export function isDashboardExport(value: unknown): value is DashboardExport {
         return false;
     }
 
-    if (!hasObjectProperty(value, "meta") || !hasObjectProperty(value, "listings") || !hasObjectProperty(value, "analysis")) {
+    if (
+        !hasObjectProperty(value, "meta") ||
+        !hasObjectProperty(value, "listings") ||
+        !hasObjectProperty(value, "analysis")
+    ) {
         return false;
     }
 

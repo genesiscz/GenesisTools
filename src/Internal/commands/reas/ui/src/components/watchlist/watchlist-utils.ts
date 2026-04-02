@@ -6,6 +6,35 @@ export const GRADE_COLORS: Record<string, string> = {
     F: "text-red-400 border-red-500/30 bg-red-500/10",
 };
 
+export const PROVIDER_BADGE_STYLES: Record<string, string> = {
+    reas: "text-rose-300 border-rose-500/30 bg-rose-500/10",
+    sreality: "text-cyan-300 border-cyan-500/30 bg-cyan-500/10",
+    bezrealitky: "text-violet-300 border-violet-500/30 bg-violet-500/10",
+    ereality: "text-emerald-300 border-emerald-500/30 bg-emerald-500/10",
+    mf: "text-amber-300 border-amber-500/30 bg-amber-500/10",
+};
+
+export const PROVIDER_LABELS: Record<string, string> = {
+    reas: "REAS",
+    sreality: "Sreality",
+    bezrealitky: "Bezrealitky",
+    ereality: "Ereality",
+    mf: "MF",
+};
+
+const VALID_PROVIDERS = new Set<ProviderName>(["reas", "sreality", "bezrealitky", "ereality", "mf"]);
+
+export function parseSavedProviders(value: string | null | undefined): ProviderName[] {
+    if (!value) {
+        return [];
+    }
+
+    return value
+        .split(",")
+        .map((provider) => provider.trim())
+        .filter((provider): provider is ProviderName => VALID_PROVIDERS.has(provider as ProviderName));
+}
+
 export function getStalenessInfo(lastAnalyzedAt: string | null): {
     label: string;
     color: string;
@@ -129,3 +158,4 @@ export function formatDisposition(value: string | null | undefined): string {
 
     return value.toUpperCase();
 }
+import type { ProviderName } from "@app/Internal/commands/reas/types";
