@@ -166,6 +166,8 @@ export interface SavePropertyInput {
     mortgageTerm?: number;
     downPayment?: number;
     loanAmount?: number;
+    alertYieldFloor?: number;
+    alertGradeChange?: boolean;
     notes?: string;
 }
 
@@ -418,12 +420,14 @@ export class ReasDatabase extends BaseDatabase {
                 target_price, target_area, monthly_rent, monthly_costs,
                 periods, providers, listing_url,
                 mortgage_rate, mortgage_term, down_payment, loan_amount,
+                alert_yield_floor, alert_grade_change,
                 notes
             ) VALUES (
                 $name, $district, $construction_type, $disposition,
                 $target_price, $target_area, $monthly_rent, $monthly_costs,
                 $periods, $providers, $listing_url,
                 $mortgage_rate, $mortgage_term, $down_payment, $loan_amount,
+                $alert_yield_floor, $alert_grade_change,
                 $notes
             )
         `);
@@ -444,6 +448,8 @@ export class ReasDatabase extends BaseDatabase {
             $mortgage_term: input.mortgageTerm ?? null,
             $down_payment: input.downPayment ?? null,
             $loan_amount: input.loanAmount ?? null,
+            $alert_yield_floor: input.alertYieldFloor ?? null,
+            $alert_grade_change: input.alertGradeChange ? 1 : 0,
             $notes: input.notes ?? null,
         });
 

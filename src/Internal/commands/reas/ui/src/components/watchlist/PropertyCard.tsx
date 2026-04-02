@@ -182,6 +182,16 @@ export function PropertyCard({
                     <Badge variant="outline" className="border-white/10 text-gray-400 bg-white/[0.02]">
                         Percentile {property.percentile != null ? `${property.percentile.toFixed(0)}th` : "-"}
                     </Badge>
+                    {property.alert_yield_floor != null && (
+                        <Badge variant="outline" className="border-amber-500/20 text-amber-300 bg-amber-500/5">
+                            Alert yield &lt; {property.alert_yield_floor.toFixed(1)}%
+                        </Badge>
+                    )}
+                    {property.alert_grade_change ? (
+                        <Badge variant="outline" className="border-rose-500/20 text-rose-300 bg-rose-500/5">
+                            Alert on grade change
+                        </Badge>
+                    ) : null}
                 </div>
 
                 {property.notes && (

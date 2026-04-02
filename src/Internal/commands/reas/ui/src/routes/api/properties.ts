@@ -94,6 +94,8 @@ export const Route = createFileRoute("/api/properties")({
                     mortgageTerm: body.mortgageTerm ? Number(body.mortgageTerm) : undefined,
                     downPayment: body.downPayment ? Number(body.downPayment) : undefined,
                     loanAmount: body.loanAmount ? Number(body.loanAmount) : undefined,
+                    alertYieldFloor: body.alertYieldFloor ? Number(body.alertYieldFloor) : undefined,
+                    alertGradeChange: body.alertGradeChange === true,
                     notes: body.notes as string | undefined,
                 });
 

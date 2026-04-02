@@ -50,6 +50,8 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
     const [mortgageTerm, setMortgageTerm] = useState("");
     const [downPayment, setDownPayment] = useState("");
     const [loanAmount, setLoanAmount] = useState("");
+    const [alertYieldFloor, setAlertYieldFloor] = useState("");
+    const [alertGradeChange, setAlertGradeChange] = useState(false);
     const [notes, setNotes] = useState("");
     const [importing, setImporting] = useState(false);
     const [listingImportMessage, setListingImportMessage] = useState<string | null>(null);
@@ -123,6 +125,8 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
         setMortgageTerm("");
         setDownPayment("");
         setLoanAmount("");
+        setAlertYieldFloor("");
+        setAlertGradeChange(false);
         setNotes("");
         setListingImportMessage(null);
         lastEstimateSignatureRef.current = null;
@@ -154,6 +158,8 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                 mortgageTerm: Number(mortgageTerm) || undefined,
                 downPayment: Number(downPayment) || undefined,
                 loanAmount: Number(loanAmount) || undefined,
+                alertYieldFloor: Number(alertYieldFloor) || undefined,
+                alertGradeChange,
                 notes: notes.trim() || undefined,
             });
 
@@ -179,6 +185,8 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
         mortgageTerm,
         downPayment,
         loanAmount,
+        alertYieldFloor,
+        alertGradeChange,
         notes,
         onAdd,
         resetForm,
@@ -554,6 +562,38 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                     className="h-8 border-white/10 bg-black/20 text-xs font-mono"
                                 />
                             </div>
+                        </div>
+                    </div>
+
+                    <div className="rounded border border-white/10 bg-black/10 p-3">
+                        <div className="mb-3 text-[10px] font-mono uppercase tracking-[0.18em] text-gray-500">
+                            Alerts
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                            <div>
+                                <label
+                                    htmlFor="prop-alert-yield"
+                                    className="mb-1 block text-[10px] font-mono text-gray-500"
+                                >
+                                    Yield floor (%)
+                                </label>
+                                <Input
+                                    id="prop-alert-yield"
+                                    type="number"
+                                    value={alertYieldFloor}
+                                    onChange={(e) => setAlertYieldFloor(e.target.value)}
+                                    placeholder="4.5"
+                                    className="h-8 border-white/10 bg-black/20 text-xs font-mono"
+                                />
+                            </div>
+                            <label className="flex items-center gap-2 rounded border border-white/10 bg-black/20 px-3 py-2 text-[11px] font-mono text-gray-300">
+                                <Checkbox
+                                    id="prop-alert-grade"
+                                    checked={alertGradeChange}
+                                    onCheckedChange={(checked) => setAlertGradeChange(checked === true)}
+                                />
+                                <span>Alert on grade change</span>
+                            </label>
                         </div>
                     </div>
 

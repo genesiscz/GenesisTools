@@ -197,6 +197,8 @@ describe("saved_properties", () => {
         periods: "2024,2025",
         providers: "reas,sreality",
         listingUrl: "https://www.sreality.cz/detail/101",
+        alertYieldFloor: 4.5,
+        alertGradeChange: true,
         notes: "Near the park",
     };
 
@@ -211,6 +213,8 @@ describe("saved_properties", () => {
         expect(row!.construction_type).toBe("brick");
         expect(row!.target_price).toBe(4000000);
         expect(row!.listing_url).toBe("https://www.sreality.cz/detail/101");
+        expect(row!.alert_yield_floor).toBe(4.5);
+        expect(row!.alert_grade_change).toBe(1);
         expect(row!.notes).toBe("Near the park");
     });
 
