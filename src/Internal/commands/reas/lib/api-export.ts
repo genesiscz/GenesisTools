@@ -12,6 +12,14 @@ interface HistogramBucket {
     count: number;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+function hasObjectProperty(value: Record<string, unknown>, key: string): value is Record<string, Record<string, unknown>> {
+    return isRecord(value[key]);
+}
+
 function buildHistogram(values: number[], bucketCount = 6): HistogramBucket[] {
     if (values.length === 0) {
         return [];
@@ -164,6 +172,18 @@ export interface DashboardExport {
 
 export type { FullAnalysis } from "@app/Internal/commands/reas/types";
 
+export function isDashboardExport(value: unknown): value is DashboardExport {
+    if (!isRecord(value)) {
+        return false;
+    }
+
+    if (!hasObjectProperty(value, "meta") || !hasObjectProperty(value, "listings") || !hasObjectProperty(value, "analysis")) {
+        return false;
+    }
+
+    return hasObjectProperty(value, "benchmarks");
+}
+
 export function buildDashboardExport(analysis: FullAnalysis): DashboardExport {
     const { comparables, trends, timeOnMarket, discount, yield: yieldResult } = analysis;
     const priceHistogram = buildHistogram(
@@ -212,7 +232,7 @@ export function buildDashboardExport(analysis: FullAnalysis): DashboardExport {
                 rentPerM2: r.area ? r.price / r.area : 0,
                 address: r.locality,
                 link: r.link ?? "",
-                source: "sreality",
+                source: r.source,
             })),
         },
         analysis: {

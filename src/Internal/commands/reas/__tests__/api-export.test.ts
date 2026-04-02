@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { FullAnalysis } from "@app/Internal/commands/reas/lib/api-export";
-import { buildDashboardExport } from "@app/Internal/commands/reas/lib/api-export";
+import { buildDashboardExport, isDashboardExport } from "@app/Internal/commands/reas/lib/api-export";
 import { SafeJSON } from "@app/utils/json";
 
 describe("buildDashboardExport()", () => {
@@ -110,5 +110,40 @@ describe("buildDashboardExport()", () => {
     test("includes discount stats", () => {
         const result = buildDashboardExport(mockAnalysis);
         expect(result.analysis.discount.avgDiscount).toBe(-3.5);
+    });
+
+    test("preserves rental listing provider sources", () => {
+        const result = buildDashboardExport({
+            ...mockAnalysis,
+            rentalListings: [
+                {
+                    id: "rental-1",
+                    source: "bezrealitky",
+                    sourceId: "rental-1",
+                    sourceContract: "bezrealitky-v1",
+                    type: "rental",
+                    price: 21_000,
+                    locality: "Praha 2",
+                    disposition: "2+kk",
+                    area: 54,
+                    link: "https://example.com/rental-1",
+                    labels: [],
+                },
+            ],
+        });
+
+        expect(result.listings.rentals).toHaveLength(1);
+        expect(result.listings.rentals[0]?.source).toBe("bezrealitky");
+    });
+
+    test("recognizes valid dashboard export payloads", () => {
+        const result = buildDashboardExport(mockAnalysis);
+
+        expect(isDashboardExport(result)).toBe(true);
+    });
+
+    test("rejects malformed dashboard export payloads", () => {
+        expect(isDashboardExport({})).toBe(false);
+        expect(isDashboardExport({ meta: {} })).toBe(false);
     });
 });
