@@ -19,6 +19,10 @@ fi
 
 echo "✅ Bun is installed"
 
+# Get the directory where install.sh is located
+CURRENT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$CURRENT_DIR" || exit 1
+
 # Check if node_modules exists, if not install dependencies
 if [ ! -d "node_modules" ]; then
     echo "📦 Installing dependencies..."
@@ -31,9 +35,6 @@ if [ ! -d "node_modules" ]; then
 else
     echo "✅ Dependencies already installed"
 fi
-
-# Get the directory where install.sh is located
-CURRENT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # Detect Windows (Git Bash / MSYS2 / Cygwin)
 IS_WINDOWS=false
@@ -57,9 +58,10 @@ if [ "$IS_WINDOWS" = true ]; then
 
     # Add to user PATH if not already present (case-insensitive check)
     CURRENT_PATH="$(powershell.exe -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path', 'User')" 2>/dev/null | tr -d '\r')"
+    export WIN_DIR
     HAS_PATH_ENTRY="$(powershell.exe -NoProfile -Command "\
       \$p=[Environment]::GetEnvironmentVariable('Path','User'); \
-      \$target='${WIN_DIR//\\/\\\\}'; \
+      \$target=\$env:WIN_DIR; \
       if ((\$p -split ';') | Where-Object { \$_.Trim() -ieq \$target }) { 'true' } else { 'false' }" 2>/dev/null | tr -d '\r')"
     if [ "$HAS_PATH_ENTRY" = "true" ]; then
         echo "✅ $WIN_DIR is already in user PATH"
@@ -97,11 +99,17 @@ else
         local shell_config_file="$1"
 
         if [ -f "$shell_config_file" ]; then
-            # Check if the line already exists in the file
-            if grep -q "GENESIS_TOOLS_PATH" "$shell_config_file"; then
+            if grep -Fqx "$TOOLS_LINE" "$shell_config_file"; then
                 echo "✅ $CURRENT_DIR is already in PATH in $shell_config_file"
+            elif grep -q "GENESIS_TOOLS_PATH" "$shell_config_file"; then
+                # Stale path from a previous installation — replace it
+                grep -v "GENESIS_TOOLS_PATH" "$shell_config_file" > "${shell_config_file}.tmp"
+                mv "${shell_config_file}.tmp" "$shell_config_file"
+                echo "$TOOLS_LINE" >> "$shell_config_file"
+                echo "$EXPORT_LINE" >> "$shell_config_file"
+                echo "📝 Updated GENESIS_TOOLS_PATH in $shell_config_file"
+                SHELL_CONFIG_CHANGED=true
             else
-                # Append the export line if not found
                 echo "$TOOLS_LINE" >> "$shell_config_file"
                 echo "$EXPORT_LINE" >> "$shell_config_file"
                 echo "📝 Added $CURRENT_DIR to PATH in $shell_config_file"

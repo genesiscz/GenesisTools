@@ -117,8 +117,17 @@ function deriveWatchDirs(root: string, appDir: string, extraDirs: string[]): str
     // Explicit extra directories (e.g. "azure-devops" → src/azure-devops/)
     for (const extra of extraDirs) {
         const dir = resolve(appDir, extra);
+        const rel = relative(appDir, dir);
 
-        if (dir !== root && existsSync(dir)) {
+        if (
+            rel &&
+            rel !== "." &&
+            !isAbsolute(rel) &&
+            rel !== ".." &&
+            !rel.startsWith(`..${sep}`) &&
+            dir !== root &&
+            existsSync(dir)
+        ) {
             dirs.push(dir);
         }
     }
