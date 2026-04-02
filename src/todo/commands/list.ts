@@ -3,7 +3,7 @@ import { formatTodoList } from "@app/todo/lib/format";
 import { TodoStore } from "@app/todo/lib/store";
 import type { OutputFormat, Todo, TodoFilters, TodoPriority, TodoStatus } from "@app/todo/lib/types";
 import { isInteractive, parseVariadic } from "@app/utils/cli";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 
 const ACTIVE_STATUSES: TodoStatus[] = ["todo", "in-progress", "blocked"];
 
@@ -24,7 +24,7 @@ export function createListCommand(): Command {
         .option("--priority <priorities>", "Filter by priority (comma-separated)")
         .option("--tag <tags>", "Filter by tags (comma-separated)")
         .option("--session <id>", "Filter by session ID")
-        .option("-f, --format <format>", "Output format: ai|json|md|table")
+        .addOption(new Option("-f, --format <format>", "Output format").choices(["ai", "json", "md", "table"]))
         .option("--colors", "Force colorized output even in non-TTY")
         .action(async (opts) => {
             const filters: TodoFilters = {};

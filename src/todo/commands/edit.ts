@@ -6,7 +6,7 @@ import { TodoStore } from "@app/todo/lib/store";
 import { type SyncTarget, syncTodo } from "@app/todo/lib/sync";
 import type { OutputFormat, Todo, TodoPriority } from "@app/todo/lib/types";
 import { isInteractive, parseVariadic } from "@app/utils/cli";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import pc from "picocolors";
 
 function resolveFormat(format: string | undefined): OutputFormat {
@@ -27,14 +27,14 @@ export function createEditCommand(): Command {
         .argument("<id>", "Todo ID")
         .option("--title <text>", "New title")
         .option("--description <text>", "New description")
-        .option("--priority <priority>", "New priority: critical|high|medium|low")
+        .addOption(new Option("--priority <priority>", "New priority").choices(["critical", "high", "medium", "low"]))
         .option("--add-tag <tags>", "Add tags (comma-separated)")
         .option("--remove-tag <tags>", "Remove tags (comma-separated)")
         .option("--add-reminder <time>", "Add a reminder", collect, [])
         .option("--add-link <link>", "Add a link", collect, [])
         .option("--session-id <id>", "Set session ID")
-        .option("--sync-to <target>", "Auto-sync reminders: calendar|reminders|both")
-        .option("-f, --format <format>", "Output format")
+        .addOption(new Option("--sync-to <target>", "Auto-sync reminders").choices(["calendar", "reminders", "both"]))
+        .addOption(new Option("-f, --format <format>", "Output format").choices(["ai", "json", "md", "table"]))
         .option("--colors", "Force colorized output even in non-TTY")
         .action(async (id, opts) => {
             const projectRoot = findProjectRoot(process.cwd()) ?? process.cwd();

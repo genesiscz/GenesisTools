@@ -1,6 +1,6 @@
 import { findProjectRoot } from "@app/todo/lib/context";
 import { TodoStore } from "@app/todo/lib/store";
-import { isInteractive } from "@app/utils/cli";
+import { isInteractive, suggestCommand } from "@app/utils/cli";
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 
@@ -9,7 +9,8 @@ export function createRemoveCommand(): Command {
         .alias("rm")
         .description("Remove a todo")
         .argument("<id>", "Todo ID")
-        .action(async (id) => {
+        .option("-y, --yes", "Skip confirmation (required in non-interactive mode)")
+        .action(async (id, opts) => {
             const projectRoot = findProjectRoot(process.cwd()) ?? process.cwd();
             const store = TodoStore.forProject(projectRoot);
             const existing = await store.get(id);
@@ -19,7 +20,13 @@ export function createRemoveCommand(): Command {
                 process.exit(1);
             }
 
-            if (isInteractive()) {
+            if (!isInteractive() && !opts.yes) {
+                console.error("Error: --yes required for non-interactive removal.");
+                console.error(suggestCommand("tools todo remove", { add: [id, "--yes"] }));
+                process.exit(1);
+            }
+
+            if (isInteractive() && !opts.yes) {
                 const confirm = await p.confirm({
                     message: `Remove "${existing.title}" (${id})?`,
                 });

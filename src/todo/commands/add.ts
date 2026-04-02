@@ -6,7 +6,7 @@ import { type SyncTarget, syncTodo } from "@app/todo/lib/sync";
 import type { OutputFormat, TodoPriority } from "@app/todo/lib/types";
 import { isInteractive, parseVariadic, suggestCommand } from "@app/utils/cli";
 import * as p from "@clack/prompts";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import pc from "picocolors";
 
 const PRIORITIES: TodoPriority[] = ["critical", "high", "medium", "low"];
@@ -44,8 +44,8 @@ export function createAddCommand(): Command {
         .option("-a, --attach <path>", "File path to attach (repeatable)", collect, [])
         .option("--md <path>", "Markdown file to inline as content")
         .option("--project <path>", "Override project root")
-        .option("--sync-to <target>", "Auto-sync reminders: calendar|reminders|both")
-        .option("-f, --format <format>", "Output format: ai|json|md|table")
+        .addOption(new Option("--sync-to <target>", "Auto-sync reminders").choices(["calendar", "reminders", "both"]))
+        .addOption(new Option("-f, --format <format>", "Output format").choices(["ai", "json", "md", "table"]))
         .option("--colors", "Force colorized output even in non-TTY")
         .action(async (titleArg, opts) => {
             let title: string | undefined = titleArg;

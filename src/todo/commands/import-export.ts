@@ -15,7 +15,7 @@ function validateTodos(data: unknown): Todo[] {
     }
 
     for (let i = 0; i < data.length; i++) {
-        const item = data[i];
+        const item = data[i] as Record<string, unknown>;
 
         if (typeof item !== "object" || item === null) {
             throw new Error(`Item at index ${i} is not an object`);
@@ -26,6 +26,12 @@ function validateTodos(data: unknown): Todo[] {
                 throw new Error(`Item at index ${i} is missing required field: ${field}`);
             }
         }
+
+        // Default optional arrays to prevent runtime crashes
+        item.attachments ??= [];
+        item.links ??= [];
+        item.reminders ??= [];
+        item.tags ??= [];
     }
 
     return data as Todo[];
