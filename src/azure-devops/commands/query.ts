@@ -90,7 +90,7 @@ function formatAI(queryId: string, items: WorkItem[], changes: ChangeInfo[], cac
         lines.push("");
         lines.push("To get full details + comments for changed items, run:");
         for (const change of changes) {
-            lines.push(`  tools azure-devops --workitem ${change.id}`);
+            lines.push(`  tools azure-devops workitem ${change.id}`);
         }
     }
 

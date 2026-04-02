@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { extractOrgName } from "@app/azure-devops/config";
 import type { AzureConfigWithTimeLog, TimeLogConfig } from "@app/azure-devops/types";
 import { findConfigPath, loadConfig } from "@app/azure-devops/utils";
 import { SafeJSON } from "@app/utils/json";
@@ -53,9 +54,8 @@ function saveConfig(configPath: string, config: AzureConfigWithTimeLog): void {
     writeFileSync(configPath, SafeJSON.stringify(config, null, 2));
 }
 
-function extractOrgName(config: AzureConfigWithTimeLog): string {
-    const orgMatch = config.org.match(/dev\.azure\.com\/([^/]+)/);
-    const orgName = orgMatch?.[1];
+function extractOrgNameOrExit(config: AzureConfigWithTimeLog): string {
+    const orgName = extractOrgName(config.org);
 
     if (!orgName) {
         console.error("Could not extract organization name from config.org");
@@ -167,7 +167,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
         }
 
         if (shouldFetch) {
-            const orgName = extractOrgName(config);
+            const orgName = extractOrgNameOrExit(config);
             const spinner = p.spinner();
             spinner.start("Fetching TimeLog API key from Azure DevOps...");
 

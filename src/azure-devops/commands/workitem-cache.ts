@@ -79,7 +79,7 @@ async function handleList(): Promise<void> {
 
     lines.push("");
     lines.push("To refresh a work item:");
-    lines.push("  tools azure-devops --workitem <id> --force");
+    lines.push("  tools azure-devops workitem <id> --force");
 
     console.log(lines.join("\n"));
 }

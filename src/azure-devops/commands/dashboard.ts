@@ -43,7 +43,7 @@ async function handleDashboard(input: string, format: OutputFormat): Promise<voi
     lines.push("");
     lines.push("To fetch a query, run:");
     for (const q of dashboard.queries) {
-        lines.push(`  tools azure-devops --query ${q.queryId}`);
+        lines.push(`  tools azure-devops query ${q.queryId}`);
     }
 
     switch (format) {
