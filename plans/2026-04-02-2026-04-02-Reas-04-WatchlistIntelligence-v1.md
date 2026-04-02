@@ -52,7 +52,7 @@ Transform the shallow `/watchlist` page from a flat property summary into a full
 - [x] 18. **Add summary stats row at top** — Total properties, average yield, best performer, worst performer, total portfolio value, weighted average grade.
 - [ ] 19. **Add sort/filter controls** — Sort watchlist by: grade, yield, percentile, last updated, name. Filter by: district, grade range, yield range.
 - [ ] 20. **Add "Refresh All" bulk action** — Button to re-analyze all watchlist properties in sequence with progress indicator.
-- [ ] 21. **Add comparison action** — Select 2-4 watchlist properties and navigate to comparison view with them pre-loaded.
+- [x] 21. **Add comparison action** — Select 2-4 watchlist properties and navigate to comparison view with them pre-loaded.
 - [ ] 22. **Add notification thresholds** — Per-property alert settings: "Alert me if yield drops below X%" or "Alert if grade changes". Stored in saved_properties table.
 
 ## Verification Criteria

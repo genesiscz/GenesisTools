@@ -1,6 +1,6 @@
 import type { SavedPropertyRow, SavePropertyInput } from "@app/Internal/commands/reas/lib/store";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Outlet, useRouterState } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useRouter, useRouterState } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
@@ -10,8 +10,9 @@ import { toast } from "@ui/index";
 import { ArrowDownAZ, ArrowUpAZ, Loader2, RefreshCw, Search, Star } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { AddPropertyForm } from "../components/watchlist/AddPropertyForm";
+import { buildWatchlistCompareQuery } from "../components/watchlist/compare-query";
 import { PropertyCard } from "../components/watchlist/PropertyCard";
-import { refreshPropertiesSequentially, type RefreshAllProgress } from "../components/watchlist/refresh-all";
+import { type RefreshAllProgress, refreshPropertiesSequentially } from "../components/watchlist/refresh-all";
 import {
     formatCurrencyCompact,
     formatNumber,
@@ -89,6 +90,7 @@ function WatchlistPage() {
 }
 
 function WatchlistIndexPage() {
+    const router = useRouter();
     const queryClient = useQueryClient();
     const { data: propertiesData, isLoading: propertiesLoading } = useProperties();
 
@@ -100,6 +102,7 @@ function WatchlistIndexPage() {
     const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
     const [refreshAllProgress, setRefreshAllProgress] = useState<RefreshAllProgress | null>(null);
     const [refreshAllActive, setRefreshAllActive] = useState(false);
+    const [selectedCompareIds, setSelectedCompareIds] = useState<number[]>([]);
 
     const addMutation = useMutation({
         mutationFn: async (input: SavePropertyInput) => {
@@ -190,6 +193,8 @@ function WatchlistIndexPage() {
     );
 
     const properties = propertiesData?.properties ?? [];
+    const selectedCompareProperties = properties.filter((property) => selectedCompareIds.includes(property.id));
+    const selectedCompareDistricts = [...new Set(selectedCompareProperties.map((property) => property.district))];
 
     const handleRefreshAll = useCallback(async () => {
         if (properties.length === 0 || refreshAllActive) {
@@ -224,6 +229,30 @@ function WatchlistIndexPage() {
             setRefreshAllActive(false);
         }
     }, [properties, queryClient, refreshAllActive, refreshProperty]);
+
+    const toggleCompareSelection = useCallback((id: number) => {
+        setSelectedCompareIds((current) => {
+            if (current.includes(id)) {
+                return current.filter((value) => value !== id);
+            }
+
+            if (current.length >= 4) {
+                return current;
+            }
+
+            return [...current, id];
+        });
+    }, []);
+
+    const openCompare = useCallback(() => {
+        if (selectedCompareDistricts.length < 2) {
+            toast.error("Select properties from at least two districts to compare");
+            return;
+        }
+
+        const params = buildWatchlistCompareQuery(selectedCompareProperties);
+        router.navigate({ to: `/compare?${params.toString()}` });
+    }, [router, selectedCompareDistricts.length, selectedCompareProperties]);
 
     const summary = useMemo(() => {
         const analyzed = properties.filter((property) => property.last_analyzed_at);
@@ -359,15 +388,31 @@ function WatchlistIndexPage() {
                             Failed {refreshAllProgress.failed}
                         </Badge>
                         {refreshAllActive && (
-                            <Badge
-                                variant="outline"
-                                className="border-amber-500/20 bg-amber-500/5 text-amber-300"
-                            >
+                            <Badge variant="outline" className="border-amber-500/20 bg-amber-500/5 text-amber-300">
                                 Refreshing property #{refreshAllProgress.propertyId}
                             </Badge>
                         )}
                     </div>
                 )}
+
+                <div className="flex flex-wrap gap-2 text-[10px] font-mono">
+                    <Badge variant="outline" className="border-emerald-500/20 bg-emerald-500/5 text-emerald-300">
+                        Compare picks {selectedCompareIds.length}/4
+                    </Badge>
+                    <Badge variant="outline" className="border-white/10 bg-white/[0.02] text-gray-400">
+                        Unique districts {selectedCompareDistricts.length}
+                    </Badge>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={openCompare}
+                        disabled={selectedCompareIds.length < 2}
+                        className="h-6 border-amber-500/30 px-2 text-[10px] font-mono text-amber-300 hover:bg-amber-500/10"
+                    >
+                        Open Compare
+                    </Button>
+                </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                     <SummaryMetric
@@ -549,6 +594,8 @@ function WatchlistIndexPage() {
                             property={property}
                             onRefresh={handleRefresh}
                             onDelete={handleDelete}
+                            selectedForCompare={selectedCompareIds.includes(property.id)}
+                            onToggleCompare={toggleCompareSelection}
                         />
                     ))}
                 </div>

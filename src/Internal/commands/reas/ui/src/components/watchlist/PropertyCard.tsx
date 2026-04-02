@@ -4,7 +4,7 @@ import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { cn } from "@ui/lib/utils";
-import { ExternalLink, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { CheckSquare, ExternalLink, Loader2, RefreshCw, Square, Trash2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import {
     formatConstructionType,
@@ -24,6 +24,8 @@ interface PropertyCardProps {
     property: SavedPropertyRow;
     onRefresh: (id: number) => Promise<void>;
     onDelete: (id: number) => void;
+    selectedForCompare?: boolean;
+    onToggleCompare?: (id: number) => void;
 }
 
 interface MetricItemProps {
@@ -51,7 +53,13 @@ function MetricItem({ label, value, tone = "default" }: MetricItemProps) {
     );
 }
 
-export function PropertyCard({ property, onRefresh, onDelete }: PropertyCardProps) {
+export function PropertyCard({
+    property,
+    onRefresh,
+    onDelete,
+    selectedForCompare = false,
+    onToggleCompare,
+}: PropertyCardProps) {
     const [refreshing, setRefreshing] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -183,6 +191,23 @@ export function PropertyCard({ property, onRefresh, onDelete }: PropertyCardProp
                 )}
 
                 <div className="grid grid-cols-2 gap-2 pt-1">
+                    {onToggleCompare && (
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => onToggleCompare(property.id)}
+                            className={cn(
+                                "col-span-2 h-8 text-xs font-mono",
+                                selectedForCompare
+                                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                                    : "border-white/10 text-gray-300 hover:bg-white/[0.04]"
+                            )}
+                        >
+                            {selectedForCompare ? <CheckSquare className="w-3 h-3" /> : <Square className="w-3 h-3" />}
+                            {selectedForCompare ? "Selected for Compare" : "Select for Compare"}
+                        </Button>
+                    )}
+
                     <Button
                         size="sm"
                         variant="outline"

@@ -1,5 +1,5 @@
 import { DISPOSITIONS, PROPERTY_TYPES } from "@app/Internal/commands/reas/lib/config-builder";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useRouterState } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
@@ -7,7 +7,7 @@ import { DistrictCommandSelect } from "@ui/components/command";
 import { Input } from "@ui/components/input";
 import { Skeleton } from "@ui/components/skeleton";
 import { GitCompare, Loader2, X } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ComparisonGrid } from "../components/compare/ComparisonGrid";
 import { ComparisonMarketTable } from "../components/compare/ComparisonMarketTable";
 import { ComparisonOverview } from "../components/compare/ComparisonOverview";
@@ -41,6 +41,47 @@ function ComparePage() {
     const [area, setArea] = useState("80");
     const [isComparing, setIsComparing] = useState(false);
     const [results, setResults] = useState<DistrictComparisonResult[]>([]);
+    const search = useRouterState({ select: (state) => state.location.searchStr });
+    const hydratedFromSearchRef = useRef(false);
+
+    useEffect(() => {
+        if (hydratedFromSearchRef.current) {
+            return;
+        }
+
+        hydratedFromSearchRef.current = true;
+
+        const params = new URLSearchParams(search);
+        const districts = params
+            .get("districts")
+            ?.split(",")
+            .map((value) => value.trim())
+            .filter(Boolean);
+        const type = params.get("type");
+        const nextDisposition = params.get("disposition");
+        const nextPrice = params.get("price");
+        const nextArea = params.get("area");
+
+        if (districts && districts.length > 0) {
+            setSelectedDistricts(districts.slice(0, MAX_DISTRICTS));
+        }
+
+        if (type) {
+            setPropertyType(type);
+        }
+
+        if (nextDisposition) {
+            setDisposition(nextDisposition);
+        }
+
+        if (nextPrice) {
+            setPrice(nextPrice);
+        }
+
+        if (nextArea) {
+            setArea(nextArea);
+        }
+    }, [MAX_DISTRICTS, search]);
 
     const removeDistrict = useCallback((district: string) => {
         setSelectedDistricts((prev) => prev.filter((value) => value !== district));
