@@ -1,3 +1,5 @@
+import type { ProviderName } from "@app/Internal/commands/reas/types";
+
 export const GRADE_COLORS: Record<string, string> = {
     A: "text-emerald-400 border-emerald-500/30 bg-emerald-500/10",
     B: "text-cyan-400 border-cyan-500/30 bg-cyan-500/10",
@@ -158,4 +160,3 @@ export function formatDisposition(value: string | null | undefined): string {
 
     return value.toUpperCase();
 }
-import type { ProviderName } from "@app/Internal/commands/reas/types";

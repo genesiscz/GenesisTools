@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildProviderBrowseLinks, detectProviderFromUrl } from "@app/Internal/commands/reas/lib/url-builder";
 import type { ProviderBrowseLink } from "@app/Internal/commands/reas/lib/url-builder";
+import { buildProviderBrowseLinks, detectProviderFromUrl } from "@app/Internal/commands/reas/lib/url-builder";
 
 describe("url-builder", () => {
     test("detects provider from listing url", () => {
@@ -32,7 +32,12 @@ describe("url-builder", () => {
             providers: ["sreality", "bezrealitky", "ereality", "mf"],
         });
 
-        expect(links.map((link: ProviderBrowseLink) => link.provider)).toEqual(["sreality", "bezrealitky", "ereality", "mf"]);
+        expect(links.map((link: ProviderBrowseLink) => link.provider)).toEqual([
+            "sreality",
+            "bezrealitky",
+            "ereality",
+            "mf",
+        ]);
         expect(links[0]?.url).toContain("hradec-kralove");
         expect(links[1]?.url).toContain("Hradec%20Kr%C3%A1lov%C3%A9");
         expect(links[2]?.url).toBe("https://www.ereality.cz/pronajem/byty/hradec-kralove?pg=0");

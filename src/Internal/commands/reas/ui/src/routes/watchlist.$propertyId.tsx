@@ -29,9 +29,9 @@ import {
     formatYield,
     GRADE_COLORS,
     getStalenessInfo,
-    parseSavedProviders,
     PROVIDER_BADGE_STYLES,
     PROVIDER_LABELS,
+    parseSavedProviders,
 } from "../components/watchlist/watchlist-utils";
 import { YieldCard } from "../components/YieldCard";
 

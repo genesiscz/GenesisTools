@@ -323,7 +323,9 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                         <Checkbox
                                             id={`provider-${provider.value}`}
                                             checked={providers.includes(provider.value)}
-                                            onCheckedChange={(checked) => toggleProvider(provider.value, checked === true)}
+                                            onCheckedChange={(checked) =>
+                                                toggleProvider(provider.value, checked === true)
+                                            }
                                         />
                                         <span>{provider.label}</span>
                                     </label>
@@ -338,7 +340,10 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                         </div>
                         <div className="grid gap-3 md:grid-cols-2">
                             <div>
-                                <label htmlFor="prop-mortgage-rate" className="mb-1 block text-[10px] font-mono text-gray-500">
+                                <label
+                                    htmlFor="prop-mortgage-rate"
+                                    className="mb-1 block text-[10px] font-mono text-gray-500"
+                                >
                                     Rate (%)
                                 </label>
                                 <Input
@@ -351,7 +356,10 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                 />
                             </div>
                             <div>
-                                <label htmlFor="prop-mortgage-term" className="mb-1 block text-[10px] font-mono text-gray-500">
+                                <label
+                                    htmlFor="prop-mortgage-term"
+                                    className="mb-1 block text-[10px] font-mono text-gray-500"
+                                >
                                     Term (years)
                                 </label>
                                 <Input
@@ -364,7 +372,10 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                 />
                             </div>
                             <div>
-                                <label htmlFor="prop-down-payment" className="mb-1 block text-[10px] font-mono text-gray-500">
+                                <label
+                                    htmlFor="prop-down-payment"
+                                    className="mb-1 block text-[10px] font-mono text-gray-500"
+                                >
                                     Down payment (CZK)
                                 </label>
                                 <Input
@@ -377,7 +388,10 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                 />
                             </div>
                             <div>
-                                <label htmlFor="prop-loan-amount" className="mb-1 block text-[10px] font-mono text-gray-500">
+                                <label
+                                    htmlFor="prop-loan-amount"
+                                    className="mb-1 block text-[10px] font-mono text-gray-500"
+                                >
                                     Loan amount (CZK)
                                 </label>
                                 <Input

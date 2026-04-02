@@ -1,5 +1,5 @@
-import type { ProviderName } from "@app/Internal/commands/reas/types";
 import { buildProviderBrowseLinks } from "@app/Internal/commands/reas/lib/url-builder";
+import type { ProviderName } from "@app/Internal/commands/reas/types";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { cn } from "@ui/lib/utils";
@@ -38,7 +38,9 @@ export function ProviderLinks({ district, listingUrl, providers }: ProviderLinks
                             >
                                 {PROVIDER_LABELS[link.provider] ?? link.provider}
                             </Badge>
-                            <span className="text-[11px] font-mono text-gray-400">{link.kind === "listing" ? "Stored listing" : "Browse search"}</span>
+                            <span className="text-[11px] font-mono text-gray-400">
+                                {link.kind === "listing" ? "Stored listing" : "Browse search"}
+                            </span>
                         </div>
                         <Button
                             asChild

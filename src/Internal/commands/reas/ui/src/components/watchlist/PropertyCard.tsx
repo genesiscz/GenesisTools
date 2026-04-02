@@ -15,9 +15,9 @@ import {
     formatYield,
     GRADE_COLORS,
     getStalenessInfo,
-    parseSavedProviders,
     PROVIDER_BADGE_STYLES,
     PROVIDER_LABELS,
+    parseSavedProviders,
 } from "./watchlist-utils";
 
 interface PropertyCardProps {
