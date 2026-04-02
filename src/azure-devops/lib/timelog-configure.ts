@@ -33,8 +33,7 @@ export async function fetchTimeLogFunctionsKey(orgName: string): Promise<string>
         queryParams: { "api-version": "7.1-preview" },
     });
 
-    const result =
-        await $`az rest --method GET --resource "${AZURE_DEVOPS_RESOURCE_ID}" --uri "${uri}"`.quiet();
+    const result = await $`az rest --method GET --resource "${AZURE_DEVOPS_RESOURCE_ID}" --uri "${uri}"`.quiet();
 
     const data = SafeJSON.parse(result.text(), { strict: true });
     const configDoc = data.find((d: { id: string }) => d.id === "Config");

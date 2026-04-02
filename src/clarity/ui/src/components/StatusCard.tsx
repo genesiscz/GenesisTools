@@ -2,11 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Skeleton } from "@ui/components/skeleton";
-import { Globe, Link2, Shield, User } from "lucide-react";
-import type { StatusResult } from "../server/settings";
+import { AlertTriangle, Shield } from "lucide-react";
+import type { GranularStatus } from "../server/settings";
 
-async function fetchStatus(): Promise<StatusResult> {
-    const res = await fetch("/api/status");
+async function fetchGranularStatus(): Promise<GranularStatus> {
+    const res = await fetch("/api/granular-status");
 
     if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -21,8 +21,14 @@ interface StatusCardProps {
     compact?: boolean;
 }
 
-function StatusDot({ ok }: { ok: boolean }) {
-    return <div className={`w-2 h-2 rounded-full ${ok ? "bg-green-500" : "bg-red-500"}`} />;
+function StatusDot({ color }: { color: "green" | "red" | "amber" }) {
+    const colorClass = {
+        green: "bg-green-500",
+        red: "bg-red-500",
+        amber: "bg-amber-500",
+    }[color];
+
+    return <span className={`w-2 h-2 rounded-full inline-block ${colorClass}`} />;
 }
 
 function AuthBadge({ hasAuth }: { hasAuth: boolean }) {
@@ -37,14 +43,182 @@ function AuthBadge({ hasAuth }: { hasAuth: boolean }) {
     );
 }
 
+function clarityDotColor(clarity: GranularStatus["clarity"]): "green" | "red" {
+    return clarity.configured && clarity.hasAuth ? "green" : "red";
+}
+
+function adoDotColor(ado: GranularStatus["ado"]): "green" | "red" {
+    return ado.configured ? "green" : "red";
+}
+
+function timelogDotColor(timelog: GranularStatus["timelog"]): "green" | "amber" | "red" {
+    if (timelog.configured && timelog.defaultUser) {
+        return "green";
+    }
+
+    if (timelog.configured || timelog.hasFunctionsKey) {
+        return "amber";
+    }
+
+    return "red";
+}
+
+function DirectoryWarning({ projectCwd }: { projectCwd: string }) {
+    return (
+        <div className="flex items-start gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 mb-4">
+            <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+            <div className="text-xs text-amber-300/80">
+                <span className="font-mono text-amber-300">{projectCwd}</span>
+                <br />
+                Config is read from this directory. Run{" "}
+                <span className="font-mono">tools clarity ui</span> from the same folder where you ran{" "}
+                <span className="font-mono">tools azure-devops configure</span>.
+            </div>
+        </div>
+    );
+}
+
+function ClaritySection({ clarity }: { clarity: GranularStatus["clarity"] }) {
+    return (
+        <div className="space-y-1">
+            <div className="flex items-center gap-2">
+                <StatusDot color={clarityDotColor(clarity)} />
+                <span className="text-sm font-mono text-gray-300">Clarity PPM</span>
+            </div>
+
+            {clarity.configured ? (
+                <div className="ml-4 space-y-1">
+                    {clarity.baseUrl && (
+                        <div className="text-xs font-mono text-gray-400">{clarity.baseUrl}</div>
+                    )}
+                    <div className="flex items-center gap-2 text-xs font-mono text-gray-400">
+                        Auth: <AuthBadge hasAuth={clarity.hasAuth} />
+                    </div>
+                    <div className="text-xs font-mono text-gray-400">
+                        Mappings: {clarity.mappingsCount}
+                    </div>
+                    {clarity.uniqueName && (
+                        <div className="text-xs font-mono text-gray-400">{clarity.uniqueName}</div>
+                    )}
+                </div>
+            ) : (
+                <div className="ml-4 text-xs font-mono text-gray-500">
+                    Not configured — paste a cURL command below
+                </div>
+            )}
+        </div>
+    );
+}
+
+function AdoSection({ ado }: { ado: GranularStatus["ado"] }) {
+    return (
+        <div className="space-y-1">
+            <div className="flex items-center gap-2">
+                <StatusDot color={adoDotColor(ado)} />
+                <span className="text-sm font-mono text-gray-300">Azure DevOps</span>
+            </div>
+
+            {ado.configured ? (
+                <div className="ml-4 space-y-1">
+                    <div className="text-xs font-mono text-gray-400">Org: {ado.org}</div>
+                    <div className="text-xs font-mono text-gray-400">Project: {ado.project}</div>
+                </div>
+            ) : (
+                <div className="ml-4 text-xs font-mono text-amber-400/80">
+                    Not configured — set up below or run:{" "}
+                    <span className="font-mono">tools azure-devops configure &lt;url&gt;</span>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function TimelogSection({ timelog }: { timelog: GranularStatus["timelog"] }) {
+    const dotColor = timelogDotColor(timelog);
+
+    return (
+        <div className="space-y-1">
+            <div className="flex items-center gap-2">
+                <StatusDot color={dotColor} />
+                <span className="text-sm font-mono text-gray-300">TimeLog</span>
+            </div>
+
+            {timelog.configured && timelog.defaultUser ? (
+                <div className="ml-4 space-y-1">
+                    <div className="text-xs font-mono text-gray-400">API key: configured</div>
+                    <div className="text-xs font-mono text-gray-400">
+                        Default user: {timelog.defaultUser.userName} ({timelog.defaultUser.userEmail})
+                    </div>
+                </div>
+            ) : timelog.configured || timelog.hasFunctionsKey ? (
+                <div className="ml-4 space-y-1">
+                    <div className="text-xs font-mono text-gray-400">API key: configured</div>
+                    <div className="text-xs font-mono text-gray-400">Default user: not set</div>
+                </div>
+            ) : (
+                <div className="ml-4 text-xs font-mono text-amber-400/80">
+                    Not configured — set up below or run:{" "}
+                    <span className="font-mono">tools azure-devops timelog configure</span>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function CompactStatusCard({ status }: { status: GranularStatus }) {
+    const anyUnconfigured =
+        clarityDotColor(status.clarity) === "red" ||
+        adoDotColor(status.ado) === "red" ||
+        timelogDotColor(status.timelog) === "red";
+
+    return (
+        <Card className="border-amber-500/20">
+            <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
+                    System status
+                </CardTitle>
+            </CardHeader>
+            <CardContent>
+                <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                        <div className="flex items-center gap-2">
+                            <StatusDot color={clarityDotColor(status.clarity)} />
+                            <span className="text-xs font-mono text-gray-400">Clarity</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <StatusDot color={adoDotColor(status.ado)} />
+                            <span className="text-xs font-mono text-gray-400">ADO</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <StatusDot color={timelogDotColor(status.timelog)} />
+                            <span className="text-xs font-mono text-gray-400">TimeLog</span>
+                        </div>
+
+                        {anyUnconfigured && (
+                            <a
+                                href="/settings"
+                                className="text-xs font-mono text-amber-400 hover:text-amber-300 transition-colors"
+                            >
+                                Configure &rarr;
+                            </a>
+                        )}
+                    </div>
+
+                    <div className="text-xs font-mono text-gray-500/60">{status.projectCwd}</div>
+                </div>
+            </CardContent>
+        </Card>
+    );
+}
+
 export function StatusCard({ compact }: StatusCardProps) {
     const {
         data: status,
         isLoading,
         error,
     } = useQuery({
-        queryKey: ["status"],
-        queryFn: fetchStatus,
+        queryKey: ["granular-status"],
+        queryFn: fetchGranularStatus,
         staleTime: 30_000,
     });
 
@@ -90,43 +264,7 @@ export function StatusCard({ compact }: StatusCardProps) {
     }
 
     if (compact) {
-        return (
-            <Card className="border-amber-500/20">
-                <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
-                        System status
-                    </CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-                        <div className="flex items-center gap-2">
-                            <StatusDot ok={status.configured} />
-                            <span className="text-xs font-mono text-gray-400">Clarity</span>
-                            <Badge variant="outline" className="text-xs">
-                                {status.configured ? "Configured" : "Not configured"}
-                            </Badge>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <StatusDot ok={status.hasAuth} />
-                            <span className="text-xs font-mono text-gray-400">Auth</span>
-                            <AuthBadge hasAuth={status.hasAuth} />
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <Link2 className="w-3.5 h-3.5 text-gray-500" />
-                            <span className="text-xs font-mono text-gray-400">
-                                {status.mappingsCount} mapping{status.mappingsCount !== 1 ? "s" : ""}
-                            </span>
-                        </div>
-                        {status.uniqueName && (
-                            <div className="flex items-center gap-2">
-                                <User className="w-3.5 h-3.5 text-gray-500" />
-                                <span className="text-xs font-mono text-gray-400">{status.uniqueName}</span>
-                            </div>
-                        )}
-                    </div>
-                </CardContent>
-            </Card>
-        );
+        return <CompactStatusCard status={status} />;
     }
 
     return (
@@ -134,43 +272,15 @@ export function StatusCard({ compact }: StatusCardProps) {
             <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-mono text-gray-400 flex items-center gap-2">
                     <Shield className="w-4 h-4" />
-                    Connection status
+                    Configuration status
                 </CardTitle>
             </CardHeader>
             <CardContent>
-                <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                        <StatusDot ok={status.configured} />
-                        <span className="font-mono text-sm text-gray-300">
-                            {status.configured ? "Configured" : "Not configured"}
-                        </span>
-                    </div>
-
-                    {status.baseUrl && (
-                        <div className="flex items-center gap-3">
-                            <Globe className="w-4 h-4 text-gray-500" />
-                            <span className="font-mono text-sm text-gray-400">{status.baseUrl}</span>
-                        </div>
-                    )}
-
-                    <div className="flex items-center gap-3">
-                        <Shield className="w-4 h-4 text-gray-500" />
-                        <span className="font-mono text-sm text-gray-400">
-                            Auth: <AuthBadge hasAuth={status.hasAuth} />
-                        </span>
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                        <Link2 className="w-4 h-4 text-gray-500" />
-                        <span className="font-mono text-sm text-gray-400">Mappings: {status.mappingsCount}</span>
-                    </div>
-
-                    {status.uniqueName && (
-                        <div className="flex items-center gap-3">
-                            <User className="w-4 h-4 text-gray-500" />
-                            <span className="font-mono text-sm text-gray-400">{status.uniqueName}</span>
-                        </div>
-                    )}
+                <DirectoryWarning projectCwd={status.projectCwd} />
+                <div className="space-y-4">
+                    <ClaritySection clarity={status.clarity} />
+                    <AdoSection ado={status.ado} />
+                    <TimelogSection timelog={status.timelog} />
                 </div>
             </CardContent>
         </Card>
