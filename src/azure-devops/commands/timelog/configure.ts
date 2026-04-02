@@ -1,7 +1,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { Api } from "@app/azure-devops/api";
 import { extractOrgName } from "@app/azure-devops/config";
 import { fetchTimeLogFunctionsKey } from "@app/azure-devops/lib/timelog-configure";
-import type { AzureConfigWithTimeLog, TimeLogConfig } from "@app/azure-devops/types";
+import type { AzureConfigWithTimeLog, IdentityRef, TimeLogConfig } from "@app/azure-devops/types";
 import { findConfigPath, loadConfig } from "@app/azure-devops/utils";
 import { SafeJSON } from "@app/utils/json";
 import * as p from "@clack/prompts";
@@ -156,68 +157,104 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
         p.log.success("API key is already configured.");
     }
 
-    // Step 2: Default user
+    // Step 2: Default user — pick from team members or enter manually
     if (!config.timelog.defaultUser) {
         p.log.warn("Default user is not configured.");
 
-        const userName = await p.text({
-            message: "Enter your display name:",
-            placeholder: "John Doe",
-            validate: (value) => {
-                if (!value?.trim()) {
-                    return "Display name is required";
-                }
-            },
-        });
+        let members: IdentityRef[] = [];
+        const spinner = p.spinner();
+        spinner.start("Fetching team members from Azure DevOps...");
 
-        if (p.isCancel(userName)) {
-            p.cancel("Operation cancelled.");
-            process.exit(0);
+        try {
+            const api = new Api(config);
+            members = (await api.getTeamMembers()).filter((m) => !!m.id);
+            spinner.stop(`Found ${members.length} team members`);
+        } catch {
+            spinner.stop(pc.yellow("Could not fetch team members — falling back to manual entry"));
         }
 
-        const userEmail = await p.text({
-            message: "Enter your email:",
-            placeholder: "john.doe@example.com",
-            validate: (value) => {
-                if (!value?.trim()) {
-                    return "Email is required";
-                }
+        if (members.length > 0) {
+            const selected = await p.select({
+                message: "Select your user:",
+                options: members.map((m) => ({
+                    value: m,
+                    label: `${m.displayName}`,
+                    hint: m.uniqueName ?? undefined,
+                })),
+            });
 
-                if (!value.includes("@")) {
-                    return "Must be a valid email address";
-                }
-            },
-        });
+            if (p.isCancel(selected)) {
+                p.cancel("Operation cancelled.");
+                process.exit(0);
+            }
 
-        if (p.isCancel(userEmail)) {
-            p.cancel("Operation cancelled.");
-            process.exit(0);
+            const member = selected as IdentityRef;
+            config.timelog.defaultUser = {
+                userId: member.id!,
+                userName: member.displayName,
+                userEmail: member.uniqueName ?? member.displayName,
+            };
+        } else {
+            const userName = await p.text({
+                message: "Enter your display name:",
+                placeholder: "John Doe",
+                validate: (value) => {
+                    if (!value?.trim()) {
+                        return "Display name is required";
+                    }
+                },
+            });
+
+            if (p.isCancel(userName)) {
+                p.cancel("Operation cancelled.");
+                process.exit(0);
+            }
+
+            const userEmail = await p.text({
+                message: "Enter your email:",
+                placeholder: "john.doe@example.com",
+                validate: (value) => {
+                    if (!value?.trim()) {
+                        return "Email is required";
+                    }
+
+                    if (!value.includes("@")) {
+                        return "Must be a valid email address";
+                    }
+                },
+            });
+
+            if (p.isCancel(userEmail)) {
+                p.cancel("Operation cancelled.");
+                process.exit(0);
+            }
+
+            const userId = await p.text({
+                message:
+                    "Enter your Azure AD Object ID (find it in Azure Portal > Azure Active Directory > Users > your profile):",
+                placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+                validate: (value) => {
+                    if (!value?.trim()) {
+                        return "User ID is required";
+                    }
+
+                    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim())) {
+                        return "Must be a valid GUID (e.g., xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)";
+                    }
+                },
+            });
+
+            if (p.isCancel(userId)) {
+                p.cancel("Operation cancelled.");
+                process.exit(0);
+            }
+
+            config.timelog.defaultUser = {
+                userId: (userId as string).trim(),
+                userName: (userName as string).trim(),
+                userEmail: (userEmail as string).trim(),
+            };
         }
-
-        const userId = await p.text({
-            message: "Enter your Azure AD Object ID (GUID):",
-            placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-            validate: (value) => {
-                if (!value?.trim()) {
-                    return "User ID is required";
-                }
-
-                if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim())) {
-                    return "Must be a valid GUID (e.g., xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)";
-                }
-            },
-        });
-
-        if (p.isCancel(userId)) {
-            p.cancel("Operation cancelled.");
-            process.exit(0);
-        }
-
-        config.timelog.defaultUser = {
-            userId: (userId as string).trim(),
-            userName: (userName as string).trim(),
-            userEmail: (userEmail as string).trim(),
-        };
     } else {
         p.log.success(`Default user: ${config.timelog.defaultUser.userName} <${config.timelog.defaultUser.userEmail}>`);
     }

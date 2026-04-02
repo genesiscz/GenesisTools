@@ -5,10 +5,10 @@ import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Input } from "@ui/components/input";
 import { CheckCircle, Loader2, RefreshCw, Search, XCircle } from "lucide-react";
-import { toast } from "sonner";
 import { useState } from "react";
-import type { GranularStatus } from "../server/settings";
+import { toast } from "sonner";
 import { StatusCard } from "../components/StatusCard";
+import type { GranularStatus } from "../server/settings";
 
 async function testConnectionApi() {
     const res = await fetch("/api/test-connection", { method: "POST" });
@@ -279,9 +279,7 @@ function SettingsPage() {
                                     {adoMutation.isPending ? "Configuring..." : "Configure"}
                                 </Button>
                             </div>
-                            <p className="text-xs text-gray-600 font-mono mt-1.5">
-                                Also accepts visualstudio.com URLs
-                            </p>
+                            <p className="text-xs text-gray-600 font-mono mt-1.5">Also accepts visualstudio.com URLs</p>
 
                             {adoMutation.isError && (
                                 <div className="mt-2">
@@ -294,8 +292,8 @@ function SettingsPage() {
                                         adoMutation.error.message.toLowerCase().includes("not logged in") && (
                                             <p className="font-mono text-xs text-amber-400/70 mt-1">
                                                 Hint: Run{" "}
-                                                <code className="px-1 py-0.5 bg-white/5 rounded">az login</code> in
-                                                your terminal first
+                                                <code className="px-1 py-0.5 bg-white/5 rounded">az login</code> in your
+                                                terminal first
                                             </p>
                                         )}
                                 </div>

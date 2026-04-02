@@ -68,7 +68,8 @@ export class TimeLogApi {
         if (!response.ok) {
             const errorText = await response.text();
             logger.debug(`[timelog-api] Error: ${errorText.slice(0, 200)}`);
-            throw new Error(`TimeLog API Error ${response.status}: ${errorText}`);
+            const detail = errorText.trim() || `(empty response from ${method} ${endpoint})`;
+            throw new Error(`TimeLog API Error ${response.status}: ${detail}`);
         }
 
         // Handle empty responses (e.g., DELETE)

@@ -26,8 +26,12 @@ function requireAdoConfig(): AzureConfigWithTimeLog {
 }
 
 function createTimeLogApi(adoConfig: AzureConfigWithTimeLog): TimeLogApi {
+    if (!adoConfig.orgId) {
+        throw new Error("Organization ID missing from config. Re-run: tools azure-devops configure <url>");
+    }
+
     const user = adoConfig.timelog!.defaultUser!;
-    return new TimeLogApi(adoConfig.orgId!, adoConfig.projectId, adoConfig.timelog!.functionsKey, user);
+    return new TimeLogApi(adoConfig.orgId, adoConfig.projectId, adoConfig.timelog!.functionsKey, user);
 }
 
 async function enrichExportEntries(
