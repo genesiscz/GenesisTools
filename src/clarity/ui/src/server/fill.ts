@@ -236,8 +236,6 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
                     return;
                 }
 
-                let weekClarityTotal = 0;
-
                 for (const entry of wp.entries) {
                     const te = ts.timeentries._results.find(
                         (e: TimeEntryRecord) => e.taskCode === entry.clarityTaskCode
@@ -254,7 +252,13 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
                     }
 
                     entry.clarityDayValues = dayValues;
-                    weekClarityTotal += entry.clarityCurrentMinutes;
+                }
+
+                // Sum total from ALL Clarity timesheet entries (not just ADO-matched ones)
+                let weekClarityTotal = 0;
+
+                for (const te of ts.timeentries._results) {
+                    weekClarityTotal += Math.round(((te as TimeEntryRecord).actuals?.segmentList?.total ?? 0) / 60);
                 }
 
                 wp.clarityTotalMinutes = weekClarityTotal;
