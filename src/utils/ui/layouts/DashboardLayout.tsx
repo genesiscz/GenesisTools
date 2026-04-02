@@ -55,23 +55,28 @@ export function DashboardLayout({
 
             {/* Header */}
             <header className="sticky top-0 z-40 glass-card border-b border-amber-500/20">
-                <div className="max-w-6xl mx-auto px-6">
+                <div className="max-w-6xl mx-auto px-3 sm:px-6">
                     <div className="flex h-12 items-center justify-between">
                         {/* Logo / Title */}
-                        <div className="flex items-center gap-2 group">
+                        <button
+                            type="button"
+                            className="flex items-center gap-2 group cursor-pointer shrink-0"
+                            onClick={() => onNavigate?.("/")}
+                            onKeyDown={(e) => e.key === "Enter" && onNavigate?.("/")}
+                        >
                             {icon && (
                                 <div className="p-1 rounded bg-amber-500/10 border border-amber-500/30 group-hover:neon-glow transition-all">
                                     {icon}
                                 </div>
                             )}
-                            <span className="font-mono font-bold text-sm text-gray-300 tracking-wider">
+                            <span className="font-mono font-bold text-sm text-gray-300 tracking-wider group-hover:text-gray-100 transition-colors hidden sm:inline">
                                 {displayTitle}
                             </span>
-                        </div>
+                        </button>
 
                         {/* Navigation */}
                         {navLinks && navLinks.length > 0 && (
-                            <nav className="flex items-center gap-1">
+                            <nav className="flex items-center gap-0.5 sm:gap-1">
                                 {navLinks.map(({ label, href, icon: linkIcon }) => {
                                     const isActive = activePath === href;
                                     return (
@@ -84,14 +89,15 @@ export function DashboardLayout({
                                                     onNavigate(href);
                                                 }
                                             }}
-                                            className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-mono tracking-wider transition-all no-underline ${
+                                            className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded text-xs font-mono tracking-wider transition-all no-underline ${
                                                 isActive
                                                     ? "bg-amber-500/10 text-amber-400 border border-amber-500/30 neon-glow"
                                                     : "text-gray-500 hover:text-gray-300 hover:bg-white/5"
                                             }`}
+                                            title={label}
                                         >
                                             {linkIcon}
-                                            {label}
+                                            <span className="hidden sm:inline">{label}</span>
                                         </a>
                                     );
                                 })}
