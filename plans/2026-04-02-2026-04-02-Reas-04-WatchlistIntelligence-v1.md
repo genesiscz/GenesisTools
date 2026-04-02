@@ -42,8 +42,8 @@ Transform the shallow `/watchlist` page from a flat property summary into a full
 ### Phase C: Enhanced Add/Edit Form
 
 - [x] 13. **Add mortgage section to AddPropertyForm** — Collapsible "Hypotéka" section with: interest rate (%), term (years), down payment / LTV. Auto-computes monthly payment and cash flow preview.
-- [ ] 14. **Add auto-rent estimation** — When district + disposition + area are filled, make an API call to get median rent for that combination. Pre-fill the rent field with "Estimated: X Kč" that user can accept or override.
-- [ ] 15. **Add "Import from URL" feature** — Text input accepting listing URL (sreality, bezrealitky, reas). Parse URL to extract source and listing ID, fetch listing details, auto-fill form fields.
+- [x] 14. **Add auto-rent estimation** — When district + disposition + area are filled, make an API call to get median rent for that combination. Pre-fill the rent field with "Estimated: X Kč" that user can accept or override.
+- [x] 15. **Add "Import from URL" feature** — Text input accepting listing URL (sreality, bezrealitky, reas). Parse URL to extract source and listing ID, fetch listing details, auto-fill form fields.
 - [x] 16. **Add providers selection** — Checkboxes for which data providers to use in analysis (reas, sreality, bezrealitky, ereality, mf). Matches `SavePropertyInput.providers` field that exists but is never exposed.
 - [x] 17. **Add timeframe selection** — Select analysis period (6mo, 12mo, 24mo). Matches `SavePropertyInput.periods` field that exists but is never exposed.
 

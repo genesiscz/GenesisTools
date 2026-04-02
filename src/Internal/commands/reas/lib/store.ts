@@ -169,6 +169,22 @@ export interface SavePropertyInput {
     notes?: string;
 }
 
+export interface RentEstimate {
+    medianRent: number;
+    medianRentPerM2: number;
+    listingCount: number;
+}
+
+export interface ListingsOverview {
+    saleCount: number;
+    rentalCount: number;
+    soldCount: number;
+    saleLastFetchedAt: string | null;
+    rentalLastFetchedAt: string | null;
+    soldLastFetchedAt: string | null;
+    sourceCount: number;
+}
+
 export interface DistrictSnapshotRow {
     id: number;
     district: string;
@@ -743,6 +759,96 @@ export class ReasDatabase extends BaseDatabase {
         );
     }
 
+    getListingByUrl(url: string): ListingRow | null {
+        return (
+            (this.db
+                .prepare("SELECT * FROM listings WHERE link = $link ORDER BY updated_at DESC, id DESC LIMIT 1")
+                .get({
+                    $link: url,
+                }) as ListingRow | undefined) ?? null
+        );
+    }
+
+    estimateMonthlyRent(options: { district: string; disposition?: string; area?: number }): RentEstimate | null {
+        const where = ["type = 'rental'", "status = 'active'", "district = $district"];
+        const params: Record<string, string | number> = {
+            $district: options.district,
+        };
+
+        if (options.disposition) {
+            where.push("disposition = $disposition");
+            params.$disposition = options.disposition;
+        }
+
+        if (options.area && options.area > 0) {
+            where.push("area BETWEEN $area_min AND $area_max");
+            params.$area_min = Math.max(0, options.area - 12);
+            params.$area_max = options.area + 12;
+        }
+
+        const rows = this.db
+            .prepare(
+                `SELECT price, price_per_m2 FROM listings WHERE ${where.join(" AND ")} ORDER BY price ASC, id ASC LIMIT 50`
+            )
+            .all(params) as Array<{ price: number; price_per_m2: number | null }>;
+
+        if (rows.length === 0) {
+            return null;
+        }
+
+        const rents = rows.map((row) => row.price);
+        const rentsPerM2 = rows.map((row) => row.price_per_m2).filter((value): value is number => value !== null);
+
+        return {
+            medianRent: computeMedian(rents),
+            medianRentPerM2: rentsPerM2.length > 0 ? computeMedian(rentsPerM2) : 0,
+            listingCount: rows.length,
+        };
+    }
+
+    getListingsOverview(): ListingsOverview {
+        const rows = this.db
+            .prepare(`
+            SELECT type, COUNT(*) as count, MAX(fetched_at) as last_fetched_at
+            FROM listings
+            GROUP BY type
+        `)
+            .all() as Array<{ type: string; count: number; last_fetched_at: string | null }>;
+
+        const sourceRow = this.db.prepare("SELECT COUNT(DISTINCT source) as source_count FROM listings").get() as
+            | { source_count: number }
+            | undefined;
+
+        const overview: ListingsOverview = {
+            saleCount: 0,
+            rentalCount: 0,
+            soldCount: 0,
+            saleLastFetchedAt: null,
+            rentalLastFetchedAt: null,
+            soldLastFetchedAt: null,
+            sourceCount: sourceRow?.source_count ?? 0,
+        };
+
+        for (const row of rows) {
+            if (row.type === "sale") {
+                overview.saleCount = row.count;
+                overview.saleLastFetchedAt = row.last_fetched_at;
+            }
+
+            if (row.type === "rental") {
+                overview.rentalCount = row.count;
+                overview.rentalLastFetchedAt = row.last_fetched_at;
+            }
+
+            if (row.type === "sold") {
+                overview.soldCount = row.count;
+                overview.soldLastFetchedAt = row.last_fetched_at;
+            }
+        }
+
+        return overview;
+    }
+
     saveDistrictSnapshot(analysis: FullAnalysis): void {
         this.db
             .prepare(`
@@ -813,6 +919,17 @@ export class ReasDatabase extends BaseDatabase {
 
         return sorted[middle];
     }
+}
+
+function computeMedian(values: number[]): number {
+    const sorted = [...values].sort((left, right) => left - right);
+    const midpoint = Math.floor(sorted.length / 2);
+
+    if (sorted.length % 2 === 0) {
+        return (sorted[midpoint - 1] + sorted[midpoint]) / 2;
+    }
+
+    return sorted[midpoint];
 }
 
 export const reasDatabase = new ReasDatabase();

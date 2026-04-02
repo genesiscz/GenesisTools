@@ -15,6 +15,7 @@ import { Building2, ExternalLink, Filter, RefreshCw, SlidersHorizontal } from "l
 import { type FormEvent, type HTMLInputTypeAttribute, useMemo, useState } from "react";
 import { ListingDetailSheet } from "../components/listings/ListingDetailSheet";
 import { SourceBadge } from "../components/listings/SourceBadge";
+import { StalenessIndicator } from "../components/StalenessIndicator";
 
 export const Route = createFileRoute("/listings")({
     component: ListingsPage,
@@ -36,6 +37,15 @@ interface ListingsFilters {
 
 interface ListingsResponse {
     listings: ListingRow[];
+    overview: {
+        saleCount: number;
+        rentalCount: number;
+        soldCount: number;
+        saleLastFetchedAt: string | null;
+        rentalLastFetchedAt: string | null;
+        soldLastFetchedAt: string | null;
+        sourceCount: number;
+    };
     page: number;
     limit: number;
     total: number;
@@ -102,7 +112,9 @@ function ListingsPage() {
 
     const activeFilterCount = useMemo(() => countActiveFilters(filters), [filters]);
     const listings = listingsQuery.data?.listings ?? [];
+    const overview = listingsQuery.data?.overview;
     const totalPages = listingsQuery.data?.totalPages ?? 1;
+    const selectedFreshness = getTypeFreshness(overview, listingType);
 
     const handleFilterChange = (key: keyof ListingsFilters, value: string) => {
         setDraftFilters((current) => ({
@@ -148,12 +160,13 @@ function ListingsPage() {
                         <div>
                             <h1 className="text-xl font-mono font-bold text-gray-200">Listings</h1>
                             <p className="text-xs font-mono text-gray-500">
-                                Browse live sale, rental, and sold inventory from the aggregated REAS feeds.
+                                Browse cached sale, rental, and sold inventory persisted from prior REAS analyses.
                             </p>
                         </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2 justify-end">
+                        {selectedFreshness && <StalenessIndicator generatedAt={selectedFreshness} />}
                         <Badge
                             variant="outline"
                             className="border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.2em] text-gray-300"
@@ -168,6 +181,44 @@ function ListingsPage() {
                         </Badge>
                     </div>
                 </div>
+
+                {overview && (
+                    <Card className="mb-6 border-white/5 bg-white/[0.02]">
+                        <CardHeader className="border-b border-white/5 pb-4">
+                            <CardTitle className="font-mono text-sm text-cyan-300">Cache overview</CardTitle>
+                            <CardDescription className="font-mono text-xs text-gray-500">
+                                Active tabs only show listings already ingested into the local SQLite cache. They do not
+                                fetch marketplace inventory on page load.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="flex flex-wrap items-center gap-2 pt-6">
+                            <Badge
+                                variant="outline"
+                                className="border-cyan-500/20 bg-cyan-500/5 font-mono text-[10px] text-cyan-300"
+                            >
+                                {overview.saleCount} sale
+                            </Badge>
+                            <Badge
+                                variant="outline"
+                                className="border-emerald-500/20 bg-emerald-500/5 font-mono text-[10px] text-emerald-300"
+                            >
+                                {overview.rentalCount} rental
+                            </Badge>
+                            <Badge
+                                variant="outline"
+                                className="border-amber-500/20 bg-amber-500/5 font-mono text-[10px] text-amber-300"
+                            >
+                                {overview.soldCount} sold
+                            </Badge>
+                            <Badge
+                                variant="outline"
+                                className="border-white/10 bg-white/[0.03] font-mono text-[10px] text-gray-300"
+                            >
+                                {overview.sourceCount} cached sources
+                            </Badge>
+                        </CardContent>
+                    </Card>
+                )}
 
                 <Tabs value={listingType} onValueChange={handleTypeChange} className="mb-6">
                     <TabsList className="bg-white/[0.02]">
@@ -311,6 +362,14 @@ function ListingsPage() {
                         </div>
                     </CardHeader>
                     <CardContent className="pt-6">
+                        {listingType !== "sold" && listingsQuery.data && listingsQuery.data.total <= 5 && (
+                            <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 font-mono text-xs text-amber-200">
+                                This active tab is sparse because only previously ingested listings are available in the
+                                cache right now. Run a fresh analysis or refresh tracked properties to ingest more
+                                active inventory.
+                            </div>
+                        )}
+
                         {listingsQuery.isLoading && <ListingsTableSkeleton />}
 
                         {listingsQuery.isError && (
@@ -482,6 +541,31 @@ function ListingsPage() {
             />
         </>
     );
+}
+
+function getTypeFreshness(
+    overview:
+        | {
+              saleLastFetchedAt: string | null;
+              rentalLastFetchedAt: string | null;
+              soldLastFetchedAt: string | null;
+          }
+        | undefined,
+    listingType: ListingType
+): string | null {
+    if (!overview) {
+        return null;
+    }
+
+    if (listingType === "sale") {
+        return overview.saleLastFetchedAt;
+    }
+
+    if (listingType === "rental") {
+        return overview.rentalLastFetchedAt;
+    }
+
+    return overview.soldLastFetchedAt;
 }
 
 function FilterInput({

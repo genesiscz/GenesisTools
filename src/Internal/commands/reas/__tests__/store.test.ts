@@ -352,4 +352,146 @@ describe("listings", () => {
         expect(listing).not.toBeNull();
         expect(listing!.source_id).toBe("101");
     });
+
+    test("finds a listing by its source url", () => {
+        db.upsertListings(
+            [
+                {
+                    source: "sreality",
+                    sourceContract: "sreality-v2",
+                    type: "rental",
+                    sourceId: "101",
+                    district: "Praha 2",
+                    disposition: "2+kk",
+                    area: 60,
+                    price: 15000,
+                    pricePerM2: 250,
+                    address: "Praha 2, Vinohrady",
+                    link: "https://sreality.cz/101",
+                    status: "active",
+                    fetchedAt: "2026-04-02T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ id: 101 }),
+                },
+            ],
+            "Praha 2"
+        );
+
+        const listing = db.getListingByUrl("https://sreality.cz/101");
+
+        expect(listing).not.toBeNull();
+        expect(listing!.district).toBe("Praha 2");
+    });
+
+    test("estimates rent from matching rental listings", () => {
+        db.upsertListings(
+            [
+                {
+                    source: "sreality",
+                    sourceContract: "sreality-v2",
+                    type: "rental",
+                    sourceId: "101",
+                    district: "Praha 2",
+                    disposition: "2+kk",
+                    area: 58,
+                    price: 18000,
+                    pricePerM2: 310,
+                    address: "Praha 2, Vinohrady",
+                    link: "https://sreality.cz/101",
+                    status: "active",
+                    fetchedAt: "2026-04-02T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ id: 101 }),
+                },
+                {
+                    source: "bezrealitky",
+                    sourceContract: "bezrealitky-graphql",
+                    type: "rental",
+                    sourceId: "102",
+                    district: "Praha 2",
+                    disposition: "2+kk",
+                    area: 62,
+                    price: 20000,
+                    pricePerM2: 322,
+                    address: "Praha 2, Nusle",
+                    link: "https://bezrealitky.cz/102",
+                    status: "active",
+                    fetchedAt: "2026-04-02T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ id: 102 }),
+                },
+            ],
+            "Praha 2"
+        );
+
+        const estimate = db.estimateMonthlyRent({ district: "Praha 2", disposition: "2+kk", area: 60 });
+
+        expect(estimate).not.toBeNull();
+        expect(estimate!.medianRent).toBe(19000);
+        expect(estimate!.listingCount).toBe(2);
+    });
+
+    test("returns listings overview counts and freshness by type", () => {
+        db.upsertListings(
+            [
+                {
+                    source: "sreality",
+                    sourceContract: "sreality-v2",
+                    type: "sale",
+                    sourceId: "201",
+                    district: "Praha 2",
+                    disposition: "2+kk",
+                    area: 60,
+                    price: 6500000,
+                    pricePerM2: 108333,
+                    address: "Praha 2, Vinohrady",
+                    link: "https://sreality.cz/201",
+                    status: "active",
+                    fetchedAt: "2026-04-02T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ id: 201 }),
+                },
+                {
+                    source: "bezrealitky",
+                    sourceContract: "bezrealitky-graphql",
+                    type: "rental",
+                    sourceId: "202",
+                    district: "Praha 2",
+                    disposition: "2+kk",
+                    area: 58,
+                    price: 19000,
+                    pricePerM2: 328,
+                    address: "Praha 2, Nusle",
+                    link: "https://bezrealitky.cz/202",
+                    status: "active",
+                    fetchedAt: "2026-04-03T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ id: 202 }),
+                },
+                {
+                    source: "reas",
+                    sourceContract: "reas-catalog",
+                    type: "sold",
+                    sourceId: "203",
+                    district: "Praha 2",
+                    disposition: "2+kk",
+                    area: 55,
+                    price: 6200000,
+                    pricePerM2: 112727,
+                    address: "Praha 2, Vinohrady",
+                    link: "https://reas.cz/203",
+                    status: "sold",
+                    fetchedAt: "2026-04-04T00:00:00.000Z",
+                    soldAt: "2026-03-01T00:00:00.000Z",
+                    rawJson: SafeJSON.stringify({ id: 203 }),
+                },
+            ],
+            "Praha 2"
+        );
+
+        const overview = db.getListingsOverview();
+
+        expect(overview.saleCount).toBe(1);
+        expect(overview.rentalCount).toBe(1);
+        expect(overview.soldCount).toBe(1);
+        expect(overview.saleLastFetchedAt).toBe("2026-04-02T00:00:00.000Z");
+        expect(overview.rentalLastFetchedAt).toBe("2026-04-03T00:00:00.000Z");
+        expect(overview.soldLastFetchedAt).toBe("2026-04-04T00:00:00.000Z");
+        expect(overview.sourceCount).toBe(3);
+    });
 });

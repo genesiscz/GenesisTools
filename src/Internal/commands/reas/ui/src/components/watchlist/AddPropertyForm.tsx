@@ -1,5 +1,6 @@
 import { buildPeriodOptions, DISPOSITIONS, PROPERTY_TYPES } from "@app/Internal/commands/reas/lib/config-builder";
 import type { SavePropertyInput } from "@app/Internal/commands/reas/lib/store";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
 import { Checkbox } from "@ui/components/checkbox";
 import { DistrictCommandSelect } from "@ui/components/command";
@@ -15,7 +16,7 @@ import {
 import { Input } from "@ui/components/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@ui/components/select";
 import { Loader2, Plus } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface AddPropertyFormProps {
     onAdd: (input: SavePropertyInput) => Promise<void>;
@@ -50,6 +51,61 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
     const [downPayment, setDownPayment] = useState("");
     const [loanAmount, setLoanAmount] = useState("");
     const [notes, setNotes] = useState("");
+    const [importing, setImporting] = useState(false);
+    const [listingImportMessage, setListingImportMessage] = useState<string | null>(null);
+    const lastEstimateSignatureRef = useRef<string | null>(null);
+
+    const areaNumber = Number(targetArea);
+    const shouldEstimateRent = Boolean(district && disposition && disposition !== "all" && areaNumber > 0);
+
+    const rentEstimateQuery = useQuery<{
+        estimate: {
+            medianRent: number;
+            medianRentPerM2: number;
+            listingCount: number;
+        } | null;
+    }>({
+        queryKey: ["watchlist-rent-estimate", district, disposition, areaNumber],
+        enabled: shouldEstimateRent,
+        queryFn: async () => {
+            const params = new URLSearchParams({
+                estimateRent: "1",
+                district,
+                disposition,
+                area: String(areaNumber),
+            });
+            const response = await fetch(`/api/properties?${params.toString()}`);
+
+            if (!response.ok) {
+                throw new Error("Failed to estimate rent");
+            }
+
+            return response.json() as Promise<{
+                estimate: {
+                    medianRent: number;
+                    medianRentPerM2: number;
+                    listingCount: number;
+                } | null;
+            }>;
+        },
+    });
+
+    useEffect(() => {
+        const estimate = rentEstimateQuery.data?.estimate;
+
+        if (!estimate || monthlyRent.trim()) {
+            return;
+        }
+
+        const signature = [district, disposition, areaNumber, estimate.medianRent].join(":");
+
+        if (lastEstimateSignatureRef.current === signature) {
+            return;
+        }
+
+        setMonthlyRent(String(Math.round(estimate.medianRent)));
+        lastEstimateSignatureRef.current = signature;
+    }, [areaNumber, district, disposition, monthlyRent, rentEstimateQuery.data?.estimate]);
 
     const resetForm = useCallback(() => {
         setName("");
@@ -68,6 +124,8 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
         setDownPayment("");
         setLoanAmount("");
         setNotes("");
+        setListingImportMessage(null);
+        lastEstimateSignatureRef.current = null;
     }, []);
 
     const canSubmit = name.trim() && district && constructionType;
@@ -135,6 +193,69 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
             return current.filter((value) => value !== provider);
         });
     }, []);
+
+    const applyEstimatedRent = useCallback(() => {
+        const estimate = rentEstimateQuery.data?.estimate;
+
+        if (!estimate) {
+            return;
+        }
+
+        setMonthlyRent(String(Math.round(estimate.medianRent)));
+    }, [rentEstimateQuery.data?.estimate]);
+
+    const handleImportFromUrl = useCallback(async () => {
+        const trimmedUrl = listingUrl.trim();
+
+        if (!trimmedUrl) {
+            setListingImportMessage("Paste a cached listing URL first.");
+            return;
+        }
+
+        setImporting(true);
+        setListingImportMessage(null);
+
+        try {
+            const params = new URLSearchParams({ listingUrl: trimmedUrl });
+            const response = await fetch(`/api/properties?${params.toString()}`);
+            const body = (await response.json()) as {
+                error?: string;
+                draft?: {
+                    name: string;
+                    district: string;
+                    disposition?: string;
+                    targetPrice: number;
+                    targetArea: number;
+                    monthlyRent: number;
+                    listingUrl: string;
+                };
+                rentEstimate?: {
+                    listingCount: number;
+                } | null;
+            };
+
+            if (!response.ok || !body.draft) {
+                throw new Error(body.error ?? "Failed to import listing");
+            }
+
+            setName(body.draft.name);
+            setDistrict(body.draft.district);
+            setDisposition(body.draft.disposition ?? "all");
+            setTargetPrice(body.draft.targetPrice > 0 ? String(body.draft.targetPrice) : "");
+            setTargetArea(body.draft.targetArea > 0 ? String(body.draft.targetArea) : "");
+            setMonthlyRent(body.draft.monthlyRent > 0 ? String(body.draft.monthlyRent) : "");
+            setListingUrl(body.draft.listingUrl);
+            setListingImportMessage(
+                body.rentEstimate
+                    ? `Imported from cache. Rent estimate used ${body.rentEstimate.listingCount} rental comps.`
+                    : "Imported from cache."
+            );
+        } catch (error) {
+            setListingImportMessage(error instanceof Error ? error.message : "Failed to import listing");
+        } finally {
+            setImporting(false);
+        }
+    }, [listingUrl]);
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -262,6 +383,22 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                                 placeholder="15000"
                                 className="h-8 text-xs font-mono bg-black/20 border-white/10"
                             />
+                            {shouldEstimateRent && rentEstimateQuery.isFetching && (
+                                <p className="mt-2 text-[10px] font-mono text-gray-500">
+                                    Estimating from cached rentals...
+                                </p>
+                            )}
+                            {rentEstimateQuery.data?.estimate && !rentEstimateQuery.isFetching && (
+                                <button
+                                    type="button"
+                                    className="mt-2 text-left text-[10px] font-mono text-cyan-300 transition hover:text-cyan-200"
+                                    onClick={applyEstimatedRent}
+                                >
+                                    Estimated{" "}
+                                    {Math.round(rentEstimateQuery.data.estimate.medianRent).toLocaleString("cs-CZ")} CZK
+                                    from {rentEstimateQuery.data.estimate.listingCount} cached rentals. Click to apply.
+                                </button>
+                            )}
                         </div>
                         <div>
                             <label htmlFor="prop-costs" className="block text-[10px] font-mono text-gray-500 mb-1">
@@ -282,14 +419,28 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                         <label htmlFor="prop-url" className="block text-[10px] font-mono text-gray-500 mb-1">
                             Listing URL
                         </label>
-                        <Input
-                            id="prop-url"
-                            type="url"
-                            value={listingUrl}
-                            onChange={(e) => setListingUrl(e.target.value)}
-                            placeholder="https://www.sreality.cz/..."
-                            className="h-8 text-xs font-mono bg-black/20 border-white/10"
-                        />
+                        <div className="flex gap-2">
+                            <Input
+                                id="prop-url"
+                                type="url"
+                                value={listingUrl}
+                                onChange={(e) => setListingUrl(e.target.value)}
+                                placeholder="https://www.sreality.cz/..."
+                                className="h-8 text-xs font-mono bg-black/20 border-white/10"
+                            />
+                            <Button
+                                type="button"
+                                variant="outline"
+                                className="border-white/10 bg-black/20 text-[11px] font-mono text-gray-300 hover:bg-white/[0.04]"
+                                onClick={handleImportFromUrl}
+                                disabled={importing}
+                            >
+                                {importing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Import"}
+                            </Button>
+                        </div>
+                        {listingImportMessage && (
+                            <p className="mt-2 text-[10px] font-mono text-cyan-300">{listingImportMessage}</p>
+                        )}
                     </div>
 
                     <div className="grid gap-3 md:grid-cols-2">

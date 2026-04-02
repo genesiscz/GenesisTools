@@ -1,5 +1,6 @@
 import { fetchAndAnalyze } from "@app/Internal/commands/reas/lib/analysis-service";
 import { buildConfig, resolveDistrict } from "@app/Internal/commands/reas/lib/config-builder";
+import { buildImportedPropertyDraft } from "@app/Internal/commands/reas/lib/property-form-defaults";
 import { reasDatabase } from "@app/Internal/commands/reas/lib/store";
 import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler, jsonBody } from "../../server/api-utils";
@@ -7,7 +8,54 @@ import { apiHandler, jsonBody } from "../../server/api-utils";
 export const Route = createFileRoute("/api/properties")({
     server: {
         handlers: {
-            GET: apiHandler(async () => {
+            GET: apiHandler(async (request) => {
+                const url = new URL(request.url);
+                const importUrl = url.searchParams.get("listingUrl")?.trim();
+
+                if (importUrl) {
+                    const listing = reasDatabase.getListingByUrl(importUrl);
+
+                    if (!listing) {
+                        return Response.json(
+                            {
+                                error: "Listing URL was not found in the local cache yet. Refresh analysis first to ingest it.",
+                            },
+                            { status: 404 }
+                        );
+                    }
+
+                    const rentEstimate = reasDatabase.estimateMonthlyRent({
+                        district: listing.district,
+                        disposition: listing.disposition ?? undefined,
+                        area: listing.area ?? undefined,
+                    });
+
+                    return Response.json({
+                        draft: buildImportedPropertyDraft({ listing, rentEstimate }),
+                        listing,
+                        rentEstimate,
+                    });
+                }
+
+                if (url.searchParams.get("estimateRent") === "1") {
+                    const district = url.searchParams.get("district")?.trim();
+                    const areaParam = url.searchParams.get("area")?.trim();
+                    const disposition = url.searchParams.get("disposition")?.trim() || undefined;
+
+                    if (!district || !areaParam) {
+                        return Response.json({ error: "Missing required params: district, area" }, { status: 400 });
+                    }
+
+                    const area = Number(areaParam);
+
+                    if (!Number.isFinite(area) || area <= 0) {
+                        return Response.json({ error: "Invalid area parameter" }, { status: 400 });
+                    }
+
+                    const estimate = reasDatabase.estimateMonthlyRent({ district, disposition, area });
+                    return Response.json({ estimate });
+                }
+
                 const properties = reasDatabase.getProperties();
                 return Response.json({ properties });
             }),

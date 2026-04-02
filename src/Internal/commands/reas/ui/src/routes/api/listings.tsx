@@ -38,9 +38,11 @@ export const Route = createFileRoute("/api/listings")({
 
                 const total = reasDatabase.getListingsCount(query);
                 const listings = reasDatabase.getListings(query);
+                const overview = reasDatabase.getListingsOverview();
 
                 return Response.json({
                     listings,
+                    overview,
                     page: Math.max(page, 1),
                     limit,
                     total,
