@@ -12,23 +12,28 @@ export const Route = createFileRoute("/api/configure-timelog-user")({
                     return body;
                 }
 
-                if (typeof body.userId !== "string" || body.userId.trim() === "") {
+                const userId = typeof body.userId === "string" ? body.userId.trim() : "";
+                const userName = typeof body.userName === "string" ? body.userName.trim() : "";
+                const userEmail = typeof body.userEmail === "string" ? body.userEmail.trim() : "";
+
+                if (userId === "") {
                     return Response.json({ error: "Field 'userId' must be a non-empty string" }, { status: 400 });
                 }
 
-                if (typeof body.userName !== "string" || body.userName.trim() === "") {
+                if (userName === "") {
                     return Response.json({ error: "Field 'userName' must be a non-empty string" }, { status: 400 });
                 }
 
-                if (typeof body.userEmail !== "string" || body.userEmail.trim() === "") {
+                if (userEmail === "") {
                     return Response.json({ error: "Field 'userEmail' must be a non-empty string" }, { status: 400 });
                 }
 
-                const result = await setTimeLogDefaultUser({
-                    userId: body.userId,
-                    userName: body.userName,
-                    userEmail: body.userEmail,
-                });
+                const result = await setTimeLogDefaultUser({ userId, userName, userEmail });
+
+                if (!result.success) {
+                    return Response.json(result, { status: 400 });
+                }
+
                 return Response.json(result);
             }),
         },
