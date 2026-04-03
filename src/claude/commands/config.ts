@@ -1,4 +1,10 @@
-import { type ClaudeConfig, DEFAULT_WARMUP, determineAccountLabel, loadConfig, saveConfig } from "@app/claude/lib/config";
+import {
+    type ClaudeConfig,
+    DEFAULT_WARMUP,
+    determineAccountLabel,
+    loadConfig,
+    saveConfig,
+} from "@app/claude/lib/config";
 import { fetchUsage } from "@app/claude/lib/usage/api";
 import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@app/utils/claude/auth";
 import { copyToClipboard } from "@app/utils/clipboard";
@@ -580,6 +586,11 @@ async function configureWeeklyWarmup(config: ClaudeConfig, accountNames: string[
     );
 }
 
+function todayDateString(): string {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 async function showConfig(config: ClaudeConfig): Promise<void> {
     const accounts = Object.entries(config.accounts);
 
@@ -639,6 +650,50 @@ async function showConfig(config: ClaudeConfig): Promise<void> {
     lines.push(
         `  macOS:              ${config.notifications.channels.macos ? pc.green("enabled") : pc.dim("disabled")}`
     );
+
+    if (config.warmup) {
+        const w = config.warmup;
+        lines.push("");
+        lines.push(pc.bold("Warmup:"));
+
+        // Session
+        if (w.session.enabled) {
+            const accts = w.session.accounts.join(", ");
+            const { startHour, endHour } = w.session.schedule;
+            lines.push(`  Session:  ${pc.green("enabled")} (${accts}) \u2014 ${startHour}:00\u2192${endHour}:00`);
+
+            const blocks: string[] = [];
+            let cursor = startHour;
+            while (cursor + 5 <= endHour) {
+                blocks.push(`${String(cursor).padStart(2, "0")}:00\u2192${String(cursor + 5).padStart(2, "0")}:00`);
+                cursor += 5;
+            }
+
+            if (blocks.length > 0) {
+                lines.push(`            Blocks: ${blocks.join(", ")}`);
+            }
+        } else {
+            lines.push(`  Session:  ${pc.dim("disabled")}`);
+        }
+
+        // Weekly
+        if (w.weekly.enabled) {
+            const accts = w.weekly.accounts.join(", ");
+            lines.push(`  Weekly:   ${pc.green("enabled")} (${accts})`);
+        } else {
+            lines.push(`  Weekly:   ${pc.dim("disabled")}`);
+        }
+
+        // Today's log
+        const today = todayDateString();
+        if (w.todayLog.date === today && w.todayLog.events.length > 0) {
+            lines.push("  Today's warmups:");
+            for (const evt of w.todayLog.events) {
+                const icon = evt.success ? pc.green("\u2713") : pc.red("\u2717");
+                lines.push(`    ${evt.time}  ${evt.account.padEnd(20)} ${evt.type.padEnd(8)} ${icon}`);
+            }
+        }
+    }
 
     p.note(lines.join("\n"), "Current Configuration");
 }
