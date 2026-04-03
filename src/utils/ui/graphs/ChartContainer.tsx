@@ -29,8 +29,8 @@ function ChartContainer({
                 </CardHeader>
             )}
             <CardContent className={cn("pt-0", contentClassName)}>
-                <div style={{ height }}>
-                    <ResponsiveContainer width="100%" height="100%">
+                <div className="min-w-0 w-full" style={{ height }}>
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={height}>
                         {children}
                     </ResponsiveContainer>
                 </div>

@@ -1,13 +1,20 @@
 import { DISPOSITIONS, PROPERTY_TYPES } from "@app/Internal/commands/reas/lib/config-builder";
-import { createFileRoute, useRouterState } from "@tanstack/react-router";
+import { createFileRoute, useRouter, useRouterState } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
-import { DistrictCommandSelect } from "@ui/components/command";
+import { Separator } from "@ui/components/separator";
 import { Input } from "@ui/components/input";
 import { Skeleton } from "@ui/components/skeleton";
 import { GitCompare, Loader2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { buildCompareSearchParams, parseCompareSearchParams } from "../components/compare/compare-query";
+import { DistrictContextCallout } from "../components/compare/DistrictContextCallout";
+import { DistrictDetailTable } from "../components/compare/DistrictDetailTable";
+import { DistrictPicker } from "../components/compare/DistrictPicker";
+import { DistrictPriceBarChart } from "../components/compare/DistrictPriceBarChart";
+import { DistrictRadarComparison } from "../components/compare/DistrictRadarChart";
+import { DistrictYieldBarChart } from "../components/compare/DistrictYieldBarChart";
 import { ComparisonGrid } from "../components/compare/ComparisonGrid";
 import { ComparisonMarketTable } from "../components/compare/ComparisonMarketTable";
 import { ComparisonOverview } from "../components/compare/ComparisonOverview";
@@ -31,57 +38,60 @@ interface DistrictComparisonResponse {
 }
 
 function ComparePage() {
-    const MAX_DISTRICTS = 4;
+    const MAX_DISTRICTS = 12;
     const MIN_DISTRICTS = 2;
+    const router = useRouter();
+    const search = useRouterState({ select: (state) => state.location.searchStr });
+    const initialSearchState = parseCompareSearchParams({ search, maxDistricts: MAX_DISTRICTS });
 
-    const [selectedDistricts, setSelectedDistricts] = useState<string[]>([]);
-    const [propertyType, setPropertyType] = useState("brick");
-    const [disposition, setDisposition] = useState("all");
-    const [price, setPrice] = useState("5000000");
-    const [area, setArea] = useState("80");
+    const [selectedDistricts, setSelectedDistricts] = useState<string[]>(initialSearchState.districts);
+    const [propertyType, setPropertyType] = useState(initialSearchState.propertyType);
+    const [disposition, setDisposition] = useState(initialSearchState.disposition);
+    const [price, setPrice] = useState(initialSearchState.price);
+    const [area, setArea] = useState(initialSearchState.area);
     const [isComparing, setIsComparing] = useState(false);
     const [results, setResults] = useState<DistrictComparisonResult[]>([]);
-    const search = useRouterState({ select: (state) => state.location.searchStr });
-    const hydratedFromSearchRef = useRef(false);
+    const [appliedSearch, setAppliedSearch] = useState<string | null>(search);
+    const lastSyncedSearchRef = useRef<string | null>(null);
 
     useEffect(() => {
-        if (hydratedFromSearchRef.current) {
+        const parsed = parseCompareSearchParams({ search, maxDistricts: MAX_DISTRICTS });
+
+        setSelectedDistricts((current) =>
+            arraysEqual(current, parsed.districts) ? current : parsed.districts
+        );
+        setPropertyType((current) => (current === parsed.propertyType ? current : parsed.propertyType));
+        setDisposition((current) => (current === parsed.disposition ? current : parsed.disposition));
+        setPrice((current) => (current === parsed.price ? current : parsed.price));
+        setArea((current) => (current === parsed.area ? current : parsed.area));
+        setAppliedSearch(search);
+    }, [MAX_DISTRICTS, search]);
+
+    useEffect(() => {
+        if (appliedSearch !== search) {
             return;
         }
 
-        hydratedFromSearchRef.current = true;
+        const nextSearch = buildCompareSearchParams({
+            districts: selectedDistricts,
+            propertyType,
+            disposition,
+            price,
+            area,
+        }).toString();
+        const currentSearch = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search).toString();
 
-        const params = new URLSearchParams(search);
-        const districts = params
-            .get("districts")
-            ?.split(",")
-            .map((value) => value.trim())
-            .filter(Boolean);
-        const type = params.get("type");
-        const nextDisposition = params.get("disposition");
-        const nextPrice = params.get("price");
-        const nextArea = params.get("area");
-
-        if (districts && districts.length > 0) {
-            setSelectedDistricts(districts.slice(0, MAX_DISTRICTS));
+        if (lastSyncedSearchRef.current === nextSearch || currentSearch === nextSearch) {
+            lastSyncedSearchRef.current = nextSearch;
+            return;
         }
 
-        if (type) {
-            setPropertyType(type);
-        }
-
-        if (nextDisposition) {
-            setDisposition(nextDisposition);
-        }
-
-        if (nextPrice) {
-            setPrice(nextPrice);
-        }
-
-        if (nextArea) {
-            setArea(nextArea);
-        }
-    }, [MAX_DISTRICTS, search]);
+        lastSyncedSearchRef.current = nextSearch;
+        router.navigate({
+            to: nextSearch ? `/compare?${nextSearch}` : "/compare",
+            replace: true,
+        });
+    }, [area, disposition, price, propertyType, router, search, selectedDistricts]);
 
     const removeDistrict = useCallback((district: string) => {
         setSelectedDistricts((prev) => prev.filter((value) => value !== district));
@@ -163,6 +173,8 @@ function ComparePage() {
     const canCompare = selectedDistricts.length >= MIN_DISTRICTS && !isComparing;
     const loadedComparisons = results.flatMap((result) => (result.comparison ? [result.comparison] : []));
     const errors = results.filter((result) => result.error);
+    const targetDistrict = selectedDistricts[0];
+    const targetPricePerM2 = Number(price) > 0 && Number(area) > 0 ? Number(price) / Number(area) : undefined;
 
     return (
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
@@ -180,24 +192,11 @@ function ComparePage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
                 <div className="lg:col-span-1 self-start" style={{ zIndex: 20 }}>
-                    <Card className="border-white/5 bg-white/[0.02] overflow-visible">
-                        <CardHeader>
-                            <CardTitle className="text-xs font-mono text-gray-400">
-                                Select Districts ({selectedDistricts.length}/{MAX_DISTRICTS})
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent className="overflow-visible">
-                            <DistrictCommandSelect
-                                mode="multi"
-                                selected={selectedDistricts}
-                                onValueChange={setSelectedDistricts}
-                                maxSelections={MAX_DISTRICTS}
-                                placeholder="Select districts..."
-                                searchPlaceholder="Search districts..."
-                                shouldFilter={false}
-                            />
-                        </CardContent>
-                    </Card>
+                    <DistrictPicker
+                        selectedDistricts={selectedDistricts}
+                        setSelectedDistricts={setSelectedDistricts}
+                        maxDistricts={MAX_DISTRICTS}
+                    />
                 </div>
 
                 <div className="lg:col-span-2 space-y-4">
@@ -336,12 +335,57 @@ function ComparePage() {
                     {!isComparing && loadedComparisons.length > 0 && (
                         <>
                             <ComparisonOverview comparisons={loadedComparisons} />
-                            <ComparisonGrid comparisons={loadedComparisons} />
+                            <section className="grid gap-6 xl:grid-cols-2">
+                                <DistrictPriceBarChart
+                                    comparisons={loadedComparisons}
+                                    targetDistrict={targetDistrict}
+                                    targetPricePerM2={targetPricePerM2}
+                                />
+                                <DistrictYieldBarChart
+                                    comparisons={loadedComparisons}
+                                    targetDistrict={targetDistrict}
+                                />
+                            </section>
+
+                            <DistrictDetailTable comparisons={loadedComparisons} />
+
                             <ComparisonTrendSection comparisons={loadedComparisons} />
+
+                            <DistrictRadarComparison
+                                comparisons={loadedComparisons}
+                                selectedDistricts={selectedDistricts}
+                            />
+
+                            <DistrictContextCallout districts={loadedComparisons.map((comparison) => comparison.district)} />
+
+                            <Separator className="bg-white/5" />
+
                             <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
+                                <ComparisonGrid comparisons={loadedComparisons} />
                                 <ComparisonRankingsTable comparisons={loadedComparisons} />
                                 <ComparisonMarketTable comparisons={loadedComparisons} />
                             </div>
+
+                            <Card className="border-white/5 bg-white/[0.02]">
+                                <CardHeader>
+                                    <CardTitle className="text-sm font-mono text-amber-300">
+                                        Data provenance
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent className="flex flex-col gap-3 text-xs font-mono text-gray-400">
+                                    {loadedComparisons.map((comparison) => (
+                                        <div key={comparison.district} className="rounded-lg border border-white/5 bg-black/20 p-3">
+                                            <div className="text-gray-200">{comparison.district}</div>
+                                            <div className="mt-1">
+                                                Providers: {(comparison.exportData.meta.providers ?? []).join(" · ")}
+                                            </div>
+                                            <div className="mt-1">
+                                                Sold {comparison.summary.salesCount} · Rentals {comparison.summary.rentalCount} · Active {comparison.exportData.listings.activeSales.length}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </CardContent>
+                            </Card>
                         </>
                     )}
                 </div>
@@ -358,6 +402,14 @@ function ComparePage() {
             )}
         </div>
     );
+}
+
+function arraysEqual(left: string[], right: string[]) {
+    if (left.length !== right.length) {
+        return false;
+    }
+
+    return left.every((value, index) => value === right[index]);
 }
 
 function ComparisonLoadingState({ districts }: { districts: string[] }) {

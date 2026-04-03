@@ -2,7 +2,6 @@ import type { DashboardExport } from "@app/Internal/commands/reas/lib/api-export
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ui/components/card";
 import { Progress } from "@ui/components/progress";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/components/table";
 import { cn } from "@ui/lib/utils";
 import {
     Activity,
@@ -21,6 +20,10 @@ import {
 } from "lucide-react";
 import { ActiveSalesChart, ComparablesScatterChart, DistributionHistogram, TrendChartCard } from "./AnalysisCharts";
 import { AnalysisMetricCard } from "./AnalysisMetricCard";
+import { DataTable } from "./DataTable";
+import { InfoBox } from "./InfoBox";
+import { ScoreGauge } from "./ScoreGauge";
+import { SectionTitle } from "./SectionTitle";
 import {
     formatCompactCurrency,
     formatCurrency,
@@ -52,6 +55,10 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
 
     return (
         <div className="space-y-4">
+            <SectionTitle
+                title="Overview"
+                subtitle="Stored snapshot across pricing, yield, provider depth, and analyst conviction."
+            />
             <Card className="border-white/5 bg-[radial-gradient(circle_at_top_left,rgba(245,158,11,0.18),transparent_40%),radial-gradient(circle_at_top_right,rgba(56,189,248,0.12),transparent_38%),rgba(255,255,255,0.02)]">
                 <CardContent className="grid gap-6 p-6 lg:grid-cols-[1.3fr_0.7fr]">
                     <div className="space-y-4">
@@ -120,31 +127,19 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
                             </CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                            <div className="flex items-end justify-between gap-4">
+                            <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center sm:justify-between">
                                 <div>
                                     <div className={cn("text-5xl font-black font-mono", getScoreTone(summary.overall))}>
                                         {summary.grade}
                                     </div>
-                                    <div className="mt-1 text-sm font-mono text-slate-400">
-                                        {summary.recommendation}
-                                    </div>
+                                    <div className="mt-1 text-sm font-mono text-slate-400">{summary.recommendation}</div>
                                 </div>
-                                <div className="text-right">
-                                    <div className="text-3xl font-semibold font-mono text-white">{summary.overall}</div>
-                                    <div className="text-xs font-mono uppercase tracking-[0.24em] text-slate-500">
-                                        score / 100
-                                    </div>
-                                </div>
+                                <ScoreGauge score={summary.overall} label="Investment score" />
                             </div>
                             <Progress value={summary.overall} className="h-2 bg-white/5" />
-                            <div className="space-y-2">
-                                {summary.reasoning.slice(0, 3).map((item) => (
-                                    <div key={item} className="flex items-start gap-2 text-xs font-mono text-slate-400">
-                                        <span className="mt-1 size-1.5 rounded-full bg-amber-300" />
-                                        <span>{item}</span>
-                                    </div>
-                                ))}
-                            </div>
+                            <InfoBox title="Analyst signal" tone="positive">
+                                {summary.reasoning.slice(0, 3).join(" ")}
+                            </InfoBox>
                         </CardContent>
                     </Card>
                 </CardContent>
@@ -207,11 +202,12 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
                         {(providerCounts.providerSummary.length > 0
                             ? providerCounts.providerSummary
                             : data.meta.providers.map((provider) => ({
-                                  provider,
-                                  count: 0,
-                                  fetchedAt: data.meta.generatedAt,
-                                  sourceContract: provider,
-                              }))
+                              provider,
+                              count: 0,
+                              fetchedAt: data.meta.generatedAt,
+                              sourceContract: provider,
+                              error: undefined,
+                          }))
                         ).map((provider) => (
                             <div
                                 key={`${provider.provider}-${provider.sourceContract}`}
@@ -354,6 +350,10 @@ export function TrendTab({ data }: AnalysisSectionProps) {
 export function ComparablesTab({ data }: AnalysisSectionProps) {
     return (
         <div className="space-y-4">
+            <SectionTitle
+                title="Comparables"
+                subtitle="Sold evidence, active asking context, and direct source links for every exported sale."
+            />
             <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
                 <ComparablesScatterChart data={data} />
                 <ActiveSalesChart data={data} />
@@ -369,78 +369,42 @@ export function ComparablesTab({ data }: AnalysisSectionProps) {
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="px-0">
-                    <div className="overflow-x-auto">
-                        <Table>
-                            <TableHeader>
-                                <TableRow className="border-white/5 hover:bg-transparent">
-                                    <TableHead className="font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">
-                                        Address
-                                    </TableHead>
-                                    <TableHead className="font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">
-                                        Disp.
-                                    </TableHead>
-                                    <TableHead className="text-right font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">
-                                        Area
-                                    </TableHead>
-                                    <TableHead className="text-right font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">
-                                        Price
-                                    </TableHead>
-                                    <TableHead className="text-right font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">
-                                        CZK / m²
-                                    </TableHead>
-                                    <TableHead className="text-right font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">
-                                        DOM
-                                    </TableHead>
-                                    <TableHead className="text-right font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">
-                                        Discount
-                                    </TableHead>
-                                    <TableHead className="w-10" />
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {data.listings.sold.map((listing, index) => (
-                                    <TableRow
-                                        key={`${listing.address}-${index}`}
-                                        className="border-white/5 hover:bg-white/[0.03]"
-                                    >
-                                        <TableCell className="max-w-[240px] truncate font-mono text-xs text-slate-200">
-                                            {listing.address}
-                                        </TableCell>
-                                        <TableCell className="font-mono text-xs text-slate-400">
-                                            {listing.disposition}
-                                        </TableCell>
-                                        <TableCell className="text-right font-mono text-xs text-slate-300">
-                                            {formatInteger(listing.area)} m²
-                                        </TableCell>
-                                        <TableCell className="text-right font-mono text-xs text-slate-300">
-                                            {formatCompactCurrency(listing.price)}
-                                        </TableCell>
-                                        <TableCell className="text-right font-mono text-xs text-cyan-300">
-                                            {formatCompactCurrency(listing.pricePerM2)}
-                                        </TableCell>
-                                        <TableCell className="text-right font-mono text-xs text-slate-400">
-                                            {listing.daysOnMarket ? formatDays(listing.daysOnMarket) : "-"}
-                                        </TableCell>
-                                        <TableCell className="text-right font-mono text-xs text-amber-200">
-                                            {listing.discount != null ? formatPercent(listing.discount) : "-"}
-                                        </TableCell>
-                                        <TableCell>
-                                            {listing.link ? (
-                                                <a
-                                                    href={listing.link}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    className="inline-flex text-slate-500 transition-colors hover:text-amber-300"
-                                                >
-                                                    <ExternalLink className="h-3.5 w-3.5" />
-                                                </a>
-                                            ) : null}
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    </div>
+                    <DataTable
+                        columns={[
+                            { key: "address", header: "Address", className: "max-w-[240px] truncate text-slate-200" },
+                            { key: "disposition", header: "Disp.", className: "text-slate-400" },
+                            { key: "areaLabel", header: "Area", align: "right" },
+                            { key: "priceLabel", header: "Price", align: "right" },
+                            { key: "pricePerM2Label", header: "CZK / m²", align: "right", className: "text-cyan-300" },
+                            { key: "domLabel", header: "DOM", align: "right", className: "text-slate-400" },
+                            { key: "discountLabel", header: "Discount", align: "right", className: "text-amber-200" },
+                            {
+                                key: "link",
+                                header: "Link",
+                                render: (row) =>
+                                    row.link ? (
+                                        <a
+                                            href={String(row.link)}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="inline-flex text-slate-500 transition-colors hover:text-amber-300"
+                                        >
+                                            <ExternalLink className="h-3.5 w-3.5" />
+                                        </a>
+                                    ) : null,
+                            },
+                        ]}
+                        rows={data.listings.sold.map((listing) => ({
+                            ...listing,
+                            areaLabel: `${formatInteger(listing.area)} m²`,
+                            priceLabel: formatCompactCurrency(listing.price),
+                            pricePerM2Label: formatCompactCurrency(listing.pricePerM2),
+                            domLabel: listing.daysOnMarket ? formatDays(listing.daysOnMarket) : "-",
+                            discountLabel: listing.discount != null ? formatPercent(listing.discount) : "-",
+                        }))}
+                        getRowKey={(row, index) => `${String(row.address)}-${index}`}
+                        emptyMessage="No sold comparables were exported."
+                    />
                 </CardContent>
             </Card>
         </div>
@@ -452,6 +416,10 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
 
     return (
         <div className="space-y-4">
+            <SectionTitle
+                title="Rentals"
+                subtitle="Deduplicated rental supply grouped by disposition, with provider-level evidence and raw rows."
+            />
             <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
                 {aggregated.length > 0 ? (
                     aggregated.map((group) => (
@@ -509,8 +477,10 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
                     ))
                 ) : (
                     <Card className="border-white/5 bg-white/[0.02] lg:col-span-2 xl:col-span-3">
-                        <CardContent className="p-6 text-sm font-mono text-slate-400">
-                            The backend did not return aggregated rental statistics for this run.
+                        <CardContent className="p-6">
+                            <InfoBox title="Rental aggregation" tone="warning">
+                                The backend did not return aggregated rental statistics for this run.
+                            </InfoBox>
                         </CardContent>
                     </Card>
                 )}
@@ -525,53 +495,23 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
                         </CardTitle>
                     </CardHeader>
                     <CardContent className="px-0">
-                        <div className="overflow-x-auto">
-                            <Table>
-                                <TableHeader>
-                                    <TableRow className="border-white/5 hover:bg-transparent">
-                                        <TableHead className="font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">
-                                            Address
-                                        </TableHead>
-                                        <TableHead className="font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">
-                                            Disp.
-                                        </TableHead>
-                                        <TableHead className="text-right font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">
-                                            Area
-                                        </TableHead>
-                                        <TableHead className="text-right font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">
-                                            Rent
-                                        </TableHead>
-                                        <TableHead className="text-right font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500">
-                                            Rent / m²
-                                        </TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {data.listings.rentals.slice(0, 12).map((listing, index) => (
-                                        <TableRow
-                                            key={`${listing.address}-${index}`}
-                                            className="border-white/5 hover:bg-white/[0.03]"
-                                        >
-                                            <TableCell className="max-w-[220px] truncate font-mono text-xs text-slate-200">
-                                                {listing.address}
-                                            </TableCell>
-                                            <TableCell className="font-mono text-xs text-slate-400">
-                                                {listing.disposition}
-                                            </TableCell>
-                                            <TableCell className="text-right font-mono text-xs text-slate-300">
-                                                {formatInteger(listing.area)} m²
-                                            </TableCell>
-                                            <TableCell className="text-right font-mono text-xs text-slate-300">
-                                                {formatCompactCurrency(listing.rent)}
-                                            </TableCell>
-                                            <TableCell className="text-right font-mono text-xs text-cyan-300">
-                                                {formatCurrency(listing.rentPerM2)}
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        </div>
+                        <DataTable
+                            columns={[
+                                { key: "address", header: "Address", className: "max-w-[220px] truncate text-slate-200" },
+                                { key: "disposition", header: "Disp.", className: "text-slate-400" },
+                                { key: "areaLabel", header: "Area", align: "right" },
+                                { key: "rentLabel", header: "Rent", align: "right" },
+                                { key: "rentPerM2Label", header: "Rent / m²", align: "right", className: "text-cyan-300" },
+                            ]}
+                            rows={data.listings.rentals.slice(0, 12).map((listing) => ({
+                                ...listing,
+                                areaLabel: `${formatInteger(listing.area)} m²`,
+                                rentLabel: formatCompactCurrency(listing.rent),
+                                rentPerM2Label: formatCurrency(listing.rentPerM2),
+                            }))}
+                            getRowKey={(row, index) => `${String(row.address)}-${index}`}
+                            emptyMessage="No rental listings were exported."
+                        />
                     </CardContent>
                 </Card>
 
@@ -623,6 +563,10 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
 
     return (
         <div className="space-y-4">
+            <SectionTitle
+                title="Investment"
+                subtitle="Pricing edge, yield spread, benchmark context, and the current score rationale."
+            />
             <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
                 <Card className="border-white/5 bg-white/[0.02]">
                     <CardHeader className="pb-3">
@@ -632,19 +576,14 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
                         </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                        <div className="flex items-center justify-between gap-4">
+                        <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center sm:justify-between">
                             <div>
                                 <div className={cn("text-5xl font-black font-mono", getScoreTone(summary.overall))}>
                                     {summary.grade}
                                 </div>
                                 <div className="text-sm font-mono text-slate-400">{summary.recommendation}</div>
                             </div>
-                            <div className="text-right">
-                                <div className="text-3xl font-semibold font-mono text-white">{summary.overall}</div>
-                                <div className="text-xs font-mono uppercase tracking-[0.24em] text-slate-500">
-                                    overall
-                                </div>
-                            </div>
+                            <ScoreGauge score={summary.overall} label="Overall" />
                         </div>
                         <Progress value={summary.overall} className="h-2 bg-white/5" />
                         <div className="space-y-2">
@@ -749,6 +688,10 @@ export function VerdictTab({ data }: AnalysisSectionProps) {
 
     return (
         <div className="space-y-4">
+            <SectionTitle
+                title="Verdict"
+                subtitle="Bottom-line recommendation with evidence depth and explicit provenance from the current export."
+            />
             <Card className="border-white/5 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.16),transparent_40%),radial-gradient(circle_at_bottom_right,rgba(245,158,11,0.14),transparent_36%),rgba(255,255,255,0.02)]">
                 <CardContent className="grid gap-6 p-6 lg:grid-cols-[1.1fr_0.9fr]">
                     <div className="space-y-4">
@@ -778,19 +721,23 @@ export function VerdictTab({ data }: AnalysisSectionProps) {
                             </p>
                         </div>
                         <div className="space-y-2">
-                            {verdictLines.slice(2).map((line) => (
-                                <div
-                                    key={line}
-                                    className="flex items-start gap-2 rounded-lg border border-white/5 bg-slate-950/40 px-3 py-2 text-xs font-mono text-slate-400"
-                                >
-                                    <span className="mt-1 size-1.5 rounded-full bg-cyan-300" />
-                                    <span>{line}</span>
-                                </div>
+                            {verdictLines.slice(2).map((line, index) => (
+                                <InfoBox key={line} tone={index === 0 ? "info" : "warning"}>
+                                    {line}
+                                </InfoBox>
                             ))}
                         </div>
                     </div>
 
                     <div className="grid gap-4 sm:grid-cols-2">
+                        <Card className="border-white/10 bg-slate-950/60 sm:col-span-2">
+                            <CardContent className="flex flex-col items-center gap-3 p-4">
+                                <ScoreGauge score={summary.overall} label="Conviction" />
+                                <div className={cn("text-sm font-mono", getScoreTone(summary.overall))}>
+                                    {summary.grade} grade
+                                </div>
+                            </CardContent>
+                        </Card>
                         <AnalysisMetricCard
                             label="Conviction"
                             value={`${summary.overall}/100`}

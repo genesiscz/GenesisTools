@@ -1,8 +1,9 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { cn } from "@ui/lib/utils";
 import { Activity, ArrowDownRight, ArrowUpRight, TrendingUp } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { TrendChart } from "../history/TrendChart";
+import { buildDistrictTrendModel, DISTRICT_TREND_TIMEFRAMES } from "./district-trend-model";
 import type { DistrictComparison } from "./types";
 
 interface ComparisonTrendSectionProps {
@@ -10,17 +11,45 @@ interface ComparisonTrendSectionProps {
 }
 
 export function ComparisonTrendSection({ comparisons }: ComparisonTrendSectionProps) {
-    const chartData = useMemo(
+    const availableDistricts = useMemo(() => comparisons.map((comparison) => comparison.district), [comparisons]);
+    const [timeframeDays, setTimeframeDays] = useState<number>(DISTRICT_TREND_TIMEFRAMES[2].days);
+    const [visibleDistricts, setVisibleDistricts] = useState<string[]>(availableDistricts);
+
+    useEffect(() => {
+        setVisibleDistricts((prev) => {
+            const next = prev.filter((district) => availableDistricts.includes(district));
+
+            if (next.length > 0) {
+                return next;
+            }
+
+            return availableDistricts;
+        });
+    }, [availableDistricts]);
+
+    const model = useMemo(
         () =>
-            comparisons.flatMap((comparison) =>
-                comparison.snapshots.map((snapshot) => ({
-                    date: snapshot.snapshotDate,
-                    value: snapshot.medianPricePerM2,
-                    district: comparison.district,
-                }))
-            ),
-        [comparisons]
+            buildDistrictTrendModel({
+                comparisons,
+                timeframeDays,
+                visibleDistricts,
+            }),
+        [comparisons, timeframeDays, visibleDistricts]
     );
+
+    function toggleDistrict(district: string) {
+        setVisibleDistricts((prev) => {
+            if (prev.includes(district)) {
+                if (prev.length === 1) {
+                    return prev;
+                }
+
+                return prev.filter((value) => value !== district);
+            }
+
+            return [...prev, district];
+        });
+    }
 
     return (
         <Card className="border-white/5 bg-white/[0.02]">
@@ -30,39 +59,80 @@ export function ComparisonTrendSection({ comparisons }: ComparisonTrendSectionPr
                     Multi-district trendline
                 </CardTitle>
             </CardHeader>
-            <CardContent className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4">
-                <TrendChart data={chartData} height={260} />
-                <div className="space-y-3">
-                    {comparisons.map((comparison) => {
-                        const latestSnapshot = comparison.snapshots[comparison.snapshots.length - 1] ?? null;
-                        const yoyChange = latestSnapshot?.yoyChange ?? null;
+            <CardContent className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+                <div className="flex flex-col gap-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                        {DISTRICT_TREND_TIMEFRAMES.map((timeframe) => (
+                            <button
+                                key={timeframe.days}
+                                type="button"
+                                onClick={() => setTimeframeDays(timeframe.days)}
+                                className={cn(
+                                    "rounded-md border px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider transition-colors",
+                                    timeframeDays === timeframe.days
+                                        ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-300"
+                                        : "border-white/10 bg-black/20 text-gray-500 hover:border-white/20 hover:text-gray-300"
+                                )}
+                            >
+                                {timeframe.label}
+                            </button>
+                        ))}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {availableDistricts.map((district) => {
+                            const isVisible = visibleDistricts.includes(district);
+
+                            return (
+                                <button
+                                    key={district}
+                                    type="button"
+                                    onClick={() => toggleDistrict(district)}
+                                    className={cn(
+                                        "rounded-md border px-2.5 py-1 text-[10px] font-mono transition-colors",
+                                        isVisible
+                                            ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                                            : "border-white/10 bg-black/20 text-gray-500 hover:border-white/20 hover:text-gray-300"
+                                    )}
+                                >
+                                    {district}
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <TrendChart data={[]} rows={model.rows} series={model.series} height={260} />
+                </div>
+                <div className="flex flex-col gap-3">
+                    {model.series.map((series) => {
+                        const comparison = comparisons.find((item) => item.district === series.district);
+                        const latestSnapshot = comparison?.snapshots[comparison.snapshots.length - 1] ?? null;
+                        const yoyChange = series.yoyChange;
 
                         return (
                             <div
-                                key={comparison.district}
-                                className="rounded-lg border border-white/5 bg-black/20 p-3 space-y-2"
+                                key={series.district}
+                                className="flex flex-col gap-2 rounded-lg border border-white/5 bg-black/20 p-3"
                             >
                                 <div className="flex items-center justify-between gap-3">
                                     <div>
-                                        <div className="text-sm font-mono font-semibold text-gray-100">
-                                            {comparison.district}
-                                        </div>
+                                        <div className="text-sm font-mono font-semibold text-gray-100">{series.district}</div>
                                         <div className="text-[10px] font-mono uppercase tracking-wider text-gray-500">
-                                            Latest snapshot {latestSnapshot?.snapshotDate ?? "N/A"}
+                                            Latest snapshot {series.latestDate ?? "N/A"}
                                         </div>
                                     </div>
-                                    <Activity className="w-4 h-4 text-cyan-400" />
+                                    <Activity className="w-4 h-4" style={{ color: series.color }} />
                                 </div>
                                 <div className="grid grid-cols-2 gap-3 text-xs font-mono">
                                     <MetricPair
                                         label="Median"
-                                        value={`${Math.round(comparison.summary.medianPricePerM2).toLocaleString("cs-CZ")} CZK/m²`}
+                                        value={
+                                            series.latestValue === null
+                                                ? "N/A"
+                                                : `${Math.round(series.latestValue).toLocaleString("cs-CZ")} CZK/m²`
+                                        }
                                     />
                                     <MetricPair
                                         label="Comparables"
-                                        value={String(
-                                            latestSnapshot?.comparablesCount ?? comparison.summary.salesCount
-                                        )}
+                                        value={String(latestSnapshot?.comparablesCount ?? comparison?.summary.salesCount ?? 0)}
                                     />
                                 </div>
                                 <div

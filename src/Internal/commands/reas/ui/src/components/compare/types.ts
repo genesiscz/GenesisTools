@@ -8,6 +8,8 @@ export interface DistrictComparisonSnapshot {
     comparablesCount: number;
     trendDirection: string | null;
     yoyChange: number | null;
+    marketGrossYield: number | null;
+    marketNetYield: number | null;
     snapshotDate: string;
 }
 

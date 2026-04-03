@@ -1,4 +1,5 @@
 import type { DashboardExport } from "@app/Internal/commands/reas/lib/api-export";
+import { fmt, fmtCompactCurrency, fmtCurrency, fmtDays, fmtInteger, fmtPercentile, pct } from "./formatters";
 
 export interface InvestmentSummary {
     overall: number;
@@ -8,43 +9,35 @@ export interface InvestmentSummary {
 }
 
 export function formatNumber(value: number, options?: Intl.NumberFormatOptions): string {
-    return value.toLocaleString("cs-CZ", options);
+    return fmt(value, options);
 }
 
 export function formatInteger(value: number): string {
-    return formatNumber(Math.round(value));
+    return fmtInteger(value);
 }
 
 export function formatCurrency(value: number): string {
-    return `${formatInteger(value)} CZK`;
+    return fmtCurrency(value);
 }
 
 export function formatCompactCurrency(value: number): string {
-    if (Math.abs(value) >= 1_000_000) {
-        return `${(value / 1_000_000).toFixed(1)}M CZK`;
-    }
-
-    if (Math.abs(value) >= 1_000) {
-        return `${(value / 1_000).toFixed(0)}k CZK`;
-    }
-
-    return formatCurrency(value);
+    return fmtCompactCurrency(value);
 }
 
 export function formatPercent(value: number, digits = 1): string {
-    return `${value.toFixed(digits)}%`;
+    return pct(value, { digits });
 }
 
 export function formatSignedPercent(value: number, digits = 1): string {
-    return `${value >= 0 ? "+" : ""}${formatPercent(value, digits)}`;
+    return pct(value, { digits, signed: true });
 }
 
 export function formatPercentile(value: number): string {
-    return `${value.toFixed(0)}th percentile`;
+    return fmtPercentile(value);
 }
 
 export function formatDays(value: number): string {
-    return `${Math.round(value)} days`;
+    return fmtDays(value);
 }
 
 export function median(values: number[]): number {

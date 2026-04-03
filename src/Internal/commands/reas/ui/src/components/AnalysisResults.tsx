@@ -1,7 +1,10 @@
 import type { DashboardExport } from "@app/Internal/commands/reas/lib/api-export";
+import { Link } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
+import { Button } from "@ui/components/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@ui/components/tabs";
 import { cn } from "@ui/lib/utils";
+import { GitCompare } from "lucide-react";
 import {
     ComparablesTab,
     InvestmentTab,
@@ -12,6 +15,7 @@ import {
     VerdictTab,
 } from "./analysis/AnalysisSections";
 import { ExportButton } from "./ExportButton";
+import { buildAnalysisCompareQuery } from "./compare/compare-query";
 import { StalenessIndicator } from "./StalenessIndicator";
 
 interface AnalysisResultsProps {
@@ -29,6 +33,8 @@ const ANALYSIS_TABS = [
 ] as const;
 
 export function AnalysisResults({ data }: AnalysisResultsProps) {
+    const compareHref = `/compare?${buildAnalysisCompareQuery(data).toString()}`;
+
     return (
         <div className="space-y-4 animate-slide-up">
             <div className="flex flex-col gap-4 rounded-2xl border border-white/5 bg-white/[0.02] p-4 sm:p-5">
@@ -57,6 +63,12 @@ export function AnalysisResults({ data }: AnalysisResultsProps) {
                                 {(data.meta.providers ?? []).join(" · ")}
                             </div>
                         </div>
+                        <Button asChild variant="outline" className="border-cyan-500/20 bg-cyan-500/5 text-cyan-300 hover:bg-cyan-500/10">
+                            <Link to={compareHref}>
+                                <GitCompare className="h-3.5 w-3.5" />
+                                Compare District
+                            </Link>
+                        </Button>
                         <ExportButton data={data} />
                     </div>
                 </div>

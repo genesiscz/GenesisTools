@@ -4,6 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@ui/lib/utils";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
+import { GRADE_COLORS } from "../analysis/display-model";
 
 interface HistoryEntry {
     id: number;
@@ -21,14 +22,6 @@ interface HistoryTableProps {
     entries: HistoryEntry[];
     districtFilter: string;
 }
-
-const GRADE_COLORS: Record<string, string> = {
-    A: "text-emerald-400 border-emerald-500/30 bg-emerald-500/10",
-    B: "text-cyan-400 border-cyan-500/30 bg-cyan-500/10",
-    C: "text-amber-400 border-amber-500/30 bg-amber-500/10",
-    D: "text-orange-400 border-orange-500/30 bg-orange-500/10",
-    F: "text-red-400 border-red-500/30 bg-red-500/10",
-};
 
 const PAGE_SIZE = 20;
 
