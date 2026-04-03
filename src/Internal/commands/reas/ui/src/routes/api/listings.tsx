@@ -1,5 +1,5 @@
-import type { GetListingsOptions } from "@app/Internal/commands/reas/lib/store";
 import { fetchListingsIntoCache } from "@app/Internal/commands/reas/lib/analysis-service";
+import type { GetListingsOptions } from "@app/Internal/commands/reas/lib/store";
 import { reasDatabase } from "@app/Internal/commands/reas/lib/store";
 import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler, jsonBody } from "../../server/api-utils";

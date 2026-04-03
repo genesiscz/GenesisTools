@@ -13,21 +13,21 @@ import { type FormEvent, useMemo, useState } from "react";
 import { ListingDetailSheet } from "../components/listings/ListingDetailSheet";
 import { ListingFilters } from "../components/listings/ListingFilters";
 import { ListingsTable } from "../components/listings/ListingsTable";
-import { SourceBadge } from "../components/listings/SourceBadge";
 import {
     appendFilterParams,
     countActiveFilters,
     DEFAULT_FILTERS,
     formatShortDateTime,
     LISTING_TYPES,
-    normalizeFilters,
-    SORT_OPTIONS,
     type ListingsFilters,
     type ListingsResponse,
     type ListingType,
+    normalizeFilters,
+    SORT_OPTIONS,
     type SortBy,
     type SortDir,
 } from "../components/listings/listings-shared";
+import { SourceBadge } from "../components/listings/SourceBadge";
 import { StalenessIndicator } from "../components/StalenessIndicator";
 
 export const Route = createFileRoute("/listings")({
@@ -39,7 +39,9 @@ function ListingsPage() {
     const [listingType, setListingType] = useState<ListingType>("sale");
     const [draftFilters, setDraftFilters] = useState<ListingsFilters>(DEFAULT_FILTERS);
     const [filters, setFilters] = useState<ListingsFilters>(DEFAULT_FILTERS);
-    const [fetchConstructionType, setFetchConstructionType] = useState(PROPERTY_TYPES[1]?.value ?? PROPERTY_TYPES[0].value);
+    const [fetchConstructionType, setFetchConstructionType] = useState(
+        PROPERTY_TYPES[1]?.value ?? PROPERTY_TYPES[0].value
+    );
     const [page, setPage] = useState(1);
     const [sortBy, setSortBy] = useState<SortBy>("fetched_at");
     const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -76,7 +78,9 @@ function ListingsPage() {
     const sourceOptions = useMemo(() => {
         const defaultSources = ["sreality", "bezrealitky", "ereality", "reas", "mf"];
         const knownSources = overview?.sources.map((source) => source.source) ?? [];
-        return Array.from(new Set([...knownSources, ...defaultSources])).sort((left, right) => left.localeCompare(right));
+        return Array.from(new Set([...knownSources, ...defaultSources])).sort((left, right) =>
+            left.localeCompare(right)
+        );
     }, [overview]);
 
     const fetchListingsMutation = useMutation({
@@ -118,18 +122,18 @@ function ListingsPage() {
             await queryClient.invalidateQueries({ queryKey: ["listings"] });
 
             const listingLabel = result.type === "sold" ? "sold" : result.type === "rental" ? "rental" : "sale";
-            const warningSuffix = result.warnings && result.warnings.length > 0 ? ` (${result.warnings.length} warnings)` : "";
-            toast.success(`Fetched ${result.fetchedCount ?? 0} ${listingLabel} listings for ${result.district ?? "selected district"}${warningSuffix}`);
+            const warningSuffix =
+                result.warnings && result.warnings.length > 0 ? ` (${result.warnings.length} warnings)` : "";
+            toast.success(
+                `Fetched ${result.fetchedCount ?? 0} ${listingLabel} listings for ${result.district ?? "selected district"}${warningSuffix}`
+            );
         },
         onError: (error: Error) => {
             toast.error(error.message);
         },
     });
 
-    const handleNumberFilterChange = (
-        key: "priceMin" | "priceMax" | "areaMin" | "areaMax",
-        value: string
-    ) => {
+    const handleNumberFilterChange = (key: "priceMin" | "priceMax" | "areaMin" | "areaMax", value: string) => {
         setDraftFilters((current) => ({
             ...current,
             [key]: value,
@@ -224,7 +228,9 @@ function ListingsPage() {
                                 onClick={() => fetchListingsMutation.mutate()}
                                 disabled={fetchListingsMutation.isPending}
                             >
-                                <RefreshCw className={cn("h-4 w-4", fetchListingsMutation.isPending && "animate-spin")} />
+                                <RefreshCw
+                                    className={cn("h-4 w-4", fetchListingsMutation.isPending && "animate-spin")}
+                                />
                                 Fetch Listings
                             </Button>
                         </div>

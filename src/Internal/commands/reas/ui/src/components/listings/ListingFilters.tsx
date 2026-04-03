@@ -77,7 +77,10 @@ export function ListingFilters({
                             label="Dispositions"
                             emptyLabel="Any disposition"
                             selectedValues={filters.dispositions}
-                            options={DISPOSITION_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+                            options={DISPOSITION_OPTIONS.map((option) => ({
+                                value: option.value,
+                                label: option.label,
+                            }))}
                             onToggle={onToggleDisposition}
                         />
                         <FilterMultiSelect
@@ -142,7 +145,9 @@ export function ListingFilters({
                     </div>
 
                     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/5 pt-4">
-                        <p className="font-mono text-[11px] text-gray-500">Page {page} of {totalPages}</p>
+                        <p className="font-mono text-[11px] text-gray-500">
+                            Page {page} of {totalPages}
+                        </p>
                         <div className="flex items-center gap-2">
                             <Button
                                 type="button"
@@ -152,7 +157,10 @@ export function ListingFilters({
                             >
                                 Reset
                             </Button>
-                            <Button type="submit" className="border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20">
+                            <Button
+                                type="submit"
+                                className="border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                            >
                                 Apply filters
                             </Button>
                         </div>

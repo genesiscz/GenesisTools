@@ -1,8 +1,8 @@
 import { fetchBezrealitkyAdvertDetail } from "@app/Internal/commands/reas/api/bezrealitky-client";
 import { buildSavedPropertyFromListing } from "@app/Internal/commands/reas/lib/property-form-defaults";
 import { reasDatabase } from "@app/Internal/commands/reas/lib/store";
-import { createFileRoute } from "@tanstack/react-router";
 import { SafeJSON } from "@app/utils/json";
+import { createFileRoute } from "@tanstack/react-router";
 import { apiHandler, jsonBody } from "../../server/api-utils";
 
 export const Route = createFileRoute("/api/listings/$id")({

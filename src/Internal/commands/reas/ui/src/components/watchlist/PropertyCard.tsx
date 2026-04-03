@@ -6,11 +6,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { cn } from "@ui/lib/utils";
 import { CheckSquare, ChevronDown, ChevronUp, ExternalLink, Loader2, RefreshCw, Square, Trash2 } from "lucide-react";
 import { useCallback, useState } from "react";
-import { buildPropertyCardModel } from "./property-card-model";
+import { buildCompareSearchParams } from "../compare/compare-query";
 import { PropertyMortgageCard } from "./PropertyMortgageCard";
-import { PropertySparkline } from "./property-sparkline";
 import { PropertyVerdictMini } from "./PropertyVerdictMini";
 import { PropertyYieldBreakdown } from "./PropertyYieldBreakdown";
+import { buildPropertyCardModel } from "./property-card-model";
+import { PropertySparkline } from "./property-sparkline";
 import {
     formatConstructionType,
     formatCurrencyCompact,
@@ -24,7 +25,6 @@ import {
     PROVIDER_LABELS,
     parseSavedProviders,
 } from "./watchlist-utils";
-import { buildCompareSearchParams } from "../compare/compare-query";
 
 interface PropertyCardProps {
     property: SavedPropertyRow;
@@ -163,7 +163,11 @@ export function PropertyCard({
                 <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
                         <MetricItem label="Net Yield" value={formatYield(property.last_net_yield)} tone="accent" />
-                        <PropertySparkline history={history} getValue={(row) => row.net_yield} stroke="rgb(6 182 212)" />
+                        <PropertySparkline
+                            history={history}
+                            getValue={(row) => row.net_yield}
+                            stroke="rgb(6 182 212)"
+                        />
                     </div>
                     <div className="space-y-1">
                         <MetricItem label="Score" value={formatNumber(property.last_score)} tone="warning" />

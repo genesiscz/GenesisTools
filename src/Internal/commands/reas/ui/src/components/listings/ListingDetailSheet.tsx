@@ -1,13 +1,13 @@
 import type { BezrealitkyAdvertDetail } from "@app/Internal/commands/reas/api/bezrealitky-client";
+import { PROPERTY_TYPES } from "@app/Internal/commands/reas/lib/config-builder";
 import type { ListingRow } from "@app/Internal/commands/reas/lib/store";
 import { SafeJSON } from "@app/utils/json";
-import { PROPERTY_TYPES } from "@app/Internal/commands/reas/lib/config-builder";
-import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/components/select";
 import { ScrollArea } from "@ui/components/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/components/select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@ui/components/sheet";
 import { Skeleton } from "@ui/components/skeleton";
 import { toast } from "@ui/index";
@@ -15,7 +15,6 @@ import { cn } from "@ui/lib/utils";
 import { ExternalLink, MapPin } from "lucide-react";
 import { useEffect, useState } from "react";
 import { buildListingCompareQuery } from "../compare/compare-query";
-import { SourceBadge } from "./SourceBadge";
 import {
     extractFirstSeenAt,
     extractImageGallery,
@@ -24,6 +23,7 @@ import {
     getPriceChange,
     mergeImageGallery,
 } from "./listing-detail-model";
+import { SourceBadge } from "./SourceBadge";
 
 interface ListingDetailResponse {
     listing: ListingRow;
@@ -73,7 +73,9 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
     const priceChange = listing ? getPriceChange({ currentPrice: listing.price, originalPrice }) : null;
     const mapEmbedUrl = listing ? buildMapEmbedUrl(listing) : null;
     const mapLinkUrl = listing ? buildMapLinkUrl(listing) : null;
-    const listingTimeline = listing ? buildListingTimeline({ listing, originalPrice, availableFrom, firstSeenAt, priceChange }) : [];
+    const listingTimeline = listing
+        ? buildListingTimeline({ listing, originalPrice, availableFrom, firstSeenAt, priceChange })
+        : [];
     const compareHref = listing ? `/compare?${buildListingCompareQuery(listing).toString()}` : null;
     const providerLinks = hydratedDetail?.links ?? [];
     const regionTree = hydratedDetail?.regionTree ?? [];
@@ -238,32 +240,41 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                     </section>
                                 )}
 
-                                {listing.coordinates_lat !== null && listing.coordinates_lng !== null && mapEmbedUrl && mapLinkUrl && (
-                                    <section className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
-                                        <div className="mb-3 flex items-center justify-between gap-3">
-                                            <div>
-                                                <div className="text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
-                                                    Map
+                                {listing.coordinates_lat !== null &&
+                                    listing.coordinates_lng !== null &&
+                                    mapEmbedUrl &&
+                                    mapLinkUrl && (
+                                        <section className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                                            <div className="mb-3 flex items-center justify-between gap-3">
+                                                <div>
+                                                    <div className="text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
+                                                        Map
+                                                    </div>
+                                                    <p className="mt-1 font-mono text-xs text-gray-400">
+                                                        {listing.coordinates_lat.toFixed(5)},{" "}
+                                                        {listing.coordinates_lng.toFixed(5)}
+                                                    </p>
                                                 </div>
-                                                <p className="mt-1 font-mono text-xs text-gray-400">
-                                                    {listing.coordinates_lat.toFixed(5)}, {listing.coordinates_lng.toFixed(5)}
-                                                </p>
+                                                <Button
+                                                    asChild
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="border-white/10 bg-black/20 text-gray-300 hover:bg-white/[0.04]"
+                                                >
+                                                    <a href={mapLinkUrl} target="_blank" rel="noreferrer">
+                                                        <ExternalLink className="h-3.5 w-3.5" />
+                                                        Open map
+                                                    </a>
+                                                </Button>
                                             </div>
-                                            <Button asChild size="sm" variant="outline" className="border-white/10 bg-black/20 text-gray-300 hover:bg-white/[0.04]">
-                                                <a href={mapLinkUrl} target="_blank" rel="noreferrer">
-                                                    <ExternalLink className="h-3.5 w-3.5" />
-                                                    Open map
-                                                </a>
-                                            </Button>
-                                        </div>
-                                        <iframe
-                                            title={`Map for ${listing.address}`}
-                                            src={mapEmbedUrl}
-                                            className="h-64 w-full rounded-lg border border-white/5"
-                                            loading="lazy"
-                                        />
-                                    </section>
-                                )}
+                                            <iframe
+                                                title={`Map for ${listing.address}`}
+                                                src={mapEmbedUrl}
+                                                className="h-64 w-full rounded-lg border border-white/5"
+                                                loading="lazy"
+                                            />
+                                        </section>
+                                    )}
 
                                 {hydratedDetail && (
                                     <section className="rounded-xl border border-cyan-500/15 bg-cyan-500/[0.03] p-4">
@@ -271,8 +282,14 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                             Bezrealitky detail
                                         </div>
                                         <div className="grid gap-3 sm:grid-cols-2">
-                                            <Metric label="Charges" value={formatCurrency(hydratedDetail.charges ?? null)} />
-                                            <Metric label="Deposit" value={formatCurrency(hydratedDetail.deposit ?? null)} />
+                                            <Metric
+                                                label="Charges"
+                                                value={formatCurrency(hydratedDetail.charges ?? null)}
+                                            />
+                                            <Metric
+                                                label="Deposit"
+                                                value={formatCurrency(hydratedDetail.deposit ?? null)}
+                                            />
                                             <Metric
                                                 label="Service charges"
                                                 value={formatCurrency(hydratedDetail.serviceCharges ?? null)}
@@ -281,14 +298,24 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                                 label="Utility charges"
                                                 value={formatCurrency(hydratedDetail.utilityCharges ?? null)}
                                             />
-                                            <Metric label="Available from" value={formatUnknownDate(hydratedDetail.availableFrom)} />
-                                            <Metric label="Original price" value={formatCurrency(hydratedDetail.originalPrice ?? null)} />
+                                            <Metric
+                                                label="Available from"
+                                                value={formatUnknownDate(hydratedDetail.availableFrom)}
+                                            />
+                                            <Metric
+                                                label="Original price"
+                                                value={formatCurrency(hydratedDetail.originalPrice ?? null)}
+                                            />
                                         </div>
 
                                         {regionTree.length > 0 && (
                                             <div className="mt-4 flex flex-wrap items-center gap-2">
                                                 {regionTree.map((region) => (
-                                                    <Badge key={`${region.id}-${region.name}`} variant="outline" className="border-white/10 bg-white/[0.03] font-mono text-[10px] text-gray-300">
+                                                    <Badge
+                                                        key={`${region.id}-${region.name}`}
+                                                        variant="outline"
+                                                        className="border-white/10 bg-white/[0.03] font-mono text-[10px] text-gray-300"
+                                                    >
                                                         {region.name}
                                                     </Badge>
                                                 ))}
@@ -368,7 +395,9 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                                             key={`${entry.title ?? entry.value ?? index}`}
                                                             className="flex items-center justify-between gap-3 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2 text-xs font-mono text-gray-300"
                                                         >
-                                                            <span className="text-gray-400">{entry.title ?? `Detail ${index + 1}`}</span>
+                                                            <span className="text-gray-400">
+                                                                {entry.title ?? `Detail ${index + 1}`}
+                                                            </span>
                                                             {entry.valueHref ? (
                                                                 <a
                                                                     href={entry.valueHref}
@@ -376,11 +405,15 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                                                     rel="noreferrer"
                                                                     className="flex items-center gap-2 text-cyan-300 hover:text-cyan-200"
                                                                 >
-                                                                    <span className="text-right">{entry.value ?? entry.valueHref}</span>
+                                                                    <span className="text-right">
+                                                                        {entry.value ?? entry.valueHref}
+                                                                    </span>
                                                                     <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                                                                 </a>
                                                             ) : (
-                                                                <span className="text-right">{entry.value ?? "--"}</span>
+                                                                <span className="text-right">
+                                                                    {entry.value ?? "--"}
+                                                                </span>
                                                             )}
                                                         </div>
                                                     ))}
@@ -402,7 +435,9 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                                             rel="noreferrer"
                                                             className="flex items-center justify-between gap-3 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2 text-xs font-mono text-gray-300 hover:border-cyan-500/30 hover:text-cyan-300"
                                                         >
-                                                            <span className="truncate">{getRelatedAdvertLabel(advert)}</span>
+                                                            <span className="truncate">
+                                                                {getRelatedAdvertLabel(advert)}
+                                                            </span>
                                                             <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                                                         </a>
                                                     ))}
@@ -429,7 +464,11 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                                 </SelectTrigger>
                                                 <SelectContent className="border-white/10 bg-[#09090d] font-mono text-xs text-gray-200">
                                                     {PROPERTY_TYPES.map((type) => (
-                                                        <SelectItem key={type.value} value={type.value} className="font-mono text-xs text-gray-200">
+                                                        <SelectItem
+                                                            key={type.value}
+                                                            value={type.value}
+                                                            className="font-mono text-xs text-gray-200"
+                                                        >
                                                             {type.label}
                                                         </SelectItem>
                                                     ))}
@@ -587,13 +626,7 @@ function buildMapLinkUrl(listing: ListingRow) {
     return `https://www.openstreetmap.org/?mlat=${listing.coordinates_lat}&mlon=${listing.coordinates_lng}#map=16/${listing.coordinates_lat}/${listing.coordinates_lng}`;
 }
 
-function getOriginalPrice({
-    raw,
-    hydratedDetail,
-}: {
-    raw: unknown;
-    hydratedDetail: BezrealitkyAdvertDetail | null;
-}) {
+function getOriginalPrice({ raw, hydratedDetail }: { raw: unknown; hydratedDetail: BezrealitkyAdvertDetail | null }) {
     if (hydratedDetail?.originalPrice !== undefined) {
         return hydratedDetail.originalPrice;
     }
@@ -605,13 +638,7 @@ function getOriginalPrice({
     return typeof raw.originalPrice === "number" ? raw.originalPrice : null;
 }
 
-function getAvailableFrom({
-    raw,
-    hydratedDetail,
-}: {
-    raw: unknown;
-    hydratedDetail: BezrealitkyAdvertDetail | null;
-}) {
+function getAvailableFrom({ raw, hydratedDetail }: { raw: unknown; hydratedDetail: BezrealitkyAdvertDetail | null }) {
     if (hydratedDetail?.availableFrom !== undefined) {
         return hydratedDetail.availableFrom;
     }

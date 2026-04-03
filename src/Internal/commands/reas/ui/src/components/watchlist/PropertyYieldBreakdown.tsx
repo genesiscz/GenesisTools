@@ -40,7 +40,9 @@ export function PropertyYieldBreakdown({ model }: { model: PropertyCardModel }) 
                             <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
                                 <div
                                     className="h-full rounded-full bg-cyan-400/80"
-                                    style={{ width: `${Math.max(8, (benchmark.yield / Math.max(benchmarkMax, 1)) * 100)}%` }}
+                                    style={{
+                                        width: `${Math.max(8, (benchmark.yield / Math.max(benchmarkMax, 1)) * 100)}%`,
+                                    }}
                                 />
                             </div>
                         </div>

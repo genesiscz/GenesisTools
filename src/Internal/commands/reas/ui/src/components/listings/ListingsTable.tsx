@@ -14,7 +14,6 @@ import { Skeleton } from "@ui/components/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/components/table";
 import { cn } from "@ui/lib/utils";
 import { ExternalLink, MoreHorizontal, RefreshCw, SlidersHorizontal } from "lucide-react";
-import { SourceBadge } from "./SourceBadge";
 import {
     formatArea,
     formatMarketMetric,
@@ -23,11 +22,12 @@ import {
     formatShortDate,
     getListingRangeLabel,
     LISTING_SKELETON_KEYS,
-    readableSortLabel,
     type ListingType,
+    readableSortLabel,
     type SortBy,
     type SortDir,
 } from "./listings-shared";
+import { SourceBadge } from "./SourceBadge";
 
 interface ListingsTableProps {
     listingType: ListingType;
@@ -174,10 +174,16 @@ export function ListingsTable({
                                                     <ExternalLink className="h-3.5 w-3.5" />
                                                 </a>
                                             </div>
-                                            <div className="mt-1 text-[11px] font-mono text-gray-500">{listing.status}</div>
+                                            <div className="mt-1 text-[11px] font-mono text-gray-500">
+                                                {listing.status}
+                                            </div>
                                         </TableCell>
-                                        <TableCell className="font-mono text-xs text-gray-300">{listing.district}</TableCell>
-                                        <TableCell className="font-mono text-xs text-gray-400">{listing.disposition ?? "--"}</TableCell>
+                                        <TableCell className="font-mono text-xs text-gray-300">
+                                            {listing.district}
+                                        </TableCell>
+                                        <TableCell className="font-mono text-xs text-gray-400">
+                                            {listing.disposition ?? "--"}
+                                        </TableCell>
                                         <TableCell className="text-right font-mono text-xs text-gray-300">
                                             {formatArea(listing.area)}
                                         </TableCell>
@@ -191,7 +197,9 @@ export function ListingsTable({
                                             {formatMarketMetric(listing.days_on_market)}
                                         </TableCell>
                                         <TableCell className="text-right font-mono text-xs text-gray-400">
-                                            {formatShortDate(listing.type === "sold" ? listing.sold_at : listing.fetched_at)}
+                                            {formatShortDate(
+                                                listing.type === "sold" ? listing.sold_at : listing.fetched_at
+                                            )}
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <RowActions listing={listing} onSelectListing={onSelectListing} />
@@ -276,9 +284,7 @@ function RowActions({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
                 <DropdownMenuGroup>
-                    <DropdownMenuItem onSelect={() => onSelectListing(listing.id)}>
-                        View details
-                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => onSelectListing(listing.id)}>View details</DropdownMenuItem>
                     <DropdownMenuItem asChild>
                         <a href={listing.link} target="_blank" rel="noreferrer">
                             Open source

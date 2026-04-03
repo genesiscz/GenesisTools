@@ -1,4 +1,8 @@
-import type { PropertyAnalysisHistoryRow, SavedPropertyRow, SavePropertyInput } from "@app/Internal/commands/reas/lib/store";
+import type {
+    PropertyAnalysisHistoryRow,
+    SavedPropertyRow,
+    SavePropertyInput,
+} from "@app/Internal/commands/reas/lib/store";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useRouter, useRouterState } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
@@ -581,13 +585,13 @@ function WatchlistIndexPage() {
             {!propertiesLoading && filteredProperties.length > 0 && (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {filteredProperties.map((property) => (
-                            <PropertyCard
-                                key={property.id}
-                                property={property}
-                                history={historyByProperty[property.id] ?? []}
-                                onRefresh={handleRefresh}
-                                onDelete={handleDelete}
-                                selectedForCompare={selectedCompareIds.includes(property.id)}
+                        <PropertyCard
+                            key={property.id}
+                            property={property}
+                            history={historyByProperty[property.id] ?? []}
+                            onRefresh={handleRefresh}
+                            onDelete={handleDelete}
+                            selectedForCompare={selectedCompareIds.includes(property.id)}
                             onToggleCompare={toggleCompareSelection}
                         />
                     ))}

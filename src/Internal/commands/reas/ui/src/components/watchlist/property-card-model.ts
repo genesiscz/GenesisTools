@@ -105,7 +105,9 @@ export function buildPropertyCardModel(property: SavedPropertyRow): PropertyCard
             targetPrice: property.target_price,
             financedYield:
                 property.target_price > 0 && property.monthly_rent > 0
-                    ? ((property.monthly_rent - property.monthly_costs - (mortgageModel?.monthlyPayment ?? 0)) * 12 * 100) /
+                    ? ((property.monthly_rent - property.monthly_costs - (mortgageModel?.monthlyPayment ?? 0)) *
+                          12 *
+                          100) /
                       property.target_price
                     : null,
             benchmarks: analysis.yield.benchmarks ?? [],
@@ -131,11 +133,15 @@ function buildMortgageModel(property: SavedPropertyRow): PropertyMortgageModel |
     const monthlyPayment =
         monthlyRate === 0
             ? property.loan_amount / numberOfPayments
-            : (property.loan_amount * monthlyRate) / (1 - Math.pow(1 + monthlyRate, -numberOfPayments));
+            : (property.loan_amount * monthlyRate) / (1 - (1 + monthlyRate) ** -numberOfPayments);
     const totalInterest = monthlyPayment * numberOfPayments - property.loan_amount;
-    const equity = property.down_payment && property.down_payment > 0 ? property.down_payment : property.target_price - property.loan_amount;
+    const equity =
+        property.down_payment && property.down_payment > 0
+            ? property.down_payment
+            : property.target_price - property.loan_amount;
     const annualCashflow = (property.monthly_rent - property.monthly_costs - monthlyPayment) * 12;
-    const breakEvenOccupancy = property.monthly_rent > 0 ? ((monthlyPayment + property.monthly_costs) / property.monthly_rent) * 100 : 0;
+    const breakEvenOccupancy =
+        property.monthly_rent > 0 ? ((monthlyPayment + property.monthly_costs) / property.monthly_rent) * 100 : 0;
 
     return {
         monthlyPayment,

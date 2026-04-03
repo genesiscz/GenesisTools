@@ -14,21 +14,21 @@ import { toast } from "@ui/index";
 import { cn } from "@ui/lib/utils";
 import { ArrowLeft, ExternalLink, FileStack, History, Layers3 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { ComparablesTable } from "../components/ComparablesTable";
-import { MomentumCard } from "../components/MomentumCard";
-import { PriceTrendChart } from "../components/PriceTrendChart";
-import { ScoreCard } from "../components/ScoreCard";
 import { DataTable } from "../components/analysis/DataTable";
 import { InfoBox } from "../components/analysis/InfoBox";
 import { ScoreGauge } from "../components/analysis/ScoreGauge";
 import { SectionTitle } from "../components/analysis/SectionTitle";
 import { StatCard } from "../components/analysis/StatCard";
+import { ComparablesTable } from "../components/ComparablesTable";
+import { MomentumCard } from "../components/MomentumCard";
+import { PriceTrendChart } from "../components/PriceTrendChart";
+import { ScoreCard } from "../components/ScoreCard";
 import { PropertyHistoryChart } from "../components/watchlist/PropertyHistoryChart";
-import { buildPropertyCardModel } from "../components/watchlist/property-card-model";
 import { PropertyMortgageCard } from "../components/watchlist/PropertyMortgageCard";
-import { ProviderLinks } from "../components/watchlist/ProviderLinks";
 import { PropertyVerdictMini } from "../components/watchlist/PropertyVerdictMini";
 import { PropertyYieldBreakdown } from "../components/watchlist/PropertyYieldBreakdown";
+import { ProviderLinks } from "../components/watchlist/ProviderLinks";
+import { buildPropertyCardModel } from "../components/watchlist/property-card-model";
 import {
     formatConstructionType,
     formatCurrencyCompact,
@@ -208,7 +208,9 @@ function WatchlistPropertyDetailPage() {
     const gradeStyle = property.last_grade ? (GRADE_COLORS[property.last_grade] ?? "") : "";
     const providers = parseSavedProviders(property.providers);
     const alertYieldTriggered =
-        property.alert_yield_floor != null && property.last_net_yield != null && property.last_net_yield < property.alert_yield_floor;
+        property.alert_yield_floor != null &&
+        property.last_net_yield != null &&
+        property.last_net_yield < property.alert_yield_floor;
 
     return (
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
@@ -336,7 +338,10 @@ function WatchlistPropertyDetailPage() {
 
                         <div className="grid gap-3 md:grid-cols-[minmax(0,220px)_1fr]">
                             <div>
-                                <label htmlFor="detail-alert-yield" className="mb-1 block text-[10px] font-mono text-gray-500">
+                                <label
+                                    htmlFor="detail-alert-yield"
+                                    className="mb-1 block text-[10px] font-mono text-gray-500"
+                                >
                                     Yield floor (%)
                                 </label>
                                 <Input
@@ -441,7 +446,9 @@ function WatchlistPropertyDetailPage() {
                                     />
                                     <StatCard
                                         label="Percentile"
-                                        value={property.percentile != null ? `${property.percentile.toFixed(0)}th` : "-"}
+                                        value={
+                                            property.percentile != null ? `${property.percentile.toFixed(0)}th` : "-"
+                                        }
                                         hint="Relative to sold comparables"
                                         accent="green"
                                     />
@@ -457,7 +464,11 @@ function WatchlistPropertyDetailPage() {
                             <PriceTrendChart data={exportData} />
 
                             <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                                <PropertyHistoryChart title="Score History" color="rgb(245 158 11)" points={historySeries.score} />
+                                <PropertyHistoryChart
+                                    title="Score History"
+                                    color="rgb(245 158 11)"
+                                    points={historySeries.score}
+                                />
                                 <PropertyHistoryChart
                                     title="Net Yield History"
                                     color="rgb(6 182 212)"
@@ -509,10 +520,26 @@ function WatchlistPropertyDetailPage() {
                             />
 
                             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                                <StatCard label="Target Price" value={formatCurrencyFull(exportData.meta.target.price)} accent="amber" />
-                                <StatCard label="Target Area" value={`${formatNumber(exportData.meta.target.area)} m2`} accent="slate" />
-                                <StatCard label="Providers" value={formatNumber(exportData.meta.providers.length)} accent="cyan" />
-                                <StatCard label="Generated" value={formatDateTime(exportData.meta.generatedAt)} accent="green" />
+                                <StatCard
+                                    label="Target Price"
+                                    value={formatCurrencyFull(exportData.meta.target.price)}
+                                    accent="amber"
+                                />
+                                <StatCard
+                                    label="Target Area"
+                                    value={`${formatNumber(exportData.meta.target.area)} m2`}
+                                    accent="slate"
+                                />
+                                <StatCard
+                                    label="Providers"
+                                    value={formatNumber(exportData.meta.providers.length)}
+                                    accent="cyan"
+                                />
+                                <StatCard
+                                    label="Generated"
+                                    value={formatDateTime(exportData.meta.generatedAt)}
+                                    accent="green"
+                                />
                             </div>
 
                             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -525,9 +552,18 @@ function WatchlistPropertyDetailPage() {
                                     <CardContent className="px-0">
                                         <DataTable
                                             columns={[
-                                                { key: "address", header: "Address", className: "max-w-[260px] truncate text-gray-300" },
+                                                {
+                                                    key: "address",
+                                                    header: "Address",
+                                                    className: "max-w-[260px] truncate text-gray-300",
+                                                },
                                                 { key: "rentLabel", header: "Rent", align: "right" },
-                                                { key: "rentPerM2Label", header: "CZK/m2", align: "right", className: "text-cyan-400" },
+                                                {
+                                                    key: "rentPerM2Label",
+                                                    header: "CZK/m2",
+                                                    align: "right",
+                                                    className: "text-cyan-400",
+                                                },
                                             ]}
                                             rows={exportData.listings.rentals.slice(0, 12).map((listing) => ({
                                                 ...listing,
@@ -542,7 +578,9 @@ function WatchlistPropertyDetailPage() {
 
                                 <Card className="border-white/5 bg-white/[0.02]">
                                     <CardHeader className="pb-2">
-                                        <CardTitle className="text-sm font-mono text-amber-400">Yield Context</CardTitle>
+                                        <CardTitle className="text-sm font-mono text-amber-400">
+                                            Yield Context
+                                        </CardTitle>
                                     </CardHeader>
                                     <CardContent className="space-y-4">
                                         <YieldCard data={exportData} />
@@ -572,7 +610,9 @@ function WatchlistPropertyDetailPage() {
                                 <ScoreGauge score={property.last_score ?? 0} label="Stored score" />
                                 <div className="space-y-3">
                                     <InfoBox tone="info" title="Stored snapshot">
-                                        Net yield {formatYield(property.last_net_yield)} · gross yield {formatYield(property.last_gross_yield)} · market median {formatCurrencyCompact(property.last_median_price_per_m2)}.
+                                        Net yield {formatYield(property.last_net_yield)} · gross yield{" "}
+                                        {formatYield(property.last_gross_yield)} · market median{" "}
+                                        {formatCurrencyCompact(property.last_median_price_per_m2)}.
                                     </InfoBox>
                                     {exportData ? <MomentumCard data={exportData} /> : null}
                                 </div>
@@ -595,7 +635,14 @@ function WatchlistPropertyDetailPage() {
                         <div className="grid grid-cols-1 xl:grid-cols-[0.95fr_1.05fr] gap-4">
                             <PropertyVerdictMini grade={property.last_grade} model={propertyModel} />
                             <div className="space-y-4">
-                                <InfoBox tone={property.last_grade === "A" || property.last_grade === "B" ? "positive" : "warning"} title="Recommendation">
+                                <InfoBox
+                                    tone={
+                                        property.last_grade === "A" || property.last_grade === "B"
+                                            ? "positive"
+                                            : "warning"
+                                    }
+                                    title="Recommendation"
+                                >
                                     {propertyModel.recommendation
                                         ? `${propertyModel.recommendation} backed by ${propertyModel.reasons.length} stored reasons and ${propertyModel.verdictChecklist.length} checklist items.`
                                         : "No stored recommendation is available yet. Refresh the property to generate one."}
@@ -619,7 +666,12 @@ function WatchlistPropertyDetailPage() {
                                     columns={[
                                         { key: "provider", header: "Provider", className: "text-gray-300" },
                                         { key: "sourceContract", header: "Contract", className: "text-gray-500" },
-                                        { key: "countLabel", header: "Count", align: "right", className: "text-cyan-400" },
+                                        {
+                                            key: "countLabel",
+                                            header: "Count",
+                                            align: "right",
+                                            className: "text-cyan-400",
+                                        },
                                         { key: "fetchedLabel", header: "Fetched", className: "text-gray-500" },
                                     ]}
                                     rows={exportData.meta.providerSummary.map((provider) => ({
@@ -659,7 +711,8 @@ function WatchlistPropertyDetailPage() {
                                                         variant="outline"
                                                         className={cn(
                                                             "text-[10px] font-mono",
-                                                            GRADE_COLORS[String(row.grade)] ?? "border-white/10 text-gray-400"
+                                                            GRADE_COLORS[String(row.grade)] ??
+                                                                "border-white/10 text-gray-400"
                                                         )}
                                                     >
                                                         {row.gradeLabel}
@@ -668,11 +721,26 @@ function WatchlistPropertyDetailPage() {
                                                     <span className="text-xs font-mono text-gray-500">-</span>
                                                 ),
                                         },
-                                        { key: "scoreLabel", header: "Score", align: "right", className: "text-amber-400" },
-                                        { key: "netYieldLabel", header: "Net Yield", align: "right", className: "text-cyan-400" },
+                                        {
+                                            key: "scoreLabel",
+                                            header: "Score",
+                                            align: "right",
+                                            className: "text-amber-400",
+                                        },
+                                        {
+                                            key: "netYieldLabel",
+                                            header: "Net Yield",
+                                            align: "right",
+                                            className: "text-cyan-400",
+                                        },
                                         { key: "grossYieldLabel", header: "Gross Yield", align: "right" },
                                         { key: "medianLabel", header: "Median CZK/m2", align: "right" },
-                                        { key: "compsLabel", header: "Comps", align: "right", className: "text-gray-400" },
+                                        {
+                                            key: "compsLabel",
+                                            header: "Comps",
+                                            align: "right",
+                                            className: "text-gray-400",
+                                        },
                                     ]}
                                     rows={history.map((entry) => ({
                                         ...entry,
@@ -688,7 +756,9 @@ function WatchlistPropertyDetailPage() {
                                 />
                             ) : (
                                 <div className="px-6 pb-6">
-                                    <p className="text-xs font-mono text-gray-500">No analysis history is stored for this property yet.</p>
+                                    <p className="text-xs font-mono text-gray-500">
+                                        No analysis history is stored for this property yet.
+                                    </p>
                                 </div>
                             )}
                         </CardContent>

@@ -16,9 +16,7 @@ export function PropertyMortgageCard({ mortgage }: { mortgage: PropertyMortgageM
                         <div>Break-even {formatPercent(mortgage.breakEvenOccupancy)}</div>
                     </div>
                     <div className="mt-3">
-                        <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-gray-600">
-                            Balance
-                        </div>
+                        <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-gray-600">Balance</div>
                         <svg viewBox="0 0 100 24" className="h-6 w-full overflow-visible" aria-hidden="true">
                             <polyline
                                 fill="none"

@@ -26,7 +26,13 @@ export function extractFirstSeenAt(raw: unknown) {
     return typeof raw.firstVisibleAt === "string" ? raw.firstVisibleAt : null;
 }
 
-export function getPriceChange({ currentPrice, originalPrice }: { currentPrice: number; originalPrice: number | null }) {
+export function getPriceChange({
+    currentPrice,
+    originalPrice,
+}: {
+    currentPrice: number;
+    originalPrice: number | null;
+}) {
     if (originalPrice === null || originalPrice <= 0 || originalPrice === currentPrice) {
         return null;
     }
@@ -64,7 +70,10 @@ export function extractNemoreportLinks(value: unknown): ExternalResourceLink[] {
         value,
         path: [],
         visit: ({ value: candidate, path }) => {
-            if (typeof candidate !== "string" || !candidate.startsWith("http://") && !candidate.startsWith("https://")) {
+            if (
+                typeof candidate !== "string" ||
+                (!candidate.startsWith("http://") && !candidate.startsWith("https://"))
+            ) {
                 return;
             }
 
@@ -130,10 +139,12 @@ export function extractImageGallery(raw: unknown): ListingGalleryImage[] {
             return [];
         }
 
-        return [{
-            full,
-            preview: getImageUrl(entry, ["preview", "thumbnail", "thumb", "url", "src"]) ?? full,
-        }];
+        return [
+            {
+                full,
+                preview: getImageUrl(entry, ["preview", "thumbnail", "thumb", "url", "src"]) ?? full,
+            },
+        ];
     });
 }
 

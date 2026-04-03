@@ -4,8 +4,8 @@ import {
     extractImageGallery,
     extractNemoreportLinks,
     extractPoiHighlights,
-    mergeImageGallery,
     getPriceChange,
+    mergeImageGallery,
 } from "@app/Internal/commands/reas/ui/src/components/listings/listing-detail-model";
 
 describe("listing-detail-model", () => {
@@ -90,9 +90,7 @@ describe("listing-detail-model", () => {
     test("prefers existing raw media but appends unique hydrated images", () => {
         expect(
             mergeImageGallery({
-                primary: [
-                    { full: "https://example.test/full-0.jpg", preview: "https://example.test/thumb-0.jpg" },
-                ],
+                primary: [{ full: "https://example.test/full-0.jpg", preview: "https://example.test/thumb-0.jpg" }],
                 secondary: [
                     { full: "https://example.test/full-0.jpg", preview: "https://example.test/thumb-0.jpg" },
                     { full: "https://example.test/full-1.jpg", preview: "https://example.test/thumb-1.jpg" },

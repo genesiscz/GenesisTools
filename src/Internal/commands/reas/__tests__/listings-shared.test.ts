@@ -3,8 +3,8 @@ import {
     appendFilterParams,
     countActiveFilters,
     getListingRangeLabel,
-    normalizeFilters,
     type ListingsFilters,
+    normalizeFilters,
 } from "@app/Internal/commands/reas/ui/src/components/listings/listings-shared";
 
 function makeFilters(overrides?: Partial<ListingsFilters>): ListingsFilters {

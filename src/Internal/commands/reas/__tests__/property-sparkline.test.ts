@@ -21,11 +21,14 @@ function makeHistoryRow(overrides?: Partial<PropertyAnalysisHistoryRow>): Proper
 
 describe("buildSparklinePoints", () => {
     test("returns normalized points ordered oldest to newest", () => {
-        const points = buildSparklinePoints([
-            makeHistoryRow({ id: 3, analyzed_at: "2026-04-03T00:00:00.000Z", net_yield: 3.9 }),
-            makeHistoryRow({ id: 1, analyzed_at: "2026-04-01T00:00:00.000Z", net_yield: 3.4 }),
-            makeHistoryRow({ id: 2, analyzed_at: "2026-04-02T00:00:00.000Z", net_yield: 3.7 }),
-        ], (row: PropertyAnalysisHistoryRow) => row.net_yield);
+        const points = buildSparklinePoints(
+            [
+                makeHistoryRow({ id: 3, analyzed_at: "2026-04-03T00:00:00.000Z", net_yield: 3.9 }),
+                makeHistoryRow({ id: 1, analyzed_at: "2026-04-01T00:00:00.000Z", net_yield: 3.4 }),
+                makeHistoryRow({ id: 2, analyzed_at: "2026-04-02T00:00:00.000Z", net_yield: 3.7 }),
+            ],
+            (row: PropertyAnalysisHistoryRow) => row.net_yield
+        );
 
         expect(points).toHaveLength(3);
         expect(points[0]).toBe("0,24");
@@ -33,7 +36,10 @@ describe("buildSparklinePoints", () => {
     });
 
     test("returns empty array when fewer than two finite values exist", () => {
-        const points = buildSparklinePoints([makeHistoryRow({ net_yield: null })], (row: PropertyAnalysisHistoryRow) => row.net_yield);
+        const points = buildSparklinePoints(
+            [makeHistoryRow({ net_yield: null })],
+            (row: PropertyAnalysisHistoryRow) => row.net_yield
+        );
         expect(points).toEqual([]);
     });
 });
