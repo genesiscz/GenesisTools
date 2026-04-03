@@ -1,28 +1,28 @@
 # Wakeup
 
-Tiny Wake-on-LAN helper with an HTTP relay that can be kept alive by the `tools daemon` scheduler.
+Tiny Wake-on-LAN helper with a guided CLI and HTTP relay.
 
-## Usage
+## Quick start
 
-### Send a magic packet
+- `tools wakeup` — opens an interactive menu (Configuration or Wake). The first run asks whether this machine is a server, client, or both and saves to `~/.genesis-tools/wakeup/config.json`.
+- `tools wakeup server` — guided setup that auto-fills broadcast/MAC from your active interface, saves config, and starts the relay.
+- `tools wakeup register` — grabs your MAC/broadcast automatically, asks for name/password, and registers with the configured server.
+- `tools wakeup login` — prompts for server, name, password; confirms with the server, then saves credentials.
+- `tools wakeup wake` — picks a saved device (or lets you login), asks when to wake (default now), and waits for the server acknowledgement.
+- `tools wakeup send` — prompt-driven raw Wake-on-LAN packet sender.
 
-```bash
-tools wakeup send --mac AA:BB:CC:DD:EE:FF --broadcast 192.168.1.255 --port 9
-```
+All prompts use `@clack/prompts`; sensible defaults come from your network interface and saved config.
 
-### Run HTTP relay
+## Server endpoints
 
-```bash
-tools wakeup server --port 8787 --broadcast 192.168.1.255 --wol-port 9 --default-mac AA:BB:CC:DD:EE:FF --token secret
-```
+- `GET /health` — `{ "status": "ok" }`
+- `POST /register` — `{ name, password, mac, broadcast?, port? }`
+- `POST /login` — `{ name, password }` → confirms the client exists
+- `POST /wake` — `{ name, password }` (uses registered client) or `{ mac, broadcast?, port?, password? }`
 
-Endpoints:
+If a server token is configured, requests must include `Authorization: Bearer <token>` (or `?token=` for GET).
 
-- `GET /health` — returns `{ "status": "ok" }`
-- `POST /wake` — body: `{ "mac": "...", "broadcast": "...", "port": 9, "password": "..." }`
-  - Provide bearer token via `Authorization: Bearer <token>` or `?token=` query parameter when `--token` is set.
-
-### Keep relay always running (daemon)
+## Keep the relay running (daemon)
 
 Register the relay with the shared daemon (launchd-backed):
 
@@ -31,7 +31,7 @@ tools wakeup daemon register --port 8787 --broadcast 192.168.1.255 --mac AA:BB:C
 tools daemon install   # ensure daemon is installed and running
 ```
 
-Check status / remove:
+Status / remove:
 
 ```bash
 tools wakeup daemon status
@@ -41,4 +41,4 @@ tools wakeup daemon unregister
 ## Notes
 
 - Works best when the target Mac has "Wake for network access" enabled and is on a network that forwards broadcast packets to the interface.
-- SecureOn passwords are supported via `--password`/`password` field (6-byte hex).
+- SecureOn passwords are supported in `tools wakeup send` and `/wake` via the optional `password` field (6-byte hex).
