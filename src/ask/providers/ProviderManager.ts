@@ -661,6 +661,50 @@ export class ProviderManager {
         const provider = this.getProvider(providerName);
         return provider?.models || [];
     }
+
+    /**
+     * Create a fresh subscription DetectedProvider for a specific claude account.
+     * Does NOT use or modify the singleton `detectedProviders` cache.
+     * Returns null if account not found or token resolution fails.
+     */
+    async createSubscriptionProvider(accountName: string): Promise<DetectedProvider | null> {
+        try {
+            const { resolveAccountToken } = await import("@app/utils/claude/subscription-auth");
+            const { token } = await resolveAccountToken(accountName);
+
+            const { createAnthropic } = await import("@ai-sdk/anthropic");
+            const provider = createAnthropic({
+                apiKey: "oauth-placeholder",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "anthropic-beta": SUBSCRIPTION_BETAS,
+                },
+                fetch: createSubscriptionFetch(),
+            });
+
+            const allConfigs = getProviderConfigs();
+            const anthropicConfig = allConfigs.find((c) => c.name === "anthropic");
+
+            if (!anthropicConfig) {
+                return null;
+            }
+
+            const models = await this.getAvailableModels(anthropicConfig, provider);
+
+            return {
+                name: "anthropic",
+                type: "anthropic",
+                key: `${token.slice(0, 20)}...`,
+                provider,
+                models,
+                config: anthropicConfig,
+                systemPromptPrefix: SUBSCRIPTION_SYSTEM_PREFIX,
+            };
+        } catch (err) {
+            logger.warn(`Failed to create subscription provider for "${accountName}": ${err}`);
+            return null;
+        }
+    }
 }
 
 // Singleton instance
