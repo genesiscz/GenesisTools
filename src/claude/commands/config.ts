@@ -1,4 +1,4 @@
-import { type ClaudeConfig, determineAccountLabel, loadConfig, saveConfig } from "@app/claude/lib/config";
+import { type ClaudeConfig, DEFAULT_WARMUP, determineAccountLabel, loadConfig, saveConfig } from "@app/claude/lib/config";
 import { fetchUsage } from "@app/claude/lib/usage/api";
 import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@app/utils/claude/auth";
 import { copyToClipboard } from "@app/utils/clipboard";
@@ -200,6 +200,7 @@ async function interactiveConfig(): Promise<void> {
             options: [
                 { value: "accounts", label: `Manage accounts (${accountCount} configured)` },
                 { value: "notifications", label: "Notification settings" },
+                { value: "warmup", label: "Auto-warmup" },
                 { value: "show", label: "Show current config" },
                 { value: "exit", label: "Exit" },
             ],
@@ -214,6 +215,8 @@ async function interactiveConfig(): Promise<void> {
             await manageAccounts(config);
         } else if (action === "notifications") {
             await manageNotifications(config);
+        } else if (action === "warmup") {
+            await manageWarmup(config);
         } else if (action === "show") {
             await showConfig(config);
         }
@@ -372,6 +375,209 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
 
     await saveConfig(config);
     p.log.success("Notification settings saved.");
+}
+
+async function manageWarmup(config: ClaudeConfig): Promise<void> {
+    if (!config.warmup) {
+        config.warmup = { ...DEFAULT_WARMUP };
+    }
+
+    const action = await p.select({
+        message: "Warmup settings:",
+        options: [
+            {
+                value: "session",
+                label: "Session warmup (5h window)",
+                hint: config.warmup.session.enabled ? "enabled" : "disabled",
+            },
+            {
+                value: "weekly",
+                label: "Weekly reset warmup",
+                hint: config.warmup.weekly.enabled ? "enabled" : "disabled",
+            },
+            { value: "back", label: "Back" },
+        ],
+    });
+
+    if (p.isCancel(action) || action === "back") {
+        return;
+    }
+
+    const accountNames = Object.keys(config.accounts);
+
+    if (accountNames.length === 0) {
+        p.log.error("No accounts configured. Run: tools claude login");
+        return;
+    }
+
+    if (action === "session") {
+        await configureSessionWarmup(config, accountNames);
+    } else if (action === "weekly") {
+        await configureWeeklyWarmup(config, accountNames);
+    }
+}
+
+async function configureSessionWarmup(config: ClaudeConfig, accountNames: string[]): Promise<void> {
+    const warmup = config.warmup!;
+
+    const enabled = await p.confirm({
+        message: "Enable automatic session warmup?",
+        initialValue: warmup.session.enabled,
+    });
+    if (p.isCancel(enabled)) {
+        return;
+    }
+
+    warmup.session.enabled = enabled;
+
+    if (!enabled) {
+        await saveConfig(config);
+        p.log.success("Session warmup disabled.");
+        return;
+    }
+
+    // Account selection (multiselect)
+    const accounts = await p.multiselect({
+        message: "Which accounts to warm up?",
+        options: accountNames.map((name) => ({
+            value: name,
+            label: `${name}${config.accounts[name].label ? ` (${config.accounts[name].label})` : ""}`,
+        })),
+        initialValues: warmup.session.accounts.filter((a) => accountNames.includes(a)),
+        required: true,
+    });
+    if (p.isCancel(accounts)) {
+        return;
+    }
+
+    warmup.session.accounts = accounts as string[];
+
+    // Schedule
+    const startHour = await p.text({
+        message: "Start hour (0-23):",
+        initialValue: String(warmup.session.schedule.startHour),
+        validate: (v = "") => {
+            const n = parseInt(v, 10);
+            if (Number.isNaN(n) || n < 0 || n > 23) {
+                return "Must be 0-23";
+            }
+        },
+    });
+    if (p.isCancel(startHour)) {
+        return;
+    }
+
+    const endHour = await p.text({
+        message: "End hour (1-24, last warmup at this hour minus 5):",
+        initialValue: String(warmup.session.schedule.endHour),
+        validate: (v = "") => {
+            const n = parseInt(v, 10);
+            if (Number.isNaN(n) || n < 1 || n > 24) {
+                return "Must be 1-24";
+            }
+        },
+    });
+    if (p.isCancel(endHour)) {
+        return;
+    }
+
+    const start = parseInt(startHour as string, 10);
+    const end = parseInt(endHour as string, 10);
+    warmup.session.schedule = { startHour: start, endHour: end };
+
+    // Preview 5h blocks
+    const blocks: string[] = [];
+    let cursor = start;
+    while (cursor + 5 <= end) {
+        blocks.push(`${String(cursor).padStart(2, "0")}:00\u2192${String(cursor + 5).padStart(2, "0")}:00`);
+        cursor += 5;
+    }
+
+    if (blocks.length > 0) {
+        p.note(blocks.join(", "), "5h warmup blocks");
+    }
+
+    // Notification preferences
+    const notify = await p.confirm({
+        message: "Notify on each warmup?",
+        initialValue: warmup.session.notify,
+    });
+    if (p.isCancel(notify)) {
+        return;
+    }
+
+    warmup.session.notify = notify;
+
+    if (notify) {
+        const onlyIfUnused = await p.confirm({
+            message: "Only notify if session was unused?",
+            initialValue: warmup.session.notifyOnlyIfUnused,
+        });
+        if (p.isCancel(onlyIfUnused)) {
+            return;
+        }
+
+        warmup.session.notifyOnlyIfUnused = onlyIfUnused;
+    }
+
+    await saveConfig(config);
+
+    const accountList = warmup.session.accounts.join(", ");
+    p.log.success(
+        `Session warmup enabled for ${accountList}. Blocks: ${blocks.join(", ")}. ` +
+            `I will automatically start sessions within ${start}:00\u2013${end}:00.`
+    );
+}
+
+async function configureWeeklyWarmup(config: ClaudeConfig, accountNames: string[]): Promise<void> {
+    const warmup = config.warmup!;
+
+    const enabled = await p.confirm({
+        message: "Enable automatic warmup at weekly reset?",
+        initialValue: warmup.weekly.enabled,
+    });
+    if (p.isCancel(enabled)) {
+        return;
+    }
+
+    warmup.weekly.enabled = enabled;
+
+    if (!enabled) {
+        await saveConfig(config);
+        p.log.success("Weekly warmup disabled.");
+        return;
+    }
+
+    const accounts = await p.multiselect({
+        message: "Which accounts to warm up at weekly reset?",
+        options: accountNames.map((name) => ({
+            value: name,
+            label: `${name}${config.accounts[name].label ? ` (${config.accounts[name].label})` : ""}`,
+        })),
+        initialValues: warmup.weekly.accounts.filter((a) => accountNames.includes(a)),
+        required: true,
+    });
+    if (p.isCancel(accounts)) {
+        return;
+    }
+
+    warmup.weekly.accounts = accounts as string[];
+
+    const notify = await p.confirm({
+        message: "Notify on weekly warmup?",
+        initialValue: warmup.weekly.notify,
+    });
+    if (p.isCancel(notify)) {
+        return;
+    }
+
+    warmup.weekly.notify = notify;
+
+    await saveConfig(config);
+    p.log.success(
+        `Weekly warmup enabled for ${(accounts as string[]).join(", ")}. ` +
+            "I will automatically notify you whenever a weekly session is started."
+    );
 }
 
 async function showConfig(config: ClaudeConfig): Promise<void> {
